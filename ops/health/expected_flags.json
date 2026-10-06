@@ -10,6 +10,13 @@
       "ruling": "Operator 2026-10-06: ON at the next reviewed exact-SHA install, code default OFF for rollback. No standalone activation, restart or production write authorized."
     },
     {
+      "name": "strategy_schwab_1m_v2_removed_wait_clear_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "CLEARWAIT1 ends only a scanner-removed, durably terminal unfilled waiting episode; unknown cancellation and owned fills remain blocked.",
+      "ruling": "Original operator protocol authorizes default-ON at deploy with a rollback switch. Reviewed exact-SHA deployment remains separate; this PR authorizes no production writes, activation or restart."
+    },
+    {
       "name": "strategy_schwab_1m_v2_resting_buy_round_up_enabled",
       "expected": true,
       "owning_service": "schwab-1m-v2",

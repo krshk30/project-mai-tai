@@ -57,6 +57,7 @@ from project_mai_tai.v2_flip_entry_ownership import (
     FlipPositionBook,
     FlipPositionLeg,
 )
+from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitProof, RemovalPersist
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.entry_gate import resolve_entry_window, within_rth_entry_window
@@ -745,6 +746,13 @@ class SchwabV2Strategy:
         self._retry_one_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_retry_one_enabled", False)
         )
+        self._removed_wait_enabled = self._flip_owned_first_entry_enabled and bool(
+            self.settings.strategy_schwab_1m_v2_removed_wait_clear_enabled
+        )
+        self._removed_wait_requests: dict[str, RemovedWait] = {}
+        self._removed_scanner_symbols: set[str] = set()
+        self._removed_wait_persist: RemovalPersist | None = None
+        self._removed_wait_restore_readable = True
         self._retry_one_max_retries = max(
             0,
             int(
@@ -1121,6 +1129,149 @@ class SchwabV2Strategy:
                 opportunities[state.symbol] = opportunity_id
         return opportunities
 
+    def configure_removed_wait(
+        self, persist: RemovalPersist | None, *, restored: Mapping[str, RemovedWait],
+        readable: bool,
+    ) -> None:
+        self._removed_wait_persist = persist
+        self._removed_wait_restore_readable = readable
+        self._removed_wait_requests = dict(restored)
+        self._removed_scanner_symbols.update(restored)
+        for symbol, request in restored.items():
+            state = self.watchlist_state(symbol)
+            if not self._removed_wait_has_owner(state):
+                self._queue_removed_wait_barriers(state, request)
+
+    def scanner_readded(self, symbol: str) -> None:
+        self._removed_scanner_symbols.discard(symbol)
+
+    def _removed_wait_gate_closed(self, symbol: str) -> bool:
+        return getattr(self, "_removed_wait_enabled", False) and (
+            not self._removed_wait_restore_readable
+            or symbol.upper() in self._removed_wait_requests
+            or symbol.upper() in self._removed_scanner_symbols
+        )
+
+    @staticmethod
+    def _removed_wait_has_owner(state: SymbolState) -> bool:
+        return bool(state.flip_owner_fill_accounts or state.flip_owner_position_ids
+                    or state.flip_owner_open_positions or state.position_qty_held
+                    or state.flip_owner_phase in {"provisional", "bound", "consumed", "awaiting_close"})
+
+    def apply_removed_wait_proofs(self, proofs: Iterable[RemovedWaitProof]) -> None:
+        for proof in proofs:
+            request = proof.request
+            state = self._symbol_states.get(request.symbol)
+            if (self._removed_wait_enabled and proof.reason == "own_fill_stays_owned"
+                    and not proof.clear and self._removed_wait_requests.get(request.symbol) == request
+                    and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+                try:
+                    if self._removed_wait_persist is None:
+                        raise RuntimeError("removal store unavailable")
+                    self._removed_wait_persist(request, False)
+                except Exception:  # noqa: BLE001
+                    logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=owned_fill_write_failed", request.symbol)
+                else:
+                    # The waiting-removal request ends; filled ownership and exit management do not.
+                    self._removed_wait_requests.pop(request.symbol, None)
+                continue
+            if (not self._removed_wait_enabled or not proof.clear or state is None
+                    or not self._flip_owner_restore_readable
+                    or not self._removed_wait_restore_readable
+                    or self._removed_wait_requests.get(request.symbol) != request
+                    or not 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS
+                    or self._removed_wait_has_owner(state) or state.position_qty
+                    or not self._flip_owner_evidence_fresh(state)
+                    or int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) != request.opportunity_id):
+                continue
+            if request.opportunity_id == 0 and state.flip_owner_first_rest_placed:
+                continue
+            seed_cap = (state.cw_seed_cap_watch_start_ms, state.cw_resting_taken, state.cw_reclaim_taken)
+            if request.opportunity_id and not self._retire_flip_owner_opportunity(
+                state, reason="scanner_removed_terminal_unfilled"):
+                continue
+            if request.opportunity_id == 0:
+                self._release_fanout_webull_claim(state, reason="scanner_removed_terminal_unfilled")
+                self._reset_fanout_webull_slots(state)
+                self._clear_cw_slot_claims(state)
+                state.cw_v2_emit_claimed = False
+                state.cw_v2_emit_ms = 0
+            if seed_cap[0]:
+                state.cw_seed_cap_watch_start_ms, state.cw_resting_taken, state.cw_reclaim_taken = seed_cap
+            try:
+                if self._removed_wait_persist is None:
+                    raise RuntimeError("removal store unavailable")
+                self._removed_wait_persist(request, False)
+            except Exception:  # noqa: BLE001
+                logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=retire_write_failed", request.symbol)
+                continue
+            self._removed_wait_requests.pop(request.symbol, None)
+            logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=CLEAR reason=%s",
+                        request.symbol, request.opportunity_id, proof.reason)
+
+    def _remove_waiting_buy(self, state: SymbolState, *, reason: str) -> bool:
+        symbol = state.symbol
+        self._removed_scanner_symbols.add(symbol)
+        had_wait = bool(state.cw_armed or state.resting_active or state.webull_resting_active
+                        or state.cw_v2_emit_claimed or state.flip_owner_opportunity_id
+                        or state.fanout_segment_id or symbol in self._pending_first_rest_quotes
+                        or any(d.intent_type == "open" and d.symbol == symbol
+                               for queue in (self._pending_intents, self._pending_webull_direct_intents,
+                                             self._pending_webull_fanout_intents) for d in queue))
+        self._finish_first_rest_quote_wait(state, action="gave_up", reason=reason)
+        for name in ("_pending_intents", "_pending_webull_direct_intents", "_pending_webull_fanout_intents"):
+            setattr(self, name, self._drop_queued_open_intents_for_symbol(getattr(self, name), symbol))
+        released = state.cw_armed
+        queue_sizes = (len(self._pending_intents), len(self._pending_webull_direct_intents))
+        if state.resting_active or state.webull_resting_active:
+            self._queue_resting_cancel(state, reason=reason)
+        for queue, start in zip((self._pending_intents, self._pending_webull_direct_intents), queue_sizes):
+            for draft in queue[start:]:
+                draft.metadata["clearwait_buy_only"] = "true"
+                opportunity = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+                if opportunity:
+                    draft.metadata["fanout_segment_id"] = str(opportunity)
+        state.cw_armed = False
+        state.cw_arm_bar_ts = 0
+        state.atr_hold_pending = None
+        if not had_wait or self._removed_wait_has_owner(state) or symbol in self._removed_wait_requests:
+            return released
+        accounts = [self.settings.strategy_schwab_1m_v2_account_name]
+        if self._dual_broker_fanout_enabled:
+            accounts.append(self.settings.strategy_schwab_1m_v2_webull_account_name)
+        request = RemovedWait(symbol, int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0),
+                              str(uuid4()), self._now_ms(), tuple(accounts))
+        self._removed_wait_requests[symbol] = request
+        try:
+            if self._removed_wait_persist is None:
+                raise RuntimeError("removal store unavailable")
+            self._removed_wait_persist(request, True)
+        except Exception:  # noqa: BLE001
+            logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=request_write_failed", symbol)
+            return released
+        self._queue_removed_wait_barriers(state, request)
+        return released
+
+    def _queue_removed_wait_barriers(self, state: SymbolState, request: RemovedWait) -> None:
+        symbol = state.symbol
+        md = {"clearwait_removal_token": request.token,
+              "clearwait_opportunity_id": str(request.opportunity_id),
+              "resting_entry_cancel": "true", "reason": "watchlist-removed",
+              "clearwait_buy_only": "true",
+              "source": STRATEGY_CODE, "strategy_version": STRATEGY_VERSION}
+        if request.opportunity_id:
+            md.update(fanout_segment_id=str(request.opportunity_id), fanout_slot="resting",
+                      fanout_slot_id=fanout_slot_id(strategy_code=STRATEGY_CODE, symbol=symbol,
+                          segment_id=request.opportunity_id, slot="resting"))
+        # Ordinary serial-lane cancels also revoke deferred mirror/NFQ retries.
+        self._pending_intents.append(TradeIntentDraft(symbol=symbol, side="buy", intent_type="cancel",
+            quantity=Decimal(self._atr_qty), reason="scanner removal cancellation barrier", metadata=dict(md)))
+        if self._dual_broker_fanout_enabled and self.settings.strategy_schwab_1m_v2_webull_account_name:
+            self._pending_webull_direct_intents.append(TradeIntentDraft(
+                symbol=symbol, side="buy", intent_type="cancel", quantity=Decimal(self._webull_fanout_qty),
+                reason="scanner removal cancellation barrier (webull)",
+                metadata={**md, "fanout_leg": "webull", "fanout_source": "rth_resting_mirror"}))
+
     @staticmethod
     def _clear_flip_owner_memory(state: SymbolState) -> None:
         state.flip_owner_phase = "idle"
@@ -1136,6 +1287,9 @@ class SchwabV2Strategy:
         state.flip_owner_recovery_warning_at_ms = 0
 
     def _retire_flip_owner_opportunity(self, state: SymbolState, *, reason: str) -> bool:
+        if (self._removed_wait_enabled and state.symbol in self._removed_wait_requests
+                and reason != "scanner_removed_terminal_unfilled"):
+            return False
         previous_phase = state.flip_owner_phase
         opportunity_id = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
         self._flip_owner_counts["release_evaluated"] += 1
@@ -1568,6 +1722,8 @@ class SchwabV2Strategy:
         pre-flip episode retires its opportunity.
         """
 
+        if self._removed_wait_enabled and state.symbol in self._removed_wait_requests:
+            return False
         self._flip_owner_counts["unknown_recovery_evaluated"] += 1
         evaluated = self._flip_owner_counts["unknown_recovery_evaluated"]
         open_positions = state.flip_owner_open_positions
@@ -1971,7 +2127,9 @@ class SchwabV2Strategy:
         self._flip_owner_counts["admission_evaluated"] += 1
         reason = "allowed"
         allowed = True
-        if slot != "first":
+        if self._removed_wait_gate_closed(state.symbol):
+            allowed, reason = False, "scanner_removed_waiting_buy"
+        elif slot != "first":
             allowed, reason = False, "non_first_producer_disabled"
         elif not self._flip_owner_restore_readable:
             allowed, reason = False, "restore_unreadable"
@@ -1993,6 +2151,8 @@ class SchwabV2Strategy:
             allowed, reason = False, f"owner_phase_{state.flip_owner_phase}"
         elif state.flip_owner_open_positions:
             allowed, reason = False, "open_position_present"
+        elif self._removed_wait_enabled and self._removed_wait_has_owner(state):
+            allowed, reason = False, "filled_owner_present"
         if not allowed and reason not in {
             "non_first_producer_disabled",
             "owner_phase_bound",
@@ -2730,6 +2890,8 @@ class SchwabV2Strategy:
         state = self._symbol_states.get(symbol)
         if state is None:
             return False
+        if self._removed_wait_enabled:
+            return self._remove_waiting_buy(state, reason=reason)
         self._finish_first_rest_quote_wait(state, action="gave_up", reason=reason)
         if getattr(self, "_line_restoration_enabled", False):
             # Removal revokes permission and cancels both legs. Retain the owner,
@@ -3568,6 +3730,8 @@ class SchwabV2Strategy:
         return bool(state is not None and state.gap_hold_active)
 
     def line_buy_ready(self, symbol: str) -> bool:
+        if self._removed_wait_gate_closed(symbol):
+            return False
         if not getattr(self, "_line_restoration_enabled", False):
             return True
         reader = getattr(self, "_line_readiness", None)
@@ -3851,7 +4015,7 @@ class SchwabV2Strategy:
         for symbol, state in self._symbol_states.items():
             if not (0 < state.atr_session_anchor_ms < anchor):
                 continue
-            if is_protected(symbol, state):
+            if (self._removed_wait_enabled and symbol in self._removed_wait_requests) or is_protected(symbol, state):
                 continue
             # This sweep is itself the current-session boundary proof. Requiring a live bar here
             # makes the clock-driven path unable to retire ownership for the silent symbols it was
@@ -5629,6 +5793,9 @@ class SchwabV2Strategy:
         result = {"at": now.timestamp(), "verdict": "expired", "reason": "watch_removed"}
         if state is None:
             return {**result, "verdict": "wait", "reason": "watch_or_restart_state_unavailable"}
+        if self._removed_wait_gate_closed(state.symbol):
+            return {**result, "verdict": "expired" if old_buy_proven_clear(job) else "wait",
+                    "reason": "scanner_removed_waiting_buy"}
         same_segment = int(state.fanout_segment_id or 0) == job["segment_id"]
         replacement_generation = job.get("replacement", {}).get("metadata", {}).get("rpg_resting_generation")
         feedback_key = (token, job["phase"], job.get("revision", 0), replacement_generation,

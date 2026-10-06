@@ -1,0 +1,99 @@
+{
+  "source": "src/project_mai_tai/v2_removed_wait.py",
+  "method": "AST guard disabling in isolated memory; baseline control first",
+  "results": [
+    {
+      "mutation": "all_account_receipts",
+      "guard_lines": [
+        257
+      ],
+      "test": "test_acceptance_faults_fail_closed",
+      "arguments": [
+        "missing_receipt"
+      ],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "unknown_cancel",
+      "guard_lines": [
+        249
+      ],
+      "test": "test_acceptance_faults_fail_closed",
+      "arguments": [
+        "unknown_cancel"
+      ],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "terminal_order",
+      "guard_lines": [
+        192
+      ],
+      "test": "test_acceptance_faults_fail_closed",
+      "arguments": [
+        "pending_order"
+      ],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "position_guard",
+      "guard_lines": [
+        129
+      ],
+      "test": "test_acceptance_faults_fail_closed",
+      "arguments": [
+        "position"
+      ],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "owner_position_identity",
+      "guard_lines": [
+        143
+      ],
+      "test": "test_acceptance_faults_fail_closed",
+      "arguments": [
+        "position_id"
+      ],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "no_wire_evidence",
+      "guard_lines": [
+        228
+      ],
+      "test": "test_acceptance_faults_fail_closed",
+      "arguments": [
+        "generic_absence"
+      ],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "nfq_terminal",
+      "guard_lines": [
+        185
+      ],
+      "test": "test_acceptance_faults_fail_closed",
+      "arguments": [
+        "nfq_hold"
+      ],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "xhg_unknown_ticket",
+      "guard_lines": [
+        183
+      ],
+      "test": "test_recorded_xhg_unknown_ticket_overrules_rejected_order",
+      "arguments": [],
+      "outcome": "KILLED"
+    },
+    {
+      "mutation": "aifa_settle_window",
+      "guard_lines": [],
+      "test": "test_recorded_aifa_latest_cancel_not_first_cancel_controls_settle",
+      "arguments": [],
+      "outcome": "KILLED"
+    }
+  ]
+}

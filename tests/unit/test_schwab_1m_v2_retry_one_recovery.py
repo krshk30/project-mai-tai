@@ -17,6 +17,7 @@ def _strategy():
     strategy = SchwabV2Strategy(
         Settings(
             strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+            strategy_schwab_1m_v2_removed_wait_clear_enabled=False,
             strategy_schwab_1m_v2_retry_one_enabled=True,
         )
     )
