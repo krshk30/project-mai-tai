@@ -1,0 +1,12 @@
+{
+  "baseline_sha": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "test": "tests/unit/test_roundup1.py::test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire",
+  "scope": "unchanged immutable baseline; SQLite/FakeRedis/mock adapter only",
+  "observed_at_et": "2026-10-06 16:06:38",
+  "result": "FAILED",
+  "refusal_reason": "resting_window_ended",
+  "log": "/tmp/clearwait1-4805-baseline-afterclose-sckt.log",
+  "log_sha256": "e5a73b8e516bac8178691e8934a4a034eefee4f5a56b0b3c677c688d1db4175e",
+  "runtime_or_test_source_changes": false,
+  "disposition": "inherited clock-sensitive replay control; do not waive trading window or claim CI success"
+}
