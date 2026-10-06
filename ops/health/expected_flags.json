@@ -218,6 +218,14 @@
       ]
     },
     {
+      "name": "orb_schwab_atr_entry_gate_enabled",
+      "expected": true,
+      "owning_service": "orb-schwab",
+      "also_check_services": ["oms"],
+      "reason": "ORBPURPLE1 withholds the initial ORB-Schwab buy when the prior completed Schwab close is under the exit ATR line or its evidence is unavailable.",
+      "ruling": "2026-10-06 operator: lane B ships default-ON at reviewed deployment, with its own rollback switch; paper ORB is unchanged. This catalog update does not authorize deployment."
+    },
+    {
       "name": "orb_schwab_observe_enabled",
       "expected": false,
       "owning_service": "orb-schwab",

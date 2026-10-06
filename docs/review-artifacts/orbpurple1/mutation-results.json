@@ -1,0 +1,58 @@
+[
+  {
+    "mutation": "remove_producer_gate",
+    "red": true,
+    "returncode": 1,
+    "failed_names": [
+      "test_apus_purple_is_withheld_and_rollback_restores_one_buy[True]"
+    ]
+  },
+  {
+    "mutation": "allow_purple",
+    "red": true,
+    "returncode": 1,
+    "failed_names": [
+      "test_all_recorded_placement_candidates_replay_through_live_gate[APUS-2026-10-05-5.07-5.421986558524449-False]"
+    ]
+  },
+  {
+    "mutation": "reject_short_state_equality",
+    "red": true,
+    "returncode": 1,
+    "failed_names": [
+      "test_close_equal_to_atr_line_is_allowed[10]"
+    ]
+  },
+  {
+    "mutation": "unknown_fail_open",
+    "red": true,
+    "returncode": 1,
+    "failed_names": [
+      "test_empty_or_unavailable_completed_history_never_passes[bars1-schwab_bar_read_unavailable]"
+    ]
+  },
+  {
+    "mutation": "remove_oms_admission_gate",
+    "red": true,
+    "returncode": 1,
+    "failed_names": [
+      "test_oms_cannot_bypass_producer_atr_gate[below_line]"
+    ]
+  },
+  {
+    "mutation": "remove_post_preview_gate",
+    "red": true,
+    "returncode": 1,
+    "failed_names": [
+      "test_oms_rechecks_atr_after_preview_and_records_local_refusal"
+    ]
+  },
+  {
+    "mutation": "default_off",
+    "red": true,
+    "returncode": 1,
+    "failed_names": [
+      "test_default_on_independent_from_paper_and_paper_service_is_unchanged"
+    ]
+  }
+]

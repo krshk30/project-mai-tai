@@ -232,9 +232,10 @@ def test_oms_rechecks_atr_after_preview_and_records_local_refusal(monkeypatch):
         assert intent.payload["refusal_code"] == "orb_schwab_atr_prior_close_under_atr"
 
 
-def test_close_equal_to_atr_line_is_allowed():
-    bars = [OrbBar(timestamp=OPEN - timedelta(minutes=9-i), open=10, high=10,
-                   low=10, close=10, volume=100) for i in range(9)]
+@pytest.mark.parametrize("count", [9, 10])
+def test_close_equal_to_atr_line_is_allowed(count):
+    bars = [OrbBar(timestamp=OPEN - timedelta(minutes=count-i), open=10, high=10,
+                   low=10, close=10, volume=100) for i in range(count)]
     result = completed_atr_entry_gate(bars, "complete", OPEN)
     assert result.close == result.trail == 10 and result.verdict == "allowed"
 
