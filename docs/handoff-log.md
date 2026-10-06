@@ -6655,3 +6655,26 @@ proposed scope DISAGREE and clarification asked, no cap waiver/reset/build.
 Counterfactual future Webull fill is not an observed fill. MIRRORHOLD1 remains
 separate from1099, with crash/retirement/perleg isolation still required.
 No database/order/service/production action. T/Board/decision rows untouched.
+
+### 2026-10-06 13:11 ET - codex-2 C57 OLOX generation counter-control
+
+Independent parent process-local replay loads baseline aaac903e's actual
+authorization, ownership and queue methods. The recorded 10:13 primary placed
+job48c765e5 and 10:15 c9b13cc4 refusal are fed into a reconstructed strategy
+cache at10:16:03. Primary generation equals the prior replacement generation,
+resting_active=true, primaryquantity=0, _rpg_entry_owned=false, but the separate
+placed-generation predicate=true: zero primary and zero mirror drafts. Breaking
+ONLY the primary generation equality produces one primary and zero mirror
+drafts. Counter-control passes; this identifies the gate within that replay,
+not the uncaptured live cache or an observed re-placement. The surviving mirror,
+quote continuation and cache retention are controlled and explicitly disclosed.
+Raw /tmp/codex-t43-parent-generation-countercontrol.log sha256
+c7ca71a7ef9aca97cc1b7a7f4525daeaa15566098d678319198390c5f0210913;
+script /tmp/codex-t43-parent-generation-replay.py sha256
+a9e9fa40392adc2d609760adfa9d3a38d69c6b22ed8afc394f39b9c7af6cdb3b.
+The candidate is NOT READY: focused314pass/1cancelled-restartfailure, plus an
+inactive/different-generation ownership safety blocker. Complete baseline3eb
+47fail6416pass receipt retained; interrupted candidatefull1452pass receipt is
+excluded, no final paired result. Zeno remains sole source/test writer and
+resumes the narrow proof fix. Parent edits only this C-row and append-only log;
+no production, ledger, M/T/Board/decision change, no MIRROR expansion.
