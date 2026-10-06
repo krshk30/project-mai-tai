@@ -1,0 +1,9 @@
+=== V2 RESTART PRE-FLIGHT — 2026-10-06 16:18:26 EDT ===
+  [OVERRIDE] clock gate (<18:00 ET) overridden by OPERATOR
+             reason: Operator 2026-10-06 after-close ruling; after16:00 clock only; raw armed/managed checks remain mandatory; exact dated IPDN residual policy, NOT whole-account flatness
+             ⛔ this asserts NOTHING about armed state — gate 1 below is the real check.
+  [ok]    zero armed segments [published state, 2.1s old]
+  [ok]    zero open managed rows
+  [ok]    broker flat on both real-money accounts (operator manuals excluded)
+
+  ===> GO. Zero armed segments AND flat. Safe to restart v2.
