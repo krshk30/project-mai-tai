@@ -103,6 +103,7 @@ def test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on()
     numeric = json.loads((Path(__file__).parents[2] / "ops/health/expected_numeric.json").read_text())
     entries = catalog["flags"] + numeric["settings"]
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 152
+    assert flags["webull_list_primary_reads_enabled"] is True
     assert flags["strategy_schwab_1m_v2_line_chart_restoration_enabled"] is True
 
 
