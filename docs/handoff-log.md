@@ -5835,3 +5835,18 @@ it returned UNKNOWN and is not called green. No permissions relaxed. Deployment
 journal deployments-20261006.md records the correction and actual root receipt.
 Today Claude owns the manual gate. Proposal only: root-run named06:20dailytimer,
 dated-pin fail-closed and explicit repin ownership; no timer installed here.
+
+## 2026-10-06 06:34 ET - ROUNDUP1 eight startup diagnostics now pass locally
+
+Own combined working-tree run:496passed/6.62s, raw
+/tmp/roundup1-legacy-working-20261006.log. Includes all eight formerly failing
+outside-discovery no-ticket startup diagnostics, the new discovery-time85cases
+and403ROUNDUPcases. Controlled fixture uses recorded prices with unfilled,
+no-ticket permutations; it is not proof of a historical duplicate or live restart.
+Accepted wire/quantity preserved; partial/fill consumption, exact zero terminal
+proof, unreadable/conflicting evidence, blocked-leg independence and flagOFF
+covered. Still no review-ready head: source review, recovery-specific mutations
+and completed same-environment main/head pair remain required. Initial full-main
+run56fail/5885pass included the systemPython subprocess mismatch;16sync tests
+pass with the virtualenv on PATH, so the controlled full pair uses that PATH.
+Nothing merged or installed.
