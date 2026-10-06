@@ -1,0 +1,73 @@
+{
+  "SDK_NO_RETRY_POLICY_identity_verified": true,
+  "access_token_header_present": false,
+  "account_alias": "live:orb",
+  "account_id_query_matches_configured": true,
+  "agent": "codex",
+  "asof_end_utc": "2026-10-06T19:57:20.639730+00:00",
+  "asof_start_utc": "2026-10-06T19:57:20.175709+00:00",
+  "budget_head": "78ee3503783d59267423e2e7abc21c10cc68ba85",
+  "budget_module": "project_mai_tai.broker_adapters.webull_order_reads",
+  "budget_scope": "Reviewed shared registry definitions in this separate SSH probe process; not distributed production enforcement",
+  "budget_source_sha256": "3e802143b8bfa68fcbf3926883a9c92efd0093177a3caff16e0eef06ed208738",
+  "currency_asset_rows": 1,
+  "documented_USD_day_power_present": true,
+  "endpoint": "/trading/assets/balances/get",
+  "environment_writes": false,
+  "filesystem_writes_denied": true,
+  "http_attempts": 1,
+  "http_end_utc": "2026-10-06T19:57:20.637870+00:00",
+  "http_start_utc": "2026-10-06T19:57:20.369496+00:00",
+  "http_status": 200,
+  "installed_sdk_version": "2.0.11",
+  "kind": "WBPOWER1_documented_balance_route_GET",
+  "method": "GET",
+  "official_request_path": "webull/trade/request/v2/get_account_balance_request.py",
+  "official_request_sha256": "8269b4da7a4ccc09e4787f78a56152b7edf989b3fb2eeb8d1358b9862d053511",
+  "official_sdk_commit": "abe5668ce4bc11dd1e8a1aad944d9dbb239bf12d",
+  "outcome": "response_returned",
+  "permit_endpoint": "account-balance",
+  "prepared_request_serialization_bytes": 560,
+  "prepared_request_serialization_sha256": "afa499bd81e7edb91c553ff25b1db29ab169ea5ee3615a033c7bb76b42adc74e",
+  "redirects_enabled": false,
+  "refresh_enabled": false,
+  "request_body_bytes": 0,
+  "request_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "request_bytes_scope": "Prepared HTTP/1.1 serialization before transport-added headers/TLS; raw headers and query never persisted",
+  "requested_total_asset_currency": "USD",
+  "reservation_subtraction_semantics": "UNMEASURED; no subtraction, alias fallback or placement permission inferred",
+  "response_JSON_valid": true,
+  "response_account_identity": "absent",
+  "response_body_bytes": 595,
+  "response_body_sha256": "ad68dd28e3325e5db9bf435be9983215e77d1c20f21636cb67383b5fc5c7ba80",
+  "response_bytes_scope": "Actual decoded response.content bytes; raw response not persisted",
+  "response_total_asset_currency": "USD",
+  "retry_enabled": false,
+  "reviewed_installed_source_sha256": {
+    "webull/core/auth/composer/default_signature_composer.py": "410adb76c097e7430718932132720ecbfa31d0b07b41852c0de2403dce974815",
+    "webull/core/auth/signers/app_key_signer.py": "a23746df215e7d4ee896a9d06d11250ae25ff550fb52ab9e144dfdf883ff05f9",
+    "webull/core/client.py": "cf148188823d283c5ce6d1e94deac97d5fcf28fb7c13d7b7a133a989a900b49c",
+    "webull/core/http/response.py": "882b924f71271d4d8dc04bef564d018e1ff471f355d0fc7b20c73c75cdc803fd",
+    "webull/core/request.py": "cbc97f1b059d44b3ebf31fb4426ef150d83600443c83aeef18965209b4db3101",
+    "webull/core/retry/retry_policy.py": "cb52b073b970d4de2c82f47bd407146ecbfc71860b00945d0ccc7b5563bab9bb"
+  },
+  "same_process_registry_identity_verified": true,
+  "sdk_single_attempts": 1,
+  "selected_USD_power_scope": [
+    {
+      "currency": "USD",
+      "fields": {
+        "day_buying_power": {
+          "normalized": "750.93",
+          "raw": "750.93"
+        }
+      },
+      "path": "$.account_currency_assets[0]"
+    }
+  ],
+  "signature_algorithm": "HMAC-SHA1",
+  "strict": false,
+  "transport_retries_total": 0,
+  "version": "v3",
+  "x_version_at_send": "v3"
+}
