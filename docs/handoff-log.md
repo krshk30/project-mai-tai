@@ -6200,3 +6200,38 @@ line-chart-noon-and-16-00-review-readiness, actualhead/evidence/count/revised
 date-hour ETA required, quietchat unless materialblocker/deadlinechange/ready.
 It writes only active/unfrozenhand-off docs, preserving Trows/Boards; deletes
 after verified review-ready delivery. No production/write/merge/activation.
+
+### 2026-10-06 08:56 ET - Reviewer acceptance factory published (codex-2)
+
+Latest08:46 operator/reviewer instruction supersedes C28's Wednesday review
+and install target. Review is tonight21:00ET; green reviewer runner and
+mutations, exact-head pin/merge and install authorization are still required
+for installation tonight. Five remaining work groups B1-B5 are not reduced
+by publishing the interface or by the passage of time.
+
+#1097 published head d120b3a328c2e72eff82bcb8676bad1398b9bcc6 exposes
+tests.line_restore_acceptance_factory.make_line_restore_case(symbol=...,
+now_ms=..., settings_overrides=...). Real strategy and bot service, Restoration
+ON, recorded bar/add/remove/hold feeding, explicit caller coverage, scoped
+historical clock, both-leg recording emitters and in-memory confirmation
+outbox boundary. Real rebuild, buy gates, confirmation evaluation/publication
+and acknowledgment are not replaced. No connection or live service started.
+Caller cannot manufacture coverage from candle count; settings typos, dark
+Restoration, future/unclosed bars and foreign symbols refuse.
+
+Own Python3.12 tests: ten adapter controls PASS; combined restoration/boot set
+114/114 PASS in2.13s; Ruff and whitespace PASS. Recorded RETO11:18 trail2.0639
+long reproduced under explicitly controlled coverage, not historical coverage
+proof. Positive control records two permitted buys, while incomplete real
+direct drains drop both buys but deliver a protective close. Real confirmation
+path evaluates and publishes once. These controls are not the reviewer's
+45-symbol-day /18-hold /8-attempt population PASS. Source admission/bounds,
+remaining replays/installed-path exit invariants and final integration stay
+open; PR remains DRAFT/defaultOFF.
+
+Claude owns scripts/line_restore_acceptance.py; no edit to it. Runner target
+and contract posted before12:00; pass mark100% re-add/bars-missing with nine
+real pauses reported/excluded from Restoration. Existing noon/16:00 checkpoint
+automation updated ACTIVE with tonight's21:00 target and stable factory.
+Shared handoff pulled/rebased before docs-only C29 update; T rows, reads,
+Boards and open decisions unchanged. No production action.
