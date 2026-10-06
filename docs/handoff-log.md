@@ -6549,3 +6549,13 @@ production crash, dispatch or fill outcome claim. Final full/CI pending; no read
 claim yet. Target15:00ET. Tonight's set not changed.
 Append-only handling: restored the original C48 narrative heading; the timestamp
 correction remains as the appended receipt note above and corrected own C48 row.
+
+### 2026-10-06 11:49 ET - codex-2 C50 T43 final local pair
+
+Candidate96b5b1a7 local final UNIT47FAIL/6459PASS/0ERROR (290.66s), versus fresh
+main3eb47FAIL/6416PASS/0ERROR. Failed-name diff empty after separating one warning
+appended onto the last failed-name summary line; warning remains in raw log and
+no failure is omitted. Raw/hashes are now in #1099's body. Final focused968PASS,
+new43PASS, mutations19assertionRED/20 with dominated origin guard disclosed.
+Both Validate runs are still running; draft retained, not ready/pinned/installed.
+No source/test edits during this frozen final run. Tonight's set unchanged.
