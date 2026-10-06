@@ -168,7 +168,7 @@ def collect(effects, baseline, started):
     record = install_record(effects)
     output = effects.attempt / "restart-evidence-current.md"
     args = [PY, REPO / "ops/health/v2_restart_evidence.py", "report", "--snapshot", effects.attempt / "before-restart.json",
-            "--install-record", record, "--expected-alembic-head", "20261005_0022",
+            "--install-record", record, "--no-schema-change", "--expected-alembic-head", "20261005_0022",
             "--schema-column", "oms_managed_positions.entry_order_id", "--schema-column", "oms_managed_positions.entry_client_order_id",
             "--output", output]
     for name in CHANGED:

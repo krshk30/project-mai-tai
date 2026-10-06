@@ -1,5 +1,12 @@
 # October 6 Install1 - Six Items, Four Owners, One Control Restart
 
+**Latest census ruling:** capture the full all-date journal, count informational;
+require zero requested/price_wait/submitting. See
+job/CENSUS_PHASE_RULING_2026-10-06.md for own103-row capture, actual raw gates,
+unchanged-schema reporting and the two unresolved missing-ID historical rows.
+This supersedes the old14-ticket/64-row semantic admission, not the broker/order
+or open-row safety gates. No install has started and no production byte changed.
+
 **Application bound; literal release not yet staged.** APPROVED_SHA is
 `4805ddc81184c76b4d5cef5c483c809edb666fe6`, tree
 `4248057079864f93066a69f355e2607840c701b9`. Its whole tree equals pinned

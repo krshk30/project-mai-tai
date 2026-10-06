@@ -152,7 +152,8 @@ class Real:
 
     def reader(self, name, *args):
         for count in range(3):
-            result = self.command(["nice", "-n", "19", PY, self.job / name, *args], check=False, timeout=210)
+            result = self.command(["nice", "-n", "19", PY, self.job / name, *args], check=False,
+                                  timeout=660 if name == "census_readonly.py" else 210, limit=8_000_000)
             if result.returncode == 0:
                 return result.stdout.decode()
             need(result.returncode == 2 and count < 2, "read-only blocker or exhausted UNKNOWN: " + name)
@@ -181,7 +182,8 @@ class Real:
             "database_binding": "SELECT current_database() database,inet_server_addr()::text server_address",
             "revision": "SELECT version_num FROM alembic_version LIMIT 2",
             "columns": "SELECT column_name,data_type,character_maximum_length,is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='oms_managed_positions' AND column_name IN ('entry_order_id','entry_client_order_id') ORDER BY column_name LIMIT 3",
-            "tickets": "SELECT id,payload FROM dashboard_snapshots WHERE snapshot_type='atr_reprice_handoff' ORDER BY id LIMIT 65",
+            "ticket_count": "SELECT count(*) total FROM dashboard_snapshots WHERE snapshot_type='atr_reprice_handoff'",
+            "tickets": "SELECT id,payload FROM dashboard_snapshots WHERE snapshot_type='atr_reprice_handoff' ORDER BY id LIMIT 1025",
         }
         if since:
             queries["buys"] = "SELECT b.id FROM broker_orders b JOIN broker_accounts a ON a.id=b.broker_account_id WHERE a.name IN ('live:orb','live:schwab_1m_v2') AND lower(b.side)='buy' AND b.submitted_at>=:since LIMIT 65"
@@ -193,7 +195,9 @@ class Real:
                 connection.exec_driver_sql("SET LOCAL statement_timeout='5s'")
                 result = {key: [dict(row) for row in connection.execute(text(query), {"since": since}).mappings()]
                           for key, query in queries.items()}
-                need(all(len(rows) <= 64 for rows in result.values()), "SQL proof overflow")
+                need(all(len(rows) <= (1024 if key == "tickets" else 64)
+                         for key, rows in result.items()), "SQL proof overflow")
+                need(result["ticket_count"] == [{"total": len(result["tickets"])}], "incomplete all-date ticket capture")
                 connection.rollback()
         finally:
             engine.dispose()
@@ -207,9 +211,17 @@ class Real:
              and columns["entry_client_order_id"]["character_maximum_length"] == 128
              and all(row["is_nullable"] == "YES" for row in columns.values()), "binding schema differs")
         self.receipt("sql.json", json.dumps(result, sort_keys=True, default=str).encode())
+        from ticket_inventory import require_idle, stable_bindings
+        try:
+            self.receipt("ticket-dispositions.json", canonical(require_idle(result["tickets"])))
+        except ValueError as exc:
+            raise Stop(str(exc)) from None
         if since:
             need(not any(result[key] for key in ("buys", "buy_intents", "buy_fills")), "entry activity during install")
-            need(result["tickets"] == self.db_before["tickets"], "ticket disposition changed; requires review")
+            try:
+                stable_bindings(self.db_before["tickets"], result["tickets"])
+            except ValueError as exc:
+                raise Stop(str(exc)) from None
         return result
 
     def redis(self):
@@ -384,6 +396,8 @@ class Real:
         self.sql(self.install_started)
         if completed:
             self.source(APP, verify_objects=False)
+        # Historical reads may be slow; refresh direct flatness last before each action.
+        self.flat()
 
     def action(self, action, name):
         need((action, name) in PHASES, "out-of-scope service action")

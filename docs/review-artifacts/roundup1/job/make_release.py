@@ -8,7 +8,7 @@ from release_policy import (APP, BOX, DAY, ENV_UPDATES, NUMERIC_ARTIFACT, NUMERI
                             RETRY_ENABLED, SCOPE, TREE, digest, need)
 
 PREFIX = "docs/review-artifacts/roundup1/"
-NAMES = ("attended.py", "release_policy.py", "armed_readonly.py", "raw_gate_admission.py", "strict_flat_readonly.py", "census_readonly.py",
+NAMES = ("attended.py", "release_policy.py", "armed_readonly.py", "raw_gate_admission.py", "strict_flat_readonly.py", "census_readonly.py", "ticket_inventory.py",
          "redis_checkpoint.py", "post_proof.py", "closeout.py", "gate_patch.py", "preopen.baseline.sh", "daily.py",
          "daily-run.sh", "daily-notify.sh", "project-mai-tai-preopen.service", "project-mai-tai-preopen.timer",
          "project-mai-tai-preopen-failure.service", "make_release.py", "RELEASE_STATUS_2026-10-06.md",
@@ -55,6 +55,9 @@ def generate(plan):
                 display=dict(merged_sha=APP, source_in_checkout=True, activation="AUTHORIZED_INSTALL1_UNMEASURED",
                              control_restart=True, restart_count=1, page="/bot/orb", symbol="JAGX", trades=1),
                 numeric_catalog=dict(artifact=NUMERIC_ARTIFACT, sha256=NUMERIC_SHA, source_catalog_unchanged=True),
+                ticket_gate=dict(population="full all-date journal; count informational",
+                                 prohibited_phases=["requested", "price_wait", "submitting"],
+                                 unknown_ownership="retained; never cleared by install admission"),
                 flaggate=dict(boolean=143, numeric=10, total=153,
                               required="actual153/153 PASS or narrowly proven paper151/153 UNKNOWN2; never relabel UNKNOWN as PASS"))
 

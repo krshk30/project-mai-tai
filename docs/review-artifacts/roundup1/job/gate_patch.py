@@ -53,6 +53,8 @@ fi''')
             additions += line
     anchor = "  --expected-alembic-head 20261005_0022"
     need(script.count(anchor) == 1, "schema proof anchor ambiguous")
+    need("--no-schema-change" not in script, "unchanged-schema declaration already present")
+    script = script.replace(anchor, "  --no-schema-change \\\n" + anchor)
     script = script.replace(anchor, additions + anchor)
     numeric = "".join(f"  --expect-flag '{name}:{RETRY_MAX}=0' \\\n" for name in ("oms", "schwab-1m-v2"))
     need(RETRY_MAX not in script, "retry numeric expectation already present/ambiguous")

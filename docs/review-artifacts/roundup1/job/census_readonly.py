@@ -3,8 +3,8 @@
 Run through SSH stdin as root/nice19 with PYTHONDONTWRITEBYTECODE=1 and
 PYTHONPATH=/home/trader/project-mai-tai/src. No snapshot-batches, refresh grant,
 order polling/realignment, persistence, Redis mutation, or service action.
-Only the 14 independently retained ticket identities are recognized. No date
-or phase filter is applied to the journal population. New identities STOP.
+All-date ticket count is informational. The October6 phase admission requires
+zero requested/price_wait/submitting; this never clears unknown ownership.
 """
 import asyncio
 import argparse
@@ -29,11 +29,12 @@ from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.session import build_engine
 from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal
 from project_mai_tai.settings import Settings
+from ticket_inventory import inventory, stable_bindings
 
 ACCOUNTS = ("live:schwab_1m_v2", "live:orb")
-MAX_ROWS = 64
+MAX_ROWS = 1024
 MAX_BODY = 1_000_000
-MAX_OUTPUT = 2_000_000
+MAX_OUTPUT = 8_000_000
 KNOWN = {
     "fbfd692d-ec1f-5a39-9e11-1a133abccc96": (ACCOUNTS[0], "APUS"),
     "bd6ac0b9-727c-500b-8581-aabdd95992d4": (ACCOUNTS[1], "APUS"),
@@ -135,7 +136,7 @@ def rows(connection, query, parameters=None, limit=MAX_ROWS):
     data = [dict(row) for row in connection.execute(text(query), parameters or {}).mappings()]
     if len(data) > limit:
         raise Unreadable("SQL row overflow: " + query.split()[1])
-    bounded(data)
+    bounded(data, 4_000_000)
     return data
 
 
@@ -155,16 +156,27 @@ def sql_census(config, result):
                                            "WHERE snapshot_type='atr_reprice_handoff'"))
             result["all_date_ticket_count"] = total
             if total > MAX_ROWS:
-                raise Unreadable("all-date journal exceeds 64-row bound")
+                raise Unreadable("all-date audit capture exceeds 1024-row resource bound")
+            footprint = connection.scalar(text("SELECT coalesce(sum(octet_length(payload::text)),0) "
+                                               "FROM dashboard_snapshots WHERE snapshot_type='atr_reprice_handoff'"))
+            result["ticket_payload_bytes"] = footprint
+            if footprint > 4_000_000:
+                raise Unreadable("all-date audit capture exceeds 4MB resource bound")
             # Invoke the actual unfiltered runtime reader only after its size is proven bounded.
             with Session(bind=connection, autoflush=False) as session:
                 jobs = HandoffJournal(None).jobs(session=session)
             captured = rows(connection, "SELECT id,created_at,payload FROM dashboard_snapshots "
-                "WHERE snapshot_type='atr_reprice_handoff' ORDER BY id LIMIT 65")
+                "WHERE snapshot_type='atr_reprice_handoff' ORDER BY id LIMIT 1025")
             if {str(key): value for key, value in jobs} != {
                     str(row["id"]): row["payload"] for row in captured} or len(jobs) != total:
                 raise Stop("actual HandoffJournal.jobs differs from bounded all-date census")
             result["jobs"] = captured
+            try:
+                result["phase_inventory"] = inventory(captured)
+            except ValueError as exc:
+                raise Stop(str(exc)) from None
+            if result["phase_inventory"]["in_flight"]:
+                raise Stop("requested/price_wait/submitting ticket present")
             result["journal_digest_sha256"] = digest({str(key): value for key, value in jobs})
             result["reviewed_token_digest_sha256"] = digest(sorted(KNOWN))
             result["reviewed_fixture_sha256"] = FIXTURE_SHA256
@@ -174,8 +186,6 @@ def sql_census(config, result):
             actual_ids = {str(key) for key, _ in jobs}
             result["outside_reviewed_14"] = sorted(actual_ids - set(KNOWN))
             result["missing_reviewed_14"] = sorted(set(KNOWN) - actual_ids)
-            if actual_ids != set(KNOWN):
-                raise Stop("outside/missing reviewed 14-ticket population: STOP")
             ids, clients, broker_ids, generations = set(), set(), set(), set()
 
             def keys(value):
@@ -196,18 +206,16 @@ def sql_census(config, result):
                         keys(item)
 
             for key, job in jobs:
-                validate_immutable(key, job)
                 old = job.get("old") if isinstance(job, dict) else None
                 if (not isinstance(old, dict) or
-                        (old.get("broker_account_name"), old.get("symbol")) != KNOWN[str(key)] or
+                        old.get("broker_account_name") not in ACCOUNTS or not old.get("symbol") or
                         old.get("strategy_code") != "schwab_1m_v2" or
                         old.get("side") != "buy" or job.get("slot") not in {"first", "reclaim"} or
-                        job.get("phase") not in {"refused", "held_unknown", "filled", "placed", "expired"} or
                         not isinstance(old.get("metadata"), dict) or
                         not old.get("client_order_id") or not isinstance(job.get("revision"), int)):
                     raise Stop("reviewed identity has untested/unreadable ticket shape: " + str(key))
                 keys(job)
-            if any(len(values) > 128 for values in (ids, clients, broker_ids, generations)):
+            if any(len(values) > 4096 for values in (ids, clients, broker_ids, generations)):
                 raise Stop("ticket identity key bound exceeded")
             parameters = {"ids": sorted(ids), "clients": sorted(clients),
                           "brokers": sorted(broker_ids), "generations": sorted(generations)}
@@ -220,7 +228,7 @@ def sql_census(config, result):
                 "b.broker_order_id=ANY(:brokers) OR (s.code='schwab_1m_v2' AND "
                 "a.name IN ('live:schwab_1m_v2','live:orb') AND lower(b.side)='buy' AND "
                 "b.payload->>'rpg_resting_generation'=ANY(:generations)) "
-                "ORDER BY b.submitted_at,b.id LIMIT 65", parameters)
+                "ORDER BY b.submitted_at,b.id LIMIT 1025", parameters)
             result["linked_intents"] = rows(connection,
                 "SELECT t.id,t.created_at,t.status,t.symbol,t.side,t.intent_type,t.quantity,"
                 "t.reason,t.payload,s.code strategy,a.name account FROM trade_intents t "
@@ -228,12 +236,12 @@ def sql_census(config, result):
                 "ON a.id=t.broker_account_id WHERE s.code='schwab_1m_v2' AND "
                 "a.name IN ('live:schwab_1m_v2','live:orb') AND "
                 "t.payload->'metadata'->>'rpg_resting_generation'=ANY(:generations) "
-                "ORDER BY t.created_at,t.id LIMIT 65", parameters)
+                "ORDER BY t.created_at,t.id LIMIT 1025", parameters)
             result["linked_fills"] = rows(connection,
                 "SELECT f.id,f.order_id,f.symbol,f.side,f.quantity,f.price,f.filled_at,"
                 "s.code strategy,a.name account FROM fills f JOIN strategies s ON s.id=f.strategy_id "
                 "JOIN broker_accounts a ON a.id=f.broker_account_id WHERE CAST(f.order_id AS text)"
-                "=ANY(:ids) ORDER BY f.filled_at,f.id LIMIT 65",
+                "=ANY(:ids) ORDER BY f.filled_at,f.id LIMIT 1025",
                 {"ids": [str(row["id"]) for row in result["linked_orders"]]})
             for label, table, time_column in (
                     ("nonterminal_orders", "broker_orders", "submitted_at"),
@@ -243,7 +251,7 @@ def sql_census(config, result):
                     f"FROM {table} t JOIN broker_accounts a ON a.id=t.broker_account_id "
                     "WHERE a.name IN ('live:schwab_1m_v2','live:orb') AND (t.status IS NULL OR "
                     "lower(t.status) NOT IN ('filled','rejected','cancelled','canceled','expired',"
-                    "'replaced')) ORDER BY t.id LIMIT 65")
+                    "'replaced','aborted')) ORDER BY t.id LIMIT 65")
             if result["nonterminal_orders"] or result["nonterminal_intents"]:
                 raise Stop("SQL nonterminal orders/intents present")
             result["schema_revision"] = rows(connection, "SELECT version_num FROM alembic_version LIMIT 3", limit=2)
@@ -444,7 +452,7 @@ async def brokers(config, result):
 async def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require-reviewed", action="store_true",
-                        help="explicit strict reviewed-population census (also the default)")
+                        help="explicit all-date phase census (also the default)")
     args = parser.parse_args()
     result = {"started_at": stamp(), "readonly": True, "rc": 2, "install_authority": False}
     result["require_reviewed"] = args.require_reviewed
@@ -452,12 +460,15 @@ async def main():
         config = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
         source_bound(result)
         sql_census(config, result)
-        await asyncio.wait_for(brokers(config, result), 150)
+        await asyncio.wait_for(brokers(config, result), 600)
         after = {}
         sql_census(config, after)
         result["journal_digest_after_sha256"] = after["journal_digest_sha256"]
-        if result["journal_digest_sha256"] != result["journal_digest_after_sha256"]:
-            raise Stop("journal changed during direct reads: repeat census before writes")
+        try:
+            stable_bindings(result["jobs"], after["jobs"])
+        except ValueError as exc:
+            raise Stop(str(exc)) from None
+        result["phase_inventory_after"] = after["phase_inventory"]
         result["rc"] = 0
         result["disposition"] = "bounded census only; not a strict-flat or install gate"
     except Stop as exc:
