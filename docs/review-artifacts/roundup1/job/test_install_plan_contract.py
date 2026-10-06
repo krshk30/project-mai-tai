@@ -42,7 +42,7 @@ def test_candidate_catalog_has_actual151_process_checks_including_both_orb_consu
     assert entry["also_check_services"] == ["oms"]
 
 
-def test_install_scope_is_exact_three_new_env_keys_and_three_processes():
+def test_install_scope_is_exact_three_bool_updates_and_four_processes():
     document = PLAN.read_text()
     keys = re.findall(r"`(MAI_TAI_[A-Z0-9_]+)`", document)
     assert set(keys) == {
@@ -50,7 +50,8 @@ def test_install_scope_is_exact_three_new_env_keys_and_three_processes():
         "MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED",
         "MAI_TAI_ORB_SCHWAB_ATR_ENTRY_GATE_ENABLED",
     }
-    assert "v2, OMS and orb-schwab exactly once" in document
+    assert "v2, OMS, orb-schwab and control exactly once" in document
+    assert "ONE CONTROL RESTART IN INSTALL1" in document
     assert "stop v2 -> stop orb-schwab -> stop OMS -> start OMS once ->\nstart orb-schwab once -> start v2 once" in document
     assert "T43 waits" in document and "MIRRORHOLD Step0" in document
     assert "MainPID=0" in document and "exact reviewed cause" in document
@@ -62,7 +63,7 @@ def test_install_scope_is_exact_three_new_env_keys_and_three_processes():
 def test_daily_timer_is_checks_only_and_never_starts_application_units():
     document = PREOPEN.read_text()
     assert "Persistent=false" in document and "06:20:00 America/New_York" in document
-    assert "the combined five-active-item plan" in document
+    assert "the combined six-item plan" in document
     assert "start" in document and "**the timer only**" in document
     assert "No Wants/Requires dependency on an application unit" in document
     assert "Date/paper changes do not authorize any other identity refresh" in document

@@ -75,8 +75,8 @@ def test_plan_accepts_zero_and_keeps_display_outside_restart_authority():
     assert "RETRY_ONE_ENABLED=true" in document and "RETRY_ONE_MAX_RETRIES=0" in document
     assert "Literal runner integration is LOCALLY TESTED" in document
     assert "FLAGGATE153" in document and "151/153 rc2 UNKNOWN2" in document
-    assert "five active items" in document and "#1100 is **SOURCE INCLUDED / ACTIVATION PENDING**" in document
+    assert "ONE CONTROL RESTART IN INSTALL1" in document
     assert "mergeCommit=4805ddc81184c76b4d5cef5c483c809edb666fe6" in document
     assert "37513775601 attempt2 is SUCCESS" in document
     assert "reload=False" in document and "no\nExecReload" in document
-    assert "control must remain untouched" in document
+    assert "one atomic restart in Install1" in document

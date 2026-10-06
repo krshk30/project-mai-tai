@@ -1,4 +1,4 @@
-# October 6 Release - Six-Item Source, Five Active, Display Activation Pending
+# October 6 Install1 - Six Items, Four Owners, One Control Restart
 
 **Application bound; literal release not yet staged.** APPROVED_SHA is
 `4805ddc81184c76b4d5cef5c483c809edb666fe6`, tree
@@ -17,10 +17,11 @@ reviewer/Codex segments. Whole-tree equality is verified; production remains
 
 Tonight's intended six items are ROUNDUP1, LINE=CHART Restoration, ORBPURPLE1,
 daily preopen mechanics, corrected RETRYOFF1 zero budget and #1100 ORB display.
-The first four and accepted env-only fifth bind the exact4805 application above.
-#1100 is **SOURCE INCLUDED / ACTIVATION PENDING** after verified merge; its
-handlers are not loaded without a separately approved control-process action.
-This is five active items plus one source-only, not a six-item activated release.
+All six items bind the exact4805 application above. New explicit operator YES
+authorizes **ONE CONTROL RESTART IN INSTALL1**, display only. #1100 activation
+is included, but actual loaded page and token-owner health remain UNMEASURED
+until the four-owner sequence and fresh proofs complete. No extra trading gate,
+control action endpoint, refresh request or alternate token writer.
 Parent owns the new
 read-only bracket Step0; this checkpoint does not adopt or replace that work.
 
@@ -111,11 +112,15 @@ with its switch explicitly true on that tree. No unreviewed application source
 is included. LINE=CHART source default remains OFF; this reviewed install turns
 it ON alongside ROUNDUP1. No file is staged on the box by this draft.
 
-- Application processes changed: **v2, OMS and orb-schwab exactly once**.
-  Strategy, gateway, ORB, paper, daily guard, control, capture, reconciler, Redis
+- Application processes changed: **v2, OMS, orb-schwab and control exactly once**.
+  Strategy, gateway, ORB, paper, daily guard, capture, reconciler, Redis
   and PostgreSQL are not restarted. OMS needs ROUNDUP for PA1/wire pricing and
   ORBPURPLE1 for admission and post-preview checks; orb-schwab must load the new
   producer gate, not merely rely on a new default in unloaded source.
+  Control has exactly one atomic systemctl restart after the six existing
+  v2/OMS/orb-schwab phases, to load display handlers. No separate stop/start,
+  reload, reset-failed, repeat or restart-all. Exact final control PID/start/
+  invocation are repinned; every other unchanged-service pin remains.
 - Exactly three env keys change to true:
   `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RESTING_BUY_ROUND_UP_ENABLED`,
   `MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED` and
@@ -124,7 +129,7 @@ it ON alongside ROUNDUP1. No file is staged on the box by this draft.
   `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_MAX_RETRIES=0`.
   Keep `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_ENABLED=true` unchanged;
   do not remove it or write false. Exact before hash/diff and duplicate/case-alias
-  refusal apply. This is env-only on c21, not a trading-source change.
+  refusal apply. This is env-only on pinned4805, not a trading-source change.
   Retain all four October 5 switches, NFQ, GAP_HOLD, sizing600/300/1000,
   target5/stop8 and existing ORB flags. No other switch or trading rule edit.
 - Schema0022 is already installed: verify it; do not rerun a migration.
@@ -147,9 +152,9 @@ Current literal mechanics are `job/attended.py`, not the historical sourced
 `job/runner_mechanics.sh` component. Full fake sequence, backup/abort,
 153-check isolated catalog and max-zero daily guards are locally assembled and
 tested; no production gate was invoked. The generated immutable release still
-needs exact independent review/approval and fresh admission and is **UNREADY**
+needs exact standing-authority hash binding and fresh admission and is **UNREADY**
 for production without them. Do not substitute the October5 migration runner:
-today's sequence has three different services and no migration. No local test
+today's sequence has four different application owners and no migration. No local test
 or policy allowance authorizes a box action. The following116-test component
 receipt remains historical; current literal receipt is below.
 
@@ -206,7 +211,7 @@ not observed activation; actual132/66 still blocks. See the new release status
 below; this supersedes only the earlier unresolved mechanical admission, not
 the raw gate truth or the d125 receipt.
 Scoped sequence: **stop v2 -> stop orb-schwab -> stop OMS -> start OMS once ->
-start orb-schwab once -> start v2 once**.
+start orb-schwab once -> start v2 once -> atomic restart control once**.
 No clock abort after the first stop. Abort trap pages actual states and starts
 nothing; no rollback/recovery/extra restart is pre-authorized.
 
@@ -258,8 +263,8 @@ no unconsumed consumed slot and existing missing-data hold behavior.
 
 The reviewed date/paper shape in
 `../preopen-daily/PLAN_2026-10-06.md` remains exact. Re-pin once to the final
-application SHA and new OMS/v2/orb-schwab identities; strategy and untouched
-identities remain constants. Declare exactly these three in `--restarted`.
+application SHA and new OMS/v2/orb-schwab/control identities; strategy and untouched
+identities remain constants. Declare exactly these four in `--restarted`.
 ORB-Schwab live/observe and ATR-gate expectations now belong in that restart
 group; never remove its proof by treating it as untouched. Expectations for
 other non-restarted services remain in the catalog, not that restart-only group.
@@ -283,13 +288,17 @@ extra restart, ticket purge or recovery action is pre-authorized.
 
 ## Literal Mechanics Checkpoint - Reviewable, Not Admitted
 
-`job/attended.py` contains the exact three-owner sequence, phase-aware fresh
+`job/attended.py` contains the exact four-owner sequence, phase-aware fresh
 admission and unchanged-owner proof, source/env/catalog/gate backups, abort
 state/notification and no automatic recovery. `job/make_release.py` packages
 only exact committed blobs and the pinned4805 application sources. The daily
 wrapper, narrow recorded-gate transform and three timer units are literal local
-artifacts. No approval is generated and no production staging/run is authorized
-by those bytes. The entry point requires an exact independently reviewed
+artifacts. The latest operator ruling authorizes tested local approval generation
+under standing mechanics authority, not a new fabricated reviewer receipt.
+`job/make_approval.py` accepts only the exact committed-blob manifest/hash and
+refuses unresolved blocking_acceptance, source/scope/hash drift and production
+output paths. Its exclusive local approval is not production staging or admission.
+The entry point requires the exact immutable
 manifest hash and approval and refuses any immutable `blocking_acceptance`
 population even if an approval JSON matches its hash. The withdrawn RETRYOFF
 flag-OFF/removal remains excluded. Corrected enabledtrue/max0 adoption below
@@ -317,7 +326,11 @@ missing proof or paper drift stops. Runtime checker/golden source catalog is
 unchanged; reviewed isolated numeric adds two zero checks. No paper restart.
 Coverage is retained in raw results, COMPLETE and deployment
 journal. This is the October5 precedent at the new denominator, not whole-fleet
-PASS. Current IPDN132/66 continues to block all fresh admission.
+PASS. Historical IPDN132/66 is not admitted. Parent's bounded15:22 read reports
+APUS78 and MOBX504 bot holdings and no current IPDN row; that report is a
+blocker, not this lane's fresh admission receipt. Every attempt independently
+proves strict-flat/exact standing admission; one empty query or the pending
+Install2 holdings classifier cannot clear a holding.
 
 Row47 parser now supports the recorded manager UNIT/init.scope schema and
 prefixed exit1 message, with old invocation and intended-stop identity binding.
@@ -330,11 +343,11 @@ available tonight. See job/row47_prior_schema.json and its raw provenance.
 
 Local reviewable commit/hash generation is now authorized, not production
 staging or execution. Prior d125 UNREADY receipts and the earlier unstaged395
-test checkpoint remain historical. Exact independent approval plus fresh raw
+test checkpoint remain historical. Exact standing-authority approval plus fresh raw
 gates/strict admission are still required after16:00 before any box write.
 New #1099 recovery/MIRROR-counter and #1100 display work do not hold this install;
 include only a separately reviewed fresh merged pin before the first write,
-with newly generated immutable release and approval. Current release stays c21.
+with newly generated immutable release and approval. Current candidate is4805.
 
 ## RETRYOFF1 Corrected Zero Budget - INCLUDED In Plan
 
@@ -356,7 +369,7 @@ Plan/catalog focus19PASS includes both-owner explicit zero, per-owner missing,
 nonzero, negative, malformed, empty and unreadable controls. This uses the
 unchanged application checker with controlled process readings, not production
 reads. That plan-only19/484PASS checkpoint4e8d7ee2 remains historical and does
-not validate the subsequent integration. New own integrated job run568PASS/
+not validate the subsequent integration. Historical three-owner integrated job run568PASS/
 29.61s includes normal/proven-row47/paperUNKNOWN2 complete sequences, exact
 enabledtrue retention/max0 update before stop, catalog diff/153 coverage, stable
 raw process and daily guard failures, immutable-package hashes and control
@@ -398,14 +411,15 @@ are unchanged. No effect is claimed before the scoped restart and fresh gates.
 
 This plan includes the corrected env-only card and locally tested mechanics.
 Commit781454af and its337b1589 manifest remain historical, not current approval.
-Generate the new committed-blob release as release-manifest-retry-zero.json;
-the separate RELEASE_VERIFICATION_RETRY_ZERO_2026-10-06.md receipt must name
+Generate the new committed-blob release as release-manifest-install1-control.json;
+the separate RELEASE_VERIFICATION_INSTALL1_CONTROL_2026-10-06.md receipt must name
 its exact source commit/artifact hashes to avoid circular manifest inputs.
 No production staging/attempt until exact review and
-fresh after16:00 admission. #1100 activation remains excluded under the following exact
-read-only disposition; this three-owner restart scope is unchanged.
+fresh after16:00 admission. #1100 activation is now authorized under the following exact
+one-restart disposition. The new four-owner scope supersedes the historical
+three-owner release; a new tested immutable manifest is required.
 
-### #1100 Verified Merge, Control Activation Pending
+### #1100 Verified Merge, One Control Restart Authorized
 
 Read-only hosted result: head56c9357b66c591acb83a1aa7ccbcbc0847883dd9 is MERGED,
 mergeCommit=4805ddc81184c76b4d5cef5c483c809edb666fe6,
@@ -422,11 +436,67 @@ At that head, build_app3559 compiles /bot/orb, /bot/orb-paper and
 the current systemd control unit ExecStart is mai-tai-control and has no
 ExecReload. A checkout or browser refresh cannot activate these new handlers.
 The control lifespan also owns SchwabTokenRefresher at3580; control activation
-therefore needs separately reviewed restart/reload choreography and fresh
-auth-owner/health proof. No such additional restart is authorized or implemented
-by this plan: control must remain untouched by the three-owner runner.
-With #1100 merged but without activation authority, report display activation pending,
-not installed/working, and ask parent to resolve scope before claiming six items.
+therefore has explicit operator YES for one atomic restart in Install1, not a
+reload or quiet unapproved extra action. It runs last after the six trading-owner
+phases with fresh phase-aware gates. Initial token-owner proof runs before any
+source/env write against the old OMS PID, then repeats immediately before the
+control restart against the new OMS PID. Before: unchanged old control identity,
+sole control process census, healthy enabled refresher with zero dead retries/
+no last error, OMS incidental refresh false on the exact new OMS PID and a
+nonempty token store with access expiry at least180s ahead. No forced grant,
+token-store edit or alternate writer. Restart rc0/stderr empty and duration<=120s;
+after: old PID absent, unique new active/running/NRestarts0 PID, later start and
+new invocation, unchanged three trading-owner identities. Read-only proof is
+bounded60s, metadata process inventory4096/cmdlines4096bytes, /proc env262144,
+token JSON65536 and each local HTTP response524288bytes/10s. Failure stops;
+no retry/recovery control action. Nothing is run on the box by this lane.
+
+Use only GET127.0.0.1:8100 health/overview/ORB page/ORB API, no proxies,
+redirects, mutations or auth endpoints. Preserve original page/API raw bodies
+and hashes (token/overview raw credentials never output). Require LIVE/SCHWAB,
+live:schwab_1m_v2, Mode LIVE, Provider SCHWAB, exactly one JAGX closed trade,
+quantity2, recorded6.6700->6.6001, PNL-0.1398/display-0.14, no managed/pending
+book and after-close SESSION COMPLETE/no auto-refresh. New-process log range
+must contain exactly the new PID Uvicorn marker, startup complete, one dedicated
+refresher-start line timestamped after the new start and binding8100; no new
+traceback/error/dead-token/idle. A plain untimestamped Uvicorn header is supported
+only under that exact PID marker, not attributed by old file/status alone.
+Fresh owner/page proof repeats at post-start and final closeout, and final pins
+and official restart set now include control. Runtime checker153 remains intact.
+
+Standing mechanics authority permits local assembly/tests without a new design
+review per attempt. Latest operator instruction permits tested local generation
+of the exact immutable release approval, with authority explicitly recorded as
+operator-standing-mechanics-authority, not reviewer=claude-1. No fresh reviewer
+hash roundtrip is required. Parent independently hashes/tests the candidate and
+confirms fresh runtime admission before execution strictly after16:00.
+The previous fce68644
+manifest remains historical and cannot approve this wider restart scope.
+Control/standing-approval integration is locally tested: **672PASS/44.85s**, raw
+/tmp/roundup1-install1-standing-freeze-20261006.log, SHA256
+bf41bfa80308a8cef09bb42e088f039b8435026fda9e0cc1496f7f6aa0acb3da.
+Eighteen fresh in-memory mechanics probes PASS control/ASSERTION_RED mutant,
+no source rewriting; SHA256
+b36f2de7ead64b185de49f1cc99a3c14a23a5fe4cccd5e8ffcf585266aa83a87,
+/tmp/roundup1-install1-standing-freeze-mutations-20261006.json. Prior14 plus
+control_page_trade_count/control_old_pid_retired/control_token_margin/
+standing_approval_exact_hash. Historical665/17 preceded approval-builder adoption.
+Ruff/diff PASS. Full fake normal/row47/paperUNKNOWN2 sequences, bounded-read
+negatives and no writes/actions when initial control proof fails are covered.
+The replacement release-manifest-install1-control.json and separate
+RELEASE_VERIFICATION_INSTALL1_CONTROL_2026-10-06.md are committed-blob metadata
+published after this source freeze; prior manifests cannot authorize this scope.
+Actual loaded display/token-owner health remains UNMEASURED.
+blocking_acceptance=[] means no unresolved code/policy card, not live admission.
+Every runtime requirement remains mandatory; no approval can waive measured
+holdings, armed/unknown/census failures or admit execution before16:00.
+
+Operator-holdings classifier is a separate pending-reviewed/pinned Install2 lane,
+not Install1. Do not load its unmerged library or weaken the unchanged strict
+flat helper. MI/NXL and dated exact IPDN1000 rules remain unchanged. Parent's
+bounded15:22 snapshot reports APUS78/MOBX504 bot holdings, no current IPDN row;
+that is not a fresh Install1 admission or blanket-clearance proof. All bot
+holdings/managed/net-fill/intents/unowned SELL/unknown activity still block.
 
 ## Dated IPDN Operator Residual Policy
 

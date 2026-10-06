@@ -21,7 +21,7 @@ def build(original, final, snapshot, record):
     report = "REPORT=/home/trader/known_defect_regression_watch/v2-restart-evidence-20261006.md"
     need(script.count(report) == 1, "report anchor ambiguous")
     script = script.replace(report, 'REPORT="/home/trader/known_defect_regression_watch/v2-restart-evidence-${EXPECTED_DATE//-/}.md"')
-    for name, prefix in (("schwab-1m-v2", ""), ("oms", "OMS_"), ("orb-schwab", "ORB_SCHWAB_")):
+    for name, prefix in (("schwab-1m-v2", ""), ("oms", "OMS_"), ("orb-schwab", "ORB_SCHWAB_"), ("control", "CONTROL_")):
         need(name in CHANGED, "non-scoped pin update")
         state = final[name]
         need(state["MainPID"] > 0, "new pin lacks PID")
@@ -37,6 +37,9 @@ fi''')
     old_restart = "  --restarted strategy \\\n"
     need(script.count(old_restart) == 1, "restart declaration ambiguous")
     script = script.replace(old_restart, "  --restarted orb-schwab \\\n")
+    restart_anchor = "  --restarted orb-schwab \\\n"
+    need(script.count(restart_anchor) == 1, "control restart declaration ambiguous")
+    script = script.replace(restart_anchor, restart_anchor + "  --restarted control \\\n")
     expectations = {(name, key) for name in ("oms", "schwab-1m-v2") for key in PM}
     expectations.update({("oms", NEW_ENV[2]), ("orb-schwab", NEW_ENV[2]),
                          ("orb-schwab", "MAI_TAI_ORB_LIVE_SCHWAB_ORDERS_ENABLED"),

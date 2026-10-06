@@ -111,10 +111,12 @@ def test_gate_transform_exact_baseline_and_only_scoped_pins(tmp_path):
     value = gate_patch.build(original, final, "/exact/snapshot.json", "/exact/record.json")
     assert '--restarted strategy' not in value
     assert '--restarted orb-schwab' in value
-    for key in ("STRATEGY", "ORB", "MARKET_DATA", "CONTROL"):
+    for key in ("STRATEGY", "ORB", "MARKET_DATA"):
         for field in ("PID", "START"):
             line = next(line for line in original.splitlines() if line.startswith("EXPECTED_" + key + "_" + field + "="))
             assert line in value
+    assert "EXPECTED_CONTROL_PID=" + str(final["control"]["MainPID"]) in value
+    assert "--restarted control" in value
     assert 'EXPECTED_DATE="$(TZ=America/New_York date +%F)"' in value
     assert 'v2-restart-evidence-${EXPECTED_DATE//-/}.md' in value
     assert 'daily.py paper' in value and 'daily.py report-date "$REPORT"' in value

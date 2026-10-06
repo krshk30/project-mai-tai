@@ -185,8 +185,8 @@ def test_catalog_baseline_alteration_blocks_even_with_reviewed_artifact(change):
         retry.catalog(raw, policy.canonical(baseline))
 
 
-@pytest.mark.parametrize("action", ["stop", "start", "restart", "reload"])
-def test_no_control_action_allowed_without_scope_update(tmp_path, action):
+@pytest.mark.parametrize("action", ["stop", "start", "reload"])
+def test_unapproved_control_actions_still_block(tmp_path, action):
     fx = attended.Real(tmp_path, {}, tmp_path)
     with pytest.raises(policy.Stop, match="out-of-scope"):
         fx.action(action, "control")

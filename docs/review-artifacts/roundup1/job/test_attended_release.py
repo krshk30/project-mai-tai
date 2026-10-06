@@ -27,7 +27,7 @@ def release():
 
 
 def decision():
-    return dict(decision="APPROVED", reviewer="claude-1", attended=True, release_sha256="b" * 64,
+    return dict(decision="APPROVED", authority=policy.AUTHORITY, attended=True, release_sha256="b" * 64,
                 approved_sha=policy.APP, plan_commit="a" * 40, date_et=policy.DAY, scope=policy.SCOPE)
 
 
@@ -45,7 +45,7 @@ def test_manifest_pin_drift_blocks(field, value):
         policy.approval(data, "b" * 64, decision(), NOW)
 
 
-@pytest.mark.parametrize("field,value", [("decision", "DRAFT"), ("reviewer", "codex"), ("attended", False),
+@pytest.mark.parametrize("field,value", [("decision", "DRAFT"), ("authority", "codex"), ("attended", False),
                                          ("release_sha256", "c" * 64), ("approved_sha", policy.BOX),
                                          ("plan_commit", "c" * 40), ("date_et", "2026-10-07"), ("scope", "wide")])
 def test_approval_each_binding_required(field, value):
@@ -105,6 +105,8 @@ class Fake:
         else:
             state.update(MainPID=self.before[name]["MainPID"] + 1000, ActiveState="active", SubState="running",
                          ExecMainStartTimestampMonotonic=200, ExecMainStartTimestamp="Tue 2026-10-06 20:11:00 UTC")
+            if name == "control":
+                state["InvocationID"] = "f" * 32
 
     def checkpoint(self, completed):
         self.call("checkpoint" + str(completed))
@@ -137,7 +139,7 @@ def test_full_sequence_exact_three_owners_once_timer_only_no_late_clock_abort(mi
 
 
 @pytest.mark.parametrize("failure", ["initial", "prepare", "v2-gate", "oms-gate", "proof", "closeout-timer-only",
-    *["gates" + str(n) for n in range(6)], *["checkpoint" + str(n) for n in range(1, 7)],
+    *["gates" + str(n) for n in range(len(policy.PHASES))], *["checkpoint" + str(n) for n in range(1, len(policy.PHASES) + 1)],
     *[action + "-" + name for action, name in policy.PHASES]])
 def test_every_phase_abort_records_actual_and_never_recovers(failure):
     fx = Fake(fail=failure)

@@ -309,6 +309,7 @@ class Real:
         self.redis()
         self.oms_gate()
         self.v2_gate()
+        self.control_proof("before", self.before["control"]["MainPID"])
         self.install_started = self.now()
         self.preflight_targets()
 
@@ -388,8 +389,14 @@ class Real:
         need((action, name) in PHASES, "out-of-scope service action")
         unit = "project-mai-tai-" + name + ".service"
         before = self.fleet()[name]
-        if action == "stop":
+        if action in {"stop", "restart"}:
             need(before == self.before[name], "intended old process changed before stop")
+        if action == "restart":
+            need(name == "control", "only control atomic restart authorized")
+            self.control_proof("before", before["MainPID"])
+            path = Path("/var/log/project-mai-tai/control.log")
+            stat = path.stat()
+            self.log_base["control"] = dict(path=str(path), inode=stat.st_ino, device=stat.st_dev, offset=stat.st_size)
         since = self.now()
         result = self.command(["systemctl", action, unit], check=False, timeout=120)
         after = self.fleet()[name]
@@ -409,15 +416,35 @@ class Real:
             need(cleaned["MainPID"] == 0 and cleaned["ActiveState"] == "inactive" and cleaned["Result"] == "success", "ORB reset not clean/PID0")
         else:
             need(result.returncode == 0, "intended systemctl action failed")
-        if action == "start":
+            if action == "restart":
+                need(not result.stderr.strip(), "control restart stderr unreadable")
+        if action in {"start", "restart"}:
             self.start_returned[name] = self.now()
             self.receipt(name + "-start-returned.json", canonical(dict(post_return_utc=self.start_returned[name].isoformat())))
+        if action == "restart":
+            need(0 <= (self.now() - since).total_seconds() <= 120, "control restart exceeds120s owner-gap bound")
+            states(self.before, self.fleet(), len(PHASES))
+            self.control_proof("after", after["MainPID"], before["MainPID"])
+
+    def control_proof(self, phase, pid, old_pid=None):
+        from control_display_proof import validate
+        args = [PY, self.job / "control_display_proof.py", "--phase", phase, "--pid", str(pid)]
+        if old_pid is not None:
+            args += ["--old-pid", str(old_pid)]
+        since = self.now()
+        result = self.command(args, check=False, timeout=60, limit=2_000_000)
+        need(result.returncode == 0 and not result.stderr.strip(), "control owner/page proof blocked")
+        value = validate(json.loads(result.stdout), phase, pid, old_pid, since, self.now())
+        oms = self.started.get("oms", self.before["oms"])
+        need(value["adapter"]["pid"] == oms["MainPID"], "control proof not bound to phase-specific OMS identity")
+        self.latest_control = value
+        self.receipt("control-" + phase + "-proof.json", canonical(value))
 
     def checkpoint(self, completed):
         current = self.fleet()
         states(self.before, current, completed)
         for action, name in PHASES[:completed]:
-            if action == "start" and name not in self.started:
+            if action in {"start", "restart"} and name not in self.started:
                 self.started[name] = current[name]
         for name, expected in self.started.items():
             need(current[name] == expected, "new process drift after start")
@@ -432,21 +459,24 @@ class Real:
             exclusive(self.attempt / "logs-old-processes-stopped.json", canonical(self.log_base))
 
     def finish_proof(self):
-        self.gates(6)
+        self.gates(len(PHASES))
+        self.control_proof("after", self.started["control"]["MainPID"], self.before["control"]["MainPID"])
         from post_proof import collect
         proof = collect(self, self.log_base, self.started)
         self.receipt("post-start-proof.json", canonical(proof))
-        self.gates(6)
+        self.gates(len(PHASES))
 
     def closeout(self):
         from closeout import install
         install(self)
 
     def complete(self):
-        self.gates(6)
+        self.gates(len(PHASES))
+        self.control_proof("after", self.started["control"]["MainPID"], self.before["control"]["MainPID"])
         exclusive(self.attempt / "COMPLETE.json", canonical(dict(application=APP, tree=TREE, completed_at_utc=self.now().isoformat(),
                                                                actions=PHASES, actual=self.fleet(),
                                                                flaggate_coverage=json.loads((self.attempt / "flaggate-coverage.json").read_bytes()),
+                                                               control_display=self.latest_control,
                                                                next_session_proof="UNMEASURED")))
 
     def abort(self, phase, completed):

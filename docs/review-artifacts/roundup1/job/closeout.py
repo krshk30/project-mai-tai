@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from daily import exclusive
 from gate_patch import build
-from release_policy import APP, CHANGED, DAY, ET, NUMERIC_ARTIFACT, canonical, digest, need
+from release_policy import APP, CHANGED, DAY, ET, NUMERIC_ARTIFACT, PHASES, canonical, digest, need
 
 DAILY = ("daily.py", "release_policy.py", "retry_zero_readonly.py", "daily-run.sh", "daily-notify.sh")
 UNITS = ("project-mai-tai-preopen.service", "project-mai-tai-preopen-failure.service", "project-mai-tai-preopen.timer")
@@ -74,7 +74,7 @@ def flag_result(rc, text, catalog, *, paper_before=None, paper_after=None, now=N
 
 def install(effects):
     from attended import GATE, PY, REPO
-    effects.gates(6)
+    effects.gates(len(PHASES))
     snapshot, record = effects.attempt / "before-restart.json", install_record(effects)
     candidate = build((effects.attempt / "preopen.before").read_text(), effects.last, str(snapshot), str(record))
     gate_file = effects.attempt / "preopen.candidate.sh"
@@ -113,7 +113,7 @@ def install(effects):
     coverage = flag_result(result.returncode, result.stdout.decode(), catalog, paper_before=paper_before,
                            paper_after=effects.fleet()["momentum-paper"], now=effects.now())
     exclusive(effects.attempt / "flaggate-coverage.json", canonical(coverage))
-    effects.gates(6)
+    effects.gates(len(PHASES))
     need(GATE.read_bytes() == (effects.attempt / "preopen.before").read_bytes(), "gate changed during install")
     root = ROOT
     need(not root.exists(), "daily target appeared during install")
@@ -157,7 +157,7 @@ def install(effects):
     journal = JOURNAL
     need(journal.is_file(), "deployment journal missing; no implicit creation")
     with journal.open("a") as file:
-        file.write("\n" + effects.now().isoformat() + " codex five-item retry-zero application=" + APP + " attempt=" + str(effects.attempt)
+        file.write("\n" + effects.now().isoformat() + " codex six-item control-display retry-zero application=" + APP + " attempt=" + str(effects.attempt)
                    + " release=" + pin["release_sha256"] + " preopen=" + pin["gate_sha256"]
                    + " flags=" + str(coverage["checked"]) + "/153 raw_verdict=" + coverage["original_verdict"]
                    + " raw_rc=" + str(coverage["original_rc"]) + " unknown=" + str(coverage["unknown"])

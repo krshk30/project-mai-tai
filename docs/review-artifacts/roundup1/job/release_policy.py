@@ -13,8 +13,9 @@ BOX = "7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf"
 DAY = "2026-10-06"
 BASELINE_GATE = "8cdafcded0f748b6779696953cc8a101409b6bc0ce9a2314938d7f4fa82cf15a"
 ADAPTER = "a9f2407612baf48ee4b0577e42ccd0c714be1c1315b8276f5f9638a2999a1aaa"
-SCOPE = "five-active-items-4805-retry-zero-display-unloaded-v2-oms-orb-schwab-only"
-CHANGED = ("schwab-1m-v2", "orb-schwab", "oms")
+SCOPE = "six-item-4805-retry-zero-display-one-control-restart-install1"
+AUTHORITY = "operator-standing-mechanics-authority"
+CHANGED = ("schwab-1m-v2", "orb-schwab", "oms", "control")
 SERVICES = ("control", "market-capture", "market-data", "oms", "orb", "orb-schwab",
             "reconciler", "schwab-1m-v2", "strategy", "momentum-paper",
             "option-a-daily-guard", "redis", "postgresql")
@@ -32,7 +33,7 @@ NUMERIC_ARTIFACT = "expected_numeric.retry-zero.json"
 NUMERIC_SHA = "bff3fad73fa593b48af08fc3cb8ab6cad5d2d055e1bc787706ff79ad34dbf205"
 PHASES = (
     ("stop", "schwab-1m-v2"), ("stop", "orb-schwab"), ("stop", "oms"),
-    ("start", "oms"), ("start", "orb-schwab"), ("start", "schwab-1m-v2"))
+    ("start", "oms"), ("start", "orb-schwab"), ("start", "schwab-1m-v2"), ("restart", "control"))
 
 
 class Stop(RuntimeError):
@@ -67,14 +68,18 @@ def first_write_window(now):
     need(local.date().isoformat() == DAY and local.time() > time(16), "first-write/stop window closed")
 
 
-def approval(release, release_hash, decision, now):
+def decision_record(release, release_hash):
     need(release["approved_sha"] == APP and release["tree"] == TREE and release["box_sha"] == BOX
          and release["scope"] == SCOPE and release["date_et"] == DAY, "release scope drift")
     need(re.fullmatch(r"[0-9a-f]{40}", release["plan_commit"]) is not None, "plan commit unbound")
-    expected = dict(decision="APPROVED", reviewer="claude-1", attended=True,
-                    release_sha256=release_hash, approved_sha=APP, plan_commit=release["plan_commit"],
-                    date_et=DAY, scope=SCOPE)
-    need(decision == expected, "literal attended reviewer approval absent/mismatched")
+    need(re.fullmatch(r"[0-9a-f]{64}", release_hash) is not None, "release hash unbound")
+    need(not release.get("blocking_acceptance"), "unresolved immutable acceptance blocker")
+    return dict(decision="APPROVED", authority=AUTHORITY, attended=True,
+                release_sha256=release_hash, approved_sha=APP, plan_commit=release["plan_commit"], date_et=DAY, scope=SCOPE)
+
+
+def approval(release, release_hash, decision, now):
+    need(decision == decision_record(release, release_hash), "literal standing-authority approval absent/mismatched")
     first_write_window(now)
 
 
@@ -83,7 +88,10 @@ def states(before, current, completed):
     need(0 <= completed <= len(PHASES), "unknown phase")
     stopped, started = set(), set()
     for action, name in PHASES[:completed]:
-        (stopped if action == "stop" else started).add(name)
+        if action in {"stop", "restart"}:
+            stopped.add(name)
+        if action in {"start", "restart"}:
+            started.add(name)
     for name in SERVICES:
         old, state = before[name], current[name]
         if name in stopped - started:
@@ -95,6 +103,9 @@ def states(before, current, completed):
                  and state["SubState"] == "running" and state["Result"] == "success"
                  and state["ExecMainStartTimestampMonotonic"] > old["ExecMainStartTimestampMonotonic"],
                  "new owning identity not proven: " + name)
+            if name == "control":
+                need(re.fullmatch(r"[0-9a-f]{32}", state.get("InvocationID", "")) is not None
+                     and state["InvocationID"] != old["InvocationID"], "new control invocation not proven")
         else:
             need(state == old, "untouched/early identity drift: " + name)
 

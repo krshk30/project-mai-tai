@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 import attended
 import make_release
+import make_approval
 import release_policy as policy
 from test_attended_release import decision, release
 
@@ -93,7 +94,7 @@ def test_deterministic_manifest_adopts_zero_not_off_and_pins_runtime_conditions(
     assert first["approved_sha"] == policy.APP and first["tree"] == policy.TREE
     assert first["blocking_acceptance"] == []
     assert any("RETRYOFF1" in entry and "withdrawn" in entry for entry in first["excluded"])
-    assert len(first["runtime_required"]) == 5
+    assert len(first["runtime_required"]) == 6
     assert first["flaggate"]["total"] == 153 and "151/153 UNKNOWN2" in first["flaggate"]["required"]
     assert first["env_updates"] == policy.ENV_UPDATES
     assert first["retained_env"] == {policy.RETRY_ENABLED: "true"}
@@ -101,7 +102,9 @@ def test_deterministic_manifest_adopts_zero_not_off_and_pins_runtime_conditions(
     assert policy.NUMERIC_ARTIFACT in first["artifacts"]
     assert "retry_zero_readonly.py" in first["artifacts"]
     assert first["display"] == dict(merged_sha=policy.APP, source_in_checkout=True,
-                                    activation="UNMEASURED_NOT_AUTHORIZED", control_restart=False)
+                                    activation="AUTHORIZED_INSTALL1_UNMEASURED", control_restart=True,
+                                    restart_count=1, page="/bot/orb", symbol="JAGX", trades=1)
+    assert "control_display_proof.py" in first["artifacts"]
     assert "src/project_mai_tai/services/control_plane.py" in first["application_blobs"]
     assert "armed_readonly.py" in first["artifacts"]
 
@@ -126,3 +129,49 @@ def test_builder_refuses_production_destination_before_any_write(monkeypatch, op
     monkeypatch.setattr("sys.argv", ["make_release.py", "--plan", "a" * 40, option, "/home/trader/not-authorized"])
     with pytest.raises(policy.Stop, match="never stages production"):
         make_release.main()
+
+
+def test_local_approval_exact_committed_blobs_and_standing_authority(monkeypatch, tmp_path):
+    working_blob_control(monkeypatch)
+    raw = policy.canonical(make_release.generate("a" * 40))
+    expected = policy.digest(raw)
+    result = json.loads(make_approval.create(raw, expected))
+    assert result["authority"] == policy.AUTHORITY and "reviewer" not in result
+    policy.approval(json.loads(raw), expected, result, NOW)
+    release_file, output = tmp_path / "release.json", tmp_path / "approval.json"
+    release_file.write_bytes(raw)
+    monkeypatch.setattr("sys.argv", ["make_approval.py", "--release", str(release_file), "--expected", expected,
+                                    "--output", str(output)])
+    make_approval.main()
+    assert output.read_bytes() == make_approval.create(raw, expected)
+    with pytest.raises(FileExistsError):
+        make_approval.main()
+
+
+@pytest.mark.parametrize("fault", ["hash", "uncommitted", "blocker", "scope", "old-reviewer"])
+def test_standing_approval_drift_unready_or_fabricated_reviewer_blocks(monkeypatch, fault):
+    working_blob_control(monkeypatch)
+    data = make_release.generate("a" * 40)
+    if fault == "uncommitted":
+        data["artifacts"]["attended.py"] = "a" * 64
+    elif fault == "blocker":
+        data["blocking_acceptance"] = ["controlled unresolved acceptance"]
+    elif fault == "scope":
+        data["scope"] = "all-services"
+    raw = policy.canonical(data)
+    expected = "c" * 64 if fault == "hash" else policy.digest(raw)
+    if fault == "old-reviewer":
+        decision = json.loads(make_approval.create(raw, expected))
+        decision["reviewer"] = "claude-1"
+        with pytest.raises(policy.Stop):
+            policy.approval(data, expected, decision, NOW)
+    else:
+        with pytest.raises(policy.Stop):
+            make_approval.create(raw, expected)
+
+
+def test_approval_builder_refuses_production_destination_before_read(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["make_approval.py", "--release", "/missing", "--expected", "a" * 64,
+                                    "--output", "/home/trader/unapproved/approval.json"])
+    with pytest.raises(policy.Stop, match="never stages production"):
+        make_approval.main()

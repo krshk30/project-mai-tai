@@ -1,6 +1,24 @@
-# Five Active Items, Display Source Included But Not Activated
+# Install1 Six Items, Four Owners, One Control Restart
 
-Current working integration receipt:568PASS/29.61s,
+Current four-owner/standing-authority freeze: **672PASS/44.85s**,
+/tmp/roundup1-install1-standing-freeze-20261006.log, SHA256
+bf41bfa80308a8cef09bb42e088f039b8435026fda9e0cc1496f7f6aa0acb3da.
+Eighteen fresh in-memory probes each PASS control/ASSERTION_RED mutant,
+/tmp/roundup1-install1-standing-freeze-mutations-20261006.json, SHA256
+b36f2de7ead64b185de49f1cc99a3c14a23a5fe4cccd5e8ffcf585266aa83a87.
+No source rewriting. New probes: control_page_trade_count,
+control_old_pid_retired, control_token_margin and standing_approval_exact_hash;
+previous14 freshly rechecked. Historical665/17 preceded approval-builder adoption.
+Ruff/diff PASS. Full fake sequences include normal/proven-row47/paperUNKNOWN2,
+one atomic control restart and timer-only closeout. Negatives cover read-only
+HTTP/cache/redirect/type/size/timeout, owner/PID/invocation drift, raw/token
+proof, old PID retirement and no writes/actions if initial control proof fails.
+No application full suite, real Linux/systemd validation, token-owner handoff,
+display activation, broker/flat admission or tomorrow's timer run is claimed.
+New source/manifest/committed rerun receipt is published separately as
+RELEASE_VERIFICATION_INSTALL1_CONTROL_2026-10-06.md, avoiding circular inputs.
+
+Historical three-owner integration receipt:568PASS/29.61s,
 /tmp/roundup1-retry-zero-integrated-final-20261006.log;14 fresh in-memory
 mechanics probes PASS control/ASSERTION_RED mutant, no source rewriting,
 /tmp/roundup1-retry-zero-integrated-mutations-20261006.json. Ruff/diff PASS.
@@ -8,26 +26,36 @@ Separate committed-source rerun and deterministic manifest verification receipt
 is published in RELEASE_VERIFICATION_RETRY_ZERO_2026-10-06.md. The parent484PASS
 clean4e8d control does not validate this later integration. Historical c21/469
 and d125 receipts below remain historical, never new application admission.
+The new one-control-restart integration is not covered by568; the fresh672
+freeze above supersedes only local mechanics coverage, not live admission.
 
 Status: **REVIEWABLE / NOT ADMITTED**, not a stage, install, live flat receipt
 or broker acceptance claim. Bounded read-only prior journal/file and current
 paper/config evidence was captured; no production gates/provider requests,
 service actions, env/DB/Redis writes or application-source edits in this lane.
 The d125 commit and `BUILD_STATUS_2026-10-06.md` remain unchanged evidence.
+Immutable blocking_acceptance is empty: no unresolved code/policy card remains.
+This does NOT mean runtime gates passed. Reported bot holdings, exact residual
+activation, complete armed/census reads, row47 conditional signature, real
+control-owner/page proof and Linux timer verification remain fresh runtime
+requirements. The runner cannot skip them and refuses first execution before
+16:00; an authorization record cannot turn any live failure into PASS.
 
 Candidate is exact4805ddc81184c76b4d5cef5c483c809edb666fe6, whole tree
 4248057079864f93066a69f355e2607840c701b9; BOX7823 baseline; no migration.
-Only v2/OMS/orb-schwab restart once. The three reviewed env enables and numeric
+Only v2/OMS/orb-schwab/control restart once. Control uses exactly one atomic
+restart after the six trading-owner phases, no separate stop/start, reload,
+reset-failed, repeated restart or refresh endpoint. The three reviewed env enables and numeric
 retry-max0 are implemented; retry-enabledtrue must already be explicit and is
 preserved byte-for-byte. Superseded OFF/removal is withdrawn, not accepted.
 T43, CLEARWAIT, new WEBULL lanes, MIRRORHOLD Step0 and Pause are not adopted.
 #1099 recovery/MIRROR-counter is excluded. #1100 merged15:04:24ET; local whole
 tree equals pinned56c9357b, hosted latest pin37514987598 and both Validate
 37513768160/37513775601 attempt2 SUCCESS. Display source is in this application
-checkout; activation remains UNMEASURED/NOT AUTHORIZED. Control uses uvicorn
-reload=False/no systemd ExecReload and owns SchwabTokenRefresher. No control
-action is added. Parent/user resolve activation separately, never claim all six
-items activated. This checkpoint grants no additional install/process authority.
+checkout; operator explicitly authorized ONE CONTROL RESTART IN INSTALL1.
+Activation remains UNMEASURED. Control uses uvicorn reload=False/no systemd
+ExecReload and owns SchwabTokenRefresher. Exact standing-authority release approval and
+fresh gates are still required; this local checkpoint is not install admission.
 Golden source catalogs remain151; isolated numeric catalog raises measured
 population to153 (143 boolean+10 numeric), dropping no original row.
 
@@ -57,24 +85,32 @@ population to153 (143 boolean+10 numeric), dropping no original row.
   blocks. No checker/application catalog edit or paper restart. Only the
   reviewed isolated numeric artifact adds both zero checks. Next morning's dynamic
   active-paper proof is unchanged. Coverage is retained in COMPLETE/journal.
-- Current measured IPDN132/66, managed/virtual and bot balances plus OLOX
-  activity remain admission blockers. Positive1000 activation is UNMEASURED.
+- Historical IPDN132/66, any managed/virtual and bot balances plus unowned SELL
+  or in-flight activity block. Parent's15:22 bounded DB read reports APUS78 and
+  MOBX504 bot holdings and no current IPDN row, not own fresh admission. These
+  reported holdings cannot be cleared by an operator-residual policy. Positive
+  datedIPDN1000 activation is UNMEASURED. The unmerged operator-holdings
+  classifier is Install2 only: no import, adapter adoption or strict-flat change.
 - Unmodified v2 gate133 defaults an absent armed field to zero. New mechanics
   bracket that unchanged gate with one explicitly complete newest isolated
   state read. Missing/failed/unsupported/malformed/wrong source/account/type,
   stale/future or nonempty armed field blocks. No application/gate rewrite.
 
 The new manifest includes corrected zero budget and excludes superseded
-OFF/removal, display activation and unpinned lanes, lists these
-runtime requirements, and requires exact independent approval. No approval.json
-is generated. A different candidate/policy needs a new committed/tested/reviewed
+OFF/removal, extra control actions, Install2 classifier and unpinned lanes, lists these
+runtime requirements. Latest explicit operator ruling permits tested local
+approval generation without a new reviewer-hash roundtrip. make_approval.py
+records operator-standing-mechanics-authority, not a fabricated reviewer,
+requires exact committed-blob manifest/hash and refuses unresolved acceptance
+or production output paths. Exclusive local approval is not a runtime gate
+waiver or production staging. A different candidate/policy needs a new committed/tested/reviewed
 release and hashes, not editing a staged manifest or waiving a live blocker.
 
 ## Mechanics And Cost
 
 `attended.py` and `release_policy.py`: attended sequence, first-write/first-stop
 after16:00/date fence, no post-first-stop clock abort, phase-aware unit identity
-gates, fresh direct/helper/census before each stop/start, source/import binding,
+gates, fresh direct/helper/census before each stop/start/restart, source/import binding,
 backups and exclusive receipts, native UTC systemd output, nonblocking lock,
 SIGTERM/SIGINT abort receipt and one existing-adapter call. Abort starts nothing
 and preserves partial source/env/unit/catalog state; no recovery authorization.
@@ -135,8 +171,23 @@ before source/env changes and rechecked before backup/source advance.
 All original numeric rows are preserved; isolated replacement is backed up and
 its exact diff recorded. Golden source catalogs are not written.
 
+`control_display_proof.py`: read-only systemd5s brackets, /proc environment
+262144bytes, process census<=4096 with cmdline<=4096bytes each, complete sole
+owner check before/after. Initial proof precedes source/env writes with old OMS,
+then OMS process/default-false token-writer evidence must bind the newly started
+OMS PID immediately before/after control restart. No token refresh or alternate writer. Healthy
+enabled refresher, dead retries0/error empty and token expiry>=180s margin are
+required before and after; no secrets are returned. Four approved loopback
+GETs only, each10s/524288bytes, no proxies/redirects/cached responses; whole
+proof command60s/2MB. After: old PID absent, new PID/invocation/start; exact
+LIVE/SCHWAB ORB JAGX one-trade page and API, quantity2/6.67->6.6001/PNL-0.1398,
+flat displayed managed/pending book, original page/API and hashes retained.
+New-PID Uvicorn8100/startup/refresher log proof is bounded to the immediate
+pre-restart file offset. No repeated service action on any failure. Runtime
+Linux, process census, token-owner handoff and page activation are UNMEASURED.
+
 `gate_patch.py`, `daily.py`, shell entry points and three units: exact recorded
-8cdaf gate input; date/report from today's ET clock; only OMS/v2/orb-schwab static
+8cdaf gate input; date/report from today's ET clock; only OMS/v2/orb-schwab/control static
 pins updated; guard-linked dynamic paper active/NRestarts0/floor admission.
 Original watch/verdict routes retained. Root isolated hashes pin gate/helpers,
 calendar/snapshot/record and units. Exclusive runs, nonblocking lock, fresh dated
@@ -162,7 +213,9 @@ historical generated `release-manifest.json`, `armed_readonly.py`,
 `test_row47_recorded_schema.py`, `row47_prior_schema.json`,
 `retry_zero_readonly.py`, `expected_numeric.retry-zero.json`,
 `test_retry_zero_catalog.py`, `test_retry_zero_mechanics.py`,
-`RETRY_ZERO_RECEIPT_2026-10-06.md`.
+`RETRY_ZERO_RECEIPT_2026-10-06.md`, `control_display_proof.py`,
+`test_control_install.py`, `make_approval.py`. Prior manifests/verification receipts are historical
+three-owner releases, not authority for this expanded control action.
 No parent handoff or app files touched.
 
 High-signal test names: `test_literal_full_sequence_backups_gate_diff_hashes_units_timer_only`,
@@ -182,8 +235,9 @@ High-signal test names: `test_literal_full_sequence_backups_gate_diff_hashes_uni
 Test/hash/commit receipt is published separately after the final rerun and
 deterministic committed-blob manifest generation, so it does not form a circular
 manifest input. The new manifest binds both plans, executable artifacts and4805
-application blobs. Do not issue an approval or stage it while the blockers above
-remain. Fake system/provider results and root metadata are explicitly controlled
+application blobs. Local approval generation is authorized; no staging before
+16:00 or execution before fresh runtime gates admit the attempt. Fake
+system/provider results and root metadata are explicitly controlled
 fixtures, not fabricated production records or acceptance history.
 
 ## Historical Unstaged395 Receipt

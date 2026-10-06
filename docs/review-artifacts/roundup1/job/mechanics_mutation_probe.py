@@ -6,6 +6,14 @@ import sys
 
 ROOT = Path(__file__).parent
 PROBES = (
+    ("standing_approval_exact_hash", "make_approval", 'need(digest(raw) == expected,', 'need(True,',
+     "import pytest; import test_manifest_release as t; t.test_standing_approval_drift_unready_or_fabricated_reviewer_blocks(pytest.MonkeyPatch(), 'hash')"),
+    ("control_page_trade_count", "control_display_proof", 'need(trades == ["1"],', 'need(True,',
+     "import test_control_install as t; t.test_control_page_wrong_identity_paper_qty_or_count_blocks('<strong>1</strong>', '<strong>2</strong>')"),
+    ("control_old_pid_retired", "control_display_proof", 'need(proof["old_pid_retired"] is True and old_pid != pid,', 'need(True,',
+     "import test_control_install as t; t.test_control_owner_token_pid_time_and_raw_proof_negatives(lambda r: r.update(old_pid_retired=False))"),
+    ("control_token_margin", "control_display_proof", 'need(expires >= now + timedelta(seconds=180),', 'need(True,',
+     "import test_control_install as t; t.test_token_store_margin_health_no_tokens_returned()"),
     ("retry_explicit_raw_values", "retry_zero_readonly", 'need(found == [(key, expected)],', 'need(True,',
      "import test_retry_zero_mechanics as t; import release_policy as p; t.test_raw_missing_default_nonzero_negative_malformed_each_key_blocks(p.RETRY_MAX, None)"),
     ("retry_env_zero_write", "release_policy", 'RETRY_MAX: "0"}', 'RETRY_MAX: "1"}',

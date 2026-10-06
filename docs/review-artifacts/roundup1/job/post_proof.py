@@ -91,6 +91,9 @@ def process_flags(effects):
 def grade_logs(found, started):
     receipts = {}
     for name in CHANGED:
+        if name == "control":
+            receipts[name] = control_logs(found[name], started[name])
+            continue
         lower = system_time(started[name]["ExecMainStartTimestamp"])
         records, stamp = [], None
         for line in found[name]["text"].splitlines():
@@ -117,6 +120,26 @@ def grade_logs(found, started):
     if not any(int(match[1]) > 0 for match in sync):
         raise Unknown("new OMS Webull sync ok0")
     return receipts
+
+
+def control_logs(found, state):
+    lines = found["text"].splitlines()
+    starts = [(i, match[1]) for i, line in enumerate(lines)
+              if (match := re.fullmatch(r"INFO:\s+Started server process \[(\d+)\]", line))]
+    need(len(starts) == 1 and starts[0][1] == str(state["MainPID"]), "control log lacks unique exact new-PID marker")
+    new = lines[starts[0][0]:]
+    need(not any("Traceback" in line or "ERROR" in line or "SCHWAB-TOKEN-DEAD" in line
+                 or "DEGRADED" in line or "SCHWAB-TOKEN-REFRESHER-IDLE" in line for line in new), "new control/token failure log")
+    need(sum("Application startup complete." in line for line in new) == 1
+         and sum("[SCHWAB-TOKEN-REFRESHER] starting " in line for line in new) == 1
+         and any(re.fullmatch(r"INFO:\s+Uvicorn running on http://(?:127\.0\.0\.1|0\.0\.0\.0):8100 \(Press CTRL\+C to quit\)", line)
+                 for line in new), "control startup/token-owner/8100 binding missing")
+    token_line = next(line for line in new if "[SCHWAB-TOKEN-REFRESHER] starting " in line)
+    match = re.match(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3})", token_line)
+    need(match is not None, "token-owner startup timestamp absent")
+    stamp = datetime.strptime(match[1], "%Y-%m-%d %H:%M:%S,%f").replace(tzinfo=timezone.utc)
+    need(stamp >= system_time(state["ExecMainStartTimestamp"]), "control startup predates new identity")
+    return dict(lines=new, ranges=found["ranges"], pid=state["MainPID"], token_owner_started_at_utc=stamp.isoformat())
 
 
 def collect(effects, baseline, started):

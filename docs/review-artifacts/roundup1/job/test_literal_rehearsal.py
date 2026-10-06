@@ -59,7 +59,7 @@ class FakeSystem(attended.Real):
             output = b"CONTROLLED source archive; not a live backup"
         elif "switch" in args:
             self.head = policy.APP
-        elif args[0] == "systemctl" and args[1] in {"start", "stop"}:
+        elif args[0] == "systemctl" and args[1] in {"start", "stop", "restart"}:
             name = args[2].removeprefix("project-mai-tai-").removesuffix(".service")
             item = self.system[name]
             if args[1] == "stop":
@@ -70,12 +70,18 @@ class FakeSystem(attended.Real):
                 item.update(MainPID=fleet()[name]["MainPID"] + 1000, ActiveState="active", SubState="running",
                             Result="success", NRestarts=0, ExecMainStartTimestampMonotonic=200,
                             ExecMainStartTimestamp="Tue 2026-10-06 20:10:00 UTC")
+                if name == "control":
+                    item["InvocationID"] = "f" * 32
                 log = self.repo / "logs" / (name + ".log")
                 lines = {"oms": "[BROKER-SYNC-CENSUS] live:orb: ok=1 failed=0 consecutive_now=0",
                          "orb-schwab": "[ORB-SCHWAB] mode=LIVE live_sending=True",
                          "schwab-1m-v2": "[V2-BOOT-HOLD] restoration_complete=1\n2026-10-06 20:10:00,001 [V2-LINE-RESTORE] sym=CONTROLLED outcome=published entry_allowed=0"}
                 with log.open("a") as stream:
-                    stream.write("2026-10-06 20:10:00,000 " + lines[name] + "\n")
+                    if name == "control":
+                        from test_control_install import control_log
+                        stream.write(control_log(item["MainPID"]))
+                    else:
+                        stream.write("2026-10-06 20:10:00,000 " + lines[name] + "\n")
         elif args[0] == "journalctl":
             output = b"\n".join(json.dumps(row).encode() for row in row47_proof()[2])
         elif args[:2] == ["systemctl", "reset-failed"]:
@@ -98,6 +104,12 @@ class FakeSystem(attended.Real):
         elif any(arg.endswith("armed_readonly.py") for arg in args):
             import armed_readonly
             output = policy.canonical(armed_readonly.proof(reply(), NOW))
+        elif any(arg.endswith("control_display_proof.py") for arg in args):
+            from test_control_install import control_receipt
+            phase = args[args.index("--phase") + 1]
+            pid = int(args[args.index("--pid") + 1])
+            old = int(args[args.index("--old-pid") + 1]) if "--old-pid" in args else None
+            output = policy.canonical(control_receipt(phase, pid, old, self.system["control"], self.system["oms"]["MainPID"]))
         elif any(arg.endswith("preflight_oms_restart.sh") for arg in args):
             output, rc = OMS.encode(), 1
         elif any(arg.endswith("preflight_v2_restart.sh") for arg in args):
@@ -197,6 +209,16 @@ def setup(monkeypatch, tmp_path, *, retry_env=None, **options):
         original_checkpoint(completed)
         monkeypatch.setattr(attended, "Path", real_path)
     monkeypatch.setattr(fx, "checkpoint", checkpoint)
+    original_action = fx.action
+    def action(verb, name):
+        if name == "control":
+            monkeypatch.setattr(attended, "Path", lambda value: repo / "logs/control.log"
+                                if str(value) == "/var/log/project-mai-tai/control.log" else real_path(value))
+        try:
+            return original_action(verb, name)
+        finally:
+            monkeypatch.setattr(attended, "Path", real_path)
+    monkeypatch.setattr(fx, "action", action)
     return fx, gate, env
 
 
@@ -204,9 +226,11 @@ def setup(monkeypatch, tmp_path, *, retry_env=None, **options):
 def test_literal_full_sequence_backups_gate_diff_hashes_units_timer_only(monkeypatch, tmp_path, failed_row47):
     fx, gate, env = setup(monkeypatch, tmp_path, failed_row47=failed_row47)
     attended.Sequence(fx).run()
-    actions = [args for args in fx.calls if args[0] == "systemctl" and args[1] in {"start", "stop"}]
+    actions = [args for args in fx.calls if args[0] == "systemctl" and args[1] in {"start", "stop", "restart"}]
     assert actions == [["systemctl", action, "project-mai-tai-" + name + ".service"] for action, name in policy.PHASES]
     assert (fx.attempt / "COMPLETE.json").exists()
+    assert len([args for args in actions if args[1] == "restart"]) == 1
+    assert json.loads((fx.attempt / "COMPLETE.json").read_bytes())["control_display"]["page"]["trades"] == 1
     assert (fx.attempt / "source-before.tar").exists() and (fx.attempt / "env.before").exists()
     assert (fx.attempt / "env.diff").exists()
     assert "UNCHANGED=1" not in (fx.attempt / "env.diff").read_text()
@@ -230,7 +254,7 @@ def test_literal_full_sequence_backups_gate_diff_hashes_units_timer_only(monkeyp
         assert env.read_text().count(name + "=true") == 1
 
 
-@pytest.mark.parametrize("fault", ["armed_readonly.py", "switch --detach", "pip install", "stop project-mai-tai-oms", "start project-mai-tai-orb-schwab", "systemd-analyze verify", "enable --now"])
+@pytest.mark.parametrize("fault", ["armed_readonly.py", "control_display_proof.py", "restart project-mai-tai-control", "switch --detach", "pip install", "stop project-mai-tai-oms", "start project-mai-tai-orb-schwab", "systemd-analyze verify", "enable --now"])
 def test_literal_partial_failure_traps_actual_state_no_recovery(monkeypatch, tmp_path, fault):
     fx, _, _ = setup(monkeypatch, tmp_path, fault=fault)
     with pytest.raises(policy.Stop):
