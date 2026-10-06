@@ -7089,3 +7089,15 @@ Install1 source/production remain parentowned. WEBULL429 andCLEARWAIT inherited
 after-close clock-sensitive SCKT tests require exact recorded in-window test
 clocks; authorized tests-only corrections, no assertions loosened/sourcegate
 changed. All Install2 lanes remain unpinned/unmerged/uninstalled.
+
+### 2026-10-06 16:21 ET - codex-2 C90 MOBX exact child read
+
+Own readonly DB identifies504-share late exit1008197739975 at15:34:46ET,
+fill1.185, owned entryb985974f44f8/parent1008196842877 bought504@1.18 at14:59:50.
+Persisted bracket target1.24/stop1.09/reference1.1834. Exact broker GET16:19:31
+returns FILLED/limit1.18/tagAPI_TOS:TraderAPI. Initial comparison526-share
+child1008195341839 limit1.19/tagTA_ prefix. No refresh, order mutation or token
+write. Replacement history collections are absent from these exact responses;
+no complete chain or client/person identity claimed. Same measured channel tag
+as the IPDN replacements is not proof of who made the change. Exit behaviour
+not built; reference/fill base difference remains parked per disposition.
