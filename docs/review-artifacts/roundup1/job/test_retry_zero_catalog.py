@@ -79,4 +79,4 @@ def test_plan_accepts_zero_and_keeps_display_outside_restart_authority():
     assert "mergeCommit=4805ddc81184c76b4d5cef5c483c809edb666fe6" in document
     assert "37513775601 attempt2 is SUCCESS" in document
     assert "reload=False" in document and "no\nExecReload" in document
-    assert "one atomic restart in Install1" in document
+    assert "2026-10-06 18:47 ET supersedes the control proof gate" in document

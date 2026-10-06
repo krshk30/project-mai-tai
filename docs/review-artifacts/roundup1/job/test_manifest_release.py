@@ -103,7 +103,7 @@ def test_deterministic_manifest_adopts_zero_not_off_and_pins_runtime_conditions(
     assert "retry_zero_readonly.py" in first["artifacts"]
     assert first["display"] == dict(merged_sha=policy.APP, source_in_checkout=True,
                                     activation="AUTHORIZED_INSTALL1_UNMEASURED", control_restart=True,
-                                    restart_count=1, page="/bot/orb", symbol="JAGX", trades=1)
+                                    restart_count=1, page="/bot/orb", required="LIVE/SCHWAB only")
     assert "control_display_proof.py" in first["artifacts"]
     assert "src/project_mai_tai/services/control_plane.py" in first["application_blobs"]
     assert "armed_readonly.py" in first["artifacts"]
