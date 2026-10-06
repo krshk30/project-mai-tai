@@ -6586,3 +6586,16 @@ Experimentaluncommittedsource patch removed; source diffemptyversus96b5b1a.
 standingStep0DISAGREE, asyncacceptancecorrectionasked, notwaitingforinstall.
 No source/switch/ledger/production change. C51 remains a true earlier receipt,
 not a readiness claim for this expanded card. Tonight's reviewed set unchanged.
+
+### 2026-10-06 12:18 ET - codex-2 C53 operator-only holding rule assessment
+
+Own independent source/DB/directbroker assessment agrees with zeroordersAND
+zerofills, and reproduces the existing net-zero shortcut's misclassification
+of cancelledbotorder/roundtrip cases. An unownedSELL remainscritical. IPDNhad
+14Schwaborders and127buy/127selltoday; it cannot receive an operator-only
+symbolwaiver. The directbrokerreadat12:00wasflat; earlier1000holdingunknown.
+MI/NXLcurrent-sessionactivityzero does not retire their historicalbroker-flat
+ledgerdiscrepancies: those are not holdings. Kept existing allowance unchanged
+andaskedforhistoricaldisposition. No rule/gate/source build claimed; noledger,
+incident, service or production write. STEP0.md retains rawrecordhashes and
+distinguishes fourin-memoryexperiments from pytest/full-suite evidence.
