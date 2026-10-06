@@ -6896,3 +6896,18 @@ rerunpassedonunchangedhead, no assertion/source/pin bypass. MainwholeTREE
 plan4e8d mechanics/catalogsuite484PASS18.37s, WTcleanatcompletion; laterdirty
 runnerchangesdo notborrowthisreceipt. LiteralplanwriterinformedactualAPP/tree,
 controlactivationquestionpending. Productionremains7823; noinstallrestart/env.
+
+### 2026-10-06 15:08:09 ET - codex-2 C74 read-only bracket target parity
+
+Parent reads sanitized exact broker trees/receipt and deployed7823 source.
+IPDN final target LIMIT4.55, executed4.56; original4.63 ->4.61 at14:34:25 ->
+4.55 at14:37:59. Same effective5/8 settings do not mean same actual-fill
+targets: Schwab uses reference4.4101 cent-rounded, Webull actualfill4.42.
+MOBX reference1.1315 gives target1.19 vs Webull actualfill1.13 target1.1865.
+Replacement actor/rule is UNMEASURED. Only adapterPUT pathfound requiresORB;
+this negative source evidence does not prove manual action. Codeformula dates
+July22/Aug13 are not firstproductionoverride dates, which remainunmeasured.
+Three serialized2s exactGETs, readonlyboundedDB and lowpriorityboundedlogs;
+no broker order/token/service/env/Redis/ledger write or exitbuild. Preserved
+sanitizedrawfiles and Step0 in docs/review-artifacts/bracket-target-parity.
+MOBX-only powercount one dedupattempt is not globalfour; allsymbolcensusrequested.
