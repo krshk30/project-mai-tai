@@ -570,3 +570,25 @@ not a fabricated broker event. Three recorded Webull HTTP417 submit rejects
 and this intent are captured in job/TERMINAL_REJECTS_RECORDED_2026-10-06.json.
 Tests:718 jobPASS;12/12 assertion mutationsRED, no harness failures. Fresh full
 103-row/broker rehearsal and all initial runner gates remain mandatory.
+
+### Initial Mechanics Attempt, 17:18 ET
+
+Release9069e171/source06ff7eb9 staged27hashesPASS and invoked once. Initial
+source admission stopped before any source/env/service write: the box had not
+fetched APP4805, so gitshow could not read its catalog blob. Abort's fleet read
+also lacked Redis EnvironmentFiles because systemctl hides empty values by
+default, including with --all. Fetch exact reviewed main objects without
+checkout; use field-limited systemctlshow --all and require typed D-Bus proof
+EnvironmentFiles=a(sb)0 for the two system units if that array is omitted.
+Own Redis D-Bus read confirms a(sb)0; no empty/default invention. Tests pin it;
+no missing-field default or identity waiver. Preserve originalSTOP/attempt and
+metadata-containing transport directory; new immutable package/exclusivejob.
+The collector's install record references runner-journal.jsonl. Materialize
+that append-only, owner/mode-checked receipt hash journal as commands run;
+never name a nonexistent journal. Live runner output contains receipt names
+only; protected raw command/evidence files remain in the attempt directory.
+
+Own17:16:25-17:18:13ET full read-only rehearsal rc0:103tickets/zeroinflight,
+95linkedparents terminal, all4recorded no-ID rejects proven, Webullopen0.
+Localreceipt /tmp/install1-terminal-reject-full-rehearsal-v2-20261006.json.
+No unknown ticket ownership cleared; AIXI/XHG remain held_unknown.

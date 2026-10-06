@@ -11,6 +11,7 @@ from pathlib import Path
 import pwd
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -135,7 +136,18 @@ class Real:
 
     def receipt(self, name, raw):
         self.counter += 1
-        exclusive(self.attempt / f"{self.counter:03d}-{name}", raw)
+        path = self.attempt / f"{self.counter:03d}-{name}"
+        exclusive(path, raw)
+        journal = self.attempt / "runner-journal.jsonl"
+        fd = os.open(journal, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "ab") as file:
+            metadata = os.fstat(file.fileno())
+            need(stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.geteuid()
+                 and metadata.st_mode & 0o022 == 0, "unsafe runner journal")
+            at = self.now().isoformat()
+            file.write((json.dumps(dict(at_utc=at, receipt=path.name,
+                         sha256=digest(raw), bytes=len(raw)), sort_keys=True) + "\n").encode())
+        print(at + " receipt=" + path.name, flush=True)
 
     def command(self, args, *, check=True, timeout=30, limit=3_000_000):
         args = list(map(str, args))
@@ -165,8 +177,19 @@ class Real:
         for name in SERVICES:
             # Redis/Postgres service names do not share the trading unit prefix.
             unit = name + ".service" if name in {"redis", "postgresql"} else "project-mai-tai-" + name + ".service"
-            output = self.command(["systemctl", "show", unit, *["--property=" + field for field in UNIT_FIELDS]])
+            output = self.command(["systemctl", "show", unit, "--all", *["--property=" + field for field in UNIT_FIELDS]])
             state = dict(line.split("=", 1) for line in output.stdout.decode().splitlines() if "=" in line)
+            if name in {"redis", "postgresql"} and "EnvironmentFiles" not in state:
+                # systemctl omits this empty array even with --all; prove it via typed D-Bus.
+                object_reply = self.command(["busctl", "call", "org.freedesktop.systemd1",
+                    "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "GetUnit", "s", unit]).stdout.decode().strip()
+                need(object_reply.startswith("o "), "system unit D-Bus object unreadable")
+                object_path = json.loads(object_reply[2:])
+                need(re.fullmatch(r"/org/freedesktop/systemd1/unit/[A-Za-z0-9_]+", object_path), "system unit D-Bus path unreadable")
+                array = self.command(["busctl", "get-property", "org.freedesktop.systemd1", object_path,
+                    "org.freedesktop.systemd1.Service", "EnvironmentFiles"]).stdout.decode().strip()
+                need(array == "a(sb) 0", "omitted system EnvironmentFiles not proven empty")
+                state["EnvironmentFiles"] = ""
             need(set(state) == set(UNIT_FIELDS), "unreadable fleet state: " + name)
             for key in ("MainPID", "NRestarts", "ExecMainCode", "ExecMainStatus", "ExecMainStartTimestampMonotonic"):
                 state[key] = int(state[key])
@@ -492,6 +515,14 @@ class Real:
                                                                flaggate_coverage=json.loads((self.attempt / "flaggate-coverage.json").read_bytes()),
                                                                control_display=self.latest_control,
                                                                next_session_proof="UNMEASURED")))
+        from closeout import JOURNAL
+        with JOURNAL.open("a") as file:
+            file.write("\n" + self.now().isoformat() + " COMPLETE codex install1 application=" + APP
+                       + " plan=" + self.release["plan_commit"] + " attempt=" + str(self.attempt)
+                       + " receipt=" + str(self.attempt / "COMPLETE.json")
+                       + " live-delivery/scanner/first-daily-rehearsal=UNMEASURED\n")
+            file.flush()
+            os.fsync(file.fileno())
 
     def abort(self, phase, completed):
         # Always preserve actual state; no start, rollback or automatic recovery in this path.
