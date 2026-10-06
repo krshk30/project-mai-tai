@@ -6483,3 +6483,19 @@ KEEPREST1 Step0 6a84c3b2 reproduced 18 take-downs but found the named IMCC08:17
 case still SHORT/flip=none; BUY flip08:25. DISAGREE on that acceptance timing,
 one blocker, no build/PR. Asked for corrected08:26 case, card unchanged. Other
 lanes continue; dates/hours reported only when independently supportable.
+
+### 2026-10-06 11:10 ET - codex-2 C43/C44/C45 independent outcomes
+
+CLEARWAIT1 Step0 e7562201 found prior sent orders in both named pure-wait
+cases: AIXI/Webull09:57:42, XHG/Schwab10:32:03. Strict never-sent card agrees,
+acceptance cases disagree; stopped, one scope blocker, no build or ready ETA.
+T43 Step0 correction237e4646 accepts local-abort cause. Own11:05 pull2/78 token
+OPENs; mutable authorization/completion proxies do not measure final-check
+p99. Bounded nonce refresh requests actual current v2 gates, keeps1s and exact
+identity checks. Early focused221PASS before later negatives; full verification
+ongoing, target2026-10-06 15:00ET, no PR/ready yet.
+ORBPURPLE1 Step000a54644 agrees with gate. Six placement candidates,559 real
+bars, two filled entries both above line, so no claimed profit improvement.
+Target2026-10-06 13:00ET, source8f591809 and verification underway. Separate
+writers/PRs, no shared trading edits and no production action. Tonight's
+ROUNDUP+Restoration+preopen remains unchanged unless separately pinned/rebound.
