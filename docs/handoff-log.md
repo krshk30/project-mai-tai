@@ -6678,3 +6678,19 @@ inactive/different-generation ownership safety blocker. Complete baseline3eb
 excluded, no final paired result. Zeno remains sole source/test writer and
 resumes the narrow proof fix. Parent edits only this C-row and append-only log;
 no production, ledger, M/T/Board/decision change, no MIRROR expansion.
+
+### 2026-10-06 13:13 ET - codex-2 C58 four-item policy checkpoint
+
+Pushed plan d125cbeb10e0731ea0a639126d8d18b7348ad675 on
+codex/1006-after-close-install-plan binds c21d8274/e01851ac and151checks,
+three true env additions, v2/OMS/orb-schwab only. Parent independently reran
+197 policy/contract tests PASS0.70s; agent retains8new+11existing assertion-RED
+mutations and source hashes in BUILD_STATUS_2026-10-06.md. Exact dated
+operatorIPDN1000 is not inferred from netzero and MI/NXL are unchanged.
+Actual12:59:25ET132/66 bot books and OLOX pending rows still block, and positive
+live1000 activation is UNMEASURED. No full literal runner, immutable release,
+tested row47 exception, installed daily timer or remote staging receipt is
+claimed. Kant continues sole mechanics writer. Existing after-close Codex
+wake-up now names the four-item exact candidate and checkpoint, preserving
+same scheduling/notification intent; it is NOT a box job. No production write,
+restart, ledger change or trade. #1099/MIRROR/#1100/RETRYOFF remain excluded.
