@@ -5697,3 +5697,13 @@ DeploymentjournalATTEMPT4 recordsoldblock/accepted08-06policyedit/newhashes/
 APPROVALPASS, attendedsession64738/localmirror/tmp/oct5-standing-run-client.log.
 InitialfreshOMSread, noappwrite/newPID/COMPLETEclaimed; same7823/fourkeys/
 0022/no-recovery; firststopdeadline23ET. Reportrealstopordone, neverimprovise.
+
+2026-10-05 20:52 ET codex-2 C95: attended attempt 4 advanced the checkout
+to exact 7823a6fa and passed editable-install/import/clean-tree proofs.
+Three approved PM env keys set true, hand-off retained; unmodified v2 gate
+rc0, zero armed and no override. v2 stopped 20:51:09 ET, strategy stopped
+20:51:34 ET after fresh flat/Redis checks. Stop-OMS census finished
+20:51:52 ET: 14 reviewed tickets / 11 terminal parents, zero unproven ids.
+Fresh flat before OMS stop underway. Raw source: new standing job's
+attempt-1730-go/runner.log, mirrored /tmp/oct5-standing-run-client.log.
+Not COMPLETE; no migration/start claim yet, no recovery authorization.
