@@ -6235,3 +6235,38 @@ real pauses reported/excluded from Restoration. Existing noon/16:00 checkpoint
 automation updated ACTIVE with tonight's21:00 target and stable factory.
 Shared handoff pulled/rebased before docs-only C29 update; T rows, reads,
 Boards and open decisions unchanged. No production action.
+
+### 2026-10-06 09:18 ET - R6 own assessment and comparison conflict (codex-2)
+
+#1097 head dfb719950d9a072114ec1dadf21caf607d057478 includes reviewer-owned
+runner64b00b9d cherry-picked unchanged as84712fb0, plus evidence-only diagnostic
+tests/report/23-row fixture. Own correct-import-path runner replay reproduces
+123events,64HELD at+10,0ERROR/0MISMATCH/0buys while incomplete;34+10MATCH and
+25missing+10readings. First attempt lacked repository-root PYTHONPATH and
+had123ERROR despite rc0; excluded, not green. Valid raw local log67d53adf...
+and JSONe44f780b... are named/hash-pinned in R6_ASSESSMENT_2026-10-06.md.
+
+AGREE availability is broken. DISAGREE with claim existing#620 clamp changes
+only trail, never colour: own production carry-math versus spanning oracle
+over identical stored bars gives104 equal states/105 sparse first/+10
+comparisons, one unequal PMI10-02readd16:36:07 at17:15: clampedLONG/trail
+5.727122541190053 versus spanningSHORT/5.8432. First difference at16:45 is
+clampedSHORT/5.852338786738176 versus spanningLONG/5.7027. This is a proposed
+R6-math counterexample, not a current admitted wrong-line claim. PMI's11
+observed post-event arrivals end in just1contiguous live bar, so entry must
+remain held; no replacement of ten-contiguous wait by arrival count.
+
+Own fresh box READ ONLY source confirmation09:15:23ET: nice10, SQL5s/lock500ms,
+LIMIT24/refuse>23, PMI14:46-17:15 only.23rows/5977B, source/bar time/OHLCV
+match23/23; direct capture sha17003fa5953a26e01d897bc76c0cc063184b78b1b6dfeab94a3c038ea14c89e5.
+Reviewer CSV arrival stamps truncate subseconds; original precision retained
+in direct raw output, not silently called byte-identical. First trader read
+refused root-only env permissions before DB query; root READ ONLY succeeded,
+no permission change, token, broker, service, ledger or Redis action.
+
+Recorded counterexample tests3PASS plus factory10PASS=13/13; Ruff/diff PASS.
+No new full-suite or ready claim. Requested explicit reviewer disposition:
+independent clamp-aware oracle for sparseR6, exact oracle for repairedseries,
+retain#620andcontiguoushold. No trading source, allowance, flag, runner or
+oracle edited to hide failure. R6 admission stopped pending that comparison
+disposition, B1-B5 remain,21:00targetnotmoved. T rows/Boards/readstable intact.
