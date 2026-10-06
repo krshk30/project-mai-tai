@@ -187,3 +187,85 @@ handoff edit was performed. The former c21 pair is historical, not final proof.
 Publish the final exact SHA and both push/pull-request Validate URLs on the PR
 only after both conclude success. No production-after latency, eliminated429
 rate, broker quota equivalence, install, or deployment success is claimed.
+
+## Authorized After-Close Fixture Correction
+
+Human parent authorized only the test fixture correction in
+`tests/unit/test_roundup1.py::test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire`.
+At frozen78ee3503, PR Validate37521817116 passed6590 units and the isolated
+PostgreSQL16 full golden86/1 xfail. Push Validate37521807711 first crashed with
+native CPython/SQLAlchemy exit139 (root cause unproved); one same-head retry
+completed6589 units/1 failure. The sole failure was the exact ROUNDUP test
+above, whose real-clock NFQ gate correctly returned `resting_window_ended`
+after16:00 ET. Push golden/Ruff were skipped, not green. That head was NOT ready.
+
+Own controlled original-test probes at16:06 ET failed on both untouched
+main4805 and78ee with the same `request, = adapter.requests` ValueError and
+NFQ reason. The test and NFQ runtime source were identical between those trees.
+Original BASE log `.webull429-roundup-current-base-probe.log` (base worktree)
+SHA256 `4b05610f58f70772be18068d55ea54e17b0f4891f940bb6ec3bbe35727d46b97`;
+original HEAD log `.webull429-roundup-current-head-probe.log` (build worktree)
+SHA256 `34e14f84e0d611b4283322aa1367620930a5988b889c4f65c18b7ae2614b83da`.
+
+The corrected fixture pins the test-local OMS `utcnow`, initial event
+`produced_at`, market metadata and quote timestamp to SCKT's recorded
+submission `2026-10-05T16:47:03.808217+00:00` (12:47:03 ET), using the existing
+recorded row. NFQ and its generated retry consequently share that clock/date.
+All original wire-stop1.07, limit1.08, quantity278 and one-submit assertions
+remain unchanged; explicit recorded-clock and real entry-window assertions
+are added. No runtime source, trading window, gate, timer, or other test
+fixture is changed. This remains a controlled PA1 interleaving around recorded
+prices, NOT a claim of historical deferral, execution, ledger repair or live BUY.
+
+At after16:00 ET, the corrected singled test passes1/1; log
+`.webull429-clock-v3-target.log` SHA256
+`142e711fac20a466998c8bbeb42619edb1e1722cf84dfe39f564f9b894494392`.
+The focused ROUNDUP/deferred/NFQ/RPG-NFQ/WEBULL suite passes638, log
+`.webull429-clock-v3-focused-real.log` SHA256
+`b553bc444dd63361012520d2c3432d41131f76b9414c8619588a3e706f2eeeeb`.
+An initial focused command named a nonexistent test file and exited4 during
+collection; `.webull429-clock-v3-focused.log` is retained, excluded from proof.
+The corrected focused command above collected and executed all638 tests.
+Controlled ALL-ON152/152, zero mismatch/UNKNOWN, log
+`.webull429-clock-v3-all-on.log` SHA256
+`28de8dbb6d1e42ab3ea5e5ce8b805702f51f929b2396e73bcf007172276a1266`.
+All20 mutations re-run with19 direct assertion/DID NOT RAISE kills and one
+separate decoder UNKNOWN exception; v3 raw hashes in `MUTATION_AUDIT.md`.
+
+Runtime/WEBULL-control hashes remain exactly those in the replacement receipt
+above. The sole changed test file's SHA256 is
+`464e3fbf5209335cf066bad3ab55c796a7daf43c376ce9badf9c8f7f80f33e50`.
+The candidate full suite starts only after that change and retains that hash
+through completion. No local full PostgreSQL golden BASE/HEAD pair is claimed.
+Both new exact-head hosted Validate runs must succeed before readiness.
+
+Fresh after-close full pair, exact normal-PATH command above, pinned main4805:
+
+| Clock-correction run | Passed | Failed | Warnings | Duration |
+| --- | ---: | ---: | ---: | --- |
+| Untouched main4805 BASE | 6468 | 57 | 455 | 293.97s |
+| Clock-corrected candidate HEAD | 6534 | 56 | 455 | 293.98s |
+
+BASE-only failure is exactly the authorized ROUNDUP test named above;
+HEAD-only failures: zero. HEAD names exactly match unchanged
+`MAC_HEAD_FAILED.txt` (SHA256 `6799163e6462c341489ccc9c1f1d8c1bf24cf9d8f2952543a593dbb5e69ff416`).
+`MAC_CLOCK_BASE_FAILED.txt` records all57 current BASE names without dropping
+the reproduced clock-sensitive failure. The earlier identical56-name pair
+is retained as historical evidence, not substituted for this new pair.
+65 new WEBULL controls plus one corrected existing fixture yield66 more
+passing outcomes versus this after-close BASE. No test skip or PATH change.
+Canonical names are extracted from FAILED lines; raw logs remain unedited.
+
+| Clock-correction raw log | Location | SHA256 |
+| --- | --- | --- |
+| `.webull429-clock-v3-base-unit.log` | base-proof worktree | `907ab32d4e42e71c07bbdb6eaa651c28f26259bb2eaa64f9335187dfa11df6f0` |
+| `.webull429-clock-v3-head-unit.log` | sole build worktree | `2ce0e4670a4082374a0977b32f65f5260601f9b7f8b3a0d68b11996d24c7b427` |
+| `.webull429-clock-v3-replay.log` | sole build worktree | `fc4b3d32437d6d7d0fe0be7c3d83df234055d3a4d8954dc327d3ed13e76677be` |
+| `.webull429-clock-v3-ruff.log` | sole build worktree | `82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18` |
+| `.webull429-clock-v3-markers.log` | sole build worktree | `22ae18ed7788aef47a544aa32fbc36022be54bd773174d04e29bf4e9bb411292` |
+
+SQLite/replay/backtest71 passed/1 xfailed,7.66s. Ruff and marker isolation pass.
+No local PostgreSQL golden full pair or VPS baseline was run. The adapter,
+store, service and WEBULL test hashes remained unchanged from78ee throughout
+this candidate run; the clock-corrected test hash above also stayed unchanged.
+Only this test fixture and this lane's review artifacts enter the new commit.
