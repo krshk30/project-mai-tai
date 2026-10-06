@@ -20,7 +20,8 @@ and passes through the serial pipeline. Exact existing RPG order bindings read
 their own recorded wire pair and quantity on restore; this is not generic
 historical order discovery or a broker-terminal classifier.
 
-Catalog expectation is **ON for deployment**, checked on v2 and OMS. The
+Catalog expectation is **ON for deployment**, with v2 as its owning service.
+The install must also verify the loaded key on OMS for PA1 resubmission. The
 Settings default remains FALSE for backward compatibility / explicit rollback;
 the reviewed install must set the env flag TRUE, not deploy a dark version.
 No merge, flag activation, production write or restart is authorized by this
