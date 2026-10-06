@@ -6014,3 +6014,12 @@ will be updated to this design; actual recurring box timer NEXTWed06:20 and
 hashes are installation evidence still owed, not claimed now. First real
 Wednesday run remains rehearsal with Claude's06:22check.09:42guard follow-up
 unchanged; #1095 blockers and Restoration priority unchanged.
+
+## 2026-10-06 07:19 ET - Existing evening follow-up updated
+
+Automation update returned ACTIVE for the existing20:05ET preopen build/install
+wake-up, now bound to design8a117dad. Removed the superseded manual-repin and
+operator-question dependency; retained after20:00-only build/test/install and
+exact shape checks in the gate, static non-paper pins, first real Wednesday
+rehearsal and Claude06:22verification. No duplicate automation or box unit
+created. Actual installed hashes and Wed06:20NEXT remain owed tonight.
