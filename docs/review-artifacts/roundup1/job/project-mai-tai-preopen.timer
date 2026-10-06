@@ -1,0 +1,12 @@
+[Unit]
+Description=Today-dated preopen checks weekdays at0620 America/New_York
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 06:20:00 America/New_York
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=project-mai-tai-preopen.service
+
+[Install]
+WantedBy=timers.target

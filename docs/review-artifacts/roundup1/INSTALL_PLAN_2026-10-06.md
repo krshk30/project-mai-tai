@@ -168,6 +168,17 @@ The unmodified v2/OMS gates still apply. If either refuses the dated IPDN
 residual, that is an unresolved admission blocker: this helper does not waive
 or edit those gates. The clock-only reason must not falsely claim broker
 flatness; do not invoke that clock override with a residual holding.
+The later October6 install-gate ruling now has a local mechanics implementation:
+`job/raw_gate_admission.py` preserves the original rc1/NO-GO and its raw output,
+and admits only the sole exact IPDN1000 refusal when fresh direct/helper proof
+before and after agrees. Zero armed/managed and fresh other-account evidence
+remain mandatory; BLIND, stale, other holdings, third findings, SELL/in-flight
+activity or any other blocker stops. Before18:00 the new literal clock-only
+reason explicitly says NOT whole-account flatness. No gate source, protected
+env, account/ledger row or arbitrary NO-GO is waived. Controlled positives are
+not observed activation; actual132/66 still blocks. See the new release status
+below; this supersedes only the earlier unresolved mechanical admission, not
+the raw gate truth or the d125 receipt.
 Scoped sequence: **stop v2 -> stop orb-schwab -> stop OMS -> start OMS once ->
 start orb-schwab once -> start v2 once**.
 No clock abort after the first stop. Abort trap pages actual states and starts
@@ -180,6 +191,12 @@ the intended stop, may qualify for a narrowly named reset-failed before its
 single start. Unexpected exit cause, nonzero/unreadable PID, startup failure or
 any other unit blocks. The exact stop signature/reset mechanics remain untested
 in this draft; do not invent a match or execute a reset to force green.
+This is the retained d125 status. The new job has controlled signature/negative
+tests and a PID/time/unit-bound reset path, but the actual retained row47 raw
+shutdown signature is still missing from this release. Source inspection shows
+the ORB SIGTERM handler cancels the task without logging the received signal.
+A hypothetical SIGTERM log line in a controlled positive is not that historical
+record. The immutable checkpoint is therefore blocked, not executable.
 
 Verify new identities/starts, active/NRestarts0, no new-process tracebacks and
 no startup buy. Read ROUND_UP, LINE_CHART_RESTORATION and all retained switches
@@ -237,6 +254,86 @@ restart and a matching catalog. This line is not rollback authorization.
 Restoration=false requires a v2 restart and matching catalog; retain every
 other key and read the actual resulting identities/line state. No rollback,
 extra restart, ticket purge or recovery action is pre-authorized.
+
+## Literal Mechanics Checkpoint - Reviewable, Not Admitted
+
+`job/attended.py` contains the exact three-owner sequence, phase-aware fresh
+admission and unchanged-owner proof, source/env/catalog/gate backups, abort
+state/notification and no automatic recovery. `job/make_release.py` packages
+only exact committed blobs and the pinned c21 application sources. The daily
+wrapper, narrow recorded-gate transform and three timer units are literal local
+artifacts. No approval is generated and no production staging/run is authorized
+by those bytes. The entry point requires an exact independently reviewed
+manifest hash and approval and refuses any immutable `blocking_acceptance`
+population even if an approval JSON matches its hash. RETRYOFF is explicitly
+excluded from this candidate, not an accepted no-second-trade card.
+The unchanged v2 gate133 defaults a missing cw_armed_segments field to empty.
+Mechanics now bracket that unchanged gate with an explicit bounded read of
+the single newest isolated-state entry. Read-only EVAL_RO caps the reply at
+256KiB before socket transfer; it never reads snapshot-batches. Source/type,
+strategy/account, event/stream timestamp freshness and explicit list presence
+are mandatory. Missing, failed, unsupported, malformed, stale/future or nonzero
+reads stop, not zero. No trading or source-gate edit is made.
+
+`job/RELEASE_STATUS_2026-10-06.md` is the new mechanics/test/remaining-blocker
+receipt. `job/BUILD_STATUS_2026-10-06.md` and commit d125 retain their original
+evidence unchanged. Full controlled sequences simulate system/provider results;
+they do not establish live flatness, historic acceptance or tomorrow's timer
+result. The latest narrow operator ruling supersedes the former nighttime
+paper coverage blocker: preserve actual **149/151, rc2, UNKNOWN2**, never151PASS.
+Only momentum_paper_enabled and market_data_subscription_startup_enabled on
+momentum-paper with exact reason 'momentum-paper is not active' qualify, plus
+unchanged fresh PID0/inactive/dead/success/NRestarts0/exit0 and dated09:40
+InactiveEnterTimestamp (within30s). The other149 rows must PASS with exact151
+unique catalog identities and no failures. Any other UNKNOWN/reason/state/time,
+missing proof or paper drift stops. Runtime checker/catalog is unchanged; no
+paper restart. Coverage is retained in raw results, COMPLETE and deployment
+journal. This is the October5 precedent at the new denominator, not whole-fleet
+PASS. Current IPDN132/66 continues to block all fresh admission.
+
+Row47 parser now supports the recorded manager UNIT/init.scope schema and
+prefixed exit1 message, with old invocation and intended-stop identity binding.
+The prior retained traceback is untimestamped and has no explicit SIGTERM
+event. It supplies schema tests only, never reset permission. Current-attempt
+old-PID/invocation explicit SIGTERM, CancelledError, ORB entrypoint, manager
+stop/exit1, bounded timestamps and fresh MainPID0 are all required. Ambiguous
+or missing current evidence stops before reset; no claim this proof will be
+available tonight. See job/row47_prior_schema.json and its raw provenance.
+
+Local reviewable commit/hash generation is now authorized, not production
+staging or execution. Prior d125 UNREADY receipts and the earlier unstaged395
+test checkpoint remain historical. Exact independent approval plus fresh raw
+gates/strict admission are still required after16:00 before any box write.
+New #1099 recovery/MIRROR-counter and #1100 display work do not hold this install;
+include only a separately reviewed fresh merged pin before the first write,
+with newly generated immutable release and approval. Current release stays c21.
+
+## RETRYOFF1 Requested - BLOCKED Acceptance
+
+The operator's13:00 ruling requests removal of the retry-one env key (default
+False), not writing a false override, to prevent another buy in the same segment
+after a closed trade. That requested removal is pending and **not included in
+the executable env action set or catalog**. No RETRYOFF execution is authorized
+by this checkpoint. Parent exact-main OFF replay of recorded OLOX opportunity
+1791302942230, Webull managed row8f75d2a2, still produces owner idle and one
+primary plus one mirror at12:21 after confirmation close. Source1907-1926 retains
+confirmation-only retirement with retryFalse, and the default-OFF regression
+test explicitly preserves it. The parent's27-test OFF suite PASS is a control,
+not proof the no-second-trade card is satisfied. Raw parent evidence is
+`/tmp/codex-retryoff1-olox-*`; no numeric/bar/order evidence is invented here.
+Requested pending literal removal:
+`MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_ENABLED=true`.
+No false assignment is authorized as a substitute. The unchanged c21 catalog
+still expects retry-one True; an expected-False job catalog is also pending,
+not generated/installed or claimed matching by this checkpoint.
+
+RETRYOFF requires an independently reviewed disposition before changing the
+three-key env action or the catalog. If later released, removal needs exact
+duplicate/before-hash/diff controls and effective False in new v2/OMS, with an
+explicit generated isolated catalog expectation and unchanged151 denominator.
+No trading-source change is authorized in this lane. CLEARWAIT and new WEBULL
+lanes remain excluded absent a pin/merge. T43/#1099 remains excluded after the
+legacy-proof regression; no moving application SHA adoption.
 
 ## Dated IPDN Operator Residual Policy
 

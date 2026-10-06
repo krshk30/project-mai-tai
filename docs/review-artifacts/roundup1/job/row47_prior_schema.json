@@ -1,0 +1,33 @@
+{
+  "provenance": {
+    "kind": "recorded-manager-schema-only-not-current-attempt-reset-proof",
+    "raw_journal_path": "/tmp/roundup1-row47-sep30-schema-20261006.jsonl",
+    "raw_journal_sha256": "dcc054f34e2406fd4567c80964a6ba285e31dd3ce6d4f294f93c97db46f562df",
+    "raw_log_tail_path": "/tmp/roundup1-row47-prior-orb-log-tail-20261006.txt",
+    "raw_log_tail_sha256": "39a6feda47e38000e07009368e3e36a13c284d6b126f7bffd9b72c448ba0e581",
+    "log_limits": "last32768 decompressed bytes of14912byte gzip; read only",
+    "journal_limits": "September30 23:30-23:32UTC <=120rows; six rows retained,7847bytes",
+    "known_gap": "No explicit SIGTERM event; untimestamped file traceback cannot identify oldPID/current attempt. Never use for runtime clearance."
+  },
+  "manager_rows": [
+    {
+      "_PID": "1",
+      "_SYSTEMD_UNIT": "init.scope",
+      "UNIT": "project-mai-tai-orb-schwab.service",
+      "INVOCATION_ID": "1ebc41f37327421b8e46600d6a36f115",
+      "__REALTIME_TIMESTAMP": "1790811071512194",
+      "JOB_TYPE": "stop",
+      "MESSAGE": "Stopping project-mai-tai-orb-schwab.service - Project Mai Tai separate default-off ORB Schwab producer..."
+    },
+    {
+      "_PID": "1",
+      "_SYSTEMD_UNIT": "init.scope",
+      "UNIT": "project-mai-tai-orb-schwab.service",
+      "INVOCATION_ID": "1ebc41f37327421b8e46600d6a36f115",
+      "__REALTIME_TIMESTAMP": "1790811071755823",
+      "EXIT_CODE": "exited",
+      "EXIT_STATUS": "1",
+      "MESSAGE": "project-mai-tai-orb-schwab.service: Main process exited, code=exited, status=1/FAILURE"
+    }
+  ]
+}
