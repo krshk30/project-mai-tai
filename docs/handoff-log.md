@@ -6640,3 +6640,18 @@ v2/OMS-only149 draft is not represented as ready for this expanded set.
 Parent remains the C-row writer; sole T43 writer is replaying the recorded
 10:13placed/10:15refused in-memory generation gate. MIRRORHOLD1 has its own
 read-only Step0 lane, not folded into1099. No pin/readiness claim for either.
+
+### 2026-10-06 13:03 ET - codex-2 C56 MIRRORHOLD1 independent denominator
+
+Own frozen12:55:51.850465ET OMS prefix reproduces76forgotten decisions:
+47reauthorization,15proven-no-wire,13caps,1resubmit_accepted. Problem75events
+span7slots/symbol-segments and4names; four requested acceptance segments
+contain66. The76/4/3 reviewer denominator has no stated cutoff and is not
+silently adopted. Parent independently hashed agent's rawrecord845 including
+newline,347178d8; exact lines/sourceprefixhash retained in STEP0.md.
+Lost hold and retry amplification AGREE. Whole-slot three-real-reprice cap
+would exhaust IPDN10:34 before the accepted10:48 firstinband placement;
+proposed scope DISAGREE and clarification asked, no cap waiver/reset/build.
+Counterfactual future Webull fill is not an observed fill. MIRRORHOLD1 remains
+separate from1099, with crash/retirement/perleg isolation still required.
+No database/order/service/production action. T/Board/decision rows untouched.
