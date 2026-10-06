@@ -1118,6 +1118,9 @@ class Settings(BaseSettings):
     # placement, cancellation, and the v2 state machine byte-identical until the operator enables
     # this fix on its own day.
     oms_v2_webull_mirror_deferred_resubmit_enabled: bool = False
+    # MIRRORHOLD1 retains the exact RTH mirror opportunity durably. One initial
+    # Webull wire submission plus three resubmissions; no-wire checks cost zero.
+    oms_v2_webull_mirror_retained_hold_enabled: bool = False
     # NFQ1: only the RTH Webull mirror's wire shape may use a ten-second cache reading.
     # The reactive/premarket price limit keeps its separate 2000ms setting.
     oms_v2_webull_mirror_quote_max_age_ms: int = 10000

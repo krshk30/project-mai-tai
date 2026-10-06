@@ -250,7 +250,9 @@ class AtrRepriceRuntimeMixin:
                 return job  # An uncertain dispatch is not a no-wire price wait.
             price_refusal = any("PRICE_AGGRESSIVE" in (reason or "")
                                 for reason in job.get("replacement_reasons", []))
-            if price_refusal and job.get("attempt", 0) >= self._WEBULL_MIRROR_RESUBMIT_MAX_ATTEMPTS:
+            budget_hook = getattr(self, "_mirrorhold_price_budget_exhausted", None)
+            if price_refusal and (budget_hook(job) if budget_hook is not None else
+                    job.get("attempt", 0) >= self._WEBULL_MIRROR_RESUBMIT_MAX_ATTEMPTS):
                 return journal.change(token, job["revision"], phase="refused", reason="price_retry_budget_exhausted")
             job = journal.change(token, job["revision"], phase="clear",
                                  attempt=job.get("attempt", 0) + 1)

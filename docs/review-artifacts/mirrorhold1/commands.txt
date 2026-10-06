@@ -1,0 +1,20 @@
+[codex] Frozen MIRRORHOLD1 commands; local controlled tests only.
+Working directory: /Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai
+Pristine source directory: /Users/velkris/.codex/worktrees/mirrorhold1-retained-price-wait/project-mai-tai
+
+env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -q -p no:cacheprovider tests/unit/test_mirrorhold1_retained_hold.py tests/unit/test_oms_webull_mirror_deferred_resubmit.py tests/unit/test_nfq1_mirror_fresh_price.py tests/unit/test_webull_adapter.py tests/unit/test_rpg1_runtime.py tests/unit/test_rpg1_runtime_nfq.py tests/unit/test_rpg1_nfq1_composition.py tests/unit/test_rpg1_piece3_14.py tests/unit/test_rpg1_reprice_handoff.py tests/unit/test_all_on_pm.py tests/unit/test_pmrest1.py tests/unit/test_rpgstuck1_all_on.py tests/unit/test_rpg1_review_guards.py tests/unit/test_expected_flags_check.py tests/unit/test_no_test_reimplements_logic.py --tb=short --junitxml=/tmp/mirrorhold1-final-focused.xml > /tmp/mirrorhold1-final-focused.log 2>&1
+
+env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -q -p no:cacheprovider tests/unit/test_mirrorhold1_retained_hold.py --tb=short --junitxml=/tmp/mirrorhold1-final-new.xml > /tmp/mirrorhold1-final-new.log 2>&1
+
+env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python docs/review-artifacts/mirrorhold1/mutate_controls.py > /tmp/mirrorhold1-final-mutations.json 2>&1
+
+nice -n 19 env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line --junitxml=/tmp/mirrorhold1-final-full.xml > /tmp/mirrorhold1-final-full.log 2>&1
+
+env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -q -p no:cacheprovider tests/unit/test_pmprint1_tonight_flags.py --tb=short --junitxml=/tmp/mirrorhold1-pm-catalog.xml > /tmp/mirrorhold1-pm-catalog.log 2>&1
+
+nice -n 19 env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line --junitxml=/tmp/mirrorhold1-postpin-full.xml > /tmp/mirrorhold1-postpin-full.log 2>&1
+
+nice -n 19 env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line --junitxml=/tmp/mirrorhold1-pristine-full.xml > /tmp/mirrorhold1-pristine-full.log 2>&1
+
+env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/ruff check src/project_mai_tai/oms/mirror_retained_hold.py tests/unit/test_mirrorhold1_retained_hold.py docs/review-artifacts/mirrorhold1/mutate_controls.py
+git diff --check

@@ -1,0 +1,643 @@
+{
+  "codex_marker": "[codex] Independently captured read-only source; runtime schedules/SDK responses are controlled, not venue fills.",
+  "source_transcript": "/Users/velkris/.codex/sessions/2026/10/06/rollout-2026-10-06T11-12-58-01a111c6-6c38-7b83-a351-feca34a7999c.jsonl",
+  "record_hashes": {
+    "873": "de9acdffc4f4cbe33b6007693a0a08767b804554c350e2257ebb1f0fa5578f4a",
+    "954": "bb1f26c88a7bf25ab5b55b39d6bb8f1c78a4fd1ac9193fbd6088950e4aeb1562"
+  },
+  "boundaries": {
+    "quotes": "Captured ask/event timestamps projected into controlled cache; primary persisted two-decimal stops are proxies, not actual Webull dispatch prices.",
+    "IPDN_fills": "Counterfactual Webull fills for earlier segments UNMEASURED.",
+    "AIXI_0957_terminal_cancel": "UNMEASURED; reprice cancellations at 09:54/09:56, PLACE at 09:57."
+  },
+  "capture_proxies": {
+    "kind": "OWN_MIRRORHOLD_CAPTURE_PROXY",
+    "cutoff_utc": "2026-10-06T17:00:11.089136+00:00",
+    "read_only": true,
+    "statement_timeout_ms": 5000,
+    "rows": [
+      {
+        "id": "198f4ef1-f3db-4a11-9b83-06883877ca38",
+        "created_at": "2026-10-06 14:27:03.161410+00:00",
+        "segment": "1791296823073",
+        "stop": "5.35",
+        "quote_at": "2026-10-06 14:26:59.867226+00:00",
+        "received_at": "2026-10-06 14:27:00.070489+00:00",
+        "bid_price": "4.710000",
+        "ask_price": "4.730000"
+      },
+      {
+        "id": "207b64c3-ecd0-446e-9cad-e73887dca571",
+        "created_at": "2026-10-06 14:28:04.792875+00:00",
+        "segment": "1791296823073",
+        "stop": "5.27",
+        "quote_at": "2026-10-06 14:28:04.050205+00:00",
+        "received_at": "2026-10-06 14:28:04.428360+00:00",
+        "bid_price": "4.670000",
+        "ask_price": "4.720000"
+      },
+      {
+        "id": "5e017078-4ee4-42ab-959b-232ba6b14f93",
+        "created_at": "2026-10-06 14:30:06.505460+00:00",
+        "segment": "1791296823073",
+        "stop": "5.23",
+        "quote_at": "2026-10-06 14:30:02.564064+00:00",
+        "received_at": "2026-10-06 14:30:04.664957+00:00",
+        "bid_price": "4.680000",
+        "ask_price": "4.740000"
+      },
+      {
+        "id": "700947b7-3363-4388-b577-1fc65f755769",
+        "created_at": "2026-10-06 14:34:04.417154+00:00",
+        "segment": "1791296823073",
+        "stop": "5.11",
+        "quote_at": "2026-10-06 14:34:02.864931+00:00",
+        "received_at": "2026-10-06 14:34:03.526923+00:00",
+        "bid_price": "4.620000",
+        "ask_price": "4.650000"
+      },
+      {
+        "id": "a5238007-f456-42aa-936f-29fa498bc1ee",
+        "created_at": "2026-10-06 14:40:07.149373+00:00",
+        "segment": "1791296823073",
+        "stop": "5.06",
+        "quote_at": "2026-10-06 14:40:06.581492+00:00",
+        "received_at": "2026-10-06 14:40:07.069319+00:00",
+        "bid_price": "4.440000",
+        "ask_price": "4.480000"
+      },
+      {
+        "id": "926d4d00-156f-4fd1-8855-87ef978ad871",
+        "created_at": "2026-10-06 14:41:05.286701+00:00",
+        "segment": "1791296823073",
+        "stop": "4.95",
+        "quote_at": "2026-10-06 14:41:03.375330+00:00",
+        "received_at": "2026-10-06 14:41:04.295722+00:00",
+        "bid_price": "4.380000",
+        "ask_price": "4.390000"
+      },
+      {
+        "id": "9e60388d-98be-48a2-87a2-0c2a820ceff8",
+        "created_at": "2026-10-06 14:43:02.842520+00:00",
+        "segment": "1791296823073",
+        "stop": "4.84",
+        "quote_at": "2026-10-06 14:43:01.652174+00:00",
+        "received_at": "2026-10-06 14:43:02.721127+00:00",
+        "bid_price": "4.360000",
+        "ask_price": "4.380000"
+      },
+      {
+        "id": "a1ffc748-cfae-466c-afc7-3c600a6c55bc",
+        "created_at": "2026-10-06 14:44:04.202053+00:00",
+        "segment": "1791296823073",
+        "stop": "4.78",
+        "quote_at": "2026-10-06 14:44:01.854615+00:00",
+        "received_at": "2026-10-06 14:44:02.290934+00:00",
+        "bid_price": "4.280000",
+        "ask_price": "4.300000"
+      },
+      {
+        "id": "82bbbc5c-d977-40fd-98aa-0ff26016db57",
+        "created_at": "2026-10-06 14:48:04.314323+00:00",
+        "segment": "1791296823073",
+        "stop": "4.73",
+        "quote_at": "2026-10-06 14:48:03.065571+00:00",
+        "received_at": "2026-10-06 14:48:04.266992+00:00",
+        "bid_price": "4.320000",
+        "ask_price": "4.380000"
+      },
+      {
+        "id": "99acd58c-9128-4b1d-9a70-af743cc3ce0f",
+        "created_at": "2026-10-06 15:44:02.573167+00:00",
+        "segment": "1791301442514",
+        "stop": "4.66",
+        "quote_at": "2026-10-06 15:44:00.956279+00:00",
+        "received_at": "2026-10-06 15:44:01.809671+00:00",
+        "bid_price": "4.360000",
+        "ask_price": "4.400000"
+      },
+      {
+        "id": "1f2c6e79-81f2-4d6c-a936-5837968f2bbc",
+        "created_at": "2026-10-06 15:55:08.535541+00:00",
+        "segment": "1791301442514",
+        "stop": "4.58",
+        "quote_at": "2026-10-06 15:55:06.342093+00:00",
+        "received_at": "2026-10-06 15:55:06.786056+00:00",
+        "bid_price": "4.190000",
+        "ask_price": "4.200000"
+      },
+      {
+        "id": "51311059-3daf-4114-9c8d-e9f1cd4beef8",
+        "created_at": "2026-10-06 15:56:04.727200+00:00",
+        "segment": "1791301442514",
+        "stop": "4.54",
+        "quote_at": "2026-10-06 15:56:01.034589+00:00",
+        "received_at": "2026-10-06 15:56:01.455039+00:00",
+        "bid_price": "4.160000",
+        "ask_price": "4.190000"
+      }
+    ]
+  },
+  "bounded_timeline": [
+    {
+      "path": "/var/log/project-mai-tai/oms.log",
+      "cutoff_utc": "2026-10-06T16:57:04.924022+00:00",
+      "source_prefix_bytes": 3139335,
+      "source_prefix_sha256": "0fa2ce0a6cf1964a4c3f893160b5d697b675bf1af115802989137f47f473cc2c",
+      "rows": [
+        {
+          "line": 15188,
+          "raw": "2026-10-06 13:54:02,761 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=rpg_proven_no_wire attempts=0 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15189,
+          "raw": "2026-10-06 13:54:02,762 WARNING [oms-risk] [OMS-RPG1] symbol=AIXI reason=distance_proven_no_wire"
+        },
+        {
+          "line": 15190,
+          "raw": "2026-10-06 13:54:02,809 INFO [oms-risk] [OMS-RPG1] token=b7a63f3f-ef04-5bad-a5f2-8d94c2cd8414 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15192,
+          "raw": "2026-10-06 13:54:03,714 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=deferred reason=precheck_distance market=2.3 stop=2.6347 pct=12.7035 attempts=0/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 15193,
+          "raw": "2026-10-06 13:54:03,715 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-e2a208e1d3c3 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=489.897 cache_source=ask cache_timestamp=2026-10-06T13:54:03.225239+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 15194,
+          "raw": "2026-10-06 13:54:03,748 INFO [oms-risk] [OMS-RPG1] token=b7a63f3f-ef04-5bad-a5f2-8d94c2cd8414 phase=price_wait reason=replacement_refused reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15195,
+          "raw": "2026-10-06 13:54:04,833 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=0 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15197,
+          "raw": "2026-10-06 13:54:04,908 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=deferred reason=precheck_distance market=2.3 stop=2.6347 pct=12.7035 attempts=1/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 15198,
+          "raw": "2026-10-06 13:54:04,909 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-0cfcd407ab72 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=1683.809 cache_source=ask cache_timestamp=2026-10-06T13:54:03.225239+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 15199,
+          "raw": "2026-10-06 13:54:04,946 INFO [oms-risk] [OMS-RPG1] token=b7a63f3f-ef04-5bad-a5f2-8d94c2cd8414 phase=price_wait reason=replacement_refused reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15206,
+          "raw": "2026-10-06 13:54:07,282 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=1 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15208,
+          "raw": "2026-10-06 13:54:07,386 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=deferred reason=precheck_distance market=2.3 stop=2.6347 pct=12.7035 attempts=2/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 15209,
+          "raw": "2026-10-06 13:54:07,386 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-069e1d0a3d37 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=132.509 cache_source=ask cache_timestamp=2026-10-06T13:54:07.254293+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 15210,
+          "raw": "2026-10-06 13:54:07,448 INFO [oms-risk] [OMS-RPG1] token=b7a63f3f-ef04-5bad-a5f2-8d94c2cd8414 phase=price_wait reason=replacement_refused reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15211,
+          "raw": "2026-10-06 13:54:08,926 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=2 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15213,
+          "raw": "2026-10-06 13:54:08,986 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=attempt_cap_reached attempts=3 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15214,
+          "raw": "2026-10-06 13:54:08,986 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=deferred reason=precheck_distance market=2.3 stop=2.6347 pct=12.7035 attempts=3/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 15215,
+          "raw": "2026-10-06 13:54:08,987 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-f86e32649a77 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=281.814 cache_source=ask cache_timestamp=2026-10-06T13:54:08.705258+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 15216,
+          "raw": "2026-10-06 13:54:09,040 INFO [oms-risk] [OMS-RPG1] token=b7a63f3f-ef04-5bad-a5f2-8d94c2cd8414 phase=refused reason=replacement_refused reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15217,
+          "raw": "2026-10-06 13:54:09,089 INFO [oms-risk] [OMS-RPG1] token=b7a63f3f-ef04-5bad-a5f2-8d94c2cd8414 phase=refused reason=replacement_refused reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15231,
+          "raw": "2026-10-06 13:55:03,673 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=deferred reason=precheck_distance market=2.34 stop=2.6347 pct=11.1853 attempts=0/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 15232,
+          "raw": "2026-10-06 13:55:03,673 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-76224a938c86 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=1089.725 cache_source=ask cache_timestamp=2026-10-06T13:55:02.583979+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 15254,
+          "raw": "2026-10-06 13:56:03,146 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=rpg_proven_no_wire attempts=0 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15255,
+          "raw": "2026-10-06 13:56:03,150 WARNING [oms-risk] [OMS-RPG1] symbol=AIXI reason=distance_proven_no_wire"
+        },
+        {
+          "line": 15256,
+          "raw": "2026-10-06 13:56:03,186 INFO [oms-risk] [OMS-RPG1] token=66e929af-bc28-53fd-824d-c4f354f22ba2 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15258,
+          "raw": "2026-10-06 13:56:04,251 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=deferred reason=precheck_distance market=2.31 stop=2.5984 pct=11.0991 attempts=0/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 15259,
+          "raw": "2026-10-06 13:56:04,251 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-e06e6cd41d55 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=2072.129 cache_source=ask cache_timestamp=2026-10-06T13:56:02.179106+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 15260,
+          "raw": "2026-10-06 13:56:04,315 INFO [oms-risk] [OMS-RPG1] token=66e929af-bc28-53fd-824d-c4f354f22ba2 phase=price_wait reason=replacement_refused reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15261,
+          "raw": "2026-10-06 13:56:05,313 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=0 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15263,
+          "raw": "2026-10-06 13:56:05,426 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=deferred reason=precheck_distance market=2.3 stop=2.5984 pct=11.4840 attempts=1/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 15264,
+          "raw": "2026-10-06 13:56:05,426 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-0a880a5a050d decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=242.932 cache_source=ask cache_timestamp=2026-10-06T13:56:05.183393+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 15265,
+          "raw": "2026-10-06 13:56:05,545 INFO [oms-risk] [OMS-RPG1] token=66e929af-bc28-53fd-824d-c4f354f22ba2 phase=price_wait reason=replacement_refused reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15272,
+          "raw": "2026-10-06 13:56:07,846 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=1 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15274,
+          "raw": "2026-10-06 13:56:07,944 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=deferred reason=precheck_distance market=2.3 stop=2.5984 pct=11.4840 attempts=2/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 15275,
+          "raw": "2026-10-06 13:56:07,944 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-dab90e129fe1 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=726.240 cache_source=ask cache_timestamp=2026-10-06T13:56:07.218203+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 15276,
+          "raw": "2026-10-06 13:56:07,980 INFO [oms-risk] [OMS-RPG1] token=66e929af-bc28-53fd-824d-c4f354f22ba2 phase=price_wait reason=replacement_refused reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15277,
+          "raw": "2026-10-06 13:56:09,506 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=2 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15279,
+          "raw": "2026-10-06 13:56:09,594 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=attempt_cap_reached attempts=3 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15280,
+          "raw": "2026-10-06 13:56:09,595 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=deferred reason=precheck_distance market=2.3 stop=2.5984 pct=11.4840 attempts=3/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 15281,
+          "raw": "2026-10-06 13:56:09,595 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-e1240c1f83b1 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=773.348 cache_source=ask cache_timestamp=2026-10-06T13:56:08.821956+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 15282,
+          "raw": "2026-10-06 13:56:09,636 INFO [oms-risk] [OMS-RPG1] token=66e929af-bc28-53fd-824d-c4f354f22ba2 phase=refused reason=replacement_refused reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15283,
+          "raw": "2026-10-06 13:56:09,667 INFO [oms-risk] [OMS-RPG1] token=66e929af-bc28-53fd-824d-c4f354f22ba2 phase=refused reason=replacement_refused reads=0 account=live:orb symbol=AIXI segment=1791294242804 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 15297,
+          "raw": "2026-10-06 13:57:02,941 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=deferred reason=precheck_distance market=2.34 stop=2.5984 pct=9.9446 attempts=0/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 15298,
+          "raw": "2026-10-06 13:57:02,941 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-419a6d7a0a6d decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=496.792 cache_source=ask cache_timestamp=2026-10-06T13:57:02.444776+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 15313,
+          "raw": "2026-10-06 13:57:42,712 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=queued attempt=1/3 market=2.4 market_source=ask stop=2.5984 threshold=2.390528 - polarity: queued means no broker await occurred on the market-tick task; the serial intent lane owns submission"
+        },
+        {
+          "line": 15314,
+          "raw": "2026-10-06 13:57:42,713 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=resubmitted attempt=1/3 - polarity: resubmitted means the serial intent lane, not the market-tick task, is starting the normal broker pipeline"
+        },
+        {
+          "line": 15317,
+          "raw": "2026-10-06 13:57:43,018 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 decision=forgotten reason=resubmit_accepted attempts=1 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 15318,
+          "raw": "2026-10-06 13:57:43,019 INFO [oms-risk] [OMS-NFQ1] sym=AIXI segment=1791294242804 slot_id=7c448455-f5fb-52e9-b792-84744055e2c2 attempt=schwab_1m_v2-AIXI-open-d1c79f2d643b decision=sent reason=accepted cache_age_ms=168.003 cache_source=ask cache_timestamp=2026-10-06T13:57:42.851038+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=129 wire_source=ask"
+        },
+        {
+          "line": 16473,
+          "raw": "2026-10-06 14:32:03,750 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=deferred reason=precheck_distance market=2.68 stop=3.0618 pct=12.4698 attempts=0/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 16474,
+          "raw": "2026-10-06 14:32:03,750 INFO [oms-risk] [OMS-NFQ1] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 attempt=schwab_1m_v2-XHG-open-e2c0f49ad475 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=817.245 cache_source=ask cache_timestamp=2026-10-06T14:32:02.933052+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 16475,
+          "raw": "2026-10-06 14:32:13,536 WARNING [oms-risk] [OMS-BROKER-REJECT] sym=XHG acct=live:schwab_1m_v2 coid=schwab_1m_v2-XHG-open-572eed004d33 reason=Opening transactions for this security must be placed with a broker. Contact us at 1-800-435-4000"
+        },
+        {
+          "line": 16493,
+          "raw": "2026-10-06 14:33:03,743 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=1 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=782.789 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16494,
+          "raw": "2026-10-06 14:33:03,836 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=forgotten reason=rpg_proven_no_wire attempts=0 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 16495,
+          "raw": "2026-10-06 14:33:03,855 WARNING [oms-risk] [OMS-RPG1] symbol=XHG reason=distance_proven_no_wire"
+        },
+        {
+          "line": 16496,
+          "raw": "2026-10-06 14:33:03,868 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=1 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=782.789 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16497,
+          "raw": "2026-10-06 14:33:03,941 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=1 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=782.789 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16498,
+          "raw": "2026-10-06 14:33:04,043 INFO [oms-risk] [OMS-RPG1] token=be2348c0-acfd-56b7-84eb-90cce3c42f73 phase=clear reason=current_strategy_authorization_required reads=0 account=live:orb symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16500,
+          "raw": "2026-10-06 14:33:04,978 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=deferred reason=precheck_distance market=2.66 stop=3.0383 pct=12.4510 attempts=0/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 16501,
+          "raw": "2026-10-06 14:33:04,978 INFO [oms-risk] [OMS-NFQ1] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 attempt=schwab_1m_v2-XHG-open-83d46b969874 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=734.318 cache_source=ask cache_timestamp=2026-10-06T14:33:04.244173+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 16502,
+          "raw": "2026-10-06 14:33:05,067 INFO [oms-risk] [OMS-RPG1] token=be2348c0-acfd-56b7-84eb-90cce3c42f73 phase=price_wait reason=replacement_refused reads=0 account=live:orb symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16503,
+          "raw": "2026-10-06 14:33:05,826 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=2 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=2873.453 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16504,
+          "raw": "2026-10-06 14:33:06,153 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=0 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 16506,
+          "raw": "2026-10-06 14:33:06,346 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=deferred reason=precheck_distance market=2.66 stop=3.0383 pct=12.4510 attempts=1/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 16507,
+          "raw": "2026-10-06 14:33:06,348 INFO [oms-risk] [OMS-NFQ1] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 attempt=schwab_1m_v2-XHG-open-b2f0c1497c93 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=2102.883 cache_source=ask cache_timestamp=2026-10-06T14:33:04.244173+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 16508,
+          "raw": "2026-10-06 14:33:06,466 INFO [oms-risk] [OMS-RPG1] token=be2348c0-acfd-56b7-84eb-90cce3c42f73 phase=price_wait reason=replacement_refused reads=0 account=live:orb symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16509,
+          "raw": "2026-10-06 14:33:06,967 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=3 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=4012.466 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16510,
+          "raw": "2026-10-06 14:33:07,450 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=1 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 16512,
+          "raw": "2026-10-06 14:33:07,570 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=deferred reason=precheck_distance market=2.66 stop=3.0383 pct=12.4510 attempts=2/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 16513,
+          "raw": "2026-10-06 14:33:07,570 INFO [oms-risk] [OMS-NFQ1] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 attempt=schwab_1m_v2-XHG-open-f51de37a5a39 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=289.917 cache_source=ask cache_timestamp=2026-10-06T14:33:07.280645+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 16514,
+          "raw": "2026-10-06 14:33:07,624 INFO [oms-risk] [OMS-RPG1] token=be2348c0-acfd-56b7-84eb-90cce3c42f73 phase=price_wait reason=replacement_refused reads=0 account=live:orb symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16515,
+          "raw": "2026-10-06 14:33:08,128 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=4 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=5169.235 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16516,
+          "raw": "2026-10-06 14:33:08,636 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=2 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 16518,
+          "raw": "2026-10-06 14:33:08,736 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=forgotten reason=attempt_cap_reached attempts=3 — polarity: forgotten means this slot is no longer eligible for a deferred resubmit"
+        },
+        {
+          "line": 16519,
+          "raw": "2026-10-06 14:33:08,737 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=deferred reason=precheck_distance market=2.67 stop=3.0383 pct=12.1219 attempts=3/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 16520,
+          "raw": "2026-10-06 14:33:08,737 INFO [oms-risk] [OMS-NFQ1] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 attempt=schwab_1m_v2-XHG-open-f54003563f78 decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=1026.757 cache_source=ask cache_timestamp=2026-10-06T14:33:07.710466+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        },
+        {
+          "line": 16521,
+          "raw": "2026-10-06 14:33:08,822 INFO [oms-risk] [OMS-RPG1] token=be2348c0-acfd-56b7-84eb-90cce3c42f73 phase=refused reason=replacement_refused reads=0 account=live:orb symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=-1 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16522,
+          "raw": "2026-10-06 14:33:09,217 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=5 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=6266.205 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16523,
+          "raw": "2026-10-06 14:33:09,660 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=5 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=6266.205 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16524,
+          "raw": "2026-10-06 14:33:11,134 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=6 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=8161.816 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16525,
+          "raw": "2026-10-06 14:33:12,117 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=7 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=9150.431 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16526,
+          "raw": "2026-10-06 14:33:13,176 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=8 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=10218.895 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16532,
+          "raw": "2026-10-06 14:33:15,281 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=9 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=12308.867 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16533,
+          "raw": "2026-10-06 14:33:15,345 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=9 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=12308.867 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16534,
+          "raw": "2026-10-06 14:33:16,495 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=10 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=13540.361 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16535,
+          "raw": "2026-10-06 14:33:17,569 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=11 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=14614.81 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16536,
+          "raw": "2026-10-06 14:33:18,679 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=12 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=15720.709 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16537,
+          "raw": "2026-10-06 14:33:19,719 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=13 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=16736.776 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16538,
+          "raw": "2026-10-06 14:33:21,090 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=14 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=18134.623 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16539,
+          "raw": "2026-10-06 14:33:21,933 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=15 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=18984.45 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16540,
+          "raw": "2026-10-06 14:33:22,988 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=16 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=20029.001 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16541,
+          "raw": "2026-10-06 14:33:24,052 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=17 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=21097.721 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16542,
+          "raw": "2026-10-06 14:33:25,203 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=18 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=22234.278 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16543,
+          "raw": "2026-10-06 14:33:26,183 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=19 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=23221.121 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16544,
+          "raw": "2026-10-06 14:33:27,244 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=20 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=24288.123 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16545,
+          "raw": "2026-10-06 14:33:28,451 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=21 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=25487.709 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16550,
+          "raw": "2026-10-06 14:33:30,292 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=22 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=27335.868 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16551,
+          "raw": "2026-10-06 14:33:30,327 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=22 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=27335.868 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16552,
+          "raw": "2026-10-06 14:33:31,476 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=23 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=28514.779 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16553,
+          "raw": "2026-10-06 14:33:32,498 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=24 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=29528.361 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16554,
+          "raw": "2026-10-06 14:33:33,806 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=25 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=30837.36 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16555,
+          "raw": "2026-10-06 14:33:34,809 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=26 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=31837.249 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16556,
+          "raw": "2026-10-06 14:33:36,571 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=27 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=33583.636 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16557,
+          "raw": "2026-10-06 14:33:37,093 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=28 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=34130.682 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16558,
+          "raw": "2026-10-06 14:33:38,130 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=29 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=35165.913 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16559,
+          "raw": "2026-10-06 14:33:39,309 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=waiting reason=terminal_rejection_explicit_zero reads=30 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=36355.587 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16560,
+          "raw": "2026-10-06 14:33:39,952 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=held_unknown reason=readback_budget_exhausted reads=30 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=36355.587 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16561,
+          "raw": "2026-10-06 14:33:40,614 INFO [oms-risk] [OMS-RPG1] token=7b67fe5c-2622-5820-9760-5d500cf2dce4 phase=refused reason=old_rejected_explicit_zero reads=30 account=live:schwab_1m_v2 symbol=XHG segment=1791297123018 slot=first cancel_to_read_ms=36355.587 cancel_to_submit_ms=-1 cancel_to_report_ms=-1 timing=local_observation"
+        },
+        {
+          "line": 16573,
+          "raw": "2026-10-06 14:34:03,948 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 decision=deferred reason=precheck_distance market=2.64 stop=2.9551 pct=10.6629 attempts=0/3 rearm_seconds=0.0 - polarity: deferred before submit means Webull received no order"
+        },
+        {
+          "line": 16574,
+          "raw": "2026-10-06 14:34:03,949 INFO [oms-risk] [OMS-NFQ1] sym=XHG segment=1791297123018 slot_id=783062c4-48c9-5e1a-a802-3aee5a9100c9 attempt=schwab_1m_v2-XHG-open-00fd1abcea8f decision=held reason=PRICE_AGGRESSIVE_precheck cache_age_ms=202.687 cache_source=ask cache_timestamp=2026-10-06T14:34:03.746623+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=ask"
+        }
+      ]
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "cutoff_utc": "2026-10-06T16:57:04.924022+00:00",
+      "source_prefix_bytes": 12455540,
+      "source_prefix_sha256": "fd5bdfaec850fea6e625ff2d23858e7ef90ea1274d9d04733c7df21f1e3a1cdb",
+      "rows": [
+        {
+          "line": 28529,
+          "raw": "2026-10-06 13:54:02,723 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=2.6917 trigger=2.7052 band_pct=0.50 offset_pct=0.50 — cancelling the mirror"
+        },
+        {
+          "line": 28593,
+          "raw": "2026-10-06 13:55:03,115 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-PLACE] AIXI slot=first line=2.6216 trigger=2.6347 limit=2.6479 band_pct=0.50 offset_pct=0.50"
+        },
+        {
+          "line": 28597,
+          "raw": "2026-10-06 13:55:03,198 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=2.6216 trigger=2.6347 limit=2.6479 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)"
+        },
+        {
+          "line": 28648,
+          "raw": "2026-10-06 13:56:03,103 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-WEBULL-RESTING-CANCEL] AIXI reason=reprice line=2.6216 trigger=2.6347 band_pct=0.50 offset_pct=0.50 — cancelling the mirror"
+        },
+        {
+          "line": 28703,
+          "raw": "2026-10-06 13:57:02,876 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-PLACE] AIXI slot=first line=2.5855 trigger=2.5984 limit=2.6114 band_pct=0.50 offset_pct=0.50"
+        },
+        {
+          "line": 28707,
+          "raw": "2026-10-06 13:57:02,885 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=2.5855 trigger=2.5984 limit=2.6114 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)"
+        },
+        {
+          "line": 33031,
+          "raw": "2026-10-06 14:32:03,036 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-PLACE] XHG slot=first line=3.0466 trigger=3.0618 limit=3.0771 band_pct=0.50 offset_pct=0.50"
+        },
+        {
+          "line": 33035,
+          "raw": "2026-10-06 14:32:03,055 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-WEBULL-RESTING-PLACE] XHG slot=first line=3.0466 trigger=3.0618 limit=3.0771 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)"
+        },
+        {
+          "line": 33118,
+          "raw": "2026-10-06 14:33:02,640 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-CANCEL] XHG slot=first reason=reprice resting_below_floor_bars=0 line=3.0466 trigger=3.0618 band_pct=0.50 offset_pct=0.50"
+        },
+        {
+          "line": 33119,
+          "raw": "2026-10-06 14:33:02,640 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-WEBULL-RESTING-CANCEL] XHG reason=reprice line=3.0466 trigger=3.0618 band_pct=0.50 offset_pct=0.50 — cancelling the mirror"
+        },
+        {
+          "line": 33201,
+          "raw": "2026-10-06 14:34:02,314 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-PLACE] XHG slot=first line=2.9404 trigger=2.9551 limit=2.9698 band_pct=0.50 offset_pct=0.50"
+        },
+        {
+          "line": 33205,
+          "raw": "2026-10-06 14:34:02,325 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-WEBULL-RESTING-PLACE] XHG slot=first line=2.9404 trigger=2.9551 limit=2.9698 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)"
+        }
+      ]
+    }
+  ]
+}

@@ -57,6 +57,13 @@
       "ruling": "Operator BUGS v3 FINAL 2026-10-02: on with the NFQ1 deploy, separate from tonight's b8 install."
     },
     {
+      "name": "oms_v2_webull_mirror_retained_hold_enabled",
+      "expected": false,
+      "owning_service": "oms",
+      "reason": "MIRRORHOLD1 retained-owner source is reviewed separately; no activation is approved.",
+      "ruling": "2026-10-06 MIRRORHOLD1 source-build release: default OFF; pin, merge, install and activation remain separate."
+    },
+    {
       "name": "tradingview_alerts_enabled",
       "expected": true,
       "owning_service": "control",

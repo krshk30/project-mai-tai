@@ -100,7 +100,7 @@ def test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on()
     assert {key: flags[key] for key in TONIGHT} == {key: True for key in TONIGHT}
     numeric = json.loads((Path(__file__).parents[2] / "ops/health/expected_numeric.json").read_text())
     entries = catalog["flags"] + numeric["settings"]
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 151
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 152
     assert flags["strategy_schwab_1m_v2_line_chart_restoration_enabled"] is True
 
 
