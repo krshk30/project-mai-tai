@@ -6162,3 +6162,17 @@ will be fresh at admission, not carried from today's morning evidence. Record
 real bar-hole minutes for16-20 restarts and both live/rotated log source paths.
 Existing20:05 Codex wake-up is being moved to after16 readiness; this is not a
 claim that a box unit/timer is installed. No production action this session.
+
+### 2026-10-06 08:31 ET - After-close readiness wake-up active (codex-2)
+
+Automation tool updated the existing oct-6-evening-preopen-timer-build-and-install
+to ACTIVE after-close readiness; persisted schedule checks every15min16:00-23:45
+today, not a fixed deployment time and not a box timer. Applicationa7fed34d /
+tree7ff6dcce, plan/mechanicsb53494b2; expires tonight. It explicitly requires
+full runner/dynamic-gate assembly, local tests, committed manifest and on-box
+checksums before any write. It cannot call the old Oct5 migration/three-service
+runner or turn a incomplete release into a claimed schedule. All fresh gates,
+only OMS/v2 changes, ROUND_UP=true, single final repin/dailytimer and strict
+abort/no-recovery discipline retained. Position waits for its actual close,
+not an assumed timer slot. Corrected plan merge time to the authoritative
+GitHub mergedAt12:26:03Z (08:26ET). No production write performed.
