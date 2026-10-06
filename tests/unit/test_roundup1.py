@@ -259,11 +259,15 @@ def test_recorded_sckt_reprice_authorization_recomputes_ceiling_and_matches_oms(
 @pytest.mark.asyncio
 async def test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire(monkeypatch):
     from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+    from project_mai_tai.oms import service as oms
     from tests.unit.test_oms_webull_mirror_deferred_resubmit import (
         _integrated_service, _session_factory,
     )
     factory = _session_factory()
     svc, adapter = _integrated_service(factory, enabled=True, nfq_enabled=True)
+    # Keep NFQ, event and quote clocks on SCKT's recorded in-window timestamp.
+    recorded_at = datetime.fromisoformat(SCKT["submitted_at"])
+    monkeypatch.setattr(oms, "utcnow", lambda: recorded_at)
     monkeypatch.setattr(svc, "_market_is_fillable", lambda now=None: True)
     svc.settings = svc.settings.model_copy(update={**ACTIVE_FLAGS, FLAG: True,
         "strategy_schwab_1m_v2_webull_entry_notional_usd": Decimal("300")})
@@ -273,12 +277,14 @@ async def test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_si
     for key in ("rpg_handoff_token", "rpg_event_id", "nfq_retry_token", "nfq_hold_id"):
         md.pop(key, None)
     md.update(webull_shape_market_price="0.97", webull_shape_market_source="ask",
-        webull_shape_market_at_utc=datetime.now(UTC).isoformat(), webull_shape_market_max_age_ms="10000")
-    event = TradeIntentEvent(source_service="recorded-sckt-pa1-replay", payload=TradeIntentPayload(
+        webull_shape_market_at_utc=recorded_at.isoformat(), webull_shape_market_max_age_ms="10000")
+    event = TradeIntentEvent(source_service="recorded-sckt-pa1-replay", produced_at=recorded_at, payload=TradeIntentPayload(
         strategy_code="schwab_1m_v2", broker_account_name="live:orb", symbol="SCKT",
         side="buy", intent_type="open", quantity=Decimal("280"), reason="ATR Flip", metadata=md))
+    assert svc._nfq_now() == recorded_at
+    assert svc._nfq_window_open(event)
     assert svc._defer_webull_resting_mirror_before_submit(event)
-    svc._latest_quotes_by_symbol["SCKT"] = {"ask": Decimal("1.0"), "received_at": datetime.now(UTC)}
+    svc._latest_quotes_by_symbol["SCKT"] = {"ask": Decimal("1.0"), "received_at": recorded_at}
     await svc._evaluate_webull_mirror_deferred_resubmits("SCKT")
     retry, = [TradeIntentEvent.model_validate(data) for _, data in svc.redis.entries]
     await svc.process_trade_intent(retry)
