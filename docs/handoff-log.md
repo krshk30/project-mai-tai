@@ -6559,3 +6559,15 @@ no failure is omitted. Raw/hashes are now in #1099's body. Final focused968PASS,
 new43PASS, mutations19assertionRED/20 with dominated origin guard disclosed.
 Both Validate runs are still running; draft retained, not ready/pinned/installed.
 No source/test edits during this frozen final run. Tonight's set unchanged.
+
+### 2026-10-06 11:55 ET - codex-2 C51 T43 ready with both CI receipts
+
+#1099 READY at96b5b1a70bee51a8b4b0dbb6ae8ad0aefc51c144, both Validate SUCCESS,
+each exact headSha verified. Linux6506UNIT passed +86golden/1expected xfail;
+migration, markers and Ruff passed. Raw paths/hashes in C51 and PR body. No
+independent pin yet; no merge/install. The final source head is unchanged from
+C49/C50. Local47failed names match main, no new failures; full quantities and
+the19RED/20 mutation disclosure remain in the PR. Target15:00ET met early.
+ORBPURPLE1 #1098 is also ready, ed7c2c81. KEEPREST1 and CLEARWAIT1 assessment
+disagreements remain genuine stops, no build/PR claimed. Tonight's three-item
+approved set remains unchanged until a separate pin and reviewed plan binding.
