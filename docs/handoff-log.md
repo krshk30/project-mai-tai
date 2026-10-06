@@ -5984,3 +5984,16 @@ does not roll automatically. Requested explicit verified03:50repin ownership
 versus Claude manual pre06:20repin; no automatic live identity adoption/bypass.
 First realWed06:20run remains rehearsal, hand06:22retained untilgreen.
 No application, flag, gatepolicy, process, database or box file action.
+
+## 2026-10-06 07:11 ET - Evening preopen follow-up active, not a box job
+
+Codex automation oct-6-evening-preopen-timer-build-and-install ACTIVE at20:05ET
+tonightonly, bound to design8361b095. This is a threadwake-up, not an installed
+production unit/timer. It defers all build/tests/staging/boxwrites to after20:00,
+requires fake-input controls and unit/calendar validation, then enables only
+the recurring preopen timer with actual Wed06:20NEXT. No real futuregate tonight,
+no tradingservice action, no pinadoption or waiver. Explicit paper/date repin
+disposition still needed. Installation receipt will name actual systemd units
+and hashes, and read-only Wednesday first-run verification follows success.
+No frozen/promoted handoff edit is authorized by that later wake-up.09:42guard
+check unchanged. #1095 remains DRAFT, no review request while C8/C12 unresolved.
