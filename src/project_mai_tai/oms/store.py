@@ -559,7 +559,7 @@ class OmsStore:
             recorded_metadata.get("nfq_price_feedback_owned") == "true"
             and recorded_metadata.get("fanout_source") == "rth_resting_mirror"
             and recorded_metadata.get("fanout_leg") == "webull"
-            and report.event_type in {"rejected", "cancelled", "canceled", "expired"}
+            and report.event_type in {"rejected", "aborted", "cancelled", "canceled", "expired"}
         ):
             # Keep the audit row, but let NFQ classify terminal versus still owned by PA1.
             # A generic rejection first would release v2 before NFQ can re-hold or clear

@@ -1688,7 +1688,7 @@ class StrategyBotRuntime:
         reason: str | None = None,
     ) -> None:
         self._roll_day_if_needed()
-        if status not in {"rejected", "cancelled"}:
+        if status not in {"rejected", "aborted", "cancelled"}:
             return
 
         normalized_reason = (reason or "").strip().lower()
@@ -10386,7 +10386,7 @@ class StrategyEngineService:
                     TradeIntent.strategy_id.in_(list(strategy_ids)),
                     TradeIntent.broker_account_id.in_(list(account_ids)),
                     TradeIntent.symbol.in_(list(position_symbols)),
-                    not_(TradeIntent.status.in_(("rejected", "cancelled"))),
+                    not_(TradeIntent.status.in_(("rejected", "aborted", "cancelled"))),
                 )
                 .order_by(TradeIntent.created_at.asc())
             ).all()

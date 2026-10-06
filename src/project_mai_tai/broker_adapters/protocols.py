@@ -27,7 +27,7 @@ class OrderRequest:
 
 @dataclass(frozen=True)
 class ExecutionReport:
-    event_type: Literal["accepted", "rejected", "filled", "partially_filled", "cancelled"]
+    event_type: Literal["accepted", "rejected", "aborted", "filled", "partially_filled", "cancelled"]
     client_order_id: str
     broker_order_id: str | None = None
     broker_fill_id: str | None = None

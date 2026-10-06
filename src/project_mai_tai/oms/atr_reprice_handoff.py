@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
-from decimal import Decimal
+from datetime import UTC
+from decimal import Decimal, InvalidOperation
 from typing import Awaitable, Callable, Literal
 from uuid import UUID, uuid5, NAMESPACE_URL
 
@@ -18,7 +19,9 @@ from sqlalchemy.orm import sessionmaker
 
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback, scoped_request
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
-from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill
+from project_mai_tai.db.models import (
+    BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, Strategy, TradeIntent,
+)
 from project_mai_tai.strategy_core.v2_entry_sizing import proven_resting_pair
 
 
@@ -31,6 +34,55 @@ MAX_READS = 30
 def old_buy_proven_clear(job: dict) -> bool:
     return bool((job.get("local_no_wire") or job.get("cleared_at") is not None)
                 and not job.get("no_rebuy"))
+
+
+def local_rpg_abort_proof(session, order: BrokerOrder, *, job: dict | None = None):
+    """Read-only exact no-wire evidence, shared by dispatch and position readers."""
+    md = order.payload or {}
+    try:
+        token = UUID(md.get("rpg_handoff_token", ""))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if job is None:
+        row = session.get(DashboardSnapshot, token)
+        if row is None or row.snapshot_type != SNAPSHOT_TYPE:
+            return None
+        job = row.payload
+    replacement = job.get("replacement", {})
+    try:
+        quantity = Decimal(replacement.get("quantity", "0"))
+        if not quantity.is_finite() or quantity <= 0:
+            return None
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    account = session.get(BrokerAccount, order.broker_account_id)
+    strategy = session.get(Strategy, order.strategy_id)
+    intent = session.get(TradeIntent, order.intent_id)
+    audit = session.scalar(select(BrokerOrderEvent).where(
+        BrokerOrderEvent.order_id == order.id,
+        BrokerOrderEvent.event_type == "aborted",
+        BrokerOrderEvent.event_source == "client",
+    ).order_by(BrokerOrderEvent.event_at.desc()).limit(1))
+    filled = session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1))
+    code = md.get("refusal_code")
+    if (order.status != "aborted" or order.broker_order_id or filled is not None
+            or not old_buy_proven_clear(job)
+            or account is None or account.name != replacement.get("broker_account_name")
+            or strategy is None or strategy.code != replacement.get("strategy_code")
+            or order.symbol != replacement.get("symbol") or order.side != "buy"
+            or order.quantity != quantity
+            or order.client_order_id != replacement.get("client_order_id")
+            or md.get("refusal_origin") != "client_abort" or not code
+            or md.get("rpg_handoff_token") != replacement.get("metadata", {}).get("rpg_handoff_token")
+            or any(md.get(key) != replacement.get("metadata", {}).get(key) for key in
+                   ("rpg_resting_generation", "fanout_segment_id", "cw_entry_slot"))
+            or intent is None or intent.status != "aborted"
+            or (intent.payload or {}).get("refusal_origin") != "client_abort"
+            or (intent.payload or {}).get("refusal_code") != code
+            or audit is None or (audit.payload or {}).get("reason") != code):
+        return None
+    at = audit.event_at.replace(tzinfo=UTC) if audit.event_at.tzinfo is None else audit.event_at
+    return code, at.timestamp()
 
 
 def _request_dict(request: OrderRequest) -> dict:
@@ -135,6 +187,14 @@ class HandoffJournal:
             filled = session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1))
             if filled is not None or order.status in {"filled", "partially_filled"}:
                 updates = dict(phase="filled", replacement_filled=True, reason="replacement_fill_accounted")
+            elif order.status == "aborted":
+                if (order.payload or {}).get("rpg_handoff_token") != str(token):
+                    return job
+                proof = local_rpg_abort_proof(session, order, job=job)
+                if proof is None:
+                    return job
+                updates = dict(phase="refused", reason="replacement_refused",
+                               replacement_reasons=[proof[0]], completed_at=proof[1])
             elif order.status in {"cancelled", "canceled", "expired", "rejected"}:
                 updates = dict(phase="refused", reason="replacement_terminal_accounted")
             elif order.broker_order_id and order.status in {"accepted", "working", "open"}:
@@ -320,7 +380,10 @@ class AtrRepriceHandoff:
         attributable = [report for report in reports if report.client_order_id == replacement.client_order_id]
         accepted = any(report.event_type in {"accepted", "filled", "partially_filled"}
                        and report.origin == "broker" for report in attributable)
-        rejected = bool(attributable) and all(report.event_type == "rejected" for report in attributable)
+        rejected = bool(attributable) and all(
+            report.event_type == "rejected" or (report.event_type == "aborted" and report.origin == "client")
+            for report in attributable
+        )
         deferred = rejected and any(report.metadata.get("rpg_price_wait_owner") == "true"
                                     for report in attributable)
         # Current-gate feedback can advance the revision during the awaited submit.

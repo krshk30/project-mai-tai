@@ -132,6 +132,8 @@ def broker_outcome(event_type: str, event_source: str) -> str:
         return "cancelled"
     if event == "expired":
         return "expired"
+    if event == "aborted":
+        return "rejected_client_abort" if source == "client" else "could_not_tell"
     if event == "rejected":
         if source == "client":
             return "rejected_client_abort"
