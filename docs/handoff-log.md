@@ -6381,3 +6381,20 @@ Full unit is RUNNING; ready and CI claims withheld. Prior4b pushValidategreen,
 PRValidateexit139 with SQLite/SQLAlchemy worker stack, not an assertion failure
 and not proved infrastructure. Final exact head still needs bothValidategreen.
 No production write/restart/flag/merge; scope is only reviewer blockers.
+
+### 2026-10-06 10:21 ET - codex-2 C35: final delivery65010dff, CI pending
+
+Pushed #1097 exact head65010dffffaa28c5f6ae22df0c48cf9358a6bdbf.
+Runtime diff vs4b803f08 EMPTY. Reviewer runner ed871725 bytes unchanged;
+141 boolean+8 numeric=149 catalog, restorationtrue at approved install,
+runtime defaultfalse. Composed41, realfactory12, grouped69, focused258 PASS.
+Both123-case population runs have0 mismatches/errors/incomplete buys or
+permissions,+10 98 MATCH0 HELD25 n/a, chart83 same15 late-input differences.
+Final full unit6416 PASS47 FAIL vs same-base6314 PASS47 FAIL; namesdelta0/0.
+Raw head log SHA2565e8e678a22ed04228fe4b643bd4eb1cbe7aa58baa1ce985c3289e12d24744a73;
+baseline SHA256a834f282ba73b9468be6a2af9b1180ba592b39f7c77f306ce7eb84fff7ad9124.
+Full failed names committed FINAL_UNIT_RECEIPT_2026-10-06.json, PRbodyupdated.
+BothValidate running on delivery; PR staysdraft until green. Independent pin
+expectedFAIL until reviewer source coverage; records-only d5788159 independently
+covers claude-1's b3e90344 and91b02e5e runner/evidence commits, no self-pin.
+No merge/install/production action. Current task does not build ORB-purple.
