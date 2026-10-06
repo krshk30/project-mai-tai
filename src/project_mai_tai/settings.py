@@ -21,6 +21,8 @@ def _legacy_strategy_alias_field(default: object, primary_name: str, legacy_name
 
 
 class Settings(BaseSettings):
+    # WEBULL429: conservative list-primary query policy; OFF restores legacy reads.
+    webull_list_primary_reads_enabled: bool = True
     model_config = SettingsConfigDict(
         env_prefix="MAI_TAI_",
         env_file=".env",

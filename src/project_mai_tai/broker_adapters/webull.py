@@ -38,6 +38,9 @@ from project_mai_tai.settings import Settings
 from project_mai_tai.broker_adapters.atr_buy_readback import (
     AtrBuyReadback, scoped_request, unknown, webull_buy_readback,
 )
+from project_mai_tai.broker_adapters.webull_order_reads import (
+    QueryBudgetUnavailable, shared_budget, shared_reader, terminal_version,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -138,6 +141,7 @@ class WebullBrokerAdapter:
         *,
         accounts_by_name: dict[str, WebullAccountConfig] | None = None,
         client: object | None = None,
+        terminal_proof_store: object | None = None,
     ) -> None:
         self.settings = settings
         self.region_id = (settings.webull_region_id or "us").strip() or "us"
@@ -185,6 +189,12 @@ class WebullBrokerAdapter:
         self._today_orders_cache_secs = _DEFAULT_TODAY_ORDERS_CACHE_SECS
         self._today_orders_lock = threading.Lock()
         self._today_orders_cache: dict[str, tuple[float, dict[str, dict[str, object]]]] = {}
+        self._list_primary_enabled = settings.webull_list_primary_reads_enabled
+        self._query_budget = shared_budget(self.host, self.app_key)
+        self._today_reader = shared_reader(self.host, self.app_key, settings.oms_broker_sync_interval_seconds)
+        self._terminal_proof_store = terminal_proof_store
+        self._terminal_read_lock = self._query_budget.terminal_lock
+        self._terminal_inflight = self._query_budget.terminal_inflight
         self._accepted_cancel_lock = threading.Lock()
         self._accepted_cancel_at: dict[tuple[str, str], float] = {}
         # Combo brackets already re-priced off their master fill (base coids). In-memory only: a
@@ -478,21 +488,26 @@ class WebullBrokerAdapter:
         # exactly ONE leg can fill, so RETURN ON THE FIRST HIT rather than always querying both --
         # that halves the calls on the common path. Found by live-probing 4 symbols back-to-back:
         # the 1st returned correctly and the next 3 came back 417/TOO_MANY_REQUESTS.
+        unknown_child = False
         for suffix in ("T", "S"):                       # STOP_PROFIT first (the common winner)
             od = OrderDetailRequest()
             od.set_account_id(account.account_id)
             client_order_id = self._combo_leg_coid(base, suffix)
             od.set_client_order_id(client_order_id)
             try:
-                _, body = self._order_detail_body_with_fallback(account, od, client_order_id)
+                _, body = self._ordinary_order_body(account, od, client_order_id, symbol=symbol, side="sell")
             except Exception as exc:  # noqa: BLE001
                 if self._is_order_not_found(exc):
                     continue                            # leg never existed -> not an error
                 raise
             if not isinstance(body, dict):
+                unknown_child = getattr(self, "_list_primary_enabled", False)
                 continue
             item = (body.get("items") or [{}])[0] if isinstance(body.get("items"), list) else {}
-            if str(item.get("order_status") or "").upper() != "FILLED":
+            if getattr(self, "_list_primary_enabled", False) and item.get("symbol") and str(item["symbol"]).upper() != symbol.upper():
+                unknown_child = True
+                continue
+            if self._map_status(item) != "filled":
                 continue                                # the cancelled sibling: expected, skip
             qty = self._decimal_or_none(item, "filled_qty", "filledQty")
             price = self._decimal_or_none(
@@ -516,7 +531,12 @@ class WebullBrokerAdapter:
                 "price": price,
                 "filled_at": filled_at,
                 "broker_order_id": broker_order_id,
+                **({"webull_read_evidence": body.get("_webull_list_evidence"),
+                    "webull_terminal_proof": body.get("_webull_terminal_proof")}
+                   if getattr(self, "_list_primary_enabled", False) else {}),
             }
+        if unknown_child:
+            raise ValueError("Webull OCO child read is UNKNOWN")
         return None
 
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
@@ -821,6 +841,12 @@ class WebullBrokerAdapter:
         account-wide response is evidence only after an exact match on OUR client_order_id;
         account positions are never consulted and cannot authorize an order, row, or sell.
         """
+        if getattr(self, "_list_primary_enabled", False):
+            return self._today_reader.read(
+                account.account_id, client_order_id,
+                lambda cursor: self._today_page(account, cursor),
+                fresh_seconds=self._today_orders_cache_secs,
+            )
         cache_secs = float(
             getattr(self, "_today_orders_cache_secs", _DEFAULT_TODAY_ORDERS_CACHE_SECS)
         )
@@ -880,6 +906,121 @@ class WebullBrokerAdapter:
             cache[cache_key] = (time.monotonic(), rows_by_client_id)
             return rows_by_client_id.get(client_order_id)
 
+    def _today_page(self, account: WebullAccountConfig, cursor: str) -> tuple[int, object]:
+        from webull.trade.request.get_today_orders_request import TodayOrdersListRequest
+        request = TodayOrdersListRequest()
+        request.set_account_id(account.account_id)
+        request.set_page_size(100)
+        if cursor:
+            request.set_last_client_order_id(cursor)
+        response = self._get_client().get_response(request)
+        return self._response_status(response), self._body(response)
+
+    def _budgeted_detail(self, account, request, client_id, *, strict=False):
+        if getattr(self, "_list_primary_enabled", False):
+            self._query_budget.claim("detail", f"{account.account_id}:{client_id}", strict=strict)
+        return self._get_client().get_response(request)
+
+    def _validated_list_execution(self, body, account, client_id, *, exact_list=True, symbol="", side=""):
+        if not isinstance(body, dict) or body.get("error_code"):
+            return None
+        coid = self._first_str(body, "client_order_id", "clientOrderId")
+        if (exact_list and coid != client_id) or (coid and coid != client_id):
+            return None
+        items = body.get("items")
+        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+            return None
+        item = items[0]
+        if ((symbol and item.get("symbol") and str(item["symbol"]).upper() != symbol.upper())
+                or (side and item.get("side") and str(item["side"]).lower() != side.lower())):
+            return None
+        for raw in (body, item):
+            for key in ("account_id", "accountId"):
+                if raw.get(key) is not None and str(raw[key]) != account.account_id:
+                    return None
+            for key in ("client_order_id", "clientOrderId"):
+                if raw.get(key) is not None and str(raw[key]) != client_id:
+                    return None
+        status = str(item.get("status") or item.get("order_status") or item.get("orderStatus") or "").upper()
+        if len({self._map_status({"status": str(item[k]).upper()}) for k in
+                ("status", "order_status", "orderStatus") if item.get(k)}) > 1:
+            return None
+        known = _FILLED_STATUSES | _PARTIAL_STATUSES | _CANCELLED_STATUSES | _REJECTED_STATUSES | _ACCEPTED_STATUSES
+        if status not in known:
+            return None
+        qty = self._decimal_or_none(item, "filled_qty", "filledQty", "filled_quantity", "filledQuantity")
+        if qty is None or not qty.is_finite() or qty < 0:
+            return None
+        broker_id = self._first_str(body, "order_id", "orderId")
+        if any(str(raw[k]) != broker_id for raw in (body, item) for k in
+               ("order_id", "orderId") if raw.get(k)):
+            return None
+        price = self._decimal_or_none(item, "filled_price", "filledPrice", "avg_fill_price", "avgFillPrice", "avg_price")
+        filled_time = self._parse_broker_time(item.get("last_filled_time") or item.get("lastFilledTime"))
+        if qty > 0 or status in _FILLED_STATUSES | _PARTIAL_STATUSES:
+            if qty <= 0 or price is None or not price.is_finite() or price <= 0 or not broker_id or filled_time is None:
+                return None
+        if status in _FILLED_STATUSES | _CANCELLED_STATUSES | _REJECTED_STATUSES and not broker_id:
+            return None
+        return (self._map_status(item), broker_id, str(qty.normalize()), str(price.normalize()) if qty > 0 else None,
+                filled_time.isoformat() if qty > 0 else None)
+
+    def _ordinary_order_body(self, account, detail_request, client_id, *, symbol="", side=""):
+        if not getattr(self, "_list_primary_enabled", False):
+            return self._order_detail_body_with_fallback(account, detail_request, client_id)
+        body = self._today_order_detail_blocking(account, client_id)
+        execution = self._validated_list_execution(body, account, client_id, symbol=symbol, side=side)
+        if execution is None:
+            return 200, None  # Missing/malformed/stale is UNKNOWN, never absence proof.
+        if execution[0] not in {"filled", "cancelled", "rejected"}:
+            return 200, body
+        version = terminal_version(account.account_id, client_id, {"execution": execution})
+        # Serialize an optional confirmation, not a forever-attempted flag. Only a
+        # committed proof suppresses another GET after restart or failed attribution.
+        key = (account.account_id, client_id, version)
+        with self._terminal_read_lock:
+            if key in self._terminal_inflight:
+                return 200, body
+            self._terminal_inflight.add(key)
+        try:
+            store = self._terminal_proof_store
+            proof = store.load(account.account_id, client_id, version) if store else None
+            if proof is not None:
+                if (proof.get("source") != "/trade/order/detail"
+                        or not self._parse_broker_time(proof.get("acquired_at"))
+                        or self._validated_list_execution(proof.get("body"), account, client_id, exact_list=False, symbol=symbol, side=side) != execution):
+                    return 200, None
+            else:
+                try:
+                    response = self._budgeted_detail(account, detail_request, client_id)
+                except Exception as exc:
+                    if not isinstance(exc, QueryBudgetUnavailable) and not self._is_rate_limited(exc):
+                        raise
+                    return self._fresh_list_execution(body)  # Failure is not completed proof.
+                confirmed = self._body(response)
+                if self._response_status(response) == 429:
+                    return self._fresh_list_execution(body)
+                if self._response_status(response) != 200 or self._validated_list_execution(
+                        confirmed, account, client_id, exact_list=False, symbol=symbol, side=side) != execution:
+                    return 200, None
+                proof = {"account_id": account.account_id, "client_order_id": client_id,
+                         "version": version, "source": "/trade/order/detail",
+                         "acquired_at": datetime.now(UTC).isoformat(), "execution": list(execution),
+                         "body": confirmed}
+                if store:
+                    store.save(account.account_id, client_id, version, proof)
+            body["_webull_terminal_proof"] = proof
+        finally:
+            with self._terminal_read_lock:
+                self._terminal_inflight.discard(key)
+        return 200, body
+
+    def _fresh_list_execution(self, body):
+        acquired = self._parse_broker_time(body["_webull_list_evidence"]["acquired_at"])
+        if acquired and 0 <= (datetime.now(UTC) - acquired).total_seconds() < self._today_orders_cache_secs:
+            return 200, body
+        return 200, None
+
     def _order_detail_body_with_fallback(
         self,
         account: WebullAccountConfig,
@@ -887,9 +1028,11 @@ class WebullBrokerAdapter:
         client_order_id: str,
     ) -> tuple[int, object]:
         try:
-            response = self._get_client().get_response(detail_request)
+            response = self._budgeted_detail(account, detail_request, client_order_id, strict=True)
             return self._response_status(response), self._body(response)
         except Exception as exc:
+            if getattr(self, "_list_primary_enabled", False):
+                raise  # Strict fresh confirmation never consumes cached ordinary list proof.
             if not self._is_rate_limited(exc):
                 raise
             alternate = self._today_order_detail_blocking(account, client_order_id)
@@ -933,7 +1076,9 @@ class WebullBrokerAdapter:
             od.set_account_id(account.account_id)
             od.set_client_order_id(coid)
             try:
-                _, body = self._order_detail_body_with_fallback(account, od, coid)
+                _, body = self._ordinary_order_body(account, od, coid, symbol=request.symbol, side=request.side)
+                if body is None and getattr(self, "_list_primary_enabled", False):
+                    continue
                 break
             except Exception as exc:  # noqa: BLE001 - only ORDER_NOT_FOUND is retryable here
                 if index == len(lookups) - 1 or not self._is_order_not_found(exc):
@@ -946,12 +1091,22 @@ class WebullBrokerAdapter:
         # fill live in items[0] as order_status / filled_qty / filled_price.
         items = body.get("items") if isinstance(body.get("items"), list) else []
         item = items[0] if items and isinstance(items[0], dict) else {}
+        if getattr(self, "_list_primary_enabled", False) and not item:
+            return None
+        if getattr(self, "_list_primary_enabled", False) and item.get("symbol") and str(item["symbol"]).upper() != request.symbol.upper():
+            return None
         broker_order_id = self._first_str(body, "order_id", "orderId")
         event_type = self._map_status(item)
         filled_quantity = (
             self._decimal_or_none(item, "filled_qty", "filledQty", "filled_quantity", "filledQuantity")
             or Decimal("0")
         )
+        terminal_partial = (getattr(self, "_list_primary_enabled", False)
+                            and event_type in {"cancelled", "rejected"} and filled_quantity > 0)
+        if terminal_partial:
+            # Account cumulative executions before retiring the remaining ownership.
+            # Keep the order in the open/partial path; never drop an unrecorded fill.
+            event_type = "partially_filled"
         # filled_price = the CONFIRMED real fill-price field (was the naked-position bug:
         # a wrong field -> fill_price None -> OMS arms NO trailing stop).
         fill_price = self._decimal_or_none(
@@ -987,6 +1142,11 @@ class WebullBrokerAdapter:
                 logger.exception("Webull bracket realign raised for %s", request.symbol)
 
         metadata = dict(request.metadata)
+        if terminal_partial:
+            metadata["webull_terminal_with_partial_fill"] = str(item.get("order_status") or item.get("status") or "")
+        for key in ("_webull_list_evidence", "_webull_terminal_proof"):
+            if key in body:
+                metadata[key] = json.dumps(body[key], sort_keys=True)
         if item.get("last_filled_time"):
             metadata["webull_broker_filled_time"] = str(item.get("last_filled_time"))
         if item.get("place_time"):
@@ -1093,7 +1253,7 @@ class WebullBrokerAdapter:
         detail = OrderDetailRequest()
         detail.set_account_id(account.account_id)
         detail.set_client_order_id(client_order_id)
-        response = self._get_client().get_response(detail)
+        response = self._budgeted_detail(account, detail, client_order_id, strict=True)
         return self._response_status(response), self._body(response)
 
     async def _cancel_order(

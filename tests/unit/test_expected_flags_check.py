@@ -59,6 +59,9 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     by_name = {entry["name"]: entry for entry in entries}
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["expected"] is True
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["owning_service"] == "oms"
+    assert by_name["webull_list_primary_reads_enabled"]["expected"] is True
+    assert by_name["webull_list_primary_reads_enabled"]["owning_service"] == "oms"
+    assert Settings.model_fields["webull_list_primary_reads_enabled"].default is True
     for suffix in ("pm_print_ask_confirm", "pm_flip_wait", "pm_rest_reprice", "atr_reprice_handoff"):
         name = f"strategy_schwab_1m_v2_{suffix}_enabled"
         assert by_name[name]["expected"] is True

@@ -948,6 +948,13 @@
       "owning_service": "strategy",
       "reason": "Enabled in the owning running service for the approved live configuration.",
       "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "webull_list_primary_reads_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "WEBULL429 list-primary reads with conservative per-HTTP query budget and strict confirmation proof; OFF is rollback.",
+      "ruling": "2026-10-06 operator released LIST-TODAYPRIMARY read build; cancel-backoff withdrawn, no interval or cancel changes."
     }
   ]
 }
