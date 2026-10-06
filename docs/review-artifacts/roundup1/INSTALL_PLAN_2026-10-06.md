@@ -1,4 +1,4 @@
-# ROUNDUP1, LINE=CHART, ORBPURPLE1 And Daily Preopen - October 6 Window
+# October 6 Release - Six-Item Intent, Five Included, Display Pending
 
 **Application bound; literal release not yet staged.** APPROVED_SHA is
 `c21d8274fcd1d3129d61207a33dd7b002a7c9e8c`, tree
@@ -11,10 +11,18 @@ matched-head rebase merge. Five committed pin records independently cover all
 reviewer/Codex segments. Whole-tree equality is verified; production remains
 `7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf`, not this new main.
 
-## Four-Item Set - October 6 Merge Receipt
+## Current Disposition And Four-Item Merge Receipt
 
-Only ROUNDUP1, LINE=CHART Restoration, ORBPURPLE1 and daily preopen mechanics are
-in the current candidate. The eight PM switches remain ON; the independent
+Tonight's intended six items are ROUNDUP1, LINE=CHART Restoration, ORBPURPLE1,
+daily preopen mechanics, corrected RETRYOFF1 zero budget and #1100 ORB display.
+The first four bind the merged c21 application below; the fifth is the accepted
+env-only policy on that same source. #1100 is **NOT INCLUDED** until verified
+exact-head review/checks and merge, new application SHA/tree binding and a
+separately approved control-process activation decision. This is five included
+items plus one pending, not a six-item executable release. Parent owns the new
+read-only bracket Step0; this checkpoint does not adopt or replace that work.
+
+The eight PM switches remain ON; the independent
 ORBPURPLE1 switch is also explicitly ON. The merged catalog validates 130
 boolean settings expanded to 143 process checks plus eight numeric checks:
 **FLAGGATE151**, not an observed live PASS. ORBPURPLE1 adds the orb-schwab and
@@ -118,12 +126,18 @@ it ON alongside ROUNDUP1. No file is staged on the box by this draft.
   Retain all four October 5 switches, NFQ, GAP_HOLD, sizing600/300/1000,
   target5/stop8 and existing ORB flags. No other switch or trading rule edit.
 - Schema0022 is already installed: verify it; do not rerun a migration.
-- Catalog expectation is FLAGGATE151 (143 boolean +8 numeric); numeric remains8. Verify the real measured
-  denominator/result, including UNKNOWN rows; never start paper to force green.
-  The added max-retries value is not in that catalog: require a separate pinned
-  2/2 explicit zero-budget process proof for new v2/OMS and daily preopen.
-  Retain baseline149/151 UNKNOWN2 under the narrow paper policy; do not claim
-  the existing151 checks prove zero or silently alter the catalog denominator.
+- The unchanged c21 catalog is FLAGGATE151 (143 boolean +8 numeric), a baseline
+  that does not check max-retries. Reviewer now authorizes an isolated numeric
+  catalog, `job/expected_numeric.retry-zero.json`, preserving all five baseline
+  entries verbatim and adding explicit max-retries0 for v2 and OMS with
+  require_process_env=true. Its actual count is 143 boolean +10 numeric =
+  **FLAGGATE153**; do not guess or retain151 as the new denominator.
+  Require153/153 PASS, or retain151/153 rc2 UNKNOWN2 only for the same two paper
+  rows with fresh unchanged dated clean-stop proof. Historical149/151 remains
+  historical, never relabeled PASS. Hash-bind this catalog, show its exact diff
+  and use it in both post-start and daily preopen checks before execution.
+  Catalog artifact tests are not runner adoption or live process proof;
+  duplicate/alias, stable-PID and explicit env guards remain mandatory.
 
 ## Literal Runner Requirements Before Staging
 
@@ -329,8 +343,18 @@ Keep `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_ENABLED=true` unchanged and set
 `MAI_TAI_STRATEGY_SCHWAB_1M_V2_RETRY_ONE_MAX_RETRIES=0` in the reviewed runner.
 The old flag-OFF/removal FAIL remains historical for a different configuration;
 its requested removal and expected-False catalog are withdrawn, not pending.
-**Plan inclusion is confirmed; literal runner integration/testing is PENDING.**
+Reviewer accepts the33PASS replay and IPDN correction and authorizes this env
+policy plus the new numeric expectation. **Plan inclusion is confirmed;
+literal runner integration/testing is PENDING.**
 No production environment has been changed or adopted by this plan-only update.
+Owned isolated numeric catalog SHA256:
+`bff3fad73fa593b48af08fc3cb8ab6cad5d2d055e1bc787706ff79ad34dbf205`.
+Plan/catalog focus19PASS includes both-owner explicit zero, per-owner missing,
+nonzero, negative, malformed, empty and unreadable controls. This uses the
+unchanged application checker with controlled process readings, not production
+reads; runner selection, full zero-budget rehearsal and manifest remain pending.
+Owned job-suite control484PASS/17.41s; this preserves the existing full fake
+sequences but does not make them zero-budget integration rehearsals.
 
 Parent receipt: docs/review-artifacts/retryoff1/ZERO_BUDGET_REPLAY_2026-10-06.md
 in the shared handoff worktree. Independently read raw33PASS/0.87s focus log and
@@ -356,8 +380,10 @@ Executable mechanics must preserve enabledtrue, update only max-retries0 in
 addition to the three reviewed boolean enables, capture exact hashes/diff and
 refuse duplicates. Read explicit zero from stable new v2/OMS PIDs after startup
 and on each daily preopen; absent/default1/1/negative/unreadable/alias/PID drift
-blocks, never falls back to zero. Catalog151 is unchanged; supplemental2/2 is
-separately named and retained in receipts. Existing first/waiting/SELL controls
+blocks, never falls back to zero. The c21 source catalog151 is unchanged;
+the reviewed isolated numeric artifact adds two checks and requires153 total.
+This supersedes the earlier separate supplemental2/2 catalog proposal, not the
+explicit raw zero-budget process proof. Existing first/waiting/SELL controls
 are unchanged. No effect is claimed before the scoped restart and fresh gates.
 
 This plan checkpoint includes the corrected env-only card; mechanics integration
@@ -365,8 +391,29 @@ is still pending. Commit781454af and its337b1589 manifest are historical and do
 not bind this updated plan. There is no current immutable manifest for it yet.
 Regenerate an immutable committed-blob release after the updated mechanics and
 full fake rehearsal pass; no production staging/attempt until exact review and
-fresh after16:00 admission. #1100 rebased56c9357b remains pending reviewer pin/
-merge and separate control restart decision; this three-owner scope is unchanged.
+fresh after16:00 admission. #1100 remains excluded under the following exact
+read-only disposition; this three-owner restart scope is unchanged.
+
+### #1100 Pending Merge And Control Activation
+
+Read-only hosted result: head56c9357b66c591acb83a1aa7ccbcbc0847883dd9 is OPEN,
+mergeCommit=null. Latest independent-review-pin37514987598 is SUCCESS;
+Validate37513775601 is FAILURE, while37513768160 is SUCCESS. Parent investigates
+the failed check; a successful pin does not waive it or establish a merge.
+Do not quietly substitute this head, a moving main or an unverified merge.
+
+Exact local diff c21->56c9357b under src/ops-systemd is solely
+src/project_mai_tai/services/control_plane.py (153 insertions/9 deletions).
+At that head, build_app3559 compiles /bot/orb, /bot/orb-paper and
+/api/bot/orb-schwab at4202/4206/4210. run4331 uses uvicorn reload=False at4338;
+the current systemd control unit ExecStart is mai-tai-control and has no
+ExecReload. A checkout or browser refresh cannot activate these new handlers.
+The control lifespan also owns SchwabTokenRefresher at3580; control activation
+therefore needs separately reviewed restart/reload choreography and fresh
+auth-owner/health proof. No such additional restart is authorized or implemented
+by this plan: control must remain untouched by the three-owner runner.
+If #1100 merges without activation authority, report display activation pending,
+not installed/working, and ask parent to resolve scope before claiming six items.
 
 ## Dated IPDN Operator Residual Policy
 

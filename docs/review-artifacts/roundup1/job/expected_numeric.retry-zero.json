@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "settings": [
+    {
+      "name": "redis_snapshot_batch_stream_maxlen",
+      "expected": 120,
+      "owning_service": "market-data",
+      "require_process_env": true,
+      "reason": "SNAPHIST1: the gateway publisher owns retention; 120 batches cover scanner warm-up at the live 5-second interval.",
+      "ruling": "Operator 2026-10-03 decision 5: scanner history 15 to 10 minutes; validate scanner and activate with the next reviewed gateway restart."
+    },
+    {
+      "name": "oms_v2_webull_mirror_quote_max_age_ms",
+      "expected": 10000,
+      "owning_service": "oms",
+      "reason": "NFQ1 mirror wire-shape age only; shared reactive/premarket age remains 2000ms.",
+      "ruling": "Operator BUGS v3 FINAL 2026-10-02: price in the last ten seconds, otherwise hold."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_entry_notional_usd",
+      "expected": 600,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "require_process_env": true,
+      "reason": "Fixed-dollar Schwab entry sizing and OMS notional guard must agree in running processes.",
+      "ruling": "Operator 2026-10-01: Schwab $600 every time we trade"
+    },
+    {
+      "name": "strategy_schwab_1m_v2_webull_entry_notional_usd",
+      "expected": 300,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "require_process_env": true,
+      "reason": "Fixed-dollar Webull fan-out and OMS notional guard must agree in running processes.",
+      "ruling": "Operator 2026-10-01: the other broker $300"
+    },
+    {
+      "name": "strategy_schwab_1m_v2_entry_max_shares",
+      "expected": 1000,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "reason": "Both entry placement and the broker-side guard enforce the same hard share cap.",
+      "ruling": "Operator fixed-dollar entry card 2026-10-01: at most 1,000 shares"
+    },
+    {
+      "name": "strategy_schwab_1m_v2_retry_one_max_retries",
+      "expected": 0,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "require_process_env": true,
+      "reason": "RETRYOFF1 corrected zero-budget policy: explicit zero in both new owners; no settings-default admission.",
+      "ruling": "Operator/reviewer 2026-10-06: retain retry-enabled=true unchanged, set max-retries=0 after the recorded 33-PASS decision replay. No trading-source change."
+    }
+  ]
+}
