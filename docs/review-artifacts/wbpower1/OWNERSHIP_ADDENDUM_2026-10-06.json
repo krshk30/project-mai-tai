@@ -1,0 +1,99 @@
+{
+  "agent": "codex",
+  "lane": "WBPOWER1",
+  "branch": "codex/wbpower1",
+  "base": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "handoff_evidence_head": "a503f0ca0b091611baf16c6dab6a1c2f3d9eafe0",
+  "asof_utc": "2026-10-06T19:51:13+00:00",
+  "status": "STOP_BUILD_EXACT_POWER_CONTRACT_AND_MARKET_BASIS_UNPROVEN",
+  "verdict": {
+    "AGREE": "Use one cached explicit-USD available-day-power preflight at the final Webull BUY placement boundary; proven insufficiency skips only Webull with one OMS-WEBULL-LEG-SKIP reason=buying_power. Schwab proceeds independently. Accepted census remains three distinct refusals today and zero on prior observed days.",
+    "DISAGREE": "Do not reinterpret legacy margin_power or cash_power as available day buying power, subtract guessed reservations, use a current balance as historical funds, or use an exit anchor as a MARKET wire price.",
+    "UNMEASURED": "Available day power after reservations on the actual configured US legacy route; historical available day power for MOBX14:47/IPDN14:32; MARKET notional risk bound at final placement. No ready implementation or replay acceptance is claimed."
+  },
+  "read_ownership": {
+    "new_owner_broker_HTTP_attempts": 0,
+    "new_owner_balance_GETs": 0,
+    "previous_owner_completed_GET_receipt": "BALANCE_RECEIPT_2026-10-06.json",
+    "previous_owner_completed_GET_attempts": 1,
+    "previous_owner_completed_GET_http_status": 200,
+    "previous_owner_completed_GET_end_utc": "2026-10-06T19:27:20.068892+00:00",
+    "previous_request_no_longer_in_flight_parent_confirmation": "Not received by this checkpoint. No new live GET was issued.",
+    "no_second_read_needed_to_report_blockers": true,
+    "source_assessment": "Read-only local source and public official documentation; no live auth, service, DB, Redis or environment writes"
+  },
+  "actual_balance_findings": {
+    "route": "GET /account/balance x-version=v2 total_asset_currency=USD",
+    "SDK": "2.0.11",
+    "observed_paths": {
+      "$.account_currency_assets[0].margin_power": "451.405",
+      "$.account_currency_assets[0].cash_power": "0"
+    },
+    "USD_scope": "Receipt reports root and account_currency_assets[0] currency USD",
+    "day_power_named_fields_in_sanitized_power_scan": [],
+    "scope_limit": "Receipt is a selected-field scan, not retained full response JSON. Raw body hash and byte count are retained; no secrets or account ID persisted.",
+    "reservation_semantics": "UNMEASURED. Presence of margin_power does not establish day power or whether pending orders are already reserved.",
+    "historical_scope": "Read at15:27ET, after both recorded orders; cannot prove funds at14:47 or14:32. Broker refusal establishes MOBX insufficiency classification, and IPDN fill establishes execution, but neither supplies a retained numerical power response."
+  },
+  "official_reference_findings": {
+    "reference_url": "https://developer.webull.com/apis/docs/reference/account-balance/",
+    "machine_readable_reference_url": "https://developer.webull.com/apis/docs/reference/account-balance.md",
+    "index_url": "https://developer.webull.com/apis/llms.txt",
+    "reference_markdown_sha256": "4301fc785f7eb824bcc5d301bc982fb1d9379ddbf73c54d96a1054a3c9345a68",
+    "retrieval": "Browser HTML omitted response field details; successful bounded public curl of official Markdown exposed OpenAPI schema. No broker account was queried.",
+    "documented_route": "GET /trading/assets/balances/get",
+    "documented_version_default": "v3; supported header values v2 and v3",
+    "documented_USD_field": "account_currency_assets[USD].day_buying_power",
+    "day_power_description": "Day-Trade Buying Power (Margin Account)",
+    "reservation_field": "account_currency_assets[USD].used_margin_for_open_order",
+    "reservation_description_paraphrase": "Pending orders reserve margin that cannot fund another use",
+    "semantics_limit": "Reference does not prove legacy margin_power equals day_buying_power or specify whether to subtract used_margin_for_open_order from day_buying_power. Newer-route semantics cannot certify an unobserved legacy-route field.",
+    "legacy_fields_in_current_reference": "Neither margin_power nor cash_power is documented in this response schema",
+    "no_undocumented_alias_fallback": true
+  },
+  "remaining_runtime_blockers": [
+    {
+      "id": "actual_US_available_day_power_contract",
+      "needed": "Authoritative mapping for the installed legacy route's margin_power/cash_power, or a verified supported route that actually returns USD day_buying_power for the configured account, with explicit pending-order reservation semantics. Do not issue an additional live request without parent coordination; the prior one authorized read is completed.",
+      "cache_implication": "Even a fresh balance can be spent twice by parallel placements unless debit/invalidation and serialization cover this broker account. Need the authoritative reservation model before implementing reuse; a two-second cache alone is insufficient."
+    },
+    {
+      "id": "MARKET_comparison_basis_at_wire",
+      "needed": "Measured authoritative MARKET pricing/risk context carried to final dispatch, with freshness and a defined comparison bound. Final MARKET single-leg and bracket master payloads carry no limit price. Do not invent a quote or alter trading prices/sizing.",
+      "observed_reactive_path": "oms/service.py:2482-2531 builds a MARKET bracket master; its local exit anchor may use a quote or Schwab fill fallback and is not carried as a timed entry comparison bound to the adapter.",
+      "observed_bracket_boundary": "broker_adapters/webull.py:2082-2090 adds master limit_price only for LIMIT. SELL target/stop prices are not entry notional evidence."
+    }
+  ],
+  "unknown_and_freshness_disposition": {
+    "safe_direction": "UNKNOWN or stale evidence cannot authorize Webull placement; Schwab continues independently. It must not be reported as proven buying_power insufficiency or zero funds.",
+    "candidate_cache_age_seconds": 2.0,
+    "candidate_age_provenance": "Existing account-read cache duration and parent proposed direction, not measured broker balance freshness",
+    "required_implementation_proof": "Measure monotonic age again after any SDK wait at final placement, reject missing/invalid/negative/nonfinite/conflicting currency-scoped power, reject budget denial/timeouts, prevent concurrent overspend, and distinguish unknown from measured insufficiency. No runtime policy activated."
+  },
+  "WEBULL429_coordination": {
+    "PR": 1101,
+    "inspected_head": "78ee3503783d59267423e2e7abc21c10cc68ba85",
+    "inspected_module": "project_mai_tai.broker_adapters.webull_order_reads",
+    "stable_function": "shared_budget(host, app_key).claim('account-balance', exact_account_id, strict=False)",
+    "parent_requested_module": "project_mai_tai.broker_adapters.webull_query_budget",
+    "path_discrepancy": "Requested webull_query_budget module is absent at the inspected head; shared_budget lives in webull_order_reads. Asked Sagan to confirm the intended stable path; no cross-branch writes or duplicate budget module.",
+    "contract": "Use the same process-local object across adapters/accounts/aliases/threads, claim immediately before each actual HTTP attempt, failures cost permits, cache hits cost zero, no retries or borrowed permits. Two attempts per rolling two seconds per endpoint is an application policy, not proven provider quota.",
+    "previous_probe_limit": "Previous probe reused budget definitions in a separate SSH process; that receipt does not prove shared production process enforcement.",
+    "dependency_at_base": "Neither budget module is present at4805. Integrate the reviewed dependency only after power semantics permit a build."
+  },
+  "verification": {
+    "runtime_changes": 0,
+    "test_source_changes": 0,
+    "new_production_reads": 0,
+    "full_same_environment_unit_pair": "NOT RUN: evidence-only change, no runtime candidate",
+    "failed_test_name_diff": "NOT CLAIMED",
+    "CI": "NOT RUN: no implementation PR",
+    "ALL_ON": "NOT RUN: no implementation candidate or new flag",
+    "mutations": "NOT RUN: no implementation candidate",
+    "MOBX_IPDN_historical_acceptance": "UNMEASURED: no retained historical numerical power; hypothetical funds would not be raw replay evidence",
+    "ready_PR": null,
+    "merge_pin_deploy": false,
+    "shared_handoff_or_other_lane_edits": false,
+    "install_ownership": "Parent owns production and immutable install/handoff; this lane makes no release-state claim"
+  }
+}
