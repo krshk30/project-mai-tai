@@ -1,0 +1,413 @@
+{
+  "scope": "controlled isolated subprocesses; tracked source unchanged",
+  "delete_owner_oracle": "explicit non-null state assertion before the existing recorded replay oracle",
+  "mutations": [
+    {
+      "mutation": "queue_spends_wire_budget",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_queue_and_duplicate_copies_spend_only_one_actual_wire",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/queue_spends_wire_budget-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": ".                                                                        [100%]\n1 passed in 1.35s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/queue_spends_wire_budget-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_queue_and_duplicate_copies_spend_only_one_actual_wire",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:183: in test_queue_and_duplicate_copies_spend_only_one_actual_wire\n    assert len(queued(lane)) == 1 and state(lane, event)[\"wire_submissions\"] == 0\nE   AssertionError: assert (1 == 1 and 1 == 0)\nE    +  where 1 = len([TradeIntentEvent(event_id=UUID('9397553c-f6d6-4f06-b64e-4c6cef70f63e'), event_type='trade_intent', source_service='om...ax_age_ms': '10000', 'mirrorhold_token': 'b10c802c-8a50-4a0d-8f44-ce2d8c10ea11', 'webull_deferred_resubmit': 'true'}))])\nE    +    where [TradeIntentEvent(event_id=UUID('9397553c-f6d6-4f06-b64e-4c6cef70f63e'), event_type='trade_intent', source_service='om...ax_age_ms': '10000', 'mirrorhold_token': 'b10c802c-8a50-4a0d-8f44-ce2d8c10ea11', 'webull_deferred_resubmit': 'true'}))] = queued((<project_mai_tai.oms.service.OmsRiskService object at 0x1092391f0>, <tests.unit.test_webull_adapter._FakeClient objec...e), autoflush=True, expire_on_commit=False), [datetime.datetime(2026, 10, 6, 14, 27, 5, tzinfo=datetime.timezone.utc)]))"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": "F                                                                        [100%]\n=================================== FAILURES ===================================\n__________ test_queue_and_duplicate_copies_spend_only_one_actual_wire __________\ntests/unit/test_mirrorhold1_retained_hold.py:183: in test_queue_and_duplicate_copies_spend_only_one_actual_wire\n    assert len(queued(lane)) == 1 and state(lane, event)[\"wire_submissions\"] == 0\nE   AssertionError: assert (1 == 1 and 1 == 0)\nE    +  where 1 = len([TradeIntentEvent(event_id=UUID('9397553c-f6d6-4f06-b64e-4c6cef70f63e'), event_type='trade_intent', source_service='om...ax_age_ms': '10000', 'mirrorhold_token': 'b10c802c-8a50-4a0d-8f44-ce2d8c10ea11', 'webull_deferred_resubmit': 'true'}))])\nE    +    where [TradeIntentEvent(event_id=UUID('9397553c-f6d6-4f06-b64e-4c6cef70f63e'), event_type='trade_intent', source_service='om...ax_age_ms': '10000', 'mirrorhold_token': 'b10c802c-8a50-4a0d-8f44-ce2d8c10ea11', 'webull_deferred_resubmit': 'true'}))] = queued((<project_mai_tai.oms.service.OmsRiskService object at 0x1092391f0>, <tests.unit.test_webull_adapter._FakeClient objec...e), autoflush=True, expire_on_commit=False), [datetime.datetime(2026, 10, 6, 14, 27, 5, tzinfo=datetime.timezone.utc)]))\n----------------------------- Captured stdout call -----------------------------\n2026-10-06 15:47:16,499 INFO [oms-risk] [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=outside_8pct_no_submission\n------------------------------ Captured log call -------------------------------\nINFO     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=outside_8pct_no_submission\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_queue_and_duplicate_copies_spend_only_one_actual_wire\n1 failed in 0.97s\n"
+        }
+      }
+    },
+    {
+      "mutation": "reprice_resets_wire_budget",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_three_actual_resubmissions_cap_survives_reprice_and_restart",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/reprice_resets_wire_budget-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": ".                                                                        [100%]\n1 passed in 1.48s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/reprice_resets_wire_budget-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_three_actual_resubmissions_cap_survives_reprice_and_restart",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:200: in test_three_actual_resubmissions_cap_survives_reprice_and_restart\n    assert state(lane, event)[\"wire_submissions\"] == number + 1\nE   assert 1 == (1 + 1)"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": " oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=1 resubmissions=0 reason=PRICE_AGGRESSIVE\nINFO     oms-risk:service.py:15996 [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -\nINFO     oms-risk:service.py:15887 [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 1 attempted since boot (\u26d4 read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only \u2014 the fill and the position update are no longer gated on it.\nINFO     oms-risk:service.py:15923 [BROKER-SYNC-CENSUS] no account was read this window \u2014 UNMEASURED, not clean.\nERROR    project_mai_tai.broker_adapters.webull:webull.py:579 Webull position sync failed for live:orb\nTraceback (most recent call last):\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 560, in list_account_positions\n    snapshots = await asyncio.to_thread(self._positions_blocking, account, broker_account_name)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 1041, in _positions_blocking\n    raise ValueError(\"Webull positions response is not an object\")\nValueError: Webull positions response is not an object\nWARNING  oms-risk:service.py:10117 [BROKER-SYNC-UNREADABLE] acct=live:orb consecutive=1 \u2014 positions read FAILED (Webull positions for live:orb unreadable -> UNKNOWN (protection kept)). This account is EXCLUDED from the sync: nothing is zeroed and no virtual position is cleared for it this cycle. An empty list from a failed call is not a flat account.\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_three_actual_resubmissions_cap_survives_reprice_and_restart\n1 failed in 1.04s\n"
+        }
+      }
+    },
+    {
+      "mutation": "rpg_forget_deletes_durable_owner",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_recorded_ipdn_1027_proxy_steps_survive_until_1048",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/rpg_forget_deletes_durable_owner-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": ".                                                                        [100%]\n1 passed in 1.48s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/rpg_forget_deletes_durable_owner-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_recorded_ipdn_1027_proxy_steps_survive_until_1048",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:142: in test_recorded_ipdn_1027_proxy_steps_survive_until_1048\n    assert state(lane, first)[\"phase\"] == \"held\"\n           ^^^^^^^^^^^^^^^^^^\ndocs/review-artifacts/mirrorhold1/mutate_controls.py:117: in required_state\n    assert data is not None, \"durable retained owner must survive RPG forget\"\n           ^^^^^^^^^^^^^^^^\nE   AssertionError: durable retained owner must survive RPG forget"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": "F                                                                        [100%]\n=================================== FAILURES ===================================\n____________ test_recorded_ipdn_1027_proxy_steps_survive_until_1048 ____________\ntests/unit/test_mirrorhold1_retained_hold.py:142: in test_recorded_ipdn_1027_proxy_steps_survive_until_1048\n    assert state(lane, first)[\"phase\"] == \"held\"\n           ^^^^^^^^^^^^^^^^^^\ndocs/review-artifacts/mirrorhold1/mutate_controls.py:117: in required_state\n    assert data is not None, \"durable retained owner must survive RPG forget\"\n           ^^^^^^^^^^^^^^^^\nE   AssertionError: durable retained owner must survive RPG forget\n----------------------------- Captured stdout call -----------------------------\n2026-10-06 15:47:24,410 INFO [oms-risk] [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=outside_8pct_no_submission\n2026-10-06 15:47:24,419 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=IPDN segment=1791296823073 slot_id=controlled-slot-1791296823073 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=0 \u2014 polarity: forgotten means this slot is no longer eligible for a deferred resubmit\n------------------------------ Captured log call -------------------------------\nINFO     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=outside_8pct_no_submission\nINFO     oms-risk:service.py:13118 [OMS-WEBULL-MIRROR-DEFERRED] sym=IPDN segment=1791296823073 slot_id=controlled-slot-1791296823073 decision=forgotten reason=rpg_reauthorizes_price_wait attempts=0 \u2014 polarity: forgotten means this slot is no longer eligible for a deferred resubmit\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_recorded_ipdn_1027_proxy_steps_survive_until_1048\n1 failed in 0.59s\n"
+        }
+      }
+    },
+    {
+      "mutation": "final_dispatch_cap_removed",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_final_cap_guard_survives_an_accepted_fourth_wire_then_cancel",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/final_dispatch_cap_removed-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": ".                                                                        [100%]\n1 passed in 1.33s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/final_dispatch_cap_removed-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_final_cap_guard_survives_an_accepted_fourth_wire_then_cancel",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:734: in test_final_cap_guard_survives_an_accepted_fourth_wire_then_cancel\n    assert client.calls[\"place\"] == 4\nE   assert 5 == 4"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": "ROR-LAG] sym=IPDN segment=1791296823073 slot_id=controlled-slot-1791296823073 primary_entered=none primary_clock=oms_submit_started wire=2026-10-06T14:27:08.000+00:00 lag_ms=-1 outcome=accepted shape=stop_limit_unchanged\nINFO     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=accepted wires=5 resubmissions=4 reason=mirror_accepted\nWARNING  project_mai_tai.broker_adapters.webull:webull.py:942 Webull order-detail: unexpected body=<tests.unit.test_webull_adapter._Resp object at 0x10968fb60>\nINFO     oms-risk:service.py:10727 [OMS-INTENT-REPAIR] terminalized 1 orphaned active intents\nERROR    project_mai_tai.broker_adapters.webull:webull.py:579 Webull position sync failed for live:orb\nTraceback (most recent call last):\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 560, in list_account_positions\n    snapshots = await asyncio.to_thread(self._positions_blocking, account, broker_account_name)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 1041, in _positions_blocking\n    raise ValueError(\"Webull positions response is not an object\")\nValueError: Webull positions response is not an object\nWARNING  oms-risk:service.py:10117 [BROKER-SYNC-UNREADABLE] acct=live:orb consecutive=5 \u2014 positions read FAILED (Webull positions for live:orb unreadable -> UNKNOWN (protection kept)). This account is EXCLUDED from the sync: nothing is zeroed and no virtual position is cleared for it this cycle. An empty list from a failed call is not a flat account.\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_final_cap_guard_survives_an_accepted_fourth_wire_then_cancel\n1 failed in 1.07s\n"
+        }
+      }
+    },
+    {
+      "mutation": "reused_client_guard_removed",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_direct_dispatch_guard_refuses_a_previously_used_client",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/reused_client_guard_removed-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": ".                                                                        [100%]\n1 passed in 1.26s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/reused_client_guard_removed-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_direct_dispatch_guard_refuses_a_previously_used_client",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:747: in test_direct_dispatch_guard_refuses_a_previously_used_client\n    assert service._mirrorhold_dispatch(session, event) == \"mirrorhold_duplicate_client\"\nE   AssertionError: assert None == 'mirrorhold_duplicate_client'\nE    +  where None = _mirrorhold_dispatch(<sqlalchemy.orm.session.Session object at 0x10a4ec320>, TradeIntentEvent(event_id=UUID('4a540383-952f-4f6c-861d-75e2d5ac19b1'), event_type='trade_intent', source_service='sch...-7189d28c246b', 'mirrorhold_dispatch_generation': 'c1c2d8d6ab3c45812e1fe39ffb5c6eba72d79baad1f18f6fa0c72aa6bbe49ca5'})))\nE    +    where _mirrorhold_dispatch = <project_mai_tai.oms.service.OmsRiskService object at 0x10a6e1400>._mirrorhold_dispatch"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": "O     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=1 resubmissions=0 reason=PRICE_AGGRESSIVE\nINFO     oms-risk:service.py:15996 [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -\nINFO     oms-risk:service.py:15887 [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 1 attempted since boot (\u26d4 read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only \u2014 the fill and the position update are no longer gated on it.\nINFO     oms-risk:service.py:15923 [BROKER-SYNC-CENSUS] no account was read this window \u2014 UNMEASURED, not clean.\nERROR    project_mai_tai.broker_adapters.webull:webull.py:579 Webull position sync failed for live:orb\nTraceback (most recent call last):\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 560, in list_account_positions\n    snapshots = await asyncio.to_thread(self._positions_blocking, account, broker_account_name)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 1041, in _positions_blocking\n    raise ValueError(\"Webull positions response is not an object\")\nValueError: Webull positions response is not an object\nWARNING  oms-risk:service.py:10117 [BROKER-SYNC-UNREADABLE] acct=live:orb consecutive=1 \u2014 positions read FAILED (Webull positions for live:orb unreadable -> UNKNOWN (protection kept)). This account is EXCLUDED from the sync: nothing is zeroed and no virtual position is cleared for it this cycle. An empty list from a failed call is not a flat account.\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_direct_dispatch_guard_refuses_a_previously_used_client\n1 failed in 0.89s\n"
+        }
+      }
+    },
+    {
+      "mutation": "terminal_cancel_retains_permission",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_controlled_actual_terminal_cancel_fences_queued_generation",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/terminal_cancel_retains_permission-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": "...                                                                      [100%]\n3 passed in 1.57s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/terminal_cancel_retains_permission-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_controlled_actual_terminal_cancel_fences_queued_generation[buy_flip]",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:224: in test_controlled_actual_terminal_cancel_fences_queued_generation\n    assert state(lane, event)[\"phase\"] == \"retired\"\nE   AssertionError: assert 'held' == 'retired'\nE     \nE     - retired\nE     + held"
+            },
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_controlled_actual_terminal_cancel_fences_queued_generation[window_closed]",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:224: in test_controlled_actual_terminal_cancel_fences_queued_generation\n    assert state(lane, event)[\"phase\"] == \"retired\"\nE   AssertionError: assert 'held' == 'retired'\nE     \nE     - retired\nE     + held"
+            },
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_controlled_actual_terminal_cancel_fences_queued_generation[segment_end]",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:224: in test_controlled_actual_terminal_cancel_fences_queued_generation\n    assert state(lane, event)[\"phase\"] == \"retired\"\nE   AssertionError: assert 'held' == 'retired'\nE     \nE     - retired\nE     + held"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": "RRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=v2_terminal_cancel\n------------------------------ Captured log call -------------------------------\nINFO     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=outside_8pct_no_submission\nINFO     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=v2_terminal_cancel\n_ test_controlled_actual_terminal_cancel_fences_queued_generation[segment_end] _\ntests/unit/test_mirrorhold1_retained_hold.py:224: in test_controlled_actual_terminal_cancel_fences_queued_generation\n    assert state(lane, event)[\"phase\"] == \"retired\"\nE   AssertionError: assert 'held' == 'retired'\nE     \nE     - retired\nE     + held\n----------------------------- Captured stdout call -----------------------------\n2026-10-06 15:47:35,851 INFO [oms-risk] [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=outside_8pct_no_submission\n2026-10-06 15:47:35,861 INFO [oms-risk] [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=v2_terminal_cancel\n------------------------------ Captured log call -------------------------------\nINFO     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=outside_8pct_no_submission\nINFO     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=v2_terminal_cancel\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_controlled_actual_terminal_cancel_fences_queued_generation[buy_flip]\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_controlled_actual_terminal_cancel_fences_queued_generation[window_closed]\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_controlled_actual_terminal_cancel_fences_queued_generation[segment_end]\n3 failed in 1.19s\n"
+        }
+      }
+    },
+    {
+      "mutation": "affirmative_no_wire_guard_removed",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_real_adapter_no_wire_freshness_is_free_but_false_marker_is_not",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/affirmative_no_wire_guard_removed-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": ".                                                                        [100%]\n1 passed in 1.25s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/affirmative_no_wire_guard_removed-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_real_adapter_no_wire_freshness_is_free_but_false_marker_is_not",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:558: in test_real_adapter_no_wire_freshness_is_free_but_false_marker_is_not\n    assert state(lane, event)[\"phase\"] == \"uncertain\"\nE   AssertionError: assert 'held' == 'uncertain'\nE     \nE     - uncertain\nE     + held"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": "-risk:service.py:15996 [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -\nINFO     oms-risk:service.py:15887 [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 1 attempted since boot (\u26d4 read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only \u2014 the fill and the position update are no longer gated on it.\nINFO     oms-risk:service.py:15923 [BROKER-SYNC-CENSUS] no account was read this window \u2014 UNMEASURED, not clean.\nERROR    project_mai_tai.broker_adapters.webull:webull.py:579 Webull position sync failed for live:orb\nTraceback (most recent call last):\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 560, in list_account_positions\n    snapshots = await asyncio.to_thread(self._positions_blocking, account, broker_account_name)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 1041, in _positions_blocking\n    raise ValueError(\"Webull positions response is not an object\")\nValueError: Webull positions response is not an object\nWARNING  oms-risk:service.py:10117 [BROKER-SYNC-UNREADABLE] acct=live:orb consecutive=1 \u2014 positions read FAILED (Webull positions for live:orb unreadable -> UNKNOWN (protection kept)). This account is EXCLUDED from the sync: nothing is zeroed and no virtual position is cleared for it this cycle. An empty list from a failed call is not a flat account.\nINFO     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=held wires=0 resubmissions=0 reason=freshness_no_wire\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_real_adapter_no_wire_freshness_is_free_but_false_marker_is_not\n1 failed in 0.89s\n"
+        }
+      }
+    },
+    {
+      "mutation": "enqueue_token_fences_removed",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_enqueue_ack_loss_invalidates_old_copy_without_losing_hold",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/enqueue_token_fences_removed-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": ".                                                                        [100%]\n1 passed in 1.32s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/enqueue_token_fences_removed-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_enqueue_ack_loss_invalidates_old_copy_without_losing_hold",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:294: in test_enqueue_ack_loss_invalidates_old_copy_without_losing_hold\n    assert client.calls.get(\"place\", 0) == 0\nE   AssertionError: assert 1 == 0\nE    +  where 1 = <built-in method get of dict object at 0x10c4f6800>('place', 0)\nE    +    where <built-in method get of dict object at 0x10c4f6800> = {'detail': 1, 'place': 1, 'positions': 1}.get\nE    +      where {'detail': 1, 'place': 1, 'positions': 1} = <tests.unit.test_webull_adapter._FakeClient object at 0x10b584da0>.calls"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": "s=1 resubmissions=0 reason=mirror_accepted\nWARNING  project_mai_tai.broker_adapters.webull:webull.py:942 Webull order-detail: unexpected body=<tests.unit.test_webull_adapter._Resp object at 0x10b1462d0>\nINFO     oms-risk:service.py:15996 [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -\nINFO     oms-risk:service.py:15887 [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 1 attempted since boot (\u26d4 read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only \u2014 the fill and the position update are no longer gated on it.\nINFO     oms-risk:service.py:15923 [BROKER-SYNC-CENSUS] no account was read this window \u2014 UNMEASURED, not clean.\nERROR    project_mai_tai.broker_adapters.webull:webull.py:579 Webull position sync failed for live:orb\nTraceback (most recent call last):\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 560, in list_account_positions\n    snapshots = await asyncio.to_thread(self._positions_blocking, account, broker_account_name)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 1041, in _positions_blocking\n    raise ValueError(\"Webull positions response is not an object\")\nValueError: Webull positions response is not an object\nWARNING  oms-risk:service.py:10117 [BROKER-SYNC-UNREADABLE] acct=live:orb consecutive=1 \u2014 positions read FAILED (Webull positions for live:orb unreadable -> UNKNOWN (protection kept)). This account is EXCLUDED from the sync: nothing is zeroed and no virtual position is cleared for it this cycle. An empty list from a failed call is not a flat account.\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_enqueue_ack_loss_invalidates_old_copy_without_losing_hold\n1 failed in 0.92s\n"
+        }
+      }
+    },
+    {
+      "mutation": "wire_evidence_guard_removed",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_terminal_report_without_submission_evidence_does_not_release_unknown_budget",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/wire_evidence_guard_removed-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": "...                                                                      [100%]\n3 passed in 1.56s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/wire_evidence_guard_removed-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_terminal_report_without_submission_evidence_does_not_release_unknown_budget[rejected]",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:920: in test_terminal_report_without_submission_evidence_does_not_release_unknown_budget\n    assert state(lane, event)[\"dispatch_unresolved\"]\nE   assert False"
+            },
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_terminal_report_without_submission_evidence_does_not_release_unknown_budget[cancelled]",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:920: in test_terminal_report_without_submission_evidence_does_not_release_unknown_budget\n    assert state(lane, event)[\"dispatch_unresolved\"]\nE   assert False"
+            },
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_terminal_report_without_submission_evidence_does_not_release_unknown_budget[expired]",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:920: in test_terminal_report_without_submission_evidence_does_not_release_unknown_budget\n    assert state(lane, event)[\"dispatch_unresolved\"]\nE   assert False"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": "1791296823073 slot=controlled-slot-1791296823073 phase=blocked wires=0 resubmissions=0 reason=broker_terminal_clear\n_ test_terminal_report_without_submission_evidence_does_not_release_unknown_budget[expired] _\ntests/unit/test_mirrorhold1_retained_hold.py:920: in test_terminal_report_without_submission_evidence_does_not_release_unknown_budget\n    assert state(lane, event)[\"dispatch_unresolved\"]\nE   assert False\n----------------------------- Captured stdout call -----------------------------\n2026-10-06 15:47:47,042 INFO [oms-risk] [OMS-FANOUT-MIRROR-LAG] sym=IPDN segment=1791296823073 slot_id=controlled-slot-1791296823073 primary_entered=none primary_clock=oms_submit_started wire=2026-10-06T14:27:04.000+00:00 lag_ms=-1 outcome=accepted shape=stop_limit_unchanged\n2026-10-06 15:47:47,045 INFO [oms-risk] [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=accepted wires=1 resubmissions=0 reason=mirror_accepted\n2026-10-06 15:47:47,048 INFO [oms-risk] [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=blocked wires=0 resubmissions=0 reason=broker_terminal_clear\n------------------------------ Captured log call -------------------------------\nINFO     oms-risk:service.py:13597 [OMS-FANOUT-MIRROR-LAG] sym=IPDN segment=1791296823073 slot_id=controlled-slot-1791296823073 primary_entered=none primary_clock=oms_submit_started wire=2026-10-06T14:27:04.000+00:00 lag_ms=-1 outcome=accepted shape=stop_limit_unchanged\nINFO     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=accepted wires=1 resubmissions=0 reason=mirror_accepted\nINFO     oms-risk:mirror_retained_hold.py:134 [OMS-MIRRORHOLD1] account=live:orb symbol=IPDN segment=1791296823073 slot=controlled-slot-1791296823073 phase=blocked wires=0 resubmissions=0 reason=broker_terminal_clear\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_terminal_report_without_submission_evidence_does_not_release_unknown_budget[rejected]\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_terminal_report_without_submission_evidence_does_not_release_unknown_budget[cancelled]\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_terminal_report_without_submission_evidence_does_not_release_unknown_budget[expired]\n3 failed in 1.15s\n"
+        }
+      }
+    },
+    {
+      "mutation": "cas_guard_removed",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_stale_revision_cannot_replace_generation",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/cas_guard_removed-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": ".                                                                        [100%]\n1 passed in 1.15s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/cas_guard_removed-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_stale_revision_cannot_replace_generation",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "Failed",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:359: in test_stale_revision_cannot_replace_generation\n    with pytest.raises(RuntimeError, match=\"stale revision\"):\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'RuntimeError'>"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": "F                                                                        [100%]\n=================================== FAILURES ===================================\n________________ test_stale_revision_cannot_replace_generation _________________\ntests/unit/test_mirrorhold1_retained_hold.py:359: in test_stale_revision_cannot_replace_generation\n    with pytest.raises(RuntimeError, match=\"stale revision\"):\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'RuntimeError'>\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_stale_revision_cannot_replace_generation\n1 failed in 0.80s\n"
+        }
+      }
+    },
+    {
+      "mutation": "off_recreates_nfq_actor",
+      "target": "tests/unit/test_mirrorhold1_retained_hold.py::test_off_keeps_existing_owner_without_recreating_a_second_nfq_actor",
+      "semantic_assertion_kill": true,
+      "runs": {
+        "baseline": {
+          "exit_code": 0,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/off_recreates_nfq_actor-baseline.json",
+          "assertion_failures": [],
+          "non_assertion_errors": [],
+          "baseline_pass": true,
+          "harness_error": false,
+          "output_tail": ".                                                                        [100%]\n1 passed in 1.25s\n"
+        },
+        "mutant": {
+          "exit_code": 1,
+          "receipt": "/tmp/mirrorhold1-parent-semantic-controls/off_recreates_nfq_actor-mutant.json",
+          "assertion_failures": [
+            {
+              "nodeid": "tests/unit/test_mirrorhold1_retained_hold.py::test_off_keeps_existing_owner_without_recreating_a_second_nfq_actor",
+              "when": "call",
+              "outcome": "failed",
+              "exception_type": "AssertionError",
+              "assertion_failure": true,
+              "failure": "tests/unit/test_mirrorhold1_retained_hold.py:940: in test_off_keeps_existing_owner_without_recreating_a_second_nfq_actor\n    assert not service._nfq_holds and not client.calls.get(\"place\")\nE   AssertionError: assert (not {'controlled-slot-1791296823073': PriceHold(event=TradeIntentEvent(event_id=UUID('5ec19047-63ae-4965-a938-3ab2b9d024a7...6eba72d79baad1f18f6fa0c72aa6bbe49ca5'})), row_id=UUID('2b3ef4ab-30e8-4afa-9333-8e0e7bbd27d2'), phase='held', token='')})\nE    +  where {'controlled-slot-1791296823073': PriceHold(event=TradeIntentEvent(event_id=UUID('5ec19047-63ae-4965-a938-3ab2b9d024a7...6eba72d79baad1f18f6fa0c72aa6bbe49ca5'})), row_id=UUID('2b3ef4ab-30e8-4afa-9333-8e0e7bbd27d2'), phase='held', token='')} = <project_mai_tai.oms.service.OmsRiskService object at 0x10ccceb40>._nfq_holds"
+            }
+          ],
+          "non_assertion_errors": [],
+          "baseline_pass": false,
+          "harness_error": false,
+          "output_tail": "=stamp_expired_at_wire cache_age_ms=11000.000 cache_source=ask cache_timestamp=2026-10-06T14:27:05+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=11000 wire_source=ask\nINFO     oms-risk:service.py:15996 [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -\nINFO     oms-risk:service.py:15887 [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 1 attempted since boot (\u26d4 read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only \u2014 the fill and the position update are no longer gated on it.\nINFO     oms-risk:service.py:15923 [BROKER-SYNC-CENSUS] no account was read this window \u2014 UNMEASURED, not clean.\nERROR    project_mai_tai.broker_adapters.webull:webull.py:579 Webull position sync failed for live:orb\nTraceback (most recent call last):\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 560, in list_account_positions\n    snapshots = await asyncio.to_thread(self._positions_blocking, account, broker_account_name)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/velkris/.codex/worktrees/mirrorhold1/project-mai-tai/src/project_mai_tai/broker_adapters/webull.py\", line 1041, in _positions_blocking\n    raise ValueError(\"Webull positions response is not an object\")\nValueError: Webull positions response is not an object\nWARNING  oms-risk:service.py:10117 [BROKER-SYNC-UNREADABLE] acct=live:orb consecutive=1 \u2014 positions read FAILED (Webull positions for live:orb unreadable -> UNKNOWN (protection kept)). This account is EXCLUDED from the sync: nothing is zeroed and no virtual position is cleared for it this cycle. An empty list from a failed call is not a flat account.\n=========================== short test summary info ============================\nFAILED tests/unit/test_mirrorhold1_retained_hold.py::test_off_keeps_existing_owner_without_recreating_a_second_nfq_actor\n1 failed in 0.87s\n"
+        }
+      }
+    }
+  ],
+  "all_semantic_assertion_kills": true
+}
