@@ -2,5 +2,8 @@
   "symbol_days": 90,
   "stored_bars": 19175,
   "mathematical_mismatches_on_identical_inputs": 0,
+  "short_in_both_lines_samples": 6,
+  "maximum_short_difference_pct": 0.1859086611919152,
+  "above_buffer_samples_long_in_both_lines": true,
   "scope": "counterfactual mathematics only; NOT service population acceptance"
 }
