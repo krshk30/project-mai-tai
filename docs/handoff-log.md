@@ -7153,3 +7153,17 @@ not runtime fallback or weakened production binding. Actual release remains
 e624ed13 andCLEARWAIT6c1846a4 have bothValidategreen and are readyforreview.
 RESERVE34b6bb5b pinPASS butValidatex2FAIL on inheritedSCKT hostclock; no bypass
 or pinnedbranchrewrite. Install2 merges remain behind Install1reportedCOMPLETE.
+
+### 2026-10-06 17:29 ET - codex-2 C97 real unreadable-source stop
+
+Attended2012b090 initialonly STOP17:28:08ET after three strategy strict-flat
+TimeoutError/rc2 reads,60s between completedattempt and nextread. OMScheck
+passed; exact source of timeout not proved. No fourthread or recovery under
+the stop condition. Abortadapterrc0/confirmedtrue. All4targets remain oldactive
+PIDs/NRestarts0; ownpostcheck7823clean andenvunchanged. No app/catalog/preopen/
+dailyunitwrite, noCOMPLETE. Runtime release09dae897/runner4b3728d9 retained;
+actualartifact harness734PASS, tests-only requiredplanfixture refreshcb6d54cc,
+no deployedsourcechange. Earlier terminal-reject/fullbroker proof not reused
+as currentflatness. #1102 exact97e2ba74 authorizedassertions97PASS but both
+ValidateFAIL on same inheritedSCKT wallclockcase as pinned#1106. No bypass,
+branchrewrite or Install2merge. Receipt lists fullpaths andhashes.
