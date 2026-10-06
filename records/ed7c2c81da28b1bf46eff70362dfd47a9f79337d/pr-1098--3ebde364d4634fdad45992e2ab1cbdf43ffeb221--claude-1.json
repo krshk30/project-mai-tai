@@ -1,0 +1,9 @@
+{
+  "pr_number": 1098,
+  "range_base": "3ebde364d4634fdad45992e2ab1cbdf43ffeb221",
+  "range_head": "ed7c2c81da28b1bf46eff70362dfd47a9f79337d",
+  "reviewed_at": "2026-10-06T16:06:31Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "ORBPURPLE1 (operator approved card 10-06): initial Schwab ORB buy withheld unless the prior completed 1-min bar closed at or above the exit-ATR trail; unknown evidence withholds. Read the full diff (orb_schwab_atr_entry.py gate, orb_schwab_app wiring, OMS admission + post-preview, setting orb_schwab_atr_entry_gate_enabled default True, catalog TRUE); paper ORB untouched. Focused tests 291 pass; full unit suite 48 failed = identical failed-name set to base 3ebde364 (host-tooling baseline). My own mutations all RED: gate inverted (14 fail), unknown evidence allowed (1), service skips the gate (9). Codex Step 0 population checked: 2/2 filled entries since 09-30 not skipped, APUS 10-05 withheld; realised improvement unmeasured on history and reported to the operator as a rule not an edge."
+}
