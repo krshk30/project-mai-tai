@@ -1,7 +1,7 @@
 # WEBULL429 released build source assessment
 
-[codex] Sole writer of `codex/webull429-list-primary-plan`. KEEPREST remains
-stopped at its own evidence commit; no shared handoff edits.
+[codex] Sole writer of `codex/webull429-list-primary-plan`. This lane does not
+edit KEEPREST source or the shared handoff.
 
 ## Accepted Evidence and Scope
 
@@ -61,6 +61,12 @@ settings are outside this build. The legacy query quota remains UNMEASURED.
   for quantity, price, status, and fill time are rejected; equivalent formats
   remain usable. List-endpoint NOT_FOUND never proves readable/absent children,
   and an unusable native FILLED decoder result remains UNKNOWN.
+- A CANCELLED/REJECTED remainder with validated positive cumulative execution
+  keeps its broker terminal status. The real OMS store admits that execution
+  only for Webull/broker-origin reports with the adapter's matching terminal
+  marker, recording only the unbooked delta. A managed row may grow by this
+  delta only for the exact same owned entry order/client; no ladder reset or
+  second BUY. Terminal orders/intents retire while held shares remain tracked.
 - EOD still freshly confirms both children; strict RPG still uses its exact
   fresh BUY-only detail decoder. AIFA's ordinary failure and both recorded OLOX
   strict failures are represented with their actual IDs and synthetic controlled
@@ -78,16 +84,22 @@ settings remain unchanged; this lane does not slow those timers.
 
 ## Verification
 
-Focused adapter, RPG, configuration catalog, PM composition, and protection
-guards:411 passed. Local SQLite roundtrip plus replay/backtest:71 passed,
-one expected failure. Ruff and marker isolation pass. Fourteen process-local source
-mutations are killed. Full Mac unit pair against authorized current main4805:
-main6469 passed/56 failed; head6521 passed/56 failed. Failure names match exactly,
-zero new failures. The prior c21 pair is superseded by this post-rebase pair.
-The measured baseline is56, not an assumed47. `VERIFICATION.md` records commands,
-hashes, the corrected inventory assertion, and the pinned main's green Ubuntu
-CI receipt. Final exact-head push and PR Validate results must both be green
-before a ready claim; their URLs and exact SHA will be published on the PR.
+Focused adapter, real OMS/store lifecycle, RPG, configuration catalog, PM
+composition, and protection guards:437 passed. Local SQLite roundtrip plus
+replay/backtest:71 passed, one expected failure. Ruff and marker isolation pass.
+`MUTATION_AUDIT.md` classifies raw failures and hashes:19 direct assertion/DID
+NOT RAISE mutations plus one separately traced behavioral UNKNOWN exception,
+not20 assertion-red claims. Parent's terminal-partial finding was confirmed by
+four before-fix real OMS assertions; increasing cumulative fills also exposed
+the managed-quantity gap. Both are covered by six post-fix lifecycle variants.
+The cfe81117 green CI/full pair is superseded and is NOT a ready candidate.
+`VERIFICATION.md` records the replacement pinned pair and its environment.
+Fresh pinned main4805:6469 passed/56 failed; corrected HEAD6534 passed/56
+failed. Both failed-name lists exactly match, zero new failures,65 passing
+additions versus main. Normal PATH is preserved; Avicenna's venv-first47
+baseline is explicitly not claimed as this same environment pair.
+Both replacement exact-head push and PR Validate results must conclude green
+before ready; their URLs and exact SHA are published on the PR afterward.
 Controlled ALL-ON nine-flag composition plus this lane's read flag passes the
 effective-zero audit:152/152 checked,0 mismatches,0 unknown. Public WBPOWER1
 budget/cache/detail boundaries are released in `INTEGRATION_CONTRACT.md`.

@@ -770,7 +770,18 @@ class OmsStore:
         payload: dict[str, object],
     ) -> Fill | None:
         if report.event_type not in {"filled", "partially_filled"}:
-            return None
+            # List-primary Webull can prove an execution and a cancelled/rejected
+            # remainder together. Record only the cumulative execution delta while
+            # retaining the broker's terminal order/intent status.
+            if (
+                report.event_type not in {"cancelled", "rejected"}
+                or report.origin != "broker"
+                or report.metadata.get("webull_terminal_with_partial_fill") != report.event_type
+            ):
+                return None
+            account = session.get(BrokerAccount, broker_account_id)
+            if account is None or account.provider != "webull":
+                return None
         if report.filled_quantity <= 0 or report.fill_price is None:
             return None
         if report.broker_fill_id:

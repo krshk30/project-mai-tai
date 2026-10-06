@@ -7,9 +7,37 @@ import pytest
 
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.broker_adapters.webull_order_reads import QueryBudget, TodayOrderReader
+from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.oms.store import OmsStore
 
 
 mutations = {
+    "terminal_venue_scope_removed": (
+        OmsStore, "record_fill_if_needed",
+        'if account is None or account.provider != "webull":', "if False:",
+    ),
+    "terminal_origin_scope_removed": (
+        OmsStore, "record_fill_if_needed",
+        'or report.origin != "broker"', "or False",
+    ),
+    "terminal_remainder_reopened": (
+        WebullBrokerAdapter, "_fetch_order_blocking",
+        'metadata["webull_terminal_with_partial_fill"] = event_type',
+        'metadata["webull_terminal_with_partial_fill"] = event_type; event_type = "partially_filled"',
+    ),
+    "terminal_execution_dropped": (
+        OmsStore, "record_fill_if_needed",
+        'report.event_type not in {"cancelled", "rejected"}', "True",
+    ),
+    "cumulative_execution_doublecounted": (
+        OmsStore, "record_fill_if_needed",
+        "incremental_quantity = report.filled_quantity - already_recorded",
+        "incremental_quantity = report.filled_quantity",
+    ),
+    "managed_terminal_delta_dropped": (
+        OmsRiskService, "_apply_managed_position_after_fill",
+        "existing.current_quantity += int(quantity)", "pass",
+    ),
     "detail_first_restored": (
         WebullBrokerAdapter, "_ordinary_order_body",
         'if not getattr(self, "_list_primary_enabled", False):', "if True:",
