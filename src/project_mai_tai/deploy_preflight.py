@@ -8,6 +8,8 @@ from urllib.error import URLError
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
+from project_mai_tai.operator_holding_evidence import OperatorHoldingsProof
+
 
 EXPECTED_SERVICE_NAMES = {
     "market-data-gateway",
@@ -98,6 +100,7 @@ def evaluate_live_deploy_preflight(
     heartbeat_max_age_seconds: int = 120,
     recent_fill_grace_seconds: int = 180,
     warnings: list[str] | None = None,
+    operator_holdings_proof: OperatorHoldingsProof | None = None,
 ) -> list[str]:
     if service_target not in TARGET_SERVICE_NAMES:
         raise ValueError(f"unknown service target: {service_target}")
@@ -126,7 +129,19 @@ def evaluate_live_deploy_preflight(
         failures.append(f"{open_virtual_positions} virtual positions are still open.")
 
     open_account_positions = int(counts.get("open_account_positions", 0) or 0)
-    if open_account_positions > 0:
+    operator_positions_proven = False
+    if operator_holdings_proof is not None:
+        if type(operator_holdings_proof) is not OperatorHoldingsProof:
+            failures.append("operator holdings gate requires a typed direct-broker/database proof.")
+        else:
+            proof_failures = operator_holdings_proof.failures(now)
+            failures.extend(proof_failures)
+            if not proof_failures:
+                if operator_holdings_proof.position_count() != open_account_positions:
+                    failures.append("operator proof and overview broker position inventory differ.")
+                else:
+                    operator_positions_proven = True
+    if open_account_positions > 0 and not operator_positions_proven:
         failures.append(f"{open_account_positions} broker account positions are still open.")
 
     recent_intents = overview.get("recent_intents", [])
