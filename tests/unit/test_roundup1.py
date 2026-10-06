@@ -183,6 +183,33 @@ def test_recorded_meds_print_below_ceiling_cannot_cross_or_take_slot(stream):
 
 
 @pytest.mark.parametrize("leg", ["schwab", "webull"])
+def test_recorded_nxl_pm_limit_reference_remains_the_price_actually_sent(monkeypatch, leg):
+    from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+    from project_mai_tai.oms import service as oms
+    case = REAL[12]
+    strategy, state, clock = armed(case, **{**ACTIVE_FLAGS, FLAG: True})
+    state.resting_active = False
+    strategy._queue_resting_place(state, state.resting_level)
+    primary = cross(strategy, state, clock, case[3], case[4])
+    mirror, = strategy.drain_webull_fanout_intents()
+    draft = primary if leg == "schwab" else mirror
+    account = "live:schwab_1m_v2" if leg == "schwab" else "live:orb"
+    event = TradeIntentEvent(source_service="recorded-nxl-pm-wire", payload=TradeIntentPayload(
+        strategy_code="schwab_1m_v2", broker_account_name=account, symbol="NXL", side="buy",
+        intent_type="open", quantity=Decimal(draft.quantity), reason=draft.reason, metadata=deepcopy(draft.metadata)))
+    svc = service(True)
+    svc.settings = svc.settings.model_copy(update={**ACTIVE_FLAGS,
+        "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled": True})
+    svc._fresh_ask = lambda symbol, max_age_ms: 7.16
+    monkeypatch.setattr(oms, "_is_regular_market_session", lambda now=None: False)
+    monkeypatch.setattr(oms, "_extended_hours_session", lambda now=None: "AM")
+    assert svc._apply_v2_eh_resting_entry(session=None, event=event, intent=None) is None
+    assert event.payload.metadata["limit_price"] == event.payload.metadata["reference_price"] == "7.16"
+    assert Decimal(event.payload.metadata["resting_wire_stop_price"]) == Decimal("7.15")
+    assert draft.quantity == (84 if leg == "schwab" else 42)
+
+
+@pytest.mark.parametrize("leg", ["schwab", "webull"])
 def test_five_dollar_line_has_503_wire_and_cent_exact_is_unchanged(leg):
     strategy, state = strategy_for()
     strategy._queue_resting_place(state, 5.00)

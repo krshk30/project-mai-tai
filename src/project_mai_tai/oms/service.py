@@ -14633,7 +14633,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             )
         md["order_type"] = "limit"
         md["limit_price"] = limit_s
-        md["reference_price"] = md["entry_price"] if md.get("resting_buy_round_up") == "true" else limit_s
+        md["reference_price"] = limit_s
         md["session"] = session_code
         md["extended_hours"] = "true"
         md["price_source"] = "ask"
