@@ -17,7 +17,9 @@ UNIT_DIRECTORY = Path("/etc/systemd/system")
 JOURNAL = Path("/home/trader/fleet_health/deployments-20261006.md")
 
 
-def install_record(effects, owners=CHANGED):
+def install_record(effects, owners=None):
+    if owners is None:
+        owners = getattr(effects, "runtime_owners", CHANGED)
     path = effects.attempt / ("install-record.json" if owners == CHANGED else "application-install-record.json")
     if path.exists():
         return path
@@ -76,7 +78,8 @@ def install(effects):
     from attended import GATE, PY, REPO
     effects.gates(len(PHASES))
     snapshot, record = effects.attempt / "before-restart.json", install_record(effects)
-    candidate = build((effects.attempt / "preopen.before").read_text(), effects.last, str(snapshot), str(record))
+    candidate = build((effects.attempt / "preopen.before").read_text(), effects.last, str(snapshot), str(record),
+                      restart_strategy="strategy" in getattr(effects, "runtime_owners", CHANGED))
     gate_file = effects.attempt / "preopen.candidate.sh"
     exclusive(gate_file, candidate.encode(), 0o700)
     effects.command(["bash", "-n", gate_file])

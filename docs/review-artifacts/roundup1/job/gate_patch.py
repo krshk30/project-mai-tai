@@ -10,7 +10,7 @@ def assignment(script, key, value):
     return re.sub(pattern, lambda _: key + "=" + shlex.quote(str(value)), script, flags=re.M)
 
 
-def build(original, final, snapshot, record):
+def build(original, final, snapshot, record, *, restart_strategy=False):
     need(digest(original.encode()) == BASELINE_GATE, "deployed gate differs from recorded reviewed baseline")
     script = original
     script = assignment(script, "EXPECTED_DATE", "DYNAMIC_ET_TODAY")
@@ -21,8 +21,11 @@ def build(original, final, snapshot, record):
     report = "REPORT=/home/trader/known_defect_regression_watch/v2-restart-evidence-20261006.md"
     need(script.count(report) == 1, "report anchor ambiguous")
     script = script.replace(report, 'REPORT="/home/trader/known_defect_regression_watch/v2-restart-evidence-${EXPECTED_DATE//-/}.md"')
-    for name, prefix in (("schwab-1m-v2", ""), ("oms", "OMS_"), ("orb-schwab", "ORB_SCHWAB_"), ("control", "CONTROL_")):
-        need(name in CHANGED, "non-scoped pin update")
+    owners = [("schwab-1m-v2", ""), ("oms", "OMS_"), ("orb-schwab", "ORB_SCHWAB_"), ("control", "CONTROL_")]
+    if restart_strategy:
+        owners.append(("strategy", "STRATEGY_"))
+    for name, prefix in owners:
+        need(name in CHANGED or (restart_strategy and name == "strategy"), "non-scoped pin update")
         state = final[name]
         need(state["MainPID"] > 0, "new pin lacks PID")
         script = assignment(script, "EXPECTED_" + prefix + "PID", state["MainPID"])
@@ -36,7 +39,7 @@ else
 fi''')
     old_restart = "  --restarted strategy \\\n"
     need(script.count(old_restart) == 1, "restart declaration ambiguous")
-    script = script.replace(old_restart, "  --restarted orb-schwab \\\n")
+    script = script.replace(old_restart, (old_restart if restart_strategy else "") + "  --restarted orb-schwab \\\n")
     restart_anchor = "  --restarted orb-schwab \\\n"
     need(script.count(restart_anchor) == 1, "control restart declaration ambiguous")
     script = script.replace(restart_anchor, restart_anchor + "  --restarted control \\\n")

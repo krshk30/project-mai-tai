@@ -135,6 +135,23 @@ def test_gate_transform_exact_baseline_and_only_scoped_pins(tmp_path):
         gate_patch.build(original + "\n# unexpected drift", final, "/s", "/r")
 
 
+def test_reviewed_continuation_repins_strategy_only_when_it_was_restarted():
+    original = (ROOT / "preopen.baseline.sh").read_text()
+    owners = (*policy.CHANGED, "strategy")
+    final = {name: dict(MainPID=700 + i, ExecMainStartTimestamp="Tue 2026-10-06 23:49:00 UTC")
+             for i, name in enumerate(owners)}
+    value = gate_patch.build(original, final, "/exact/snapshot.json", "/exact/record.json", restart_strategy=True)
+    assert "EXPECTED_STRATEGY_PID=704" in value
+    assert "EXPECTED_STRATEGY_START='Tue 2026-10-06 23:49:00 UTC'" in value
+    assert value.count("--restarted strategy") == 1
+    assert value.count("--restarted orb-schwab") == 1
+    assert value.count("--restarted control") == 1
+    for key in ("ORB", "MARKET_DATA"):
+        for field in ("PID", "START"):
+            line = next(line for line in original.splitlines() if line.startswith("EXPECTED_" + key + "_" + field + "="))
+            assert line in value
+
+
 def test_units_literal_timer_only_checks_no_trading_dependencies():
     service = (ROOT / "project-mai-tai-preopen.service").read_text()
     timer = (ROOT / "project-mai-tai-preopen.timer").read_text()
