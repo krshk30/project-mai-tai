@@ -7011,3 +7011,14 @@ controls, no harness/runtime errors. Only harness/report changed over107252ac;
 the original __class__ closure retained so super calls are real. Exacthead
 hostedValidatex2 green, pin absent. This restores semantic evidence, not live
 counterfactual IPDN fill or combinedT43 source proof. No production action.
+
+### 2026-10-06 15:52 ET - codex-2 C85 terminal-partial fix controls
+
+78ee3503 follows the real parent false-live-remainder finding. Parent read
+adapter/store/service changes and independently ran145focused adapter/store/
+OWNMIX controls, PASS11.52s. Broker terminal order/intent remains terminal,
+cumulative executions land once, and exact owned managed row retains its fill;
+repeated poll and completed sell do not reopen an old remainder. These fakeSDK/
+SQLite controls are not invented historical execution evidence. FreshheadCI
+and finalunitpair/pin pending; oldcfe results cannot certify78ee. No production
+write. Expanded103ticketcensus still blocksInstall1 before staging.
