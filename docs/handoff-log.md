@@ -5896,3 +5896,22 @@ head sha bea9a56429580aafeaa4535fd4ea12fb7e8b75b4966d8e985aba4cd19bdd5d2a.
 unbounded historical recovery and wrong-target OMS cancel fallback blockers.
 No historical accepted/unfilled restart or complete all-flags ROUNDUP-ON proof;
 controlled fixtures remain disclosed. No ready/pin/CI-green/install claim.
+
+## 2026-10-06 06:51 ET - LINE=CHART integration checkpoint, parent handover
+
+Restoration writer released clean checkpoint9e75a78c on exactmain03b26293;
+five primitive commits range-equal, no rebase conflicts. Source wiring remains
+defaultOFF:04:00anchored provider manifest, late-bar retention, off-callback
+rebuild and epoch/revision/current-bar atomic publication. RETO11:18/11:21
+trail2.0639; corrected no-historic-SELL/rest controls retain recorded values.
+Prior sourcefull53FAILED/5944PASS vs exact03b47FAILED/5894PASS; six addednodes.
+Two catalogcounts fixed before handover. Parent corrected four residualnodes:
+providerfingerprint now pinned independently to retained255-rowliteral; another
+147->148 catalogcount; OFF emitter paths skip new readiness method calls.
+Focused212PASS8.16s, Ruff/diffchecksPASS; frozenfinalfullnowrunning, no final
+no-regression claim yet. Parent sole writer, no further concurrent edits.
+Persistence callbacks still gate the next fetchcycle, and shared confirmation
+delivery can delay later symbols: concrete activation blockers. Live provider
+completeness/quota/latency and seven September decision-time coverage controls
+remain UNMEASURED. Thirteen recorded entry-line controls prove math/state, not
+full order lifecycle. No PR, push, readyclaim, merge or production action.
