@@ -6921,3 +6921,15 @@ not a fourthorder; user'sfourglobal isUNMEASURED, not disproven. Parent source
 sweep finds no live buying-power reader; proposes onlyfreshaccountread/serial
 pendingreservation shape. No buildlane/sizingchange/releaseinclusion authorized.
 Rawscan preserved with sanitizedlines/hash besidebracketassessment.
+
+### 2026-10-06 15:12:42 ET - codex-2 C76 immutable retry-zero runner verified
+
+Planwriter publishes a69sourceplan/fce metadatareceipt, cleanremoteverified.
+APP4805/tree4248 bound; eightPMswitches plusORBPURPLEON, maxretry0/trueenabled
+retained, isolated153catalog. Parentindependentjobdir568PASS29.58seconds;
+regeneratesmanifest froma69committedblobs exacta62e2799 and independentlychecks
+24artifact/18apphashes. Agent14inmemorycontrolmutantsassertionRED. No fake
+systemd/process fixtures claimedlive. Controlactionnotauthorized: displaycode
+incheckoutonly; pendinguserdisposition. Onlyv2/OMS/orb-schwab scopedonce.
+Actualaftercloseadmission/newticketcensus/holdings remainmandatory; paper
+151/153UNKNOWN2 notgreen. No boxstage/approval/service/env/DB/Redis/ledger action.
