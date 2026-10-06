@@ -69,6 +69,7 @@ def _settings(*, strict: bool, dual: bool = False, retry_one: bool = False) -> S
         strategy_schwab_1m_v2_dual_broker_fanout_enabled=dual,
         strategy_schwab_1m_v2_webull_resting_mirror_enabled=dual,
         strategy_schwab_1m_v2_flip_owned_first_entry_enabled=strict,
+        strategy_schwab_1m_v2_removed_wait_clear_enabled=False,
         strategy_schwab_1m_v2_retry_one_enabled=retry_one,
         strategy_schwab_1m_v2_account_name=PRIMARY,
         strategy_schwab_1m_v2_webull_account_name=WEBULL,

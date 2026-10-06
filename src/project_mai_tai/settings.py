@@ -544,6 +544,8 @@ class Settings(BaseSettings):
     # opportunity back for a bounded number of fresh crosses that trade date. OFF preserves the
     # confirmation-only reset exactly. The count is anchored to the 04:00 ET strategy session.
     strategy_schwab_1m_v2_retry_one_enabled: bool = False
+    # CLEARWAIT1: retire only a removed, durably terminal unfilled episode. OFF is rollback.
+    strategy_schwab_1m_v2_removed_wait_clear_enabled: bool = True
     strategy_schwab_1m_v2_retry_one_max_retries: int = 1
     # P1.3 + P1.4 armed-segment safety (ONE flag gates the boot-mark AND the boot-hold; they are one
     # change). ON: reconstructed CW-v2 segments are capped on db-seed so a restart can't re-issue the
