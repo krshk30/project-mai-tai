@@ -3846,6 +3846,7 @@ class SchwabV2BotService:
         bars from either source remain gated by the same 300-second bound.
         """
         self._observe_line_bar(symbol, bar)
+        self._note_line_live_bar(symbol, bar)
         if symbol not in self._warmup_ready_symbols():
             pending = self._streamer_pending.setdefault(symbol, [])
             if len(pending) >= STREAMER_PENDING_BARS_MAX_PER_SYMBOL:
@@ -4547,10 +4548,7 @@ class SchwabV2BotService:
             self._confirmation_last_live_bar_ms[normalized] = max(
                 bar.timestamp_ms, self._confirmation_last_live_bar_ms.get(normalized, 0)
             )
-            live = self._line_live_bars.setdefault(normalized, set())
-            live.add(bar.timestamp_ms)
-            cutoff = self._confirmation_last_live_bar_ms[normalized] - 600_000
-            live.intersection_update(ts for ts in live.copy() if ts >= cutoff)
+            self._note_line_live_bar(normalized, bar)
         if observation_phase == "live" and not getattr(self, "_line_restoration_enabled", False):
             normalized = symbol.upper()
             atr_state = str(
@@ -4640,10 +4638,26 @@ class SchwabV2BotService:
 
     def _line_buy_ready(self, symbol: str) -> bool:
         state = self.strategy._symbol_states.get(symbol)
+        result = self._line_published.get(symbol)
+        clean = True
+        if result is not None and result.request.spanning_pairs:
+            current = result.request.current_bar_ms
+            live = self._line_live_bars.get(symbol, set())
+            clean = all(current - offset * 60_000 in live
+                        for offset in range(2 * self.strategy._atr_period))
         return bool(symbol in self._watchlist and self._line_snapshot_current(symbol)
                     and state.atr_state in {"long", "short"}
                     and state.atr_trail is not None and math.isfinite(state.atr_trail)
-                    and state.atr_trail > 0 and not self.strategy.gap_hold_active(symbol))
+                    and state.atr_trail > 0 and clean and not self.strategy.gap_hold_active(symbol))
+
+    def _note_line_live_bar(self, symbol: str, bar: ChartBar) -> None:
+        if (not getattr(self, "_line_restoration_enabled", False)
+                or not 60_000 <= self.strategy._now_ms() - bar.timestamp_ms <= 180_000):
+            return
+        live = self._line_live_bars.setdefault(symbol.upper(), set())
+        live.add(bar.timestamp_ms)
+        current = max(live)
+        live.intersection_update(ts for ts in live.copy() if ts >= current - 600_000)
 
     def _line_version(self, symbol: str) -> str:
         result = self._line_published.get(symbol)
@@ -4736,9 +4750,9 @@ class SchwabV2BotService:
         source_proof = ledger._coverage
         if self.session_factory is not None and source_proof is not None:
             try:
-                stored = await asyncio.to_thread(
+                stored = await asyncio.wait_for(asyncio.to_thread(
                     self._read_line_session_bars, symbol, ledger.anchor_ms, ledger.current_bar_ms,
-                )
+                ), 6.0)
             except Exception:
                 ledger.invalidate_coverage()
                 logger.exception("[V2-LINE-RESTORE] sym=%s outcome=stored_history_unreadable "
@@ -4752,6 +4766,25 @@ class SchwabV2BotService:
                 ledger.observe(bar)
             # Do not rewrite the provider's IDs/value fingerprint to certify
             # DB additions or corrections. Unreconciled sources remain held.
+            pairs = ledger.gap_pairs()
+            if pairs:
+                evidence_revision = ledger.revision
+                try:
+                    traded = await asyncio.wait_for(asyncio.to_thread(
+                        self._read_line_gap_trades, symbol, pairs,
+                    ), 6.0)
+                except Exception:
+                    ledger.invalidate_coverage()
+                    logger.exception("[V2-LINE-RESTORE] sym=%s outcome=tape_unreadable "
+                                     "entry_allowed=0", symbol)
+                    return False
+                if (self._line_sessions.get(symbol) is not ledger
+                        or ledger.revision != evidence_revision
+                        or self.strategy._symbol_states.get(symbol) is not state
+                        or state.line_restore_reset_after_ms != reset_fence):
+                    return False
+                for pair in traded:
+                    ledger.mark_traded_pair(pair)
         previous = self._line_published.get(symbol)
         if self._line_snapshot_current(symbol):
             return True
@@ -4769,6 +4802,9 @@ class SchwabV2BotService:
         if snapshot is None:
             return False
         indicator = dict(snapshot.indicator)
+        if indicator["atr_state"] not in {"long", "short"} or indicator["atr_trail"] is None:
+            ledger.incomplete_reason = "indicator_unseeded"
+            return False
         indicator["atr_hl"] = deque(indicator["atr_hl"], maxlen=period)
         indicator["atr_tr_seed"] = list(indicator["atr_tr_seed"])
         current_bar = result.request.bars[-1]
@@ -4838,9 +4874,11 @@ class SchwabV2BotService:
                 self.strategy._bar_observation_phase = old_phase
         logger.info(
             "[V2-LINE-RESTORE] sym=%s epoch=%d revision=%d current_bar_ms=%d bars=%d "
-            "outcome=published live_append=%d entry_allowed=%d",
+            "outcome=published live_append=%d entry_allowed=%d spanning_pairs=%d "
+            "clean_live_required=%d",
             symbol, ledger.epoch, ledger.revision, ledger.current_bar_ms, len(result.request.bars),
             int(adjacent_live), int(self._line_buy_ready(symbol)),
+            len(result.request.spanning_pairs), 2 * period if result.request.spanning_pairs else 0,
         )
         # Issued evaluations have already left the tracker's one-shot registry.
         for ts, value in sorted((ts, value) for (sym, ts), value in confirmations.items() if sym == symbol):
@@ -4867,6 +4905,9 @@ class SchwabV2BotService:
     def _read_line_session_bars(self, symbol: str, anchor_ms: int, current_bar_ms: int):
         """Bounded full-session SELECT; never called by a trading callback."""
         with self.session_factory() as session:
+            if session.get_bind().dialect.name == "postgresql":
+                session.execute(text("SET LOCAL statement_timeout = '5s'"))
+                session.execute(text("SET LOCAL lock_timeout = '500ms'"))
             rows = session.scalars(select(StrategyBarHistory).where(
                 StrategyBarHistory.strategy_code == STRATEGY_CODE,
                 StrategyBarHistory.symbol == symbol,
@@ -4882,6 +4923,43 @@ class SchwabV2BotService:
                 int((row.bar_time if row.bar_time.tzinfo else row.bar_time.replace(tzinfo=UTC))
                     .timestamp() * 1000),
             ) for row in rows]
+
+    def _read_line_gap_trades(self, symbol: str, pairs):
+        """One bounded positive-evidence query off the callback; never fetch ticks."""
+        if not pairs or len(pairs) > 480:
+            raise ValueError("invalid full-session gap bound")
+        values = ",".join(f"(:left_{i}, :right_{i})" for i in range(len(pairs)))
+        params = {"symbol": symbol}
+        for i, (left, right) in enumerate(pairs):
+            params[f"left_{i}"] = left
+            params[f"right_{i}"] = right
+        query = text(f"""
+            WITH gaps(lo, hi) AS (VALUES {values})
+            SELECT lo, hi FROM gaps WHERE
+            EXISTS (SELECT 1 FROM market_capture_trades t
+                    WHERE t.symbol=:symbol
+                    AND t.event_ts >= to_timestamp((lo+60000)/1000.0)
+                    AND t.event_ts < to_timestamp(hi/1000.0))
+            OR EXISTS (SELECT 1 FROM market_trade_ticks t
+                    WHERE t.symbol=:symbol
+                    AND t.event_ts >= to_timestamp((lo+60000)/1000.0)
+                    AND t.event_ts < to_timestamp(hi/1000.0))
+        """)
+        with self.session_factory() as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            session.execute(text("SET LOCAL lock_timeout = '500ms'"))
+            return tuple((int(row[0]), int(row[1])) for row in session.execute(query, params))
+
+    def _observe_line_trade(self, symbol: str, timestamp_ms: int) -> None:
+        if not getattr(self, "_line_restoration_enabled", False):
+            return
+        ledger = self._line_sessions.get(symbol.upper())
+        if ledger is not None and 0 < timestamp_ms <= self.strategy._now_ms():
+            revision = ledger.revision
+            ledger.observe_trade(timestamp_ms)
+            if ledger.revision != revision:
+                self._line_dirty.add(ledger.symbol)
+                self._line_rebuild_event.set()
 
     def _strategy_on_bar(
         self,
@@ -5108,6 +5186,7 @@ class SchwabV2BotService:
 
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
         now = datetime.now(UTC)
+        self._observe_line_trade(symbol, int(getattr(quote, "trade_time_ms", 0) or 0))
         self._last_tick_at[symbol] = _format_eastern(now)
         # Watchdog: quotes flow whenever the market is actually trading
         # (holiday-safe), so this is the discriminator for whether a bar
@@ -5143,6 +5222,8 @@ class SchwabV2BotService:
         await self._emit_webull_fanout_legs()
 
     async def _handle_stream_tick(self, tick: SchwabTick) -> None:
+        if tick.kind == "trade":
+            self._observe_line_trade(tick.symbol, int(tick.event_ts_ms))
         if self._eh_stream_cross_enabled and tick.service == "LEVELONE_EQUITIES":
             raw_ask = tick.raw.get("2")
             if raw_ask is not None:
