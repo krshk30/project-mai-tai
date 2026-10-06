@@ -12,7 +12,8 @@ case = make_line_restore_case(
 )
 ```
 
-Run from the repository root with `PYTHONPATH=src`. Cases must run **serially**:
+Run from the repository root with `PYTHONPATH=src:.` (the runner must be able
+to import the repository's `tests` package). Cases must run **serially**:
 the scoped historical clock temporarily replaces the strategy/service module
 clock, then restores both bindings, including when a call raises.
 
