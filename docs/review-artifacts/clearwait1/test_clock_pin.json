@@ -1,0 +1,25 @@
+{
+  "current_main_sha": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "test": "tests/unit/test_roundup1.py::test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire",
+  "unchanged_main_reproduction_at_et": "2026-10-06 16:30:07",
+  "unchanged_main_result": "FAILED: resting_window_ended",
+  "main_log": "/tmp/clearwait1-normal-clockpin-current-main-reproduction.log",
+  "main_log_sha256": "cd920bebea022d9ac8d3ecf966886a937536792e6f437968424c1206c3d06d55",
+  "recorded_timestamp_source": "tests/fixtures/roundup1/orders_179.json, schwab_1m_v2-SCKT-open-9a10bc5b0102 submitted_at",
+  "recorded_in_window_utc": "2026-10-05T16:47:03.808217+00:00",
+  "pin": "test-scoped OMS utcnow; initial event, quote and market metadata aligned; actual NFQ window asserted",
+  "test_file_sha256": "464e3fbf5209335cf066bad3ab55c796a7daf43c376ce9badf9c8f7f80f33e50",
+  "read_only_coordination": "PR #1101 e624ed13a13cfcf85fbbb5667f90b20125e77b16, identical entire test-file hash",
+  "original_assertions_preserved": true,
+  "added_clock_and_window_assertions": 2,
+  "runtime_source_diff_from_3ff2a7f2": [],
+  "other_branch_edits": false,
+  "final_path_protocol": "explicit shared venv Python; inherited PATH unchanged; PYTHONPATH=src:.",
+  "prior_venv_first_preliminary_runs": "interrupted; not final pair receipts",
+  "current_accepted_retryoff1": {
+    "enabled": true,
+    "max_retries": 0
+  },
+  "obsolete_flag_off_assessment": "historical DISAGREE only; not the accepted true/zero rule",
+  "production_actions": false
+}

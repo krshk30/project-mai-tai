@@ -1,12 +1,12 @@
 {
   "baseline_sha": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
-  "method": "immutable Git archive versus frozen isolated worktree; explicit shared venv Python, inherited PATH unchanged, PYTHONPATH=src:., full tests/unit command",
+  "method": "immutable Git archive versus frozen isolated worktree; identical venv/PATH/PYTHONPATH and full tests/unit command",
   "runs": {
     "base": {
       "tests": 6525,
-      "failures": 58,
+      "failures": 49,
       "errors": 0,
-      "seconds": 279.805,
+      "seconds": 274.101,
       "failure_names": [
         "tests.unit.test_eod_cron_adoption::test_current_wrapper_and_installer_remain_executable",
         "tests.unit.test_fanout_outcome_acceptance_schedule::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]",
@@ -56,27 +56,18 @@
         "tests.unit.test_log_retention_policy::test_installer_shell_fault_controls",
         "tests.unit.test_momentum_gateway_throughput::test_real_dead_consumer_cannot_block_the_paced_producer",
         "tests.unit.test_roundup1::test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire",
-        "tests.unit.test_sync_checkout_only::test_live_reference_vetoes_a_declared_file_before_checkout_moves[current-crontab]",
-        "tests.unit.test_sync_checkout_only::test_live_reference_vetoes_a_declared_file_before_checkout_moves[root-crontab]",
-        "tests.unit.test_sync_checkout_only::test_live_reference_vetoes_a_declared_file_before_checkout_moves[systemd]",
-        "tests.unit.test_sync_checkout_only::test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet[ops/health/fanout_identity_acceptance.py]",
-        "tests.unit.test_sync_checkout_only::test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet[ops/health/field_acceptance.py]",
-        "tests.unit.test_sync_checkout_only::test_sync_only_fast_forwards_safe_delta_without_mutating_services",
-        "tests.unit.test_sync_checkout_only::test_sync_only_refuses_behavioral_python_change_before_checkout_moves",
-        "tests.unit.test_sync_checkout_only::test_sync_only_refuses_success_if_any_process_identity_moves",
-        "tests.unit.test_sync_checkout_only::test_sync_only_refuses_unlisted_runtime_path_before_checkout_moves",
         "tests.unit.test_unattended_upgrade_policy::test_installer_and_notifier_fault_controls"
       ],
       "artifacts": {
-        "/tmp/clearwait1-normal-clockpin-unit-base.log": "2909ca2f7989e9bfbbbc5d8bba38ec4751665b7e3b9e4a94091698969b8f6fd9",
-        "/tmp/clearwait1-normal-clockpin-unit-base.xml": "c1b87c77a64ce3fa74a7963183ad2499d6da64e2b7734aabdc9f5de0cffe6fd1"
+        "/tmp/clearwait1-4805-afterclose-unit-base.log": "b4c0e6a702f3bcdc0e6f3def4b65292b4a1bf30299c6c9b205b62dc9f3555e7c",
+        "/tmp/clearwait1-4805-afterclose-unit-base.xml": "aebf13070d33841b4be821470ab0016ce35bf12b185f9fdd90271fa752ab1670"
       }
     },
     "head": {
-      "tests": 6612,
-      "failures": 56,
+      "tests": 6609,
+      "failures": 48,
       "errors": 0,
-      "seconds": 279.596,
+      "seconds": 271.722,
       "failure_names": [
         "tests.unit.test_fanout_outcome_acceptance_schedule::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]",
         "tests.unit.test_fanout_outcome_acceptance_schedule::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal]",
@@ -124,20 +115,12 @@
         "tests.unit.test_fanout_outcome_acceptance_schedule::test_whole_installer_succeeds_with_one_managed_schedule",
         "tests.unit.test_log_retention_policy::test_installer_shell_fault_controls",
         "tests.unit.test_momentum_gateway_throughput::test_real_dead_consumer_cannot_block_the_paced_producer",
-        "tests.unit.test_sync_checkout_only::test_live_reference_vetoes_a_declared_file_before_checkout_moves[current-crontab]",
-        "tests.unit.test_sync_checkout_only::test_live_reference_vetoes_a_declared_file_before_checkout_moves[root-crontab]",
-        "tests.unit.test_sync_checkout_only::test_live_reference_vetoes_a_declared_file_before_checkout_moves[systemd]",
-        "tests.unit.test_sync_checkout_only::test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet[ops/health/fanout_identity_acceptance.py]",
-        "tests.unit.test_sync_checkout_only::test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet[ops/health/field_acceptance.py]",
-        "tests.unit.test_sync_checkout_only::test_sync_only_fast_forwards_safe_delta_without_mutating_services",
-        "tests.unit.test_sync_checkout_only::test_sync_only_refuses_behavioral_python_change_before_checkout_moves",
-        "tests.unit.test_sync_checkout_only::test_sync_only_refuses_success_if_any_process_identity_moves",
-        "tests.unit.test_sync_checkout_only::test_sync_only_refuses_unlisted_runtime_path_before_checkout_moves",
+        "tests.unit.test_roundup1::test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire",
         "tests.unit.test_unattended_upgrade_policy::test_installer_and_notifier_fault_controls"
       ],
       "artifacts": {
-        "/tmp/clearwait1-normal-clockpin-unit-head.log": "a69e88e5ab7a5c287fd430a31574d578bfeacb27aa5ed3533f238cb041ac2e39",
-        "/tmp/clearwait1-normal-clockpin-unit-head.xml": "84434feb0767155f3c3253972749053f7db6c9e06e2690d90d4d942c9e15aeb5"
+        "/tmp/clearwait1-4805-unit-head.log": "7697b020495123cde50abe69ddb9b424dae75106e0a481f9da51ebb5217b0974",
+        "/tmp/clearwait1-4805-unit-head.xml": "bd738ea9818b35a22706b21e9760f2cd6215836fc8a8bc601fd315ce78467912"
       }
     }
   },
@@ -145,12 +128,10 @@
     "src/project_mai_tai/v2_removed_wait.py": "81499e7c81e35295bf586b6022b8b7e536bb8e3209de4a1db8c036c5d88f21ae",
     "src/project_mai_tai/strategy_core/schwab_1m_v2.py": "0cf5770e53f55afc61f1f4d1b8e728eaf4cc32d63a6709f1894a12e9f650c136",
     "src/project_mai_tai/services/schwab_1m_v2_bot.py": "a5b59e08a76c1e65ee1e1cb8c61de7e52fd0d07b5c645f0f2291e0671b74ab49",
-    "tests/unit/test_clearwait1_removed_wait.py": "7865aa234851949e90a7ae189db36f5a8951e5bd5c36f61469098fcac1796149",
-    "tests/unit/test_roundup1.py": "464e3fbf5209335cf066bad3ab55c796a7daf43c376ce9badf9c8f7f80f33e50"
+    "tests/unit/test_clearwait1_removed_wait.py": "27aea4764d6a98c02041a388f85b37ff96cafe6778baf97c07ee3372fb5b3823"
   },
   "new_failures": [],
   "baseline_only_failures": [
-    "tests.unit.test_eod_cron_adoption::test_current_wrapper_and_installer_remain_executable",
-    "tests.unit.test_roundup1::test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire"
+    "tests.unit.test_eod_cron_adoption::test_current_wrapper_and_installer_remain_executable"
   ]
 }

@@ -716,6 +716,44 @@ def test_fresh_first_rest_after_clean_readd_really_places_new_episode(eh):
     assert state.resting_is_broker_order is not eh
 
 
+def test_accepted_retryoff_true_zero_allows_fresh_unfilled_episode_without_spending_budget():
+    from tests.unit.test_v2_retry_one import _place_first, _strategy as retry_strategy
+
+    strategy, clock, _ = retry_strategy(enabled=True, max_retries=0, dual=True)
+    strategy.configure_removed_wait(lambda *a: None, restored={}, readable=True)
+    state, old = _place_first(strategy, clock, "AIXI")
+    budget = (state.retry_one_segment_id, state.retry_one_closes_in_segment)
+    strategy.release_and_drop_symbol("AIXI")
+    request = strategy._removed_wait_requests["AIXI"]
+    strategy.scanner_readded("AIXI")
+    strategy.apply_removed_wait_proofs([RemovedWaitProof(request, clock[0], True, "controlled_terminal")])
+    strategy._queue_resting_place(state, 3.859, slot="first")
+    assert strategy._retry_one_enabled and strategy._retry_one_max_retries == 0
+    assert state.flip_owner_opportunity_id > old
+    assert any(d.intent_type == "open" for d in strategy.drain_pending_intents())
+    assert (state.retry_one_segment_id, state.retry_one_closes_in_segment) == budget
+
+
+@pytest.mark.parametrize("reason", ["CONFIRMATION_EXIT", "CW_HARD_STOP"])
+def test_accepted_retryoff_true_zero_keeps_closed_filled_episode_consumed_on_removal(reason):
+    from tests.unit.test_v2_retry_one import (
+        _close_primary, _fill_primary, _place_first, _strategy as retry_strategy,
+    )
+
+    strategy, clock, _ = retry_strategy(enabled=True, max_retries=0)
+    strategy.configure_removed_wait(lambda *a: None, restored={}, readable=True)
+    state, old = _place_first(strategy, clock, "AIXI")
+    _fill_primary(strategy, clock, "AIXI", "controlled-owned-fill")
+    _close_primary(strategy, clock, "AIXI", "controlled-owned-fill", reason)
+    assert state.flip_owner_phase == "consumed"
+    strategy.release_and_drop_symbol("AIXI")
+    strategy.scanner_readded("AIXI")
+    strategy._queue_resting_place(state, 3.859, slot="first")
+    assert "AIXI" not in strategy._removed_wait_requests
+    assert state.flip_owner_phase == "consumed" and state.flip_owner_opportunity_id == old
+    assert not any(d.intent_type == "open" for d in strategy.drain_pending_intents())
+
+
 def test_pending_removal_survives_legacy_recovery_sell_and_session_retire_paths():
     strategy, state, clock, _ = _strategy()
     strategy.release_and_drop_symbol("AIXI")

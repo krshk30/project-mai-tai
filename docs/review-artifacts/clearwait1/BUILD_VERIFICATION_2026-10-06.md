@@ -66,10 +66,26 @@ That raw comparison has one new failure name and is preserved separately in
 isolated SCKT test on unchanged 4805 reproduced the same refusal at
 2026-10-06 16:06:38 ET; see `baseline_clock_control.json`. The full
 after-close baseline comparison confirmed zero new candidate failure names.
-No production window/authorization change, age waiver, test skip or
-out-of-lane test edit has been made. The inherited clock-sensitive test may
-block tonight's Validate runs; readiness requires both latest runs, not an
-earlier successful main run.
+Both Validate runs at historical head 3ff2a7f2 then failed only this same
+SCKT control (6,608 passed / one failed each). Those failures are retained in
+the PR receipts, not substituted by an earlier successful main run.
+
+The human now authorizes the one test-only simulated-session pin. Exact test:
+`tests/unit/test_roundup1.py::test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire`.
+OMS/NFQ, initial event, market metadata and quote clocks use SCKT's recorded
+submission, `2026-10-05T16:47:03.808217+00:00` (12:47 ET). The actual NFQ
+clock/window predicates are positively asserted; every original wire-price,
+quantity and one-submit assertion remains. No runtime source, trading window,
+authorization age, sizing or retry rule changes. The pin passes after close.
+Fresh unchanged-current-main 4805 reproduces the original failure at
+2026-10-06 16:30:07 ET on inherited normal PATH.
+
+Read-only coordination inspected Sagan's PR #1101 at e624ed13. Its complete
+test file and this lane's pin have the same SHA256:
+`464e3fbf5209335cf066bad3ab55c796a7daf43c376ce9badf9c8f7f80f33e50`.
+No WEBULL429 runtime change was imported and no other branch/worktree edited.
+Preliminary venv-first runs were interrupted and are not final pair receipts.
+The final pair invokes the shared venv Python with inherited PATH unchanged.
 
 The initial evidence-only checkpoint remains
 `a2de4ec07323d2c30d844a62fea31725e4a717a9`. Production capture was
@@ -91,15 +107,19 @@ Released fixture SHA256:
   observes one possible mock wire, zero surviving opening rows and two actual
   local no-target receipts. It now returns `clear=false` with the unresolved
   dispatch reason; see `defensive_counterexample.json`.
-- Latest rebased focused acceptance: 389 passed, including 84 new CLEARWAIT1 cases, all-ON
+- Latest normal-PATH focused acceptance: 812 passed, including 87 CLEARWAIT1 cases,
+  the complete recorded ROUNDUP suite, all-ON
   settings, OWNMIX, Restoration, seed-cap, RETRY-ONE and held-feed regressions.
-- Latest full unit pair on identical venv/PATH/PYTHONPATH, frozen rebased candidate
-  versus immutable 4805 Git archive, both exercising SCKT after 16:00:
-  candidate 6,561 passed / 48 failed; baseline 6,476 passed / 49 failed.
-  Exact failure-name comparison: ZERO new failures. The
-  baseline-only executable-mode control explains the extra recovered pass.
-  Local baseline failures include macOS shell dependencies and the unrelated
-  dead-consumer timing control and the reproduced after-close SCKT replay.
+- Latest full unit pair invokes shared venv Python with inherited normal PATH
+  unchanged and PYTHONPATH=src:. on the frozen candidate versus immutable
+  current main 4805 archive: candidate 6,556 passed / 56 failed (279.81s);
+  baseline 6,467 passed / 58 failed (280.01s).
+  Exact failure-name comparison: ZERO new failures. Baseline-only names are
+  the authorized SCKT clock fixture and archive executable-mode control.
+  Remaining 56 names match exactly, including measured Mac shell dependencies,
+  nine sync-only subprocess failures and dead-consumer timing control.
+  The earlier venv-first 3ff pair is preserved in
+  `pre_clock_pin_unit_pair.json`; its 48/49 counts are not normal-PATH counts.
   Full failure names, log/XML hashes and frozen
   source hashes are retained in `defensive_unit_pair.json`.
 - Sixteen CLEARWAIT1 guard mutations were killed, including missing history,
@@ -113,8 +133,13 @@ The existing all-ON mutation harness killed five of six mutations. Its
 Restoration rejects that selected path before the mutated branch. This is a
 baseline coverage gap, not a CLEARWAIT1 behavior regression; no all-ON mutation
 sweep PASS is claimed. The same 41-pass gap mutation was also verified on
-unchanged 4805. Parent's RETRY-OFF closed-trade assessment remains
-DISAGREE; no composed-card PASS or historical AIXI 10:22 outcome is claimed.
+unchanged 4805. The current accepted RETRYOFF1 rule is
+`enabled=true, max_retries=0`, NOT flag OFF. Added CLEARWAIT1 controls prove
+fresh unfilled release spends no retry budget, while actual fill/close
+transitions remain consumed through removal/re-add at zero retries.
+The prior flag-OFF confirmation-close DISAGREE is obsolete-scope historical
+evidence, not a disagreement with the current accepted true/zero rule.
+No composed KEEP/RETRY card PASS or historical AIXI 10:22 outcome is claimed.
 
 The original attachment explicitly authorizes default-ON at deploy with a
 rollback-only switch. That separate switch and expected-ON registry are wired;
@@ -128,8 +153,9 @@ between the old and rebased trees. The latest full pair and CI must cover
 that baseline and the rebased candidate. The latest full pair does so.
 Both latest push and pull-request Validate runs are required before a ready
 review pin. Their exact-SHA receipts will be published with the PR, never
-in the parent's shared handoff. One identified readiness blocker remains:
-the inherited clock-sensitive SCKT test may fail both latest Validate runs.
+in the parent's shared handoff. The inherited fixture blocker has an
+authorized test-only remedy; the new full pair and both new-head Validate
+receipts are required before readiness.
 The PR stays draft until the gates pass; no readiness or production eligibility
-is claimed. Conditional review target: 2026-10-06 16:30 ET, subject to this
-test-only scope disposition and both latest Validate receipts.
+is claimed. Conditional review target: 2026-10-06 17:00 ET, subject to the
+final full pair and both latest Validate receipts.
