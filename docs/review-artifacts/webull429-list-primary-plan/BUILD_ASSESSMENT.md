@@ -57,7 +57,10 @@ settings are outside this build. The legacy query quota remains UNMEASURED.
   broker fill IDs and OMS fill attribution remain idempotent.
 - A partial execution stays nonterminal, preserves cumulative fill accounting,
   and does not spend a terminal-confirmation detail call. Conflicting terminal
-  detail or unusable quantity/price/time remains UNKNOWN.
+  detail or unusable quantity/price/time remains UNKNOWN. Conflicting aliases
+  for quantity, price, status, and fill time are rejected; equivalent formats
+  remain usable. List-endpoint NOT_FOUND never proves readable/absent children,
+  and an unusable native FILLED decoder result remains UNKNOWN.
 - EOD still freshly confirms both children; strict RPG still uses its exact
   fresh BUY-only detail decoder. AIFA's ordinary failure and both recorded OLOX
   strict failures are represented with their actual IDs and synthetic controlled
@@ -76,10 +79,10 @@ settings remain unchanged; this lane does not slow those timers.
 ## Verification
 
 Focused adapter, RPG, configuration catalog, PM composition, and protection
-guards:401 passed. Local SQLite roundtrip plus replay/backtest:71 passed,
-one expected failure. Ruff and marker isolation pass. Ten process-local source
+guards:411 passed. Local SQLite roundtrip plus replay/backtest:71 passed,
+one expected failure. Ruff and marker isolation pass. Fourteen process-local source
 mutations are killed. Full Mac unit pair: main6438 passed/56 failed;
-head6480 passed/56 failed. Failure names match exactly, zero new failures.
+head6490 passed/56 failed. Failure names match exactly, zero new failures.
 The measured baseline is56, not an assumed47. `VERIFICATION.md` records commands,
 hashes, the corrected inventory assertion, and the pinned main's green Ubuntu
 CI receipt. Final exact-head push and PR Validate results must both be green

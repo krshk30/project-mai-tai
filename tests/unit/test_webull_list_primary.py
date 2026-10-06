@@ -481,3 +481,54 @@ async def test_fresh_both_child_eod_confirmation_can_release(fake_sdk):
     assert result.outcome == "released"
     assert len(result.reports) == 2
     assert client.calls == {"detail": 2}
+
+
+@pytest.mark.parametrize("key,value", [
+    ("filledQty", "2"), ("filledQty", "bad"),
+    ("avgFillPrice", "1.12"), ("avgFillPrice", "NaN"),
+    ("lastFilledTime", "2026-10-06 15:12:00.000+0000"),
+    ("orderStatus", "NOT_A_BROKER_STATUS"),
+])
+def test_conflicting_execution_aliases_are_unknown(fake_sdk, key, value):
+    raw = row(status="FILLED", qty="1", price="1.11")
+    raw["items"][0][key] = value
+    client = _FakeClient({"today": listed(raw), "detail": raw})
+    assert read(primary(client)) is None
+    assert "detail" not in client.calls
+
+
+def test_equivalent_execution_aliases_remain_usable(fake_sdk):
+    raw = row(status="FILLED", qty="1", price="1.11")
+    raw["items"][0].update(filledQty="1.00", avgFillPrice="1.1100",
+                          lastFilledTime="2026-10-06T15:11:00+00:00", orderStatus="FILLED")
+    assert read(primary(_FakeClient({"today": listed(raw), "detail": raw}))).event_type == "filled"
+
+
+def test_unknown_status_alias_cannot_hide_behind_working_status(fake_sdk):
+    raw = row()
+    raw["items"][0]["orderStatus"] = "NOT_A_BROKER_STATUS"
+    assert read(primary(_FakeClient({"today": listed(raw)}))) is None
+
+
+def test_list_not_found_never_claims_readable_children(fake_sdk):
+    clock = Clock()
+
+    class Client(_FakeClient):
+        def get_response(self, request):
+            clock.now += 16  # A slow error must not become two readable absent children.
+            raise _ServerException("ORDER_NOT_FOUND", "Order not found", 404)
+
+    adapter = primary(Client({}), clock)
+    with pytest.raises(_ServerException):
+        adapter._exit_fill_blocking(adapter.accounts_by_name["live:orb"], "AIFA", "owned")
+
+
+def test_native_decoder_missing_supported_fill_fields_is_unknown(fake_sdk):
+    adapter = primary(_FakeClient({}))
+    raw = row(status="FILLED", qty="1", price="1.11")
+    raw["items"][0]["filled_quantity"] = raw["items"][0].pop("filled_qty")
+    # Isolate the native decoder boundary: a sibling working read cannot erase
+    # an unusable FILLED child, even if ordinary validation accepted an alias.
+    adapter._ordinary_order_body = lambda *args, **kwargs: (200, raw)
+    with pytest.raises(ValueError, match="UNKNOWN"):
+        adapter._exit_fill_blocking(adapter.accounts_by_name["live:orb"], "AIFA", "owned")
