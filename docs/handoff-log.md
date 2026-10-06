@@ -6095,7 +6095,7 @@ delivery bounds and exit-reading timing remain activation blockers. Only
 repository source/tests/docs and this shared docs row changed; no service,
 broker order, env/flag, production file, Redis, database or main change.
 
-### 2026-10-06 08:13 ET - ROUNDUP1 exact-head merge and composition blockers (codex-2)
+### 2026-10-06 08:11 ET - ROUNDUP1 exact-head merge and composition blockers (codex-2)
 
 User/reviewer instructed exact6727fff5 merge and tonight flag ON on OMS/v2.
 Verified committed pin at review-pinsd874fe5d, hosted PASS and Validate x2PASS.
