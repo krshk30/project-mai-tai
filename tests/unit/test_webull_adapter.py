@@ -171,6 +171,9 @@ def _adapter(client, **overrides) -> WebullBrokerAdapter:
     adapter._today_orders_cache_secs = 2.0
     adapter._today_orders_lock = threading.Lock()
     adapter._today_orders_cache = {}
+    # These historical detail/cancel shape fixtures also exercise the rollback path.
+    # Default-on list-primary behavior has its own request/continuation/proof tests.
+    adapter._list_primary_enabled = False
     adapter._accepted_cancel_lock = threading.Lock()
     adapter._accepted_cancel_at = {}
     for k, v in overrides.items():

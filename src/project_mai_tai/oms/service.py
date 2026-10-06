@@ -12713,7 +12713,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         if normalized == "schwab":
             return SchwabBrokerAdapter(self.settings)
         if normalized == "webull":
-            return WebullBrokerAdapter(self.settings)
+            from project_mai_tai.broker_adapters.webull_order_reads import TerminalProofStore
+            return WebullBrokerAdapter(self.settings, terminal_proof_store=TerminalProofStore(self.session_factory))
         raise RuntimeError(f"Unsupported broker provider: {provider}")
 
     def seed_runtime_metadata(self) -> dict[str, int]:
