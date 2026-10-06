@@ -7223,3 +7223,13 @@ artifacts verified on box; approval75b4a125 under standing mechanics authority.
 Attended runner started18:56; /home/trader/roundup1-install1-20261006-01ed2458/
 runner.log and numbered rawstdout/stderr receipts retained. NOT COMPLETE;
 no Install2 merge or source trading change, no rollback/recovery authority.
+
+2026-10-06 19:14 ET codex-2 C103: attended Install1 STOP19:11:44 at
+stop-orb-schwab/rc1 exact CancelledError missing. Source4805clean/envadvanced,
+v2 stopped19:09:01; orb-schwab stopped19:11:43 exit1; OMS362892/control2916
+active unchanged. All measured trading gates passed, one TimeoutError retried
+to rc0. Abort page rc0/confirmed. Unit stdout/stderr append to app log; known
+CancelledError exists there, not in captured journal. No reset/start/recovery,
+no control action, no COMPLETE claim. Requested same-attempt continuation.
+Raw STOP, states, runner hash/last30 and gate receipts recorded in
+docs/review-artifacts/roundup1/INSTALL1_ROW47_STOP_2026-10-06.md.
