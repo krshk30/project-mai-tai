@@ -5882,3 +5882,17 @@ proof. First trader env permission refusal preceded SQL; root read made no
 writes. Exact-target cancel fallback and bounded recovery remain real readiness
 blockers. Asked whether fixes belong in a separate prerequisite or explicitly
 expanded #1095 scope; no OMS trading change hidden in rounding. DRAFT/defaultOFF.
+
+## 2026-10-06 06:48 ET - ROUNDUP1 draft checkpoint published
+
+Published #1095 head980a65a59e6dbeec4b1556d183479101ddafdf59; DRAFT retained.
+Exact frozen full pair: main47FAILED/5894PASS238.49s, head47FAILED/6384PASS258.23s.
+Failed node sets identical after removing one interleaved absolute-path stderr
+suffix after a parameter's closing bracket, not changing test identities.
+Three provisional regressions (two catalog counts/default-OFF refresh call)
+fixed, not baseline-waived. Raw main sha e2ec7223de97e8047441b551017c401850ce364d17f787ae77d970067c2c22d8;
+head sha bea9a56429580aafeaa4535fd4ea12fb7e8b75b4966d8e985aba4cd19bdd5d2a.
+543focus/9existing+7newmutationsRED. Updated REPORT/PRbody prominently retain
+unbounded historical recovery and wrong-target OMS cancel fallback blockers.
+No historical accepted/unfilled restart or complete all-flags ROUNDUP-ON proof;
+controlled fixtures remain disclosed. No ready/pin/CI-green/install claim.
