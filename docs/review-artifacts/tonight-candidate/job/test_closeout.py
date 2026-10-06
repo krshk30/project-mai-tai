@@ -88,3 +88,10 @@ def test_closeout_cannot_run_service_schema_env_or_source_sequence():
     script = Path(__file__).with_name('closeout.sh').read_text()
     for forbidden in ['systemctl start', 'systemctl stop', 'systemctl restart', 'alembic', 'checkout', 'switch --', 'actions.py" env', 'actions.py" migration']:
         assert forbidden not in script
+
+
+def test_closeout_uses_original_separate_redis_baseline(tmp_path, monkeypatch):
+    (tmp_path/'proof-before.json').write_text('{}')
+    (tmp_path/'redis-baseline.json').write_text('{"evicted_keys":0,"used_memory":806948736}')
+    monkeypatch.setattr(proof, 'redis_proof', lambda before: before)
+    assert proof.runner_mode('redis', [str(tmp_path)]) == {'redis': {'evicted_keys': 0, 'used_memory': 806948736}}
