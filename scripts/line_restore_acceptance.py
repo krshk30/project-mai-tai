@@ -102,7 +102,7 @@ async def run_case(c, rows, probes, period, factor):
     if c["kind"].startswith("hold"):
         case.hold(detected_at_ms=t, last_bar_age_s=c["hole_min"]*60, last_print_age_s=0.3)
     results = {"first": None, "plus10": None}
-    live_count = 0; attested = False; buy_before_complete = 0; incomplete_reasons = collections.Counter()
+    live_count = 0; attested = False; buy_before_complete = 0; entry_allowed_while_incomplete = 0; incomplete_reasons = collections.Counter()
     for r in post:
         now = max(r["ts"] + 61_000, t + 1)
         src = "rest" if r["source"] != "live" else "streamer"
@@ -120,17 +120,21 @@ async def run_case(c, rows, probes, period, factor):
             live_count += 1
             if snap["incomplete_reason"]: incomplete_reasons[snap["incomplete_reason"]] += 1
             if snap["incomplete_reason"] and snap["buy_count"]: buy_before_complete = snap["buy_count"]
+            if snap["incomplete_reason"] and snap["entry_allowed"]: entry_allowed_while_incomplete += 1
             if live_count in (1, 11):
-                orc = oracle_rows([x for x in rows if x["ts"] <= r["ts"]])
+                orc = oracle_rows(known)          # same inputs as the code: correctness of the math/plumbing
                 o = orc[-1] if orc else {}
+                orc_chart = oracle_rows([x for x in rows if x["ts"] <= r["ts"]])   # everything the DB has by now = the chart
+                oc = orc_chart[-1] if orc_chart else {}
                 rec = probes.get((sym, c["day"]), {}).get(r["ts"])
                 gaps = [(et(a["ts"]), round((b["ts"]-a["ts"])/60000)) for a, b in zip(known, known[1:]) if b["ts"] - a["ts"] > 60_000]
                 results["first" if live_count == 1 else "plus10"] = dict(gaps=gaps[:6], n_known=len(known), anchor=et(ledger.anchor_ms) if ledger else None,
                     bar=et(r["ts"]), admitted=not snap["incomplete_reason"], reason=snap["incomplete_reason"],
                     state=snap["state"], trail=round(snap["trail"] or 0, 4), oracle_state=o.get("state"), oracle_trail=round(o.get("trail") or 0, 4),
+                    chart_state=oc.get("state"), chart_trail=round(oc.get("trail") or 0, 4),
                     recorded_state=rec[0] if rec else None, recorded_trail=rec[1] if rec else None, entry_allowed=snap["entry_allowed"], buy_count=snap["buy_count"])
             if live_count >= 11: break
-    return dict(c, et=et(t), results=results, buy_before_complete=buy_before_complete, incomplete=dict(incomplete_reasons))
+    return dict(c, et=et(t), results=results, buy_before_complete=buy_before_complete, entry_allowed_while_incomplete=entry_allowed_while_incomplete, incomplete=dict(incomplete_reasons))
 
 def verdict(r):
     out = []
@@ -160,12 +164,15 @@ async def main():
         v = verdict(r) if "error" not in r else ["ERROR", r["error"][:80]]
         rec = r["results"]["first"] or {}
         before = "" if not rec.get("recorded_state") else ("rec=" + ("same" if rec["recorded_state"] == rec["oracle_state"] else f"{rec['recorded_state']}≠{rec['oracle_state']}"))
+        x10 = r["results"]["plus10"] or {}
+        if x10.get("admitted"):
+            tally[(c["kind"], "plus10_vs_chart:" + ("same" if x10.get("state") == x10.get("chart_state") and abs((x10.get("trail") or 0) - (x10.get("chart_trail") or 0)) <= 1e-6 else "DIFFERS"))] += 1
         tally[(c["kind"], "first:" + v[0].split("(")[0])] += 1
         tally[(c["kind"], "plus10:" + v[1].split("(")[0])] += 1
         rec10 = r["results"]["plus10"] or {}
         if rec10.get("recorded_state") and rec10.get("oracle_state"):
             tally[(c["kind"], "installed_bot_at_plus10:" + ("same_as_oracle" if rec10["recorded_state"] == rec10["oracle_state"] and abs((rec10["recorded_trail"] or 0) - (rec10["oracle_trail"] or 0)) < 1e-3 else "DIFFERS"))] += 1
-        print(f"{r['et']} {c['symbol']:5} {c['kind']:17} hole={c['hole_min']:>5}m first={v[0]:<40} +10={v[1]:<28} buys_while_incomplete={r['buy_before_complete']} {before}")
+        print(f"{r['et']} {c['symbol']:5} {c['kind']:17} hole={c['hole_min']:>5}m first={v[0]:<40} +10={v[1]:<28} buys_while_incomplete={r['buy_before_complete']} entry_allowed_while_incomplete={r.get('entry_allowed_while_incomplete',0)} {before}")
         out.append(dict(r, verdict=v))
     print("\nTALLY:", json.dumps({f"{k[0]}:{k[1]}": n for k, n in sorted(tally.items())}, indent=0))
     if a.json: json.dump(out, open(a.json, "w"), indent=1, default=str)
