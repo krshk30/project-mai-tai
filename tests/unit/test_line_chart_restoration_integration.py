@@ -25,11 +25,13 @@ from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import TradeIntentDraft
 from project_mai_tai.strategy_core.session_line_restore import (
     SessionCoverage, SessionLineRestoration, build_session_line, history_fingerprint,
+    RebuildInput,
 )
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 RAW = json.loads((FIXTURES / "line_chart_restoration_bars.json").read_text())
 CONTROLS = json.loads((FIXTURES / "line_chart_recorded_entry_controls.json").read_text())
+JAGX_TODAY = json.loads((FIXTURES / "line_chart_jagx_20261006.json").read_text())
 
 
 def _ms(value):
@@ -55,10 +57,12 @@ def _payload(symbol, bars):
 
 
 def _proof(ledger, bars):
+    # This is a controlled proof for integration fences, not a measurement of
+    # historical prefix coverage. The real provider defaults it to unproven.
     return SessionCoverage("schwab_rest_full_session", ledger.anchor_ms,
                            bars[-1].timestamp_ms + 60_000,
                            tuple(bar.timestamp_ms for bar in bars), True,
-                           history_fingerprint(bars))
+                           history_fingerprint(bars), prefix_complete=True)
 
 
 def _bot(symbol, current, **overrides):
@@ -182,7 +186,13 @@ async def test_actual_service_rest_skip_still_records_late_history_and_admits_on
     bot._should_skip_rest_strategy_feed = lambda symbol, bar: True
     for bar in late:
         await bot._handle_bar_from_rest(symbol, bar)
-    assert await bot._rebuild_session_line(symbol, ledger)
+    admitted = await bot._rebuild_session_line(symbol, ledger)
+    if symbol == "JAGX":
+        assert not admitted
+        assert ledger.incomplete_reason == "interior_gap_unproven"
+        assert not bot.strategy.line_buy_ready(symbol)
+        return
+    assert admitted
     assert ledger.current_bar_ms == _ms(current)
     assert bot.strategy.line_buy_ready(symbol)
 
@@ -235,27 +245,27 @@ async def test_inflight_worker_cannot_publish_after_any_identity_or_coverage_cha
 
 @pytest.mark.asyncio
 async def test_readd_keeps_consumed_slots_but_requires_a_new_provider_epoch():
-    bars = _bars("JAGX")
-    bot = _bot("JAGX", bars[-1].timestamp_ms)
+    bars = _bars("RETO")
+    bot = _bot("RETO", bars[-1].timestamp_ms)
     ledger = _ingest(bot, bars)
     ledger.attest(_proof(ledger, bars))
-    assert await bot._rebuild_session_line("JAGX", ledger)
-    state = bot.strategy.watchlist_state("JAGX")
+    assert await bot._rebuild_session_line("RETO", ledger)
+    state = bot.strategy.watchlist_state("RETO")
     state.cw_resting_taken = state.cw_reclaim_taken = True
     state.retry_one_closes_in_segment = 1
     bot._watchlist = set()
     bot._sync_line_epochs()
-    bot.strategy.release_and_drop_symbol("JAGX")
-    bot._watchlist = {"JAGX"}
+    bot.strategy.release_and_drop_symbol("RETO")
+    bot._watchlist = {"RETO"}
     bot._sync_line_epochs()
-    assert not bot.strategy.line_buy_ready("JAGX")
-    assert bot.strategy.watchlist_state("JAGX") is state
+    assert not bot.strategy.line_buy_ready("RETO")
+    assert bot.strategy.watchlist_state("RETO") is state
     assert state.cw_resting_taken and state.cw_reclaim_taken and state.retry_one_closes_in_segment == 1
     new = _ingest(bot, bars)
     assert new.epoch != ledger.epoch
-    assert not await bot._rebuild_session_line("JAGX", new)
+    assert not await bot._rebuild_session_line("RETO", new)
     new.attest(_proof(new, bars))
-    assert await bot._rebuild_session_line("JAGX", new)
+    assert await bot._rebuild_session_line("RETO", new)
 
 
 @pytest.mark.asyncio
@@ -276,7 +286,7 @@ async def test_restart_never_inherits_admission_from_the_previous_process():
 
 
 @pytest.mark.asyncio
-async def test_real_provider_service_pass_publishes_full_history_off_callback(monkeypatch):
+async def test_real_provider_service_pass_does_not_certify_a_missing_prefix(monkeypatch):
     bars = _bars("RETO", _ms("2026-10-05T11:21:00-04:00"))
     bot = _bot("RETO", bars[-1].timestamp_ms)
     _ingest(bot, bars[:-1])
@@ -299,9 +309,10 @@ async def test_real_provider_service_pass_publishes_full_history_off_callback(mo
     await client._bar_loop_pass(15)
     await bot._line_restoration_pass()
     assert provider_threads[0] != threading.get_ident()
-    assert len(bot._line_published["RETO"].request.bars) == len(bars)
-    assert bot.strategy.line_buy_ready("RETO")
-    assert round(bot.strategy.watchlist_state("RETO").atr_trail, 4) == 2.0639
+    assert len(bot._line_sessions["RETO"]._bars) == len(bars)
+    assert not bot._line_published
+    assert bot._line_sessions["RETO"].incomplete_reason == "session_prefix_unproven"
+    assert not bot.strategy.line_buy_ready("RETO")
     client._authorized_get = lambda url: {"symbol": "RETO", "empty": True, "candles": []}
     await client._bar_loop_pass(15)
     assert not bot.strategy.line_buy_ready("RETO")
@@ -466,7 +477,7 @@ async def test_revision_of_current_recorded_bar_repairs_math_without_replaying_e
 
 
 @pytest.mark.asyncio
-async def test_gap_hold_rebuild_uses_existing_reset_and_clean_ten_bar_wait():
+async def test_gap_hold_cannot_admit_an_unrepaired_interior_hole_after_ten_clean_bars():
     from tests.unit.test_schwab_1m_v2_gap_hold import _chart_bar, MIDDAY_MS
 
     bars = [_chart_bar(MIDDAY_MS + index * 60_000, 2.5) for index in range(12)]
@@ -480,14 +491,14 @@ async def test_gap_hold_rebuild_uses_existing_reset_and_clean_ten_bar_wait():
     state = bot.strategy.watchlist_state("BENF")
     assert state.gap_hold_active and state.gap_hold_contiguous_bars == 9
     ledger.attest(_proof(ledger, bars[:1] + bars[2:11]))
-    assert await bot._rebuild_session_line("BENF", ledger)
+    assert not await bot._rebuild_session_line("BENF", ledger)
     assert state.gap_hold_active and not bot.strategy.line_buy_ready("BENF")
     _ingest(bot, bars[11:])
     ledger.attest(_proof(ledger, bars[:1] + bars[2:]))
     assert not state.gap_hold_active and state.gap_hold_contiguous_bars == 10
-    assert await bot._rebuild_session_line("BENF", ledger)
-    assert bot._line_published["BENF"].snapshot.reset_after_ms == MIDDAY_MS + 60_000
-    assert bot.strategy.line_buy_ready("BENF")
+    assert not await bot._rebuild_session_line("BENF", ledger)
+    assert ledger.incomplete_reason == "interior_gap_unproven"
+    assert not bot.strategy.line_buy_ready("BENF")
 
 
 @pytest.mark.asyncio
@@ -508,8 +519,8 @@ async def test_anchored_source_current_callbacks_advance_gap_hold_without_double
     assert state.gap_hold_contiguous_bars == 10 and not state.gap_hold_active
     assert bot._accept_line_source("BENF", ledger.epoch, response, _proof(ledger, response))
     assert state.gap_hold_contiguous_bars == 10
-    assert await bot._rebuild_session_line("BENF", ledger)
-    assert bot.strategy.line_buy_ready("BENF")
+    assert not await bot._rebuild_session_line("BENF", ledger)
+    assert not bot.strategy.line_buy_ready("BENF")
 
 
 def test_rpg_authorization_refuses_replacement_without_current_line():
@@ -601,7 +612,207 @@ def test_thirteen_recorded_entry_math_controls(control):
     for bar in bars:
         ledger.observe(bar)
     ledger.attest(_proof(ledger, bars))
-    snapshot = build_session_line(ledger.prepare(), 5, 3.5)
+    # This control pins mathematics, not completeness or entry admissibility.
+    # Several recorded sessions have holes awaiting the separate Pause proof.
+    request = RebuildInput(control["symbol"], ledger.epoch, ledger.revision,
+                           ledger.anchor_ms, ledger.current_bar_ms,
+                           tuple(ledger._bars[ts] for ts in sorted(ledger._bars)))
+    snapshot = build_session_line(request, 5, 3.5)
     math = dict(snapshot.indicator)
     assert math["atr_state"] == control["state"]
     assert round(math["atr_trail"], 4) == round(control["trail"], 4)
+
+
+def test_recorded_jagx_1006_provider_response_is_not_full_session_coverage():
+    bars = [_bar(row) for row in JAGX_TODAY["bars"]]
+    bot = _bot("JAGX", bars[-1].timestamp_ms)
+    client = SchwabV2RestClient(bot.settings, on_chart_bar=AsyncMock(), on_quote=AsyncMock())
+    client._authorized_get = lambda url: JAGX_TODAY["provider_response"]
+    # The real response also included ten candles beyond the requested cutoff.
+    with pytest.raises(ValueError, match="foreign or duplicate"):
+        client.fetch_session_history("JAGX", bot._line_sessions["JAGX"].anchor_ms,
+                                     bars[-1].timestamp_ms)
+    ledger = _ingest(bot, bars)
+    ledger.attest(SessionCoverage(
+        "schwab_rest_full_session", ledger.anchor_ms, bars[-1].timestamp_ms + 60_000,
+        tuple(bar.timestamp_ms for bar in bars), True, history_fingerprint(bars),
+    ))
+    assert ledger.prepare() is None
+    assert ledger.incomplete_reason == "session_prefix_unproven"
+    assert not bot.strategy.line_buy_ready("JAGX")
+    assert {row["minute"] for row in JAGX_TODAY["prefix_tape"]} == {
+        "2026-10-06 08:00:00+00:00", "2026-10-06 10:10:00+00:00",
+        "2026-10-06 10:11:00+00:00", "2026-10-06 10:12:00+00:00",
+    }
+
+
+def test_recorded_jagx_1006_conditional_series_is_not_claimed_as_chart_parity():
+    bars = [_bar(row) for row in JAGX_TODAY["bars"]]
+    ledger = SessionLineRestoration("JAGX", _ms("2026-10-06T04:00:00-04:00"), 1)
+    for bar in bars:
+        ledger.observe(bar)
+    request = RebuildInput("JAGX", 1, ledger.revision, ledger.anchor_ms,
+                           ledger.current_bar_ms, tuple(ledger._bars.values()))
+    snapshot = build_session_line(request, 5, 3.5)
+    indicator = dict(snapshot.indicator)
+    assert indicator["atr_state"] == "long"
+    assert indicator["atr_state_age"] == 7
+    assert round(indicator["atr_trail"], 4) == 5.7955
+    assert ledger.prepare() is None
+
+
+@pytest.mark.asyncio
+async def test_recorded_reto_stored_backfill_is_read_off_callback_without_rewriting_source_proof():
+    pairs = [(row, _bar(row)) for row in RAW["bars"] if row["symbol"] == "RETO"
+             and _ms(row["bar_time"]) <= _ms("2026-10-05T11:18:00-04:00")]
+    bars = [bar for _, bar in pairs]
+    late = [bar for row, bar in pairs
+            if row["source"] == "rest"
+            and _ms(row["created_at"]) > _ms("2026-10-05T11:10:18-04:00")]
+    available = [bar for _, bar in pairs if bar not in late]
+    assert len(late) == 16
+    bot = _bot("RETO", bars[-1].timestamp_ms)
+    ledger = _ingest(bot, available)
+    proof = _proof(ledger, bars)
+    ledger.attest(proof)
+    assert ledger.prepare() is None
+    threads = []
+    bot.session_factory = object()
+
+    def read(symbol, anchor, current):
+        threads.append(threading.get_ident())
+        assert symbol == "RETO" and anchor == ledger.anchor_ms and current == bars[-1].timestamp_ms
+        return late
+
+    bot._read_line_session_bars = read
+    assert await bot._rebuild_session_line("RETO", ledger)
+    assert threads and threads[0] != threading.get_ident()
+    assert ledger._coverage is proof
+    assert round(bot.strategy.watchlist_state("RETO").atr_trail, 4) == 2.0639
+    assert not bot.strategy.drain_pending_intents()
+
+
+@pytest.mark.asyncio
+async def test_stored_reto_additions_cannot_rewrite_an_incomplete_provider_manifest():
+    pairs = [(row, _bar(row)) for row in RAW["bars"] if row["symbol"] == "RETO"
+             and _ms(row["bar_time"]) <= _ms("2026-10-05T11:18:00-04:00")]
+    late = [bar for row, bar in pairs if row["source"] == "rest"
+            and _ms(row["created_at"]) > _ms("2026-10-05T11:10:18-04:00")]
+    available = [bar for _, bar in pairs if bar not in late]
+    bot = _bot("RETO", available[-1].timestamp_ms)
+    ledger = _ingest(bot, available)
+    proof = _proof(ledger, available)
+    ledger.attest(proof)
+    bot.session_factory = object()
+    bot._read_line_session_bars = lambda *args: late
+    assert not await bot._rebuild_session_line("RETO", ledger)
+    assert ledger._coverage is proof
+    assert ledger.incomplete_reason == "history_missing_or_conflicting"
+    assert not bot.strategy.line_buy_ready("RETO")
+
+
+def test_stored_session_reader_keeps_255_recorded_rows_and_exact_anchor_bounds():
+    from types import SimpleNamespace
+
+    pairs = [(row, _bar(row)) for row in RAW["bars"] if row["symbol"] == "RETO"]
+    bars = [bar for _, bar in pairs]
+    records = [SimpleNamespace(
+        symbol=bar.symbol, bar_time=datetime.fromtimestamp(bar.timestamp_ms / 1000, UTC),
+        open_price=bar.open, high_price=bar.high, low_price=bar.low,
+        close_price=bar.close, volume=bar.volume,
+    ) for bar in bars]
+    bot = _bot("RETO", bars[-1].timestamp_ms)
+    params = []
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def scalars(self, query):
+            values = query.compile().params
+            params.append(values)
+            return SimpleNamespace(all=lambda: records[:values["param_1"]])
+
+    bot.session_factory = Session
+    anchor = bot._line_sessions["RETO"].anchor_ms
+    result = bot._read_line_session_bars("RETO", anchor, bars[-1].timestamp_ms)
+    assert len(result) == 255
+    assert result == bars
+    assert params[0]["param_1"] == 961
+    assert params[0]["bar_time_1"] == datetime.fromtimestamp(anchor / 1000, UTC)
+    assert params[0]["bar_time_2"] == datetime.fromtimestamp(bars[-1].timestamp_ms / 1000, UTC)
+
+
+@pytest.mark.asyncio
+async def test_recorded_reto_complete_history_supersedes_reset_cutoff_but_not_the_wait():
+    bars = _bars("RETO", _ms("2026-10-05T11:18:00-04:00"))
+    bot = _bot("RETO", bars[-1].timestamp_ms, strategy_schwab_1m_v2_gap_hold_enabled=True)
+    before = [bar for bar in bars if bar.timestamp_ms <= _ms("2026-10-05T10:48:00-04:00")]
+    ledger = _ingest(bot, before)
+    assert bot.strategy.begin_gap_hold("RETO", detected_at_ms=_ms("2026-10-05T11:06:05-04:00"),
+                                       last_bar_age_s=1025, last_print_age_s=1)
+    state = bot.strategy.watchlist_state("RETO")
+    state.cw_resting_taken = state.cw_reclaim_taken = True
+    state.atr_fired_in_short_seg = True
+    live = [bar for bar in bars if bar.timestamp_ms >= _ms("2026-10-05T11:06:00-04:00")]
+    _ingest(bot, live[:9])
+    for bar in bars:
+        ledger.observe(bar)
+    ledger.attest(_proof(ledger, bars))
+    assert await bot._rebuild_session_line("RETO", ledger) is False  # latest callback is older
+    _ingest(bot, live[9:])
+    ledger.attest(_proof(ledger, bars))
+    assert await bot._rebuild_session_line("RETO", ledger)
+    assert not state.gap_hold_active and state.gap_hold_contiguous_bars >= 10
+    assert state.line_restore_reset_after_ms == 0
+    assert round(state.atr_trail, 4) == 2.0639
+    assert state.cw_resting_taken and state.cw_reclaim_taken and state.atr_fired_in_short_seg
+    assert not bot.strategy.drain_pending_intents()
+
+
+@pytest.mark.asyncio
+async def test_recorded_reto_historical_sell_at_initial_publication_is_not_emitted_late():
+    bars = _bars("RETO")
+    bot = _bot("RETO", bars[-1].timestamp_ms)
+    ledger = _ingest(bot, bars)
+    ledger.attest(_proof(ledger, bars))
+    rows = dict(build_session_line(ledger.prepare(), 5, 3.5).confirmation)
+    index = next(i for i in range(11, len(bars)) if rows[bars[i - 1].timestamp_ms] == "long"
+                 and rows[bars[i].timestamp_ms] == "short")
+    bot = _bot("RETO", bars[index].timestamp_ms)
+    bot._drain_atr_sell_observations = AsyncMock()
+    ledger = _ingest(bot, bars[:index + 1])
+    ledger.attest(_proof(ledger, bars[:index + 1]))
+    assert await bot._rebuild_session_line("RETO", ledger)
+    assert bot.strategy.watchlist_state("RETO").atr_state == "short"
+    assert not bot.strategy._pending_atr_sell_observations
+    assert not bot.strategy.drain_pending_intents()
+
+
+@pytest.mark.asyncio
+async def test_reto_late_prefix_repair_with_adjacent_current_bar_cannot_emit_a_replayed_flip():
+    # Candle values are recorded; arrival and prefix coverage are controlled
+    # to isolate the publication fence, not historical completeness evidence.
+    bars = _bars("RETO")
+    full = _bot("RETO", bars[-1].timestamp_ms)
+    ledger = _ingest(full, bars)
+    ledger.attest(_proof(ledger, bars))
+    states = dict(build_session_line(ledger.prepare(), 5, 3.5).confirmation)
+    index = next(i for i in range(12, len(bars)) if states[bars[i - 1].timestamp_ms] == "long"
+                 and states[bars[i].timestamp_ms] == "short")
+    bot = _bot("RETO", bars[index - 1].timestamp_ms)
+    bot._drain_atr_sell_observations = AsyncMock()
+    ledger = _ingest(bot, bars[1:index])
+    ledger.attest(_proof(ledger, bars[1:index]))
+    assert await bot._rebuild_session_line("RETO", ledger)
+    bot.strategy._now_ms = lambda: bars[index].timestamp_ms + 61_000
+    _ingest(bot, bars[index:index + 1])
+    bot._observe_line_bar("RETO", bars[0])
+    ledger.attest(_proof(ledger, bars[:index + 1]))
+    assert await bot._rebuild_session_line("RETO", ledger)
+    assert bot.strategy.watchlist_state("RETO").atr_state == "short"
+    assert not bot.strategy._pending_atr_sell_observations
+    assert not bot.strategy.drain_pending_intents()

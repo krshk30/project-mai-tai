@@ -1,0 +1,460 @@
+{
+  "read_at_utc": "2026-10-06T11:22:51.714204+00:00",
+  "raw_sha256": "fa74d87fe0fa31cdc9c71ebbd22b95780c162ab27a192d572aeefe0e0372e5e3",
+  "bars": [
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:01:00+00:00",
+      "created_at": "2026-10-06T11:02:15.419714+00:00",
+      "source": "live",
+      "open_price": "5.91000000",
+      "high_price": "6.33140000",
+      "low_price": "5.90550000",
+      "close_price": "6.19000000",
+      "volume": 141494
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:02:00+00:00",
+      "created_at": "2026-10-06T11:03:02.403508+00:00",
+      "source": "live",
+      "open_price": "6.16600000",
+      "high_price": "6.86000000",
+      "low_price": "6.15000000",
+      "close_price": "6.63500000",
+      "volume": 317030
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:03:00+00:00",
+      "created_at": "2026-10-06T11:10:10.891523+00:00",
+      "source": "rest",
+      "open_price": "6.63520000",
+      "high_price": "6.63520000",
+      "low_price": "6.01000000",
+      "close_price": "6.28990000",
+      "volume": 243599
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:04:00+00:00",
+      "created_at": "2026-10-06T11:10:10.891523+00:00",
+      "source": "rest",
+      "open_price": "6.26000000",
+      "high_price": "6.64000000",
+      "low_price": "6.25980000",
+      "close_price": "6.64000000",
+      "volume": 215066
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:05:00+00:00",
+      "created_at": "2026-10-06T11:06:35.372853+00:00",
+      "source": "live",
+      "open_price": "6.61520000",
+      "high_price": "6.90000000",
+      "low_price": "6.35000000",
+      "close_price": "6.39000000",
+      "volume": 514447
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:06:00+00:00",
+      "created_at": "2026-10-06T11:07:02.756115+00:00",
+      "source": "live",
+      "open_price": "6.42000000",
+      "high_price": "6.48000000",
+      "low_price": "6.19000000",
+      "close_price": "6.20000000",
+      "volume": 194898
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:07:00+00:00",
+      "created_at": "2026-10-06T11:08:02.574500+00:00",
+      "source": "live",
+      "open_price": "6.23000000",
+      "high_price": "6.29690000",
+      "low_price": "6.13000000",
+      "close_price": "6.27380000",
+      "volume": 85889
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:08:00+00:00",
+      "created_at": "2026-10-06T11:09:02.417023+00:00",
+      "source": "live",
+      "open_price": "6.27750000",
+      "high_price": "6.39000000",
+      "low_price": "6.20610000",
+      "close_price": "6.33000000",
+      "volume": 65199
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:09:00+00:00",
+      "created_at": "2026-10-06T11:10:02.243290+00:00",
+      "source": "live",
+      "open_price": "6.33000000",
+      "high_price": "6.33700000",
+      "low_price": "6.14000000",
+      "close_price": "6.28970000",
+      "volume": 70282
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:10:00+00:00",
+      "created_at": "2026-10-06T11:11:03.053273+00:00",
+      "source": "live",
+      "open_price": "6.22000000",
+      "high_price": "6.35000000",
+      "low_price": "6.22000000",
+      "close_price": "6.25000000",
+      "volume": 36193
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:11:00+00:00",
+      "created_at": "2026-10-06T11:12:01.657310+00:00",
+      "source": "live",
+      "open_price": "6.25990000",
+      "high_price": "6.55000000",
+      "low_price": "6.25000000",
+      "close_price": "6.49000000",
+      "volume": 133328
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:12:00+00:00",
+      "created_at": "2026-10-06T11:13:02.134349+00:00",
+      "source": "live",
+      "open_price": "6.47000000",
+      "high_price": "6.64000000",
+      "low_price": "6.43000000",
+      "close_price": "6.48150000",
+      "volume": 156717
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:13:00+00:00",
+      "created_at": "2026-10-06T11:14:02.949225+00:00",
+      "source": "live",
+      "open_price": "6.48610000",
+      "high_price": "6.65000000",
+      "low_price": "6.40000000",
+      "close_price": "6.46000000",
+      "volume": 92377
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:14:00+00:00",
+      "created_at": "2026-10-06T11:15:02.794549+00:00",
+      "source": "live",
+      "open_price": "6.46000000",
+      "high_price": "6.79900000",
+      "low_price": "6.46000000",
+      "close_price": "6.73000000",
+      "volume": 246434
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:15:00+00:00",
+      "created_at": "2026-10-06T11:16:02.575863+00:00",
+      "source": "live",
+      "open_price": "6.73000000",
+      "high_price": "6.82000000",
+      "low_price": "6.62000000",
+      "close_price": "6.62000000",
+      "volume": 253539
+    },
+    {
+      "symbol": "JAGX",
+      "bar_time": "2026-10-06T11:16:00+00:00",
+      "created_at": "2026-10-06T11:17:02.378856+00:00",
+      "source": "live",
+      "open_price": "6.62310000",
+      "high_price": "6.63230000",
+      "low_price": "6.46000000",
+      "close_price": "6.58000000",
+      "volume": 132030
+    }
+  ],
+  "provider_request": {
+    "symbol": "JAGX",
+    "periodType": "day",
+    "frequencyType": "minute",
+    "frequency": 1,
+    "startDate": 1791273600000,
+    "endDate": 1791285419999,
+    "needExtendedHoursData": "true"
+  },
+  "provider_response": {
+    "symbol": "JAGX",
+    "empty": false,
+    "candles": [
+      {
+        "open": 5.8,
+        "high": 5.91,
+        "low": 5.7869,
+        "close": 5.91,
+        "volume": 31798,
+        "datetime": 1791284400000
+      },
+      {
+        "open": 5.91,
+        "high": 6.3314,
+        "low": 5.9055,
+        "close": 6.19,
+        "volume": 141494,
+        "datetime": 1791284460000
+      },
+      {
+        "open": 6.166,
+        "high": 6.86,
+        "low": 6.15,
+        "close": 6.635,
+        "volume": 317030,
+        "datetime": 1791284520000
+      },
+      {
+        "open": 6.6352,
+        "high": 6.6352,
+        "low": 6.01,
+        "close": 6.2899,
+        "volume": 243599,
+        "datetime": 1791284580000
+      },
+      {
+        "open": 6.26,
+        "high": 6.64,
+        "low": 6.2598,
+        "close": 6.64,
+        "volume": 215066,
+        "datetime": 1791284640000
+      },
+      {
+        "open": 6.6152,
+        "high": 6.9,
+        "low": 6.35,
+        "close": 6.39,
+        "volume": 514447,
+        "datetime": 1791284700000
+      },
+      {
+        "open": 6.42,
+        "high": 6.48,
+        "low": 6.19,
+        "close": 6.2,
+        "volume": 194898,
+        "datetime": 1791284760000
+      },
+      {
+        "open": 6.23,
+        "high": 6.2969,
+        "low": 6.13,
+        "close": 6.2738,
+        "volume": 85889,
+        "datetime": 1791284820000
+      },
+      {
+        "open": 6.2775,
+        "high": 6.39,
+        "low": 6.2061,
+        "close": 6.33,
+        "volume": 65199,
+        "datetime": 1791284880000
+      },
+      {
+        "open": 6.33,
+        "high": 6.337,
+        "low": 6.14,
+        "close": 6.2897,
+        "volume": 70282,
+        "datetime": 1791284940000
+      },
+      {
+        "open": 6.22,
+        "high": 6.35,
+        "low": 6.22,
+        "close": 6.25,
+        "volume": 36193,
+        "datetime": 1791285000000
+      },
+      {
+        "open": 6.2599,
+        "high": 6.55,
+        "low": 6.25,
+        "close": 6.49,
+        "volume": 133328,
+        "datetime": 1791285060000
+      },
+      {
+        "open": 6.47,
+        "high": 6.64,
+        "low": 6.43,
+        "close": 6.4815,
+        "volume": 156717,
+        "datetime": 1791285120000
+      },
+      {
+        "open": 6.4861,
+        "high": 6.65,
+        "low": 6.4,
+        "close": 6.46,
+        "volume": 92377,
+        "datetime": 1791285180000
+      },
+      {
+        "open": 6.46,
+        "high": 6.799,
+        "low": 6.46,
+        "close": 6.73,
+        "volume": 246434,
+        "datetime": 1791285240000
+      },
+      {
+        "open": 6.73,
+        "high": 6.82,
+        "low": 6.62,
+        "close": 6.62,
+        "volume": 253539,
+        "datetime": 1791285300000
+      },
+      {
+        "open": 6.6231,
+        "high": 6.6323,
+        "low": 6.46,
+        "close": 6.58,
+        "volume": 132030,
+        "datetime": 1791285360000
+      },
+      {
+        "open": 6.5838,
+        "high": 6.9,
+        "low": 6.57,
+        "close": 6.89,
+        "volume": 265714,
+        "datetime": 1791285420000
+      },
+      {
+        "open": 6.8915,
+        "high": 7,
+        "low": 6.73,
+        "close": 6.94,
+        "volume": 392785,
+        "datetime": 1791285480000
+      },
+      {
+        "open": 6.9591,
+        "high": 6.99,
+        "low": 6.76,
+        "close": 6.77,
+        "volume": 262763,
+        "datetime": 1791285540000
+      },
+      {
+        "open": 6.78,
+        "high": 6.8983,
+        "low": 6.73,
+        "close": 6.76,
+        "volume": 212297,
+        "datetime": 1791285600000
+      },
+      {
+        "open": 6.77,
+        "high": 6.88,
+        "low": 6.65,
+        "close": 6.8,
+        "volume": 199276,
+        "datetime": 1791285660000
+      },
+      {
+        "open": 6.8031,
+        "high": 6.81,
+        "low": 6.62,
+        "close": 6.6599,
+        "volume": 127861,
+        "datetime": 1791285720000
+      },
+      {
+        "open": 6.66,
+        "high": 6.78,
+        "low": 6.6,
+        "close": 6.7032,
+        "volume": 72688,
+        "datetime": 1791285780000
+      },
+      {
+        "open": 6.7,
+        "high": 6.72,
+        "low": 6.44,
+        "close": 6.53,
+        "volume": 131771,
+        "datetime": 1791285840000
+      },
+      {
+        "open": 6.5593,
+        "high": 6.7,
+        "low": 6.53,
+        "close": 6.698,
+        "volume": 78097,
+        "datetime": 1791285900000
+      },
+      {
+        "open": 6.69,
+        "high": 6.69,
+        "low": 6.65,
+        "close": 6.6648,
+        "volume": 5064,
+        "datetime": 1791285960000
+      }
+    ]
+  },
+  "prefix_tape": [
+    {
+      "minute": "2026-10-06 08:00:00+00:00",
+      "provider": "massive",
+      "trades": 50,
+      "first_event_at": "2026-10-06 08:00:00.007000+00:00",
+      "last_event_at": "2026-10-06 08:00:02.276000+00:00",
+      "first_received_at": "2026-10-06 08:00:02.302556+00:00",
+      "last_received_at": "2026-10-06 08:00:07.006560+00:00",
+      "low_price": "4.990000",
+      "high_price": "6.650000"
+    },
+    {
+      "minute": "2026-10-06 10:10:00+00:00",
+      "provider": "massive",
+      "trades": 2083,
+      "first_event_at": "2026-10-06 10:10:14.505000+00:00",
+      "last_event_at": "2026-10-06 10:10:59.981000+00:00",
+      "first_received_at": "2026-10-06 10:10:15.987148+00:00",
+      "last_received_at": "2026-10-06 10:11:02.070574+00:00",
+      "low_price": "6.130000",
+      "high_price": "6.640000"
+    },
+    {
+      "minute": "2026-10-06 10:11:00+00:00",
+      "provider": "massive",
+      "trades": 2266,
+      "first_event_at": "2026-10-06 10:11:00.008000+00:00",
+      "last_event_at": "2026-10-06 10:11:59.991000+00:00",
+      "first_received_at": "2026-10-06 10:11:02.070576+00:00",
+      "last_received_at": "2026-10-06 10:12:01.809178+00:00",
+      "low_price": "6.110000",
+      "high_price": "6.420000"
+    },
+    {
+      "minute": "2026-10-06 10:12:00+00:00",
+      "provider": "massive",
+      "trades": 271,
+      "first_event_at": "2026-10-06 10:12:00.126000+00:00",
+      "last_event_at": "2026-10-06 10:12:05.212000+00:00",
+      "first_received_at": "2026-10-06 10:12:01.809187+00:00",
+      "last_received_at": "2026-10-06 10:12:06.113707+00:00",
+      "low_price": "5.990000",
+      "high_price": "6.188800"
+    }
+  ],
+  "limitation": "Recorded raw candles and tape. Neither provider request success nor zero retained tape proves prefix/silence coverage. Conditional 07:01-start oracle is not full-session chart parity."
+}

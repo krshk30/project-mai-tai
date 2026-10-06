@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-06",
+  "status": "DRAFT_NOT_PIN_READY",
+  "base_main": "03b26293624f87e43eb167431fc308b1aec309b3",
+  "method": "Each mutation applied alone, targeted test run, original source restored. Crash-only broad if-adjacent-live mutation excluded.",
+  "mutations": [
+    {
+      "mutation": "remove_prefix_completeness",
+      "test": "tests/unit/test_line_chart_restoration_integration.py::test_recorded_jagx_1006_provider_response_is_not_full_session_coverage",
+      "exit_code": 1,
+      "result": "ASSERTION_RED",
+      "failure": "F                                                                        [100%]\n=================================== FAILURES ===================================\n____ test_recorded_jagx_1006_provider_response_is_not_full_session_coverage ____\ntests/unit/test_line_chart_restoration_integration.py:640: in test_recorded_jagx_1006_provider_response_is_not_full_session_coverage\n    assert ledger.prepare() is None\nE   AssertionError: assert RebuildInput(symbol='JAGX', epoch=227934898914013654939553076960946682866, revision=17, anchor_ms=1791273600000, curre... HistoryBar(symbol='JAGX', open=6.6231, high=6.6323, low=6.46, close=6.58, volume=132030, timestamp_ms=1791285360000))) is None\nE    +  where RebuildInput(symbol='JAGX', epoch=227934898914013654939553076960946682866, revision=17, anchor_ms=1791273600000, curre... HistoryBar(symbol='JAGX', open=6.6231, high=6.6323, low=6.46, close=6.58, volume=132030, timestamp_ms=1791285360000))) = prepare()\nE    +    where prepare = <project_mai_tai.strategy_core.session_line_restore.SessionLineRestoration object at 0x10d99b920>.prepare\n=========================== short test summary info ============================\nFAILED tests/unit/test_line_chart_restoration_integration.py::test_recorded_jagx_1006_provider_response_is_not_full_session_coverage\n1 failed in 0.50s\n"
+    },
+    {
+      "mutation": "remove_interior_completeness",
+      "test": "tests/unit/test_line_chart_restoration.py::test_recorded_jagx_readd_34_minute_hole_blocks_until_122012_backfill",
+      "exit_code": 1,
+      "result": "ASSERTION_RED",
+      "failure": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_____ test_recorded_jagx_readd_34_minute_hole_blocks_until_122012_backfill _____\ntests/unit/test_line_chart_restoration.py:103: in test_recorded_jagx_readd_34_minute_hole_blocks_until_122012_backfill\n    assert ledger.prepare() is None\nE   AssertionError: assert RebuildInput(symbol='JAGX', epoch=2, revision=109, anchor_ms=1791187200000, current_bar_ms=1791215460000, bars=(Histor...000), HistoryBar(symbol='JAGX', open=4.734, high=4.83, low=4.7, close=4.83, volume=22270, timestamp_ms=1791215460000))) is None\nE    +  where RebuildInput(symbol='JAGX', epoch=2, revision=109, anchor_ms=1791187200000, current_bar_ms=1791215460000, bars=(Histor...000), HistoryBar(symbol='JAGX', open=4.734, high=4.83, low=4.7, close=4.83, volume=22270, timestamp_ms=1791215460000))) = prepare()\nE    +    where prepare = <project_mai_tai.strategy_core.session_line_restore.SessionLineRestoration object at 0x10b4582c0>.prepare\n=========================== short test summary info ============================\nFAILED tests/unit/test_line_chart_restoration.py::test_recorded_jagx_readd_34_minute_hole_blocks_until_122012_backfill\n1 failed in 0.48s\n"
+    },
+    {
+      "mutation": "retain_reset_cutoff",
+      "test": "tests/unit/test_line_chart_restoration_integration.py::test_recorded_reto_complete_history_supersedes_reset_cutoff_but_not_the_wait",
+      "exit_code": 1,
+      "result": "ASSERTION_RED",
+      "failure": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ test_recorded_reto_complete_history_supersedes_reset_cutoff_but_not_the_wait _\ntests/unit/test_line_chart_restoration_integration.py:771: in test_recorded_reto_complete_history_supersedes_reset_cutoff_but_not_the_wait\n    assert round(state.atr_trail, 4) == 2.0639\nE   AssertionError: assert 1.7853 == 2.0639\nE    +  where 1.7853 = round(1.7852873599999994, 4)\nE    +    where 1.7852873599999994 = SymbolState(symbol='RETO', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791198780000, open=2.0597...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').atr_trail\n------------------------------ Captured log call -------------------------------\nWARNING  project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:3604 [V2-GAP-HOLD] RETO last_bar_age_s=1025.0 last_print_age_s=1.0 cancel_requested=0 held_qty=0 entry_allowed=0\n=========================== short test summary info ============================\nFAILED tests/unit/test_line_chart_restoration_integration.py::test_recorded_reto_complete_history_supersedes_reset_cutoff_but_not_the_wait\n1 failed in 0.54s\n"
+    },
+    {
+      "mutation": "remove_unchanged_history_fence_from_live_append",
+      "test": "tests/unit/test_line_chart_restoration_integration.py::test_reto_late_prefix_repair_with_adjacent_current_bar_cannot_emit_a_replayed_flip",
+      "exit_code": 1,
+      "result": "ASSERTION_RED",
+      "failure": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ test_reto_late_prefix_repair_with_adjacent_current_bar_cannot_emit_a_replayed_flip _\ntests/unit/test_line_chart_restoration_integration.py:817: in test_reto_late_prefix_repair_with_adjacent_current_bar_cannot_emit_a_replayed_flip\n    assert not bot.strategy._pending_atr_sell_observations\nE   AssertionError: assert not {'atr-sell:RETO:1791201660000': ATRSellObservation(symbol='RETO', bar_time_ms=1791201660000, bar_close=1.96, atr_trail=2.017840640451977, decision_id='atr-sell:RETO:1791201660000')}\nE    +  where {'atr-sell:RETO:1791201660000': ATRSellObservation(symbol='RETO', bar_time_ms=1791201660000, bar_close=1.96, atr_trail=2.017840640451977, decision_id='atr-sell:RETO:1791201660000')} = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10980bfe0>._pending_atr_sell_observations\nE    +    where <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10980bfe0> = <project_mai_tai.services.schwab_1m_v2_bot.SchwabV2BotService object at 0x10980bf50>.strategy\n=========================== short test summary info ============================\nFAILED tests/unit/test_line_chart_restoration_integration.py::test_reto_late_prefix_repair_with_adjacent_current_bar_cannot_emit_a_replayed_flip\n1 failed in 0.62s\n"
+    },
+    {
+      "mutation": "truncate_full_session_to_250",
+      "test": "tests/unit/test_line_chart_restoration_integration.py::test_stored_session_reader_keeps_255_recorded_rows_and_exact_anchor_bounds",
+      "exit_code": 1,
+      "result": "ASSERTION_RED",
+      "failure": "F                                                                        [100%]\n=================================== FAILURES ===================================\n__ test_stored_session_reader_keeps_255_recorded_rows_and_exact_anchor_bounds __\ntests/unit/test_line_chart_restoration_integration.py:742: in test_stored_session_reader_keeps_255_recorded_rows_and_exact_anchor_bounds\n    assert len(result) == 255\nE   AssertionError: assert 250 == 255\nE    +  where 250 = len([ChartBar(symbol='RETO', open=2.0597, high=2.1, low=2.05, close=2.0903, volume=48990, timestamp_ms=1791198780000), Cha...), ChartBar(symbol='RETO', open=2.18, high=2.22, low=2.14, close=2.17, volume=432489, timestamp_ms=1791199080000), ...])\n=========================== short test summary info ============================\nFAILED tests/unit/test_line_chart_restoration_integration.py::test_stored_session_reader_keeps_255_recorded_rows_and_exact_anchor_bounds\n1 failed in 0.52s\n"
+    }
+  ]
+}
