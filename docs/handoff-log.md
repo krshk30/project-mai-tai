@@ -6599,3 +6599,29 @@ ledgerdiscrepancies: those are not holdings. Kept existing allowance unchanged
 andaskedforhistoricaldisposition. No rule/gate/source build claimed; noledger,
 incident, service or production write. STEP0.md retains rawrecordhashes and
 distinguishes fourin-memoryexperiments from pytest/full-suite evidence.
+
+### 2026-10-06 12:11 ET - codex-2 C54 OLOX clearance cause control
+
+Fresh c9b13cc4 read and the earlier fixture both contain cleared_at at
+10:15:05.636983, with no no_rebuy. The installed old_buy_proven_clear returns
+true. Direct control on the17 persisted OLOX jobs returns entry_owned=false;
+removing proof from a controlled copy returns true. The11:06 logs and DB
+agree on primary absence despite both placement messages. Live synthetic
+requested jobs and per-leg callback state are unmeasured, so the stated
+clearance cause is disputed, not replaced with another unproven cause.
+Assessment a2ad9423 on #1099 is docs-only; candidate source unchanged from
+96b. Latest IPDN re-attempt wording can retain the hold outside8%, not promise
+10:40 wire placement. Expanded replay/build is not ready. No source, ledger,
+service, install or gate write.
+
+Child attribution watch, limited recorded population: OLOX native child
+NQJA8HO167UPC6IMNNRTIJO24B venue14:29:10.781Z, durable log14:29:12.619Z,
+lag1.838s. Four today WebullSELLfills, one native child; no>60s lag observed
+in that one case. Unreported venue fills remain unmeasured. No child-lag
+anomaly C-row or intervention claimed.
+
+Timestamp correction: my preceding C52/C53 narrative headings mistakenly
+said12:15/12:18 before those times. Their actual recorded commit timestamps
+are12:04:58 (74e1b4b) and12:05:57 (6ae3619e). Own table as-of labels corrected
+to those timestamps; prior narrative retained append-only. T/Mrows, reads,
+boards and decisions untouched.
