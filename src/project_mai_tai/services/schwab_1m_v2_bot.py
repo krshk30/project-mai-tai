@@ -27,6 +27,7 @@ import math
 import os
 import signal
 import time
+from collections import deque
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as time_cls  # `time` the module is already imported above
 from decimal import Decimal
@@ -108,6 +109,12 @@ from project_mai_tai.strategy_core.order_routing import (
     extended_hours_session,
 )
 from project_mai_tai.strategy_core import entry_gate
+from project_mai_tai.strategy_core.session_line_restore import (
+    RebuildResult,
+    SessionLineRestoration,
+    SessionLineSnapshot,
+    build_session_line,
+)
 from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     FLIP_OWNER_ROW_SETTLE_MS,
@@ -118,6 +125,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SchwabV2IntentEmitter,
     SchwabV2Strategy,
     SymbolState,
+    OHLCVBar,
     TradeIntentDraft,
     session_start_ts_ms,
 )
@@ -553,6 +561,18 @@ class SchwabV2BotService:
         self._confirmation_exit = ConfirmationExitTracker()
         self._confirmation_bar_states: dict[tuple[str, int], str] = {}
         self._confirmation_last_live_bar_ms: dict[str, int] = {}
+        self._line_restoration_enabled = bool(
+            self.settings.strategy_schwab_1m_v2_line_chart_restoration_enabled
+        )
+        self._line_epoch = uuid4().int
+        self._line_sessions: dict[str, SessionLineRestoration] = {}
+        self._line_published: dict[str, RebuildResult[SessionLineSnapshot]] = {}
+        self._line_live_bars: dict[str, set[int]] = {}
+        self._line_dirty: set[str] = set()
+        self._line_rebuild_event = asyncio.Event()
+        if self._line_restoration_enabled:
+            self.strategy._line_readiness = self._line_buy_ready
+            self.strategy._line_version_reader = self._line_version
         self._confirmation_evaluated = 0
         self._confirmation_fired = 0
         self._confirmation_long = 0
@@ -817,6 +837,10 @@ class SchwabV2BotService:
             on_quote=self._handle_quote,
             loop_health=self._loop_health,
         )
+        if self._line_restoration_enabled:
+            self.rest_client._session_request = self._line_source_request
+            self.rest_client._on_session_history = self._accept_line_source
+            self.rest_client._on_session_failure = self._line_source_failure
         # Tick capture (LEVELONE) — pure observer, default OFF. Built before the
         # streamer so its on_tick can be wired in. Needs a session_factory; build
         # one eagerly if the bar-persist path hasn't lazily created it yet.
@@ -882,6 +906,8 @@ class SchwabV2BotService:
             await self._rpg_handoff_pass()
             self._tasks["atr_reprice"] = asyncio.create_task(self._rpg_handoff_loop())
             self._tasks["rest_client"] = asyncio.create_task(self.rest_client.run())
+            if self._line_restoration_enabled:
+                self._tasks["line_restoration"] = asyncio.create_task(self._line_restoration_loop())
             self._tasks["scanner"] = asyncio.create_task(self._scanner_consumer_loop())
             self._tasks["position_poll"] = asyncio.create_task(self._position_poll_loop())
             if self.fanout_outcome_journal is not None:
@@ -1534,6 +1560,9 @@ class SchwabV2BotService:
                 entry,
                 preferred_account_name=self.settings.strategy_schwab_1m_v2_account_name,
             ):
+                continue
+            if (getattr(self, "_line_restoration_enabled", False)
+                    and not self._line_snapshot_current(entry.symbol)):
                 continue
             last_bar = self._confirmation_last_live_bar_ms.get(entry.symbol, 0)
             if last_bar < entry.evaluation_bar_start_ms:
@@ -3326,6 +3355,7 @@ class SchwabV2BotService:
             sym: ts for sym, ts in self._watch_start_ms.items() if sym in selected
         }
         self._watchlist = selected
+        self._sync_line_epochs()
         # Drop warmup state for symbols that left the watchlist. If they
         # re-join later, REST needs to refetch the batch and the
         # buffer-and-replay path runs again.
@@ -3763,6 +3793,7 @@ class SchwabV2BotService:
                 "(MAI_TAI_STRATEGY_SCHWAB_1M_V2_LOOP_FAULT_INJECTION_COUNT) — "
                 "SPOF Workstream A v2 controlled survival test"
             )
+        self._observe_line_bar(symbol, bar)
         was_warmed = symbol in self._warmup_ready_symbols()
         just_warmed = self._mark_warmed_from_fresh_bar(symbol, bar, source="REST")
         if self._should_skip_rest_strategy_feed(symbol, bar):
@@ -3814,6 +3845,7 @@ class SchwabV2BotService:
         buffer, caps reconstructed state, and retries boot restoration. Stale
         bars from either source remain gated by the same 300-second bound.
         """
+        self._observe_line_bar(symbol, bar)
         if symbol not in self._warmup_ready_symbols():
             pending = self._streamer_pending.setdefault(symbol, [])
             if len(pending) >= STREAMER_PENDING_BARS_MAX_PER_SYMBOL:
@@ -4475,6 +4507,7 @@ class SchwabV2BotService:
         *,
         observation_phase: Literal["replay", "live"],
     ) -> None:
+        self._observe_line_bar(symbol, bar)
         await self._ensure_atr_massive_seed_before_bar(symbol, bar.timestamp_ms)
         now_et = _format_eastern(datetime.now(UTC))
         self._last_tick_at[symbol] = now_et
@@ -4509,7 +4542,16 @@ class SchwabV2BotService:
         except Exception:
             logger.exception("schwab_1m_v2 on_bar failed for %s", symbol)
             return
-        if observation_phase == "live":
+        if observation_phase == "live" and getattr(self, "_line_restoration_enabled", False):
+            normalized = symbol.upper()
+            self._confirmation_last_live_bar_ms[normalized] = max(
+                bar.timestamp_ms, self._confirmation_last_live_bar_ms.get(normalized, 0)
+            )
+            live = self._line_live_bars.setdefault(normalized, set())
+            live.add(bar.timestamp_ms)
+            cutoff = self._confirmation_last_live_bar_ms[normalized] - 600_000
+            live.intersection_update(ts for ts in live.copy() if ts >= cutoff)
+        if observation_phase == "live" and not getattr(self, "_line_restoration_enabled", False):
             normalized = symbol.upper()
             atr_state = str(
                 getattr(self.strategy._symbol_states.get(normalized), "atr_state", None)
@@ -4549,6 +4591,256 @@ class SchwabV2BotService:
         # Dual-broker fan-out: emit any Webull legs the strategy queued this bar (no-op if off).
         await self._emit_webull_fanout_legs()
 
+    def _sync_line_epochs(self) -> None:
+        if not getattr(self, "_line_restoration_enabled", False):
+            return
+        desired = self._watchlist | getattr(self, "_exit_coverage", set())
+        anchor = session_start_ts_ms(self.strategy._now_ms())
+        for symbol in set(self._line_sessions) - desired:
+            self._line_sessions.pop(symbol, None)
+            self._line_published.pop(symbol, None)
+            self._line_live_bars.pop(symbol, None)
+        for symbol in desired:
+            old = self._line_sessions.get(symbol)
+            if old is None or old.anchor_ms != anchor:
+                self._line_epoch += 1
+                self._line_sessions[symbol] = SessionLineRestoration(symbol, anchor, self._line_epoch)
+                self._line_published.pop(symbol, None)
+                self._line_live_bars.pop(symbol, None)
+
+    def _observe_line_bar(self, symbol: str, bar: ChartBar) -> None:
+        if not getattr(self, "_line_restoration_enabled", False):
+            return
+        self._sync_line_epochs()
+        ledger = self._line_sessions.get(symbol.upper())
+        if ledger is None or session_start_ts_ms(bar.timestamp_ms) != ledger.anchor_ms:
+            return
+        try:
+            revision = ledger.revision
+            ledger.observe(bar)
+            if ledger.revision != revision:
+                self._line_dirty.add(ledger.symbol)
+                self._line_rebuild_event.set()
+        except ValueError:
+            ledger.invalidate_coverage()
+            logger.exception("[V2-LINE-RESTORE] sym=%s outcome=invalid_bar entry_allowed=0", symbol)
+
+    def _line_snapshot_current(self, symbol: str) -> bool:
+        ledger = self._line_sessions.get(symbol)
+        result = self._line_published.get(symbol)
+        state = self.strategy._symbol_states.get(symbol)
+        return bool(
+            ledger is not None and result is not None and state is not None and state.bars
+            and result.request.epoch == ledger.epoch
+            and result.request.revision == ledger.revision
+            and result.request.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
+            and result.request.current_bar_ms == ledger.current_bar_ms == state.bars[-1].timestamp_ms
+            and result.snapshot.reset_after_ms == state.line_restore_reset_after_ms
+        )
+
+    def _line_buy_ready(self, symbol: str) -> bool:
+        state = self.strategy._symbol_states.get(symbol)
+        return bool(symbol in self._watchlist and self._line_snapshot_current(symbol)
+                    and state.atr_state in {"long", "short"}
+                    and state.atr_trail is not None and math.isfinite(state.atr_trail)
+                    and state.atr_trail > 0 and not self.strategy.gap_hold_active(symbol))
+
+    def _line_version(self, symbol: str) -> str:
+        result = self._line_published.get(symbol)
+        if result is None:
+            return ""
+        request = result.request
+        return f"{request.epoch}:{request.revision}:{request.current_bar_ms}:{result.snapshot.reset_after_ms}"
+
+    def _line_draft_allowed(self, draft) -> bool:
+        if (not getattr(self, "_line_restoration_enabled", False)
+                or getattr(draft, "intent_type", "") != "open"):
+            return True
+        symbol = str(draft.symbol).upper()
+        return bool(self._line_buy_ready(symbol)
+                    and draft.metadata.get("line_restore_version") == self._line_version(symbol))
+
+    async def _line_restoration_loop(self) -> None:
+        await run_resilient_loop(
+            stop_event=self._stop_event, tracker=self._loop_health, name="line_restoration",
+            iteration=self._line_restoration_pass, backoff_secs=self._loop_backoff_secs,
+            logger=logger,
+        )
+
+    async def _line_restoration_pass(self) -> None:
+        self._sync_line_epochs()
+        if not self._line_dirty:
+            try:
+                await asyncio.wait_for(self._line_rebuild_event.wait(), 1.0)
+            except TimeoutError:
+                return
+        self._line_rebuild_event.clear()
+        # Coalesce revisions per symbol and service oldest published bars first.
+        symbols = sorted(self._line_dirty, key=lambda symbol: (
+            self._line_published[symbol].request.current_bar_ms
+            if symbol in self._line_published else 0, symbol,
+        ))
+        started = time.monotonic()
+        for symbol in symbols:
+            self._line_dirty.discard(symbol)
+            ledger = self._line_sessions.get(symbol)
+            if ledger is not None:
+                await self._rebuild_session_line(symbol, ledger)
+        logger.info("[V2-LINE-REBUILD-CYCLE] symbols=%d elapsed_s=%.3f",
+                    len(symbols), time.monotonic() - started)
+
+    def _line_source_request(self, symbol: str):
+        self._sync_line_epochs()
+        ledger = self._line_sessions.get(symbol)
+        current = self.strategy._now_ms() // 60_000 * 60_000 - 60_000
+        if ledger is None or not ledger.anchor_ms <= current < ledger.anchor_ms + 16 * 3_600_000:
+            return None
+        return ledger.epoch, ledger.anchor_ms, current
+
+    def _line_source_failure(self, symbol: str, epoch: int) -> None:
+        ledger = self._line_sessions.get(symbol)
+        if ledger is not None and ledger.epoch == epoch:
+            ledger.invalidate_coverage()
+
+    def _accept_line_source(self, symbol: str, epoch: int, bars, proof) -> bool:
+        self._sync_line_epochs()
+        ledger = self._line_sessions.get(symbol)
+        if ledger is None or ledger.epoch != epoch:
+            return False
+        was_warmed = symbol in self._warmup_ready_symbols()
+        state = self.strategy.watchlist_state(symbol)
+        for bar in bars:
+            ledger.observe(bar)
+            if not state.bars or bar.timestamp_ms > state.bars[-1].timestamp_ms:
+                phase = "live" if was_warmed and bar.timestamp_ms == bars[-1].timestamp_ms else "replay"
+                self._strategy_on_bar(symbol, bar, observation_phase=phase)
+        ledger.attest(proof)
+        current = bars[-1].timestamp_ms
+        if was_warmed and 0 <= self.strategy._now_ms() - current <= 180_000:
+            live = self._line_live_bars.setdefault(symbol, set())
+            live.add(current)
+            live.intersection_update(ts for ts in live.copy() if ts >= current - 600_000)
+            self._confirmation_last_live_bar_ms[symbol] = max(
+                current, self._confirmation_last_live_bar_ms.get(symbol, 0),
+            )
+        self._line_dirty.add(symbol)
+        self._line_rebuild_event.set()
+        return True
+
+    async def _rebuild_session_line(self, symbol: str, ledger: SessionLineRestoration) -> bool:
+        state = self.strategy._symbol_states.get(symbol)
+        if state is None or not state.bars:
+            return False
+        reset_after = state.line_restore_reset_after_ms
+        previous = self._line_published.get(symbol)
+        if self._line_snapshot_current(symbol):
+            return True
+        period, factor = self.strategy._atr_period, self.strategy._atr_factor
+        result = await ledger.rebuild(
+            lambda request: build_session_line(request, period, factor, reset_after)
+        )
+        if (result is None or self._line_sessions.get(symbol) is not ledger
+                or self.strategy._symbol_states.get(symbol) is not state
+                or session_start_ts_ms(self.strategy._now_ms()) != ledger.anchor_ms
+                or state.bars[-1].timestamp_ms != result.request.current_bar_ms
+                or state.line_restore_reset_after_ms != reset_after):
+            return False
+        snapshot = ledger.admit(result)
+        if snapshot is None:
+            return False
+        indicator = dict(snapshot.indicator)
+        indicator["atr_hl"] = deque(indicator["atr_hl"], maxlen=period)
+        indicator["atr_tr_seed"] = list(indicator["atr_tr_seed"])
+        current_bar = result.request.bars[-1]
+        live = self._line_live_bars.get(symbol, set())
+        confirmations = {key: value for key, value in self._confirmation_bar_states.items()
+                         if key[0] != symbol}
+        confirmations.update({(symbol, ts): value for ts, value in snapshot.confirmation if ts in live})
+        changed_history = bool(previous is None or previous.snapshot.reset_after_ms != reset_after
+                               or result.request.bars[:len(previous.request.bars)] != previous.request.bars)
+        if changed_history:
+            # A corrected line revokes permission from the old line; it cannot
+            # revive an arm, cancellation, claim, consumed slot or retry budget.
+            if state.resting_active or state.webull_resting_active:
+                self.strategy._queue_resting_cancel(state, reason="line_history_changed")
+            state.cw_armed = False
+            state.cw_arm_bar_ts = 0
+            state.atr_hold_pending = None
+        # No await between mathematical, confirmation and readiness publication.
+        state.bars[-1] = OHLCVBar(
+            current_bar.timestamp_ms, current_bar.open, current_bar.high,
+            current_bar.low, current_bar.close, current_bar.volume,
+        )
+        self.strategy._restore_atr_indicator_snapshot(state, indicator)
+        self._confirmation_bar_states = confirmations
+        self._line_published[symbol] = result
+
+        # Only an unchanged, adjacent live append can be a new signal. Initial
+        # admission, restart, re-add, corrections and backfill never replay flips.
+        adjacent_live = bool(
+            previous is not None and previous.request.epoch == result.request.epoch
+            and previous.snapshot.reset_after_ms == reset_after
+            and previous.request.bars == result.request.bars[:-1]
+            and previous.request.current_bar_ms + 60_000 == result.request.current_bar_ms
+            and result.request.current_bar_ms in live
+            and 0 <= self.strategy._now_ms() - result.request.current_bar_ms <= 180_000
+        )
+        draft = None
+        if adjacent_live:
+            signal = dict(snapshot.signal) or None
+            if signal is not None:
+                prior = dict(previous.snapshot.indicator)
+                segment_free = (
+                    state.atr_guard == "UNCLAIMED" and state.atr_hold_pending is None
+                    if self.strategy._atr_rearm_enabled else not state.atr_fired_in_short_seg
+                )
+                touch = bool(prior["atr_state"] == "short" and prior["atr_trail"] is not None
+                             and state.bars[-1].high >= prior["atr_trail"]
+                             and segment_free)
+                signal.update(touch=touch, touch_price=prior["atr_trail"] if touch else None,
+                              observation_phase="live")
+                if touch and not self.strategy._atr_rearm_enabled:
+                    state.atr_fired_in_short_seg = True
+                if signal.get("flip") == "SELL":
+                    state.atr_fired_in_short_seg = False
+                    if self.strategy._atr_rearm_enabled:
+                        self.strategy._set_atr_guard(state, "UNCLAIMED")
+            old_phase = self.strategy._bar_observation_phase
+            self.strategy._bar_observation_phase = "live"
+            try:
+                draft = self.strategy._evaluate_completed_bar(
+                    state, is_new_bar=True, restored=True, restored_signal=signal,
+                )
+            finally:
+                self.strategy._bar_observation_phase = old_phase
+        logger.info(
+            "[V2-LINE-RESTORE] sym=%s epoch=%d revision=%d current_bar_ms=%d bars=%d "
+            "outcome=published live_append=%d entry_allowed=%d",
+            symbol, ledger.epoch, ledger.revision, ledger.current_bar_ms, len(result.request.bars),
+            int(adjacent_live), int(self._line_buy_ready(symbol)),
+        )
+        # Issued evaluations have already left the tracker's one-shot registry.
+        for ts, value in sorted((ts, value) for (sym, ts), value in confirmations.items() if sym == symbol):
+            if not self._line_snapshot_current(symbol):
+                break
+            await self._emit_confirmation_evaluations(self._confirmation_exit.evaluate_bar(
+                symbol=symbol, bar_start_ms=ts, atr_state=value,
+            ))
+        if self._line_snapshot_current(symbol):
+            for expired in self._confirmation_exit.expire_before(
+                symbol=symbol, bar_start_ms=ledger.current_bar_ms,
+            ):
+                logger.error(
+                    "[V2-CONFIRMATION-EXIT-UNANSWERABLE] sym=%s fill_id=%s target_bar_ms=%d "
+                    "observed_bar_ms=%d reason=target_bar_missed",
+                    symbol, expired.fill_id, expired.evaluation_bar_start_ms, ledger.current_bar_ms,
+                )
+        await self._drain_atr_sell_observations()
+        await self._maybe_emit(draft)
+        await self._drain_direct_strategy_intents()
+        await self._emit_webull_fanout_legs()
+        return True
+
     def _strategy_on_bar(
         self,
         symbol: str,
@@ -4582,6 +4874,8 @@ class SchwabV2BotService:
         drain = getattr(self.strategy, "drain_pending_intents", None)
         if callable(drain) and self.intent_emitter is not None:
             for d in drain():
+                if not self._line_draft_allowed(d):
+                    continue
                 try:
                     await self.intent_emitter.emit(d)
                 except Exception:
@@ -4596,6 +4890,8 @@ class SchwabV2BotService:
         wdrain = getattr(self.strategy, "drain_webull_direct_intents", None)
         if callable(wdrain):
             for d in wdrain():
+                if not self._line_draft_allowed(d):
+                    continue
                 if self.webull_intent_emitter is None:
                     logger.warning(
                         "schwab_1m_v2 webull direct intent DROPPED for %s (%s) — no webull emitter",
@@ -5138,6 +5434,11 @@ class SchwabV2BotService:
         # and would silently change five existing entry paths. With `_exit_coverage` empty — every
         # pre-change state, and every existing test — this guard is INERT and byte-neutral.
         _sym = str(getattr(draft, "symbol", "")).upper()
+        if not self._line_draft_allowed(draft):
+            await self._record_local_fanout_outcome(
+                draft, outcome="dropped_routing", reason="session_line_unproven_or_stale",
+            )
+            return "dropped_routing"
         strategy = getattr(self, "strategy", None)
         gap_hold_active = getattr(strategy, "gap_hold_active", None)
         if (
@@ -5241,6 +5542,8 @@ class SchwabV2BotService:
             )
             return "dropped_routing"
         try:
+            if not self._line_draft_allowed(draft):
+                return "dropped_routing"
             await target_emitter.emit(draft)
         except Exception:
             logger.exception("schwab_1m_v2 emit failed")

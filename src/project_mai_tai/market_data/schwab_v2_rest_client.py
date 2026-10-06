@@ -23,6 +23,7 @@ import asyncio
 import itertools
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +36,7 @@ from urllib.request import urlopen
 from project_mai_tai.market_data.schwab_v2_loop_health import (
     LoopHealthTracker,
     run_resilient_loop,
+    sleep_or_stop,
 )
 from project_mai_tai.settings import Settings
 
@@ -112,6 +114,9 @@ class SchwabV2RestClient:
         # service heartbeat so prolonged emptiness is observable instead of
         # silent. See `max_consecutive_empty`.
         self._consecutive_empty: dict[str, int] = {}
+        self._session_request = None
+        self._on_session_history = None
+        self._on_session_failure = None
 
     @property
     def configured(self) -> bool:
@@ -174,6 +179,9 @@ class SchwabV2RestClient:
         if not symbols:
             await asyncio.sleep(interval)
             return
+        if self._session_request is not None:
+            await self._anchored_bar_loop_pass(symbols, interval)
+            return
         cycle = itertools.cycle(symbols)
         for _ in range(len(symbols)):
             if self._stop_event.is_set():
@@ -208,6 +216,43 @@ class SchwabV2RestClient:
                         self._last_bar_timestamp_ms[symbol] = bar.timestamp_ms
                         await self._on_chart_bar(symbol, bar)
             await asyncio.sleep(interval)
+
+    async def _anchored_bar_loop_pass(self, symbols: list[str], interval: float) -> None:
+        # Reuse the normal bar request budget. At most four requests are in
+        # flight; the configured interval is a cycle cadence in this lane.
+        started = time.monotonic()
+        semaphore = asyncio.Semaphore(4)
+
+        async def poll(symbol):
+            context = None
+            try:
+                async with semaphore:
+                    if self._stop_event.is_set():
+                        return
+                    context = self._session_request(symbol)
+                    if context is None:
+                        return
+                    epoch, anchor, current = context
+                    bars, proof = await asyncio.to_thread(
+                        self.fetch_session_history, symbol, anchor, current,
+                    )
+                if not self._on_session_history(symbol, epoch, bars, proof):
+                    return
+                # Persistence never occupies a source-fetch semaphore slot.
+                await self._on_chart_bar(symbol, bars[-1])
+                self._last_bar_timestamp_ms[symbol] = bars[-1].timestamp_ms
+            except Exception:  # noqa: BLE001 - fail this source epoch closed
+                if context is not None:
+                    self._on_session_failure(symbol, context[0])
+                logger.exception("schwab_v2 anchored poll failed for %s", symbol)
+
+        await asyncio.gather(*(poll(symbol) for symbol in symbols))
+        elapsed = time.monotonic() - started
+        # Reserve 30 RPM for quotes/other REST consumers, even on larger lists.
+        cadence = max(0.5, interval, len(symbols) * 60 / 90)
+        logger.info("[V2-LINE-SOURCE-CYCLE] symbols=%d elapsed_s=%.3f cadence_s=%.3f concurrency=4",
+                    len(symbols), elapsed, cadence)
+        await sleep_or_stop(self._stop_event, max(0, cadence - elapsed))
 
     async def _quote_loop(self) -> None:
         interval = max(0.5, float(self.settings.strategy_schwab_1m_v2_quote_poll_interval_seconds))
@@ -356,6 +401,57 @@ class SchwabV2RestClient:
                 continue
         bars.sort(key=lambda b: b.timestamp_ms)
         return bars
+
+    def fetch_session_history(self, symbol: str, anchor_ms: int, current_bar_ms: int):
+        """Return the entire anchored response, refusing partial or malformed payloads.
+
+        This request has no delivery cursor. Candle absence is not market-silence
+        evidence; the strategy's existing sparse-bar clamp remains authoritative.
+        """
+        from project_mai_tai.strategy_core.session_line_restore import (
+            SessionCoverage, SessionLineRestoration, history_fingerprint,
+        )
+
+        end_ms = current_bar_ms + 60_000
+        if not anchor_ms <= current_bar_ms < anchor_ms + 16 * 3_600_000:
+            raise ValueError("invalid restoration session window")
+        params = urlencode({
+            "symbol": symbol, "periodType": "day", "frequencyType": "minute",
+            "frequency": 1, "startDate": anchor_ms, "endDate": end_ms - 1,
+            "needExtendedHoursData": "true",
+        })
+        payload = self._authorized_get(
+            f"{self.settings.schwab_base_url.rstrip('/')}{self.PRICE_HISTORY_PATH}?{params}"
+        )
+        candles = payload.get("candles")
+        if (str(payload.get("symbol", "")).upper() != symbol.upper()
+                or payload.get("empty") is not False or not isinstance(candles, list)
+                or not 0 < len(candles) <= 960
+                or any(payload.get(key) for key in ("next", "nextToken", "nextPage", "truncated"))):
+            raise ValueError("session response completeness unproven")
+        validator = SessionLineRestoration(symbol, anchor_ms, 0)
+        bars = []
+        ids = set()
+        for candle in candles:
+            if not isinstance(candle, dict):
+                raise ValueError("malformed session candle")
+            bar = ChartBar(
+                symbol.upper(), float(candle["open"]), float(candle["high"]),
+                float(candle["low"]), float(candle["close"]),
+                int(candle["volume"]), int(candle["datetime"]),
+            )
+            if not anchor_ms <= bar.timestamp_ms <= current_bar_ms or bar.timestamp_ms in ids:
+                raise ValueError("foreign or duplicate session candle")
+            validator.observe(bar)
+            ids.add(bar.timestamp_ms)
+            bars.append(bar)
+        bars.sort(key=lambda bar: bar.timestamp_ms)
+        if bars[-1].timestamp_ms != current_bar_ms:
+            raise ValueError("current closed candle absent")
+        return bars, SessionCoverage(
+            "schwab_rest_full_session", anchor_ms, end_ms,
+            tuple(bar.timestamp_ms for bar in bars), True, history_fingerprint(bars),
+        )
 
     def _fetch_quotes(self, symbols: list[str]) -> list[Quote]:
         if not symbols:

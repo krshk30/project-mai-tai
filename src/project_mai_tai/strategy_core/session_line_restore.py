@@ -1,7 +1,6 @@
 """Versioned session-history admission for an off-callback line rebuild.
 
-This primitive is deliberately not wired to the live service yet. A successful
-database read is not coverage evidence: the provider must attest its full query
+A successful database read is not coverage evidence: the provider must attest its full query
 window and candle IDs before a reconstruction can be admitted.
 """
 
@@ -63,6 +62,54 @@ class RebuildResult(Generic[Snapshot]):
     snapshot: Snapshot
 
 
+@dataclass(frozen=True)
+class SessionLineSnapshot:
+    indicator: tuple[tuple[str, object], ...]
+    confirmation: tuple[tuple[int, str], ...]
+    signal: tuple[tuple[str, object], ...]
+    reset_after_ms: int
+
+
+def build_session_line(
+    request: RebuildInput, period: int, factor: float, reset_after_ms: int = 0,
+) -> SessionLineSnapshot:
+    """Run production mathematics on private state, retaining sparse-bar safeguards."""
+    from project_mai_tai.settings import Settings
+    from project_mai_tai.strategy_core.schwab_1m_v2 import (
+        OHLCVBar, SchwabV2Strategy, SymbolState,
+    )
+
+    engine = SchwabV2Strategy(Settings(
+        strategy_schwab_1m_v2_atr_flip_period=period,
+        strategy_schwab_1m_v2_atr_flip_factor=factor,
+        strategy_schwab_1m_v2_atr_flip_probe_symbols="",
+        strategy_schwab_1m_v2_line_chart_restoration_enabled=False,
+    ))
+    state = SymbolState(request.symbol)
+    confirmation = []
+    signal = None
+    for bar in request.bars:
+        if bar.timestamp_ms <= reset_after_ms:
+            continue
+        signal = engine._update_atr_state(
+            state, OHLCVBar(bar.timestamp_ms, bar.open, bar.high, bar.low, bar.close, bar.volume),
+            observation_phase="replay", state_only=True,
+        )
+        confirmation.append((bar.timestamp_ms, str(state.atr_state or "unknown")))
+    snapshot = engine._atr_indicator_snapshot(state)
+    snapshot["atr_hl"] = tuple(state.atr_hl)
+    snapshot["atr_tr_seed"] = tuple(state.atr_tr_seed)
+    previous = state.atr_prev_bar
+    snapshot["atr_prev_bar"] = (
+        HistoryBar(request.symbol, previous.open, previous.high, previous.low,
+                   previous.close, previous.volume, previous.timestamp_ms)
+        if previous is not None else None
+    )
+    return SessionLineSnapshot(
+        tuple(snapshot.items()), tuple(confirmation), tuple((signal or {}).items()), reset_after_ms,
+    )
+
+
 class SessionLineRestoration:
     """Only the event-loop owner may update/admit; workers receive frozen input."""
 
@@ -101,10 +148,15 @@ class SessionLineRestoration:
             self._coverage = proof
             self.incomplete_reason = "coverage_changed"
 
+    def invalidate_coverage(self) -> None:
+        self._coverage = None
+        self.revision += 1
+        self.incomplete_reason = "coverage_unproven"
+
     def prepare(self) -> RebuildInput | None:
         proof = self._coverage
         if (proof is None or not proof.complete or proof.source != "schwab_rest_full_session"
-                or proof.start_ms > self.anchor_ms
+                or proof.start_ms != self.anchor_ms
                 or proof.end_ms < self.current_bar_ms + 60_000):
             self.incomplete_reason = "coverage_unproven"
             return None
