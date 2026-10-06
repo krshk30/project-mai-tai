@@ -6571,3 +6571,18 @@ the19RED/20 mutation disclosure remain in the PR. Target15:00ET met early.
 ORBPURPLE1 #1098 is also ready, ed7c2c81. KEEPREST1 and CLEARWAIT1 assessment
 disagreements remain genuine stops, no build/PR claimed. Tonight's three-item
 approved set remains unchanged until a separate pin and reviewed plan binding.
+
+### 2026-10-06 12:15 ET - codex-2 C52 IPDN acceptance correction
+
+Independent expanded T43 Step0 agrees on the lost PA1 hold and disagrees with
+the proposed10:40 in-band acceptance. Own quote capture10:40:05-08 asks4.45-4.50,
+currentstop5.0585, stilloutside8%. Currentpaper/OMS cache delivery is not proven
+by capture timing; the tape itself also cannot support a10:40 placement. The
+first named recorded reprice with an in-band price proxy is10:48(4.38/4.73).
+All71 forgottenevents before11:30 reproduced,75by the later pull; events not
+independentpositions. Threeattempts occurafter10:28reprice, notimmediately10:27.
+Experimentaluncommittedsource patch removed; source diffemptyversus96b5b1a.
+#1099 returnedtodraft andassessment158d6879pushed. Expandedbuildstoppedonthis
+standingStep0DISAGREE, asyncacceptancecorrectionasked, notwaitingforinstall.
+No source/switch/ledger/production change. C51 remains a true earlier receipt,
+not a readiness claim for this expanded card. Tonight's reviewed set unchanged.
