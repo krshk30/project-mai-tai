@@ -6886,3 +6886,13 @@ running, not reportedcomplete. Literalintegration/newimmutablemanifestpending.
 outside prior three-owner runner; useraskedone extra restart vs lateractivation.
 No silent restartadoption. SameheadValidatecrash rerun stillactive; mergepending.
 No productionwrite, serviceaction or broker/ledger change.
+
+### 2026-10-06 15:04:24 ET - codex-2 C73 exact-head ORBPAGE merge
+
+#1100 rebase-merged4805ddc8 only after fresh56c9357b/c21 identities, independent
+local/hostedpinPASS and both hostedValidateSUCCESS. PriorPRattempt139SQLitecrash
+rerunpassedonunchangedhead, no assertion/source/pin bypass. MainwholeTREE
+4248057079864f93066a69f355e2607840c701b9 equals pinnedtree. Parentindependent
+plan4e8d mechanics/catalogsuite484PASS18.37s, WTcleanatcompletion; laterdirty
+runnerchangesdo notborrowthisreceipt. LiteralplanwriterinformedactualAPP/tree,
+controlactivationquestionpending. Productionremains7823; noinstallrestart/env.
