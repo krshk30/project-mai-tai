@@ -53,6 +53,9 @@ Earlier broad service/boot/resting/EH/RPG/confirmation focus:237PASS.
 Scoped Ruff and diff-whitespace checks PASS. All tests explicitly use this
 checkout's `PYTHONPATH=src`. Recorded fixtures retain source/created_at;
 13 actual entry-line controls are committed with raw provenance and pass.
+These 13 controls compare indicator state/trail, not a complete replay of
+recorded order placement, cancellation, ownership and consumed-slot lifecycles.
+Broader restoration-ON composition with the installed ALL-ON controls is pending.
 
 Removed the second serial full-REST-fetch/sleep-per-symbol lane after parent
 review. Anchored history now REUSES the normal bar request, with at most four
@@ -71,11 +74,41 @@ not real provider network, runtime DB, broker or historical chart coverage.
 
 ### Outstanding Safety/Readiness Evidence
 
-Exact-head full unit pair is outstanding. First attempts omitted venv from
-PATH and were stopped; no PASS/delta is claimed from them. Restart the pair
-with PATH + PYTHONPATH identical on base03b and the clean checkpoint. Parent
-7823 control changed from56 failures without PATH to47 with PATH; neither is
-silently substituted for this branch's exact03b base.
+Full unit pair completed with identical venv-first PATH and PYTHONPATH=src:
+base03b:47FAILED/5894PASS in249.60s; frozen source checkpoint62de631f:
+53FAILED/5944PASS in251.85s. All47 baseline failure nodes are retained and
+six nodes are added. Raw logs: /tmp/line-chart-baseline-03b2-unit-20261006-path.log
+and /tmp/line-chart-restoration-62de-unit-20261006-path.log. First attempts
+omitted venv from PATH and were stopped; they are not evidence. Parent's7823
+control is not substituted for this branch's exact03b base.
+
+Two added ALL-ON catalog failures are fixed by updating only expected check
+counts139/147 to140/148; no ROUNDUP entry or behavior is copied. Final focus
+passes163 cases in3.76s: test_line_chart_restoration.py,
+test_line_chart_restoration_integration.py, test_schwab_1m_v2_gap_hold.py,
+test_schwab_1m_v2_gap_hold_prints.py, test_schwab_1m_v2_atr_bar_gap.py,
+test_expected_flags_check.py and test_all_on_pm.py. Raw:
+/tmp/line-chart-final-checkpoint-focus-20261006.log. Scoped Ruff and diff check
+pass. The full suite has NOT been rerun after this count-only correction;
+there is no final-head full-suite/no-regression claim.
+
+Four added failures remain concrete checkpoint blockers:
+- test_no_test_reimplements_logic.py::test_no_test_computes_its_expected_value_from_production_code:
+  the new provider fingerprint test derives its expected hash from production
+  history_fingerprint instead of independently pinning the recorded literal.
+- test_pmprint1_tonight_flags.py::test_s6_catalog_matches_all_on_live_set_and_147_checks:
+  another total-count assertion still expects147 instead of148.
+- test_rpg1_pending_first_quote.py::test_quote_callback_emits_both_legs_without_waiting_for_bar:
+  its SimpleNamespace service harness lacks _line_draft_allowed.
+- test_v2_held_symbol_exit_coverage.py::test_held_delisted_symbol_can_never_enter:
+  its _EmitHarness lacks _line_draft_allowed.
+The latter two expose new emitter-method coupling even in OFF tests; do not
+waive them as merely environmental. No test or safety gate is weakened. Source
+work is frozen at the parent's request rather than claiming completion.
+All four residual nodes reproduce in a final targeted run:4FAILED in1.95s,
+/tmp/line-chart-final-residual-focus-20261006.log. Sole-writer ownership is
+released to the parent after the local handover commit; this lane will not make
+further writes without renewed assignment. No push/PR is authorized.
 
 Live provider full-window delivery/omission behavior and shared REST quota
 composition remain UNMEASURED. Structurally valid full response is the adapter
@@ -92,9 +125,31 @@ require measured composition before activation. New bars revoke readiness;
 failed/stale source requests or worker results cannot authorize buys. No claim
 of instantaneous restoration or guaranteed live flip recovery is made.
 
-Parent review, full paired failure-node comparison, broader ON composition and
+Concrete scheduling limitation: source-fetch semaphore slots are released
+before persistence, so the current batch can publish while ordinary callbacks
+wait. However, the source pass still gathers those callbacks before its NEXT
+cycle. A stuck callback therefore has no established next-cycle bound. The
+ordered worker also awaits confirmation/intent delivery after each publication;
+a stuck delivery can delay later symbols. The controlled fast-publication tests
+do not establish bounded ongoing service under these conditions. This is an
+activation blocker, not merely a missing real-network timing number.
+
+Parent review, resolution of added failure nodes, final-head full paired proof,
+broader ON composition and
 live source/quota/latency evidence remain required. Default OFF draft is coherent
 for a local commit; it is not complete, review-ready, installable or push-approved.
+
+### Final Rebase And Range Proof
+
+Clean checkpoint62de631f was inspected before the final fetch/rebase. Remote
+main remains03b26293624f87e43eb167431fc308b1aec309b3; rebase says up to date.
+No conflicts occurred, so there are no conflict resolutions to review.
+Range-diff7e10baf0..25c31d39 against03b26293..ff062bcf marks all five primitive
+commits '=':84f3d0ef->778bfbf2,2a86cebd->eb2104d9,475fe844->c2661128,
+c9aca7c0->9f003969,25c31d39->ff062bcf. The integration checkpoint follows
+that range; the handover follow-up changes only BUILD_STATUS and two ALL-ON
+catalog assertions. Parent-reported checkpoint focus112PASS/1.59s on62de631f
+is independent evidence, not a substitute for the failing full pair.
 
 ## Historical 2026-10-05 Primitive Checkpoint
 
