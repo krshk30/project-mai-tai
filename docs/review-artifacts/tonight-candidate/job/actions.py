@@ -143,12 +143,10 @@ def migration(attempt):
 
 
 def record(attempt):
-    import proof
-    paper_active = proof.approved_paper(proof.service("momentum-paper"))
     before = json.loads((attempt / "before-restart.json").read_text())
     payload = {"schema_version": 1, "snapshot_captured_at_utc": before["captured_at_utc"],
                "source_journal": str(JOURNAL), "service_actions": {
-                   k: "restarted" if k in ({"oms", "strategy", "schwab-1m-v2"} | ({"momentum-paper"} if paper_active else set()))
+                   k: "restarted" if k in {"oms", "strategy", "schwab-1m-v2"}
                    else "deliberately_untouched" for k in before["services"]}}
     exclusive(attempt / "install-record.json", json.dumps(payload, indent=2) + "\n")
     print("INSTALL_RECORD " + str(attempt / "install-record.json"))

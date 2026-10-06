@@ -439,7 +439,9 @@ def repin(args):
     need(record["snapshot_captured_at_utc"] == snapshot["captured_at_utc"], "official receipt timestamp mismatch")
     actions = record["service_actions"]
     need(set(actions) == set(snapshot["services"]), "official action census incomplete")
-    changed = set(CHANGED) | ({"momentum-paper"} if approved_paper(after["services"]["momentum-paper"]) else set())
+    # The official collector does not track paper. Its direct pin is separately
+    # proven above; do not invent a service in the original snapshot.
+    changed = set(CHANGED)
     need({name for name, action in actions.items() if action == "restarted"} == changed, "restart declarations not exact authorized set")
     need(all(action == ("restarted" if name in changed else "deliberately_untouched") for name, action in actions.items()),
          "new/extra service action not authorized")

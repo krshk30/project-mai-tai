@@ -6,7 +6,7 @@ export PYTHONDONTWRITEBYTECODE=1
 JOB=$(cd -- "$(dirname -- "$0")" && pwd)
 PY=/home/trader/project-mai-tai/.venv/bin/python
 ORIGINAL=/home/trader/after-hours/2026-10-05/owned-entry-rpg-all-on-2045-standing-job/attempt-1730-go
-ATTEMPT=$JOB/closeout-2119
+ATTEMPT=$JOB/closeout-2121
 [[ $EUID == 0 && $# == 1 ]]
 [[ $(sha256sum "$JOB/release.json" | cut -d' ' -f1) == "$1" ]]
 "$PY" - "$JOB" <<'PY'
