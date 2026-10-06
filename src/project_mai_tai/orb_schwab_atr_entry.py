@@ -42,7 +42,7 @@ def completed_atr_entry_gate(bars: list[OrbBar], status: str, now: datetime) -> 
     if (trail is None or result["state"] not in {"long", "short"}
             or not isfinite(close) or close <= 0 or not isfinite(trail)):
         return AtrEntryGate("unknown", "insufficient_schwab_atr_history")
-    allowed = result["state"] == "long" and close >= trail
+    allowed = close >= trail
     return AtrEntryGate("allowed" if allowed else "below_line",
                         "prior_close_at_or_above_atr" if allowed else "prior_close_under_atr",
                         bars[-1].timestamp, close, trail)
