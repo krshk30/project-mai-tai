@@ -625,13 +625,17 @@ class WebullBrokerAdapter:
             limit_price=limit_price,
             stop_price=stop_price,
         )
+        if request.metadata.get("mirrorhold_id"):
+            report_metadata["webull_local_no_wire"] = "true"
         if refusal:
-            return [self._reject(request, refusal, origin="client")]
+            return [self._reject(request, refusal, origin="client", metadata=(
+                report_metadata if request.metadata.get("mirrorhold_id") else None))]
 
         client = self._get_client()
         instrument_id = self._resolve_instrument_id(client, request.symbol)
         if not instrument_id:
-            return [self._reject(request, f"Webull instrument id not found for {request.symbol}", origin="client")]
+            return [self._reject(request, f"Webull instrument id not found for {request.symbol}", origin="client",
+                                 metadata=report_metadata if request.metadata.get("mirrorhold_id") else None)]
 
         order_type, wire_limit, wire_stop, report_metadata, shape_refusal = (
             self._apply_resting_mirror_market_shape(
@@ -715,6 +719,7 @@ class WebullBrokerAdapter:
             po.set_extended_hours_trading(ext_flag)
             report_metadata["webull_wire_extended_hours_trading"] = str(ext_flag).lower()
 
+        report_metadata.pop("webull_local_no_wire", None)
         report_metadata["webull_wire_submitted_at_utc"] = datetime.now(UTC).isoformat(
             timespec="milliseconds"
         )
@@ -738,6 +743,7 @@ class WebullBrokerAdapter:
                 quantity=request.quantity,
                 reason=request.reason,
                 metadata=report_metadata,
+                origin="broker" if request.metadata.get("mirrorhold_id") else "unknown",
             )
         ]
 

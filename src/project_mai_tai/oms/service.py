@@ -61,6 +61,7 @@ from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.mirror_fresh_price import MirrorFreshPriceMixin
+from project_mai_tai.oms.mirror_retained_hold import MirrorRetainedHoldMixin
 from project_mai_tai.oms.atr_reprice_runtime import AtrRepriceRuntimeMixin
 from project_mai_tai.oms.orb_schwab_eod import close_orb_schwab_before_close, close_orb_schwab_on_signal
 from project_mai_tai.orb_schwab_macd import (
@@ -543,7 +544,7 @@ def resolve_cancel_intent_status(intent_type: str, report_event_type: str) -> st
     return report_event_type
 
 
-class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
+class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
     # Operator manual-stop cache window. Short enough that a stop takes effect on the next intent
     # cycle (no restart, which was the whole point), long enough that it is not a per-intent query.
     _MANUAL_STOP_CACHE_SECS = 10.0
@@ -991,6 +992,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         )
         self._rehydrate_managed_v2_symbols()  # slice-3: re-arm quote eval for open v2 rows
         self._restore_nfq_holds()
+        self._restore_mirrorhold()
         await self._rehydrate_armed_hard_stops()  # F2: rebuild the ORB stop registry from the durable mirror
         await self._publish_heartbeat(
             "starting",
@@ -1591,6 +1593,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 "persistence and before broker dispatch event_id=%s",
                 event.event_id,
             )
+            return []
+        if not self._mirrorhold_admit(event):
             return []
         if not self._claim_nfq_retry(event):
             return []
@@ -2222,7 +2226,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 and event.payload.side == "buy"
             ):
                 request_quantity = event.payload.quantity
-            if self._defer_webull_resting_mirror_before_submit(event):
+            if self._defer_webull_resting_mirror_before_submit(event, session=session):
                 refusal_code = "webull_mirror_precheck_deferred"
                 self.store.mark_intent_refused(
                     intent,
@@ -2343,8 +2347,15 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 self.store.mark_intent_refused(intent, origin="client_abort", code=rpg_refusal)
                 session.commit()
                 return [self._build_rejected_event(event, intent.id, reason=rpg_refusal)]
+            mirrorhold_refusal = self._mirrorhold_dispatch(session, event)
+            if mirrorhold_refusal:
+                self.store.mark_intent_refused(intent, origin="client_abort", code=mirrorhold_refusal)
+                session.commit()
+                return [self._build_rejected_event(event, intent.id, reason=mirrorhold_refusal)]
+            if self._mirrorhold_scope(event):
+                request.metadata.update(event.payload.metadata)
             if (event.payload.metadata.get("rpg_handoff_token") or event.payload.metadata.get("nfq_retry_token")
-                    or self._is_webull_mirror_deferred_resubmit(event)):
+                    or self._is_webull_mirror_deferred_resubmit(event) or self._mirrorhold_scope(event)):
                 # Both durable lanes must record the exact client id before wire.
                 pending_order = self.store.get_or_create_order(
                     session, intent=intent, strategy_id=strategy.id,
@@ -2358,6 +2369,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                 if rpg_refusal:
                     pending_order.status = "rejected"
                     self.store.mark_intent_refused(intent, origin="client_abort", code=rpg_refusal)
+                    self._mirrorhold_release_before_wire(session, event, pending_order, rpg_refusal)
                     session.commit()
                     return [self._build_rejected_event(event, intent.id, reason=rpg_refusal)]
             deferred = self.__dict__.get("_webull_mirror_deferred_by_slot", {}).get(
@@ -10462,6 +10474,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
                     self._observe_webull_mirror_deferred_reports(
                         event=observed_event,
                         reports=[report],
+                        session=session,
                     )
                     self._nfq_observe_reports(session, observed_event, [report])
                     self._update_hard_stop_registry_from_order_status(
@@ -13017,6 +13030,8 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
     def _claim_webull_mirror_deferred_resubmit(self, event: TradeIntentEvent) -> bool:
         """Admit a queued PA1 retry only while its slot claim is still current."""
 
+        if self._mirrorhold_new_enabled() or self._mirrorhold_scope(event) or event.payload.metadata.get("mirrorhold_token"):
+            return self._mirrorhold_claim(event)
         if not self._is_webull_mirror_deferred_resubmit(event):
             return True
         pair_key = self._resting_fanout_pair_key(event)
@@ -13062,6 +13077,9 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
     def _finish_webull_mirror_deferred_resubmit(self, event: TradeIntentEvent) -> None:
         """Fail closed if a claimed retry produced no structured terminal observation."""
 
+        if self._mirrorhold_new_enabled() or self._mirrorhold_scope(event) or event.payload.metadata.get("mirrorhold_token"):
+            self._mirrorhold_finish(event)
+            return
         if not self._is_webull_mirror_deferred_resubmit(event):
             return
         pair_key = self._resting_fanout_pair_key(event)
@@ -13124,6 +13142,10 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
 
     def _observe_webull_mirror_deferred_intent(self, event: TradeIntentEvent) -> None:
         """Forget stale PA1 state when v2 changes or cancels a resting slot."""
+        if self._mirrorhold_enabled():
+            owned = self._mirrorhold_observe_intent(event)
+            if owned or self._mirrorhold_new_enabled():
+                return
         if not self._webull_mirror_deferred_enabled():
             return
         metadata = event.payload.metadata
@@ -13217,9 +13239,13 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
             retry_not_before_monotonic,
         )
 
-    def _defer_webull_resting_mirror_before_submit(self, event: TradeIntentEvent) -> bool:
+    def _defer_webull_resting_mirror_before_submit(self, event: TradeIntentEvent, *, session=None) -> bool:
         """Skip a mirror already outside PA1's measured safe zone before touching Webull."""
 
+        if self._mirrorhold_scope(event):
+            if session is None:
+                raise RuntimeError("mirrorhold1 precheck requires caller transaction")
+            return self._mirrorhold_precheck(session, event)
         if not self._webull_mirror_deferred_enabled() or not self._is_webull_resting_mirror_event(
             event
         ):
@@ -13296,8 +13322,14 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         *,
         event: TradeIntentEvent,
         reports: list[ExecutionReport],
+        session=None,
     ) -> None:
         """Remember only structured PRICE_AGGRESSIVE rejects; terminal evidence forgets."""
+        if self._mirrorhold_new_enabled() or self._mirrorhold_scope(event):
+            if session is None:
+                raise RuntimeError("mirrorhold1 reports require caller transaction")
+            self._mirrorhold_reports(session, event, reports)
+            return
         if not self._webull_mirror_deferred_enabled():
             return
         pair_key = self._resting_fanout_pair_key(event)
@@ -13387,11 +13419,16 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
 
     async def _evaluate_webull_mirror_deferred_resubmits(self, symbol: str) -> None:
         """Resubmit each eligible PA1 slot once per market event through the normal pipeline."""
+        if self._mirrorhold_enabled():
+            await self._mirrorhold_evaluate(symbol)
+            if self._mirrorhold_new_enabled():
+                return
         if not self._webull_mirror_deferred_enabled():
             return
         normalized = str(symbol).upper()
         deferred = self.__dict__.setdefault("_webull_mirror_deferred_by_slot", {})
-        matching = [state for state in deferred.values() if state.symbol == normalized]
+        matching = [state for state in deferred.values() if state.symbol == normalized
+                    and not self._mirrorhold_scope(state.event)]
         if not matching:
             return
         if not _is_regular_market_session():
@@ -14932,6 +14969,7 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
         self._observe_webull_mirror_deferred_reports(
             event=intent_event,
             reports=reports,
+            session=session,
         )
         self._nfq_observe_reports(session, intent_event, reports)
         return published_events

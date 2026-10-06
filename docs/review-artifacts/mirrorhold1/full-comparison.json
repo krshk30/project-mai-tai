@@ -1,0 +1,20 @@
+{
+  "codex_marker": "[codex] Independently compared final generated XML failure/error IDs; not a green full-suite claim.",
+  "base": {
+    "commit": "c21d8274fcd1d3129d61207a33dd7b002a7c9e8c",
+    "path": "/tmp/mirrorhold1-pristine-full.xml",
+    "sha256": "9649c5f21fda4cafbab06eaf4067c3c90e09b04ada5d71a072b961d7fc06d792",
+    "counts": {"passed": 6514, "failed": 56, "error": 12, "skipped": 2, "xfailed": 1}
+  },
+  "head": {
+    "path": "/tmp/mirrorhold1-postpin-full.xml",
+    "sha256": "63b8008cb268cbcf0a00d4e96c3045312e287b657e376698b5b3e900c8a309b8",
+    "counts": {"passed": 6582, "failed": 56, "error": 12, "skipped": 2, "xfailed": 1}
+  },
+  "new_failure_ids": [],
+  "base_failures_absent_on_head": [],
+  "common_bad_count": 68,
+  "raw_comparison_path": "/tmp/mirrorhold1-postpin-comparison.json",
+  "raw_comparison_sha256": "d3bd6a7cb5ae9f916a608e11d982c0c2f8910b88923367ac9e2d17ff0b5334b7",
+  "remaining_unmeasured": ["composed parent T43 source", "live PostgreSQL concurrent writer behavior", "historical AIXI 09:57 terminal cancel", "counterfactual IPDN Webull fills", "measured PM PA1 recovery"]
+}
