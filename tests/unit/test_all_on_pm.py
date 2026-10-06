@@ -15,7 +15,7 @@ from project_mai_tai.market_data import schwab_v2_rest_client as rest_module
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote, SchwabV2RestClient
 from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal
 from project_mai_tai.services import schwab_1m_v2_bot as bot_module
-from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, session_start_ts_ms
+from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2Strategy, session_start_ts_ms
 from tests.unit import test_pmrest1 as pmrest
 from tests.unit import test_rpg1_runtime_nfq as nfq
 from tests.unit.test_rpg1_runtime import begin, feedback, runtime, tick_clock
@@ -36,11 +36,53 @@ ALL_ON = {
     "oms_v2_webull_mirror_fresh_price_enabled": True,
     "strategy_schwab_1m_v2_gap_hold_enabled": True,
     "strategy_schwab_1m_v2_resting_buy_round_up_enabled": True,
+    "strategy_schwab_1m_v2_line_chart_restoration_enabled": True,
 }
 CLRO = ("CLRO", "2026-09-28T11:24:59.992Z", 5.559, 5.5689, 5.55)
 
 
+class CompletedLineControl:
+    """Controlled worker output for the legacy, explicitly seeded ATR fixtures.
+
+    This is not a history attestation or a mathematical reconstruction. The
+    acceptance factory/runner exercises those boundaries without this control.
+    Here only the external completed-line prerequisite is supplied; strategy
+    admission and the service's draft-version check remain real.
+    """
+
+    def __init__(self, strategy):
+        self.strategy = strategy
+        self.complete = True
+
+    def ready(self, symbol):
+        state = self.strategy._symbol_states.get(symbol)
+        return bool(self.complete and state is not None and state.bars
+                    and state.atr_state in {"short", "long"}
+                    and state.atr_trail is not None and state.atr_trail > 0
+                    and not self.strategy.gap_hold_active(symbol))
+
+    def version(self, symbol):
+        state = self.strategy._symbol_states.get(symbol)
+        return f"controlled-completed-line:{symbol}:{state.bars[-1].timestamp_ms}" if state and state.bars else ""
+
+
+@pytest.fixture(autouse=True)
+def completed_seeded_line(monkeypatch):
+    original = SchwabV2Strategy.__init__
+
+    def init(strategy, *args, **kwargs):
+        original(strategy, *args, **kwargs)
+        if strategy._line_restoration_enabled:
+            control = CompletedLineControl(strategy)
+            strategy._composition_line = control
+            strategy._line_readiness = control.ready
+            strategy._line_version_reader = control.version
+
+    monkeypatch.setattr(SchwabV2Strategy, "__init__", init)
+
+
 def assert_all_on(settings):
+    assert len(ALL_ON) == 8
     assert all(getattr(settings, key) is True for key in ALL_ON)
 
 
@@ -55,6 +97,10 @@ async def test_all_on_recorded_service_cross_same_ask_both_legs(monkeypatch, rou
     bot, written, _ = _bot(monkeypatch, **ALL_ON)
     bot.strategy, bot.settings = strategy, strategy.settings
     bot._watchlist = {state.symbol}
+    # Supply the same controlled worker output to both gates, not a waiver of
+    # _line_draft_allowed (which must still compare the captured version).
+    bot._line_buy_ready = strategy._composition_line.ready
+    bot._line_version = strategy._composition_line.version
     assert bot._gap_hold_enabled and strategy._gap_hold_enabled
     dispatched = []
 
@@ -93,6 +139,12 @@ async def test_all_on_recorded_service_cross_same_ask_both_legs(monkeypatch, rou
         # H/L/C/volume are retained; the unretained open is a controlled input.
         bar = OHLCVBar(ms("2026-10-05T12:32:00Z"), 5.2, 5.2569, 5.2, 5.2404, 27895)
         assert strategy.on_observed_bar("VEEA", bar, observation_phase="live") is None
+        # With Restoration ON, the callback advances the bar but only the
+        # worker's publication may evaluate the supplied current-bar signal.
+        recorded_flip(state, bar)
+        assert strategy._evaluate_completed_bar(
+            state, is_new_bar=True, restored=True, restored_signal=signal,
+        ) is None
         assert state.pm_resting_flip_seen_ms and not state.resting_flip_ms
         clock[0] = ms(VEEA[1])
     before = deepcopy(asdict(state))
@@ -139,6 +191,41 @@ async def test_all_on_recorded_service_cross_same_ask_both_legs(monkeypatch, rou
     assert state.resting_flip_ms == clock[0]
     assert cross(strategy, state, clock, 5.27, 5.27, stream=route != "stream") is None
     assert not strategy.drain_webull_fanout_intents()
+
+
+@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.parametrize("slot", ["first", "reclaim"])
+def test_all_eight_on_incomplete_line_blocks_both_cross_paths_without_consuming_state(stream, slot):
+    strategy, state, clock = armed(VEEA, **ALL_ON)
+    state.resting_slot = slot
+    strategy._composition_line.complete = False
+    before = deepcopy(asdict(state))
+    assert cross(strategy, state, clock, 5.27, 5.27, stream=stream) is None
+    after = asdict(state)
+    # A quote may refresh the cache; it cannot consume an economic slot.
+    before.pop("last_quote")
+    after.pop("last_quote")
+    assert after == before
+    assert not strategy.drain_pending_intents()
+    assert not strategy.drain_webull_fanout_intents()
+
+
+def test_all_eight_on_service_refuses_draft_after_completed_line_is_revoked(monkeypatch):
+    strategy, state, clock = armed(VEEA, **ALL_ON)
+    draft = cross(strategy, state, clock, 5.27, 5.27)
+    assert draft is not None
+    bot, _, _ = _bot(monkeypatch, **ALL_ON)
+    bot.strategy = strategy
+    bot._line_buy_ready = strategy._composition_line.ready
+    bot._line_version = strategy._composition_line.version
+    assert bot._line_draft_allowed(draft)
+    captured = draft.metadata["line_restore_version"]
+    state.bars[-1].timestamp_ms += 60_000
+    assert bot._line_version(state.symbol) != captured
+    assert not bot._line_draft_allowed(draft)
+    state.bars[-1].timestamp_ms -= 60_000
+    strategy._composition_line.complete = False
+    assert not bot._line_draft_allowed(draft)
 
 
 @pytest.mark.parametrize("slot", ["first", "reclaim"])
@@ -258,6 +345,7 @@ def test_all_on_rth_conversion_preserves_original_thin_cancel(monkeypatch, caplo
 
 
 def test_all_on_catalog_audit_committed_live_set_requires_both_consumers():
+    assert len(ALL_ON) == 8
     root = Path(__file__).parents[2]
     flags = json.loads((root / "ops/health/expected_flags.json").read_text())["flags"]
     numeric = json.loads((root / "ops/health/expected_numeric.json").read_text())["settings"]
@@ -288,14 +376,20 @@ def test_all_on_flip_wait_takedown_and_rth_latch_regressions(monkeypatch, caplog
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("broker", ["schwab", "webull"])
-async def test_all_on_gap_hold_retires_handoff_without_replacement(monkeypatch, broker):
+async def test_all_on_gap_hold_withholds_proven_clear_handoff_without_replacement(monkeypatch, broker):
     h = await runtime(monkeypatch, broker, strategy_overrides=ALL_ON)
     h.service.settings = h.service.settings.model_copy(update=ALL_ON)
     token, _ = await begin(h, broker)
     assert HandoffJournal(h.factory).read(token)["phase"] == "clear"
     h.state.gap_hold_active = True
     await feedback(h)
-    assert HandoffJournal(h.factory).read(token)["phase"] == "expired"
+    job = HandoffJournal(h.factory).read(token)
+    # Restoration first revokes line admission. A proven-clear ticket remains
+    # clear/waiting, rather than being authorized against incomplete mathematics.
+    assert job["phase"] == "clear"
+    decision = h.strategy.rpg_handoff_authorization(token, job)
+    assert decision["verdict"] == "wait"
+    assert decision["reason"] == "session_line_unproven"
     assert not h.adapter.opens
 
 

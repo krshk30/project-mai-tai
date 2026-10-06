@@ -12,6 +12,7 @@ from project_mai_tai.confirmation_exit import ConfirmationEntry
 from project_mai_tai.strategy_core.schwab_1m_v2 import TradeIntentDraft
 from project_mai_tai.strategy_core.session_line_restore import SessionCoverage, history_fingerprint
 from tests.line_restore_acceptance_factory import make_line_restore_case
+from tests.unit.test_all_on_pm import ALL_ON
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 RETO = [row for row in json.loads((FIXTURES / "line_chart_restoration_bars.json").read_text())["bars"]
@@ -74,6 +75,30 @@ async def test_factory_missing_coverage_blocks_real_direct_drain_for_both_legs_b
     assert case.schwab.intents == [close]
     assert case.webull.intents == []
     assert case.snapshot()["buy_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("complete", [False, True])
+async def test_all_eight_on_real_factory_requires_provider_proof_preserves_protective_sell(complete):
+    case = await populated_case(**ALL_ON)
+    assert all(getattr(case.settings, key) is True for key in ALL_ON)
+    assert case.strategy._line_readiness == case.bot._line_buy_ready
+    if complete:
+        case.attest(controlled_proof(case))
+    assert bool(await case.rebuild()) is complete
+    assert case.snapshot()["entry_allowed"] is complete
+    metadata = {"line_restore_version": case.bot._line_version("RETO")}
+    primary = TradeIntentDraft("RETO", "buy", "open", Decimal(1), "ATR Flip", dict(metadata))
+    mirror = TradeIntentDraft("RETO", "buy", "open", Decimal(1), "ATR Flip", dict(metadata))
+    close = TradeIntentDraft("RETO", "sell", "close", Decimal(1), "protective exit")
+    case.strategy._pending_intents.extend([primary, close])
+    case.strategy._pending_webull_direct_intents.append(mirror)
+    with case.clock():
+        await case.bot._drain_direct_strategy_intents()
+    assert close in case.schwab.intents
+    assert case.snapshot()["buy_count"] == (2 if complete else 0)
+    assert case.schwab.intents == ([primary, close] if complete else [close])
+    assert case.webull.intents == ([mirror] if complete else [])
 
 
 @pytest.mark.asyncio
