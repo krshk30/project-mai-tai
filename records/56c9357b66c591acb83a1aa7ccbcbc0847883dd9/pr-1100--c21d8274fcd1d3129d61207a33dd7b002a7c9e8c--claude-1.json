@@ -1,0 +1,9 @@
+{
+  "pr_number": 1100,
+  "range_base": "c21d8274fcd1d3129d61207a33dd7b002a7c9e8c",
+  "range_head": "56c9357b66c591acb83a1aa7ccbcbc0847883dd9",
+  "reviewed_at": "2026-10-06T18:55:00Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "ORBPAGE1 (operator 10-06 11:52: the ORB page must show the LIVE ORB-Schwab bot, not the paper observer). Read the full control_plane diff: live ORB page built from strategy-owned managed rows only in the shared Schwab account (never account totals), orders/fills/intents attributed by strategy, P&L from completed cycles, paper observer relabelled, /api/bot/orb-schwab added; after my finding the page keeps HOLDING while an ORB row is open, says SESSION COMPLETE only after 10:00 and flat, display window runs to 16:00 (the EOD close path exists). Focused 102 pass on this head; my mutations RED (session ignores open positions -> 6 fail; display window back to 10:00 -> 4 fail); full unit suite on the pre-rebase content 48 failed = identical names to base; rebased patch byte-identical to the reviewed one (3 codex commits). Display only; no trading path touched."
+}
