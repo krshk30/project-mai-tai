@@ -5816,3 +5816,22 @@ recalculation2fail, legacy-exit-reference1fail, unproven-restore-release8fail.
 Raw logs /tmp/roundup1-20261006-mutation-*.log; pytest rc1 for each. No on-disk
 source mutation. This verifies the existing ROUNDUP behavior only, not the
 in-progress generic no-ticket restoration or full-suite pair.
+
+## 2026-10-06 06:31 ET - Preopen mechanics corrected, root run green
+
+Own read reproduced T3: two ORB-Schwab flag expectations were incorrectly in
+the restart-only checker although ORB-Schwab was deliberately untouched.
+Backed up preopen, removed exactly those two arguments, bash-n PASS; identities,
+declarations, catalog/checker paths, routing and mode0700/trader unchanged.
+ORB-Schwab remains directly identity-pinned and in the full live-flag catalog.
+New sha2568cdafcded0f748b6779696953cc8a101409b6bc0ce9a2314938d7f4fa82cf15a.
+Backup /home/trader/after-hours/2026-10-06/preopen-mechanics-0630/preopen.sh.before;
+two-line preopen.diff and gate-root-0631.txt alongside it. Root read at06:31:10
+finished06:31:16 rc0, restart evidence9/9 and FLAGGATE147/147; dated report exists.
+N/A_OFF_SESSION remains N/A, not live-bar delivery PASS. No process/flag/catalog
+change. Initial staging permission refusals preceded any script install.
+An additional trader invocation exposed root-only isolated-helper permissions;
+it returned UNKNOWN and is not called green. No permissions relaxed. Deployment
+journal deployments-20261006.md records the correction and actual root receipt.
+Today Claude owns the manual gate. Proposal only: root-run named06:20dailytimer,
+dated-pin fail-closed and explicit repin ownership; no timer installed here.
