@@ -7,7 +7,7 @@
       "expected": true,
       "owning_service": "schwab-1m-v2",
       "reason": "ROUNDUP1 ceilings the four-decimal resting buy trigger to the broker tick; existing orders retain their proven wire.",
-      "ruling": "Operator card confirmed 2026-10-05 13:44 ET; reviewer clarified one entry reference at 13:58 ET. Default OFF, not tonight; activation requires a later exact-SHA GO."
+      "ruling": "Operator card confirmed 2026-10-05 13:44 ET; rounding-only scope confirmed 2026-10-06. ON at the next reviewed exact-SHA deployment; the switch remains for rollback, not a dark deployment. No standalone restart or activation is authorized by this PR."
     },
     {
       "name": "strategy_schwab_1m_v2_pm_print_ask_confirm_enabled",
