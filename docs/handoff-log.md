@@ -6068,3 +6068,29 @@ can fall through to the newest open symbol order. No measured race count or
 production cancellation is claimed. No OMS dispatcher patch is part of ROUNDUP1.
 The rounding-only tests pass; final frozen suite comparison and review-ready
 head are still being prepared. No production, ledger, service or main change.
+
+### 2026-10-06 07:46 ET - LINE=CHART default-OFF draft and paired suites (codex-2)
+
+Published draft #1097 at 49e9be4b1b6fc55bbf5f26db2e729f75a9cec585 on
+codex/line-chart-restoration. This is visibility of an incomplete build, NOT
+a pin request or install candidate. Off-callback stored-session read retains
+the 04:00/current window with a 961-row refusal bound; late DB additions cannot
+rewrite provider coverage. An admitted rebuild uses full history instead of
+the reset cutoff, with clean-bar wait, epoch/current fences and no late flip.
+
+Focused 180 pass and five isolated assertion mutations red. Final Python3.12
+full pair against exact main03b26293: main47failed/5894passed, draft47failed/
+5958passed, failed-name added0/removed0. Earlier run omitted venv from the
+subprocess PATH and both sides had56 failures; both final full runs use the
+same corrected PATH. Committed FULL_SUITE_PAIR_2026-10-06.json retains exact
+names, source/log hashes and command; MUTATIONS_2026-10-06.json retains the
+five assertion failures. Baseline equality is not full-suite or chart PASS.
+
+JAGX full-anchor coverage remains UNMEASURED: both candle sources omit a
+positively traded prefix. Conditional stored line5.7955/long-age7 is not the
+chart. RETO controlled complete-series replay reaches2.0639 without emitting
+the historical SELL. APUS and MI pause/no-reset checks await the separate
+Pause lane; no two-flag composition is claimed. Prefix/source recovery,
+delivery bounds and exit-reading timing remain activation blockers. Only
+repository source/tests/docs and this shared docs row changed; no service,
+broker order, env/flag, production file, Redis, database or main change.
