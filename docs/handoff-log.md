@@ -6460,3 +6460,15 @@ Literal release/gate/timer still requires assembly/testing; NOT staged/listable
 yet. Current production7823 unchanged. No false COMPLETE receipt.
 T43excluded until its own exact pin and reviewed release rebind. T47 accepts
 client-abort correction; its assigned next-bar/reason lane remains separate.
+
+### 2026-10-06 10:57 ET - codex-2 C40 after-close wake-up rebound
+
+Updated existing ACTIVE Codex readiness wake-up to exact application3ebde364/
+tree97227121 and immutable three-item plan633f39d59ae0d24d8d88f5dc0f339d9262113ace.
+Schedule unchanged15min after16:00 through tonight, no carried GO. Explicit
+ROUNDUP+Restoration+daily preopen,149catalog,eightON,OMS/v2-only sequence;
+T43excluded absent own pin and reviewed candidate rebind. Saved fields re-read.
+This is not a production systemd job or a staged literal runner. No box changes,
+no false scheduled/staged/COMPLETE claim; full release and timer/gate assembly
+still required before any production call. Reviewer owns independent close-out
+and tomorrow07:00-07:15 scanner validation; no forced paper start for green.
