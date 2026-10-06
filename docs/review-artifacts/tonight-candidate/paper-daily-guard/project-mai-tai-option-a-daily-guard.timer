@@ -1,0 +1,12 @@
+[Unit]
+Description=Momentum paper daily guard at 03:40 ET on trading weekdays
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 03:40:00 America/New_York
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=project-mai-tai-option-a-daily-guard.service
+
+[Install]
+WantedBy=timers.target

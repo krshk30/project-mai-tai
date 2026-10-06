@@ -1,0 +1,21 @@
+[Unit]
+Description=Daily guarded Momentum paper session (operator 2026-10-05)
+After=network-online.target redis-server.service project-mai-tai-market-data.service
+Wants=network-online.target
+OnFailure=project-mai-tai-option-a-daily-guard-failure.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+WatchdogSec=15s
+TimeoutStartSec=60s
+User=root
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/trader/project-mai-tai/.venv/bin/python /home/trader/option-a-daily-guard/daily_guard.py
+ExecStartPost=/bin/systemctl start project-mai-tai-momentum-paper.service
+Restart=no
+UMask=0077
+StandardOutput=journal
+StandardError=journal

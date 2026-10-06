@@ -1,0 +1,12 @@
+[Unit]
+Description=Stop only Momentum paper if its daily guard dies
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/trader/project-mai-tai/.venv/bin/python /home/trader/option-a-daily-guard/failure_stop.py
+Restart=no
+UMask=0077

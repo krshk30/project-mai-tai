@@ -1,0 +1,13 @@
+{
+  "application_sha": "7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf",
+  "artifacts": {
+    "daily_guard.py": "4924256d1ebdd59ead195bbfd6959932feffd815c19613e51fb01f1d3added7b",
+    "failure_stop.py": "d00e4a53992de9a01300ecf16e134a445ba86594f7a8c1fb85bc41ace7a7d58a",
+    "guard_rules.py": "bbc0ee824eef4dbf8024c09675f4bea63d87f86d2328d7b247bdc5ad8cd19c52",
+    "project-mai-tai-option-a-daily-guard-failure.service": "9c3924ce0751d6685d68f273d173a5a02ff5886075f0ab69234f5eb38c6415e9",
+    "project-mai-tai-option-a-daily-guard.service": "c1ebf3483aab893e3123f1d9b6b708afbfe8841020e7d49d4d5f56de456d39f2",
+    "project-mai-tai-option-a-daily-guard.timer": "ad4479e138f1a5a7eb13c4503c44fbffd7a840b87c128c4df3c6016f74b4a4a0",
+    "sampler.py": "22b2f4fdb5a0b5aabea962b8718652adf44e829c5222f51e001ea9b37b648aa5"
+  },
+  "authority": "operator21:07 plus direct clarification: existing bot hours; daily trading-day start"
+}
