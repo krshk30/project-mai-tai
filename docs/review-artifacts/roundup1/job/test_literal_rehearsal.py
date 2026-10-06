@@ -200,7 +200,8 @@ def setup(monkeypatch, tmp_path, *, retry_env=None, **options):
             return path
         return real_path(value)
     monkeypatch.setattr(post_proof, "Path", proof_path)
-    fx = FakeSystem(job, {"application_blobs": application}, attempt, repo, **options)
+    fx = FakeSystem(job, {"application_blobs": application,
+                         "plan_commit": "2012b090b56dab256aeb4cb782359a23bf4e5f79"}, attempt, repo, **options)
     # Log file location is the single host-only read boundary of checkpoint().
     original_checkpoint = fx.checkpoint
     def checkpoint(completed):
@@ -229,6 +230,8 @@ def test_literal_full_sequence_backups_gate_diff_hashes_units_timer_only(monkeyp
     actions = [args for args in fx.calls if args[0] == "systemctl" and args[1] in {"start", "stop", "restart"}]
     assert actions == [["systemctl", action, "project-mai-tai-" + name + ".service"] for action, name in policy.PHASES]
     assert (fx.attempt / "COMPLETE.json").exists()
+    assert "COMPLETE codex install1" in closeout.JOURNAL.read_text()
+    assert fx.release["plan_commit"] in closeout.JOURNAL.read_text()
     assert len([args for args in actions if args[1] == "restart"]) == 1
     assert json.loads((fx.attempt / "COMPLETE.json").read_bytes())["control_display"]["page"]["trades"] == 1
     assert (fx.attempt / "source-before.tar").exists() and (fx.attempt / "env.before").exists()
