@@ -6756,3 +6756,20 @@ compared all47failednames with added/removed empty. CI at13:40:05ET remains
 inprogress on both Validate runs, PR stilldraft; no ready/pin/install claim.
 Solewriter freezesexacthead and marksready onlywithgreenCI. No production
 action, realcron, tradingcode, exitlogic, env or ledger change.
+
+### 2026-10-06 13:40 ET - codex-2 C63 WEBULL429 independent assessment
+
+Pushed docs-only2db8eb1f, no PR/runtimebuild. Parent independently verifies
+rawcompanionhashddfdb153 and freshOMS362892 /proc ordersync15s; native30 uses
+unchangedsource-default. Retained SDKrequest-ID3039detail429; today's13:15
+count101matches. Fresh frozen13:34:21.700322ET prefix131detail429 partitions
+128exact-clientmatchedfallback, oneAIFAnormalfetchhardfail and twoRPGstrict
+unknowns. All-code attack changes the causal claims: zeroSDKcancel429 in
+retainedcoverage, threecancel417today; Sep22rotation871isallSDKerrors, not
+detail429, andOct3rotation408includes two417cancelerrors. Dates reflectevent
+time separatelyfromrotatedfilenames. AIXI09:36softwareclose2.800s vs OLOX
+10:29existingchildfillresolved0.733s; no softwareexitwire claimforOLOX, no
+afterlatency withoutbuild. Readplan retains exactownership/2scache/firstFILLED/
+partialfills/strictRPG/EOD and budgets pagination plus durable terminalproof.
+DISAGREE cancelcause means no cancelbuild; seek correctedscope/disposition,
+not a rate-limit workaround for417. No source/prod/ledger/Redis changes.
