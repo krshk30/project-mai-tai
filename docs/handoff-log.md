@@ -6738,3 +6738,8 @@ these controls. Solewriter now proceeds safe implementation, target17:00
 conditional on immutable baseline/fullpair/CI; evidence-only head is not PR
 ready. Parent corrects RETRYOFF report method name to
 _apply_flip_position_evidence; result unchanged. No production write.
+
+Clock correction, recorded from UTC tool 2026-10-06 17:33:30 UTC: the C61
+heading above accidentally said13:41ET; it was published by13:33ET, not a
+future receipt. Its actual raw capture is13:30:13.519782ET as printed in C61.
+C60 assessment as-of corrected to13:33ET. Append-only history retained.
