@@ -225,7 +225,7 @@ def test_recorded_sckt_reprice_authorization_recomputes_ceiling_and_matches_oms(
     assert (Decimal(wire_md["stop_price"]), Decimal(wire_md["limit_price"])) == (Decimal("1.07"), Decimal("1.08"))
     assert service(True)._rpg_canonical_prices(wire_md, account) == (Decimal("1.07"), Decimal("1.08"))
     changed = {**wire_md, "stop_price": "1.08", "limit_price": "1.09"}
-    assert service(True)._rpg_canonical_prices(changed, account) != service(True)._rpg_canonical_prices(wire_md, account)
+    assert service(True)._rpg_canonical_prices(changed, account) == (Decimal("1.08"), Decimal("1.09"))
     assert Decimal(auth["event"]["payload"]["quantity"]) == (556 if leg == "schwab" else 278)
 
 
