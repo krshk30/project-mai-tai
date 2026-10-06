@@ -78,7 +78,9 @@ from project_mai_tai.strategy_core.time_utils import (
     is_fillable_et_session,
     session_day_eastern_str,
 )
-from project_mai_tai.strategy_core.v2_entry_sizing import resting_wire_limit, sized_entry_quantity
+from project_mai_tai.strategy_core.v2_entry_sizing import (
+    resting_buy_limit, resting_buy_stop, resting_wire_limit, sized_entry_quantity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -13410,6 +13412,18 @@ class OmsRiskService(AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
 
             state.attempts += 1
             payload = state.event.payload.model_copy(deep=True)
+            if (getattr(self.settings, "strategy_schwab_1m_v2_resting_buy_round_up_enabled", False)
+                    and str(payload.metadata.get("order_type", "")).upper() == "STOP_LIMIT"):
+                # This deferred leg has not reached the broker; unlike restart
+                # restoration of a live order, its next wire uses today's rounding.
+                stop = resting_buy_stop(Decimal(payload.metadata["stop_price"]))
+                limit = resting_buy_limit(stop, float(payload.metadata["resting_band_pct"]), leg="webull")
+                payload.metadata.update(
+                    stop_price=f"{stop:.4f}", limit_price=str(limit),
+                    entry_price=f"{stop:.4f}", reference_price=f"{stop:.4f}",
+                    resting_buy_round_up="true", resting_wire_stop_price=f"{stop:.4f}",
+                    resting_wire_limit_price=str(limit),
+                )
             payload.metadata = {
                 **payload.metadata,
                 "webull_deferred_resubmit": "true",

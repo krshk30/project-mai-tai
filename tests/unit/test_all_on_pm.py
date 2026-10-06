@@ -263,7 +263,7 @@ def test_all_on_catalog_audit_committed_live_set_requires_both_consumers():
     mismatches = {key for key in ALL_ON if by_name[key]["expected"] is not True}
     assert mismatches == set()
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 140
-    assert by_name["strategy_schwab_1m_v2_resting_buy_round_up_enabled"]["expected"] is False
+    assert by_name["strategy_schwab_1m_v2_resting_buy_round_up_enabled"]["expected"] is True
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in numeric) == 8
     for key in ALL_ON:
         assert by_name[key]["owning_service"] == ("oms" if key.startswith("oms_") else "schwab-1m-v2")

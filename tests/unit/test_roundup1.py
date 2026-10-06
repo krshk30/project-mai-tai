@@ -1,7 +1,7 @@
 """Recorded 179-order inputs; cache/bar/clock interleavings are controlled, not fills."""
 
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP
 import json
 from pathlib import Path
@@ -21,6 +21,14 @@ from tests.unit.test_pmprint1_pmflip1 import armed, cross, REAL, STRAYS
 FLAG = "strategy_schwab_1m_v2_resting_buy_round_up_enabled"
 ROWS = json.loads((Path(__file__).parents[1] / "fixtures/roundup1/orders_179.json").read_text())["queries"]["orders"]
 SCKT = next(r for r in ROWS if r["client_order_id"] == "schwab_1m_v2-SCKT-open-9a10bc5b0102")
+ACTIVE_FLAGS = {
+    "strategy_schwab_1m_v2_pm_print_ask_confirm_enabled": True,
+    "strategy_schwab_1m_v2_pm_flip_wait_enabled": True,
+    "strategy_schwab_1m_v2_pm_rest_reprice_enabled": True,
+    "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": True,
+    "oms_v2_webull_mirror_fresh_price_enabled": True,
+    "strategy_schwab_1m_v2_gap_hold_enabled": True,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +39,7 @@ def regular(monkeypatch):
 
 def strategy_for(row=SCKT, *, enabled=True):
     strategy = SchwabV2Strategy(Settings(_env_file=None, **{
-        FLAG: enabled, "strategy_schwab_1m_v2_confirmed_window_enabled": True,
+        **ACTIVE_FLAGS, FLAG: enabled, "strategy_schwab_1m_v2_confirmed_window_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_enabled": True,
         "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled": True,
         "strategy_schwab_1m_v2_dual_broker_fanout_enabled": True,
@@ -44,6 +52,8 @@ def strategy_for(row=SCKT, *, enabled=True):
     }))
     now = int(datetime.fromisoformat(row["submitted_at"]).timestamp() * 1000)
     strategy._now_ms = lambda: now
+    window = strategy._resting_in_window
+    strategy._resting_in_window = lambda current=None: window(current or datetime.fromtimestamp(now / 1000, UTC))
     strategy._entries_held = False
     strategy._resting_session_is_eh = lambda now=None: False
     state = strategy.watchlist_state(row["symbol"])
@@ -129,13 +139,137 @@ def test_pfsa_bracket_uses_the_single_sent_trigger_not_legacy_exit_reference():
     assert (new["stop"], new["target"], new["protection"]) == ("3.78", "3.97", "3.48")
 
 
+@pytest.mark.parametrize("leg", ["schwab", "webull"])
+def test_recorded_sckt_strategy_oms_adapter_wire_is_ceiling_not_nearest(leg):
+    from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+    from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+    strategy, state = strategy_for()
+    strategy._queue_resting_place(state, float(SCKT["payload"]["cw_flip_level"]))
+    primary, = strategy.drain_pending_intents()
+    mirror, = strategy.drain_webull_direct_intents()
+    draft = primary if leg == "schwab" else mirror
+    account = "live:schwab_1m_v2" if leg == "schwab" else "live:orb"
+    event = TradeIntentEvent(source_service="recorded-sckt-wire-replay", payload=TradeIntentPayload(
+        strategy_code="schwab_1m_v2", broker_account_name=account,
+        symbol=state.symbol, side=draft.side, intent_type=draft.intent_type,
+        quantity=Decimal(draft.quantity), reason=draft.reason, metadata=deepcopy(draft.metadata)))
+    service(True)._apply_v2_oco_bracket_entry(event=event)
+    request = OrderRequest(client_order_id="sckt-recorded-price-replay", strategy_code="schwab_1m_v2",
+        broker_account_name=account, symbol=state.symbol, side="buy", intent_type="open",
+        quantity=event.payload.quantity, reason=draft.reason, order_type="STOP_LIMIT", metadata=event.payload.metadata)
+    if leg == "schwab":
+        wire = object.__new__(SchwabBrokerAdapter)._build_order_payload(request)
+        stop, limit = Decimal(str(wire["stopPrice"])), Decimal(str(wire["price"]))
+        assert event.payload.metadata["bracket_target_price"] == "1.12"
+        assert event.payload.metadata["bracket_stop_price"] == "0.9844"
+    else:
+        limit, stop, _, refusal = WebullBrokerAdapter._prepare_single_leg_prices(
+            request=request, order_type="STOP_LIMIT", limit_price=Decimal(request.metadata["limit_price"]),
+            stop_price=Decimal(request.metadata["stop_price"]))
+        assert refusal is None
+    assert (stop, limit) == (Decimal("1.07"), Decimal("1.08"))
+    assert service(True)._rpg_canonical_prices(request.metadata, request.broker_account_name) == (stop, limit)
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_recorded_meds_print_below_ceiling_cannot_cross_or_take_slot(stream):
+    case = REAL[11]
+    strategy, state, clock = armed(case, **{**ACTIVE_FLAGS, FLAG: True})
+    state.resting_active = False
+    strategy._queue_resting_place(state, state.resting_level)
+    assert cross(strategy, state, clock, case[3], case[4], stream=stream) is None
+    assert state.resting_active and state.resting_flip_ms == 0
+    assert not strategy.drain_webull_fanout_intents()
+
+
+@pytest.mark.parametrize("leg", ["schwab", "webull"])
+def test_five_dollar_line_has_503_wire_and_cent_exact_is_unchanged(leg):
+    strategy, state = strategy_for()
+    strategy._queue_resting_place(state, 5.00)
+    draft, = strategy.drain_pending_intents() if leg == "schwab" else strategy.drain_webull_direct_intents()
+    assert Decimal(draft.metadata["stop_price"]) == Decimal("5.03")
+    assert strategy._resting_trigger_for_line(4.51 / 1.005) == 4.51
+
+
+def test_recorded_sckt_1247_1257_tape_never_reaches_new_stop():
+    raw = json.loads((Path(__file__).parents[2] / "docs/review-artifacts/roundup1/SCKT_AND_PFSA_EVIDENCE.json").read_text())
+    tape, = raw["queries"]["sckt_tape"]
+    new = replay(SCKT, enabled=True)
+    assert tape["n"] == 262 and tape["at_rule_or_above"] == 0
+    assert Decimal(tape["max_price"]) == Decimal("1.06") < Decimal(new["stop"]) == Decimal("1.07")
+    assert Decimal(new["limit"]) == Decimal("1.08")
+
+
+@pytest.mark.parametrize("leg", ["schwab", "webull"])
+@pytest.mark.parametrize("slot", ["first", "reclaim"])
+def test_recorded_sckt_reprice_authorization_recomputes_ceiling_and_matches_oms(leg, slot):
+    from project_mai_tai.market_data.schwab_v2_rest_client import Quote
+    strategy, state = strategy_for()
+    md = deepcopy(SCKT["payload"])
+    md["rpg_short_segment"] = str(state.atr_short_flip_bar_ts)
+    account = "live:orb" if leg == "webull" else "live:schwab_1m_v2"
+    state.last_quote = Quote(state.symbol, 1.0, 1.0, 1.0, strategy._now_ms())
+    # Controlled eligibility around SCKT's recorded old/new reprice geometry.
+    # No invented tape or historical partial-fill claim.
+    state.bars[-1] = OHLCVBar(strategy._now_ms() - 60000, 1.0, 1.0, 1.0, 1.0, 100000)
+    if slot == "reclaim":
+        strategy._reactive_entry_enabled = True
+        state.cw_armed, state.cw_bars_waited = True, 2
+        state.cw_segment_high = float(md["cw_flip_level"])
+    job = {"phase": "clear", "slot": slot, "segment_id": state.fanout_segment_id,
+        "cleared_at": datetime.fromtimestamp(strategy._now_ms() / 1000).isoformat(),
+        "old": {"symbol": state.symbol, "broker_account_name": account, "metadata": md}}
+    auth = strategy.rpg_handoff_authorization("recorded-sckt-reprice", job)
+    assert auth["verdict"] == "ready", auth
+    wire_md = auth["event"]["payload"]["metadata"]
+    assert (Decimal(wire_md["stop_price"]), Decimal(wire_md["limit_price"])) == (Decimal("1.07"), Decimal("1.08"))
+    assert service(True)._rpg_canonical_prices(wire_md, account) == (Decimal("1.07"), Decimal("1.08"))
+    changed = {**wire_md, "stop_price": "1.08", "limit_price": "1.09"}
+    assert service(True)._rpg_canonical_prices(changed, account) != service(True)._rpg_canonical_prices(wire_md, account)
+    assert Decimal(auth["event"]["payload"]["quantity"]) == (556 if leg == "schwab" else 278)
+
+
+@pytest.mark.asyncio
+async def test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_sizes_wire(monkeypatch):
+    from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+    from tests.unit.test_oms_webull_mirror_deferred_resubmit import (
+        _integrated_service, _session_factory,
+    )
+    factory = _session_factory()
+    svc, adapter = _integrated_service(factory, enabled=True, nfq_enabled=True)
+    monkeypatch.setattr(svc, "_market_is_fillable", lambda now=None: True)
+    svc.settings = svc.settings.model_copy(update={**ACTIVE_FLAGS, FLAG: True,
+        "strategy_schwab_1m_v2_webull_entry_notional_usd": Decimal("300")})
+    md = deepcopy(SCKT["payload"])
+    # Recorded SCKT prices in a controlled PA1 interleaving, not a claim that
+    # this already-accepted SCKT order was historically deferred at this time.
+    for key in ("rpg_handoff_token", "rpg_event_id", "nfq_retry_token", "nfq_hold_id"):
+        md.pop(key, None)
+    md.update(webull_shape_market_price="0.97", webull_shape_market_source="ask",
+        webull_shape_market_at_utc=datetime.now(UTC).isoformat(), webull_shape_market_max_age_ms="10000")
+    event = TradeIntentEvent(source_service="recorded-sckt-pa1-replay", payload=TradeIntentPayload(
+        strategy_code="schwab_1m_v2", broker_account_name="live:orb", symbol="SCKT",
+        side="buy", intent_type="open", quantity=Decimal("280"), reason="ATR Flip", metadata=md))
+    assert svc._defer_webull_resting_mirror_before_submit(event)
+    svc._latest_quotes_by_symbol["SCKT"] = {"ask": Decimal("1.0"), "received_at": datetime.now(UTC)}
+    await svc._evaluate_webull_mirror_deferred_resubmits("SCKT")
+    retry, = [TradeIntentEvent.model_validate(data) for _, data in svc.redis.entries]
+    await svc.process_trade_intent(retry)
+    request, = adapter.requests
+    assert (Decimal(request.metadata["stop_price"]), Decimal(request.metadata["limit_price"])) == (
+        Decimal("1.07"), Decimal("1.08"))
+    assert request.quantity == Decimal("278")
+    await svc._evaluate_webull_mirror_deferred_resubmits("SCKT")
+    assert len(adapter.requests) == 1
+
+
 @pytest.mark.parametrize("stream", [True, False])
 @pytest.mark.parametrize("case,expected", [
     (REAL[10], True), (REAL[11], False), (REAL[12], True), (REAL[13], True),
     (STRAYS[0], False), (("MI", "2026-10-05T13:15:20.309Z", 2.7288, 2.749, 2.75), True),
 ], ids=["LGHL", "MEDS", "NXL", "AMOD", "SAIQ", "MI"])
 def test_six_pm_print_proxies_compare_to_rounded_trigger(case, expected, stream):
-    strategy, state, clock = armed(case, **{FLAG: True})
+    strategy, state, clock = armed(case, **{**ACTIVE_FLAGS, FLAG: True})
     state.resting_active = False
     strategy._queue_resting_place(state, state.resting_level)
     assert not state.resting_is_broker_order
@@ -204,14 +338,15 @@ def test_oms_no_chase_reads_final_wire_cap_not_raw_formula(monkeypatch):
         max_age_ms=2000, wire_cap=Decimal("1.08"))[1] == "ASK_PAST_BAND"
 
 
-def test_flag_default_off_and_catalog_dark():
+def test_flag_rollback_default_and_catalog_requires_on_at_deploy():
     assert getattr(Settings(_env_file=None), FLAG) is False
     catalog = json.loads((Path(__file__).parents[2] / "ops/health/expected_flags.json").read_text())
-    assert next(r for r in catalog["flags"] if r["name"] == FLAG)["expected"] is False
+    assert next(r for r in catalog["flags"] if r["name"] == FLAG)["expected"] is True
 
 
 @pytest.mark.parametrize("leg,with_proof", [("webull", True), ("webull", False), ("schwab", True)])
-def test_restart_restores_recorded_accepted_wire_not_new_calculation_and_never_duplicates(leg, with_proof):
+@pytest.mark.parametrize("post_flag", [False, True], ids=["pre_flag_wire", "post_flag_wire"])
+def test_restart_restores_recorded_accepted_wire_not_new_calculation_and_never_duplicates(leg, with_proof, post_flag):
     from project_mai_tai.db.models import BrokerOrderEvent, DashboardSnapshot
     from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
     from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, SNAPSHOT_TYPE
@@ -223,38 +358,49 @@ def test_restart_restores_recorded_accepted_wire_not_new_calculation_and_never_d
     strategy, state = strategy_for(row)
     token = uuid5(NAMESPACE_URL, row["client_order_id"])
     md = deepcopy(row["payload"])
+    new = replay(row, enabled=True)
+    if post_flag:
+        # Controlled acceptance/restart of the new wire built from the recorded
+        # order's geometry, not a claim that ROUNDUP was historically enabled.
+        md = deepcopy(new["metadata"])
+    quantity = Decimal(new["shares"]) if post_flag else Decimal(row["quantity"])
     md.setdefault("rpg_resting_generation", str(token))  # Controlled ticket around the pre-RPG recorded wire.
     job = {"revision": 0, "phase": "placed", "slot": "first", "segment_id": state.fanout_segment_id,
            "old": {"symbol": row["symbol"], "broker_account_name": row["account"], "metadata": md},
            "replacement": {"client_order_id": row["client_order_id"], "metadata": md,
-                           "quantity": row["quantity"]}}
+                           "quantity": str(quantity)}}
     event = TradeIntentEvent(source_service="recorded-accepted-replay", payload=TradeIntentPayload(
         strategy_code="schwab_1m_v2", broker_account_name=row["account"], symbol=row["symbol"],
-        side="buy", intent_type="open", quantity=Decimal(row["quantity"]), reason="ATR Flip", metadata=md))
+        side="buy", intent_type="open", quantity=quantity, reason="ATR Flip", metadata=md))
     with factory() as session:
         st = svc.store.ensure_strategy(session, "schwab_1m_v2", name="v2")
         account = svc.store.ensure_broker_account(session, row["account"], provider=leg, environment="test")
         intent = svc.store.create_trade_intent(session, strategy=st, broker_account=account, event=event)
         order = svc.store.get_or_create_order(session, intent=intent, strategy_id=st.id, broker_account_id=account.id,
             client_order_id=row["client_order_id"], broker_order_id=row["broker_order_id"], symbol=row["symbol"],
-            side="buy", quantity=Decimal(row["quantity"]), metadata=md, status="accepted",
+            side="buy", quantity=quantity, metadata=md, status="accepted",
             order_type="STOP_LIMIT", time_in_force="day")
         if leg == "webull" and with_proof:
             capture = json.loads((Path(__file__).parents[1] / "fixtures/roundup1/orders_179.json").read_text())
             recorded = next(e for e in capture["queries"]["sckt_events"] if e["event_type"] == "accepted")
+            report = deepcopy(recorded["payload"])
+            if post_flag:
+                report["metadata"].update(webull_wire_stop_price=new["stop"], webull_wire_limit_price=new["limit"])
             session.add(BrokerOrderEvent(order_id=order.id, event_type="accepted", event_source="broker",
-                payload=recorded["payload"]))
+                payload=report))
         session.add(DashboardSnapshot(id=token, snapshot_type=SNAPSHOT_TYPE, payload=job))
         session.commit()
     journal = HandoffJournal(factory)
     job = journal.reconcile_feedback(token, job, include_wire_prices=True)
     result = strategy.rpg_handoff_authorization(str(token), job)
     if with_proof:
-        expected = 1.06 if leg == "webull" else 3.77
+        expected = float(new["stop"]) if post_flag else (1.06 if leg == "webull" else 3.77)
         assert strategy._active_resting_trigger(state, leg=leg) == expected
-        assert strategy._active_resting_cap(state, leg=leg) == (1.07 if leg == "webull" else 3.79)
-        assert (state.resting_webull_quantity if leg == "webull" else state.resting_schwab_quantity) == int(Decimal(row["quantity"]))
-        assert expected != strategy._resting_trigger_for_line(float(md["cw_flip_level"]))
+        expected_limit = float(new["limit"]) if post_flag else (1.07 if leg == "webull" else 3.79)
+        assert strategy._active_resting_cap(state, leg=leg) == expected_limit
+        assert (state.resting_webull_quantity if leg == "webull" else state.resting_schwab_quantity) == int(quantity)
+        if not post_flag:
+            assert expected != strategy._resting_trigger_for_line(float(md["cw_flip_level"]))
     else:
         assert result["reason"] == "placed_wire_price_unproven"
         assert strategy._rpg_entry_owned(state) and strategy._rpg_leg_owned(state, row["account"])

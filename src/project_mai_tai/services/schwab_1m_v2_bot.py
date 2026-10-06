@@ -43,8 +43,6 @@ from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
-    BrokerOrderEvent,
-    DashboardSnapshot,
     Fill,
     OmsManagedPosition,
     PaperExitRuleConfig,
@@ -110,8 +108,7 @@ from project_mai_tai.strategy_core.order_routing import (
     extended_hours_session,
 )
 from project_mai_tai.strategy_core import entry_gate
-from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, SNAPSHOT_TYPE
-from project_mai_tai.strategy_core.legacy_resting import LegacyRestingOrder, classify_legacy_order
+from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     FLIP_OWNER_ROW_SETTLE_MS,
     MAX_BAR_AGE_SECONDS_FOR_EMIT,
@@ -365,8 +362,6 @@ class SchwabV2BotService:
         self.settings = settings or get_settings()
         self.redis: Redis | None = None
         self.strategy = SchwabV2Strategy(self.settings)
-        if self.strategy._resting_round_up_enabled():
-            self.strategy.configure_legacy_resting_recovery()
         self.rest_client: SchwabV2RestClient | None = None
         self.streamer: SchwabV2Streamer | None = None
         self.intent_emitter: SchwabV2IntentEmitter | None = None
@@ -884,7 +879,6 @@ class SchwabV2BotService:
             "state_publish": asyncio.create_task(self._state_publish_loop()),
         }
         if self.enabled:
-            await self._legacy_resting_refresh()
             await self._rpg_handoff_pass()
             self._tasks["atr_reprice"] = asyncio.create_task(self._rpg_handoff_loop())
             self._tasks["rest_client"] = asyncio.create_task(self.rest_client.run())
@@ -1877,8 +1871,6 @@ class SchwabV2BotService:
         )
 
     async def _position_poll_pass(self) -> None:
-        if getattr(self.settings, "strategy_schwab_1m_v2_resting_buy_round_up_enabled", False):
-            await self._legacy_resting_refresh()
         evaluate_gap_holds = getattr(self, "_evaluate_gap_holds", None)
         if callable(evaluate_gap_holds):
             await evaluate_gap_holds()
@@ -2347,87 +2339,6 @@ class SchwabV2BotService:
             for symbol, state in self.strategy._symbol_states.items()
             if int(state.position_qty) > 0
         }
-
-    async def _legacy_resting_refresh(self) -> None:
-        if not self.strategy._resting_round_up_enabled():
-            return
-        records, readable = await asyncio.to_thread(self._fetch_legacy_resting_orders)
-        self.strategy.apply_legacy_resting_book(records, readable_accounts=readable)
-
-    def _fetch_legacy_resting_orders(self) -> tuple[list[LegacyRestingOrder], set[str]]:
-        """Discover exact strategy/account entry rows, off the quote callback path."""
-        accounts = self.strategy.legacy_resting_accounts()
-        if self.session_factory is None:
-            return [], set()
-        try:
-            with self.session_factory() as session:
-                brokers = {row.name: row for row in session.scalars(
-                    select(BrokerAccount).where(BrokerAccount.name.in_(accounts)))}
-                readable = {name for name, broker in brokers.items()
-                            if broker.provider == accounts[name]}
-                strategy = session.scalar(select(Strategy).where(Strategy.code == STRATEGY_CODE))
-                if strategy is None:
-                    return [], readable
-                # Existing durable handoffs retain their existing owner. A token
-                # in order metadata without a journal row is not a handoff.
-                ticket_clients = set()
-                for snapshot in session.scalars(select(DashboardSnapshot).where(
-                        DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE)):
-                    job = snapshot.payload
-                    for key in ("old", "replacement"):
-                        request = job.get(key) or {}
-                        if request.get("strategy_code") == STRATEGY_CODE:
-                            ticket_clients.add((request.get("broker_account_name"), request.get("client_order_id")))
-                rows = session.execute(
-                    select(BrokerOrder, TradeIntent, BrokerAccount)
-                    .join(BrokerAccount, BrokerAccount.id == BrokerOrder.broker_account_id)
-                    .outerjoin(TradeIntent, TradeIntent.id == BrokerOrder.intent_id)
-                    .where(BrokerOrder.strategy_id == strategy.id,
-                           BrokerAccount.name.in_(accounts), BrokerOrder.side == "buy",
-                           func.upper(BrokerOrder.order_type) == "STOP_LIMIT")
-                ).all()
-                order_ids = [order.id for order, _, _ in rows]
-                events_by_order = {}
-                fills_by_order = {}
-                if order_ids:
-                    for event in session.scalars(select(BrokerOrderEvent).where(
-                            BrokerOrderEvent.order_id.in_(order_ids)).order_by(
-                                BrokerOrderEvent.event_at, BrokerOrderEvent.id)):
-                        events_by_order.setdefault(event.order_id, []).append({
-                            "type": event.event_type, "source": event.event_source,
-                            "at": event.event_at, "payload": event.payload})
-                    fills_by_order = dict(session.execute(select(Fill.order_id, func.sum(Fill.quantity))
-                        .where(Fill.order_id.in_(order_ids)).group_by(Fill.order_id)).all())
-                records = []
-                linked_intents = set()
-                fields = ("id", "strategy_id", "broker_account_id", "symbol", "side", "quantity", "payload")
-                for order, intent, broker in rows:
-                    linked_intents.add(order.intent_id)
-                    if (broker.name, order.client_order_id) in ticket_clients:
-                        continue
-                    order_data = {key: getattr(order, key) for key in (*fields, "client_order_id",
-                        "broker_order_id", "order_type", "status")}
-                    intent_data = {key: getattr(intent, key) for key in (*fields, "intent_type")} if intent else None
-                    records.append(classify_legacy_order(order_data, intent_data,
-                        events_by_order.get(order.id, []), account=broker.name, provider=broker.provider,
-                        filled=fills_by_order.get(order.id, Decimal("0"))))
-                for intent, broker in session.execute(select(TradeIntent, BrokerAccount)
-                        .join(BrokerAccount, BrokerAccount.id == TradeIntent.broker_account_id)
-                        .where(TradeIntent.strategy_id == strategy.id, BrokerAccount.name.in_(accounts),
-                               TradeIntent.side == "buy", TradeIntent.intent_type == "open")):
-                    md = intent.payload.get("metadata") if isinstance(intent.payload, dict) else None
-                    if intent.id in linked_intents:
-                        continue
-                    if not isinstance(md, dict) or md.get("resting_entry") == "true" or str(
-                            md.get("order_type", "")).upper() == "STOP_LIMIT":
-                        # A pending/abandoned intent without an exact order is
-                        # not broker terminal evidence, regardless of its status.
-                        records.append(LegacyRestingOrder(account=broker.name, symbol=intent.symbol,
-                            order_id=f"intent:{intent.id}", client_id="", broker_id=""))
-                return records, readable
-        except Exception:
-            logger.exception("[V2-LEGACY-RESTING-UNKNOWN] entry evidence unreadable")
-            return [], set()
 
     def _fetch_position_maps(self) -> tuple[dict[str, int], dict[str, int]] | None:
         """Returns (union, held).
