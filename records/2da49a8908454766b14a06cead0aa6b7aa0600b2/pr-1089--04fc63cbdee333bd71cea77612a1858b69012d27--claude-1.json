@@ -1,0 +1,9 @@
+{
+  "pr_number": 1089,
+  "range_base": "04fc63cbdee333bd71cea77612a1858b69012d27",
+  "range_head": "2da49a8908454766b14a06cead0aa6b7aa0600b2",
+  "reviewed_at": "2026-10-06T01:41:06Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Shared 10-05 handoff PR #1089: codex-2-authored docs-only segment (2 commit(s)) reviewed by claude-1 at close-out \u2014 rows / evidence under codex ownership, no source files; manifest 2026-10-05-all-on-install-7823a6fa balanced 138 / 138."
+}
