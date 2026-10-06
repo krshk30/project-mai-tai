@@ -112,3 +112,37 @@ identity is retained from the accepted case, not presented as live repair.
 
 Focused437 passed log `.webull429-terminal-partial-v2-all-focused.log` SHA256
 `8b8276eb6d33d43a709c6c4e4fe97f997aaa2a466cb715efe6cfa1f8f746a4cf`.
+
+## Authorized Clock-Fixture Follow-Up
+
+After the single test-only ROUNDUP clock correction, all20 process-local
+mutations were re-run against the unchanged WEBULL/OMS runtime and65 controls.
+Raw filenames are `.webull429-mutation-v3-NAME.log` in the sole build worktree.
+The observed traces retain exactly the replacement-tree classifications above:
+19 direct assertion/DID NOT RAISE kills, one explicit decoder UNKNOWN exception.
+`detail_first_restored` still has22 assertions,2 DID NOT RAISE and9 excluded
+secondary runtime failures. No extraction/import/setup/class-cell error observed.
+This is a trace audit, not a conclusion inferred from pytest_rc1.
+
+| Name | SHA256 |
+| --- | --- |
+| detail_first_restored | `0fcf536f85fe07a8b71848950b987dce7c3f5f2e1d67dc8409d93fab3b76e2cd` |
+| nested_foreign_client_adopted | `cb150f5d5d8997a9468f2ebecea23fcedbe7f5d64c0871b810d801b12c8c4be9` |
+| stale_page_served | `674d77a9a7b358ee8db06291a9c2b595dd9a033499c1793c8e7d962184b7be8d` |
+| budget_not_counted | `873b7e5ca4e422f7e8504025bda55c956305d706e295ef9492730335b0492f5a` |
+| page20_claimed_complete | `8bb8a7ee6b5288965f30e8ae787c4dab1f2356d38377441c65e6f88c2c3df949` |
+| missing_child_claimed_readable | `0e66433e94761c4e812a7e128fab54ee4cfc0e9673efec8d2b0fd0da3a5afaaa` |
+| first_filled_lost | `84eaf4ad557bdf73523d6aa5a78ecbdaed5ff6a0405062127c3e11b532ead9e5` |
+| durable_proof_ignored | `da81036475ef25844e070c862a345aba860d06a120437788f552eecd3c6c056d` |
+| forever_attempted | `ac33b16d6497a82c3ab10bdb79d203950bd0c7e0a510f554a6c8340062399cee` |
+| strict_read_uses_list | `47b6772abc7009fbf7f4aeabc5d51d09c0a75b5de6c1ca88adfca56d3f23dd9b` |
+| quantity_alias_conflict_accepted | `276fb23219c6734eefc029d5b5d44dade4ba2bf906e7c2a342e3accdbf63b005` |
+| price_alias_conflict_accepted | `c0c97630d3580a115bfa38032df3057d8b856f56b82871e1a35289a481b33ae6` |
+| unknown_status_alias_accepted | `ec8f46bc2f4a122b638d42c34feb99435e0cebd638f9ee02198116484dc7e5fd` |
+| list_not_found_swallowed | `27177b345e07f940f0399af2ea5685d24dc1c3b60edca0c37dc5a474451f542d` |
+| terminal_venue_scope_removed | `fced0abcc516cb421d746ecf5115adee8e747b93ab99975128c86061ff909963` |
+| terminal_origin_scope_removed | `f49e3e6b146bd942eb898b199539b083a7ce5ccffa2f3826b86bf1ff652fda75` |
+| terminal_remainder_reopened | `14e269003c6bde69ebc7cd13380063292e1dda10e92b043804992390819cffe8` |
+| terminal_execution_dropped | `61f1fac96c9cfef92a6f47174216357a104bd0f2f5f3ebf5a7420c15da326dff` |
+| cumulative_execution_doublecounted | `97bb595b21ce9b5dedb250d48afe1090a52243da2a051c7f03f8a039484bb6a6` |
+| managed_terminal_delta_dropped | `e8f9caac4fabefce005dc8ef38d27e95ad362f8e131dd505d29356d67b28db0b` |
