@@ -60,6 +60,44 @@ MUTATIONS = {
     "M14-evaluation-note-not-logged": (
         "_evaluate_v2_managed_exit", "self._log_native_oco_note(acct, symbol)", "pass",
     ),
+    "M15-armed-release-bypassed": (
+        "_reserve1_trigger_schwab_hard_stop",
+        "if not await release_current():\n            return\n        events =",
+        "if False:\n            return\n        events =",
+    ),
+    "M16-armed-unknown-admitted": (
+        "_reserve1_trigger_schwab_hard_stop", 'if result != "released":', "if False:",
+    ),
+    "M17-armed-child-fill-not-attributed": (
+        "_reserve1_trigger_schwab_hard_stop", 'if result == "resolved_by_fill":', "if False:",
+    ),
+    "M18-armed-shared-claim-removed": (
+        "_reserve1_trigger_schwab_hard_stop", "claim in inflight or stop.close_in_flight",
+        "stop.close_in_flight",
+    ),
+    "M19-armed-episode-check-removed": (
+        "_reserve1_trigger_schwab_hard_stop", "if current != episode:", "if False:",
+    ),
+    "M20-armed-original-rejection-proof-removed": (
+        "_reserve1_trigger_schwab_hard_stop",
+        "if not await self._reserve1_original_close_rejected(request, reports):", "if False:",
+    ),
+    "M21-orb-old-trip-admitted": (
+        "_reserve1_hard_stop_episode", "Fill.filled_at >= position.opened_at,", "",
+    ),
+    "M22-known-native-guard-dedup-removed": (
+        "_trigger_hard_stop", "if has_native_guard:", "if False:",
+    ),
+    "M23-armed-note-log-removed": (
+        "_trigger_hard_stop", "self._log_native_oco_note(stop.broker_account_name, stop.symbol)", "pass",
+    ),
+    "M24-armed-recovery-cap-removed": (
+        "_reserve1_trigger_schwab_hard_stop", "request is None or claim in retry_used", "request is None",
+    ),
+    "M25-orb-external-send-admitted": (
+        "process_trade_intent", 'if strategy_code == "orb_schwab" and not reserve1_dispatch:',
+        'if strategy_code == "orb_schwab" and False:',
+    ),
 }
 
 

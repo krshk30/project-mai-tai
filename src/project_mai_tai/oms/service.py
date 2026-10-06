@@ -34,6 +34,7 @@ from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    BrokerOrderEvent,
     DashboardSnapshot,
     Fill,
     Strategy,
@@ -1532,6 +1533,9 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         if self._rpg_external_retry(event):
             return []
         strategy_code = str(event.payload.strategy_code).strip().lower()
+        reserve1_dispatch = self.__dict__.get("_reserve1_hard_stop_dispatch", {}).pop(
+            event.event_id, None,
+        ) == event.model_dump_json()
         if (strategy_code == "schwab_1m_v2" and event.payload.intent_type == "cancel"
                 and event.payload.metadata.get("atr_reprice") == "true"):
             return await self._rpg_begin_cancel(event)
@@ -1543,7 +1547,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 event.payload.broker_account_name,
             )
             return []
-        if strategy_code == "orb_schwab":
+        if strategy_code == "orb_schwab" and not reserve1_dispatch:
             refusal = orb_schwab_intent_refusal(event, self.settings, utcnow())
             if refusal is None and event.payload.intent_type == "open":
                 verdict, macd_reason, _histogram = schwab_completed_bar_macd_gate(
@@ -2288,7 +2292,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 order_type=str(event.payload.metadata.get("order_type", "market")),
                 time_in_force=str(event.payload.metadata.get("time_in_force", "day")),
             )
-            if strategy_code == "orb_schwab":
+            if strategy_code == "orb_schwab" and event.payload.intent_type == "open":
                 preview_error = None
                 try:
                     preview_status, preview_body = await self.broker_adapter.preview_bracket_order(
@@ -12517,6 +12521,13 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         trigger_price: Decimal,
         trigger_source: str,
     ) -> None:
+        provider_for = getattr(getattr(self, "settings", None), "provider_for_account", None)
+        schwab = (
+            stop.strategy_code in {"schwab_1m_v2", "orb_schwab"}
+            and callable(provider_for) and provider_for(stop.broker_account_name) == "schwab"
+        )
+        if schwab:
+            self._log_native_oco_note(stop.broker_account_name, stop.symbol)
         if _is_regular_market_session():
             try:
                 has_native_guard = await self._has_active_native_stop_guard_order(
@@ -12529,19 +12540,213 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
             except Exception:
                 # Fix 3: the pre-close native-guard dedup check is an OPTIMIZATION,
                 # not a safety gate. If it stalls/times out (DB hung), PROCEED to
-                # fire the protective close — a DB stall must NEVER abort real-money
-                # stop protection. Worst case is a duplicate close the periodic sync
-                # reconciles, which is strictly safer than a missed stop.
+                # evaluate the protective close. Schwab's exact-parent release below
+                # remains mandatory even if this optional guard lookup fails.
                 self.logger.warning(
                     "[HARD-STOP] native-guard pre-check failed (DB stall?) for %s %s — "
-                    "proceeding to submit the protective close",
+                    "proceeding to evaluate the protective close",
                     stop.strategy_code,
                     stop.symbol,
                 )
                 has_native_guard = False
             if has_native_guard:
                 stop.last_trigger_attempt_at = utcnow()
+                if schwab:
+                    self.logger.info(
+                        "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=DEFERRED "
+                        "reason=known_native_stop_guard", stop.symbol, stop.broker_account_name,
+                    )
                 return
+        if schwab:
+            await self._reserve1_trigger_schwab_hard_stop(
+                stop, trigger_price=trigger_price, trigger_source=trigger_source,
+            )
+            return
+        await self._trigger_hard_stop_send(
+            stop, trigger_price=trigger_price, trigger_source=trigger_source,
+        )
+
+    def _reserve1_hard_stop_episode(self, session: Session, stop: ArmedHardStop):
+        if stop.strategy_code == "orb_schwab":
+            position = session.scalar(select(VirtualPosition).join(
+                Strategy, Strategy.id == VirtualPosition.strategy_id,
+            ).join(BrokerAccount, BrokerAccount.id == VirtualPosition.broker_account_id).where(
+                Strategy.code == stop.strategy_code, BrokerAccount.name == stop.broker_account_name,
+                VirtualPosition.symbol == stop.symbol,
+            ))
+            if (position is None or position.opened_at is None or not 0 < stop.quantity <= 2
+                    or position.quantity != stop.quantity):
+                return None
+            # The current episode's broker fill binds the parent, not the latest buy or quantity.
+            entries = session.scalars(select(BrokerOrder).join(Fill, Fill.order_id == BrokerOrder.id).where(
+                BrokerOrder.strategy_id == position.strategy_id,
+                BrokerOrder.broker_account_id == position.broker_account_id,
+                BrokerOrder.symbol == position.symbol, BrokerOrder.side == "buy",
+                BrokerOrder.status == "filled", Fill.side == "buy",
+                Fill.strategy_id == position.strategy_id,
+                Fill.broker_account_id == position.broker_account_id,
+                Fill.symbol == position.symbol, Fill.broker_fill_id.is_not(None),
+                Fill.filled_at >= position.opened_at,
+            )).unique().all()
+            if len(entries) != 1 or not entries[0].broker_order_id:
+                return None
+            entry = entries[0]
+            return str(position.id), str(entry.id), str(entry.broker_order_id), stop.quantity
+        row = self.store.get_open_managed_position(
+            session, broker_account_name=stop.broker_account_name, symbol=stop.symbol,
+        )
+        if (row is None or row.strategy_code != stop.strategy_code
+                or Decimal(row.current_quantity) != stop.quantity):
+            return None
+        entry = self._find_oco_entry_order(
+            session, stop.broker_account_name, stop.symbol, row=row,
+        )
+        if entry is None or not entry.broker_order_id:
+            return None
+        return str(row.id), str(entry.id), str(entry.broker_order_id), stop.quantity
+
+    async def _reserve1_trigger_schwab_hard_stop(
+        self, stop: ArmedHardStop, *, trigger_price: Decimal, trigger_source: str,
+    ) -> None:
+        acct, symbol = stop.broker_account_name, stop.symbol
+        stop.last_trigger_attempt_at = utcnow()
+        try:
+            episode = await self._run_db(
+                lambda session: self._reserve1_hard_stop_episode(session, stop), commit=False,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            episode = None
+        if episode is None:
+            self.logger.error(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                "reason=hard_stop_entry_or_quantity_unproven", symbol, acct,
+            )
+            return
+        claim = (acct, symbol, episode[0])
+        inflight = self.__dict__.setdefault("_reserve1_sell_inflight", set())
+        if claim in inflight or stop.close_in_flight:
+            self.logger.info(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=DEFERRED "
+                "reason=hard_stop_close_inflight row=%s", symbol, acct, episode[0],
+            )
+            return
+        inflight.add(claim)
+        stop.close_in_flight = True
+        events = None
+        try:
+            async def release_current() -> bool:
+                if stop.strategy_code == "orb_schwab":
+                    result = await self.broker_adapter.release_native_oco_for_close(acct, episode[2])
+                    self.logger.info(
+                        "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=%s "
+                        "strategy=orb_schwab entry_broker_order_id=%s", symbol, acct,
+                        {"released": "RELEASED", "resolved_by_fill": "ALREADY_RESOLVED_BY_OCO_FILL"}
+                        .get(result, "COULD_NOT_TELL"), episode[2],
+                    )
+                else:
+                    result = await self._release_native_oco_for_cw_flip(
+                        acct, symbol, expected_row_id=episode[0],
+                    )
+                if result == "resolved_by_fill":
+                    if stop.strategy_code == "orb_schwab":
+                        await self._poll_orb_schwab_child_exits(entry_id=UUID(episode[1]))
+                    else:
+                        await self._close_resolved_oco_managed_row(
+                            acct, symbol, expected_row_id=episode[0],
+                        )
+                    return False
+                if result != "released":
+                    return False
+                current = await self._run_db(
+                    lambda session: self._reserve1_hard_stop_episode(session, stop), commit=False,
+                )
+                if current != episode:
+                    self.logger.error(
+                        "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                        "reason=hard_stop_episode_changed_after_release", symbol, acct,
+                    )
+                    return False
+                return True
+
+            if not await release_current():
+                return
+            events = await self._trigger_hard_stop_send(
+                stop, trigger_price=trigger_price, trigger_source=trigger_source,
+                protected_claim=claim,
+            )
+            request, reports = await self._reserve1_hard_stop_rejected_request(stop, events)
+            retry_used = self.__dict__.setdefault("_reserve1_retry_used", set())
+            if request is None or claim in retry_used:
+                return
+            retry_used.add(claim)
+            if not await self._reserve1_original_close_rejected(request, reports):
+                return
+            if not await release_current():
+                return
+            await self._trigger_hard_stop_send(
+                stop, trigger_price=trigger_price, trigger_source=trigger_source,
+                retry_of=request.client_order_id, protected_claim=claim,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception(
+                "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
+                "reason=hard_stop_release_or_send_failed", symbol, acct,
+            )
+        finally:
+            inflight.discard(claim)
+            # Accepted closes retain the existing registry latch; only an unsent close clears it.
+            if events is None:
+                stop.close_in_flight = False
+
+    async def _reserve1_hard_stop_rejected_request(self, stop: ArmedHardStop, events):
+        closes = [event.payload for event in events if event.payload.intent_type == "close"]
+        if not closes or not all(
+            event.status == "rejected" and event.filled_quantity == 0
+            and "oversold" in event.reason.lower() for event in closes
+        ):
+            return None, []
+        if len({event.client_order_id for event in closes}) != 1:
+            return None, []
+        event = closes[0]
+
+        def read(session):
+            order = session.get(BrokerOrder, event.order_db_id)
+            if (order is None or order.status != "rejected"
+                    or order.client_order_id != event.client_order_id
+                    or order.symbol != stop.symbol or order.side != "sell"
+                    or order.quantity != stop.quantity):
+                return None
+            sources = session.scalars(select(BrokerOrderEvent).where(
+                BrokerOrderEvent.order_id == order.id,
+                BrokerOrderEvent.event_type == "rejected",
+            )).all()
+            if not sources or any(source.event_source != "broker" for source in sources):
+                return None
+            return OrderRequest(
+                client_order_id=order.client_order_id, broker_account_name=stop.broker_account_name,
+                strategy_code=stop.strategy_code, symbol=stop.symbol, side="sell", intent_type="close",
+                quantity=stop.quantity, reason="HARD_STOP", metadata=dict(order.payload or {}),
+                order_type=order.order_type, time_in_force=order.time_in_force,
+            )
+
+        request = await self._run_db(read, commit=False)
+        if request is None:
+            return None, []
+        reports = [ExecutionReport(
+            event_type="rejected", origin="broker", client_order_id=event.client_order_id,
+            broker_order_id=event.broker_order_id, symbol=event.symbol, side=event.side,
+            intent_type=event.intent_type, filled_quantity=event.filled_quantity, reason=event.reason,
+        ) for event in closes]
+        return request, reports
+
+    async def _trigger_hard_stop_send(
+        self, stop: ArmedHardStop, *, trigger_price: Decimal, trigger_source: str,
+        retry_of: str = "", protected_claim: tuple[str, str, str] | None = None,
+    ) -> list[OrderEventEvent]:
         stop.last_trigger_attempt_at = utcnow()
         stop.close_in_flight = True
         self.logger.info(
@@ -12567,10 +12772,19 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                     stop=stop,
                     trigger_price=trigger_price,
                     trigger_source=trigger_source,
-                ),
+                ) | ({"reserve1_retry": "1", "reserve1_retry_of": retry_of} if retry_of else {}),
             ),
         )
-        order_events = await self.process_trade_intent(event)
+        dispatch = self.__dict__.setdefault("_reserve1_hard_stop_dispatch", {})
+        if protected_claim is not None:
+            if protected_claim not in self.__dict__.get("_reserve1_sell_inflight", set()):
+                return []
+            # One-use internal dispatch proof; external ORB signals keep their strict contract.
+            dispatch[event.event_id] = event.model_dump_json()
+        try:
+            order_events = await self.process_trade_intent(event)
+        finally:
+            dispatch.pop(event.event_id, None)
         if any(item.payload.status in {"accepted", "submitted", "partially_filled", "filled"} for item in order_events):
             stop.consecutive_close_failures = 0  # the close placed — reset the reconcile counter
             if any(item.payload.status == "filled" for item in order_events):
@@ -12578,14 +12792,14 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 self._armed_hard_stops.pop(_popkey, None)
                 if self._armed_stop_persistence_enabled:
                     self._armed_stop_dirty.add(_popkey)  # F2: flush deletes the mirror row
-            return
+            return order_events
         stop.close_in_flight = False
         if any(item.payload.reason in self.NO_POSITION_REASONS for item in order_events):
             _popkey = self._hard_stop_key(stop.strategy_code, stop.broker_account_name, stop.symbol)
             self._armed_hard_stops.pop(_popkey, None)
             if self._armed_stop_persistence_enabled:
                 self._armed_stop_dirty.add(_popkey)  # F2: flush deletes the mirror row
-            return
+            return order_events
         # Bug C: the close neither placed nor named a no-position reason (e.g. Webull
         # ORDER_NOT_SUPPORT_REVERSE_OPTION after the shares were flattened out-of-band).
         # After a few such failures, confirm against the broker; if flat, clear the stop so
@@ -12605,6 +12819,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 # Position still genuinely held — keep protecting; reset so the next burst
                 # of failures re-checks (throttles the broker position reads).
                 stop.consecutive_close_failures = 0
+        return order_events
 
     @staticmethod
     def _classify_position_read(positions, symbol: str) -> _PositionRead:

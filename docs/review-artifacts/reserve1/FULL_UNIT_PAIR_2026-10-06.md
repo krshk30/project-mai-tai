@@ -1,24 +1,27 @@
 # RESERVE1 full-unit pair
 
 Base: 4805ddc81184c76b4d5cef5c483c809edb666fe6.
-Candidate source SHA256: 22676a6866321de99332c0d26d126e06f2e664313b425ef231f298ed899b13f2.
+Candidate source SHA256: 3d103d4ed4953bd4389e4a7f535078af726c08af9c1c1003849f5908c0095b6b.
 Both complete runs occurred after the October 6 session cutoff, with PYTHONPATH=src
 and the same local .venv Python. No test assertions were weakened.
 
 Base: 57 failed, 6468 passed (280.40 seconds).
-Candidate: 57 failed, 6495 passed (283.46 seconds).
+Candidate with ArmedHardStop coverage: 57 failed, 6512 passed (302.29 seconds).
 Failed-name diff: EMPTY (57/57 identical).
 
 Raw local receipts: /tmp/reserve1-base-after-close-unit.txt,
-/tmp/reserve1-scoped-head-unit.txt. The prior base run before the cutoff had
+/tmp/reserve1-armed-full-head.txt. The prior base run before the cutoff had
 56 failed / 6469 passed; ROUNDUP1's SCKT case fails on unchanged base after the
 cutoff with resting_window_ended. The throughput failure also passed in an
 isolated base rerun. Neither was concealed or counted as a RESERVE1 regression.
 
-Focused expanded set: 333 passed, including 27 RESERVE1 cases.
-Mutation set: 14/14 RED by actual test failures.
-Raw focused receipt: /tmp/reserve1-final-expanded-focused.txt.
-Raw mutation receipt: /tmp/reserve1-scoped-mutations.txt.
+Focused expanded set: 442 passed, including 44 RESERVE1 cases.
+Mutation set: 25/25 RED by actual test failures in the final full mutation driver.
+Raw focused receipts: /tmp/reserve1-armed-expanded-focused.txt and
+/tmp/reserve1-final-armed-focused.txt.
+Raw final mutation receipt: /tmp/reserve1-final-25-mutations.txt.
+The full run and focused controls retain the baseline resource-warning class;
+the full pair has 455 warnings on each side. No existing assertions were changed.
 
 ## Identical failed names
 
@@ -81,4 +84,3 @@ tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_success_if_any_pro
 tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_unlisted_runtime_path_before_checkout_moves
 tests/unit/test_unattended_upgrade_policy.py::test_installer_and_notifier_fault_controls
 ```
-

@@ -18,11 +18,12 @@ from sqlalchemy.pool import StaticPool
 from tests.unit.managed_entry_fixtures import bind_managed_entry
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
+from project_mai_tai.broker_adapters import schwab as schwab_module
 from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBrokerAdapter
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerOrder
+from project_mai_tai.db.models import AccountPosition, BrokerOrder, Fill, Strategy, VirtualPosition
 from project_mai_tai.oms import service as service_module
-from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.oms.service import ArmedHardStop, OmsRiskService
 from project_mai_tai.settings import Settings
 
 RECORDED = json.loads((Path(__file__).parents[1] / "fixtures/reserve1/recorded_orders.json").read_text())
@@ -58,6 +59,8 @@ class RecordedSchwab(SchwabBrokerAdapter):
         if self.unknown:
             return 503, {}, {}
         if method == "GET":
+            if "/orders?" in path:
+                return 200, {}, [copy.deepcopy(self.tree)]
             assert path.endswith("/" + str(self.tree["orderId"]))
             return 200, {}, copy.deepcopy(self.tree)
         assert method == "DELETE"
@@ -70,6 +73,14 @@ class RecordedSchwab(SchwabBrokerAdapter):
         if self.fill_during_release:
             children[0]["status"] = "FILLED"
             children[0]["filledQuantity"] = self.tree["quantity"]
+            children[0]["closeTime"] = RECORDED["apus"]["decision_time"]
+            children[0]["orderActivityCollection"] = [{
+                "activityType": "EXECUTION", "executionType": "FILL",
+                "quantity": self.tree["quantity"],
+                "executionLegs": [{"legId": 1, "quantity": self.tree["quantity"],
+                                   "price": children[0]["price"],
+                                   "time": RECORDED["apus"]["decision_time"]}],
+            }]
         return 200, {}, {}
 
     async def release_native_oco_for_close(self, account, parent):
@@ -120,14 +131,20 @@ class RecordedSchwab(SchwabBrokerAdapter):
         # Refused sells must not be interpreted as flat during these tests.
         from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot
         return [BrokerPositionSnapshot(
+            broker_account_name=account,
             symbol=self.tree["orderLegCollection"][0]["instrument"]["symbol"],
-            quantity=Decimal(self.tree["quantity"]), avg_price=Decimal("7.62"),
+            quantity=Decimal(self.tree["quantity"]), average_price=Decimal("7.62"),
         )]
 
 
 def harness(monkeypatch, name="apus", **adapter_kwargs):
     case = RECORDED[name]
     now = datetime.fromisoformat(case["decision_time"])
+    class BrokerClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz is not None else now.replace(tzinfo=None)
+    monkeypatch.setattr(schwab_module, "datetime", BrokerClock)
     monkeypatch.setattr(service_module, "utcnow", lambda: now)
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda *args: True)
     monkeypatch.setattr(service_module, "_extended_hours_session", lambda *args: None)
@@ -178,6 +195,201 @@ def harness(monkeypatch, name="apus", **adapter_kwargs):
 def sell_orders(sessions):
     with sessions() as session:
         return list(session.scalars(select(BrokerOrder).where(BrokerOrder.side == "sell")))
+
+
+def armed_harness(monkeypatch, *, strategy="schwab_1m_v2", **kwargs):
+    """APUS broker tree through the actual hard-stop sender; ORB is a 2-share control.
+
+    ORB uses its production virtual-position/fill binding, never an artificial v2 row.
+    Cancellation and child-fill responses are explicit counterfactuals, not claimed live fills.
+    """
+    service, sessions, adapter, symbol, now = harness(monkeypatch, **kwargs)
+    service.settings.strategy_schwab_1m_v2_broker_provider = "schwab"
+    service.settings.oms_record_native_oco_exit_fills_enabled = True
+    quantity = Decimal(78) if strategy == "schwab_1m_v2" else Decimal(2)
+    with sessions() as session:
+        row = service.store.get_open_managed_position(session, broker_account_name=ACCT, symbol=symbol)
+        entry = session.get(BrokerOrder, row.entry_order_id)
+        if strategy == "orb_schwab":
+            owner = service.store.ensure_strategy(session, strategy, name="ORB-Schwab")
+            session.flush()
+            entry.strategy_id = owner.id
+            entry.quantity = quantity
+            session.delete(row)
+            adapter.tree["quantity"] = int(quantity)
+            adapter.tree["filledQuantity"] = int(quantity)
+            for child in adapter.tree["childOrderStrategies"][0]["childOrderStrategies"]:
+                child["quantity"] = int(quantity)
+                child["remainingQuantity"] = int(quantity)
+        entry_time = datetime.fromisoformat(RECORDED["apus"]["entry_time"])
+        session.add_all([
+            VirtualPosition(strategy_id=entry.strategy_id, broker_account_id=entry.broker_account_id,
+                            symbol=symbol, quantity=quantity, average_price=Decimal("7.62"),
+                            opened_at=entry_time),
+            AccountPosition(broker_account_id=entry.broker_account_id, symbol=symbol,
+                            quantity=quantity, average_price=Decimal("7.62")),
+            Fill(order_id=entry.id, strategy_id=entry.strategy_id, broker_account_id=entry.broker_account_id,
+                 broker_fill_id="recorded-shape-owned-entry", symbol=symbol, side="buy",
+                 quantity=quantity, price=Decimal("7.62"), filled_at=entry_time),
+        ])
+        session.commit()
+    stop = ArmedHardStop(
+        strategy_code=strategy, broker_account_name=ACCT, symbol=symbol, quantity=quantity,
+        entry_price=Decimal("7.62"), stop_loss_pct=8, stop_price=Decimal("7.0104"),
+        quote_max_age_ms=2000, initial_panic_buffer_pct=1.5,
+    )
+    service._armed_hard_stops[service._hard_stop_key(strategy, ACCT, symbol)] = stop
+    return service, sessions, adapter, symbol, now, stop
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ["schwab_1m_v2", "orb_schwab"])
+async def test_armed_hard_stop_working_schwab_children_release_confirm_then_real_close(monkeypatch, strategy):
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch, strategy=strategy)
+    await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert [method for method, _ in adapter.calls] == ["GET", "DELETE", "DELETE", "GET", "SUBMIT"]
+    assert len(adapter.requests) == 1 and adapter.requests[0].quantity == stop.quantity
+    assert adapter.requests[0].strategy_code == strategy
+    assert [order.status for order in sell_orders(sessions)] == ["filled"]
+    with sessions() as session:
+        position = session.scalar(select(VirtualPosition).join(Strategy).where(Strategy.code == strategy))
+        assert position.quantity == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ["schwab_1m_v2", "orb_schwab"])
+async def test_armed_hard_stop_child_fills_during_release_records_owned_fill_no_second_sell(monkeypatch, strategy):
+    service, sessions, adapter, symbol, _, stop = armed_harness(
+        monkeypatch, strategy=strategy, fill_during_release=True,
+    )
+    await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert adapter.requests == []
+    assert [method for method, _ in adapter.calls][:4] == ["GET", "DELETE", "DELETE", "GET"]
+    with sessions() as session:
+        assert session.scalar(select(Fill.id).where(Fill.side == "sell")) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ["schwab_1m_v2", "orb_schwab"])
+async def test_armed_hard_stop_unknown_parent_retains_stop_and_never_sends(monkeypatch, strategy):
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch, strategy=strategy, unknown=True)
+    await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert adapter.requests == [] and sell_orders(sessions) == []
+    assert service._armed_hard_stops[service._hard_stop_key(strategy, ACCT, symbol)] is stop
+    assert not stop.close_in_flight
+
+
+@pytest.mark.asyncio
+async def test_armed_hard_stop_known_native_guard_dedup_still_precedes_release(monkeypatch, caplog):
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch)
+    monkeypatch.setattr(service.logger, "handlers", [caplog.handler])
+    async def known_guard(**kwargs):
+        return True
+    monkeypatch.setattr(service, "_has_active_native_stop_guard_order", known_guard)
+    with caplog.at_level(logging.INFO):
+        await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert adapter.calls == [] and sell_orders(sessions) == []
+    assert "[OMS-V2-CW-FLIP-NOTE]" in caplog.text and "reason=known_native_stop_guard" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ["schwab_1m_v2", "orb_schwab"])
+async def test_armed_hard_stop_oversold_retries_once_only_after_broker_rejection_and_release(monkeypatch, strategy):
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch, strategy=strategy, reject=True)
+    await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert len(adapter.requests) == 2 and adapter.release_count == 2
+    assert adapter.requests[1].metadata["reserve1_retry_of"] == adapter.requests[0].client_order_id
+    assert [order.status for order in sell_orders(sessions)] == ["rejected", "filled"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("proof", ["unknown", "filled"])
+async def test_armed_hard_stop_original_close_unknown_or_filled_never_retries(monkeypatch, proof):
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch, reject=True)
+    adapter.read_proof = proof
+    await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert len(adapter.requests) == 1 and adapter.release_count == 1
+
+
+@pytest.mark.asyncio
+async def test_armed_hard_stop_cancel_ack_without_terminal_confirmation_never_sends(monkeypatch):
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch, cancel_leaves_working=True)
+    await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert adapter.requests == [] and not stop.close_in_flight
+
+
+@pytest.mark.asyncio
+async def test_armed_hard_stop_and_managed_flip_share_one_episode_sell_claim(monkeypatch):
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch)
+    adapter.pause = asyncio.Event()
+    task = asyncio.create_task(service._evaluate_v2_managed_exit(ACCT, symbol))
+    try:
+        async def wait_for_parent_read():
+            while not adapter.calls:
+                await asyncio.sleep(.001)
+        await asyncio.wait_for(wait_for_parent_read(), 1)
+        await asyncio.wait_for(service._trigger_hard_stop(
+            stop, trigger_price=Decimal("6.99"), trigger_source="bid",
+        ), 1)
+        assert adapter.requests == [] and adapter.release_count == 1
+    finally:
+        adapter.pause.set()
+        await asyncio.wait_for(task, 1)
+    assert len(adapter.requests) == 1 and len(sell_orders(sessions)) == 1
+
+
+@pytest.mark.asyncio
+async def test_armed_hard_stop_quantity_change_during_release_refuses_send(monkeypatch):
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch)
+    release = adapter.release_native_oco_for_close
+    async def release_then_position_changes(*args):
+        result = await release(*args)
+        with sessions() as session:
+            row = service.store.get_open_managed_position(session, broker_account_name=ACCT, symbol=symbol)
+            row.current_quantity -= 1
+            session.commit()
+        return result
+    monkeypatch.setattr(adapter, "release_native_oco_for_close", release_then_position_changes)
+    await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert adapter.requests == [] and not stop.close_in_flight
+
+
+@pytest.mark.asyncio
+async def test_orb_armed_hard_stop_external_intent_cannot_forge_internal_release_proof(monkeypatch):
+    from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch, strategy="orb_schwab")
+    service.settings.orb_live_schwab_orders_enabled = True
+    event = TradeIntentEvent(source_service=service_module.SERVICE_NAME, payload=TradeIntentPayload(
+        strategy_code="orb_schwab", broker_account_name=ACCT, symbol=symbol,
+        side="sell", intent_type="close", quantity=stop.quantity, reason="HARD_STOP",
+        metadata=service._build_hard_stop_metadata(
+            stop=stop, trigger_price=Decimal("6.99"), trigger_source="bid",
+        ),
+    ))
+    assert await service.process_trade_intent(event) == []
+    assert adapter.requests == []
+
+
+@pytest.mark.asyncio
+async def test_armed_hard_stop_recovery_cap_survives_a_later_quote(monkeypatch):
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch, reject=True)
+    adapter.reject_retry = True
+    await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert len(adapter.requests) == 2
+    await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert len(adapter.requests) == 3
+    assert sum(request.metadata.get("reserve1_retry") == "1" for request in adapter.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_orb_armed_hard_stop_previous_trip_is_not_current_entry_evidence(monkeypatch):
+    service, sessions, adapter, symbol, _, stop = armed_harness(monkeypatch, strategy="orb_schwab")
+    with sessions() as session:
+        fill = session.scalar(select(Fill).where(Fill.side == "buy"))
+        fill.filled_at -= timedelta(hours=1)
+        session.commit()
+    await service._trigger_hard_stop(stop, trigger_price=Decimal("6.99"), trigger_source="bid")
+    assert adapter.requests == [] and adapter.calls == []
 
 
 @pytest.mark.asyncio
