@@ -7135,3 +7135,21 @@ onlyexpected_flags.json expectedtrue and operatorruling. Parent verifiedstat.
 Catalogvalidation/ON-OFF checks pass; test_expected_flags_check.py:60 still
 expectsfalse, so catalogsuite55PASS/1FAIL, not greenCI. One-change-only request
 preserved; no source/rebase/production write. Exacthead sent for disposition.
+
+### 2026-10-06 17:25 ET - codex-2 C94-C96 attended Install1 and ready heads
+
+Clarification admits exact client-abort intent; own fullbroker rehearsal103
+tickets/zeroinflight/95terminal linkedparents and4no-ID proofsrc0 at17:18.
+Initial-only mechanics stops retained, no service action: fetchcandidate objects,
+prove omitted Redis/Postgres EnvironmentFiles as typedemptyD-Bus arrays,
+normalize literal localhost::1/128 to exacthostidentity. Materialize protected
+append-only hashreceipt journal and COMPLETE marker. Current frozen source
+2012b090/manifest09dae897 staged27hashesPASS; attendedinitial OMS/strategy
+checks rc0 at17:24:52/17:25:17. Not COMPLETE. All4scope owners plus control
+only; no newtradingcode, migration or otherrestart. Tests-only complete-harness
+fixture lacked plan_commit after journal addition; refresh fullmanifestfield,
+not runtime fallback or weakened production binding. Actual release remains
+2012b090. Sideworkers#1102 requestedassertions97PASS new97e2ba74; WEBULL429
+e624ed13 andCLEARWAIT6c1846a4 have bothValidategreen and are readyforreview.
+RESERVE34b6bb5b pinPASS butValidatex2FAIL on inheritedSCKT hostclock; no bypass
+or pinnedbranchrewrite. Install2 merges remain behind Install1reportedCOMPLETE.
