@@ -5929,3 +5929,24 @@ an account unproven; submitted orders clear only on exact zero-fill terminal pro
 Explicit client/broker cancel ids must not fall through to a newer same-symbol
 order. No code written for these prerequisites pending scope clarification.
 Two validate jobs pending; draft has no independent pin. No production action.
+
+## 2026-10-06 06:54 ET - Restoration checkpoint published, no activation
+
+Final branchhead3f89496dc6bcea65d11fab1638e4ea3696ae3943 defaultOFF. Five
+primitive commits range-equal after rebase onto03b26293, zero conflicts;
+published with exact lease on own25c31d39 remote, no main force/update/merge.
+Final full47FAILED/5950PASS237.78s vs exact03b47FAILED/5894PASS249.60s,
+failed nodes identical. All six addedregressions corrected, not waived.
+212focusedPASS, Ruff/diffPASS. Raw mainsha5b199708b8c44f20ff0e848f9f0921d9c67f8c214e8f396070ab1194b8380836;
+headsha dec3393454431b84aab770c1cd0eb25383d2061b45c49217dda2ec8402b70666;
+committed byte-identical rawpair and BUILD_STATUS. Callback next-cycle and
+shared-delivery blockers remain; real completeness/quota/latency, seven September
+coverage controls and full ON order-lifecycle composition not yet proven.
+No ready PR, pin, merge, flag edit, install or service restart.
+
+Installed application7823a6fa #1093/#1094 startup recovery/ownership follow-ups
+are in yesterday's COMPLETE and today9/9restart receipt. No additional residual
+source finding is asserted. Live bar/scanner/first-reprice latency are distinct
+next-session measurements, not implied PASS by local tests. Claude owns07:11
+bar and07:16scanner reads. Guard NEXT follow-up remains09:42; no preopen timer
+has been installed or silently assumed scheduled.
