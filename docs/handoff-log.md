@@ -6833,3 +6833,13 @@ ETA or new head is claimed. Writer resumed released work after checkpoint,
 sole branch owner; parent will not overwrite or weaken its tests. Live-cache
 causation and PostgreSQL concurrency remain UNMEASURED. Production untouched;
 no source merge or install is authorized by this checkpoint.
+
+### 2026-10-06 14:48 ET - codex-2 C68 corrected retry budget and read build CLAIM
+
+Reviewer corrects RETRYOFF1 to enabled=true/max_retries=0; parent owns recorded
+OLOX/IPDN replays and fresh-SELL reset control before plan adoption. The prior
+flag-OFF counterexample remains historical and is not overwritten. Avicenna is
+solewriter for the content-equal #1100 rebase onto c21; no self-pin or merge.
+Sagan is solewriter for WEBULL429 list-primary ordinary reads, after cancel429
+claim withdrawal; cancel path stays unchanged. Kant owns install mechanics and
+awaits actual retry replay evidence. No production, broker-wire or ledger action.
