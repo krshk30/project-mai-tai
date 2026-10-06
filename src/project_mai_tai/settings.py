@@ -637,6 +637,8 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_resting_buy_round_up_enabled: bool = False
     strategy_schwab_1m_v2_pm_print_ask_confirm_enabled: bool = False
     strategy_schwab_1m_v2_pm_flip_wait_enabled: bool = False
+    # KEEPREST1 freezes only a waiting first rest; actual-cross grace stays separate.
+    strategy_schwab_1m_v2_keep_rest_after_buy_enabled: bool = False
     # PRE-MARKET ONLY (operator 2026-09-28, CLRO 07:24 ET). The EH soft rest above watches REST quote
     # polls taken every `quote_poll_interval_seconds` (5 s), so a print through the trigger that lasts
     # less than one poll gap is never seen. ON => each STREAMED trade print (LEVELONE, arrives only

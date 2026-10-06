@@ -351,6 +351,8 @@ class SymbolState:
     # [[feedback_ambiguity_resolves_by_what_the_action_costs]]
     resting_is_broker_order: bool = True
     pm_resting_flip_seen_ms: int = 0
+    resting_buy_frozen: bool = False
+    resting_frozen_floor_bar_ms: int = 0
     resting_flip_ms: int = 0                    # ms-wall-clock the up-flip fired while resting (fill may be
     #                                             settling); 0 = not pending. Silences re-emits through the lag.
     # Dual-broker FAN-OUT once-per-flip latch for the RTH-resting Webull leg (software-detected at
@@ -2317,6 +2319,7 @@ class SchwabV2Strategy:
             or state.resting_trigger
             or state.resting_flip_ms
             or state.resting_below_floor_bars
+            or state.resting_buy_frozen
         )
         state.resting_active = False
         state.resting_level = 0.0
@@ -2327,6 +2330,8 @@ class SchwabV2Strategy:
         state.resting_flip_ms = 0
         state.resting_below_floor_bars = 0
         state.pm_resting_flip_seen_ms = 0
+        state.resting_buy_frozen = False
+        state.resting_frozen_floor_bar_ms = 0
         return cleared
 
     def apply_fanout_outcome(self, record: FanoutOutcome) -> str:
@@ -2702,6 +2707,8 @@ class SchwabV2Strategy:
         state.cw_v2_emit_ms = 0
         state.resting_flip_ms = 0
         state.pm_resting_flip_seen_ms = 0
+        state.resting_buy_frozen = False
+        state.resting_frozen_floor_bar_ms = 0
         return had_entry_state, arm_released, cancel_requested
 
     def release_and_drop_symbol(self, symbol: str, *, reason: str = "watchlist-removed") -> bool:
@@ -3806,6 +3813,8 @@ class SchwabV2Strategy:
         state.resting_slot = "first"
         state.last_resting_placed_slot = "first"
         state.resting_below_floor_bars = 0
+        state.resting_buy_frozen = False
+        state.resting_frozen_floor_bar_ms = 0
 
     def roll_stale_session_state(
         self,
@@ -4473,7 +4482,9 @@ class SchwabV2Strategy:
         if flip == "SELL":
             if self._cw_armed_segment_safety_enabled and state.cw_armed:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
-            if state.pm_resting_flip_seen_ms and not state.resting_flip_ms:
+            if state.resting_buy_frozen and state.resting_active and not state.resting_flip_ms:
+                self._queue_resting_cancel(state, reason="keep_rest_sell")
+            elif state.pm_resting_flip_seen_ms and not state.resting_flip_ms:
                 if self._pm_rest_feature(state, "pm_flip_wait"):
                     self._queue_resting_cancel(state, reason="flip_no_fill")
             state.cw_armed = False   # segment over (also the flip-close EXIT path)
@@ -4545,6 +4556,7 @@ class SchwabV2Strategy:
             "cw_resting_taken=%s cw_reclaim_taken=%s "
             "resting_below_floor_bars=%d fanout_segment_id=%d position_qty_held=%s resting_active=%s "
             "resting_flip_ms=%d pm_resting_flip_seen_ms=%d resting_level=%.4f resting_trigger=%.4f resting_slot=%s "
+            "resting_buy_frozen=%s resting_frozen_floor_bar_ms=%d "
             "flip_owner_evidence_at_ms=%d flip_owner_evidence_readable=%s "
             "flip_owner_open_positions=%d flip_owner_phase=%s "
             "retry_one_segment_id=%d retry_one_closes_in_segment=%d "
@@ -4562,6 +4574,7 @@ class SchwabV2Strategy:
             state.fanout_segment_id,
             state.position_qty_held, state.resting_active, state.resting_flip_ms, state.pm_resting_flip_seen_ms,
             state.resting_level, state.resting_trigger, state.resting_slot,
+            state.resting_buy_frozen, state.resting_frozen_floor_bar_ms,
             state.flip_owner_evidence_at_ms,
             state.flip_owner_evidence_readable, len(state.flip_owner_open_positions),
             state.flip_owner_phase,
@@ -5083,6 +5096,8 @@ class SchwabV2Strategy:
                 return
         state.resting_active = True
         state.cw_seed_cap_watch_start_ms = 0
+        state.resting_buy_frozen = False
+        state.resting_frozen_floor_bar_ms = 0
         state.resting_slot = slot        # ⛔ selects the REPRICE level only; never gates a cancel
         state.last_resting_placed_slot = slot
         state.resting_level = line
@@ -5376,6 +5391,8 @@ class SchwabV2Strategy:
         state.resting_slot = "first"
         state.resting_below_floor_bars = 0
         state.pm_resting_flip_seen_ms = 0
+        state.resting_buy_frozen = False
+        state.resting_frozen_floor_bar_ms = 0
         # ⛔⭐ BRANCH ON WHAT WAS PLACED, NOT ON THE CURRENT SESSION.
         # This used to read `self._resting_session_is_eh()` — the session NOW — on the premise that
         # "in EH nothing is live at the broker". True of an order PLACED in EH; false of one placed
@@ -5798,7 +5815,7 @@ class SchwabV2Strategy:
             # Only THIS gate moves to held. Re-entry/reactive/fan-out gates keep the conservative
             # union on purpose: dropping resting intents there would let a market buy fire while a
             # stop-limit rests, i.e. a double position.
-            if state.resting_active or state.resting_flip_ms:
+            if state.resting_active or state.resting_flip_ms or state.resting_buy_frozen:
                 self._clear_resting_fill_latch(state)
             return
         if not self._resting_in_window():   # wall-clock; never rest on stale/replayed bars
@@ -5806,7 +5823,36 @@ class SchwabV2Strategy:
                 self._queue_resting_cancel(state, reason="window_closed")
             state.resting_flip_ms = 0
             state.pm_resting_flip_seen_ms = 0
+            state.resting_buy_frozen = False
+            state.resting_frozen_floor_bar_ms = 0
             return
+        st = str(atr_signal.get("state")) if atr_signal else str(state.atr_state or "")
+        keep_rest = bool(getattr(
+            getattr(self, "settings", None), "strategy_schwab_1m_v2_keep_rest_after_buy_enabled", False
+        ))
+        if keep_rest and state.resting_active and not state.resting_flip_ms:
+            if st == "long" and not state.resting_buy_frozen:
+                state.resting_buy_frozen = True
+                if self._pm_rest_feature(state, "pm_flip_wait") and not state.pm_resting_flip_seen_ms:
+                    state.pm_resting_flip_seen_ms = self._now_ms()
+                logger.info(
+                    "[V2-KEEP-REST-BUY] %s line=%.4f trigger=%.4f "
+                    "pm_seen_ms=%d resting_flip_ms=%d source=confirmed_buy_state",
+                    state.symbol, state.resting_level, state.resting_trigger,
+                    state.pm_resting_flip_seen_ms, state.resting_flip_ms,
+                )
+            if state.resting_buy_frozen:
+                # Count completed bars, not quote callbacks; no expiry timer or reprice.
+                bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+                if bar_ms > state.resting_frozen_floor_bar_ms:
+                    state.resting_frozen_floor_bar_ms = bar_ms
+                    if self._liquidity_floor_ok(state):
+                        state.resting_below_floor_bars = 0
+                    else:
+                        state.resting_below_floor_bars += 1
+                        if state.resting_below_floor_bars >= _RESTING_LIQUIDITY_CANCEL_BARS:
+                            self._queue_resting_cancel(state, reason="liquidity_floor")
+                return
         # SILENCE-ON-FILL: a flip fired while resting -> hold until the position confirms (handled
         # above) or the grace expires. Never re-emit into the fill-settle lag.
         if state.pm_resting_flip_seen_ms and not state.resting_flip_ms:
@@ -5822,7 +5868,6 @@ class SchwabV2Strategy:
                 self._queue_resting_cancel(state, reason="flip_no_fill")
             state.resting_flip_ms = 0
             return
-        st = str(atr_signal.get("state")) if atr_signal else str(state.atr_state or "")
         try:
             raw = atr_signal.get("trail") if atr_signal else None
             trail = float(raw) if raw else float(state.atr_trail or 0.0)

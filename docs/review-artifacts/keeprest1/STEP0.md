@@ -1,5 +1,67 @@
 # KEEPREST1 independent Step 0 - 2026-10-06
 
+## Superseding Read and Released Scope - 15:33 ET
+
+The operator subsequently authorized implementation on main
+`4805ddc81184c76b4d5cef5c483c809edb666fe6`, starting from the clean pure-rebased
+evidence head `6d77a9f19d12b7bbf6077139c2bb807318afc2a5`. This section supersedes
+the earlier IMCC-classification stop below; the original receipt is preserved.
+
+**AGREE with the fix:** hold one existing, waiting first BUY at its last SHORT
+line through confirmed BUY in PM and RTH. A real cross still owns
+`resting_flip_ms` and its original grace. No timer, upper cap, duplicate entry,
+replacement authorization or ownership waiver is added. SELL, fill, gap/window
+cleanup and three completed thin bars remain management boundaries.
+
+**DISAGREE with treating all 17 chart labels as 17 waiting bot BUYs.** The human
+population is retained exactly: 17 chart-labelled rows plus IMCC 08:17 control.
+The independent bot probes show 15 LONG and three SHORT take-downs: TOPS 09:30,
+IMCC 08:17 and SAIQ 08:12 are SHORT. Six rows have an exact-level EH cross before
+take-down: those three plus IMCC 08:26, WHLR 08:47 and MI 09:16. Their taken-cross
+grace is a negative control, not a missed entry rescued by the waiting-only fix.
+No matching EH cross in the remaining logs is not proof that a broker order was
+untriggered. Historical dispatch/fill state is not fabricated in the replay.
+
+Own retained-bar recomputation gives **14 later bar-high reaches and four with no
+reach in the retained interval**. First reaches include CLRO 07:51 and OLOX
+09:13 ET. A full cancellation minute is excluded because its high might precede
+the cancellation. End is the first logged SELL after cancellation, otherwise
+16:00 ET; the latter is a read bound, NOT a change to the entry window. PMAX's
+15:50 bar reach is not an assertion that any currently configured 15:45 window
+permits an entry. Bars may be sparse. No-reach means no retained bar reached,
+not complete tick coverage. IMCC control's 08:22 bar-high reach is not a claim
+that the earlier bounded tick extraction's 08:24:38.919 print was exhaustive.
+
+**UNMEASURED:** executable asks/fills, +5%/-8% ordering, actual realized or
+counterfactual trade outcomes, retained intraminute quote timing and live
+deployment. The historical levels are not retrospectively rounded or offset.
+Controlled executable asks and owner callbacks in unit tests are labelled as
+controls, not production evidence. No existing band/price/routing gate is relaxed.
+
+Read-only receipt:
+`/tmp/keeprest1-population-reach-complete-20261006.json`, as of
+`2026-10-06T19:33:11.436807+00:00`, SHA256
+`361545c91f7d140e4d760eda762d1409348394a5994bf75fdc0dc3b133e672cc`.
+Reader `/tmp/keeprest1_population_read_20261006.py`, SHA256
+`49cfdf974e12e0198f71897ab83b4d7399d1ef341831287563f993edb8feab3a`.
+Selected logs: 121,062,908 decompressed bytes, complete within the 128 MiB / 15 s
+scan bound. The initial attempt at
+`/tmp/keeprest1-population-reach-20261006.json` reached 77,414,145 bytes and stopped
+at the time bound: partial, never treated as complete. The optimized second read
+filters symbol/date before parsing timestamps; it does not widen the bound.
+An initial unprivileged rerun was denied log access and yielded no evidence.
+Both successful readers use bounded PostgreSQL SELECTs in READ ONLY transactions,
+3 s statement timeout, at most 600 rows per case, then ROLLBACK. No broker,
+Redis, auth-store, environment, service, ledger or shared-handoff writes.
+
+Committed sanitized shape: `tests/fixtures/keeprest1/recorded.json` contains
+source references, probes, logged levels, exact-level prior cross controls,
+first later bar and coverage. Runtime code default is OFF; expected catalog
+installs ON in `schwab-1m-v2` only, with the same rollback flag. No activation
+is authorized by this branch.
+
+## Original Pre-Release Receipt
+
 Result: **DISAGREE with the IMCC 09-23 08:17 acceptance classification.**
 Implementation stopped under the operator's instruction to stop on disagreement.
 This is not a disagreement with the requested frozen-price card for a real BUY

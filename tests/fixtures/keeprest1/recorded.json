@@ -1,0 +1,916 @@
+{
+  "asof_utc": "2026-10-06T19:33:11.436807+00:00",
+  "read_bounds": {
+    "bytes_scanned": 121062908,
+    "coverage_complete": true,
+    "db_limit_per_case": 600,
+    "db_read_only": true,
+    "db_statement_timeout_ms": 3000,
+    "file_manifest": [
+      {
+        "complete": true,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+        "scanned_bytes": 14978488,
+        "sha256": "674ac69a114fc4d41e021abcd3d0d2f8826daec1c528c44f512165e25a45e946"
+      },
+      {
+        "complete": true,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260923.gz",
+        "scanned_bytes": 11978266,
+        "sha256": "ee3d438813cdb58d46c08854b277193f7b57eb2316623bbae3ec237e7b36c700"
+      },
+      {
+        "complete": true,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "scanned_bytes": 19707293,
+        "sha256": "f0c99a5efeaadcd2d8f33594a0db2f8503c5e8dec3eead89058daa3587e0648c"
+      },
+      {
+        "complete": true,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "scanned_bytes": 23130665,
+        "sha256": "1b4c9f936b17e8af14afc3ab2eb12c786c30749de03679a83bf9d360267b020e"
+      },
+      {
+        "complete": true,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+        "scanned_bytes": 15500348,
+        "sha256": "8a4f32c478ab8d96127c3d5ace0f04e75bdbda8e254ccef94a767ae71970f147"
+      },
+      {
+        "complete": true,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "scanned_bytes": 13445374,
+        "sha256": "3a4fd45aac9c90f98b1d1e7bbec20ca0b8d7d5da9740a5449ae2a567b1f77a61"
+      },
+      {
+        "complete": true,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "scanned_bytes": 22322474,
+        "sha256": "e96201546e6a7e94ca51647163ff094e9bf8e41f7a7d72277dcdc6cf62e0ef6b"
+      }
+    ],
+    "max_log_bytes": 134217728,
+    "max_log_seconds": 15
+  },
+  "cases": [
+    {
+      "symbol": "TOPS",
+      "date": "2026-09-22",
+      "cancel_et": "2026-09-22T09:30:03.100000-04:00",
+      "historical_logged_level": "1.3490",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-22 13:30:03.099000+00:00",
+        "line": 18094,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260923.gz",
+        "text": "2026-09-22 13:30:03,099 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=TOPS ts_ms=1790083740000 close=1.280100 high=1.300000 low=1.270000 tr=0.030000 loss=0.134848 trail=1.348999 state=short age=14 touch=false flip=none vol=780529 fired_seg=false"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-22 12:06:02.271000+00:00",
+        "line": 13989,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260923.gz",
+        "text": "2026-09-22 12:06:02,271 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] TOPS armed bar_ts=1790078700000 trig=1.3500 flip_level=1.3453"
+      },
+      "first_logged_SELL_after_cancel": null,
+      "first_later_bar_high_reach": null,
+      "bar_reach_verdict": "NO_REACH_IN_RETAINED_BARS",
+      "reach_end_utc": "2026-09-22 20:00:00+00:00",
+      "stored_bar_rows": 64,
+      "observed_state": "short",
+      "probe_bar_ms": 1790083740000,
+      "probe_volume": 780529,
+      "probe_close": 1.2801,
+      "cancel_log": {
+        "at_utc": "2026-09-22 13:30:03.100000+00:00",
+        "line": 18095,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260923.gz",
+        "text": "2026-09-22 13:30:03,100 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] TOPS slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 level=1.3490"
+      },
+      "exact_level_cross_before_cancel": {
+        "at_utc": "2026-09-22 13:28:44.274000+00:00",
+        "line": 18013,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260923.gz",
+        "text": "2026-09-22 13:28:44,274 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-CROSS] TOPS px=1.3900 >= level=1.3490 -> marketable EH-LIMIT buy (cap=1.3557 band=0.50%)"
+      },
+      "recorded_line": null
+    },
+    {
+      "symbol": "IMCC",
+      "date": "2026-09-23",
+      "cancel_et": "2026-09-23T08:17:02.449000-04:00",
+      "historical_logged_level": "8.0525",
+      "classification": "bot_line_control",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-23 12:17:02.449000+00:00",
+        "line": 21150,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:17:02,449 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=IMCC ts_ms=1790165760000 close=8.000000 high=8.080000 low=7.800000 tr=0.280000 loss=2.120132 trail=8.032637 state=short age=13 touch=false flip=none vol=156813 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-23 11:36:09.087000+00:00",
+        "line": 18672,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 11:36:09,087 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] IMCC armed bar_ts=1790099880000 trig=4.0900 flip_level=4.0579"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-09-23 12:38:02.217000+00:00",
+        "line": 22902,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:38:02,217 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=IMCC ts_ms=1790167020000 close=6.024000 high=8.550000 low=5.900000 tr=1.983600 loss=2.503756 trail=8.527756 state=short age=0 touch=false flip=SELL vol=569370 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-09-23 12:22:00+00:00",
+        "close_price": "7.77000000",
+        "high_price": "8.08000000",
+        "low_price": "7.55690000",
+        "open_price": "7.82440000",
+        "source": "live",
+        "volume": 178590
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-09-23 12:38:02.217000+00:00",
+      "stored_bar_rows": 21,
+      "observed_state": "short",
+      "probe_bar_ms": 1790165760000,
+      "probe_volume": 156813,
+      "probe_close": 8,
+      "cancel_log": {
+        "at_utc": "2026-09-23 12:17:02.449000+00:00",
+        "line": 21151,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:17:02,449 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] IMCC slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 level=8.0525"
+      },
+      "exact_level_cross_before_cancel": {
+        "at_utc": "2026-09-23 12:15:41.242000+00:00",
+        "line": 21032,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:15:41,242 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-CROSS] IMCC px=8.0897 >= level=8.0525 -> marketable EH-LIMIT buy (cap=8.0928 band=0.50%)"
+      },
+      "recorded_line": null
+    },
+    {
+      "symbol": "IMCC",
+      "date": "2026-09-23",
+      "cancel_et": "2026-09-23T08:26:02.372000-04:00",
+      "historical_logged_level": "8.0326",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-23 12:26:02.371000+00:00",
+        "line": 21920,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:26:02,371 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=IMCC ts_ms=1790166300000 close=7.790000 high=8.340000 low=7.500000 tr=0.840000 loss=2.167520 trail=6.235600 state=long age=1 touch=false flip=none vol=185551 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-23 12:25:01.262000+00:00",
+        "line": 21828,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:25:01,262 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] IMCC armed bar_ts=1790166240000 trig=8.3500 flip_level=8.0326"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-09-23 12:38:02.217000+00:00",
+        "line": 22902,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:38:02,217 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=IMCC ts_ms=1790167020000 close=6.024000 high=8.550000 low=5.900000 tr=1.983600 loss=2.503756 trail=8.527756 state=short age=0 touch=false flip=SELL vol=569370 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-09-23 12:34:00+00:00",
+        "close_price": "7.99000000",
+        "high_price": "8.17000000",
+        "low_price": "7.74030000",
+        "open_price": "7.75000000",
+        "source": "live",
+        "volume": 153033
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-09-23 12:38:02.217000+00:00",
+      "stored_bar_rows": 12,
+      "observed_state": "long",
+      "probe_bar_ms": 1790166300000,
+      "probe_volume": 185551,
+      "probe_close": 7.79,
+      "cancel_log": {
+        "at_utc": "2026-09-23 12:26:02.372000+00:00",
+        "line": 21922,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:26:02,372 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] IMCC slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 level=8.0326"
+      },
+      "exact_level_cross_before_cancel": {
+        "at_utc": "2026-09-23 12:24:39.261000+00:00",
+        "line": 21789,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:24:39,261 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-CROSS] IMCC px=8.0900 >= level=8.0326 -> marketable EH-LIMIT buy (cap=8.0728 band=0.50%)"
+      },
+      "recorded_line": null
+    },
+    {
+      "symbol": "IPDN",
+      "date": "2026-09-23",
+      "cancel_et": "2026-09-23T08:40:03.217000-04:00",
+      "historical_logged_level": "6.8167",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-23 12:40:03.217000+00:00",
+        "line": 23045,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:40:03,217 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=IPDN ts_ms=1790167140000 close=6.717100 high=6.840000 low=6.660000 tr=0.180000 loss=0.556722 trail=6.298597 state=long age=1 touch=false flip=none vol=13159 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-23 12:39:02.367000+00:00",
+        "line": 22976,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:39:02,367 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] IPDN armed bar_ts=1790167080000 trig=6.8370 flip_level=6.8167"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-09-23 13:02:02.880000+00:00",
+        "line": 24543,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 13:02:02,880 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=IPDN ts_ms=1790168460000 close=6.620000 high=6.800000 low=6.620000 tr=0.179970 loss=0.534950 trail=7.154950 state=short age=0 touch=false flip=SELL vol=24041 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-09-23 12:41:00+00:00",
+        "close_price": "6.78000000",
+        "high_price": "6.87000000",
+        "low_price": "6.70000000",
+        "open_price": "6.81000000",
+        "source": "live",
+        "volume": 15386
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-09-23 13:02:02.880000+00:00",
+      "stored_bar_rows": 23,
+      "observed_state": "long",
+      "probe_bar_ms": 1790167140000,
+      "probe_volume": 13159,
+      "probe_close": 6.7171,
+      "cancel_log": {
+        "at_utc": "2026-09-23 12:40:03.217000+00:00",
+        "line": 23047,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:40:03,217 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] IPDN slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 level=6.8167"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": null
+    },
+    {
+      "symbol": "WHLR",
+      "date": "2026-09-23",
+      "cancel_et": "2026-09-23T08:47:03.088000-04:00",
+      "historical_logged_level": "5.0802",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-23 12:47:03.088000+00:00",
+        "line": 23537,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:47:03,088 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=WHLR ts_ms=1790167560000 close=5.010000 high=5.130000 low=5.000000 tr=0.130000 loss=0.378117 trail=4.771104 state=long age=1 touch=false flip=none vol=45356 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-23 12:46:02.190000+00:00",
+        "line": 23468,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:46:02,190 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] WHLR armed bar_ts=1790167500000 trig=5.1500 flip_level=5.0802"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-09-23 12:59:03.090000+00:00",
+        "line": 24378,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:59:03,090 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=WHLR ts_ms=1790168280000 close=4.790000 high=4.850000 low=4.790000 tr=0.060000 loss=0.430693 trail=5.220693 state=short age=0 touch=false flip=SELL vol=16427 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-09-23 12:48:00+00:00",
+        "close_price": "5.07400000",
+        "high_price": "5.15000000",
+        "low_price": "4.99000000",
+        "open_price": "4.99050000",
+        "source": "live",
+        "volume": 48220
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-09-23 12:59:03.090000+00:00",
+      "stored_bar_rows": 13,
+      "observed_state": "long",
+      "probe_bar_ms": 1790167560000,
+      "probe_volume": 45356,
+      "probe_close": 5.01,
+      "cancel_log": {
+        "at_utc": "2026-09-23 12:47:03.088000+00:00",
+        "line": 23539,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:47:03,088 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] WHLR slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 level=5.0802"
+      },
+      "exact_level_cross_before_cancel": {
+        "at_utc": "2026-09-23 12:45:58.188000+00:00",
+        "line": 23452,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 12:45:58,188 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-CROSS] WHLR px=5.1500 >= level=5.0802 -> marketable EH-LIMIT buy (cap=5.1056 band=0.50%)"
+      },
+      "recorded_line": null
+    },
+    {
+      "symbol": "IPDN",
+      "date": "2026-09-23",
+      "cancel_et": "2026-09-23T11:51:02.633000-04:00",
+      "historical_logged_level": "5.3820",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-23 15:51:02.633000+00:00",
+        "line": 36629,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 15:51:02,633 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=IPDN ts_ms=1790178600000 close=5.411600 high=5.450000 low=5.400000 tr=0.050000 loss=0.244958 trail=5.167552 state=long age=1 touch=false flip=none vol=10569 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-23 15:50:03.243000+00:00",
+        "line": 36561,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 15:50:03,243 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] IPDN armed bar_ts=1790178540000 trig=5.4811 flip_level=5.3820"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-09-23 16:04:03.070000+00:00",
+        "line": 37560,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 16:04:03,070 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=IPDN ts_ms=1790179380000 close=5.210000 high=5.260000 low=5.200000 tr=0.100000 loss=0.260257 trail=5.470257 state=short age=0 touch=false flip=SELL vol=9088 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-09-23 15:52:00+00:00",
+        "close_price": "5.37000000",
+        "high_price": "5.42000000",
+        "low_price": "5.35850000",
+        "open_price": "5.39000000",
+        "source": "live",
+        "volume": 11038
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-09-23 16:04:03.070000+00:00",
+      "stored_bar_rows": 14,
+      "observed_state": "long",
+      "probe_bar_ms": 1790178600000,
+      "probe_volume": 10569,
+      "probe_close": 5.4116,
+      "cancel_log": {
+        "at_utc": "2026-09-23 15:51:02.633000+00:00",
+        "line": 36631,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+        "text": "2026-09-23 15:51:02,633 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-CANCEL] IPDN slot=first reason=flip_no_fill resting_below_floor_bars=0 level=5.3820"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": null
+    },
+    {
+      "symbol": "WETO",
+      "date": "2026-09-24",
+      "cancel_et": "2026-09-24T09:24:00.624000-04:00",
+      "historical_logged_level": "2.0778",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-24 13:24:00.624000+00:00",
+        "line": 34700,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 13:24:00,624 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=WETO ts_ms=1790256180000 close=2.059600 high=2.070000 low=2.050000 tr=0.020000 loss=0.082755 trail=1.984056 state=long age=1 touch=false flip=none vol=15663 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-24 13:23:02.602000+00:00",
+        "line": 34660,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 13:23:02,602 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] WETO armed bar_ts=1790256120000 trig=2.0700 flip_level=2.0674"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-09-24 13:31:02.374000+00:00",
+        "line": 35016,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 13:31:02,374 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=WETO ts_ms=1790256600000 close=1.928300 high=2.020000 low=1.860000 tr=0.150000 loss=0.188742 trail=2.117042 state=short age=0 touch=false flip=SELL vol=280244 fired_seg=false"
+      },
+      "first_later_bar_high_reach": null,
+      "bar_reach_verdict": "NO_REACH_IN_RETAINED_BARS",
+      "reach_end_utc": "2026-09-24 13:31:02.374000+00:00",
+      "stored_bar_rows": 8,
+      "observed_state": "long",
+      "probe_bar_ms": 1790256180000,
+      "probe_volume": 15663,
+      "probe_close": 2.0596,
+      "cancel_log": {
+        "at_utc": "2026-09-24 13:24:00.624000+00:00",
+        "line": 34702,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 13:24:00,624 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] WETO slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 line=2.0674 trigger=2.0778 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": 2.0674
+    },
+    {
+      "symbol": "GLND",
+      "date": "2026-09-24",
+      "cancel_et": "2026-09-24T12:07:02.479000-04:00",
+      "historical_logged_level": "4.4392",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-24 16:07:02.478000+00:00",
+        "line": 50355,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 16:07:02,478 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=GLND ts_ms=1790265960000 close=4.402300 high=4.430000 low=4.390000 tr=0.040000 loss=0.156621 trail=4.259224 state=long age=1 touch=false flip=none vol=103814 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-24 16:06:02.332000+00:00",
+        "line": 50285,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 16:06:02,332 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] GLND armed bar_ts=1790265900000 trig=4.4300 flip_level=4.4171"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-09-24 17:47:03.043000+00:00",
+        "line": 58501,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 17:47:03,043 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=GLND ts_ms=1790271960000 close=4.570000 high=4.679900 low=4.560000 tr=0.115000 loss=0.214828 trail=4.784828 state=short age=0 touch=false flip=SELL vol=211776 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-09-24 16:08:00+00:00",
+        "close_price": "4.46500000",
+        "high_price": "4.51000000",
+        "low_price": "4.44000000",
+        "open_price": "4.50500000",
+        "source": "live",
+        "volume": 254900
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-09-24 17:47:03.043000+00:00",
+      "stored_bar_rows": 101,
+      "observed_state": "long",
+      "probe_bar_ms": 1790265960000,
+      "probe_volume": 103814,
+      "probe_close": 4.4023,
+      "cancel_log": {
+        "at_utc": "2026-09-24 16:07:02.479000+00:00",
+        "line": 50357,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 16:07:02,479 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-CANCEL] GLND slot=first reason=flip_no_fill resting_below_floor_bars=0 line=4.4171 trigger=4.4392 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": 4.4171
+    },
+    {
+      "symbol": "NCPL",
+      "date": "2026-09-24",
+      "cancel_et": "2026-09-24T13:44:01.410000-04:00",
+      "historical_logged_level": "1.4559",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-24 17:44:01.409000+00:00",
+        "line": 58191,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 17:44:01,409 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=NCPL ts_ms=1790271780000 close=1.438200 high=1.450000 low=1.420000 tr=0.030000 loss=0.069435 trail=1.389457 state=long age=1 touch=false flip=none vol=63092 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-24 17:43:02.731000+00:00",
+        "line": 58113,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 17:43:02,731 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] NCPL armed bar_ts=1790271720000 trig=1.4599 flip_level=1.4437"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-09-24 18:02:02.983000+00:00",
+        "line": 59652,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 18:02:02,983 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=NCPL ts_ms=1790272860000 close=1.380000 high=1.420000 low=1.380000 tr=0.040000 loss=0.078710 trail=1.458710 state=short age=0 touch=false flip=SELL vol=86747 fired_seg=false"
+      },
+      "first_later_bar_high_reach": null,
+      "bar_reach_verdict": "NO_REACH_IN_RETAINED_BARS",
+      "reach_end_utc": "2026-09-24 18:02:02.983000+00:00",
+      "stored_bar_rows": 19,
+      "observed_state": "long",
+      "probe_bar_ms": 1790271780000,
+      "probe_volume": 63092,
+      "probe_close": 1.4382,
+      "cancel_log": {
+        "at_utc": "2026-09-24 17:44:01.410000+00:00",
+        "line": 58193,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 17:44:01,410 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-CANCEL] NCPL slot=first reason=flip_no_fill resting_below_floor_bars=0 line=1.4487 trigger=1.4559 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": 1.4487
+    },
+    {
+      "symbol": "GLND",
+      "date": "2026-09-24",
+      "cancel_et": "2026-09-24T14:38:02.507000-04:00",
+      "historical_logged_level": "4.5955",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-24 18:38:02.507000+00:00",
+        "line": 62326,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 18:38:02,507 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=GLND ts_ms=1790275020000 close=4.555000 high=4.590000 low=4.510000 tr=0.080000 loss=0.214383 trail=4.381821 state=long age=1 touch=false flip=none vol=123027 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-24 18:37:02.302000+00:00",
+        "line": 62255,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 18:37:02,302 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] GLND armed bar_ts=1790274960000 trig=4.5798 flip_level=4.5726"
+      },
+      "first_logged_SELL_after_cancel": null,
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-09-24 18:40:00+00:00",
+        "close_price": "4.59690000",
+        "high_price": "4.60000000",
+        "low_price": "4.56710000",
+        "open_price": "4.57000000",
+        "source": "live",
+        "volume": 49335
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-09-24 20:00:00+00:00",
+      "stored_bar_rows": 82,
+      "observed_state": "long",
+      "probe_bar_ms": 1790275020000,
+      "probe_volume": 123027,
+      "probe_close": 4.555,
+      "cancel_log": {
+        "at_utc": "2026-09-24 18:38:02.507000+00:00",
+        "line": 62328,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 18:38:02,507 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-CANCEL] GLND slot=first reason=flip_no_fill resting_below_floor_bars=0 line=4.5726 trigger=4.5955 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": 4.5726
+    },
+    {
+      "symbol": "PMAX",
+      "date": "2026-09-24",
+      "cancel_et": "2026-09-24T15:49:02.934000-04:00",
+      "historical_logged_level": "1.6753",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-24 19:49:02.933000+00:00",
+        "line": 68528,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 19:49:02,933 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=PMAX ts_ms=1790279280000 close=1.655000 high=1.665000 low=1.650000 tr=0.020000 loss=0.064085 trail=1.607394 state=long age=1 touch=false flip=none vol=16147 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-24 19:48:02.742000+00:00",
+        "line": 68445,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 19:48:02,742 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] PMAX armed bar_ts=1790279220000 trig=1.6700 flip_level=1.6670"
+      },
+      "first_logged_SELL_after_cancel": null,
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-09-24 19:50:00+00:00",
+        "close_price": "1.68000000",
+        "high_price": "1.69000000",
+        "low_price": "1.65030000",
+        "open_price": "1.65030000",
+        "source": "live",
+        "volume": 25591
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-09-24 20:00:00+00:00",
+      "stored_bar_rows": 11,
+      "observed_state": "long",
+      "probe_bar_ms": 1790279280000,
+      "probe_volume": 16147,
+      "probe_close": 1.655,
+      "cancel_log": {
+        "at_utc": "2026-09-24 19:49:02.934000+00:00",
+        "line": 68530,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+        "text": "2026-09-24 19:49:02,934 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-CANCEL] PMAX slot=first reason=flip_no_fill resting_below_floor_bars=0 line=1.6670 trigger=1.6753 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": 1.667
+    },
+    {
+      "symbol": "CLRO",
+      "date": "2026-09-28",
+      "cancel_et": "2026-09-28T07:26:02.405000-04:00",
+      "historical_logged_level": "5.5590",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-09-28 11:26:02.405000+00:00",
+        "line": 28672,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+        "text": "2026-09-28 11:26:02,405 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=CLRO ts_ms=1790594700000 close=5.460000 high=5.530000 low=5.450000 tr=0.100000 loss=0.336271 trail=5.217162 state=long age=1 touch=false flip=none vol=26290 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-09-28 11:25:01.607000+00:00",
+        "line": 28647,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+        "text": "2026-09-28 11:25:01,607 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] CLRO armed bar_ts=1790594640000 trig=5.5800 flip_level=5.5314"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-09-28 12:34:02.151000+00:00",
+        "line": 30520,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+        "text": "2026-09-28 12:34:02,151 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=CLRO ts_ms=1790598780000 close=5.430000 high=5.469200 low=5.370000 tr=0.100000 loss=0.263077 trail=5.693077 state=short age=0 touch=false flip=SELL vol=35494 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-09-28 11:51:00+00:00",
+        "close_price": "5.61000000",
+        "high_price": "5.69000000",
+        "low_price": "5.55020000",
+        "open_price": "5.57000000",
+        "source": "live",
+        "volume": 43157
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-09-28 12:34:02.151000+00:00",
+      "stored_bar_rows": 69,
+      "observed_state": "long",
+      "probe_bar_ms": 1790594700000,
+      "probe_volume": 26290,
+      "probe_close": 5.46,
+      "cancel_log": {
+        "at_utc": "2026-09-28 11:26:02.405000+00:00",
+        "line": 28674,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+        "text": "2026-09-28 11:26:02,405 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] CLRO slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 line=5.5314 trigger=5.5590 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": 5.5314
+    },
+    {
+      "symbol": "AIXI",
+      "date": "2026-10-02",
+      "cancel_et": "2026-10-02T12:32:02.857000-04:00",
+      "historical_logged_level": "1.6897",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-10-02 16:32:02.857000+00:00",
+        "line": 31348,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "text": "2026-10-02 16:32:02,857 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=AIXI ts_ms=1790958660000 close=1.680000 high=1.690000 low=1.675000 tr=0.015000 loss=0.066785 trail=1.619544 state=long age=1 touch=false flip=none vol=5922 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-10-02 16:31:02.576000+00:00",
+        "line": 31294,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "text": "2026-10-02 16:31:02,576 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] AIXI armed bar_ts=1790958600000 trig=1.7100 flip_level=1.6813"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-10-02 17:35:03.486000+00:00",
+        "line": 35936,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "text": "2026-10-02 17:35:03,486 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=AIXI ts_ms=1790962440000 close=1.670000 high=1.750000 low=1.640000 tr=0.102400 loss=0.197723 trail=1.867723 state=short age=0 touch=false flip=SELL vol=107732 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-10-02 16:33:00+00:00",
+        "close_price": "1.69000000",
+        "high_price": "1.69500000",
+        "low_price": "1.69000000",
+        "open_price": "1.69180000",
+        "source": "live",
+        "volume": 3397
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-10-02 17:35:03.486000+00:00",
+      "stored_bar_rows": 64,
+      "observed_state": "long",
+      "probe_bar_ms": 1790958660000,
+      "probe_volume": 5922,
+      "probe_close": 1.68,
+      "cancel_log": {
+        "at_utc": "2026-10-02 16:32:02.857000+00:00",
+        "line": 31350,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "text": "2026-10-02 16:32:02,857 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-CANCEL] AIXI slot=first reason=flip_no_fill resting_below_floor_bars=0 line=1.6813 trigger=1.6897 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": 1.6813
+    },
+    {
+      "symbol": "AIXI",
+      "date": "2026-10-02",
+      "cancel_et": "2026-10-02T13:54:02.921000-04:00",
+      "historical_logged_level": "1.7866",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-10-02 17:54:02.921000+00:00",
+        "line": 37126,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "text": "2026-10-02 17:54:02,921 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=AIXI ts_ms=1790963580000 close=1.859800 high=1.870000 low=1.810000 tr=0.060000 loss=0.180952 trail=1.678848 state=long age=1 touch=false flip=none vol=91172 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-10-02 17:53:02.593000+00:00",
+        "line": 37049,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "text": "2026-10-02 17:53:02,593 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] AIXI armed bar_ts=1790963520000 trig=1.9100 flip_level=1.7777"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-10-02 18:56:02.601000+00:00",
+        "line": 40632,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "text": "2026-10-02 18:56:02,601 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=AIXI ts_ms=1790967300000 close=1.780000 high=1.830000 low=1.750000 tr=0.080000 loss=0.218990 trail=1.998990 state=short age=0 touch=false flip=SELL vol=101395 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-10-02 17:55:00+00:00",
+        "close_price": "1.81470000",
+        "high_price": "1.84000000",
+        "low_price": "1.81000000",
+        "open_price": "1.82000000",
+        "source": "live",
+        "volume": 47398
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-10-02 18:56:02.601000+00:00",
+      "stored_bar_rows": 63,
+      "observed_state": "long",
+      "probe_bar_ms": 1790963580000,
+      "probe_volume": 91172,
+      "probe_close": 1.8598,
+      "cancel_log": {
+        "at_utc": "2026-10-02 17:54:02.921000+00:00",
+        "line": 37128,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+        "text": "2026-10-02 17:54:02,921 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-CANCEL] AIXI slot=first reason=flip_no_fill resting_below_floor_bars=0 line=1.7777 trigger=1.7866 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": 1.7777
+    },
+    {
+      "symbol": "SAIQ",
+      "date": "2026-10-05",
+      "cancel_et": "2026-10-05T08:12:02.425000-04:00",
+      "historical_logged_level": "6.7928",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-10-05 12:12:02.425000+00:00",
+        "line": 32228,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 12:12:02,425 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=SAIQ ts_ms=1791202260000 close=6.120000 high=6.350000 low=6.000000 tr=0.345000 loss=0.899320 trail=6.758972 state=short age=40 touch=false flip=none vol=83951 fired_seg=false"
+      },
+      "latest_logged_BUY_before_cancel": null,
+      "first_logged_SELL_after_cancel": null,
+      "first_later_bar_high_reach": null,
+      "bar_reach_verdict": "NO_REACH_IN_RETAINED_BARS",
+      "reach_end_utc": "2026-10-05 20:00:00+00:00",
+      "stored_bar_rows": 3,
+      "observed_state": "short",
+      "probe_bar_ms": 1791202260000,
+      "probe_volume": 83951,
+      "probe_close": 6.12,
+      "cancel_log": {
+        "at_utc": "2026-10-05 12:12:02.425000+00:00",
+        "line": 32229,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 12:12:02,425 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] SAIQ slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 line=6.7590 trigger=6.7928 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": {
+        "at_utc": "2026-10-05 12:10:35.817000+00:00",
+        "line": 32168,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 12:10:35,817 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-CROSS] SAIQ px=6.8300 line=6.7590 trigger=6.7928 cap=6.8267 band_pct=0.50 offset_pct=0.50 -> marketable EH-LIMIT buy"
+      },
+      "recorded_line": 6.759
+    },
+    {
+      "symbol": "VEEA",
+      "date": "2026-10-05",
+      "cancel_et": "2026-10-05T08:34:02.972000-04:00",
+      "historical_logged_level": "5.2613",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-10-05 12:34:02.971000+00:00",
+        "line": 32930,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 12:34:02,971 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=VEEA ts_ms=1791203580000 close=5.279600 high=5.290000 low=5.242100 tr=0.049600 loss=0.198888 trail=5.080712 state=long age=1 touch=false flip=none vol=46877 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-10-05 12:33:02.504000+00:00",
+        "line": 32900,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 12:33:02,504 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] VEEA armed bar_ts=1791203520000 trig=5.2569 flip_level=5.2351"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-10-05 13:31:02.791000+00:00",
+        "line": 36140,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 13:31:02,791 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=VEEA ts_ms=1791207000000 close=5.090000 high=5.429400 low=5.010000 tr=0.370000 loss=0.473947 trail=5.563947 state=short age=0 touch=false flip=SELL vol=212267 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-10-05 12:35:00+00:00",
+        "close_price": "5.26000000",
+        "high_price": "5.27000000",
+        "low_price": "5.25000000",
+        "open_price": "5.25000000",
+        "source": "live",
+        "volume": 10584
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-10-05 13:31:02.791000+00:00",
+      "stored_bar_rows": 58,
+      "observed_state": "long",
+      "probe_bar_ms": 1791203580000,
+      "probe_volume": 46877,
+      "probe_close": 5.2796,
+      "cancel_log": {
+        "at_utc": "2026-10-05 12:34:02.972000+00:00",
+        "line": 32932,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 12:34:02,972 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] VEEA slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 line=5.2351 trigger=5.2613 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": 5.2351
+    },
+    {
+      "symbol": "MI",
+      "date": "2026-10-05",
+      "cancel_et": "2026-10-05T09:16:02.367000-04:00",
+      "historical_logged_level": "2.7288",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-10-05 13:16:02.346000+00:00",
+        "line": 34415,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 13:16:02,346 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=MI ts_ms=1791206100000 close=2.920000 high=2.950000 low=2.630000 tr=0.310000 loss=0.519945 trail=2.400055 state=long age=0 touch=true flip=BUY vol=422139 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-10-05 13:16:02.347000+00:00",
+        "line": 34416,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 13:16:02,347 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] MI armed bar_ts=1791206100000 trig=2.9500 flip_level=2.7152"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-10-05 13:31:02.830000+00:00",
+        "line": 36148,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 13:31:02,830 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=MI ts_ms=1791207000000 close=2.450000 high=3.180000 low=2.440000 tr=0.540000 loss=0.843804 trail=3.293804 state=short age=0 touch=false flip=SELL vol=973238 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-10-05 13:17:00+00:00",
+        "close_price": "2.92030000",
+        "high_price": "3.08000000",
+        "low_price": "2.80000000",
+        "open_price": "3.07000000",
+        "source": "live",
+        "volume": 394323
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-10-05 13:31:02.830000+00:00",
+      "stored_bar_rows": 16,
+      "observed_state": "long",
+      "probe_bar_ms": 1791206100000,
+      "probe_volume": 422139,
+      "probe_close": 2.92,
+      "cancel_log": {
+        "at_utc": "2026-10-05 13:16:02.367000+00:00",
+        "line": 34417,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 13:16:02,367 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] MI slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 line=2.7152 trigger=2.7288 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": {
+        "at_utc": "2026-10-05 13:15:20.083000+00:00",
+        "line": 34374,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006",
+        "text": "2026-10-05 13:15:20,083 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-CROSS] MI px=2.7400 line=2.7152 trigger=2.7288 cap=2.7424 band_pct=0.50 offset_pct=0.50 -> marketable EH-LIMIT buy"
+      },
+      "recorded_line": 2.7152
+    },
+    {
+      "symbol": "OLOX",
+      "date": "2026-10-06",
+      "cancel_et": "2026-10-06T08:50:02.627000-04:00",
+      "historical_logged_level": "1.4425",
+      "classification": "human_authorized_chart_flip_case",
+      "last_probe_before_cancel": {
+        "at_utc": "2026-10-06 12:50:02.627000+00:00",
+        "line": 23964,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+        "text": "2026-10-06 12:50:02,627 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=OLOX ts_ms=1791290940000 close=1.421000 high=1.440000 low=1.420000 tr=0.020000 loss=0.064644 trail=1.376594 state=long age=1 touch=false flip=none vol=27021 fired_seg=true"
+      },
+      "latest_logged_BUY_before_cancel": {
+        "at_utc": "2026-10-06 12:49:02.638000+00:00",
+        "line": 23922,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+        "text": "2026-10-06 12:49:02,638 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-CW-ARM] OLOX armed bar_ts=1791290880000 trig=1.4400 flip_level=1.4353"
+      },
+      "first_logged_SELL_after_cancel": {
+        "at_utc": "2026-10-06 13:31:02.691000+00:00",
+        "line": 25850,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+        "text": "2026-10-06 13:31:02,691 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=OLOX ts_ms=1791293400000 close=1.365000 high=1.450000 low=1.310100 tr=0.139900 loss=0.178692 trail=1.543692 state=short age=0 touch=false flip=SELL vol=652051 fired_seg=false"
+      },
+      "first_later_bar_high_reach": {
+        "bar_time": "2026-10-06 13:13:00+00:00",
+        "close_price": "1.44900000",
+        "high_price": "1.46000000",
+        "low_price": "1.43980000",
+        "open_price": "1.43980000",
+        "source": "live",
+        "volume": 60994
+      },
+      "bar_reach_verdict": "REACHED_STORED_BAR_HIGH",
+      "reach_end_utc": "2026-10-06 13:31:02.691000+00:00",
+      "stored_bar_rows": 42,
+      "observed_state": "long",
+      "probe_bar_ms": 1791290940000,
+      "probe_volume": 27021,
+      "probe_close": 1.421,
+      "cancel_log": {
+        "at_utc": "2026-10-06 12:50:02.627000+00:00",
+        "line": 23967,
+        "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+        "text": "2026-10-06 12:50:02,627 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-DISARM] OLOX slot=first reason=flip_no_fill_soft_rest resting_below_floor_bars=0 line=1.4353 trigger=1.4425 band_pct=0.50 offset_pct=0.50"
+      },
+      "exact_level_cross_before_cancel": null,
+      "recorded_line": 1.4353
+    }
+  ],
+  "source_path": "/tmp/keeprest1-population-reach-complete-20261006.json",
+  "source_sha256": "361545c91f7d140e4d760eda762d1409348394a5994bf75fdc0dc3b133e672cc",
+  "limitations": "Recorded logs/bar-high reach only. Chart labels are human supplied. Controlled replay is not historical broker fills, tick/ask evidence, profit or stop ordering."
+}
