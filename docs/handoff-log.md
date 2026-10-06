@@ -6625,3 +6625,18 @@ said12:15/12:18 before those times. Their actual recorded commit timestamps
 are12:04:58 (74e1b4b) and12:05:57 (6ae3619e). Own table as-of labels corrected
 to those timestamps; prior narrative retained append-only. T/Mrows, reads,
 boards and decisions untouched.
+
+### 2026-10-06 12:54:54 ET - codex-2 C55 exact ORBPURPLE1 merge
+
+Independently verified the one committed claude-1 pin in607318ab for exact
+ed7c2c81/base3ebde364. Hosted latest independent-review-pin and both Validate
+PASS. Non-admin rebase merge with matched head completed12:54:52ET:
+c21d8274fcd1d3129d61207a33dd7b002a7c9e8c. Main tree
+e01851ac630ebf425de655c5c09dc11ae3c0304e equals pinned head's whole tree.
+No source edits, additional PR commits, flags, restart or production action.
+Four-item after-close install candidate requires a revised literal release;
+ORBPURPLE1's service gate lives in orb-schwab as well as OMS. The earlier
+v2/OMS-only149 draft is not represented as ready for this expanded set.
+Parent remains the C-row writer; sole T43 writer is replaying the recorded
+10:13placed/10:15refused in-memory generation gate. MIRRORHOLD1 has its own
+read-only Step0 lane, not folded into1099. No pin/readiness claim for either.
