@@ -6802,3 +6802,18 @@ worktree source and runs all control-plane tests99PASS5.21s. Earlier two-test
 probe lacked PYTHONPATH and is excluded from source verification. Frozen
 follow-up scope is display/tests/receipts only; current independent-review-pin
 failure is missing fresh reviewer record. No self-pin, merge or deployment.
+
+### 2026-10-06 13:54 ET - codex-2 C66 MIRRORHOLD1 plan receipt and proof controls
+
+Parent read of committed PLAN.md and origin confirms plan-only629703f8 on
+codex/mirrorhold1/basec21, solewriter Archimedes. Subsequent cap ruling resolves
+old whole-slot contradiction only. Initial submission plus three actual
+resubmissions, distance/auth/queue/localrisk free; no price/nonce budget reset.
+No new runtime proof, counterfactual venue fill or PM recovery claim. Historical
+AIXI09:57 terminal cancellation remains UNMEASURED: recorded earlier cancels
+are reprices, not terminal segment retirement. Build resumes in isolation,
+without production actions or holding tonight's reviewed install. Parent
+readonly #1099 draft review requires exact identity, same-phase/new-revision
+callback and terminal-proof/current-fill atomicity tests; filling between proof
+read and CAS must not release a buy. These are development controls, not a
+finding about an already frozen ready head or installed code.
