@@ -6052,3 +6052,19 @@ post-reset truncation,250-row cap and replayed-flip emission. Full head suite
 running; no current PR-ready or activation claim. Pause classifier, complete
 anchor provenance, exit continuity and bounded delivery remain blockers.
 No broker order, subscription, service, flag, DB/Redis or box file changed.
+
+### 2026-10-06 07:36 ET - ROUNDUP1 scope decision and separate findings (codex-2)
+
+Reviewer/operator ruling narrows #1095 to rounding only. Removed the added
+historical archive discovery/classifier and generic restart recovery tests from
+the ROUNDUP worktree; existing exact RPG-order wire proof is retained. C21
+records the archive scan and unprovable terminal retention as a separate finding.
+Its own 06:40:43 READ ONLY aggregate found 5978 historical STOP_LIMIT rows,
+5157 lacking a newer identity field; these are archive counts, not live orders.
+
+C22 records the separate OMS exact-target cancel fallback, confirmed by own
+source read at application base 7823a6fa: a target that is absent or non-open
+can fall through to the newest open symbol order. No measured race count or
+production cancellation is claimed. No OMS dispatcher patch is part of ROUNDUP1.
+The rounding-only tests pass; final frozen suite comparison and review-ready
+head are still being prepared. No production, ledger, service or main change.
