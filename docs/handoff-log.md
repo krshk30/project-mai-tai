@@ -5759,3 +5759,20 @@ owned-entry-closeout-2121-job/closeout-2121/preopen.sh.before, mode0700/bash-nPA
 Runner901c22de; final receipts under that closeout-2121 directory. Morning scanner
 validation owner claude-1; live cancel-place latency unexercised. Guard/paper
 remain active and kick-free through21:22; first15minutes end21:26ET.
+
+### C99 - Daily guarded paper first15minutes PASS, 2026-10-05 21:26:38 ET
+
+Own exclusive receipt first-15-minutes.json shaaf687f71 under
+/home/trader/after-hours/2026-10-06/option-a-daily/run-20261006T011059600358Z.
+936.000158s,937rows includingbaseline, intervals0.9944..1.00563s, zero gateway
+1008 and no guard stop. Guard366236/paper366242/gateway2907 stableactive and
+NRestarts0; Redis806893768B/evictions0, fiveowners+marker/healthyunion5,
+heartbeatage2.810746s; load0.855/0.945/1.015. Named dailytimer enabled NEXT
+10-06 03:40ET, datedtimerdisabled; existing detection09:30/feed09:40:01 unchanged,
+guardend09:40, nextsession automatically prepared/streamed by paper.
+Missing-count proof: old fullaudit actually9600OK/9600, zero kicks, fractional
+lastrow13:39:59.484776Z arrived after guard's finalintegerread. Isolated final
+drain fixes it without weakeningcoverage orcalibratedrules;60guardtestsPASS.
+Journal DAILY_PAPER_GUARD verified appended, installCOMPLETE intact. Full
+receipt46d435ef on planbranch; future scanner/bar/cancel-place evidence remains
+UNMEASURED, not retroactivelyPASS. No tradingcode/mainmerge/additionalrestart.
