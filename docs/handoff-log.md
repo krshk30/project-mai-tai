@@ -6933,3 +6933,15 @@ systemd/process fixtures claimedlive. Controlactionnotauthorized: displaycode
 incheckoutonly; pendinguserdisposition. Onlyv2/OMS/orb-schwab scopedonce.
 Actualaftercloseadmission/newticketcensus/holdings remainmandatory; paper
 151/153UNKNOWN2 notgreen. No boxstage/approval/service/env/DB/Redis/ledger action.
+
+### 2026-10-06 15:26 ET - codex-2 C77 released lanes and control disposition
+
+CLAIM KEEPREST1 on codex/keeprest1-frozen-buy-after-flip and operator holdings on
+codex/operator-holdings-classifier. WBPOWER1 assigned to existing worker on
+codex/wbpower1; all six workers active, two additional spawn requests refused
+by the agent limit and no extra workers claimed. Reviewer explicitly approves
+one control restart for Install 1; the sole plan writer is updating the literal
+runner, page proof and hashes. Current bounded DB read at 15:22:35 ET has APUS78
+and MOBX504 with bot activity, not operator-only. Fresh direct flat checks still
+required. CLEARWAIT's absent-row/unknown-submit edge is a real safety finding;
+the writer is building positive-proof handling, not weakening ownership.
