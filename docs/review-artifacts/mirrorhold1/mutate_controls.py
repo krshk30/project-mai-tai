@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import textwrap
+from types import FunctionType
 
 
 TEST = "tests/unit/test_mirrorhold1_retained_hold.py::"
@@ -26,14 +27,23 @@ CASES = {
 }
 
 
-def replace_method(cls, name, old, new):
+def replace_method(cls, name, old, new, *, count=1):
     original = getattr(cls, name)
     source = textwrap.dedent(inspect.getsource(original))
-    if source.count(old) != 1:
+    if source.count(old) != count:
         raise AssertionError(f"mutation needle not unique: {name}: {old!r}")
     namespace = dict(original.__globals__)
-    exec(compile(source.replace(old, new), "<isolated-mirrorhold1-mutation>", "exec"), namespace)
-    setattr(cls, name, namespace[name])
+    # Compiling inside a class creates the lexical cell required by zero-arg super.
+    wrapper = "class _MutationCompiler:\n" + textwrap.indent(source.replace(old, new), "    ")
+    exec(compile(wrapper, "<isolated-mirrorhold1-mutation>", "exec"), namespace)
+    compiled = getattr(namespace["_MutationCompiler"], name)
+    if compiled.__code__.co_freevars != original.__code__.co_freevars:
+        raise RuntimeError(f"mutation closure mismatch: {name}")
+    replacement = FunctionType(compiled.__code__, original.__globals__, name,
+                               original.__defaults__, original.__closure__)
+    replacement.__kwdefaults__ = original.__kwdefaults__
+    replacement.__qualname__ = original.__qualname__
+    setattr(cls, name, replacement)
 
 
 def apply(name):
@@ -80,12 +90,7 @@ def apply(name):
         replace_method(M, "_mirrorhold_dispatch",
             'or (md.get("mirrorhold_token") and (data["phase"] != "queued"\n                or data["token"] != md["mirrorhold_token"]))', '')
     elif name == "wire_evidence_guard_removed":
-        original = M._mirrorhold_reports
-        source = textwrap.dedent(inspect.getsource(original))
-        assert source.count('client in clients and all(') == 3
-        namespace = dict(original.__globals__)
-        exec(compile(source.replace('client in clients and all(', 'all('), "<isolated-wire-evidence-mutation>", "exec"), namespace)
-        M._mirrorhold_reports = namespace["_mirrorhold_reports"]
+        replace_method(M, "_mirrorhold_reports", 'client in clients and all(', 'all(', count=3)
     elif name == "cas_guard_removed":
         replace_method(M, "_mirrorhold_write", 'if changed != 1:', 'if False:')
     elif name == "off_recreates_nfq_actor":
@@ -94,28 +99,88 @@ def apply(name):
         raise ValueError(name)
 
 
-def main():
-    if len(sys.argv) == 3 and sys.argv[1] == "--child":
-        name = sys.argv[2]
+def child_run(name, mutate, result_path):
+    import pytest
+    from _pytest.outcomes import Failed
+
+    if mutate:
         apply(name)
-        import pytest
-        return pytest.main(["-q", "-p", "no:cacheprovider", "--tb=short", TEST + CASES[name]])
+    reports = []
+
+    class Classifier:
+        def pytest_runtest_setup(self, item):
+            if name == "rpg_forget_deletes_durable_owner":
+                original_state = item.module.state
+
+                def required_state(lane, event):
+                    data = original_state(lane, event)
+                    assert data is not None, "durable retained owner must survive RPG forget"
+                    return data
+
+                item.module.state = required_state
+
+        @pytest.hookimpl(hookwrapper=True)
+        def pytest_runtest_makereport(self, item, call):
+            report = (yield).get_result()
+            exception = call.excinfo.value if call.excinfo else None
+            reports.append({
+                "nodeid": item.nodeid, "when": report.when, "outcome": report.outcome,
+                "exception_type": type(exception).__name__ if exception else None,
+                "assertion_failure": isinstance(exception, (AssertionError, Failed)),
+                "failure": str(report.longrepr) if report.failed else None,
+            })
+
+    code = pytest.main(["-q", "-p", "no:cacheprovider", "--tb=short",
+                        TEST + CASES[name]], plugins=[Classifier()])
+    result_path.write_text(json.dumps({"exit_code": int(code), "reports": reports}, indent=2))
+    return code
+
+
+def main():
+    if len(sys.argv) == 5 and sys.argv[1] == "--child":
+        return child_run(sys.argv[2], sys.argv[3] == "mutant", Path(sys.argv[4]))
     if len(sys.argv) != 1:
         raise SystemExit("usage: mutate_controls.py [--child NAME]")
     results = []
     root = Path(__file__).resolve().parents[3]
+    receipt_dir = Path(os.environ.get("MIRRORHOLD_MUTATION_RECEIPTS", "/tmp/mirrorhold1-semantic-controls"))
+    receipt_dir.mkdir(parents=True, exist_ok=True)
     for name, target in CASES.items():
-        command = [sys.executable, str(Path(__file__).resolve()), "--child", name]
-        child = subprocess.run(command, cwd=root, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": "src"},
-                               capture_output=True, text=True, timeout=120)
-        output = child.stdout + child.stderr
-        # Pytest rc=1 is a killed control. Import/collection/needle errors do not count.
-        killed = child.returncode == 1 and "FAILED " + TEST + target in output
-        results.append({"mutation": name, "target": TEST + target, "exit_code": child.returncode,
-                        "killed": killed, "output_tail": output[-2500:]})
+        runs = {}
+        for mode in ("baseline", "mutant"):
+            receipt = receipt_dir / f"{name}-{mode}.json"
+            if receipt.exists():
+                receipt.unlink()
+            command = [sys.executable, str(Path(__file__).resolve()), "--child", name, mode, str(receipt)]
+            child = subprocess.run(command, cwd=root, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": "src"},
+                                   capture_output=True, text=True, timeout=120)
+            output = child.stdout + child.stderr
+            (receipt_dir / f"{name}-{mode}.log").write_text(output)
+            evidence = json.loads(receipt.read_text()) if receipt.exists() else {"reports": []}
+            failures = [r for r in evidence["reports"] if r["outcome"] == "failed"]
+            errors = [r for r in failures if r["when"] != "call" or not r["assertion_failure"]]
+            assertions = [r for r in failures if r["when"] == "call" and r["assertion_failure"]]
+            calls = [r for r in evidence["reports"] if r["when"] == "call"]
+            runs[mode] = {
+                "exit_code": child.returncode, "receipt": str(receipt),
+                "assertion_failures": assertions, "non_assertion_errors": errors,
+                "baseline_pass": child.returncode == 0 and bool(calls)
+                    and all(r["outcome"] == "passed" for r in calls),
+                "harness_error": not receipt.exists() or child.returncode not in (0, 1),
+                "output_tail": output[-2500:],
+            }
+        mutant = runs["mutant"]
+        killed = (runs["baseline"]["baseline_pass"] and mutant["exit_code"] == 1
+                  and bool(mutant["assertion_failures"]) and not mutant["non_assertion_errors"]
+                  and not mutant["harness_error"]
+                  and all(r["nodeid"].startswith(TEST + target) for r in mutant["assertion_failures"]))
+        results.append({"mutation": name, "target": TEST + target,
+                        "semantic_assertion_kill": killed, "runs": runs})
     print(json.dumps({"scope": "controlled isolated subprocesses; tracked source unchanged",
-                      "mutations": results, "all_killed": all(r["killed"] for r in results)}, indent=2))
-    return 0 if all(r["killed"] for r in results) else 1
+                      "delete_owner_oracle": "explicit non-null state assertion before the existing recorded replay oracle",
+                      "mutations": results,
+                      "all_semantic_assertion_kills": all(r["semantic_assertion_kill"] for r in results)}, indent=2))
+    return 0 if all(r["semantic_assertion_kill"] for r in results) else 1
 
 
 if __name__ == "__main__":

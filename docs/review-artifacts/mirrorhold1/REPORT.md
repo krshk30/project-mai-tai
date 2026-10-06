@@ -101,12 +101,12 @@ are superseded, not pristine or final evidence.
   it is not a line-history attestation.
 - Additional PM nightly catalog/behavior controls after the last count pin:
   **16 passed**. No activation expectation or runtime behavior changed.
-- **11/11 isolated mutations killed**: queue charges counter, reprice resets
-  counter, RPG forget deletes owner, final cap/client guard removal, cancel
-  permission retention, affirmative no-wire removal, compound enqueue token
-  fence removal, wire-evidence removal, CAS removal and OFF recreating NFQ actor.
-  Mutation needle/import failures do not count as kills. No tracked source edits
-  are performed by the runner.
+- **Prior 11/11 mutation claim WITHDRAWN.** The original runner accepted a named
+  pytest failure without checking its exception type. The OFF/NFQ mutant failed
+  from a missing `super()` class cell, not its safety assertion; the deleted-owner
+  test also indexed a missing row and raised `TypeError`. Those old receipts do
+  not establish 11 assertion-based semantic kills. The correction below replaces
+  that evidence without changing any trading source or tracked test.
 - Ruff for new source/tests/runner and `git diff --check`: PASS.
 - Final full-suite baseline comparison: **no new failure/error IDs**. Untouched
   source `c21` in separate assessment worktree: 6514 passed, 56 failed, 12 errors,
@@ -156,7 +156,64 @@ Frozen content hashes (SHA256, before source publication):
 | tests/unit/test_expected_flags_check.py | 9cfc33d9c4e28a61a8162256898482fb21054c1aa9974f439ab825aaa8b8175a |
 | tests/unit/test_all_on_pm.py | 87ae22f8ad129be04afe89bf78e88ef3f920209efa98f1c8df75b2a37eb72eac |
 | tests/unit/test_pmprint1_tonight_flags.py | 8283bc40336c7e2db2fcac6443af17530f8450a270c714beabe8c60777db0e5a |
-| docs/review-artifacts/mirrorhold1/mutate_controls.py | e2e34e75b1956709736960e8e73bc216e16155df2984dc75b6569fa6ac5c1b8a |
+| docs/review-artifacts/mirrorhold1/mutate_controls.py (historical, superseded) | e2e34e75b1956709736960e8e73bc216e16155df2984dc75b6569fa6ac5c1b8a |
+
+## Mutation Evidence Correction
+
+[codex] Follow-up on the frozen trading source of `107252ac`, rebased on exact
+`4805ddc81184c76b4d5cef5c483c809edb666fe6`. Only this report and the isolated
+runner changed. Previous `all_killed` values, including
+`/tmp/mirrorhold1-4805-mutations.json`, are withdrawn as assertion evidence.
+
+The runner now compiles each replacement inside a compiler class, validates its
+free-variable names, and installs its code using `FunctionType` with the original
+method's globals, defaults and closure. Zero-argument `super()` retains the real
+MRO's original `__class__` cell, not a compiler-class cell. No trading/test source
+is rewritten during either baseline or mutant runs.
+
+Each mutation has an independent unmutated GREEN control before its mutant. A
+pytest hook records every setup/call/teardown outcome and actual exception type.
+Only call-phase `AssertionError` or pytest's expected-exception `Failed` is an
+assertion kill, and any non-assertion/setup/teardown or harness error invalidates
+the mutant's claim. Collection/import/needle/closure failures cannot pass.
+For the deleted-owner replay only, a harness-local state wrapper asserts the
+durable row is present before the unchanged test indexes it. This extra oracle is
+explicit and runs in both GREEN and mutant subprocesses; it does not silently
+reclassify the old `TypeError` as an assertion.
+
+Corrected receipt: **11/11 semantic assertion kills**, **15 unmutated selected
+cases GREEN**, **15 mutant call failures** (14 `AssertionError`, one pytest
+`Failed` for the missing expected CAS exception), and **zero non-assertion or
+harness errors**. Parameterized cancel and terminal-report controls each have
+three call cases. The OFF/NFQ mutant fails the actual assertion at tracked test
+line 940 because it creates a second NFQ actor; it no longer raises `super()`.
+
+| Mutation | Corrected call failure |
+| --- | --- |
+| queue_spends_wire_budget | AssertionError |
+| reprice_resets_wire_budget | AssertionError |
+| rpg_forget_deletes_durable_owner | AssertionError, explicit durable-row oracle |
+| final_dispatch_cap_removed | AssertionError |
+| reused_client_guard_removed | AssertionError |
+| terminal_cancel_retains_permission | AssertionError, all 3 cases |
+| affirmative_no_wire_guard_removed | AssertionError |
+| enqueue_token_fences_removed | AssertionError |
+| wire_evidence_guard_removed | AssertionError, all 3 cases |
+| cas_guard_removed | Failed: DID NOT RAISE expected stale-revision RuntimeError |
+| off_recreates_nfq_actor | AssertionError: second NFQ actor exists |
+
+Reproduce with the common Python prefix and
+`docs/review-artifacts/mirrorhold1/mutate_controls.py > /tmp/mirrorhold1-4805-semantic-mutations.json`.
+Per-case complete logs and structured outcomes are retained under
+`/tmp/mirrorhold1-semantic-controls/`; the aggregate embeds failure details and
+classification, not only a truncated output tail.
+
+- Aggregate SHA256: `3f433492eb07a09748f29e22db8cf64f7a573ae5e15ff797d3a887e2a6baa37a`.
+- Corrected runner SHA256: `f9ae778dc4d0ec8cbb5d80bfbe878bdde431374f0ba9ce3c676c06d5d0c6d76e`.
+- New-file Ruff and diff-check PASS. All trading-source/fixture/test hashes and
+  the exact-main unit/ALLON results remain unchanged; their candidate was
+  `107252ac`, not this evidence-follow-up commit. Fresh hosted CI is required
+  after publication of the new head. Independent review pin remains required.
 
 ## Integration Gates Still Unmeasured
 
