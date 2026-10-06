@@ -81,11 +81,15 @@ settings remain unchanged; this lane does not slow those timers.
 Focused adapter, RPG, configuration catalog, PM composition, and protection
 guards:411 passed. Local SQLite roundtrip plus replay/backtest:71 passed,
 one expected failure. Ruff and marker isolation pass. Fourteen process-local source
-mutations are killed. Full Mac unit pair: main6438 passed/56 failed;
-head6490 passed/56 failed. Failure names match exactly, zero new failures.
+mutations are killed. Full Mac unit pair against authorized current main4805:
+main6469 passed/56 failed; head6521 passed/56 failed. Failure names match exactly,
+zero new failures. The prior c21 pair is superseded by this post-rebase pair.
 The measured baseline is56, not an assumed47. `VERIFICATION.md` records commands,
 hashes, the corrected inventory assertion, and the pinned main's green Ubuntu
 CI receipt. Final exact-head push and PR Validate results must both be green
 before a ready claim; their URLs and exact SHA will be published on the PR.
+Controlled ALL-ON nine-flag composition plus this lane's read flag passes the
+effective-zero audit:152/152 checked,0 mismatches,0 unknown. Public WBPOWER1
+budget/cache/detail boundaries are released in `INTEGRATION_CONTRACT.md`.
 No production DB/Redis writes, broker
 order calls, service actions, installation, or merge was performed.
