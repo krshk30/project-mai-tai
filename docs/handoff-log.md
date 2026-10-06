@@ -6413,3 +6413,12 @@ Independent pin remains expectedFAIL awaiting reviewer Codex-source ranges;
 our d5788159 records cover only claude-owned runner/evidence commits.
 No merge/flag/production/install action. Joint after-close installation awaits
 exactheadpin, merge and final plan/GO; no separate restart or ORB-purple build.
+
+### 2026-10-06 10:49 ET - codex-2 C37 one-leg CLAIM
+
+T43/T44 OLOX requested replay assigned to isolated
+codex/rpg-one-leg-rest-recovery, base a7fed34d. Own code read and bounded
+read-only pull precede the build. Missing refused/rejected leg must return
+through ordinary next-bar admission, without touching its surviving sibling.
+Reject-text recording stays bundled. No production write, restart or ledger
+adjustment; no change to manual-cancel, policy refusal or unknown-buy proof.

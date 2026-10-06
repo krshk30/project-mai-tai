@@ -131,6 +131,8 @@
 
 | C36 | #1097 READY for exact-head review; bothValidate green | Head65010dffffaa28c5f6ae22df0c48cf9358a6bdbf markedready10:33ET; push37478141100 and PR37478145270 bothSUCCESS, integration/golden/Ruff included. Catalogtrue/ruling and eight-switch blockers resolved; C34/C35 acceptance and local failed-name parity unchanged. Independent pin stillFAIL pending reviewer Codex-source coverage; no merge/install/activation | 10:33 ET 10-06 own gh exacthead/check/run reads, ready action and [review receipt](https://github.com/krshk30/project-mai-tai/pull/1097#issuecomment-6018563094). Runtime diff vs4b EMPTY; unchanged reviewer runner ed871725; own runner segment records d5788159. Final full-unit receipt completed10:20ET, distinct from report's initial10:17 acceptance timestamp | codex-2 | Reviewer exact-head pin next; standing merge only after coveragePASS. ONE reviewed after-close install with ROUNDUP/restoration/preopen timer allON,149 catalog, still needs final plan/GO. Production unchanged; ORB-purple card still not built |
 
+| C37 | CLAIM T43 one-leg recovery + reject-text recording | Started isolated branch codex/rpg-one-leg-rest-recovery at main a7fed34d; own code read and bounded OLOX pull precede implementation. Acceptance is missing leg at next bar, surviving leg untouched, no unknown/fill duplicate. No production action | 10:49 ET 10-06 own worktree/branch creation and T43/T44 source read; /Users/velkris/.codex/worktrees/rpg-one-leg-rest-recovery/project-mai-tai | codex-2 | Prove OLOX cause, test both legs/sessions, report exact PR/head; reviewed install only if pinned |
+
 ### What to READ Tuesday 10-06 — claude-1, UNPROMPTED (scheduled in the claude-1 session, CronList)
 | Time ET | Read | Pass looks like |
 |---|---|---|
