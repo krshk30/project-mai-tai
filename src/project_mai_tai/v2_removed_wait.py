@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Callable, Mapping, Sequence
@@ -13,6 +14,7 @@ from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    BrokerOrderEvent,
     DashboardSnapshot,
     Fill,
     OmsManagedPosition,
@@ -25,6 +27,7 @@ from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear
 
 SNAPSHOT_TYPE = "v2_removed_wait"
+DISPATCH_SNAPSHOT_TYPE = "v2_wait_dispatch"
 SETTLE_MS = 15_000
 ROW_LIMIT = 2048
 TERMINAL = frozenset({"cancelled", "canceled", "rejected", "expired"})
@@ -71,6 +74,7 @@ def assess_removed_wait(
     intents: Sequence[TradeIntent],
     orders: Sequence[BrokerOrder],
     filled_order_ids: set[object],
+    order_events: Sequence[BrokerOrderEvent],
     snapshots: Sequence[DashboardSnapshot],
     has_position: bool,
 ) -> RemovedWaitProof:
@@ -120,12 +124,25 @@ def assess_removed_wait(
     ):
         return result("accounts_unreadable")
     own_intent_ids = {i.id for i in intents if i.intent_type == "open" and exact(metadata(i))}
+    if request.opportunity_id == 0 and any(
+        o.id in filled_order_ids or str(o.status).lower() in {"filled", "partially_filled"}
+        for o in orders
+    ):
+        return result("missing_opportunity_with_own_fill_history")
     if any(
         (exact(metadata(o)) or o.intent_id in own_intent_ids)
         and (o.id in filled_order_ids or str(o.status).lower() in {"filled", "partially_filled"})
         for o in orders
     ):
         return result("own_fill_stays_owned")
+    own_order_ids = {o.id for o in orders if exact(metadata(o)) or o.intent_id in own_intent_ids}
+    if any(
+        e.order_id in own_order_ids
+        and (e.event_type in {"filled", "partially_filled"}
+             or (isinstance(e.payload, dict) and e.payload.get("broker_fill_id")))
+        for e in order_events
+    ):
+        return result("fill_history_not_unfilled")
     if has_position:
         return result("position_stays_managed")
     persisted = False
@@ -159,6 +176,24 @@ def assess_removed_wait(
         if row.snapshot_type == "atr_reprice_handoff":
             old = p.get("old", {})
             md = old.get("metadata", {}) if isinstance(old, dict) else {}
+            segment = p.get(
+                "segment_id", md.get("fanout_segment_id") if isinstance(md, dict) else None
+            )
+            if (
+                old.get("symbol") == request.symbol
+                and (
+                    request.opportunity_id == 0
+                    or segment is None
+                    or str(segment) == str(request.opportunity_id)
+                )
+                and (
+                    old.get("strategy_code") != "schwab_1m_v2"
+                    or not isinstance(md, dict)
+                    or segment is None
+                    or str(md.get("fanout_segment_id", "")) != str(segment)
+                )
+            ):
+                return result("replacement_ticket_metadata_unknown")
             if (
                 isinstance(md, dict)
                 and old.get("symbol") == request.symbol
@@ -173,24 +208,80 @@ def assess_removed_wait(
         elif row.snapshot_type == "oms_webull_mirror_price_hold":
             event_payload = p.get("event", {}).get("payload", {})
             md = event_payload.get("metadata", {})
+            if event_payload.get("symbol") == request.symbol and (
+                event_payload.get("strategy_code") is None
+                or not isinstance(md, dict)
+                or (
+                    event_payload.get("strategy_code") == "schwab_1m_v2"
+                    and not md.get("fanout_segment_id")
+                )
+            ):
+                return result("mirror_retry_metadata_unknown")
             if (
                 event_payload.get("symbol") == request.symbol
                 and event_payload.get("strategy_code") == "schwab_1m_v2"
-                and (request.opportunity_id == 0 or exact(md))
+                and (
+                    request.opportunity_id == 0
+                    or str(md.get("fanout_segment_id", "")) == str(request.opportunity_id)
+                )
             ):
                 latest_nfq[str(row.id)] = p
     for p in latest_rpg.values():
-        if p.get("phase") not in {"expired", "refused"} or not old_buy_proven_clear(p):
+        cleared_at = p.get("cleared_at")
+        typed_clear = p.get("local_no_wire") is True or (
+            type(cleared_at) in {int, float} and math.isfinite(cleared_at) and cleared_at > 0
+        )
+        if (
+            p.get("phase") not in {"expired", "refused"}
+            or not typed_clear
+            or not old_buy_proven_clear(p)
+        ):
             return result("replacement_ticket_not_terminal")
     if any(p.get("phase") != "retired" for p in latest_nfq.values()):
         return result("mirror_retry_not_retired")
 
     by_intent: dict[object, list[BrokerOrder]] = {}
+    intents_by_id = {i.id: i for i in intents}
+    broker_terminal = {
+        (e.order_id, "cancelled" if e.event_type == "canceled" else e.event_type)
+        for e in order_events
+        if e.event_source == "broker" and e.event_type in TERMINAL and _utc(e.event_at) <= cutoff
+        and metadata(e).get("cancel_outcome") not in {
+            "already_absent", "confirmed_after_accepted_request", "could_not_tell", "not_confirmed"
+        }
+    }
+
+    def no_wire_intent(intent: TradeIntent) -> bool:
+        p = intent.payload or {}
+        return bool(
+            str(intent.status).lower() == "rejected"
+            and (
+                (p.get("refusal_origin") == "skipped_before_submit" and p.get("refusal_code"))
+                or (
+                    p.get("refusal_origin") == "client_abort"
+                    and p.get("refusal_code") == "rpg_stale_strategy_authorization"
+                )
+            )
+        )
+
     for order in orders:
         by_intent.setdefault(order.intent_id, []).append(order)
         md = metadata(order)
         if str(order.status).lower() not in TERMINAL | {"filled"}:
             return result("opening_order_not_terminal")
+        if str(order.status).lower() in TERMINAL:
+            if not settled(order):
+                return result("terminal_order_settling")
+            status = "cancelled" if order.status == "canceled" else order.status
+            intent = intents_by_id.get(order.intent_id)
+            pre_wire = (
+                not order.broker_order_id
+                and status == "rejected"
+                and intent is not None
+                and no_wire_intent(intent)
+            )
+            if (order.id, status) not in broker_terminal and not pre_wire:
+                return result("broker_terminal_unproven")
         if exact(md) or (
             request.opportunity_id == 0
             and order.submitted_at
@@ -217,15 +308,7 @@ def assess_removed_wait(
             if not settled(intent) or any(not settled(o) for o in related):
                 return result("terminal_intent_settling")
             if not related:
-                p = intent.payload or {}
-                no_wire = status == "rejected" and (
-                    (p.get("refusal_origin") == "skipped_before_submit" and p.get("refusal_code"))
-                    or (
-                        p.get("refusal_origin") == "client_abort"
-                        and p.get("refusal_code") == "rpg_stale_strategy_authorization"
-                    )
-                )
-                if not no_wire:
+                if not no_wire_intent(intent):
                     return result("no_order_is_not_no_wire")
         if intent.intent_type == "open" and not matching:
             created_ms = int(_utc(intent.created_at).timestamp() * 1000)
@@ -256,12 +339,63 @@ def assess_removed_wait(
         receipts.add(account)
     if receipts != set(accounts.values()):
         return result("waiting_for_all_cancel_receipts")
+
+    # The journal precedes publication, independently of the OMS transaction.
+    # Empty OMS rows or a prior cancelled generation cannot hide a later lost wire.
+    journal = [
+        r.payload for r in snapshots
+        if r.snapshot_type == DISPATCH_SNAPSHOT_TYPE
+        and r.payload.get("symbol") == request.symbol
+        and str(r.payload.get("opportunity_id")) == str(request.opportunity_id)
+    ]
+    begins = [p for p in journal if p.get("kind") == "begin"]
+    if request.opportunity_id == 0 or len(begins) != 1:
+        return result("dispatch_history_unknown")
+    expected_accounts = set(request.account_names)
+    for p in journal:
+        if (p.get("schema_version") != 1 or p.get("strategy_code") != "schwab_1m_v2"
+                or p.get("kind") not in {"begin", "attempt"}
+                or not isinstance(p.get("account_names"), list)
+                or not all(isinstance(a, str) and a for a in p["account_names"])
+                or len(p["account_names"]) != len(expected_accounts)
+                or set(p["account_names"]) != expected_accounts):
+            return result("dispatch_history_unknown")
+    attempts = {p.get("attempt_token"): p for p in journal if p.get("kind") == "attempt"}
+    if len(attempts) != len([p for p in journal if p.get("kind") == "attempt"]):
+        return result("dispatch_history_unknown")
+    for token, p in attempts.items():
+        if not isinstance(token, str) or not token or p.get("account_name") not in expected_accounts:
+            return result("dispatch_history_unknown")
+        matched = [i for i in intents if i.intent_type == "open" and exact(metadata(i))
+                   and metadata(i).get("clearwait_dispatch_token") == token
+                   and accounts.get(i.broker_account_id) == p["account_name"]]
+        if not matched:
+            return result("dispatch_attempt_unproven")
+    for intent in intents:
+        if intent.intent_type != "open" or not exact(metadata(intent)):
+            continue
+        p = attempts.get(metadata(intent).get("clearwait_dispatch_token"))
+        if p is None or p["account_name"] != accounts.get(intent.broker_account_id):
+            return result("dispatch_history_unknown")
+    for order in orders:
+        if exact(metadata(order)) or order.intent_id in own_intent_ids:
+            p = attempts.get(metadata(order).get("clearwait_dispatch_token"))
+            intent = intents_by_id.get(order.intent_id)
+            if (p is None or p["account_name"] != accounts.get(order.broker_account_id)
+                    or intent is None or intent.id not in own_intent_ids
+                    or metadata(intent).get("clearwait_dispatch_token") != p["attempt_token"]):
+                return result("dispatch_history_unknown")
     return result("terminal_unfilled_removed_wait", True)
 
 
 class RemovedWaitStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
+
+    def record_dispatch(self, payload: dict) -> None:
+        with self.session_factory() as session:
+            session.add(DashboardSnapshot(snapshot_type=DISPATCH_SNAPSHOT_TYPE, payload=payload))
+            session.commit()
 
     def record(self, request: RemovedWait, active: bool) -> None:
         with self.session_factory() as session:
@@ -397,12 +531,18 @@ class RemovedWaitStore:
                         select(Fill.order_id).where(Fill.order_id.in_([o.id for o in orders]))
                     ).all()
                 )
+                order_events = bounded(
+                    select(BrokerOrderEvent).where(
+                        BrokerOrderEvent.order_id.in_([o.id for o in orders]),
+                    )
+                )
                 snapshots = bounded(
                     select(DashboardSnapshot)
                     .where(
                         DashboardSnapshot.snapshot_type.in_(
                             [
                                 SNAPSHOT_TYPE,
+                                DISPATCH_SNAPSHOT_TYPE,
                                 "v2_flip_entry_ownership",
                                 "atr_reprice_handoff",
                                 "oms_webull_mirror_price_hold",
@@ -459,6 +599,7 @@ class RemovedWaitStore:
                         intents=intents,
                         orders=orders,
                         filled_order_ids=fills,
+                        order_events=order_events,
                         snapshots=snapshots,
                         has_position=has_position,
                     )

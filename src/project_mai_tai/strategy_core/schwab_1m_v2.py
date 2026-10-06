@@ -749,6 +749,8 @@ class SchwabV2Strategy:
         self._removed_scanner_symbols: set[str] = set()
         self._removed_wait_persist: RemovalPersist | None = None
         self._removed_wait_restore_readable = True
+        self._removed_wait_dispatch_persist: Callable[[dict], None] | None = None
+        self._removed_wait_block_reason: dict[str, tuple[str, str]] = {}
         self._retry_one_max_retries = max(
             0,
             int(
@@ -1128,10 +1130,12 @@ class SchwabV2Strategy:
     def configure_removed_wait(
         self, persist: RemovalPersist | None, *, restored: Mapping[str, RemovedWait],
         readable: bool,
+        dispatch_persist: Callable[[dict], None] | None = None,
     ) -> None:
         self._removed_wait_persist = persist
         self._removed_wait_restore_readable = readable
         self._removed_wait_requests = dict(restored)
+        self._removed_wait_dispatch_persist = dispatch_persist
         self._removed_scanner_symbols.update(restored)
         for symbol, request in restored.items():
             state = self.watchlist_state(symbol)
@@ -1140,6 +1144,49 @@ class SchwabV2Strategy:
 
     def scanner_readded(self, symbol: str) -> None:
         self._removed_scanner_symbols.discard(symbol)
+
+    def _removed_wait_accounts(self) -> tuple[str, ...]:
+        accounts = [self.settings.strategy_schwab_1m_v2_account_name]
+        if self._dual_broker_fanout_enabled:
+            accounts.append(self.settings.strategy_schwab_1m_v2_webull_account_name)
+        return tuple(accounts)
+
+    def _record_removed_wait_dispatch(self, symbol: str, opportunity: int, *,
+                                      token: str = "", account: str = "") -> None:
+        if self._removed_wait_dispatch_persist is None:
+            raise RuntimeError("dispatch journal unavailable")
+        self._removed_wait_dispatch_persist({
+            "schema_version": 1, "strategy_code": STRATEGY_CODE, "symbol": symbol,
+            "opportunity_id": str(opportunity), "account_names": list(self._removed_wait_accounts()),
+            "kind": "attempt" if token else "begin", "attempt_token": token,
+            "account_name": account,
+        })
+
+    def track_removed_wait_dispatch(self, draft: TradeIntentDraft, account: str) -> bool:
+        # Eligibility awaits can outlive removal and a fresh scanner re-add.
+        state = self._symbol_states.get(draft.symbol.upper())
+        try:
+            opportunity = int(draft.metadata.get("fanout_segment_id", "0"))
+        except (TypeError, ValueError):
+            opportunity = 0
+        current = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) if state else 0
+        if opportunity <= 0 or opportunity != current:
+            logger.warning("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=stale_or_unproven_episode",
+                           draft.symbol)
+            return False
+        if self._removed_wait_dispatch_persist is None:
+            # Isolated legacy callers have no complete journal and cannot prove a removal.
+            return True
+        try:
+            if opportunity <= 0 or account not in self._removed_wait_accounts():
+                raise ValueError("dispatch identity/account unavailable")
+            token = str(uuid4())
+            self._record_removed_wait_dispatch(draft.symbol, opportunity, token=token, account=account)
+            draft.metadata["clearwait_dispatch_token"] = token
+        except Exception:  # noqa: BLE001
+            logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=dispatch_journal_failed", draft.symbol)
+            return False
+        return True
 
     def _removed_wait_gate_closed(self, symbol: str) -> bool:
         return getattr(self, "_removed_wait_enabled", False) and (
@@ -1171,6 +1218,14 @@ class SchwabV2Strategy:
                     # The waiting-removal request ends; filled ownership and exit management do not.
                     self._removed_wait_requests.pop(request.symbol, None)
                 continue
+            if not proof.clear:
+                disposition = (request.token, proof.reason)
+                if (self._removed_wait_enabled and self._removed_wait_requests.get(request.symbol) == request
+                        and self._removed_wait_block_reason.get(request.symbol) != disposition):
+                    self._removed_wait_block_reason[request.symbol] = disposition
+                    logger.warning("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=UNKNOWN reason=%s",
+                                   request.symbol, request.opportunity_id, proof.reason)
+                continue
             if (not self._removed_wait_enabled or not proof.clear or state is None
                     or not self._flip_owner_restore_readable
                     or not self._removed_wait_restore_readable
@@ -1180,18 +1235,12 @@ class SchwabV2Strategy:
                     or not self._flip_owner_evidence_fresh(state)
                     or int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) != request.opportunity_id):
                 continue
-            if request.opportunity_id == 0 and state.flip_owner_first_rest_placed:
+            if request.opportunity_id == 0:
                 continue
             seed_cap = (state.cw_seed_cap_watch_start_ms, state.cw_resting_taken, state.cw_reclaim_taken)
             if request.opportunity_id and not self._retire_flip_owner_opportunity(
                 state, reason="scanner_removed_terminal_unfilled"):
                 continue
-            if request.opportunity_id == 0:
-                self._release_fanout_webull_claim(state, reason="scanner_removed_terminal_unfilled")
-                self._reset_fanout_webull_slots(state)
-                self._clear_cw_slot_claims(state)
-                state.cw_v2_emit_claimed = False
-                state.cw_v2_emit_ms = 0
             if seed_cap[0]:
                 state.cw_seed_cap_watch_start_ms, state.cw_resting_taken, state.cw_reclaim_taken = seed_cap
             try:
@@ -1206,7 +1255,7 @@ class SchwabV2Strategy:
                         request.symbol, request.opportunity_id, proof.reason)
 
     def _remove_waiting_buy(self, state: SymbolState, *, reason: str) -> bool:
-        symbol = state.symbol
+        symbol = state.symbol.upper()
         self._removed_scanner_symbols.add(symbol)
         had_wait = bool(state.cw_armed or state.resting_active or state.webull_resting_active
                         or state.cw_v2_emit_claimed or state.flip_owner_opportunity_id
@@ -1232,11 +1281,8 @@ class SchwabV2Strategy:
         state.atr_hold_pending = None
         if not had_wait or self._removed_wait_has_owner(state) or symbol in self._removed_wait_requests:
             return released
-        accounts = [self.settings.strategy_schwab_1m_v2_account_name]
-        if self._dual_broker_fanout_enabled:
-            accounts.append(self.settings.strategy_schwab_1m_v2_webull_account_name)
         request = RemovedWait(symbol, int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0),
-                              str(uuid4()), self._now_ms(), tuple(accounts))
+                              str(uuid4()), self._now_ms(), self._removed_wait_accounts())
         self._removed_wait_requests[symbol] = request
         try:
             if self._removed_wait_persist is None:
@@ -1350,6 +1396,13 @@ class SchwabV2Strategy:
             return 0
         state.fanout_segment_id = candidate
         state.flip_owner_opportunity_id = candidate
+        if self._removed_wait_enabled and self._removed_wait_dispatch_persist is not None:
+            try:
+                self._record_removed_wait_dispatch(state.symbol, candidate)
+            except Exception:  # noqa: BLE001
+                logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=dispatch_begin_failed", state.symbol)
+                self._set_flip_owner_unknown(state, reason="dispatch_history_unknown")
+                return 0
         logger.info(
             "[V2-FLIP-OWNER-OPPORTUNITY] %s opportunity_id=%d identity_schema=v2 "
             "d20_definition=entry_opportunity evaluated=1 bound=1",
@@ -6620,12 +6673,18 @@ class SchwabV2Strategy:
             )
         # The durable bind precedes the in-memory assignment and every draft construction. Its
         # failure is visible but observation-only: it never suppresses or reroutes live money.
-        self._persist_fanout_identity_transition(
+        bound = self._persist_fanout_identity_transition(
             state,
             segment_id=segment_id,
             active=True,
             reason="segment_bind",
         )
+        if (bound and getattr(self, "_removed_wait_enabled", False)
+                and self._removed_wait_dispatch_persist is not None):
+            try:
+                self._record_removed_wait_dispatch(state.symbol, segment_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=dispatch_begin_failed", state.symbol)
         state.fanout_segment_id = segment_id
         return segment_id
 

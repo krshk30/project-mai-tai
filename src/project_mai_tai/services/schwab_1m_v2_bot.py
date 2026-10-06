@@ -792,7 +792,8 @@ class SchwabV2BotService:
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=restore_unreadable")
             self.strategy.configure_removed_wait(None, restored={}, readable=False)
         else:
-            self.strategy.configure_removed_wait(store.record, restored=restored, readable=True)
+            self.strategy.configure_removed_wait(store.record, restored=restored, readable=True,
+                                                 dispatch_persist=store.record_dispatch)
         self._removed_wait_store = store
 
     async def _removed_wait_poll(self) -> None:
@@ -834,6 +835,9 @@ class SchwabV2BotService:
         symbol = draft.symbol.upper()
         counts[symbol] = counts.get(symbol, 0) + 1
         try:
+            account = getattr(emitter, "broker_account_name", "")
+            if not self.strategy.track_removed_wait_dispatch(draft, account):
+                return False
             await emitter.emit(draft)
         finally:
             counts[symbol] -= 1

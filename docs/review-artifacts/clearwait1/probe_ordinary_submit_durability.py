@@ -1,8 +1,8 @@
 """Local-only safety probe, not a passing acceptance test or production receipt.
 
 Use the existing SQLite/FakeRedis test harness and a mock adapter. A mock wire
-followed by an exception leaves no opening rows; the current candidate assessor
-nevertheless accepts the resulting no-target cancellation receipts.
+followed by an exception leaves no opening rows. The original candidate cleared
+the no-target receipts; the defensive candidate must report FAIL_CLOSED.
 """
 
 from __future__ import annotations

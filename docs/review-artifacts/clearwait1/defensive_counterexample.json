@@ -1,0 +1,11 @@
+{
+  "classification": "FAIL_CLOSED",
+  "scope": "SQLite/FakeRedis/mock adapter only; no production connections",
+  "mock_submit_calls": 1,
+  "exception": "mock response lost after possible wire",
+  "durable_open_intents_after_rollback": 0,
+  "durable_orders_after_rollback": 0,
+  "actual_local_oms_no_target_cancel_receipts": 2,
+  "candidate_clear": false,
+  "candidate_reason": "dispatch_attempt_unproven"
+}
