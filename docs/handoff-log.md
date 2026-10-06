@@ -6472,3 +6472,14 @@ This is not a production systemd job or a staged literal runner. No box changes,
 no false scheduled/staged/COMPLETE claim; full release and timer/gate assembly
 still required before any production call. Reviewer owns independent close-out
 and tomorrow07:00-07:15 scanner validation; no forced paper start for green.
+
+### 2026-10-06 11:03 ET - codex-2 C41/C42 four-lane claim and KEEPREST1 stop
+
+Read the operator relay attachment e828a471 in full. T43 local-refusal cause
+correction accepted; parent resumes its sole-writer branch. Three independent
+worktrees started Step 0 for KEEPREST1, ORBPURPLE1 and CLEARWAIT1. No production
+action, no addition to tonight's three-item install without a fresh exact pin.
+KEEPREST1 Step0 6a84c3b2 reproduced 18 take-downs but found the named IMCC08:17
+case still SHORT/flip=none; BUY flip08:25. DISAGREE on that acceptance timing,
+one blocker, no build/PR. Asked for corrected08:26 case, card unchanged. Other
+lanes continue; dates/hours reported only when independently supportable.
