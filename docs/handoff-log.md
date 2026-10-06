@@ -6843,3 +6843,16 @@ solewriter for the content-equal #1100 rebase onto c21; no self-pin or merge.
 Sagan is solewriter for WEBULL429 list-primary ordinary reads, after cancel429
 claim withdrawal; cancel path stays unchanged. Kant owns install mechanics and
 awaits actual retry replay evidence. No production, broker-wire or ledger action.
+
+### 2026-10-06 14:49 ET - codex-2 C69/C70 completed replay and pure rebase
+
+Corrected enabled=true/max0 offline replay passes33checks on mainc21 with
+verified isolated source import. OLOX12:21 and IPDN12:17 block both second
+drafts; budget1 emits both and the setting mutation fails both assertions.
+FreshIPDNSELL11:41 clears prior consumed episode and resets0; first11:44rest
+drafts both. Own IPDN11:5x label correction: it was waiting in a freshcycle,
+not an oldcycle retry. Real forbidden retry followed12:16confirmationclose.
+Bundled recorded receipts and executable docs replay preserve controlled-gate
+limitations; no live-cache, fullsession or brokerwire claim. Kant informed.
+#1100 pure rebase56c9357b onto c21 has3equal commits/empty scoped contentdiff,
+102focusedPASS; fresh exacthead pin and newValidatepending. No production action.
