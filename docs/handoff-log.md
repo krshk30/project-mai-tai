@@ -7188,3 +7188,14 @@ Parent actualReal.reader receipt tests cover rc2then0, rc2three times and rc1
 immediate refusal, retaining every stdout/stderr/exitcode. Full runner737PASS
 41.30s; plan4c4faf13 tests-only, staged2012runtime unchanged. Currentattended
 attempt OMS/strategy rc0, census pending, no service action/COMPLETE claim.
+
+### 2026-10-06 17:44 ET - codex-2 C100 shared-state mechanical correction
+
+Fresh authorized attempt passed flat/census/Redis/OMSgate, recovered one flat
+UNKNOWN with the 60s retry, then STOPPED17:41 initial0 on newestsharedstate
+being ORB. Exact own read/source confirms expected shared publisher. No app
+write/action; oldidentities/env retained. Only boundedhelper selection changed,
+25COUNT1/read-only/262144Bperentry, strictv2zeroarmed identity/freshness remains.
+35focused/full744PASS; exactb763/manifest2bd128 staged27hashverified and new
+exclusiveattended attempt begun. PriorSTOP preserved, no COMPLETEclaim.
+#1102b67 bothValidategreen; reviewerfreshpin awaited; mainhold duringInstall1.
