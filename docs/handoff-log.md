@@ -6176,3 +6176,27 @@ only OMS/v2 changes, ROUND_UP=true, single final repin/dailytimer and strict
 abort/no-recovery discipline retained. Position waits for its actual close,
 not an assumed timer slot. Corrected plan merge time to the authoritative
 GitHub mergedAt12:26:03Z (08:26ET). No production write performed.
+
+### 2026-10-06 08:43 ET - Restoration scope cut and dated deadline (codex-2)
+
+#1097 review-ready target Tuesday2026-10-06 21:00ET, not a current ready/pin
+claim; review Wednesdaymorning and separate afterclose install only after
+pin/GO. Own read49e9be4b confirms prefix fence and unbounded stored/math/
+confirmation-delivery waits still need changes. Deadline/scope/count doc
+c0b74eddd24ebf4ced692c853bea4b43568d295d and PRmetadata published.
+
+Remaining count5 is defined by review-readiness work groups: first-stored-bar
+admission, fixed fail-closed work bounds, recorded JAGX/RETO/MI/lifecycle
+replays, six installed-path no-buy/unchanged-exit composition controls, and
+final rebase/mutations/full-unit failed-name pair/CI. Prefix beforefirstbar
+is parkedrow32, Pause/APUS separatePR, not blocked requirements silently
+declared PASS. Proposed bounds6s stored wall/5sSQL/500ms lock,3s mathematics,
+3s delivery remain unimplemented/unmeasured until tests; timeouts must never
+discard exit evaluations or release an incomplete line. Reviewer remaining
+must-not-break and source/current/revision fences stay intact.
+
+Requested12:00/16:00ET C-row checkpoint automation created ACTIVE
+line-chart-noon-and-16-00-review-readiness, actualhead/evidence/count/revised
+date-hour ETA required, quietchat unless materialblocker/deadlinechange/ready.
+It writes only active/unfrozenhand-off docs, preserving Trows/Boards; deletes
+after verified review-ready delivery. No production/write/merge/activation.
