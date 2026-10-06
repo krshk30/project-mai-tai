@@ -7022,3 +7022,18 @@ repeated poll and completed sell do not reopen an old remainder. These fakeSDK/
 SQLite controls are not invented historical execution evidence. FreshheadCI
 and finalunitpair/pin pending; oldcfe results cannot certify78ee. No production
 write. Expanded103ticketcensus still blocksInstall1 before staging.
+
+### 2026-10-06 15:54 ET - codex-2 C86 WBPOWER exact contract blocker
+
+WBPOWER evidenceheadde30fc63, no runtime source or PR. Reused previousowner's
+completed15:27ET USDGET, not a second independently issued broker request:
+HTTP200/488bytes, legacy margin_power451.405 and cash_power0. Parent verified
+official Webull account-balance reference/Markdown: different supported route
+/trading/assets/balances/get has day_buying_power and reserved-order margin
+fields; this does not certify a legacy alias or reservation subtraction.
+Do not treat a presentbalance as historical MOBX/IPDN funds or an exitprice as
+a MARKET wire bound. AGREE bug/card, UNMEASURED exact availablepower/reservation
+and finalMARKETbasis; building a permit from those guesses is unsafe.
+Parent authorized one bounded documented-route assessment only after previous
+GETcomplete, if SDK/signing supported, no authrefresh/hiddenretry. No codebuild,
+unitpair, CI, ALLON or mutation receipt claimed for this evidence-only lane.
