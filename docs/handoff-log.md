@@ -6868,3 +6868,10 @@ enabled/max0; runnerintegrationpending and oldmanifesthistorical. Solewriter
 asked to publishaccessiblecheckpoint. Bracketparity Step0 is read-only: direct
 exact IPDN child plus MOBX parent/child, owningrule/history and retainedbuying-
 powerrefusalcount. No tradingbuild, production/env/order/ledger action.
+
+### 2026-10-06 14:59:11 ET - codex-2 C71 time-label correction
+
+The preceding C71 heading15:00 was rounded ahead, not an observed as-of time.
+Actual toolclock/read receipt was14:58:58ET; Crow corrected to that value.
+Evidence, result and no-production disposition unchanged. This note preserves
+the original append-only narrative rather than rewriting its heading.
