@@ -28,7 +28,7 @@ import json
 import logging
 import math
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Callable, Deque, Iterable, Literal, Mapping
@@ -43,6 +43,7 @@ from project_mai_tai.events import (
     stream_name,
 )
 from project_mai_tai.fanout_identity import fanout_slot_for_source, fanout_slot_id
+from project_mai_tai.strategy_core.legacy_resting import LegacyRestingOrder
 from project_mai_tai.fanout_outcome_consumer import (
     NFQ_RELEASE_PREFIXES,
     POSITIVE_HOLD_OUTCOMES,
@@ -4562,6 +4563,10 @@ class SchwabV2Strategy:
         cooldown). No-op unless the sub-flag is on. Returns a market-buy open draft or None."""
         if self._rpg_entry_owned(state):
             return None
+        self._restore_legacy_resting_state(state)
+        if self._legacy_resting_owned(state, account=self.settings.strategy_schwab_1m_v2_account_name,
+                                      slot="reclaim"):
+            return None
         if not self._cw_v2_enabled:
             return None
         if self._flip_owned_first_entry_enabled:
@@ -4908,6 +4913,133 @@ class SchwabV2Strategy:
         return bool(getattr(getattr(self, "settings", None),
                             "strategy_schwab_1m_v2_resting_buy_round_up_enabled", False))
 
+    def legacy_resting_accounts(self) -> dict[str, str]:
+        accounts = {self.settings.strategy_schwab_1m_v2_account_name: "schwab"}
+        if self._dual_broker_fanout_enabled:
+            account = self.settings.strategy_schwab_1m_v2_webull_account_name
+            if account and account not in accounts:
+                accounts[account] = "webull"
+        return accounts
+
+    def configure_legacy_resting_recovery(self) -> None:
+        self._legacy_resting_orders: dict[str, LegacyRestingOrder] = {}
+        self._legacy_resting_readable: set[str] = set()
+        self._legacy_resting_applied: set[tuple[str, str, int]] = set()
+
+    def apply_legacy_resting_book(
+        self, records: list[LegacyRestingOrder], *, readable_accounts: set[str],
+    ) -> None:
+        if not self._resting_round_up_enabled():
+            return
+        if not hasattr(self, "_legacy_resting_orders"):
+            self.configure_legacy_resting_recovery()
+        updated = {record.order_id: record for record in records}
+        linked = {f"intent:{record.intent_id}" for record in records if record.intent_id}
+        for key, old in self._legacy_resting_orders.items():
+            if key in linked:
+                continue
+            new = updated.get(key)
+            if new is None:
+                # Disappearing rows and failed reads never prove clearance.
+                updated[key] = old if old.phase in {"consumed", "clear"} else replace(old, phase="unknown")
+            elif old.phase == "consumed" and new.phase == "clear":
+                updated[key] = old
+        self._legacy_resting_orders = updated
+        self._legacy_resting_readable = set(readable_accounts)
+        for symbol in {record.symbol for record in updated.values()}:
+            self._restore_legacy_resting_state(self.watchlist_state(symbol))
+
+    def _legacy_resting_owned(self, state: SymbolState, *, account: str, slot: str) -> bool:
+        if not self._resting_round_up_enabled() or not hasattr(self, "_legacy_resting_orders"):
+            return False
+        if account not in self._legacy_resting_readable:
+            return True
+        return any(record.account == account and record.symbol == state.symbol and (
+            record.phase in {"unknown", "working"} or (
+                record.phase == "consumed" and record.segment == int(state.fanout_segment_id or 0)
+                and record.slot == slot)) for record in self._legacy_resting_orders.values())
+
+    def _restore_legacy_resting_state(self, state: SymbolState) -> None:
+        if not self._resting_round_up_enabled() or not hasattr(self, "_legacy_resting_orders"):
+            return
+        accounts = self.legacy_resting_accounts()
+        for account, leg in accounts.items():
+            records = [record for record in self._legacy_resting_orders.values()
+                       if record.account == account and record.symbol == state.symbol]
+            live = [record for record in records if record.phase in {"unknown", "working"}]
+            for record in records:
+                if account not in self._legacy_resting_readable or record.phase == "unknown":
+                    continue
+                if record.phase == "working" and len(live) != 1:
+                    continue
+                if not state.fanout_segment_id and record.phase == "working":
+                    state.fanout_segment_id = record.segment
+                if record.segment != int(state.fanout_segment_id or 0):
+                    continue
+                key = (record.order_id, record.phase, record.segment)
+                if key in self._legacy_resting_applied:
+                    continue
+                generation = getattr(state, f"resting_{leg}_generation")
+                if generation and generation != record.generation:
+                    continue
+                if record.phase == "working":
+                    # The shared manager can represent only one slot at once.
+                    if state.resting_active and state.resting_slot != record.slot:
+                        continue
+                    state.resting_active = state.resting_is_broker_order = True
+                    state.resting_slot = state.last_resting_placed_slot = record.slot
+                    state.resting_level = record.level
+                    setattr(state, f"resting_{leg}_generation", record.generation)
+                    setattr(state, f"resting_{leg}_quantity", record.quantity)
+                    setattr(state, f"resting_{leg}_wire_stop", record.stop)
+                    setattr(state, f"resting_{leg}_wire_limit", record.limit)
+                    if leg == "schwab":
+                        state.resting_trigger = record.stop
+                        state.resting_wire_cap = record.limit
+                    else:
+                        if not state.resting_schwab_quantity:
+                            state.resting_trigger = record.stop
+                        state.webull_resting_active = True
+                        state.webull_resting_generation_id = record.mirror_generation
+                        state.fanout_webull_claimed = True
+                        state.fanout_claim_slot_id = record.slot_id
+                        state.fanout_claim_slot = record.economic_slot
+                        state.fanout_claim_attempt_id = record.client_id
+                        state.fanout_claim_outcome = "held"
+                else:
+                    if record.phase == "consumed":
+                        if leg == "webull":
+                            self._consume_fanout_webull_slot(state, record.economic_slot)
+                        elif record.slot == "first":
+                            state.cw_resting_taken = True
+                        else:
+                            state.cw_reclaim_taken = True
+                    setattr(state, f"resting_{leg}_quantity", 0)
+                    setattr(state, f"resting_{leg}_wire_stop", 0.0)
+                    setattr(state, f"resting_{leg}_wire_limit", 0.0)
+                    if leg == "webull":
+                        state.webull_resting_active = False
+                        state.fanout_webull_claimed = False
+                    else:
+                        state.resting_wire_cap = 0.0
+                    if not state.resting_schwab_quantity and not state.resting_webull_quantity:
+                        state.resting_active = state.resting_is_broker_order = False
+                        state.resting_trigger = state.resting_level = 0.0
+                self._legacy_resting_applied.add(key)
+
+    def _legacy_resting_cancel_identity(self, state: SymbolState, account: str) -> dict[str, str]:
+        if not self._resting_round_up_enabled():
+            return {}
+        records = [record for record in getattr(self, "_legacy_resting_orders", {}).values()
+                   if record.account == account and record.symbol == state.symbol
+                   and record.broker_id and record.client_id and record.phase in {"working", "unknown"}
+                   and record.generation in {
+                       state.resting_schwab_generation, state.resting_webull_generation}]
+        if len(records) != 1:
+            return {}
+        record = records[0]
+        return {"target_client_order_id": record.client_id, "broker_order_id": record.broker_id}
+
     def _resting_wire_metadata(self, trigger: float, *, leg: str = "schwab") -> dict[str, str]:
         if not self._resting_round_up_enabled():
             return {}
@@ -4977,11 +5109,14 @@ class SchwabV2Strategy:
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
     def _queue_resting_place(self, state: SymbolState, line: float, *, slot: str = "first") -> None:
+        self._restore_legacy_resting_state(state)
         settings = getattr(self, "settings", None)
         primary_account = str(getattr(settings, "strategy_schwab_1m_v2_account_name", ""))
         webull_account = str(getattr(settings, "strategy_schwab_1m_v2_webull_account_name", ""))
         primary_blocked = self._rpg_entry_owned(state, account=primary_account)
         webull_blocked = self._rpg_entry_owned(state, account=webull_account)
+        primary_blocked |= self._legacy_resting_owned(state, account=primary_account, slot=slot)
+        webull_blocked |= self._legacy_resting_owned(state, account=webull_account, slot=slot)
         for job in getattr(self, "_rpg_handoffs", {}).values():
             if job["old"]["symbol"] != state.symbol or job["phase"] != "placed" or job.get("replacement_filled"):
                 continue
@@ -5290,6 +5425,8 @@ class SchwabV2Strategy:
         primary_account = str(getattr(settings, "strategy_schwab_1m_v2_account_name", ""))
         webull_account = str(getattr(settings, "strategy_schwab_1m_v2_webull_account_name", ""))
         skip_primary = reason == "reprice" and self._rpg_leg_owned(state, primary_account)
+        if not was_schwab_quantity and was_webull_resting and self._legacy_resting_cancel_identity(state, webull_account):
+            skip_primary = True
         if reason == "reprice" and self._rpg_leg_owned(
                 state, webull_account):
             was_webull_resting = False
@@ -5387,6 +5524,7 @@ class SchwabV2Strategy:
                 quantity=Decimal(was_schwab_quantity or self._atr_qty),
                 reason="schwab_1m_v2 resting-entry cancel",
                 metadata={"resting_entry_cancel": "true", "reason": reason,
+                          **self._legacy_resting_cancel_identity(state, primary_account),
                           **reprice_metadata,
                           "rpg_resting_generation": state.resting_schwab_generation,
                           "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
@@ -5439,6 +5577,7 @@ class SchwabV2Strategy:
                 quantity=Decimal(was_webull_quantity or self._webull_fanout_qty),
                 reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
                 metadata={"resting_entry_cancel": "true", "reason": webull_reason,
+                          **self._legacy_resting_cancel_identity(state, webull_account),
                           **reprice_metadata,
                           **({"rpg_old_stop_price": f"{was_webull_trigger:.4f}"}
                              if reprice_metadata else {}),
@@ -5707,6 +5846,7 @@ class SchwabV2Strategy:
         after the liquidity-floor, minimum-short-bars, live-bar and stop<=ask gates, so a bar that
         fails any of those remains silent. The line means "would have rested but for the slot",
         not "every short bar"."""
+        self._restore_legacy_resting_state(state)
         self._first_rest_quote_wait_valid(state, atr_signal)
         if not (self._resting_entry_enabled and self._cw_v2_enabled):
             return
@@ -6210,6 +6350,10 @@ class SchwabV2Strategy:
         broker fill (once triggered, stop re-arming and wait for the position to confirm)."""
         if not (self._eh_resting_enabled and self._cw_v2_enabled):
             return None
+        self._restore_legacy_resting_state(state)
+        if self._legacy_resting_owned(state, account=self.settings.strategy_schwab_1m_v2_account_name,
+                                      slot=state.resting_slot):
+            return None
         if self._entries_held:                        # boot-hold suppresses all entries
             return None
         if not self._resting_session_is_eh():         # RTH -> the broker stop-limit owns the cross
@@ -6490,6 +6634,9 @@ class SchwabV2Strategy:
         anchors the native OCO off `entry_price` exactly like the Schwab primary); in EXTENDED HOURS
         a plain LIMIT that the bot's EH-routing + the OMS reactive-EH builder re-price to a marketable,
         band-capped EH-LIMIT off the OMS's own fresh ask (a MARKET/OCO 417s in EH on Webull)."""
+        if self._legacy_resting_owned(state, account=self.settings.strategy_schwab_1m_v2_webull_account_name,
+                                      slot=entry_slot or ("reclaim" if source == "reactive" else state.resting_slot)):
+            return None
         quote = sizing_quote or state.last_quote
         sized = self._sized_open(
             state.symbol, leg="webull", price=getattr(quote, "ask_price", None),
@@ -6579,6 +6726,10 @@ class SchwabV2Strategy:
         Templated on `_eh_resting_cross_check` but RTH-only. No-op unless fan-out is ON AND a Schwab
         RTH resting order is live AND flat AND not already claimed this flip."""
         if not self._dual_broker_fanout_enabled:
+            return
+        self._restore_legacy_resting_state(state)
+        if self._legacy_resting_owned(state, account=self.settings.strategy_schwab_1m_v2_webull_account_name,
+                                      slot=state.resting_slot):
             return
         if not (self._resting_entry_enabled and self._cw_v2_enabled):
             return
