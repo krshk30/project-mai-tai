@@ -57,7 +57,7 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
         if field.annotation is bool or bool in get_args(field.annotation)
     }
     by_name = {entry["name"]: entry for entry in entries}
-    assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["expected"] is False
+    assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["expected"] is True
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["owning_service"] == "oms"
     for suffix in ("pm_print_ask_confirm", "pm_flip_wait", "pm_rest_reprice", "atr_reprice_handoff"):
         name = f"strategy_schwab_1m_v2_{suffix}_enabled"
