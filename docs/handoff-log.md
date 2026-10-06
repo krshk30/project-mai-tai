@@ -6023,3 +6023,7 @@ operator-question dependency; retained after20:00-only build/test/install and
 exact shape checks in the gate, static non-paper pins, first real Wednesday
 rehearsal and Claude06:22verification. No duplicate automation or box unit
 created. Actual installed hashes and Wed06:20NEXT remain owed tonight.
+
+Timestamp correction: the automation receipt was recorded at07:17ET (clock
+11:17:03UTC), not07:19ET as the preceding heading says. C19 corrected; narrative
+heading retained under the append-only rule.
