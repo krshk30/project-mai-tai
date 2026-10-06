@@ -1,0 +1,910 @@
+{
+  "schema_version": 1,
+  "baseline": "2026-09-29 after 3389090a deploy; read-only /proc audit of owning processes",
+  "flags": [
+    {
+      "name": "strategy_schwab_1m_v2_pm_print_ask_confirm_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "reason": "PMPRINT1 requires a fresh ask at the trigger before a pre-market software cross; both legs use that ask.",
+      "ruling": "Operator 2026-10-05 15:00 ET: all four reviewed PMPRINT/PMFLIP/PMREST/RPG switches ON together. Exact-SHA install GO and fresh process verification still required; no default change."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_pm_flip_wait_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "reason": "PMFLIP1 separates a pre-market BUY flip from a cross taken, preserving the existing take-down.",
+      "ruling": "Operator 2026-10-05 15:00 ET: PMFLIP1 ON with PMPRINT1, PMREST1 and RPG. Supersedes the earlier staged OFF ruling; no default change."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_pm_rest_reprice_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "reason": "PMREST1 moves a software rest in the same evaluation without resetting its ownership or thin-bar streak.",
+      "ruling": "Operator 2026-10-05 15:00 ET: PMREST1 ON with PMPRINT1, PMFLIP1 and RPG. Supersedes the earlier staged OFF ruling; no default change."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_atr_reprice_handoff_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms"],
+      "reason": "RPG1 admits new durable fast-reprice handoffs; OFF never abandons existing ownership.",
+      "ruling": "Operator 2026-10-05 15:00 ET: RPG handoff ON with all three PM switches. Supersedes staged OFF admission; durable ownership/proof guards and exact-SHA install GO remain required."
+    },
+    {
+      "name": "market_data_subscription_startup_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "also_check_services": ["schwab-1m-v2", "orb", "orb-schwab", "momentum-paper"],
+      "reason": "COLDSTART1 announces each consumer's current subscription set on startup, even when empty.",
+      "ruling": "2026-10-03 operator: every bot tells the gateway its watchlist on startup; Redis persistence stays OFF. Ships ON with the next reviewed RPG1/COLDSTART1 install."
+    },
+    {
+      "name": "oms_v2_webull_mirror_fresh_price_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "NFQ1 holds unpriced Webull mirrors and retries through the serial lane.",
+      "ruling": "Operator BUGS v3 FINAL 2026-10-02: on with the NFQ1 deploy, separate from tonight's b8 install."
+    },
+    {
+      "name": "tradingview_alerts_enabled",
+      "expected": true,
+      "owning_service": "control",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "tradingview_alerts_auto_sync_enabled",
+      "expected": true,
+      "owning_service": "control",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "tradingview_alerts_headless",
+      "expected": true,
+      "owning_service": "control",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "tradingview_alerts_notification_smtp_starttls",
+      "expected": true,
+      "owning_service": "control",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "momentum_paper_enabled",
+      "expected": true,
+      "owning_service": "momentum-paper",
+      "reason": "Existing broker-disconnected Momentum paper service remains running; Option A was reverted.",
+      "ruling": "2026-09-28 operator declined stopping current paper service; 2026-09-29 #1068 revert."
+    },
+    {
+      "name": "market_data_warmup_enabled",
+      "expected": true,
+      "owning_service": "market-data",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "market_data_live_aggregate_stream_enabled",
+      "expected": false,
+      "owning_service": "market-data",
+      "reason": "Default-OFF optional path; no operator ruling to activate it.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_macd_30s_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_polygon_30s_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Idle polygon_30s paper bot was switched off without changing live v2.",
+      "ruling": "2026-09-28 operator approved polygon_30s OFF and strategy-only restart."
+    },
+    {
+      "name": "strategy_schwab_1m_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_macd_30s_live_aggregate_bars_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_macd_30s_live_aggregate_fallback_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "strategy_polygon_30s_live_aggregate_bars_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_polygon_30s_force_tick_built_mode",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_polygon_30s_live_aggregate_fallback_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_polygon_30s_force_live_bar_only_mode",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_macd_30s_massive_indicator_overlay_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "strategy_macd_30s_probe_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_macd_30s_reclaim_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_macd_30s_retest_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "orb_enabled",
+      "expected": true,
+      "owning_service": "orb",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit.",
+      "also_check_services": [
+        "orb-schwab",
+        "oms"
+      ]
+    },
+    {
+      "name": "orb_live_schwab_orders_enabled",
+      "expected": true,
+      "owning_service": "orb-schwab",
+      "reason": "The approved ORB Schwab live entry route must be enabled in the running producer and OMS.",
+      "ruling": "2026-09-30 operator accepted the 1-of-2 partial-fill gap and ruled ORB live ON after #1075.",
+      "also_check_services": [
+        "oms"
+      ]
+    },
+    {
+      "name": "orb_schwab_observe_enabled",
+      "expected": false,
+      "owning_service": "orb-schwab",
+      "reason": "Observe-only and live sending are mutually exclusive at service startup.",
+      "ruling": "2026-09-30 operator ruled ORB live ON after #1075; observe-only must be OFF."
+    },
+    {
+      "name": "orb_intrabar_reclaim_enabled",
+      "expected": false,
+      "owning_service": "orb",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "orb_running_high_enabled",
+      "expected": true,
+      "owning_service": "orb",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "orb_oms_quote_priced_entry_enabled",
+      "expected": true,
+      "owning_service": "orb",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "orb_resting_entry_enabled",
+      "expected": true,
+      "owning_service": "orb",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "orb_paper_lifecycle_enabled",
+      "expected": true,
+      "owning_service": "orb",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "orb_paper_atr_exit_enabled",
+      "expected": true,
+      "owning_service": "orb",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "orb_paper_atr_entry_gate_enabled",
+      "expected": false,
+      "owning_service": "orb",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "orb_paper_four_red_delay_enabled",
+      "expected": false,
+      "owning_service": "orb",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "orb_window_flatten_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "oms_v2_cw_target_stay_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "A software CW_TARGET sell rests until a per-leg -1% release or a safety exit takes ownership.",
+      "ruling": "2026-10-01 operator Card: target sell stays; both broker legs release at -1%."
+    },
+    {
+      "name": "oms_v2_overnight_flatten_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "19:55 flatten remains enabled.",
+      "ruling": "2026-09-29 operator Card 10: keep the overnight sell-off."
+    },
+    {
+      "name": "oms_v2_rth_edge_bracket_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "oms_v2_stand_down_clear_rearm_enabled",
+      "expected": false,
+      "owning_service": "oms",
+      "reason": "Interrupted stand-down re-arm remains off pending a separate ruling.",
+      "ruling": "2026-09-27 flag audit: re-arm interrupted; operator enabled none."
+    },
+    {
+      "name": "oms_v2_eod_oco_transition_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "16:00 handover cancels and confirms RTH exits before software selling.",
+      "ruling": "2026-09-29 operator Card 10; #1066 deployed."
+    },
+    {
+      "name": "oms_v2_eod_cancel_reexit_enabled",
+      "expected": false,
+      "owning_service": "oms",
+      "reason": "The older 16:01 cancel-and-reexit experiment stays off; Card 10 uses the separately enabled 16:00 handover.",
+      "ruling": "2026-09-29 operator Card 10 activates broker-confirmed 16:00 handover, not the parked 16:01 experiment."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_webull_mirror_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_webull_mirror_eh_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_dual_broker_fanout_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit.",
+      "also_check_services": [
+        "oms"
+      ]
+    },
+    {
+      "name": "strategy_schwab_1m_v2_streamer_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_gateway_register_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_tick_capture_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_timesale_capture_enabled",
+      "expected": false,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Schwab TIMESALE is unavailable; LEVELONE capture remains.",
+      "ruling": "2026-09-27 flag audit: TIMESALE not served by Schwab; operator enabled none."
+    },
+    {
+      "name": "market_capture_enabled",
+      "expected": true,
+      "owning_service": "market-capture",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_atr_flip_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_atr_massive_seed_enabled",
+      "expected": false,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Massive ATR seed remains parked pending parity and a separate ruling.",
+      "ruling": "2026-09-29 operator: parked Massive seed OFF; board 32."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_atr_only_mode",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_go_live_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_gap_hold_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Hold on a real live-bar gap, not healthy cadence.",
+      "ruling": "2026-09-27 operator approved GAP_HOLD ON after #1043."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_atr_flip_use_max_state_age",
+      "expected": false,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Historical age-filter experiment is not part of the current live entry rule.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_atr_flip_rearm_enabled",
+      "expected": false,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Legacy ATR flip re-arm is dead under CW-v2.",
+      "ruling": "2026-09-27 flag audit: re-arm dead under CW-v2; operator enabled none."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_hold_confirm_enabled",
+      "expected": false,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_confirmed_window_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_cw_v2_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_cw_v2_reclaim_enabled",
+      "expected": false,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Second entry in the same BUY-flip segment is disabled; one entry per segment remains.",
+      "ruling": "2026-07-15 operator: I don't want reclaim but don't remove it - add a flag and keep it off."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_flip_owned_first_entry_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "First entry remains flip-owned via the resting buy.",
+      "ruling": "2026-09-29 operator FLAGGATE /proc audit and #1065 live first-slot rule."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_retry_one_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Retry budget belongs to each live SELL cycle.",
+      "ruling": "2026-09-29 operator per-cycle RETRY-ONE ruling; #1065 deployed."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_cw_armed_segment_safety_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_session_time_roll_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_cw_v2_reactive_entry_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_cw_v2_resting_entry_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_confirmation_exit_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_confirmation_account_neutral_discovery_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_eh_resting_stream_cross_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Pre-market soft rests may consume eligible streamed prints; default-ON fix.",
+      "ruling": "2026-09-28 #1054 operator-approved EH1 pre-market-only deploy."
+    },
+    {
+      "name": "scanner_feed_retention_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "scanner_confirmed_capture_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "market_data_archive_retention_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "strategy_macd_1m_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_tos_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_runner_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_macd_1m_massive_indicator_overlay_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Dormant legacy or paper-only branch, not an active live fix.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "strategy_macd_1m_taapi_indicator_source_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "news_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "news_ai_shadow_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Optional shadow/promotion path remains inactive.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "news_ai_promote_enabled",
+      "expected": false,
+      "owning_service": "strategy",
+      "reason": "Optional shadow/promotion path remains inactive.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "trade_coach_enabled",
+      "expected": false,
+      "owning_service": "control",
+      "reason": "Optional shadow/promotion path remains inactive.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "trade_coach_shadow_enabled",
+      "expected": false,
+      "owning_service": "control",
+      "reason": "Optional shadow/promotion path remains inactive.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "trade_coach_promote_enabled",
+      "expected": false,
+      "owning_service": "control",
+      "reason": "Optional shadow/promotion path remains inactive.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "alpaca_cancel_unfilled_after_timeout",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "alpaca_paper_cancel_unfilled_after_timeout",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "schwab_token_refresher_enabled",
+      "expected": true,
+      "owning_service": "control",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "schwab_adapter_token_refresh_enabled",
+      "expected": false,
+      "owning_service": "oms",
+      "reason": "Default-OFF optional path; no operator ruling to activate it.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
+    },
+    {
+      "name": "schwab_native_bracket_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "webull_native_bracket_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "webull_bracket_realign_on_fill_enabled",
+      "expected": false,
+      "owning_service": "oms",
+      "reason": "Broker write to realign an OCO after a fill still needs an attended check.",
+      "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; settings.py retained OFF gate."
+    },
+    {
+      "name": "oms_record_native_oco_exit_fills_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Native OCO child fills are recorded before managed-row close.",
+      "ruling": "2026-09-29 operator FLAGGATE /proc audit; #1046 child fill observed."
+    },
+    {
+      "name": "oms_native_oco_exit_poll_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "schwab_tick_archive_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "schwab_emergency_close_rest_rescue_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "webull_native_stop_order_type_map_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "oms_refresh_resting_trigger_orders",
+      "expected": false,
+      "owning_service": "oms",
+      "reason": "Resting STOP entries stay on the book instead of being torn down by the 5-second refresh.",
+      "ruling": "2026-07-23 STABLE-REST fix; settings.py full-exempt default; 2026-09-27 operator retained it."
+    },
+    {
+      "name": "oms_hold_marketable_managed_exit",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "oms_a2_exit_not_sellable_backoff_enabled",
+      "expected": false,
+      "owning_service": "oms",
+      "reason": "Superseded A2 exit backoff path is not active.",
+      "ruling": "2026-09-27 flag audit: A2 backoff superseded; operator enabled none."
+    },
+    {
+      "name": "oms_v2_exit_release_reservation_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "oms_db_timeouts_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "service_db_timeouts_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "oms_v2_exit_management_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "oms_v2_exit_close_on_fill_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "oms_v2_webull_late_close_guard_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Keep the Webull late-close guard active.",
+      "ruling": "2026-09-29 operator FLAGGATE /proc audit of live fixes."
+    },
+    {
+      "name": "oms_armed_stop_persistence_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "oms_native_oco_stand_down_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Software exits stand down while a native OCO is confirmed working.",
+      "ruling": "2026-09-29 operator Card 10, broker-confirmed 16:00 handover."
+    },
+    {
+      "name": "oms_native_oco_resolve_flat_reconcile_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Native OCO flat reconciliation remains active.",
+      "ruling": "2026-09-29 operator FLAGGATE /proc audit; #1046."
+    },
+    {
+      "name": "oms_v2_emit_native_oco_bracket_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_webull_resting_mirror_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "oms_v2_webull_mirror_deferred_resubmit_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Keep deferred mirror resubmit active.",
+      "ruling": "2026-09-29 operator FLAGGATE /proc audit of live fixes."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_webull_fanout_on_fill_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "oms_v2_rth_fanout_limit_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "oms_cancel_verify_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "oms_v2_eh_entry_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "oms_v2_cw_floor_exit_enabled",
+      "expected": false,
+      "owning_service": "oms",
+      "reason": "Card 10 removes the +2% floor ride; target remains +5%.",
+      "ruling": "2026-09-29 operator Card 10: NO +2% floor ride; floor=false at OMS restart."
+    },
+    {
+      "name": "oms_reconcile_require_positive_flat",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "oms_settlement_probe_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "oms_intent_setup_revalidation_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "dashboard_snapshot_persistence_enabled",
+      "expected": true,
+      "owning_service": "control",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "dashboard_trade_forensics_enabled",
+      "expected": true,
+      "owning_service": "control",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    },
+    {
+      "name": "strategy_history_persistence_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Baseline default-ON capability in the owning running service.",
+      "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
+    },
+    {
+      "name": "strategy_persist_offload_enabled",
+      "expected": true,
+      "owning_service": "strategy",
+      "reason": "Enabled in the owning running service for the approved live configuration.",
+      "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
+    }
+  ]
+}

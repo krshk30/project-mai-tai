@@ -143,10 +143,12 @@ def migration(attempt):
 
 
 def record(attempt):
+    import proof
+    paper_active = proof.approved_paper(proof.service("momentum-paper"))
     before = json.loads((attempt / "before-restart.json").read_text())
     payload = {"schema_version": 1, "snapshot_captured_at_utc": before["captured_at_utc"],
                "source_journal": str(JOURNAL), "service_actions": {
-                   k: "restarted" if k in {"oms", "strategy", "schwab-1m-v2"}
+                   k: "restarted" if k in ({"oms", "strategy", "schwab-1m-v2"} | ({"momentum-paper"} if paper_active else set()))
                    else "deliberately_untouched" for k in before["services"]}}
     exclusive(attempt / "install-record.json", json.dumps(payload, indent=2) + "\n")
     print("INSTALL_RECORD " + str(attempt / "install-record.json"))
@@ -201,7 +203,9 @@ def catalogs(attempt):
 def repin(attempt):
     result = json.loads((attempt / "preopen-candidate.json").read_text())
     expected_question = ["inactive-paper check_identity currently demands active/running; candidate PID0 stays REAL FAILURE, no routing bypass"]
-    if result["review_required"] != expected_question:
+    import proof
+    paper_active = proof.approved_paper(proof.service("momentum-paper"))
+    if result["review_required"] != ([] if paper_active else expected_question):
         raise RuntimeError("unresolved preopen routing disposition; no script write")
     path = Path("/home/trader/preopen.sh")
     original = path.read_bytes()
@@ -230,8 +234,8 @@ def repin(attempt):
     if digest(path) != result["candidate_sha256"] or path.stat().st_mode & 0o777 != 0o700:
         raise RuntimeError("installed preopen bytes/mode drift")
     message = ("PREOPEN_REPIN date=2026-10-06 sha=" + APP + " sha256=" + digest(path)
-               + " backup=" + str(backup) + "; paper PID0 is real, existing active check retained; "
-               "expected identity FAILURE distinct from FLAGGATE paper UNKNOWN2, explicitly reviewed")
+               + " backup=" + str(backup) + ("; paper active PID366242 separately authorized under daily guard; identity/routing intact"
+               if paper_active else "; paper PID0 is real, existing active check retained; expected identity FAILURE distinct from FLAGGATE paper UNKNOWN2"))
     print(message)
     journal(message)
 

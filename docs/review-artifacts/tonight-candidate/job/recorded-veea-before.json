@@ -1,0 +1,42 @@
+{
+  "revision": 0,
+  "phase": "held_unknown",
+  "old": {
+    "client_order_id": "schwab_1m_v2-VEEA-cancel-11f169a6a021",
+    "broker_account_name": "live:orb",
+    "strategy_code": "schwab_1m_v2",
+    "symbol": "VEEA",
+    "side": "buy",
+    "intent_type": "cancel",
+    "quantity": "53",
+    "reason": "schwab_1m_v2 resting-entry cancel (webull mirror)",
+    "metadata": {
+      "resting_entry_cancel": "true",
+      "reason": "reprice",
+      "atr_reprice": "true",
+      "rpg_generation": "18b1c608-f5ff-449b-9278-19cba867ea89",
+      "rpg_short_segment": "1791207000000",
+      "cw_entry_slot": "first",
+      "fanout_segment_id": "1791207242421",
+      "rpg_old_stop_price": "5.5918",
+      "rpg_resting_generation": "cf1c5bef-1928-49aa-91e2-506bf44478be",
+      "fanout_leg": "webull",
+      "fanout_source": "rth_resting_mirror",
+      "webull_mirror_generation_id": "39e9ffe3-0ce7-4d1d-a317-6d8efef0511c",
+      "fanout_slot": "resting",
+      "fanout_slot_id": "3e5b86cb-fe9a-5ff9-bf7e-6270864b061b",
+      "source": "schwab_1m_v2",
+      "strategy_version": "v1.32"
+    },
+    "order_type": "STOP_LIMIT",
+    "time_in_force": "day"
+  },
+  "slot": "first",
+  "segment_id": 1791207242421,
+  "created_at": 1791207365.658557,
+  "next_read_at": 1791207365.658557,
+  "reads": 0,
+  "reason": "exact_old_order_unproven",
+  "local_no_wire": false,
+  "cancel_event_id": "11f169a6-a021-4044-97fa-6d830a043de0"
+}

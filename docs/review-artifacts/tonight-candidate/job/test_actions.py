@@ -70,7 +70,9 @@ def test_exclusive_artifact_cannot_overwrite(tmp_path):
     assert path.read_text() == "first"
 
 
-def test_record_classifies_every_snapshot_unit_and_only_three_restarted(tmp_path):
+def test_record_classifies_every_snapshot_unit_and_only_three_restarted(tmp_path, monkeypatch):
+    import proof
+    monkeypatch.setattr(proof, "service", lambda _: {"MainPID": 0, "NRestarts": 0, "ActiveState": "inactive", "SubState": "dead"})
     before = {"captured_at_utc": "2026-10-05T22:00:00Z", "services": {
         name: {} for name in ("oms", "strategy", "schwab-1m-v2", "orb", "market-data", "momentum-paper")}}
     (tmp_path / "before-restart.json").write_text(json.dumps(before))

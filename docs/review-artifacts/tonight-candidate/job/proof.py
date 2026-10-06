@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
+from decimal import Decimal
 from difflib import unified_diff
 import hashlib
 import json
@@ -32,6 +33,13 @@ FLAGS = tuple("MAI_TAI_STRATEGY_SCHWAB_1M_V2_" + name for name in (
     "ATR_REPRICE_HANDOFF_ENABLED"))
 ENV_FILES = ("/etc/project-mai-tai/project-mai-tai.env", "/etc/project-mai-tai/orb-paper.env")
 MAX_BYTES = 3_000_000
+PAPER_START = "Tue 2026-10-06 01:11:01 UTC"
+RECOVERED = {
+    "4be7cb2d-406b-56db-b597-3783f6e956ff": "schwab_1m_v2-MI-open-1ecf46d44feb",
+    "ba108172-04f6-5659-892b-a0fc10d22b15": "schwab_1m_v2-RETO-open-41cf913d0c96",
+    "ee3d0d07-abea-5fe2-98c9-cace5c08d135": "schwab_1m_v2-APUS-open-38a0c5c6f90d",
+    "faa55c1f-262b-52e2-adcc-280ab1e5e2ff": "schwab_1m_v2-VEEA-open-2d004a27acd7",
+}
 
 
 class Unknown(RuntimeError):
@@ -182,6 +190,10 @@ def active(state):
         state["ActiveState"], state["SubState"]) == ("active", "running")
 
 
+def approved_paper(state):
+    return active(state) and state["MainPID"] == 366242 and state["ExecMainStartTimestamp"] == PAPER_START
+
+
 def validate_checkpoint(before, after, phase):
     need(before["schema_version"] == after["schema_version"] == 1, "bad checkpoint shape")
     need(before["approved_sha"] == after["approved_sha"] == SHA, "checkpoint target mismatch")
@@ -191,6 +203,9 @@ def validate_checkpoint(before, after, phase):
     need(after["env_files"][ENV_FILES[1]] == before["env_files"][ENV_FILES[1]], "orb-paper.env changed")
     need(after["preopen_sha256"] == before["preopen_sha256"], "preopen changed before reviewed repin")
     for name in set(SERVICES) - set(CHANGED):
+        if name == "momentum-paper" and phase == "final" and before["services"][name]["MainPID"] == 0:
+            need(approved_paper(after["services"][name]), "separately authorized paper identity drift")
+            continue
         need(after["services"][name] == before["services"][name], "untouched identity changed: " + name)
     stops = {"v2-stopped": {"schwab-1m-v2"}, "strategy-stopped": {"schwab-1m-v2", "strategy"},
              "oms-stopped": set(CHANGED), "migrated": set(CHANGED),
@@ -287,7 +302,8 @@ def census_after(repo, before):
     disposition = []
     for token, job in current.items():
         old = prior[token]
-        need(job["old"] == old["old"], "old ticket identity changed: " + token)
+        if job["old"] != old["old"]:
+            recovered_identity(repo, token, old, job)
         phase = job["phase"]
         proven = old_buy_proven_clear(job)
         need(phase not in {"ready", "clear", "waiting", "cancelling", "prepared", "submitted", "submit_unknown"},
@@ -306,7 +322,47 @@ def census_after(repo, before):
             "limit": "SQL activity/identity proof only; separate fresh broker dispatch census mandatory"}
 
 
-def parse_gate(output, code, flags, numerics):
+def validate_recovered_identity(token, old, job, evidence, orders):
+    need(token in RECOVERED and job["old"]["client_order_id"] == RECOVERED[token], "unreviewed recovery identity")
+    need(job["phase"] == "expired" and job.get("reason") == "window_closed" and job.get("local_no_wire") is True,
+         "recovery is not proven local-no-wire window expiry")
+    a, b = old["old"], job["old"]
+    need({k: v for k, v in a.items() if k not in {"metadata", "client_order_id"}} ==
+         {k: v for k, v in b.items() if k not in {"metadata", "client_order_id"}}, "recovery changed order core")
+    need(all(b["metadata"].get(k) == v for k, v in a["metadata"].items()), "recovery changed old metadata")
+    need(old["slot"] == job["slot"] and old["segment_id"] == job["segment_id"], "recovery changed slot/segment")
+    need(b["broker_account_name"] == "live:orb" and not orders, "recovery has a broker dispatch")
+    matches = [r for r in evidence if r["payload"].get("metadata", {}).get("fanout_attempt_id") == RECOVERED[token]]
+    need(len(matches) == 1, "local original intent proof absent/ambiguous")
+    row = matches[0]
+    p, m = row["payload"], row["payload"]["metadata"]
+    need(row["status"] == "rejected" and p.get("refusal_origin") == "skipped_before_submit" and
+         p.get("refusal_code") == "webull_mirror_precheck_deferred", "not skipped-before-submit proof")
+    need(row["account"] == b["broker_account_name"] and row["symbol"] == b["symbol"] and
+         Decimal(str(row["quantity"])) == Decimal(b["quantity"]), "original intent account/symbol/quantity mismatch")
+    for key in ("rpg_resting_generation", "fanout_slot_id", "fanout_segment_id", "cw_entry_slot"):
+        need(m.get(key) == b["metadata"].get(key), "original intent identity mismatch: " + key)
+
+
+def recovered_identity(repo, token, old, job):
+    from sqlalchemy import create_engine, text
+    from project_mai_tai.settings import Settings
+    engine = create_engine(Settings(_env_file=ENV_FILES[0]).database_url, connect_args={"connect_timeout": 5})
+    generation = old["old"]["metadata"]["rpg_resting_generation"]
+    try:
+        with engine.connect() as c:
+            c.exec_driver_sql("SET TRANSACTION READ ONLY")
+            c.exec_driver_sql("SET LOCAL statement_timeout='5s'")
+            params = {"generation": generation, "account": "live:orb"}
+            evidence = [dict(r) for r in c.execute(text("SELECT t.status,t.payload,t.symbol,t.quantity,a.name account FROM trade_intents t JOIN broker_accounts a ON a.id=t.broker_account_id WHERE a.name=:account AND t.payload->'metadata'->>'rpg_resting_generation'=:generation LIMIT 65"), params).mappings()]
+            orders = [dict(r) for r in c.execute(text("SELECT b.id FROM broker_orders b JOIN broker_accounts a ON a.id=b.broker_account_id WHERE a.name=:account AND (b.payload->'metadata'->>'rpg_resting_generation'=:generation OR b.client_order_id=:coid) LIMIT 65"), dict(params, coid=RECOVERED.get(token, ""))).mappings()]
+            need(len(evidence) < 65 and len(orders) < 65, "local proof overflow")
+            validate_recovered_identity(token, old, job, evidence, orders)
+    finally:
+        engine.dispose()
+
+
+def parse_gate(output, code, flags, numerics, *, paper_active=False):
     total = sum(1 + len(row.get("also_check_services", [])) for row in flags["flags"] + numerics["settings"])
     numeric_names = {row["name"] for row in numerics["settings"]}
     numeric_total = sum(1 + len(row.get("also_check_services", [])) for row in numerics["settings"])
@@ -325,25 +381,31 @@ def parse_gate(output, code, flags, numerics):
     need(len(cold) == 1 and "momentum-paper" in cold[0].get("also_check_services", []),
          "literal COLDSTART paper catalog identity missing")
     allowed = {("momentum_paper_enabled", "momentum-paper"), ("market_data_subscription_startup_enabled", "momentum-paper")}
-    need(unknown == allowed and code == 2 and final == ["Final call: UNKNOWN; checked=145/147 mismatches=0 unknown=2"],
+    if paper_active:
+        need(not unknown and code == 0 and final == ["Final call: PASS; checked=147/147 mismatches=0 unknown=0"],
+             "active-paper gate not147/147 PASS")
+    else:
+        need(unknown == allowed and code == 2 and final == ["Final call: UNKNOWN; checked=145/147 mismatches=0 unknown=2"],
          "not the exact acknowledged paper UNKNOWN2 disposition")
     need(all(line.startswith("PASS") for identity, line in zip(identities, rows) if identity[0] in numeric_names),
          "numeric8/8 not proven")
-    return {"actual_checker_rc": code, "actual_verdict": "UNKNOWN", "checked": 145, "total": total,
+    return {"actual_checker_rc": code, "actual_verdict": "PASS" if paper_active else "UNKNOWN", "checked": 147 if paper_active else 145, "total": total,
             "numeric_pass": 8, "numeric_total": 8, "unknown_rows": sorted(unknown),
-            "disposition": "exact acknowledged paper coverage limit; NOT FLAGGATE PASS"}
+            "disposition": "active-paper full gate" if paper_active else "exact acknowledged paper coverage limit; NOT FLAGGATE PASS"}
 
 
 def gates(args):
     for path, expected in ((args.checker, args.checker_sha256), (args.catalog, args.catalog_sha256),
                            (args.numeric, args.numeric_sha256)):
         need(re.fullmatch(r"[0-9a-f]{64}", expected) is not None and sha(read(path)) == expected, "isolated gate hash mismatch")
-    need(service("momentum-paper")["MainPID"] == 0 and service("momentum-paper")["ActiveState"] == "inactive",
-         "paper inactive coverage disposition no longer applicable")
+    paper = service("momentum-paper")
+    paper_active = approved_paper(paper)
+    need(paper_active or (paper["MainPID"] == 0 and paper["ActiveState"] == "inactive"), "paper identity drift")
     code, output, error = run([sys.executable, args.checker, "--catalog", args.catalog,
                                "--numeric-catalog", args.numeric], check=False)
     need(not error.strip(), "gate checker stderr; inspect without hiding")
-    result = parse_gate(output, code, load(args.catalog), load(args.numeric))
+    need(service("momentum-paper") == paper, "paper changed during gate")
+    result = parse_gate(output, code, load(args.catalog), load(args.numeric), paper_active=paper_active)
     result["raw_output"] = output
     return result
 
@@ -377,8 +439,9 @@ def repin(args):
     need(record["snapshot_captured_at_utc"] == snapshot["captured_at_utc"], "official receipt timestamp mismatch")
     actions = record["service_actions"]
     need(set(actions) == set(snapshot["services"]), "official action census incomplete")
-    need({name for name, action in actions.items() if action == "restarted"} == set(CHANGED), "restart declarations not exactthree")
-    need(all(action == ("restarted" if name in CHANGED else "deliberately_untouched") for name, action in actions.items()),
+    changed = set(CHANGED) | ({"momentum-paper"} if approved_paper(after["services"]["momentum-paper"]) else set())
+    need({name for name, action in actions.items() if action == "restarted"} == changed, "restart declarations not exact authorized set")
+    need(all(action == ("restarted" if name in changed else "deliberately_untouched") for name, action in actions.items()),
          "new/extra service action not authorized")
     script = original
     for key, value in {"EXPECTED_DATE": NEXT, "EXPECTED_SHA": SHA, "SNAPSHOT": args.snapshot,
@@ -522,12 +585,16 @@ def bar_holes(repo, stopped, started):
       (SELECT min(bar_time) FROM series s WHERE s.symbol=live.symbol AND bar_time>:started) following
       FROM live_at_stop live ORDER BY live.symbol LIMIT 65
     """
+    local_stop, local_start = moment(stopped).astimezone(ZoneInfo("America/New_York")), moment(started).astimezone(ZoneInfo("America/New_York"))
+    offhours = local_stop.date() == local_start.date() and local_stop.hour >= 20 and local_start.hour >= 20
     try:
         with engine.connect() as connection:
             connection.exec_driver_sql("SET TRANSACTION READ ONLY")
             connection.exec_driver_sql("SET LOCAL statement_timeout='5s'")
             rows = [dict(row) for row in connection.execute(text(query),
                 {"stopped": stopped, "started": started}).mappings()]
+            offhours_count = connection.execute(text("SELECT count(*) FROM strategy_bar_history WHERE strategy_code='schwab_1m_v2' AND interval_secs=60 AND source='live' AND bar_time>=:cutoff AND bar_time<=:started"),
+                {"cutoff": local_stop.replace(hour=20, minute=0, second=0, microsecond=0).astimezone(UTC), "started": started}).scalar_one() if offhours else None
             connection.rollback()
     finally:
         engine.dispose()
@@ -536,10 +603,22 @@ def bar_holes(repo, stopped, started):
     pending = [row["symbol"] for row in rows if row["prior"] is None or row["following"] is None]
     gaps = [row["symbol"] for row in rows if row["prior"] is not None and row["following"] is not None
             and (moment(row["following"]) - moment(row["prior"])).total_seconds() > 90]
+    if offhours and offhours_count == 0 and not rows:
+        return offhours_bar_receipt(stopped, started, offhours_count)
     return {"stop_checkpoint_utc": stopped, "new_v2_start_utc": started, "live_at_stop": len(rows),
             "rows": rows, "pending": pending, "spanning_over90s": gaps,
             "verdict": "PASS" if rows and not pending and not gaps else "UNKNOWN",
             "limit": "quiet/empty or >90s needs reviewed v2_restart_evidence report/independent market-silence proof; not waived"}
+
+
+def offhours_bar_receipt(stopped, started, count):
+    a, b = moment(stopped), moment(started)
+    x, y = a.astimezone(ZoneInfo("America/New_York")), b.astimezone(ZoneInfo("America/New_York"))
+    need(x.date() == y.date() and x.hour >= 20 and y.hour >= 20 and b >= a and count == 0,
+         "not a proven after-session no-bar interval")
+    return {"verdict": "NOT_APPLICABLE_OFFHOURS", "stop_checkpoint_utc": str(a), "new_v2_start_utc": str(b),
+            "live_rows_since_session_end": count, "process_downtime_seconds": (b-a).total_seconds(),
+            "market_bar_hole_minutes": None, "delivery": "UNMEASURED until next live session; no bars scheduled after20:00"}
 
 
 def runner_mode(command, arguments):
