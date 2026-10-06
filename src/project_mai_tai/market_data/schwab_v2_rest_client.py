@@ -405,8 +405,8 @@ class SchwabV2RestClient:
     def fetch_session_history(self, symbol: str, anchor_ms: int, current_bar_ms: int):
         """Return the entire anchored response, refusing partial or malformed payloads.
 
-        This request has no delivery cursor. Candle absence is not market-silence
-        evidence; the strategy's existing sparse-bar clamp remains authoritative.
+        This request has no delivery cursor or seed cap. Completeness is from
+        the anchored provider response, not the number of candles returned.
         """
         from project_mai_tai.strategy_core.session_line_restore import (
             SessionCoverage, SessionLineRestoration, history_fingerprint,
@@ -451,6 +451,7 @@ class SchwabV2RestClient:
         return bars, SessionCoverage(
             "schwab_rest_full_session", anchor_ms, end_ms,
             tuple(bar.timestamp_ms for bar in bars), True, history_fingerprint(bars),
+            prefix_complete=True,
         )
 
     def _fetch_quotes(self, symbols: list[str]) -> list[Quote]:

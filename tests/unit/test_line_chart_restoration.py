@@ -99,9 +99,8 @@ def test_recorded_jagx_readd_34_minute_hole_blocks_until_122012_backfill():
                for row, bar in pairs if bar in late)
     for bar in late:
         ledger.observe(bar)
-    # Repairing the re-add hole does not prove the three earlier sparse gaps.
-    assert ledger.prepare() is None
-    assert ledger.incomplete_reason == "interior_gap_unproven"
+    # R6: the complete source authorizes the three remaining sparse pairs.
+    assert len(ledger.prepare().spanning_pairs) == 3
 
 
 @pytest.mark.parametrize("source,complete,start_shift,end_shift", [

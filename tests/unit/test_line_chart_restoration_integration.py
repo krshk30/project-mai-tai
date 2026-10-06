@@ -188,8 +188,8 @@ async def test_actual_service_rest_skip_still_records_late_history_and_admits_on
         await bot._handle_bar_from_rest(symbol, bar)
     admitted = await bot._rebuild_session_line(symbol, ledger)
     if symbol == "JAGX":
-        assert not admitted
-        assert ledger.incomplete_reason == "interior_gap_unproven"
+        assert admitted
+        assert len(bot._line_published[symbol].request.spanning_pairs) == 3
         assert not bot.strategy.line_buy_ready(symbol)
         return
     assert admitted
@@ -286,7 +286,7 @@ async def test_restart_never_inherits_admission_from_the_previous_process():
 
 
 @pytest.mark.asyncio
-async def test_real_provider_service_pass_does_not_certify_a_missing_prefix(monkeypatch):
+async def test_real_provider_service_full_read_certifies_first_available_session_bar(monkeypatch):
     bars = _bars("RETO", _ms("2026-10-05T11:21:00-04:00"))
     bot = _bot("RETO", bars[-1].timestamp_ms)
     _ingest(bot, bars[:-1])
@@ -310,9 +310,9 @@ async def test_real_provider_service_pass_does_not_certify_a_missing_prefix(monk
     await bot._line_restoration_pass()
     assert provider_threads[0] != threading.get_ident()
     assert len(bot._line_sessions["RETO"]._bars) == len(bars)
-    assert not bot._line_published
-    assert bot._line_sessions["RETO"].incomplete_reason == "session_prefix_unproven"
-    assert not bot.strategy.line_buy_ready("RETO")
+    assert bot._line_published
+    assert bot._line_sessions["RETO"]._coverage.prefix_complete
+    assert bot.strategy.line_buy_ready("RETO")
     client._authorized_get = lambda url: {"symbol": "RETO", "empty": True, "candles": []}
     await client._bar_loop_pass(15)
     assert not bot.strategy.line_buy_ready("RETO")
@@ -488,6 +488,7 @@ async def test_gap_hold_cannot_admit_an_unrepaired_interior_hole_after_ten_clean
         last_bar_age_s=91, last_print_age_s=1,
     )
     _ingest(bot, bars[2:11])
+    ledger.mark_traded_pair((bars[0].timestamp_ms, bars[2].timestamp_ms))
     state = bot.strategy.watchlist_state("BENF")
     assert state.gap_hold_active and state.gap_hold_contiguous_bars == 9
     ledger.attest(_proof(ledger, bars[:1] + bars[2:11]))
@@ -497,7 +498,7 @@ async def test_gap_hold_cannot_admit_an_unrepaired_interior_hole_after_ten_clean
     ledger.attest(_proof(ledger, bars[:1] + bars[2:]))
     assert not state.gap_hold_active and state.gap_hold_contiguous_bars == 10
     assert not await bot._rebuild_session_line("BENF", ledger)
-    assert ledger.incomplete_reason == "interior_gap_unproven"
+    assert ledger.incomplete_reason == "traded_gap_unrecovered"
     assert not bot.strategy.line_buy_ready("BENF")
 
 
@@ -515,6 +516,7 @@ async def test_anchored_source_current_callbacks_advance_gap_hold_without_double
     for end in range(3, 13):
         response = bars[:1] + bars[2:end]
         assert bot._accept_line_source("BENF", ledger.epoch, response, _proof(ledger, response))
+    ledger.mark_traded_pair((bars[0].timestamp_ms, bars[2].timestamp_ms))
     state = bot.strategy.watchlist_state("BENF")
     assert state.gap_hold_contiguous_bars == 10 and not state.gap_hold_active
     assert bot._accept_line_source("BENF", ledger.epoch, response, _proof(ledger, response))
@@ -735,6 +737,9 @@ def test_stored_session_reader_keeps_255_recorded_rows_and_exact_anchor_bounds()
             values = query.compile().params
             params.append(values)
             return SimpleNamespace(all=lambda: records[:values["param_1"]])
+
+        def get_bind(self):
+            return SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
 
     bot.session_factory = Session
     anchor = bot._line_sessions["RETO"].anchor_ms

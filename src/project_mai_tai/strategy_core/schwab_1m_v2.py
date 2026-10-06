@@ -3861,6 +3861,7 @@ class SchwabV2Strategy:
         *,
         observation_phase: Literal["replay", "live"] | None = None,
         state_only: bool = False,
+        span_gap: bool = False,
     ) -> dict | None:
         """Advance the ATR-trailing-stop flip state by one bar; return this
         bar's signal {touch, touch_price, flip, trail, loss, state, state_age}
@@ -3933,7 +3934,7 @@ class SchwabV2Strategy:
             # ⚠️ Gaps are NOT restart-only. Same day, no outage: CRWU 25 min, AXTU 2-13 min,
             # SNDG 3 min. This guard covers all of them.
             gap_ms = decision_gap_ms
-            if gap_ms > _ATR_MAX_BAR_GAP_MS:
+            if gap_ms > _ATR_MAX_BAR_GAP_MS and not (state_only and span_gap):
                 tr = hilo
                 self._atr_gaps_observed[phase] += 1
                 symbol_phase = (state.symbol, phase)
