@@ -5,7 +5,10 @@ Before a fill, removal revokes scanner permission and cancels a waiting buy;
 only settled terminal cancellation/rejection and no-fill/no-position proof
 permit retirement. After a fill, the owned episode and managed feed survive
 removal until the existing exit lifecycle ends. Unknown cancellation stays
-blocked. The default-ON switch is for rollback only; no deploy is performed.
+blocked. The original attachment's shared three-lane protocol explicitly says
+"default-ON at deploy (switch for rollback only)". The revised card withdrew
+the no-order-sent limit, not that flag protocol. The independent switch will
+therefore be ON by default and registered as expected ON; no deploy is performed.
 
 Clean evidence-only branch was rebased onto `c21d8274` (main including #1097
 and ORBPURPLE1); no pinned runtime source existed on this branch. Only this
@@ -64,7 +67,12 @@ Retire the fan-out identity first, then owner state, then the removal request;
 partial persistence stays closed. Retain line history/restoration epochs,
 seed-cap markers and RETRY-ONE SELL-cycle budgets; clearing a no-fill wait
 does not replenish a used filled-entry allowance. RETRY-OFF must produce the
-first legitimate fresh opportunity on re-add. No historical BUY replay or
+first legitimate fresh opportunity on re-add only for a proven-unfilled wait.
+Parent's RETRY-OFF assessment is DISAGREE: the existing false flag retains
+legacy confirmation-close release after a filled trade. That closed-trade
+path is not changed here and no composed-card PASS is claimed. Local fill,
+consumed phase or durable position identity must exclude this removal path.
+No historical BUY replay or
 authorization age waiver. KEEPREST's on-list waiting flip remains intact;
 removal is a distinct cancellation trigger. Rollback bypasses only this new
 path. Required mutation negatives cover cancellation unknown, either-leg
