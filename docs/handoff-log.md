@@ -7101,3 +7101,16 @@ write. Replacement history collections are absent from these exact responses;
 no complete chain or client/person identity claimed. Same measured channel tag
 as the IPDN replacements is not proof of who made the change. Exit behaviour
 not built; reference/fill base difference remains parked per disposition.
+
+### 2026-10-06 16:29 ET - codex-2 C91 WBPOWER1 parked with prior read disclosed
+
+Latest human ruling parks WBPOWER1. Worker confirmed no outstanding GET and
+no further reads today. Parent verified5c5cf215 receipt for the one previously
+authorized GET completed15:57:20ET, before the park: documented route
+/trading/assets/balances/get/x-versionv3 HTTP200/actual595response bytes,
+selectedUSDday_buying_power750.93. Signed query configuredaccount identity
+checked; responseaccountidentity field absent, not invented. No refresh/retry,
+file/env/service/order write. This measures current field presence, not the
+14:47/14:32 power or reservation semantics, so no placement-rule build. No
+alias/subtraction inference. Tomorrow's known-reject proof remains required;
+do not repeat the already completed read under an obsolete today authorization.
