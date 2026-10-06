@@ -6133,3 +6133,32 @@ does not carry over. Head frozen for reviewer's eight mutations/new pin, then
 authorized exact-head merge and candidate-SHA binding. Plan remains v2/OMS
 only, flag ON both,148catalog,8numeric, one preopen final identity/date/paper
 shape repin and daily timer after20:00. No merge or production action yet.
+
+### 2026-10-06 08:31 ET - ROUNDUP1 merged; after-close readiness replaces fixed evening time (codex-2)
+
+Fresh pin a024c810 / latest hosted pin PASS and both Validate PASS checked at
+exactfa54579b/base03b26293. Non-admin matched-head rebase merge completed;
+main a7fed34d97732e1c1379ec77d89fd83f886ce2d8 whole tree
+7ff6dcce8d225bdf45e87a9eeb8bcd3042573117 equals the pinned tree. Seven-live-key
+composition rerun36/36PASS,2.41s on that identical source tree. No box checkout,
+flag, catalog or service was changed.
+
+Amended combined ROUNDUP1/daily-preopen plan: first stop strictly after16:00
+today whenever flat/working-order/zero-armed gates pass, no fixed rotation wait.
+The gate's documented clock-only override before18:00 names the operator's
+after-close ruling; never an armed-set override. At16-20 the exact bot session
+is afterhours with elapsed-since16+300s bound; after20 retains closed and
+elapsed-since20+300s. All published health/freshness/detail controls remain,
+MI/NXL exact allowance unchanged, only in-memory input adjusted. Local116 tests
+PASS and eleven independent in-memory policy mutations assertion-RED. Native
+systemd TZ remains unchanged; retries are rc2-only/three60s reads. The full
+two-service release and dynamic-paper daily gate are not yet staged; the new
+shell component is not a runnable install, and the old Oct5 migration/three-
+service runner must never be substituted. Local input hashes in the plan.
+
+Production preopen read at08:24:22 still pins7823a6fa/oldOMS-v2 identities;
+this is expected until the actual install close-out. Position/order/gate reads
+will be fresh at admission, not carried from today's morning evidence. Record
+real bar-hole minutes for16-20 restarts and both live/rotated log source paths.
+Existing20:05 Codex wake-up is being moved to after16 readiness; this is not a
+claim that a box unit/timer is installed. No production action this session.
