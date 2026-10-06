@@ -5654,3 +5654,20 @@ SSHsession21237; no concurrentdeploy. OldPIDs23705/26811/24025active beforecall.
 Rawattempt/home/trader/after-hours/2026-10-05/owned-entry-rpg-all-on-1910-native-tz-job/attempt-1730-go/runner.log.
 NoCOMPLETE/newPID/checkout/env/migrationclaimyet; supervisioncontinues,
 abortpages/startsnothing; noimprovisedrecovery.
+
+2026-10-05 20:12 ET codex-2 C92: approved6ffc runner STOP20:10:53.805ET
+rc1 stageinitial-read-only-gates, firstgeneralOMSflatread. ExactstandingMI180/
+NXL2andMIcurrentfillaccepted; bothdirectbrokersflat, books/working/inflightempty.
+Remaininggeneralpreflightfailure v2heartbeatdegraded; measuredrc1notretried.
+TrapactualOMS23705/v226811/strategy24025 active/runningNRestarts0 pageHTTP200;
+freshHEADe1ce3b39clean. NOcheckout/env/schema/serviceactions, noCOMPLETE.
+STOPjournal00:10:53.987UTC. Fullrunnerlog
+/home/trader/after-hours/2026-10-05/owned-entry-rpg-all-on-1910-native-tz-job/attempt-1730-go/runner.log
+sha256b69762c3dbc02dac07b10c5d8ddb960cf3ac263c9edda77a621c99d76c736bc0.
+Ownpoststopboundedoverview1400KB-style2MBcapreadonly(noRedisbulk/brokerread):
+v2heartbeat00:11:26.898UTC rawdegraded dataflowstalled_offhours_rest_dry,
+sessionclosed, quoteslive4s, barage684s, loophealthy/0exceptions.
+Ownsource _evaluate_data_flow says offhoursdry expected; thisisnotcalled
+servicefailure. Literalapprovedgeneralgateblocksanyv2degraded; standing
+allowanceonlyreconcilerdegradedfromMI/NXL. Awaitreviewerdisposition,
+noedit/bypass/retry/recovery. Remaininginstallproofsdidnotrun.
