@@ -5795,3 +5795,14 @@ guard366236/paper366242 active. A one-time Codex follow-up is scheduled for
 box install or a new production timer. No service, flag, database or preopen
 change; claude-1 owns the manual06:22 gate. Installed #1093/#1094 proofs remain
 in yesterday's COMPLETE receipt; new-session live behaviour is not assumed PASS.
+
+## 2026-10-06 06:27 ET - ROUNDUP1 account-local tests
+
+Own local tests/unit/test_roundup1.py run: 403 passed in 2.91 seconds. Five
+obsolete cross-account assertions now preserve the installed RPGSTUCK1 rule:
+an unproven Webull leg blocks Webull, not a separately clear Schwab leg. Three
+mirror cases prove an unproven primary leg leaves a clear Webull leg placeable.
+Blocked-leg generation and quantities remain unchanged. This is a working-tree
+milestone on base 6b47c461, not a new reviewed head. Generic no-ticket startup
+restoration and the full-suite pair are still required before review readiness.
+No production touch.
