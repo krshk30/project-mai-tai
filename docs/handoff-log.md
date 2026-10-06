@@ -7114,3 +7114,16 @@ file/env/service/order write. This measures current field presence, not the
 14:47/14:32 power or reservation semantics, so no placement-rule build. No
 alias/subtraction inference. Tomorrow's known-reject proof remains required;
 do not repeat the already completed read under an obsolete today authorization.
+
+### 2026-10-06 17:07 ET - codex-2 C92 terminal reject proof source discrepancy
+
+Latest narrow terminal-no-broker-ID disposition independently checked. Three
+Webull HTTP417 submit rejections have matching events and zero fills. Complete
+bounded list-today returned86 orders over two pages, no working OLOX/MOBX.
+Schwab OLOXb95fc559 has no matching broker_order_events by either exact order
+or client ID; the exact linked rejected intent instead records client_abort
+and rpg_stale_strategy_authorization. This differs from the specified evidence
+source, not a broker holding. Clarification requested before admitting it;
+no fabricated event or status-only waiver. Install1 not started; production
+unchanged. Install2 merges held until completion. MIRRORHOLD1 catalog-only
+expectedtrue change delegated to its solewriter under latest condition.
