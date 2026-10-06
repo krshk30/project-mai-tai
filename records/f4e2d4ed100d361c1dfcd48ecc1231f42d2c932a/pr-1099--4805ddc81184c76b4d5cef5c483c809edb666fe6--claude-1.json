@@ -1,0 +1,9 @@
+{
+  "pr_number": 1099,
+  "range_base": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "range_head": "f4e2d4ed100d361c1dfcd48ecc1231f42d2c932a",
+  "reviewed_at": "2026-10-06T20:56:50Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "T43 one-leg: a refused hand-off ticket no longer keeps the Schwab leg blocked \u2014 the in-memory placed-generation latch (schwab_1m_v2.py ~5036, proven by codex replay on OLOX 10:16) clears only on positive broker-terminal proof of the replacement order (replacement_terminal_zero / old_buy_proven_clear), never by age or a saved BUY; recovery drafts only the refused leg (recover_accounts); every per-leg drop logs [V2-RESTING-LEG-SKIP]; nonce re-authorization replaces the 1 s window; local refusals stored as aborted with origin/code, aborted added to terminal sets incl. control-plane failed actions and fanout acceptance. Read the strategy and OMS diffs. Focused 969 pass (the single failure is the baseline fanout host-tooling test); full suite 49 failed identical names to base 4805ddc8. My mutations RED: leg-skip log renamed (1), terminal proof never recognised (7), recovery not limited to the refused leg (see record R3). Codex: 1,077 focused, 35/35 mutations."
+}
