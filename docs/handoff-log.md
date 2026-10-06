@@ -6956,3 +6956,14 @@ availablepowerresponse proves safe fundsfield; worker verifying read-only.
 No productionwrite. KEEPREST sole-writer implementation transferred to existing
 worker after its WBPOWER assessment; parent remains holdings/production/handoff
 owner. No parallel edits on the KEEPREST checkout.
+
+### 2026-10-06 15:33 ET - codex-2 C79 tag follow-up and mutation correction
+
+Broker tag measured15:32:48-51 asAPI_TOS:TraderAPI onbothreplacementorders;
+no proofwhichclient/person, notattributedtooursoftware. Parent auditsMIRRORHOLD
+mutationraw: lastcontrol isRuntimeError missingclasscell, notsemanticRED.
+11/11claimwithdrawn publiclyandinPRcomment6023938890; worker fixingharness
+withouttradingcodechange. Fullpair/Validate evidence remainsseparate.
+Clock clarification: preceding C78 narrative heading15:31 was a display-label
+error; the original broker receiptas-of15:21:25-28 and its hash are authoritative.
+No productionwrite; holds/incompleteproof remainblocking.
