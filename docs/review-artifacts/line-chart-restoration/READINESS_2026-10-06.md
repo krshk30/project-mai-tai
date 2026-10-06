@@ -1,10 +1,11 @@
 # LINE=CHART Restoration - Scoped Review Deadline
 
 **Review-ready ETA: Tuesday 2026-10-06 at21:00 America/New_York.**
-This is a target, not a pin, completed replay or install claim. Reviewer review
-is targeted for Wednesday morning, then a separately approved install after
-Wednesday's close. Restoration remains default OFF. It is not in today's
-ROUNDUP1/preopen install.
+This is a target, not a pin, completed replay or install claim. The 08:46 ET
+operator/reviewer instruction supersedes the Wednesday target: exact-head
+review is tonight at 21:00 ET, followed by an authorized after-close install
+tonight only if the acceptance runner, mutations and review are green.
+Restoration remains default OFF until its separately reviewed switch-on.
 
 ## Scope Disposition
 
@@ -55,6 +56,14 @@ Earlier180-focus / paired47-failure receipts belong to the earlier checkpoint.
 | MI10-05 | Own428 stored rows08:15-15:59; conditional continuous14:06 short/trail9.2013,14:11 short8.6240,14:20 short8.2551. Several interior holes remain; this is not a full-chart BUY claim or a Pause acceptance. Pin entry-blocking/rebuild/exit invariants and identify unrecovered intervals explicitly. |
 
 ## Checkpoints And Slip Rule
+
+The reviewer-owned `scripts/line_restore_acceptance.py` can import
+`tests.line_restore_acceptance_factory.make_line_restore_case` now; the
+[factory contract](ACCEPTANCE_FACTORY.md) documents recorded event feeding,
+explicit coverage, real gates and recording sinks. Its ten adapter tests are
+not the population result. Acceptance is 100% of the recorded re-add and
+bars-missing cases, with the nine real pauses reported/excluded. The named
+pause misses do not silently become Restoration PASS cases.
 
 Publish C-rows and append narrative in shared handoff #1096 at **12:00 and
 16:00 ET October6**, containing exact head, remaining IDs/count, new evidence
