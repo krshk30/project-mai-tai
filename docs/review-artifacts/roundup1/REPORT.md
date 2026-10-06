@@ -1,5 +1,44 @@
 # ROUNDUP1 Build Evidence
 
+## October 6 Rounding-Only Scope Ruling - Current
+
+The reviewer/operator narrowed #1095 to the rounding card. The added
+`_fetch_legacy_resting_orders`, `legacy_resting.py` classifier, its generic
+recovery tests and its mutation script are removed. Their earlier evidence
+below is historical, not code or prerequisites in this PR. The OMS explicit
+cancel-target fallback is unchanged and is a separate finding. Shared handoff
+C21/C22 at commit `7bac6d0f` record both findings, superseding C8/C12's scope
+recommendation without changing other rows.
+
+The entry trigger is formatted to four decimals, then ceiled to its broker
+tick. The shared Schwab/Webull rounding helpers and ORB/exit paths are unchanged.
+First/reclaim placement, PM quote/stream comparisons, mirror comparisons and
+RPG repricing consume that trigger. Brackets use the sent entry reference;
+dollar quantities use the final wire limit, except PMPRINT's existing same-ask
+sizing. PA1's unsent deferred Webull leg recomputes its ceiling/cap at resubmit
+and passes through the serial pipeline. Exact existing RPG order bindings read
+their own recorded wire pair and quantity on restore; this is not generic
+historical order discovery or a broker-terminal classifier.
+
+Catalog expectation is **ON for deployment**, checked on v2 and OMS. The
+Settings default remains FALSE for backward compatibility / explicit rollback;
+the reviewed install must set the env flag TRUE, not deploy a dark version.
+No merge, flag activation, production write or restart is authorized by this
+build report. Review readiness follows the final frozen suite and CI checks.
+
+SCKT raw1.0636 -> wire stop1.07 / limit1.08 on both actual adapter paths;
+Schwab556 / Webull278 shares at600/300 dollars. The retained12:47-12:57 tape
+has262 prints, maximum1.06, zero prints at the raw rule or new stop. Therefore
+the new stop is not triggered in that captured interval; no future fill, venue
+coverage, execution outcome or P&L improvement is asserted. The retained own
+order pull has179 orders, not the reviewer's narrower173-order population.
+
+Full-suite and mutation results for the final scope are recorded in
+`ROUNDING_ONLY_REVIEW_2026-10-06.md` once completed. Everything below is prior
+checkpoint / assessment evidence, including superseded DRAFT/blocker statements.
+
+## Historical Checkpoints (Superseded By The Scope Ruling)
+
 October 6, 2026. Current merged/rebased base:
 `7823a6fa7f63649b3f75ae3bcd07e16dc9b5dfaf`, tree
 `ee6f058c248eeebf475fd392845eadfef7af59eb`.

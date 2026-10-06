@@ -4,7 +4,7 @@
   "flags": [
     {
       "name": "strategy_schwab_1m_v2_resting_buy_round_up_enabled",
-      "expected": false,
+      "expected": true,
       "owning_service": "schwab-1m-v2",
       "reason": "ROUNDUP1 ceilings the four-decimal resting buy trigger to the broker tick; existing orders retain their proven wire.",
       "ruling": "Operator card confirmed 2026-10-05 13:44 ET; reviewer clarified one entry reference at 13:58 ET. Default OFF, not tonight; activation requires a later exact-SHA GO."

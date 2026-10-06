@@ -14,6 +14,9 @@ from project_mai_tai.strategy_core import v2_entry_sizing as sizing
 
 MUTATIONS = {
     "nearest": (sizing.resting_buy_stop, "rounding=ROUND_CEILING", "rounding=ROUND_HALF_UP"),
+    "nearest_schwab_wire": (sizing.resting_buy_stop, "rounding=ROUND_CEILING", "rounding=ROUND_HALF_UP"),
+    "nearest_webull_wire": (sizing.resting_buy_stop, "rounding=ROUND_CEILING", "rounding=ROUND_HALF_UP"),
+    "nearest_pm_compare": (sizing.resting_buy_stop, "rounding=ROUND_CEILING", "rounding=ROUND_HALF_UP"),
     "floor": (sizing.resting_buy_stop, "rounding=ROUND_CEILING", "rounding=ROUND_DOWN"),
     "wrong_subdollar_tick": (sizing.resting_buy_stop,
         'if raw_four_decimal_price >= 1 else Decimal("0.0001")',
@@ -35,6 +38,9 @@ MUTATIONS = {
     "unproven_restore_releases": (SchwabV2Strategy._rpg_entry_owned,
         'if (self._resting_round_up_enabled() and phase == "placed"',
         'if (False and phase == "placed"'),
+    "pa1_copies_nearest": (OmsRiskService._evaluate_webull_mirror_deferred_resubmits,
+        'if (getattr(self.settings, "strategy_schwab_1m_v2_resting_buy_round_up_enabled", False)',
+        'if (False'),
 }
 
 
@@ -50,7 +56,13 @@ def main():
     namespace = {}
     exec(compile(source.replace(old, new), f"<ROUNDUP1-{args.name}>", "exec"), fn.__globals__, namespace)
     fn.__code__ = namespace[fn.__name__].__code__
-    rc = pytest.main(["-q", "tests/unit/test_roundup1.py", "--tb=short",
+    selections = {
+        "nearest_schwab_wire": "recorded_sckt_strategy_oms_adapter_wire_is_ceiling_not_nearest and schwab",
+        "nearest_webull_wire": "recorded_sckt_strategy_oms_adapter_wire_is_ceiling_not_nearest and webull",
+        "nearest_pm_compare": "recorded_meds_print_below_ceiling_cannot_cross_or_take_slot",
+    }
+    selection = ["-k", selections[args.name]] if args.name in selections else []
+    rc = pytest.main(["-q", "tests/unit/test_roundup1.py", *selection, "--tb=short",
                       f"--junitxml=/tmp/roundup1-mutation-{args.name}.xml"])
     print(f"mutation={args.name} pytest_rc={rc} verdict={'RED' if rc == 1 else 'SURVIVED' if rc == 0 else 'UNMEASURED'}")
     raise SystemExit(0 if rc == 1 else 1)
