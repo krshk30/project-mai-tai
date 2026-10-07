@@ -176,10 +176,10 @@ def _service(monkeypatch, *, enabled=True, broker=None):
     return service, factory, broker
 
 
-def test_paper_orb_registration_remains_paper_when_live_route_registered() -> None:
+def test_no_paper_orb_registration_when_live_route_registered() -> None:
     registrations = strategy_registration_map(_settings())
-    assert registrations["orb"].execution_mode == "paper"
-    assert registrations["orb"].account_name == "paper:orb"
+    assert "orb" not in registrations  # ORBLIVE1: one ORB bot, live
+    assert registrations["orb_schwab"].display_name == "ORB Live"
     assert registrations["orb_schwab"].execution_mode == "live"
     assert registrations["orb_schwab"].account_name == ACCOUNT
     assert "orb_schwab" not in strategy_registration_map(_settings(enabled=False))

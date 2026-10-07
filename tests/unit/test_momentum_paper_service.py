@@ -564,14 +564,14 @@ def test_momentum_registration_is_two_paper_cards_and_retires_polygon_only_when_
     by_code = {row.code: row for row in active}
 
     assert "polygon_30s" not in by_code
-    assert {"momentum_30s", "momentum_60s", "orb"} <= set(by_code)
+    assert {"momentum_30s", "momentum_60s"} <= set(by_code)
+    assert "orb" not in by_code  # ORBLIVE1: the paper ORB registration is retired
     assert by_code["momentum_30s"].display_name == "Momentum 30"
     assert by_code["momentum_60s"].display_name == "Momentum 60"
     assert by_code["momentum_30s"].execution_mode == "paper"
     assert by_code["momentum_60s"].metadata["isolated_service"] is True
     assert Settings().provider_for_strategy("momentum_30s") == "none"
     assert Settings().market_data_provider_for_strategy("momentum_60s") == "massive"
-    assert by_code["orb"].display_name == "ORB Bot"
     assert not {
         row.name
         for row in configured_broker_account_registrations(Settings(momentum_paper_enabled=True))

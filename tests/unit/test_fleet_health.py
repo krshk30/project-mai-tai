@@ -93,7 +93,7 @@ def test_runtime_inventory_includes_momentum_and_all_continuous_project_services
         "project-mai-tai-market-data.service",
         "project-mai-tai-momentum-paper.service",
         "project-mai-tai-oms.service",
-        "project-mai-tai-orb.service",
+        "project-mai-tai-orb-schwab.service",
         "project-mai-tai-reconciler.service",
         "project-mai-tai-schwab-1m-v2.service",
         "project-mai-tai-strategy.service",
