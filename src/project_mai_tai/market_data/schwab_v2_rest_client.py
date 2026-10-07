@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Awaitable, Callable
+from zoneinfo import ZoneInfo
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest
@@ -41,6 +42,12 @@ from project_mai_tai.market_data.schwab_v2_loop_health import (
 from project_mai_tai.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def anchored_session_poll_open(now_ms: int) -> bool:
+    """LINESRC1: only the anchored source lane polls from 06:55 through 15:59 ET."""
+    eastern = datetime.fromtimestamp(now_ms / 1000, UTC).astimezone(ZoneInfo("America/New_York"))
+    return 6 * 60 + 55 <= eastern.hour * 60 + eastern.minute < 16 * 60
 
 
 ChartBarCallback = Callable[[str, "ChartBar"], Awaitable[None]]
@@ -117,6 +124,7 @@ class SchwabV2RestClient:
         self._session_request = None
         self._on_session_history = None
         self._on_session_failure = None
+        self._line_source_states: dict[str, tuple[str, str]] = {}
 
     @property
     def configured(self) -> bool:
@@ -222,8 +230,10 @@ class SchwabV2RestClient:
         # flight; the configured interval is a cycle cadence in this lane.
         started = time.monotonic()
         semaphore = asyncio.Semaphore(4)
+        requests = 0
 
         async def poll(symbol):
+            nonlocal requests
             context = None
             try:
                 async with semaphore:
@@ -233,26 +243,45 @@ class SchwabV2RestClient:
                     if context is None:
                         return
                     epoch, anchor, current = context
+                    if not anchored_session_poll_open(current + 60_000):
+                        return
+                    requests += 1
                     bars, proof = await asyncio.to_thread(
                         self.fetch_session_history, symbol, anchor, current,
                     )
+                if proof is None:
+                    # No current close is not source corruption or a failed epoch.
+                    # The service retains its old proof but fences new entries.
+                    self._on_session_history(symbol, epoch, bars, None)
+                    self._set_line_source_state(symbol, ("waiting", "current_closed_candle_pending"))
+                    return
                 if not self._on_session_history(symbol, epoch, bars, proof):
                     return
+                self._set_line_source_state(symbol, ("ready", "current_closed_candle_proven"))
                 # Persistence never occupies a source-fetch semaphore slot.
                 await self._on_chart_bar(symbol, bars[-1])
                 self._last_bar_timestamp_ms[symbol] = bars[-1].timestamp_ms
-            except Exception:  # noqa: BLE001 - fail this source epoch closed
+            except Exception as exc:  # noqa: BLE001 - fail actual source errors closed
                 if context is not None:
                     self._on_session_failure(symbol, context[0])
-                logger.exception("schwab_v2 anchored poll failed for %s", symbol)
+                self._set_line_source_state(symbol, ("error", f"{type(exc).__name__}: {exc}"))
 
         await asyncio.gather(*(poll(symbol) for symbol in symbols))
         elapsed = time.monotonic() - started
         # Reserve 30 RPM for quotes/other REST consumers, even on larger lists.
         cadence = max(0.5, interval, len(symbols) * 60 / 90)
-        logger.info("[V2-LINE-SOURCE-CYCLE] symbols=%d elapsed_s=%.3f cadence_s=%.3f concurrency=4",
-                    len(symbols), elapsed, cadence)
+        if requests:
+            logger.info("[V2-LINE-SOURCE-CYCLE] symbols=%d elapsed_s=%.3f cadence_s=%.3f concurrency=4",
+                        len(symbols), elapsed, cadence)
         await sleep_or_stop(self._stop_event, max(0, cadence - elapsed))
+
+    def _set_line_source_state(self, symbol: str, state: tuple[str, str]) -> None:
+        previous = self._line_source_states.get(symbol)
+        if previous is not None and previous[0] == state[0]:
+            return
+        self._line_source_states[symbol] = state
+        if state[0] != "ready" or previous is not None:
+            logger.warning("[V2-LINE-SOURCE-STATE] sym=%s state=%s reason=%s", symbol, *state)
 
     async def _quote_loop(self) -> None:
         interval = max(0.5, float(self.settings.strategy_schwab_1m_v2_quote_poll_interval_seconds))
@@ -403,7 +432,7 @@ class SchwabV2RestClient:
         return bars
 
     def fetch_session_history(self, symbol: str, anchor_ms: int, current_bar_ms: int):
-        """Return the entire anchored response, refusing partial or malformed payloads.
+        """Return anchored bars and proof, or bars/None while the current close is absent.
 
         This request has no delivery cursor or seed cap. Completeness is from
         the anchored provider response, not the number of candles returned.
@@ -412,6 +441,8 @@ class SchwabV2RestClient:
             SessionCoverage, SessionLineRestoration, history_fingerprint,
         )
 
+        if not anchored_session_poll_open(current_bar_ms + 60_000):
+            return [], None
         end_ms = current_bar_ms + 60_000
         if not anchor_ms <= current_bar_ms < anchor_ms + 16 * 3_600_000:
             raise ValueError("invalid restoration session window")
@@ -447,7 +478,7 @@ class SchwabV2RestClient:
             bars.append(bar)
         bars.sort(key=lambda bar: bar.timestamp_ms)
         if bars[-1].timestamp_ms != current_bar_ms:
-            raise ValueError("current closed candle absent")
+            return bars, None
         return bars, SessionCoverage(
             "schwab_rest_full_session", anchor_ms, end_ms,
             tuple(bar.timestamp_ms for bar in bars), True, history_fingerprint(bars),
