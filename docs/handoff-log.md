@@ -7779,3 +7779,12 @@ maxhandler17.758ms,zeroSQL/transactions/sessions on ticks and zeroonloopSQL,
 24offloopperiodictx84SQL. New full and both CI still pending; prior8ea8 results
 not used to certify sourcea16b9d755450d22e75181b859be537a3116670232dd715629b3c2cc5673c68f9.
 SLOT9951/today's stagedAPP994/ORB untouched; no readiness/pin/merge/deploy.
+
+2026-10-07 17:18 ET codex-2: RETRYLEFT1 PR1118 marked READY at exact
+cda4849c015a0221369194e856238bcb71b444dd. Both Validate PASS: push37684510555
+attempt2 13m6s, pull_request37684518722 11m51s. Posted receipt in comment6047052437.
+Corrected Step0 NCPL/ARTL classAGREE, APUSbothfilled negative; emissions8.069s
+and3.647s withinonebar;246focusedPASS/13assertionmutationsRED; full7155/56
+vs main7114/56, identical failednames. Actual new brokerlatencyUNMEASURED.
+No pin/merge/install; NFQ502 finalfull/CI pending, pinned SLOT9951 tomorrow
+and tonight's exact APP994 paired package/ORB unchanged.
