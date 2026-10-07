@@ -69,9 +69,10 @@ The empty-history worker test uses a two-second test-only timeout. Its negative
 control refuses queuing and proves the inner timeout fires before the outer
 watchdog. Production event behavior/timing is unchanged.
 
-Hosted Validate is pending at this checkpoint. The human explicitly waived
-another full local suite for this non-install-critical follow-up; this is not
-a green full-suite or ready/install claim. Retain the same-day
+New-head full local suite has not run. Targeted proof is 273 PASS and 9/9
+semantic RED mutation controls; hosted CI is pending at this checkpoint.
+This is not a green full-suite or ready/install claim, and no human full-suite
+waiver is claimed. Retain the same-day
 tree-identical base receipt `/tmp/linesrc1-event-head-010b2119-20261007.{xml,log}`
 (7076 PASS, 56 FAIL, zero errors) as baseline context, not as a new head run.
 Historical #1107 proof totals are not new follow-up acceptance results.
