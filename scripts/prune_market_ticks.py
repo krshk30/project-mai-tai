@@ -185,12 +185,15 @@ def run(conn, args: argparse.Namespace, *, now: datetime | None = None, monotoni
             deleted = 0
             while budget > 0 and monotonic() - started < args.max_seconds:
                 limit = min(args.batch, budget)
+                batch_started = monotonic()
                 with conn.cursor() as cur:
                     cur.execute(*delete_query(name, cutoff, args.event_types, limit))
                     rows = cur.rowcount
+                batch_seconds = monotonic() - batch_started
                 deleted += rows
                 budget -= rows
-                _report(stage="batch", target=name, deleted=rows, remaining_run_budget=budget)
+                _report(stage="batch", target=name, deleted=rows, batch_limit=limit,
+                        elapsed_seconds=batch_seconds, remaining_run_budget=budget)
                 if rows < limit:
                     break
             if deleted:

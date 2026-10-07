@@ -230,6 +230,18 @@ def test_runtime_budget_stops_without_deleting_or_vacuuming(conn):
     assert not any(sql.startswith(("DELETE", "VACUUM")) for sql, _ in conn.calls)
 
 
+def test_batch_receipt_measures_delete_not_selector_proxy(conn, capsys):
+    conn.add("reconciliation_findings", [("old", NOW - timedelta(days=8), None)])
+    turns = iter((0, 1, 2, 3.25))
+    args = mod.parse_args(["--tables", "reconciliation_findings", "--go", "--batch", "50000"])
+    assert mod.run(conn, args, now=NOW, monotonic=lambda: next(turns)) == 0
+    reports = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    batch = next(row for row in reports if row["stage"] == "batch")
+    assert batch["elapsed_seconds"] == 1.25
+    assert batch["batch_limit"] == 50000
+    assert batch["deleted"] == 1
+
+
 def test_writer_lock_refusal_precedes_any_delete(conn):
     conn.lock_available = False
     with pytest.raises(RuntimeError, match="another retention writer"):
