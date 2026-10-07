@@ -1,0 +1,9 @@
+{
+  "pr_number": 1102,
+  "range_base": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "range_head": "72983395df6450465b876860a528662f30c09e5d",
+  "reviewed_at": "2026-10-07T00:07:06Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "MIRRORHOLD1 re-pin on the marker-only re-push (patch byte-identical to b67ca775, verified by diff): the Webull mirror hold survives RPG re-authorization retries and distance deferrals; an attempt is a wire submission only (1 + 3 resubmits), no-wire checks cost nothing; durable CAS row; catalog oms_v2_webull_mirror_retained_hold_enabled expected TRUE per the operator's 10-06 15:3x ruling. Focused 601 pass; full suite 48 failed = base names minus the pinned SCKT clock test; my mutations RED: wire cap removed (2), flag ignored (8), no-wire check counted as an attempt (46)."
+}
