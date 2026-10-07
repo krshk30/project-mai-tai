@@ -1,0 +1,125 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-False] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10a875e80>
+webull = False, reactive = False
+
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    @pytest.mark.asyncio
+    async def test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent(service, webull, reactive):
+        event = biya(webull=webull, reactive=reactive)
+        hold(service, event)
+        quote(service, "2.56")  # Counterfactual +0.7874%, outside fresh band, inside held band.
+        await service._evaluate_nfq2_holds("BIYA")
+        message = retry(service)
+        assert service._claim_nfq2_retry(message)
+>       assert not service._claim_nfq2_retry(message)
+E       AssertionError: assert not True
+E        +  where True = _claim_nfq2_retry(TradeIntentEvent(event_id=UUID('28ddf9d3-885b-4549-a527-844798803285'), event_type='trade_intent', source_service='oms..._id': '6b2d5b59-e57f-4c08-8f1b-2f591297eb48', 'fanout_predecessor_attempt_id': 'schwab_1m_v2-BIYA-open-28ddf9d3885b'})))
+E        +    where _claim_nfq2_retry = <project_mai_tai.oms.service.OmsRiskService object at 0x10a875e80>._claim_nfq2_retry
+
+tests/unit/test_nfq2_eh_fresh_price.py:88: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 15:52:20,310 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 15:52:20,316 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 15:52:20,317 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-True] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10b2ae540>
+webull = True, reactive = False
+
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    @pytest.mark.asyncio
+    async def test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent(service, webull, reactive):
+        event = biya(webull=webull, reactive=reactive)
+        hold(service, event)
+        quote(service, "2.56")  # Counterfactual +0.7874%, outside fresh band, inside held band.
+        await service._evaluate_nfq2_holds("BIYA")
+        message = retry(service)
+        assert service._claim_nfq2_retry(message)
+>       assert not service._claim_nfq2_retry(message)
+E       AssertionError: assert not True
+E        +  where True = _claim_nfq2_retry(TradeIntentEvent(event_id=UUID('471933d2-55f1-4ae7-bc71-9f1bbe2786c3'), event_type='trade_intent', source_service='oms..._id': 'e2259b90-41a6-48b6-8c63-324ac36d1e66', 'fanout_predecessor_attempt_id': 'schwab_1m_v2-BIYA-open-471933d255f1'})))
+E        +    where _claim_nfq2_retry = <project_mai_tai.oms.service.OmsRiskService object at 0x10b2ae540>._claim_nfq2_retry
+
+tests/unit/test_nfq2_eh_fresh_price.py:88: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 15:52:20,368 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 15:52:20,373 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 15:52:20,374 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-False] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10ade23c0>
+webull = False, reactive = True
+
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    @pytest.mark.asyncio
+    async def test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent(service, webull, reactive):
+        event = biya(webull=webull, reactive=reactive)
+        hold(service, event)
+        quote(service, "2.56")  # Counterfactual +0.7874%, outside fresh band, inside held band.
+        await service._evaluate_nfq2_holds("BIYA")
+        message = retry(service)
+        assert service._claim_nfq2_retry(message)
+>       assert not service._claim_nfq2_retry(message)
+E       AssertionError: assert not True
+E        +  where True = _claim_nfq2_retry(TradeIntentEvent(event_id=UUID('ef72e222-a980-4b20-96d7-924d160f82d8'), event_type='trade_intent', source_service='oms..._id': 'cdbc0b28-2d60-42b4-bc12-63cb36868e03', 'fanout_predecessor_attempt_id': 'schwab_1m_v2-BIYA-open-ef72e222a980'})))
+E        +    where _claim_nfq2_retry = <project_mai_tai.oms.service.OmsRiskService object at 0x10ade23c0>._claim_nfq2_retry
+
+tests/unit/test_nfq2_eh_fresh_price.py:88: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 15:52:20,403 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 15:52:20,407 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 15:52:20,408 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-True] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10b3b6060>
+webull = True, reactive = True
+
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    @pytest.mark.asyncio
+    async def test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent(service, webull, reactive):
+        event = biya(webull=webull, reactive=reactive)
+        hold(service, event)
+        quote(service, "2.56")  # Counterfactual +0.7874%, outside fresh band, inside held band.
+        await service._evaluate_nfq2_holds("BIYA")
+        message = retry(service)
+        assert service._claim_nfq2_retry(message)
+>       assert not service._claim_nfq2_retry(message)
+E       AssertionError: assert not True
+E        +  where True = _claim_nfq2_retry(TradeIntentEvent(event_id=UUID('3f3db5f3-935a-4798-ba03-fa93651145c8'), event_type='trade_intent', source_service='oms..._id': '1dc5d854-d0b5-4d3f-91a1-0a48fa6786e4', 'fanout_predecessor_attempt_id': 'schwab_1m_v2-BIYA-open-3f3db5f3935a'})))
+E        +    where _claim_nfq2_retry = <project_mai_tai.oms.service.OmsRiskService object at 0x10b3b6060>._claim_nfq2_retry
+
+tests/unit/test_nfq2_eh_fresh_price.py:88: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 15:52:20,438 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 15:52:20,442 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 15:52:20,443 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-False]
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-True]
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-False]
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-True]
+4 failed in 0.37s
+MUTATION N7 pytest_rc=1 RED

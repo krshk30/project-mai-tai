@@ -1,0 +1,23 @@
+{
+  "cwd": "/private/tmp/codex-nfq2-on-slotclear1-integration-20261007",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "docs/review-artifacts/nfq2/check_mutations.py",
+    "N5"
+  ],
+  "head": "5d77d48f213203d23ee2ef6d8ac354655ecc0e83",
+  "tree": "32b92dc004a761b5b198c5f966e11a18afc1b95d",
+  "status_before": "?? docs/review-artifacts/nfq2-slotclear-integration/controls/\n?? docs/review-artifacts/nfq2-slotclear-integration/joint-final/",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T19:52:17.526586+00:00",
+  "end_utc": "2026-10-07T19:52:18.419812+00:00",
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 60.0,
+  "output_sha256": "7d42792a0f62262885609aea3f6197e153d0b81aefc3028c60ef7fcfdea5f847",
+  "failed_names": [
+    "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_cancel_after_enqueue_invalidates_the_serial_copy"
+  ]
+}

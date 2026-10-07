@@ -1,0 +1,23 @@
+{
+  "cwd": "/private/tmp/codex-nfq2-on-slotclear1-integration-20261007",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "docs/review-artifacts/slotclear1/check_mutations.py",
+    "S1"
+  ],
+  "head": "5d77d48f213203d23ee2ef6d8ac354655ecc0e83",
+  "tree": "32b92dc004a761b5b198c5f966e11a18afc1b95d",
+  "status_before": "?? docs/review-artifacts/nfq2-slotclear-integration/joint-final/",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T19:51:55.137087+00:00",
+  "end_utc": "2026-10-07T19:51:56.024671+00:00",
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 60.0,
+  "output_sha256": "f50205ca233f1824af50b4d1c881b9b75e235df6fee58c92259b2779dd2b666f",
+  "failed_names": [
+    "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_recorded_bar_with_later_watch_boundary_cannot_become_a_fresh_buy"
+  ]
+}
