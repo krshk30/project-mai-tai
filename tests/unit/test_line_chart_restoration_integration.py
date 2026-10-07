@@ -115,6 +115,12 @@ def test_provider_refuses_partial_or_malformed_anchored_response(damage):
     else:
         payload["truncated"] = True
     client._authorized_get = lambda url: payload
+    if damage == "current":
+        response, proof = client.fetch_session_history(
+            "RETO", bot._line_sessions["RETO"].anchor_ms, bars[-1].timestamp_ms,
+        )
+        assert response == bars[:-1] and proof is None
+        return
     with pytest.raises((ValueError, KeyError)):
         client.fetch_session_history("RETO", bot._line_sessions["RETO"].anchor_ms, bars[-1].timestamp_ms)
 

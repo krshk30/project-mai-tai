@@ -97,6 +97,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import (
     ChartBar,
     Quote,
     SchwabV2RestClient,
+    anchored_session_poll_open,
 )
 from project_mai_tai.market_data.schwab_v2_streamer import SchwabTick, SchwabV2Streamer
 from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
@@ -569,6 +570,7 @@ class SchwabV2BotService:
         self._line_sessions: dict[str, SessionLineRestoration] = {}
         self._line_published: dict[str, RebuildResult[SessionLineSnapshot]] = {}
         self._line_live_bars: dict[str, set[int]] = {}
+        self._line_source_waiting: dict[str, int] = {}
         self._line_dirty: set[str] = set()
         self._line_rebuild_event = asyncio.Event()
         if self._line_restoration_enabled:
@@ -4686,6 +4688,7 @@ class SchwabV2BotService:
             self._line_sessions.pop(symbol, None)
             self._line_published.pop(symbol, None)
             self._line_live_bars.pop(symbol, None)
+            self._line_source_waiting.pop(symbol, None)
         for symbol in desired:
             old = self._line_sessions.get(symbol)
             if old is None or old.anchor_ms != anchor:
@@ -4693,6 +4696,7 @@ class SchwabV2BotService:
                 self._line_sessions[symbol] = SessionLineRestoration(symbol, anchor, self._line_epoch)
                 self._line_published.pop(symbol, None)
                 self._line_live_bars.pop(symbol, None)
+                self._line_source_waiting.pop(symbol, None)
 
     def _observe_line_bar(self, symbol: str, bar: ChartBar) -> None:
         if not getattr(self, "_line_restoration_enabled", False):
@@ -4725,6 +4729,9 @@ class SchwabV2BotService:
         )
 
     def _line_buy_ready(self, symbol: str) -> bool:
+        ledger = self._line_sessions.get(symbol)
+        if ledger is not None and self._line_source_waiting.get(symbol) == ledger.epoch:
+            return False
         state = self.strategy._symbol_states.get(symbol)
         result = self._line_published.get(symbol)
         clean = True
@@ -4796,9 +4803,12 @@ class SchwabV2BotService:
                     len(symbols), time.monotonic() - started)
 
     def _line_source_request(self, symbol: str):
+        now_ms = self.strategy._now_ms()
+        if not anchored_session_poll_open(now_ms):
+            return None
         self._sync_line_epochs()
         ledger = self._line_sessions.get(symbol)
-        current = self.strategy._now_ms() // 60_000 * 60_000 - 60_000
+        current = now_ms // 60_000 * 60_000 - 60_000
         if ledger is None or not ledger.anchor_ms <= current < ledger.anchor_ms + 16 * 3_600_000:
             return None
         return ledger.epoch, ledger.anchor_ms, current
@@ -4812,6 +4822,9 @@ class SchwabV2BotService:
         self._sync_line_epochs()
         ledger = self._line_sessions.get(symbol)
         if ledger is None or ledger.epoch != epoch:
+            return False
+        if proof is None:
+            self._line_source_waiting[symbol] = epoch
             return False
         was_warmed = symbol in self._warmup_ready_symbols()
         state = self.strategy.watchlist_state(symbol)
@@ -4831,6 +4844,7 @@ class SchwabV2BotService:
             )
         self._line_dirty.add(symbol)
         self._line_rebuild_event.set()
+        self._line_source_waiting.pop(symbol, None)
         return True
 
     async def _rebuild_session_line(self, symbol: str, ledger: SessionLineRestoration) -> bool:
