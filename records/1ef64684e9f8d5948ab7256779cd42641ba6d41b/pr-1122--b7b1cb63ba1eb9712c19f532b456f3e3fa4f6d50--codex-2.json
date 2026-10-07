@@ -1,0 +1,9 @@
+{
+  "pr_number": 1122,
+  "range_base": "b7b1cb63ba1eb9712c19f532b456f3e3fa4f6d50",
+  "range_head": "1ef64684e9f8d5948ab7256779cd42641ba6d41b",
+  "reviewed_at": "2026-10-07T23:33:42Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independent review of claude-1 tests-only commit 1ef64684: eight files/nine stale fixtures correctly follow retired ORB registration, live ORB-Schwab health ownership, four live COLDSTART consumers, 149 boolean/157 total checks and eight process environments. Read entire tests delta and source composition; 522 affected tests PASS, Ruff/diff PASS. Both Codex source cherry-picks have stable patch IDs identical to originals, without OMS, live ORB producer or running ORB entrypoint changes; this record does not independently pin those Codex-authored source commits. Offline page fixture has no orb API row, LIVE/SCHWAB and ORB Live, zero paper/observer strings. Full suite/CI remain pending; simulation-writer removal and accepted label mutation control are tomorrow, not falsely claimed complete."
+}
