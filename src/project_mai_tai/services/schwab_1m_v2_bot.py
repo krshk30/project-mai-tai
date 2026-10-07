@@ -4082,6 +4082,8 @@ class SchwabV2BotService:
         st.cw_resting_taken = True
         st.cw_reclaim_taken = True
         st.cw_seed_cap_watch_start_ms = watch_start if cap_only else 0
+        # Reconstruction provenance is not permission: the SELL path re-proves flat ownership.
+        st.slotclear_reconstructed_watch_start_ms = watch_start
 
     def _cap_reconstructed_segment(self, symbol: str, *, stage: str) -> None:
         """P1.3: mark a RECONSTRUCTED armed segment as USED, so v2 can only enter on a flip we

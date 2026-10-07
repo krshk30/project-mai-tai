@@ -523,6 +523,13 @@
       "ruling": "Operator 2026-10-07: narrow fresh BUY reactive exception, 0.5% cap, ownership unchanged."
     },
     {
+      "name": "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "SLOTCLEAR1 fresh live SELL releases only a reconstructed claim after flat ownership proof; normal three-short-bar rest remains.",
+      "ruling": "Operator 2026-10-07 released independent default-OFF fresh SELL requirement; stale pre-watch flips remain refused."
+    },
+    {
       "name": "strategy_schwab_1m_v2_retry_one_enabled",
       "expected": true,
       "owning_service": "schwab-1m-v2",

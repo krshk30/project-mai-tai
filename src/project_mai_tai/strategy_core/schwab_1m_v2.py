@@ -267,6 +267,8 @@ class SymbolState:
     cw_reclaim_taken: bool = False              # the reclaim slot for THIS cross is used
     cw_seed_cap_watch_start_ms: int = 0         # nonzero only when the cap, not an entry, took both slots
     slotclear_fresh_buy_bar_ms: int = 0
+    slotclear_reconstructed_watch_start_ms: int = 0
+    slotclear_last_fresh_sell_bar_ms: int = 0
     cw_resting_suppressed_segment_id: int = 0   # SLOT2 marker dedupe; policy remains cw_resting_taken
     cw_resting_suppressed_bars: int = 0         # eligible bars suppressed by the consumed slot
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
@@ -1571,7 +1573,9 @@ class SchwabV2Strategy:
             state.retry_one_watch_start_ms <= 0
             or segment_id <= 0
             or (segment_id < state.retry_one_watch_start_ms
-                and not self._slotclear_live_close_after_watch(state, state.retry_one_watch_start_ms))
+                and not self._slotclear_live_close_after_watch(state, state.retry_one_watch_start_ms)
+                and not (getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled", False)
+                         and self._slotclear_live_sell_close_after_watch(state, state.retry_one_watch_start_ms)))
             or segment_id <= state.retry_one_segment_id
             or segment_id != int(state.atr_short_flip_bar_ts or 0)
         ):
@@ -2318,6 +2322,7 @@ class SchwabV2Strategy:
         state.cw_reclaim_taken = False
         state.cw_seed_cap_watch_start_ms = 0
         state.slotclear_fresh_buy_bar_ms = 0
+        state.slotclear_reconstructed_watch_start_ms = 0
         state.cw_resting_suppressed_segment_id = 0
         state.cw_resting_suppressed_bars = 0
 
@@ -2342,6 +2347,11 @@ class SchwabV2Strategy:
                     state,
                     reason="sell_flip_idle_owner_contains_evidence",
                 )
+                return
+            if getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled", False):
+                # Refused live-SELL observations must not fall through to the legacy release.
+                state.cw_resting_suppressed_segment_id = 0
+                state.cw_resting_suppressed_bars = 0
                 return
             # A replayed SELL can arrive just after a same-session re-add even though its BAR
             # opened before watch-start. Only a cap-only claim and a newly observed bar may
@@ -3093,6 +3103,7 @@ class SchwabV2Strategy:
         # broker experiment, not duplicate exposure for this counter.
         if prev_held == 0 and state.position_qty_held > 0:
             state.cw_seed_cap_watch_start_ms = 0
+            state.slotclear_reconstructed_watch_start_ms = 0
         if prev_held == 0 and state.position_qty_held > 0 and not state.cw_reclaim_taken:
             # ⛔⭐⭐ CLAIM ON FILL — and the slot decides WHICH claim.
             # The original inference was "the reactive path claims cw_reclaim_taken at EMIT, so a
@@ -4708,6 +4719,20 @@ class SchwabV2Strategy:
             return
         if flip == "SELL":
             state.slotclear_fresh_buy_bar_ms = 0
+            if (self._flip_owned_first_entry_enabled
+                    and getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled", False)):
+                watch_ms = max(state.slotclear_reconstructed_watch_start_ms,
+                               state.retry_one_watch_start_ms, self._boot_ms)
+                bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+                if (not self._slotclear_live_sell_close_after_watch(state, watch_ms)
+                        or atr_signal.get("observation_phase", "live") != "live"
+                        or state.atr_short_flip_bar_ts != bar_ms
+                        or bar_ms <= state.slotclear_last_fresh_sell_bar_ms):
+                    # Historical/duplicate delivery ends the indicator arm, not live ownership.
+                    state.cw_armed = False
+                    state.cw_arm_bar_ts = 0
+                    return
+            self._slotclear_fresh_sell(state, atr_signal)
             if self._cw_armed_segment_safety_enabled and state.cw_armed:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
             if state.resting_buy_frozen and state.resting_active and not state.resting_flip_ms:
@@ -4878,6 +4903,37 @@ class SchwabV2Strategy:
         state.slotclear_fresh_buy_bar_ms = int(state.bars[-1].timestamp_ms)
         logger.info("[V2-SLOTCLEAR1] %s watch_start=%d flip_close=%d action=fresh_first_reactive",
                     state.symbol, watch_ms, state.slotclear_fresh_buy_bar_ms + 60000)
+
+    def _slotclear_live_sell_close_after_watch(self, state: SymbolState, watch_ms: int) -> bool:
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        return bool(watch_ms > 0 and bar_ms > 0 and self._bar_observation_phase == "live"
+                    and bar_ms + 60000 > max(watch_ms, self._boot_ms)
+                    and 60000 <= self._now_ms() - bar_ms <= self._resting_max_bar_age_ms)
+
+    def _slotclear_fresh_sell(self, state: SymbolState, signal: dict) -> None:
+        watch_ms = state.slotclear_reconstructed_watch_start_ms
+        if (not getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled", False)
+                or not self._flip_owned_first_entry_enabled
+                or not self._slotclear_live_sell_close_after_watch(state, watch_ms)
+                or signal.get("observation_phase", "live") != "live"
+                or state.atr_short_flip_bar_ts != state.bars[-1].timestamp_ms
+                or not self.line_buy_ready(state.symbol) or self._entries_held
+                or self.gap_hold_active(state.symbol) or self._removed_wait_gate_closed(state.symbol)
+                or not self._flip_owner_restore_readable or not self._flip_owner_evidence_fresh(state)
+                or state.flip_owner_phase != "idle" or state.flip_owner_opportunity_id
+                or state.fanout_segment_id or state.flip_owner_flip_bar_ts
+                or state.flip_owner_provisional_started_ms or state.flip_owner_first_rest_placed
+                or state.flip_owner_fill_accounts or state.flip_owner_position_ids
+                or state.flip_owner_position_entry_ms or state.flip_owner_open_positions
+                or state.position_qty or state.position_qty_held
+                or state.resting_active or state.webull_resting_active or state.cw_v2_emit_claimed
+                or state.fanout_webull_claimed or state.fanout_claim_outcome == "filled"
+                or not (state.cw_resting_taken and state.cw_reclaim_taken)):
+            return
+        self._clear_cw_slot_claims(state)
+        state.slotclear_last_fresh_sell_bar_ms = int(state.bars[-1].timestamp_ms)
+        logger.info("[V2-SLOTCLEAR1-SELL] %s watch_start=%d flip_close=%d action=release_reconstructed_slots",
+                    state.symbol, watch_ms, state.bars[-1].timestamp_ms + 60000)
 
     def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         if not self.line_buy_ready(state.symbol):
@@ -5067,6 +5123,7 @@ class SchwabV2Strategy:
         state.cw_v2_emit_claimed = True
         state.cw_v2_emit_ms = now_ms
         state.cw_seed_cap_watch_start_ms = 0
+        state.slotclear_reconstructed_watch_start_ms = 0
         state.cw_entries_this_flip += 1     # retained for labelling (cw_entry_n); NOT the cap
         if fresh_first:
             state.cw_resting_taken = True
@@ -5433,6 +5490,7 @@ class SchwabV2Strategy:
                 return
         state.resting_active = True
         state.cw_seed_cap_watch_start_ms = 0
+        state.slotclear_reconstructed_watch_start_ms = 0
         state.resting_buy_frozen = False
         state.resting_frozen_floor_bar_ms = 0
         state.resting_slot = slot        # ⛔ selects the REPRICE level only; never gates a cancel

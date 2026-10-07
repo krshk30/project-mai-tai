@@ -543,6 +543,8 @@ class Settings(BaseSettings):
     # every new read, record and gate, restoring the pre-RECLAIM1 behaviour after a v2 restart.
     strategy_schwab_1m_v2_flip_owned_first_entry_enabled: bool = False
     strategy_schwab_1m_v2_slotclear_fresh_flip_enabled: bool = False
+    # Independent SELL-only release; never grants the narrow reactive BUY exception.
+    strategy_schwab_1m_v2_slotclear_fresh_sell_enabled: bool = False
     # RETRY-ONE: after every sibling from a first-rest episode is durably closed, hand the
     # opportunity back for a bounded number of fresh crosses that trade date. OFF preserves the
     # confirmation-only reset exactly. The count is anchored to the 04:00 ET strategy session.
