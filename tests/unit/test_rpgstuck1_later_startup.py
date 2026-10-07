@@ -43,14 +43,13 @@ async def test_later_all14_real_startup_actual_fill_and_mi_no_wire_no_stored_or_
     jobs = dict(HandoffJournal(h.factory).jobs())
     for token, job in jobs.items():
         if str(token)[:8] in LOCAL:
-            assert job["phase"] in ({"clear", "expired"} if outside_window else {"clear"})
+            assert job["phase"] == "refused"
+            assert job["release_reason"] == "old_local_no_wire_return_to_strategy"
             assert job["local_no_wire"]
             state = h.strategy.watchlist_state(job["old"]["symbol"])
             await h.bot._rpg_handoff_pass()
-            # A valid-window clear ticket still owns its transaction, not a legacy opening.
-            if not outside_window:
-                assert h.strategy._rpg_entry_owned(state, account="live:orb")
-                assert h.service._rpg_open_refusal(tokenless_open(state.symbol, "live:orb")) == "rpg_old_buy_still_owned"
+            assert not h.strategy._rpg_entry_owned(state, account="live:orb")
+            assert h.service._rpg_open_refusal(tokenless_open(state.symbol, "live:orb")) is None
         elif str(token).startswith("d86d5d38"):
             assert job["phase"] == "filled" and job["replacement_filled"]
         else:
@@ -64,8 +63,6 @@ async def test_later_all14_real_startup_actual_fill_and_mi_no_wire_no_stored_or_
     assert len(jobs) == 14
     for token, job in jobs.items():
         if str(token)[:8] in LOCAL:
-            await h.service._rpg_advance(token)
-            job = HandoffJournal(h.factory).read(token)
             assert job["phase"] == "refused"
             assert job["release_reason"] == "old_local_no_wire_return_to_strategy"
         assert old_buy_proven_clear(job)

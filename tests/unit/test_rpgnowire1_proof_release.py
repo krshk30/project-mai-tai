@@ -11,7 +11,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 
 from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
@@ -57,8 +57,8 @@ async def sxtc(monkeypatch, *, terminal_phase="refused"):
             h.events[str(intent.id)] = event
         for source in TICKETS:
             payload = deepcopy(source["payload"])
-            # Controlled terminal transition of the recording, not a claim that
-            # the captured held_unknown/price_wait tickets were already terminal.
+            # Controlled phase of the recording; clear/held_unknown are active,
+            # not terminal. The captured mirror remains price_wait when None.
             if terminal_phase is not None:
                 payload["phase"] = terminal_phase
             session.add(DashboardSnapshot(id=UUID(source["id"]), snapshot_type=SNAPSHOT_TYPE,
@@ -73,7 +73,7 @@ async def serial_tick(h, token):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", TICKETS, ids=["Schwab-cache-refusal", "Webull-thirteen-held-replacements"])
-@pytest.mark.parametrize("terminal_phase", ["refused", "expired"])
+@pytest.mark.parametrize("terminal_phase", ["refused", "expired", "clear", "held_unknown"])
 async def test_sxtc_serial_proof_feedback_releases_only_matching_v2_leg_no_saved_buy(monkeypatch, source, terminal_phase):
     h = await sxtc(monkeypatch, terminal_phase=terminal_phase)
     token = UUID(source["id"])
@@ -389,7 +389,7 @@ async def test_prepared_transfer_survives_restart_without_old_serial_dispatch(mo
 
 
 @pytest.mark.asyncio
-async def test_recorded_primary_no_wire_begin_cancel_retains_active_protocol(monkeypatch):
+async def test_recorded_primary_no_wire_begin_cancel_publishes_release_feedback(monkeypatch):
     h = await sxtc(monkeypatch)
     token = UUID(TICKETS[0]["id"])
     event = TradeIntentEvent(source_service="schwab-1m-v2", produced_at=h.clock[0],
@@ -401,9 +401,9 @@ async def test_recorded_primary_no_wire_begin_cancel_retains_active_protocol(mon
     jobs = HandoffJournal(h.factory).jobs()
     primary = [job for _, job in jobs if job["old"]["broker_account_name"] == "live:schwab_1m_v2"]
     assert len(primary) == 1
-    assert primary[0]["phase"] == "clear" and primary[0]["local_no_wire"]
-    assert "release_reason" not in primary[0]
-    assert rpg_buy_owned(primary[0])
+    assert primary[0]["phase"] == "refused" and primary[0]["local_no_wire"]
+    assert primary[0]["release_reason"] == "old_local_no_wire_return_to_strategy"
+    assert not rpg_buy_owned(primary[0])
     assert not h.adapter.opens and not h.adapter.cancels
 
 
@@ -459,14 +459,14 @@ async def test_positive_fill_latch_never_released_even_with_local_intent_proof(m
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("source", TICKETS, ids=["Schwab-held-unknown", "Webull-price-wait"])
+@pytest.mark.parametrize("source", [TICKETS[1]], ids=["Webull-price-wait"])
 async def test_recorded_sxtc_nonterminal_positive_proof_preserves_existing_serial_protocol(monkeypatch, source):
     h = await sxtc(monkeypatch, terminal_phase=None)
     token = UUID(source["id"])
     journal = HandoffJournal(h.factory)
     before = journal.read(token)
-    assert before["phase"] in {"held_unknown", "price_wait"}
-    # Positive exact durable intent proof is present, but phase is not terminal.
+    assert before["phase"] == "price_wait"
+    # Positive proof alone does not admit the explicitly excluded price_wait phase.
     assert h.service._rpg_release_unwired(token, before) is None
     assert journal.read(token) == before
     state = h.strategy.watchlist_state("SXTC")
@@ -480,24 +480,19 @@ async def test_recorded_sxtc_nonterminal_positive_proof_preserves_existing_seria
     await serial_tick(h, token)
     await h.bot._rpg_handoff_pass()
     after = journal.read(token)
-    assert after["phase"] == ("clear" if before["phase"] == "held_unknown" else "price_wait")
+    assert after["phase"] == "price_wait"
     assert "release_reason" not in after
     assert after.get("replacement") == before.get("replacement")
     assert rpg_buy_owned(after)
     assert h.strategy._rpg_entry_owned(state, account=before["old"]["broker_account_name"], slot="first")
     assert state.resting_webull_generation == generation and state.resting_webull_quantity == 92
-    if before["phase"] == "held_unknown":
-        # Existing clear authorization retires the exact old primary latch;
-        # the active ticket still owns that account and the saved replacement.
-        assert state.resting_schwab_generation == "" and state.resting_schwab_quantity == 0
-    else:
-        assert state.resting_schwab_generation == generation and state.resting_schwab_quantity == 185
+    assert state.resting_schwab_generation == generation and state.resting_schwab_quantity == 185
     assert not h.adapter.opens and not h.adapter.cancels and not h.adapter.reads
     assert not h.strategy.drain_pending_intents() and not h.strategy.drain_webull_direct_intents()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("phase", ["prepared", "waiting", "fills_waiting", "clear", "held_unknown",
+@pytest.mark.parametrize("phase", ["prepared", "waiting", "fills_waiting",
     "submitting", "submit_unknown", "price_wait", "placed", "filled"])
 async def test_positive_no_wire_intent_never_synthesizes_terminal_phase(monkeypatch, phase):
     h = await sxtc(monkeypatch, terminal_phase=phase)
@@ -512,8 +507,8 @@ async def test_positive_no_wire_intent_never_synthesizes_terminal_phase(monkeypa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", TICKETS, ids=["Schwab-cache-refusal", "Webull-held-replacement"])
-@pytest.mark.parametrize("terminal_phase", ["refused", "expired"])
-async def test_terminal_sxtc_absence_reads_zero_and_label_without_positive_intent_never_release(monkeypatch, source, terminal_phase):
+@pytest.mark.parametrize("terminal_phase", ["refused", "expired", "clear", "held_unknown"])
+async def test_admitted_sxtc_phase_absence_reads_zero_without_positive_intent_never_release(monkeypatch, source, terminal_phase):
     h = await sxtc(monkeypatch, terminal_phase=terminal_phase)
     token = UUID(source["id"])
     journal = HandoffJournal(h.factory)
@@ -533,6 +528,26 @@ async def test_terminal_sxtc_absence_reads_zero_and_label_without_positive_inten
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["refused", "expired", "clear", "held_unknown"])
+@pytest.mark.parametrize("missing", ["old", "replacement"])
+async def test_each_admitted_phase_requires_old_and_saved_replacement_independent_proof(monkeypatch, phase, missing):
+    h = await sxtc(monkeypatch, terminal_phase=phase)
+    token = UUID(TICKETS[1]["id"])
+    journal = HandoffJournal(h.factory)
+    before = journal.read(token)
+    generation = before[missing]["metadata"]["rpg_resting_generation"]
+    with h.factory() as session:
+        for source in INTENTS:
+            if (source["account"] == "live:orb"
+                    and source["payload"]["metadata"]["rpg_resting_generation"] == generation):
+                session.delete(session.get(TradeIntent, UUID(source["id"])))
+        session.commit()
+    assert h.service._rpg_release_unwired(token, before) is None
+    assert journal.read(token) == before and rpg_buy_owned(before)
+    assert not h.adapter.opens
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("source", TICKETS, ids=["Schwab-held-unknown", "Webull-price-wait"])
 async def test_sxtc_terminal_copy_cannot_override_locked_nonterminal_phase(monkeypatch, source):
     h = await sxtc(monkeypatch, terminal_phase=None)
@@ -543,3 +558,60 @@ async def test_sxtc_terminal_copy_cannot_override_locked_nonterminal_phase(monke
     assert h.service._rpg_release_unwired(token, copied) is None
     assert journal.read(token) == current
     assert not h.adapter.opens
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("positive_proof", [True, False], ids=["exact-intent-proof", "no-proof"])
+async def test_recorded_sxtc_1428_liquidity_floor_expiry_feedback_then_1512_normal_draft(
+        monkeypatch, positive_proof):
+    h = await sxtc(monkeypatch, terminal_phase=None)
+    source = TICKETS[1]
+    token = UUID(source["id"])
+    journal = HandoffJournal(h.factory)
+    lines = (RAW / "sxtc-expired-log-20261007.txt").read_text().splitlines()
+    expired = next(line for line in lines if "phase=expired reason=liquidity_floor" in line)
+    assert str(token) in expired and "segment=1791380522895" in expired
+    # Apply the independently observed later terminal transition to our earlier
+    # durable capture. The log is NOT the no-wire proof: exact intents are.
+    journal.change(token, journal.read(token)["revision"], phase="expired", reason="liquidity_floor")
+    h.clock[0] = datetime.fromisoformat("2026-10-07T14:28:02.984000+00:00")
+    if not positive_proof:
+        with h.factory() as session:
+            session.execute(delete(TradeIntent))
+            session.commit()
+    state = h.strategy.watchlist_state("SXTC")
+    state.fanout_segment_id = source["payload"]["segment_id"]
+    state.resting_active = state.resting_is_broker_order = state.webull_resting_active = True
+    state.resting_slot = "first"
+    state.resting_schwab_generation = TICKETS[0]["payload"]["old"]["metadata"]["rpg_resting_generation"]
+    state.resting_webull_generation = source["payload"]["replacement"]["metadata"]["rpg_resting_generation"]
+    state.resting_schwab_quantity, state.resting_webull_quantity = 185, 98
+    h.strategy._rpg_handoffs = {row["id"]: deepcopy(row["payload"]) for row in TICKETS}
+    await serial_tick(h, token)
+    await h.bot._rpg_handoff_pass()
+    assert h.strategy._rpg_handoffs[str(token)]["phase"] == ("refused" if positive_proof else "expired")
+    assert h.strategy._rpg_entry_owned(state, account="live:orb") is (not positive_proof)
+    assert not h.adapter.opens
+    probe = next(line for line in lines if "[V2-ATR-PROBE]" in line)
+    state.atr_state, state.atr_state_age = "short", 93
+    state.atr_trail = float(probe.split("trail=")[1].split()[0])
+    state.atr_short_flip_bar_ts = int(source["payload"]["old"]["metadata"]["rpg_short_segment"])
+    h.clock[0] = datetime.fromisoformat("2026-10-07T15:12:02.660000+00:00")
+    from project_mai_tai.strategy_core import schwab_1m_v2 as strategy_module
+    messages = []
+    original_info = strategy_module.logger.info
+
+    def record_info(message, *args, **kwargs):
+        messages.append(message % args if args else message)
+        original_info(message, *args, **kwargs)
+
+    monkeypatch.setattr(strategy_module.logger, "info", record_info)
+    h.strategy._queue_resting_place(state, state.atr_trail, slot="first")
+    assert not h.strategy.drain_pending_intents()  # Sibling remains owned; no eligibility waiver.
+    mirror = h.strategy.drain_webull_direct_intents()
+    assert len(mirror) == int(positive_proof)
+    assert all("rpg_handoff_token" not in draft.metadata for draft in mirror)
+    webull_skips = [message for message in messages
+        if "[V2-RESTING-LEG-SKIP]" in message and "account=live:orb" in message]
+    assert bool(webull_skips) is (not positive_proof)
+    assert all("reason=rpg_owned" in message for message in webull_skips)

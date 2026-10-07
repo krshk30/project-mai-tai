@@ -348,13 +348,14 @@ class AtrRepriceRuntimeMixin:
         return job
 
     def _rpg_release_unwired(self, token, job):
-        """Transfer only terminal, positively proven never-wired generations to v2.
+        """Transfer positively proven never-wired generations in admitted phases.
 
         Old-order proof does not prove a saved replacement. Lock the journal and
         invalidate its exact queued owner in the same transaction before feedback.
-        Active no-wire tickets continue through the existing coordinator protocol.
+        Clear/held_unknown are active phases admitted only by the same exact proof.
+        Price-wait and dispatch phases retain the existing coordinator protocol.
         """
-        if (job["phase"] not in {"refused", "expired"}
+        if (job["phase"] not in {"refused", "expired", "clear", "held_unknown"}
                 or job.get("no_rebuy") or job.get("replacement_filled")
                 or job.get("release_reason") == "old_local_no_wire_return_to_strategy"):
             return None

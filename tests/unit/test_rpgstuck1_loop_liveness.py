@@ -114,18 +114,15 @@ async def test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_cle
 
     monkeypatch.setattr(h.service, "_rpg_retry_pause", pump)
     await h.service._run_rpg_retry_loop(stop)
-    expected = "expired" if outside else "placed"
-    # A committed acceptance may wake one same-generation proof evaluation;
-    # it must not replay the opening or start a periodic terminal scan.
+    # Exact local proof returns to the normal v2 draft, never the saved BUY.
+    # The separate wired-terminal-zero test below retains the real L7 signal control.
     for token in tokens:
-        assert phases[token][:2] == ["clear", expected]
-        assert phases[token][2:] in ([], ["placed"] if not outside else [])
-    assert all(journal.read(token)["phase"] == expected and old_buy_proven_clear(journal.read(token))
+        assert phases[token] == ["refused"]
+        assert journal.read(token)["release_reason"] == "old_local_no_wire_return_to_strategy"
+    assert all(journal.read(token)["phase"] == "refused" and old_buy_proven_clear(journal.read(token))
                for token in tokens)
-    assert len(h.adapter.opens) == (0 if outside else 4)
-    assert len({request.metadata["fanout_slot_id"] for request in h.adapter.opens}) == len(h.adapter.opens)
-    assert all(request.broker_account_name == "live:orb" for request in h.adapter.opens)
-    assert ignored_bot_ticks and not h.adapter.cancels
+    assert not h.adapter.opens and not h.adapter.cancels
+    assert not ignored_bot_ticks
 
 
 @pytest.mark.asyncio
