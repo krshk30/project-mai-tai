@@ -1,0 +1,42 @@
+........................................................................ [ 16%]
+........................................................................ [ 32%]
+............................................F.....F..................... [ 49%]
+........................................................................ [ 65%]
+.....F.................................................................. [ 82%]
+..............F......................................................... [ 98%]
+.....                                                                    [100%]
+=================================== FAILURES ===================================
+_____ test_all_on_catalog_audit_committed_live_set_requires_both_consumers _____
+tests/unit/test_all_on_pm.py:358: in test_all_on_catalog_audit_committed_live_set_requires_both_consumers
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 150
+E   assert 151 == 150
+E    +  where 151 = sum(<generator object test_all_on_catalog_audit_committed_live_set_requires_both_consumers.<locals>.<genexpr> at 0x109a2e110>)
+_ test_all_on_process_catalog_checker_refuses_three_dark_values_without_live_io _
+tests/unit/test_all_on_pm.py:425: in test_all_on_process_catalog_checker_refuses_three_dark_values_without_live_io
+    assert lines[-1] == "Final call: REAL FAILURE; checked=158/158 mismatches=6 unknown=0"
+E   AssertionError: assert 'Final call: ...s=6 unknown=0' == 'Final call: ...s=6 unknown=0'
+E     
+E     - Final call: REAL FAILURE; checked=158/158 mismatches=6 unknown=0
+E     ?                                     ^   ^
+E     + Final call: REAL FAILURE; checked=159/159 mismatches=6 unknown=0
+E     ?                                     ^   ^
+___ test_all_on_effective_catalog_zero_with_controlled_process_environments ____
+tests/unit/test_keeprest1.py:304: in test_all_on_effective_catalog_zero_with_controlled_process_environments
+    assert lines[-1] == "Final call: PASS; checked=158/158 mismatches=0 unknown=0"
+E   AssertionError: assert 'Final call: ...s=0 unknown=0' == 'Final call: ...s=0 unknown=0'
+E     
+E     - Final call: PASS; checked=158/158 mismatches=0 unknown=0
+E     ?                             ^   ^
+E     + Final call: PASS; checked=159/159 mismatches=0 unknown=0
+E     ?                             ^   ^
+__ test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on __
+tests/unit/test_pmprint1_tonight_flags.py:105: in test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 158
+E   assert 159 == 158
+E    +  where 159 = sum(<generator object test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on.<locals>.<genexpr> at 0x1099c4b80>)
+=========================== short test summary info ============================
+FAILED tests/unit/test_all_on_pm.py::test_all_on_catalog_audit_committed_live_set_requires_both_consumers
+FAILED tests/unit/test_all_on_pm.py::test_all_on_process_catalog_checker_refuses_three_dark_values_without_live_io
+FAILED tests/unit/test_keeprest1.py::test_all_on_effective_catalog_zero_with_controlled_process_environments
+FAILED tests/unit/test_pmprint1_tonight_flags.py::test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on
+4 failed, 433 passed, 4 deselected in 22.50s

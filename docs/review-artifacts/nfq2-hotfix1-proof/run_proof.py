@@ -59,6 +59,8 @@ def metadata():
         strategy_schwab_1m_v2_entry_notional_usd=0,
         strategy_schwab_1m_v2_webull_entry_notional_usd=0,
         oms_v2_eh_entry_enabled=True, oms_v2_eh_fresh_price_enabled=True,
+        strategy_schwab_1m_v2_slotclear_fresh_flip_enabled=True,
+        strategy_schwab_1m_v2_slotclear_fresh_sell_enabled=True,
         strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=True,
         oms_quote_drift_cancel_tolerance_cents=1.0,
         oms_v2_webull_mirror_retained_hold_enabled=True,

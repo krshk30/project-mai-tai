@@ -18,7 +18,12 @@ from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload
 from tests.unit.test_nfq2_eh_fresh_price import NOW, biya, hold, retry
 from tests.unit.test_nfq2_eh_fresh_price import service as recorded_service
 
-service = recorded_service
+@pytest.fixture
+def service(monkeypatch):
+    value = recorded_service.__wrapped__(monkeypatch)
+    value.settings.strategy_schwab_1m_v2_slotclear_fresh_flip_enabled = True
+    value.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = True
+    return value
 WORK = ContextVar("combined_proof_work", default="setup")
 
 
