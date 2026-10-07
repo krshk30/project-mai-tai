@@ -1,0 +1,9 @@
+Attempt: git cherry-pick 16c435b01e7ba41c3ea58c17f100ca52df2ed3c6 0318ef84dc11b1b052073092828b80ae23c1bf54
+Base: 994f08aee2c35b3809b3c3384e0d8628807dcfb7
+Exit: 1
+CONFLICT (modify/delete): docs/review-artifacts/nfq2/ASSESSMENT_2026-10-07.md deleted in HEAD and modified in 16c435b0.
+Runtime service.py auto-merged without conflict; no manual runtime resolution made.
+Aborted the incomplete sequence in this proof worktree.
+Retried the complete NFQ-only sequence: 0239726fea29baa6e45b5a58a1a49c4f16b8168a, 16c435b01e7ba41c3ea58c17f100ca52df2ed3c6, 0318ef84dc11b1b052073092828b80ae23c1bf54.
+All three applied cleanly: 94576d78, 0fbc5419, 494bbeef (detached, local proof worktree only).
+Managed worktree created; chat attachment failed twice: thread attachment identity count exceeds 100. Continued at the returned path.
