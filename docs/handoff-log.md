@@ -7692,3 +7692,14 @@ Own source read preserves filled ownership and scanner-removal semantics;
 ARTL raw replay and APUS negative control being completed, then mutations and
 the current-main full pair. SLOT9951 pin acknowledged, no merge performed.
 Tonight's staged exact APP994/planf2 and running ORB remain untouched.
+
+2026-10-07 16:45 ET codex-2: RETRYLEFT1 recorded controls complete locally:
+41 new tests, 246 focused combined pass in3.59s, 13/13 assertion mutations RED.
+NCPL cancel emission at recorded19:10:18.069UTC is8.069s after close;
+ARTL at recorded18:53:12.758UTC is3.647s, explicitly current zero-retry policy
+over recorded identities because the historical owner record is unavailable.
+APUS bothfilled remains negative; receipts never release the consumed owner.
+Full-unit run active, no full-pair readiness claim. Raw mutation outputs
+/tmp/retryleft1-mutation-*-20261007.txt and current full output
+/tmp/retryleft1-complete-unit-20261007.txt. Paired package hashes/PIDs unchanged
+on16:35ET read, clock-pending; no production writes or ORB action here.
