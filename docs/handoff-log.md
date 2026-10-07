@@ -7476,3 +7476,31 @@ validatefallback. Exact ERROR-level shape recognized, anothererrorstillblocks.
 105runnerPASS; mechanics82461902, releasefc1c523e8a44eba554a517a0f01e05725797ddfc6d95420420fea7f26492aae5.
 Finalphase7 closeout has0 extraactions, originalSTOPs retained; allfourPIDs
 active/NRestarts0. Catalog/preopen/timer/COMPLETE stillpending, nextsessionproofunmeasured.
+
+2026-10-06 22:43 ET codex-2 C125: Install2 COMPLETE at22:41:31ET;
+APP5b8b4f642bbc3c312be436d0e92adbc22d9e9f95,
+treeb28df7b3d492d0be4e72e1233ce0fff55e43fca4, exact pinnedintegrationtree.
+OMS626190/start21:53:03, v2626439/21:53:49, strategy626773/21:54:13,
+control626835/21:54:15ET allactive/NRestarts0; no fallback/recovery used.
+Bothbrokerflat, working/managed/virtual/inflight0, SQLstartupbuys0;
+103tickets: refused82,filled10,expired9,held_unknown2, in-flight0.
+FLAGGATE155/157,0mismatch,2UNKNOWNinactivepaper; numeric8/8 and retry0extra2/2.
+Redis0evictionsbefore/after, memory809784728->809790192, fiveowners+marker1;
+officialrestart9/9,0tracebacks, barcontinuityN/Aoffsession. One exact existing
+seededfallback ERROR at22:00:12.771 (C124), not fresh-source restoration proof.
+ORBpage LIVE/SCHWAB. Finalplan82461902535d9cfafdbec87507b20d4c313dda55,
+releasefc1c523e8a44eba554a517a0f01e05725797ddfc6d95420420fea7f26492aae5;
+105runnerPASS. OriginalSTOPs retained; mechanics: OMSfirst authorizedcontinuation,
+declareactualcontrolrestart, immutableuniqueofficialreports, literalovernightheld
+state not PASS, exact369s/population/capped-slotfallback ERRORclassification.
+Runner=/home/trader/after-hours/2026-10-06/install2-5b8b4f64/continuation-seeded.log
+sha256edfa0fbd29cc5cd06631626cf2944de4a3da57eab36868b18eb11799df646123.
+Completionreceipt=/home/trader/after-hours/2026-10-06/install2-5b8b4f64/job-archive64/attempt-install2-oct6-attended/completion-receipt.json
+sha256d911ffb1c369debbdd5f6576b173f74a871404e011cada4374ed470a5428ff27;
+journal=/home/trader/fleet_health/deployments-20261006.md has COMPLETE.
+Preopen0700/trader hash0d35283299065cb29f28301b3e84af45f4bf938afd341775868e1f4f2cc40884;
+date/report dynamicET, paper requires today's activeguard/dailystartshape,
+otheridentities/SHA pinned. Actualroot project-mai-tai-preopen.timer NEXT
+Wed2026-10-07 10:20UTC/06:20ET; never ran tomorrowgateearly.
+Firstdailyrehearsal, fresh-line/scanner/live-delivery still UNMEASURED;
+Claude06:22 handcheck and07:00-07:15 scannercheck remain owners.
