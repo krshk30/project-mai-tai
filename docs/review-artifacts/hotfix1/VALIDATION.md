@@ -2,6 +2,47 @@
 
 Base: 1a70da19176d2cad486e8518e1c9030f1cabb968. No production action.
 
+## Rollback addendum: active restore and OFF admission
+
+Runtime/tests: ace0dca73c4318997e9f7a841d459b9fc4e8a200, on top of
+the originally published 92bc6a15. Opportunity startup query selects only
+held/queued; terminal rows do not enter either the detached cache or owner set.
+Queued tokens are invalidated on restart. Uncertain wires are restored in a
+separate serial-only fence set, not as opportunities or tick actors. A retired
+row with unresolved wire evidence still fences duplicate buys.
+
+Outer callback and inner retained scheduler check the flag itself; symbol
+NFQ evaluation does not call retained evaluation while OFF. OFF with an
+existing held, queued, retired or uncertain row makes no retained schedule,
+cache lookup or evaluation call. Existing legacy NFQ and exit/drift readers
+are not disabled by this feature flag.
+
+A new regression test exposed terminal deferred projections falling into
+legacy retry admission after their retained ID was removed. Commit publication
+now also removes the matching terminal projection, fenced by identity and event
+time; a newer projection is not deleted. Rollback leaves membership unchanged.
+
+Focused lifecycle run: 104 passed, two benchmark variants deselected, 14.71 s.
+All 20 mutation controls RED, including seven addendum controls: all-phase
+restore, outer/inner OFF bypass, terminal ID leak, dropped uncertain fence,
+OFF NFQ retained evaluation, and terminal projection leak. Two initial new
+mutation anchors caused HARNESS_ERROR and were repaired; only assertion-level
+test failures in the rerun are counted. See mutations.json and raw receipts.
+
+`benchmark-addendum.txt`: two isolated 60-second recorded-price replays,
+14,400 events each (240/s). ON: 19.88716 ms max loop delay, one initial SQLite
+transaction, zero after one second. OFF with the existing held row and its
+memory index present: 25.65586 ms, zero retained scheduler admissions, zero
+transactions for the whole run. Both: 14,400 hard-stop-reader calls and no
+queued buys. The unchanged <50 ms threshold passes. Gate/DB-delay controls
+and mocked exits are disclosed in the receipts; this is not live OMS proof.
+
+Ruff for the four runtime/test files passes after an import-only fixture
+export cleanup (alias then assignment) and removal of an unused UTC import.
+No assertion, fixture object, runtime or threshold changed in that cleanup.
+
+The following earlier sections describe the original head, not this follow-up.
+
 ## Performance
 
 `benchmark.txt`: final isolated offline replay, 14,400 events in
