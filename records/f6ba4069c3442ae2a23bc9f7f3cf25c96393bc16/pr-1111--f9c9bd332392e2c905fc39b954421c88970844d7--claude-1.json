@@ -1,0 +1,9 @@
+{
+  "pr_number": 1111,
+  "range_base": "f9c9bd332392e2c905fc39b954421c88970844d7",
+  "range_head": "f6ba4069c3442ae2a23bc9f7f3cf25c96393bc16",
+  "reviewed_at": "2026-10-07T12:46:49Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Test-only: tests/unit/test_linesrc1_event_driven.py wraps the recorded empty-event worker waits in asyncio.wait_for(timeout=2.0) and adds a negative control proving the inner timeout beats a 3-s outer watchdog. Verified by me: only that one test file changes vs main f9c9bd33; 38 tests pass (event-driven + review regressions); with the _queue_line_source_event-returns-False mutation that HUNG forever on #1107 the file now fails fast (28 failed in 11 s) \u2014 the review note from the #1107 pin is closed. No source, fixture or ops change."
+}
