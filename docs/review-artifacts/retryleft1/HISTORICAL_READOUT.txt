@@ -1,0 +1,84 @@
+RETRYLEFT1 independent read-only sidecar, collected 2026-10-07
+
+Immediate replay fixture: apus-own-read.json
+This is a negative-control fixture. The APUS later-fill claim is contradicted.
+No invented lineage, positive replay, retry budget state, or cancel receipt.
+
+APUS 2026-09-24, all timestamps UTC (ET = UTC minus four hours)
+Primary entry DB ID: 5c3cafbb-6745-4dc1-bc06-7b9840658e50
+Primary client: schwab_1m_v2-APUS-open-21535df9b30f
+Primary broker: 1008058489481, quantity 2, fill 19:54:58 @ 5.10
+Sibling entry DB ID: 3cf34c23-a00d-4ab5-b85a-d76b4b618ae5
+Sibling client: schwab_1m_v2-APUS-open-425277ee9076
+Sibling broker: L4IQQ5H6TBMV68QD4PFGBEQOL9, quantity 1
+Sibling broker fill event and fill: 19:54:58.742 @ 5.11
+Sibling OMS managed-open: 19:55:07.987
+Primary close DB ID: 9f499ac2-bda2-4333-986d-406cda3ae1e0
+Primary close client: schwab_1m_v2-APUS-close-fe03965a93ec
+Primary close broker: 1008059812642, quantity 2, fill 20:26:30 @ 5.3486
+Primary OMS managed-close: 20:26:31.642
+V2 owner primary-close: 20:26:34.866, union=2->0 held=2->0
+account_neutral_close_pending=1 entry_released=0.
+V2 cross-account evidence: 20:26:34.906, open=1 filled_accounts=2 position_ids=2.
+Segment: 1790278322822; schema entry_opportunity_v2.
+Rest slot: a7ff829c-ce93-5ea3-a63c-778b9e6d0071; slot resting; entry_slot first; entry_n 1.
+Stop 5.0901; limit 5.1156; fanout_source rth_resting_mirror.
+Sibling operator-manual sell: 20:34:21.184, quantity 1 @ 5.20.
+Sibling broker_orders.updated_at: 23:55:10.146963, during protection/exit management.
+That update is 208m40.147s after the primary close but is not execution time.
+Actual sibling execution precedes the primary close by 31m31.258s.
+No live broker API was queried. Evidence is retained broker-origin events/fields
+corroborated by contemporaneous OMS logs. APUS exact managed-position query
+returned no rows; the historical managed-open and owner evidence is in logs.
+
+Historical bars: 53 retained strategy_bar_history 60-second APUS rows,
+19:38:00 through 20:30:00 inclusive, in apus_bars.csv and fixture JSON.
+Raw owner windows retain ATR probes and account-owner transitions. They do not
+establish historical retry-consumed/provisional state or a no-retry policy.
+
+Independent bounded class extraction:
+Start inclusive 2026-09-22 04:00:00Z (Sep22 midnight ET).
+Cutoff exclusive 2026-10-07 19:49:20Z (Oct7 15:49:20 ET, incomplete trading day).
+Strategy schwab_1m_v2 on live:schwab_1m_v2 and live:orb only, plus linked
+operator_manual close fills attributable to a v2 entry.
+68 primary closed entry lots, 89 Webull closed entry lots (88 v2 sell fills
+plus one linked manual APUS sell). Total 157 fully liquidated broker-leg
+entry lots, not 157 account-neutral opportunities. Zero unmatched sell qty.
+70 primary buys; remaining open entry lots NXL qty2 and MI qty180.
+Two orb_schwab sell fills on the same primary account are a different strategy
+and are excluded; account names alone cannot define the v2 denominator.
+Sibling match requires exact symbol + opposite account + segment_id + slot_id,
+rest/open order submitted before close, real broker handle, no prior fill or
+terminal event. Terminal state wins over a later accepted receipt on the same
+order ID because receipt time and broker execution time can differ.
+Two inferred waiting-close pairs in retained submitted-order lifecycle data:
+ARTL Webull close Sep23 18:53:09.111Z -> primary broker cancel 19:01:02Z,
+472.889 seconds. Sibling DB ID e356e4e3-2c63-4b36-b437-0a5ad7403ed2, qty2.
+NCPL primary close Oct7 19:10:10Z -> Webull broker cancel 19:32:49.899367Z,
+1359.899367 seconds. Sibling DB ID 4a802052-09ee-43df-8af3-88f4c1f3f25c, qty182.
+NCPL included only in the bounded bulk class export; no NCPL-specific parent
+pull, logs, bar query, or fixture duplicated.
+Both pairs have initial accepted events with event_source unknown and later
+broker-origin cancelled events. Neither has a prior broker-origin accepted
+event. These are lifecycle inferences, not contemporaneous broker live-status
+attestations. No inferred post-close sibling fill in this exported scope.
+ACTUAL BROKER WAITING-AT-CLOSE CLASS COUNT: UNMEASURED.
+Pre-submit software rests are absent from broker_orders; continuous broker
+poll observations and historical retry budget attribution are not established.
+The 2 inferred cases are not a substitute for the claimed 27 actual-live cases.
+Full class event/status retention sufficiency is not certified.
+
+Reproduction (all outputs local; no remote writes):
+sh /tmp/retryleft1-sidecar-20261007-1949/collect_apus.sh
+sh /tmp/retryleft1-sidecar-20261007-1949/collect_snapshot.sh
+ssh -o BatchMode=yes mai-tai-vps 'sudo -n -u postgres env PGOPTIONS="-c default_transaction_read_only=on -c statement_timeout=20000 -c timezone=UTC" psql -X -q -d project_mai_tai -v ON_ERROR_STOP=1' < /tmp/retryleft1-sidecar-20261007-1949/apus_bars.sql > /tmp/retryleft1-sidecar-20261007-1949/apus_bars.csv
+ssh -o BatchMode=yes mai-tai-vps 'sudo -n -u postgres env PGOPTIONS="-c default_transaction_read_only=on -c statement_timeout=20000" psql -X -d project_mai_tai -v ON_ERROR_STOP=1 -P pager=off' < /tmp/retryleft1-sidecar-20261007-1949/apus_exact.sql > /tmp/retryleft1-sidecar-20261007-1949/apus_exact.raw.txt
+python3 /tmp/retryleft1-sidecar-20261007-1949/analyze.py
+python3 /tmp/retryleft1-sidecar-20261007-1949/make_apus_fixture.py
+
+collect_snapshot.sh streams a single repeatable-read, read-only transaction.
+Current broker_orders.status/updated_at are saved for context, not used as
+historical execution time. Sensitive account identifiers were not selected.
+No repository, branch, stage, source, production config, process, or order was
+modified. Source case was read via git show of
+origin/claude/handoff-2026-10-06:docs/review-artifacts/retryleft1/CASE_NCPL_2026-10-07.md.
