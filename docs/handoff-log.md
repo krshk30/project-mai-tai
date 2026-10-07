@@ -7573,3 +7573,27 @@ RPGhandoff remainsfalse, two flags become true only at actualrun; archivedrow pr
 Journal deployments-20261007.md records staging, NOT installationCOMPLETE.
 Actual newPIDs/proc/catalog157/Redis/dualpreopenpin/next07acceptance not yet measured.
 Heartbeat updated to supervise this exact box job, never a duplicate installer.
+
+### [codex] 2026-10-07 15:18 ET - C129 SLOTCLEAR fresh SELL draft delivery
+
+Origin now confirms #1113 draft95cfbae86c737b522051f6ff57c5b9e285cf55ef,
+on exact994f08ae after a clean four-equal-commit rebase. No new RPG patch.
+Both freshBUY and freshSELL reconstructed-slot paths implemented, separate
+default-OFF switches. Source frozen; later additions are supplemental evidence.
+Own independent freshBUY/freshSELL69PASS1.06s. Agent451focusedPASS, excluding
+two sustainedHOTFIXbenchmarks; candidate fullunit runs separately from completed
+main7114PASS56FAIL455.80s, actual failed-name comparison pending.
+Original7BUY+11SELL assertions-mutations RED; new restored-ticket-veto T1 RED.
+RecordedSXTC 19probes at14:26-14:44: controlled ownership/quote prerequisites,
+OFF16suppressions/zero drafts; ON slotsclear and first rest at short-age3,
+then normal reprices. These are strategy state-machine replays, not fills.
+DKI14:21-14:32 has11matchedprobes/12storedbars (last closes after logwindow),
+no freshflip and zero opens; no missing probe synthesized.
+Own currentdurable snapshot15:09:28ET retains2SXTC RPGtickets. Supplemental
+replay with those exact payloads releases slots but blocks bothlegs/zeroopens
+across19probes, handoffOFF and payloads unchanged. This is present-ticket
+control, not historical13:45 clear proof; no claimSLOTalonefixesallSXTCblocks.
+NFQ+SLOT scratch cherry-pick hit6conflicts (service, strategy, foursharedtests);
+aborted and clean. OriginalNFQ source/proof trees remain untouched. Joint
+integration, actual current-main pair and CI still gate pin-readiness.
+#1115/RPGSTALE remain PARKED; no production/pin/merge/activation.
