@@ -7726,3 +7726,12 @@ comparison preserved because baseline stderr was joined to one node id;
 existing exact-node parser confirms no changedfailure. BothValidate pending
 at publishedhead, no readiness/pin/merge/install. NFQ writer has released
 localCPU slot for final benchmark/full; pairedjob/ORB remain unchanged.
+
+2026-10-07 16:48 ET codex-2: NFQ2 follow-up pushed8ea8a824ce2f7c8ee3e0c0e0b62702b4fe6cebb3
+on1112's unchanged SLOT9951 stack, draft. Read source/REPRO: exact dispatch
+binding and broker terminal-zero proof, post-read CAS, no automatic resend;
+unknown/fill blocking; explicit unbound legacy refusal and exact local drain.
+504fastPASS12.40s/86newcases,37mutationsRED. Fresh60sactivehold run ongoing,
+full/current-main pair and freshCI pending. Priorc600/5d77 performance/full
+numbers not used as certification of this changedruntime. Source solewriter
+unchanged; no SLOT amendment, source merge or production/ORB action.
