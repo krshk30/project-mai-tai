@@ -2,6 +2,40 @@
 
 Base: 1a70da19176d2cad486e8518e1c9030f1cabb968. No production action.
 
+## Current status: NOT READY FOR RE-PIN
+
+The frozen runtime/test-tree 2eb55e370ba65fb46bcc22f3471a99ca8a8c8e01 run
+finished **57 failed / 7,113 passed / 0 skipped**, 465.75 seconds. Main's
+existing receipt is **56 failed / 7,077 passed**. One additional failed name:
+`test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions[retained-on]`.
+It processed 14,399 events in 60.002594 seconds (239.973/s), with one initial
+transaction and zero after one second, but loop delay peaked at 158.85844 ms,
+failing the unchanged <50 ms gate. Zero buys, every hard-stop-reader call
+still made. Full log: `full-frozen-failed-addendum.txt`; exact names and XML
+paths: `full-suite-pair-addendum.json`. This failure is not omitted or waived.
+
+The preceding run collected the tests before the import-only Ruff cleanup:
+56 failed / 7,114 passed, 449.58 seconds, identical failed names to main.
+Raw XML `/tmp/hotfix1-addendum-full-20261007.xml` and comparison
+`/tmp/hotfix1-addendum-preliminary-pair-20261007.json` remain local. The frozen
+rerun supersedes it as the final full-suite receipt; the import alias is not
+claimed as a cause of the stall.
+
+Both GitHub Validate runs on 2eb55e37 succeeded (37644693690, 37644700623).
+Independent-review-pin is not PASS; no fresh reviewer pin is claimed. Any
+later docs/test-diagnostic head must be reviewed at its own exact SHA.
+
+Test-only diagnostics now measure per-handler duration and GC durations,
+without disabling GC, changing pacing, excluding setup from an existing
+assertion or relaxing the 50 ms limit. Isolated passes cannot explain the
+frozen failure. The cause remains UNMEASURED, so re-pin remains blocked.
+
+Isolated diagnostic receipt `benchmark-addendum-diagnostic.txt`: both variants
+pass, 14,400 events each. ON max stall 19.33179 ms, max handler 10.92283 ms,
+one GC collection 0.27954 ms and one SQL transaction. OFF max stall 26.58054 ms,
+max handler 10.48158 ms, no GC collections, no SQL, no retained admissions.
+These are new runs, not retrospective GC attribution for the 158.858 ms failure.
+
 ## Rollback addendum: active restore and OFF admission
 
 Runtime/tests: ace0dca73c4318997e9f7a841d459b9fc4e8a200, on top of

@@ -1,5 +1,36 @@
 ## Independent Step 0
 
+**NOT READY FOR RE-PIN: frozen full-suite performance gate failed.**
+The functional addendum is implemented, but the frozen rerun is **57 failed /
+7,113 passed** versus main **56 / 7,077**: the one new failure is the retained-ON
+60-second benchmark, **158.858 ms** maximum loop delay against **<50 ms**.
+The failure is preserved in `full-frozen-failed-addendum.txt` and the exact
+failed-name diff in `full-suite-pair-addendum.json`. Flat DB work and passing
+isolated trials do not turn that failure into PASS. Cause remains UNMEASURED;
+no attribution to host contention or GC is asserted. No merge or deployment.
+
+### Rollback addendum: AGREE; fresh exact-head review required
+
+My own code read reproduced the all-phase startup selection and ownership-based
+OFF bypass. Startup now restores held/queued opportunities only. Uncertain
+wire evidence remains a separate serial duplicate-buy fence, never a tick actor.
+Committed terminal rows lose both opportunity IDs and stale deferred projections
+so they cannot resurrect as legacy retries. Both retained tick admission points
+check the flag directly. The archived production snapshot was not touched.
+
+New receipt: **20/20 mutation controls RED**, including seven addendum controls;
+**334 focused passes**, two benchmark variants deselected. Each isolated
+60-second rate test processed **14,400 events (240/s)**. ON max stall **19.887 ms**,
+one initial SQL transaction and none after one second. OFF with an existing held
+row/index: max stall **25.656 ms**, **zero retained scheduler admissions / zero SQL
+transactions** for the whole run. Zero buys; exits are mocked, not broker proof.
+Ruff passes on all four runtime/test files. Raw receipts and limitations are in
+`benchmark-addendum.txt`, `focused-addendum.txt`, `mutations.json`, `VALIDATION.md`.
+
+Feature-OFF means quote/trade ticks admit no new retained work; it does not
+disable legacy NFQ, exit/drift readers, periodic retirement or serial
+reconciliation of an already uncertain wire. Those safety fences are preserved.
+
 Issue **AGREE** from my own main-1a70 code read and bounded read-only production
 pull. Retained-mirror quote/trade callbacks synchronously scan/lock held rows;
 drift cancellation also reads candidates on eligible ticks even with the
@@ -31,7 +62,7 @@ production state changed. The legacy NFQ synchronous preparation path is
 separately owned and remains outside this patch: this is not a claim that the
 whole OMS is SQL-free on every tick. Exit decisions remain on existing paths.
 
-## Evidence
+## Initial-head Evidence (92bc6a15)
 
 Focused: **389 passed**, one benchmark deselected. Full Python 3.12 pair:
 main **56 failed / 7,077 passed**, head **56 failed / 7,101 passed**, zero skipped,
