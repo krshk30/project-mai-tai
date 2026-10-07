@@ -266,6 +266,37 @@ def test_literal_install2_daily_cumulative(monkeypatch,tmp_path):
     assert p.RETRY_ENABLED not in (fx.attempt/"env.diff").read_text()
 
 
+def test_first_stop_clock_fence_does_not_abort_stopped_sequence(monkeypatch,tmp_path):
+    fx,_,_=setup(monkeypatch,tmp_path)
+    after_midnight=datetime(2026,10,7,4,1,tzinfo=timezone.utc)
+    actions=[]
+    def action(action,name):
+        actions.append((action,name))
+        if (action,name)==("stop","schwab-1m-v2"):
+            monkeypatch.setattr(fx,"now",lambda:after_midnight)
+    # Isolate clock fencing from the separate live-freshness and identity controls.
+    for method in ("initial","prepare","v2_gate","oms_gate","finish_proof","closeout","complete"):
+        monkeypatch.setattr(fx,method,lambda:None)
+    monkeypatch.setattr(fx,"gates",lambda completed:None)
+    monkeypatch.setattr(fx,"checkpoint",lambda completed:None)
+    monkeypatch.setattr(fx,"action",action)
+    attended.Sequence(fx).run()
+    assert actions==list(EXPECTED_PHASES)
+
+
+def test_first_stop_clock_fence_still_blocks_before_stop(monkeypatch,tmp_path):
+    fx,_,_=setup(monkeypatch,tmp_path)
+    original_prepare=fx.prepare
+    after_midnight=datetime(2026,10,7,4,1,tzinfo=timezone.utc)
+    def prepare():
+        original_prepare()
+        monkeypatch.setattr(fx,"now",lambda:after_midnight)
+    monkeypatch.setattr(fx,"prepare",prepare)
+    with pytest.raises(p.Stop,match="first-write/stop window closed"):
+        attended.Sequence(fx).run()
+    assert not any(a[0]=="systemctl" and a[1] in {"stop","start","restart"} for a in fx.calls)
+
+
 @pytest.mark.parametrize("fault",["stop project-mai-tai-strategy","start project-mai-tai-sch",
     "restart project-mai-tai-control","control_display_proof.py","systemd-analyze verify",
     "enable --now","armed_readonly.py","census_readonly.py","switch --detach","pip install"])

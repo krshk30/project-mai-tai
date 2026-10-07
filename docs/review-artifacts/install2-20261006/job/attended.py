@@ -52,7 +52,8 @@ class Sequence:
                     self.fx.finish_proof()
                 self.phase = action + "-" + name
                 self.fx.gates(self.completed)
-                first_write_window(self.fx.now())
+                if not self.first_stopped:
+                    first_write_window(self.fx.now())
                 if action == "stop" and name == "schwab-1m-v2":
                     self.fx.v2_gate()
                     first_write_window(self.fx.now())
@@ -64,7 +65,6 @@ class Sequence:
                 self.completed += 1
                 self.fx.checkpoint(self.completed)
             self.phase = "single-preopen-timer-closeout"
-            first_write_window(self.fx.now())
             self.fx.closeout()
             self.phase = "complete"
             self.fx.complete()
