@@ -41,8 +41,19 @@ Primary tests in tests/unit/test_retryleft1.py:
 - test_retry_cancel_receipts_polled_off_thread_without_removed_wait_flag
 
 41 new test cases; combined RETRYLEFT1/retry-one/CLEARWAIT1/KEEPREST1/RESERVE1/
-manual-stop controls:246 passed3.59s. Complete unit pair is pending at this
-initial source checkpoint; do not infer review readiness or CI green here.
+manual-stop controls:246 passed3.59s. Complete unit run on source215d3853:
+7,155 passed /56 failed460.41s; current main994f08ae:7,114 passed /56 failed.
+Added/removed failed names both empty. UNIT_PAIR.json contains every exact
+failed name and output hashes. Candidate log and JUnit are committed alongside
+it; baseline read-only source receipt from today's SLOT/current-main run is
+also retained. Imports resolved to this worktree's src, not the primary checkout.
+
+The first naive stdout comparison is preserved as UNIT_PAIR_UNNORMALIZED.json:
+an asynchronous RuntimeWarning was appended immediately after baseline's
+field_acceptance.py] node id. The existing ownmix1 exact-node parser removes
+only trailing stderr; both actual56-name sets match. No test assertion was
+changed to obtain that result. CI must independently pass on the published
+exact head before review readiness; pin/merge/install are not claimed here.
 
 ## Mutations
 
