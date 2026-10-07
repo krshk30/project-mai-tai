@@ -1,0 +1,18 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_lpcn_fresh_exception_never_chases_above_half_percent ___________
+
+    def test_lpcn_fresh_exception_never_chases_above_half_percent():
+        strategy, state, clock, _, _ = lpcn()
+        buy(strategy, state)
+>       assert strategy.on_quote("LPCN", crossing(clock, ask=3.00)) is None
+E       AssertionError: assert TradeIntentDraft(symbol='LPCN', side='buy', intent_type='open', quantity=Decimal('200'), reason='schwab_1m_v2 ATR Flip...ed_shares': '200', 'slotclear_first': 'true', 'order_type': 'limit', 'limit_price': '2.98', 'resting_band_pct': '0.5'}) is None
+E        +  where TradeIntentDraft(symbol='LPCN', side='buy', intent_type='open', quantity=Decimal('200'), reason='schwab_1m_v2 ATR Flip...ed_shares': '200', 'slotclear_first': 'true', 'order_type': 'limit', 'limit_price': '2.98', 'resting_band_pct': '0.5'}) = on_quote('LPCN', Quote(symbol='LPCN', bid_price=2.96, ask_price=3.0, last_price=3.0, quote_time_ms=1791376803325, cumulative_volume=None, trade_time_ms=0))
+E        +    where on_quote = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10945cd10>.on_quote
+E        +    and   Quote(symbol='LPCN', bid_price=2.96, ask_price=3.0, last_price=3.0, quote_time_ms=1791376803325, cumulative_volume=None, trade_time_ms=0) = crossing([1791376803325], ask=3.0)
+
+tests/unit/test_slotclear1_fresh_flip.py:132: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_fresh_exception_never_chases_above_half_percent
+1 failed in 0.07s
+MUTATION S4 pytest_rc=1 RED

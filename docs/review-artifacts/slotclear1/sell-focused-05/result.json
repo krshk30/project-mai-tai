@@ -1,0 +1,31 @@
+{
+  "cwd": "/Users/velkris/Projects/project-mai-tai-slotclear1-side",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "-m",
+    "pytest",
+    "tests/unit/test_slotclear1_fresh_sell.py",
+    "tests/unit/test_slotclear1_fresh_flip.py",
+    "tests/unit/test_v2_flip_owned_first_entry.py",
+    "tests/unit/test_all_on_pm.py",
+    "tests/unit/test_expected_flags_check.py",
+    "tests/unit/test_v2_retry_one.py",
+    "tests/unit/test_keeprest1.py",
+    "tests/unit/test_mirrorhold1_retained_hold.py",
+    "-q",
+    "--tb=short"
+  ],
+  "head": "d68d25e0bf8cca33d6c22da39fa550b5977b5da3",
+  "tree": "816fc69197ff9a33eedfe94db00c4a4c64ada3dc",
+  "status_before": "M docs/review-artifacts/slotclear1/PR_BODY.md\n M ops/health/expected_flags.json\n M src/project_mai_tai/services/schwab_1m_v2_bot.py\n M src/project_mai_tai/settings.py\n M src/project_mai_tai/strategy_core/schwab_1m_v2.py\n M tests/unit/test_all_on_pm.py\n M tests/unit/test_expected_flags_check.py\n M tests/unit/test_keeprest1.py\n M tests/unit/test_mirrorhold1_retained_hold.py\n?? docs/review-artifacts/slotclear1/SELL_EVIDENCE_2026-10-07.json\n?? docs/review-artifacts/slotclear1/SELL_FOLLOWUP_JOURNAL.md\n?? docs/review-artifacts/slotclear1/SELL_PULL_STDERR.txt\n?? docs/review-artifacts/slotclear1/pull_sell_evidence.py\n?? docs/review-artifacts/slotclear1/run_receipt.py\n?? docs/review-artifacts/slotclear1/sell-baseline-d68/\n?? docs/review-artifacts/slotclear1/sell-before-source/\n?? docs/review-artifacts/slotclear1/sell-first-source/\n?? docs/review-artifacts/slotclear1/sell-focused-02/\n?? docs/review-artifacts/slotclear1/sell-focused-03/\n?? docs/review-artifacts/slotclear1/sell-focused-04/\n?? tests/unit/test_slotclear1_fresh_sell.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src",
+  "start_utc": "2026-10-07T18:56:45.313558+00:00",
+  "end_utc": "2026-10-07T18:56:58.827874+00:00",
+  "returncode": 1,
+  "output_sha256": "dffc1a807dbd84be769af2ea602bea5a96e91e7a7f47aa147ec70e2ef5569b53",
+  "failed_names": [
+    "tests/unit/test_keeprest1.py::test_all_on_effective_catalog_zero_with_controlled_process_environments"
+  ]
+}

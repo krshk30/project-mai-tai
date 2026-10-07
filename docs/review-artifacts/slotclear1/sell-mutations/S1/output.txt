@@ -1,0 +1,18 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__ test_lpcn_recorded_bar_with_later_watch_boundary_cannot_become_a_fresh_buy __
+
+    def test_lpcn_recorded_bar_with_later_watch_boundary_cannot_become_a_fresh_buy():
+        strategy, state, clock, _, _ = lpcn()
+        # Boundary counterfactual keeps the recorded candle fresh but closes it before the watch.
+        state.cw_seed_cap_watch_start_ms = BAR.timestamp_ms + 60001
+        buy(strategy, state)
+>       assert not state.slotclear_fresh_buy_bar_ms
+E       AssertionError: assert not 1791376740000
+E        +  where 1791376740000 = SymbolState(symbol='LPCN', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791376740000, open=2.83, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').slotclear_fresh_buy_bar_ms
+
+tests/unit/test_slotclear1_fresh_flip.py:103: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_recorded_bar_with_later_watch_boundary_cannot_become_a_fresh_buy
+1 failed in 0.08s
+MUTATION S1 pytest_rc=1 RED

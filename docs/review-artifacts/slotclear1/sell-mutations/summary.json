@@ -1,0 +1,77 @@
+{
+  "end_utc": "2026-10-07T18:58:11.210005+00:00",
+  "results": [
+    {
+      "mutation": "S1",
+      "returncode": 0
+    },
+    {
+      "mutation": "S2",
+      "returncode": 0
+    },
+    {
+      "mutation": "S3",
+      "returncode": 0
+    },
+    {
+      "mutation": "S4",
+      "returncode": 0
+    },
+    {
+      "mutation": "S5",
+      "returncode": 0
+    },
+    {
+      "mutation": "S6",
+      "returncode": 0
+    },
+    {
+      "mutation": "S7",
+      "returncode": 0
+    },
+    {
+      "mutation": "F1",
+      "returncode": 0
+    },
+    {
+      "mutation": "F2",
+      "returncode": 0
+    },
+    {
+      "mutation": "F3",
+      "returncode": 0
+    },
+    {
+      "mutation": "F4",
+      "returncode": 0
+    },
+    {
+      "mutation": "F5",
+      "returncode": 0
+    },
+    {
+      "mutation": "F6",
+      "returncode": 0
+    },
+    {
+      "mutation": "F7",
+      "returncode": 0
+    },
+    {
+      "mutation": "F8",
+      "returncode": 0
+    },
+    {
+      "mutation": "F9",
+      "returncode": 0
+    },
+    {
+      "mutation": "F10",
+      "returncode": 0
+    },
+    {
+      "mutation": "F11",
+      "returncode": 0
+    }
+  ]
+}

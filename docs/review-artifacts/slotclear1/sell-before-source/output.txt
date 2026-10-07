@@ -1,0 +1,432 @@
+.FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF                                         [100%]
+=================================== FAILURES ===================================
+_ test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True] _
+tests/unit/test_slotclear1_fresh_sell.py:91: in test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once
+    strategy, state, clock, _, _, _ = seeded(retry=retry, partial=partial)
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-False] _
+tests/unit/test_slotclear1_fresh_sell.py:91: in test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once
+    strategy, state, clock, _, _, _ = seeded(retry=retry, partial=partial)
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[False-True] _
+tests/unit/test_slotclear1_fresh_sell.py:91: in test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once
+    strategy, state, clock, _, _, _ = seeded(retry=retry, partial=partial)
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[False-False] _
+tests/unit/test_slotclear1_fresh_sell.py:91: in test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once
+    strategy, state, clock, _, _, _ = seeded(retry=retry, partial=partial)
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_reconstructed_claim_without_old_cap_only_marker_is_not_erased_when_flag_off _
+tests/unit/test_slotclear1_fresh_sell.py:112: in test_reconstructed_claim_without_old_cap_only_marker_is_not_erased_when_flag_off
+    strategy, state, clock, _, _, _ = seeded(enabled=False, partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[held_primary] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[held_mirror] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[held_qty] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[union_qty] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[working] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[mirror_working] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[emit] __
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[filled_claim] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[owner_id] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[owner_rows] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[stale_book] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[unreadable] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[restore] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[boot] __
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+__ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[gap] __
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[line] __
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[removed] _
+tests/unit/test_slotclear1_fresh_sell.py:124: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+__ test_sell_requires_live_completed_bar_after_watch_and_boot[replay_signal] ___
+tests/unit/test_slotclear1_fresh_sell.py:167: in test_sell_requires_live_completed_bar_after_watch_and_boot
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+__ test_sell_requires_live_completed_bar_after_watch_and_boot[replay_handler] __
+tests/unit/test_slotclear1_fresh_sell.py:167: in test_sell_requires_live_completed_bar_after_watch_and_boot
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+____ test_sell_requires_live_completed_bar_after_watch_and_boot[pre_watch] _____
+tests/unit/test_slotclear1_fresh_sell.py:167: in test_sell_requires_live_completed_bar_after_watch_and_boot
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+____ test_sell_requires_live_completed_bar_after_watch_and_boot[cold_boot] _____
+tests/unit/test_slotclear1_fresh_sell.py:167: in test_sell_requires_live_completed_bar_after_watch_and_boot
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+______ test_sell_requires_live_completed_bar_after_watch_and_boot[stale] _______
+tests/unit/test_slotclear1_fresh_sell.py:167: in test_sell_requires_live_completed_bar_after_watch_and_boot
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+__ test_sell_requires_live_completed_bar_after_watch_and_boot[wrong_flip_bar] __
+tests/unit/test_slotclear1_fresh_sell.py:167: in test_sell_requires_live_completed_bar_after_watch_and_boot
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+_______ test_recorded_dki_no_fresh_flip_retains_reconstructed_short_cap ________
+tests/unit/test_slotclear1_fresh_sell.py:193: in test_recorded_dki_no_fresh_flip_retains_reconstructed_short_cap
+    strategy, state, clock, _, _, bot = seeded(symbol="DKI", partial=True)
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+___ test_keeprest_sell_cancels_existing_order_without_granting_another_slot ____
+tests/unit/test_slotclear1_fresh_sell.py:207: in test_keeprest_sell_cancels_existing_order_without_granting_another_slot
+    strategy, state, clock, _, _, _ = seeded(partial=True)
+                                      ^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_slotclear1_fresh_sell.py:45: in seeded
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = enabled
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1048: in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1095: in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+E   ValueError: "Settings" object has no field "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled"
+________________ test_fresh_sell_has_its_own_default_off_switch ________________
+tests/unit/test_slotclear1_fresh_sell.py:218: in test_fresh_sell_has_its_own_default_off_switch
+    assert Settings().strategy_schwab_1m_v2_slotclear_fresh_sell_enabled is False
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../project-mai-tai/.venv/lib/python3.12/site-packages/pydantic/main.py:1042: in __getattr__
+    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E   AttributeError: 'Settings' object has no attribute 'strategy_schwab_1m_v2_slotclear_fresh_sell_enabled'
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-False]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[False-True]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[False-False]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_reconstructed_claim_without_old_cap_only_marker_is_not_erased_when_flag_off
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[held_primary]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[held_mirror]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[held_qty]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[union_qty]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[working]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[mirror_working]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[emit]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[filled_claim]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[owner_id]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[owner_rows]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[stale_book]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[unreadable]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[restore]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[boot]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[gap]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[line]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[removed]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[replay_signal]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[replay_handler]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[pre_watch]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[cold_boot]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[stale]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[wrong_flip_bar]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_dki_no_fresh_flip_retains_reconstructed_short_cap
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_keeprest_sell_cancels_existing_order_without_granting_another_slot
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_has_its_own_default_off_switch
+31 failed, 1 passed in 1.60s

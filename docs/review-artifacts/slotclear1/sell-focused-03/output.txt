@@ -1,0 +1,281 @@
+........................................................................ [ 32%]
+.....................................................FFFFFFFFFFFF.....FF [ 64%]
+.....FFFFFFFF..F.....FF................................................. [ 97%]
+......                                                                   [100%]
+=================================== FAILURES ===================================
+___ test_all_on_recorded_service_cross_same_ask_both_legs[first-SAIQ-stream] ___
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+_ test_all_on_recorded_service_cross_same_ask_both_legs[first-SAIQ-five_second_rest] _
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+___ test_all_on_recorded_service_cross_same_ask_both_legs[first-VEEA-stream] ___
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+_ test_all_on_recorded_service_cross_same_ask_both_legs[first-VEEA-five_second_rest] _
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+___ test_all_on_recorded_service_cross_same_ask_both_legs[first-CLRO-stream] ___
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+_ test_all_on_recorded_service_cross_same_ask_both_legs[first-CLRO-five_second_rest] _
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+__ test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-SAIQ-stream] __
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+_ test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-SAIQ-five_second_rest] _
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+__ test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-VEEA-stream] __
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+_ test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-VEEA-five_second_rest] _
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+__ test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-CLRO-stream] __
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+_ test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-CLRO-five_second_rest] _
+tests/unit/test_all_on_pm.py:98: in test_all_on_recorded_service_cross_same_ask_both_legs
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+_ test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting[first] _
+tests/unit/test_all_on_pm.py:237: in test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:55:20,370 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-EH-ARM] SAIQ slot=first line=8.3599 trigger=8.4100 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:5508 [V2-RESTING-EH-ARM] SAIQ slot=first line=8.3599 trigger=8.4100 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)
+_ test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting[reclaim] _
+tests/unit/test_all_on_pm.py:237: in test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting
+    assert_all_on(strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:55:20,383 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-EH-ARM] SAIQ slot=first line=8.3599 trigger=8.4100 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:5508 [V2-RESTING-EH-ARM] SAIQ slot=first line=8.3599 trigger=8.4100 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)
+________ test_all_on_rth_broker_reprice_owned_by_handoff[first-schwab] _________
+tests/unit/test_all_on_pm.py:290: in test_all_on_rth_broker_reprice_owned_by_handoff
+    assert_all_on(h.strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:55:20,495 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50
+2026-10-07 14:55:20,495 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 14:55:20,495 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-07 14:55:20,495 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-07 14:55:20,495 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+________ test_all_on_rth_broker_reprice_owned_by_handoff[first-webull] _________
+tests/unit/test_all_on_pm.py:290: in test_all_on_rth_broker_reprice_owned_by_handoff
+    assert_all_on(h.strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:55:20,596 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50
+2026-10-07 14:55:20,597 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 14:55:20,597 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-07 14:55:20,597 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-07 14:55:20,597 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_______ test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-schwab] ________
+tests/unit/test_all_on_pm.py:290: in test_all_on_rth_broker_reprice_owned_by_handoff
+    assert_all_on(h.strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:55:20,684 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=reclaim line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50
+2026-10-07 14:55:20,685 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 14:55:20,685 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-07 14:55:20,685 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-07 14:55:20,685 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=reclaim line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_______ test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-webull] ________
+tests/unit/test_all_on_pm.py:290: in test_all_on_rth_broker_reprice_owned_by_handoff
+    assert_all_on(h.strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:55:20,784 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=reclaim line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50
+2026-10-07 14:55:20,784 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 14:55:20,784 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-07 14:55:20,784 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-07 14:55:20,784 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=reclaim line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+__________ test_all_on_existing_nfq_handoff_regressions[cancel_clear] __________
+tests/unit/test_all_on_pm.py:334: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_recorded_cancel_read_then_nfq_hold_reauthorizes_once_and_old_token_cannot_wire(monkeypatch)
+tests/unit/test_rpg1_runtime_nfq.py:35: in test_recorded_cancel_read_then_nfq_hold_reauthorizes_once_and_old_token_cannot_wire
+    h = await runtime(monkeypatch, "webull")
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_all_on_pm.py:328: in all_on_runtime
+    assert_all_on(h.strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:55:20,876 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50
+2026-10-07 14:55:20,876 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 14:55:20,876 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-07 14:55:20,876 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-07 14:55:20,876 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+____________ test_all_on_existing_nfq_handoff_regressions[no_wire] _____________
+tests/unit/test_all_on_pm.py:336: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_v2_reprice_of_unsubmitted_nfq_generation_never_invents_broker_cancel(monkeypatch)
+tests/unit/test_rpg1_runtime_nfq.py:57: in test_v2_reprice_of_unsubmitted_nfq_generation_never_invents_broker_cancel
+    h = await runtime(monkeypatch, "webull")
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_all_on_pm.py:328: in all_on_runtime
+    assert_all_on(h.strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:55:20,972 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50
+2026-10-07 14:55:20,972 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 14:55:20,972 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-07 14:55:20,972 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-07 14:55:20,972 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+____________ test_all_on_existing_nfq_handoff_regressions[buy_flip] ____________
+tests/unit/test_all_on_pm.py:338: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends(monkeypatch, scenario)
+tests/unit/test_rpg1_runtime_nfq.py:80: in test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends
+    h = await runtime(monkeypatch, "webull")
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_all_on_pm.py:328: in all_on_runtime
+    assert_all_on(h.strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:55:21,067 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50
+2026-10-07 14:55:21,067 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 14:55:21,067 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-07 14:55:21,067 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-07 14:55:21,067 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+______________ test_all_on_existing_nfq_handoff_regressions[1545] ______________
+tests/unit/test_all_on_pm.py:338: in test_all_on_existing_nfq_handoff_regressions
+    await nfq.test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends(monkeypatch, scenario)
+tests/unit/test_rpg1_runtime_nfq.py:80: in test_nfq_queued_price_wait_cannot_resurrect_after_current_gate_ends
+    h = await runtime(monkeypatch, "webull")
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_all_on_pm.py:328: in all_on_runtime
+    assert_all_on(h.strategy.settings)
+tests/unit/test_all_on_pm.py:87: in assert_all_on
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:55:21,160 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50
+2026-10-07 14:55:21,160 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 14:55:21,160 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-07 14:55:21,160 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-07 14:55:21,160 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_____ test_all_on_catalog_audit_committed_live_set_requires_both_consumers _____
+tests/unit/test_all_on_pm.py:350: in test_all_on_catalog_audit_committed_live_set_requires_both_consumers
+    assert len(ALL_ON) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+_ test_all_on_process_catalog_checker_refuses_three_dark_values_without_live_io _
+tests/unit/test_all_on_pm.py:424: in test_all_on_process_catalog_checker_refuses_three_dark_values_without_live_io
+    assert lines[-1] == "Final call: REAL FAILURE; checked=156/156 mismatches=6 unknown=0"
+E   AssertionError: assert 'Final call: ...s=6 unknown=0' == 'Final call: ...s=6 unknown=0'
+E     
+E     - Final call: REAL FAILURE; checked=156/156 mismatches=6 unknown=0
+E     ?                                     ^   ^
+E     + Final call: REAL FAILURE; checked=157/157 mismatches=6 unknown=0
+E     ?                                     ^   ^
+_____________ test_catalog_covers_every_settings_bool_exactly_once _____________
+tests/unit/test_expected_flags_check.py:53: in test_catalog_covers_every_settings_bool_exactly_once
+    assert len(entries) == 135
+E   AssertionError: assert 136 == 135
+E    +  where 136 = len([{'expected': True, 'name': 'strategy_schwab_1m_v2_keep_rest_after_buy_enabled', 'owning_service': 'schwab-1m-v2', 're...'expected': True, 'name': 'strategy_schwab_1m_v2_pm_rest_reprice_enabled', 'owning_service': 'schwab-1m-v2', ...}, ...])
+=========================== short test summary info ============================
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-SAIQ-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-SAIQ-five_second_rest]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-VEEA-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-VEEA-five_second_rest]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-CLRO-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[first-CLRO-five_second_rest]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-SAIQ-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-SAIQ-five_second_rest]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-VEEA-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-VEEA-five_second_rest]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-CLRO-stream]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_recorded_service_cross_same_ask_both_legs[reclaim-CLRO-five_second_rest]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting[first]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_pmrest_software_move_owns_no_handoff_preserves_accounting[reclaim]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_broker_reprice_owned_by_handoff[first-schwab]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_broker_reprice_owned_by_handoff[first-webull]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-schwab]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-webull]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[cancel_clear]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[no_wire]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[buy_flip]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_existing_nfq_handoff_regressions[1545]
+FAILED tests/unit/test_all_on_pm.py::test_all_on_catalog_audit_committed_live_set_requires_both_consumers
+FAILED tests/unit/test_all_on_pm.py::test_all_on_process_catalog_checker_refuses_three_dark_values_without_live_io
+FAILED tests/unit/test_expected_flags_check.py::test_catalog_covers_every_settings_bool_exactly_once
+25 failed, 197 passed in 3.43s

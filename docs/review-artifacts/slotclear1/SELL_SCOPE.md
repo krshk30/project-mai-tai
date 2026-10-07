@@ -58,6 +58,9 @@ duplicate delivery, KEEP-REST cancellation, RETRY-OFF and close-boundary restart
 Mutation harnesses retain 7 BUY controls plus 11 SELL controls, including
 restoring the actual original d68 dispatcher in memory. All receipts, including
 pre-build failures, are retained separately. No checkout mutation is used.
+Supplemental `test_both_paths.py` explicitly runs both SLOT switches ON against
+the recorded LPCN BUY and SXTC SELL fixtures; 2 pass. These are supplemental
+tests, not part of the full `tests/unit` denominator.
 
 NFQ2 original source and own NFQ+HOTFIX proof worktree remain untouched/read only.
 The latter froze runtime `494bbeefdc0cd392747f528010c4f73043d2477b`, final receipts

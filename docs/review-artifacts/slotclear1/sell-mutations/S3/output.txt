@@ -1,0 +1,33 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_seed_cap_is_not_permission_to_release_real_or_unknown_ownership[closed] _
+
+blocker = 'closed'
+
+    @pytest.mark.parametrize("blocker", ["closed", "held", "working", "unknown", "stale_book", "boot", "gap", "line"])
+    def test_seed_cap_is_not_permission_to_release_real_or_unknown_ownership(blocker):
+        strategy, state, clock, _, _ = lpcn(closes=int(blocker == "closed"))
+        if blocker == "held":
+            _book(strategy, clock, "LPCN", _leg(PRIMARY, "owned-row", entered_ms=WATCH))
+        elif blocker == "working":
+            state.resting_active = True
+        elif blocker == "unknown":
+            state.flip_owner_phase = "unknown"
+        elif blocker == "stale_book":
+            state.flip_owner_evidence_at_ms = WATCH - 60000
+        elif blocker == "boot":
+            strategy._entries_held = True
+        elif blocker == "gap":
+            strategy.gap_hold_active = lambda symbol: True
+        elif blocker == "line":
+            strategy.line_buy_ready = lambda symbol: False
+        buy(strategy, state)
+>       assert state.slotclear_fresh_buy_bar_ms == 0
+E       AssertionError: assert 1791376740000 == 0
+E        +  where 1791376740000 = SymbolState(symbol='LPCN', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791376740000, open=2.83, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').slotclear_fresh_buy_bar_ms
+
+tests/unit/test_slotclear1_fresh_flip.py:125: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_flip.py::test_seed_cap_is_not_permission_to_release_real_or_unknown_ownership[closed]
+1 failed in 0.08s
+MUTATION S3 pytest_rc=1 RED

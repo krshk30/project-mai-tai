@@ -1,0 +1,39 @@
+........................................................................ [ 19%]
+........................................................................ [ 39%]
+........................................................................ [ 58%]
+.....................................................................FF. [ 78%]
+.......F...........................................F.................... [ 98%]
+.......                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_all_on_later_olox_price_proxy_crosses_once_with_sizing_and_grace[False] _
+tests/unit/test_keeprest1.py:186: in test_all_on_later_olox_price_proxy_crosses_once_with_sizing_and_grace
+    assert len(COMPOSED) == 10 and all(getattr(strategy.settings, f) for f in COMPOSED)
+E   AssertionError: assert (11 == 10)
+E    +  where 11 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_keep_rest_after_buy_enabled': True, ...})
+_ test_all_on_later_olox_price_proxy_crosses_once_with_sizing_and_grace[True] __
+tests/unit/test_keeprest1.py:186: in test_all_on_later_olox_price_proxy_crosses_once_with_sizing_and_grace
+    assert len(COMPOSED) == 10 and all(getattr(strategy.settings, f) for f in COMPOSED)
+E   AssertionError: assert (11 == 10)
+E    +  where 11 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_keep_rest_after_buy_enabled': True, ...})
+___ test_all_on_effective_catalog_zero_with_controlled_process_environments ____
+tests/unit/test_keeprest1.py:300: in test_all_on_effective_catalog_zero_with_controlled_process_environments
+    assert len(COMPOSED) == 10 and all(getattr(settings, key) for key in COMPOSED)
+E   AssertionError: assert (11 == 10)
+E    +  where 11 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_keep_rest_after_buy_enabled': True, ...})
+_ test_rpg_nonces_after_many_free_waits_do_not_spend_actual_wire_budget[True] __
+tests/unit/test_mirrorhold1_retained_hold.py:575: in test_rpg_nonces_after_many_free_waits_do_not_spend_actual_wire_budget
+    assert len(overrides) == 9
+E   AssertionError: assert 10 == 9
+E    +  where 10 = len({'oms_v2_webull_mirror_fresh_price_enabled': True, 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled': True, 'strategy_schwab_1m_v2_gap_hold_enabled': True, 'strategy_schwab_1m_v2_line_chart_restoration_enabled': True, ...})
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:56:31,992 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50
+2026-10-07 14:56:31,992 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 14:56:31,992 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-07 14:56:31,992 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-07 14:56:31,992 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1200 limit=3.1400 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+=========================== short test summary info ============================
+FAILED tests/unit/test_keeprest1.py::test_all_on_later_olox_price_proxy_crosses_once_with_sizing_and_grace[False]
+FAILED tests/unit/test_keeprest1.py::test_all_on_later_olox_price_proxy_crosses_once_with_sizing_and_grace[True]
+FAILED tests/unit/test_keeprest1.py::test_all_on_effective_catalog_zero_with_controlled_process_environments
+FAILED tests/unit/test_mirrorhold1_retained_hold.py::test_rpg_nonces_after_many_free_waits_do_not_spend_actual_wire_budget[True]
+4 failed, 363 passed in 12.82s

@@ -1,3 +1,12 @@
+## Active Follow-Up Claim
+
+Human released the additional fresh SELL requirement on October 7. Codex sidecar
+is sole writer on the clean original branch/worktree from d68d25e0; parent makes
+no source edits. Bounded SXTC/DKI reads, separate SELL replays/mutations and an
+exact full-suite pair are in progress. No production action or readiness claim.
+See `SELL_FOLLOWUP_JOURNAL.md`. The prior receipt below remains historical until
+the follow-up is frozen and verified.
+
 ## Independent Assessment and Scope
 
 Assessment committed first at 1bc0f076. AGREE on the fresh BUY seed-cap defect;
