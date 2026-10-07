@@ -33,6 +33,20 @@ MUTATIONS = {
             "test_biya_serial_rehold_moves_v2_attempt_then_giveup_releases_exact_webull_latch"),
     "N11": ("_nfq2_reason", 'return "eh_path_closed"', "pass",
             "test_biya_eh_hold_does_not_migrate_into_unpriced_regular_hours"),
+    "N12": ("_evaluate_nfq2_holds", "if not matches:", "if False:",
+            "test_nfq2_unrelated_or_stale_tick_never_opens_session_or_copies_hold_map"),
+    "N13": ("_evaluate_nfq2_holds", "if not reading.fresh:", "if False:",
+            "test_nfq2_unrelated_or_stale_tick_never_opens_session_or_copies_hold_map"),
+    "N14": ("_evaluate_nfq2_holds", "if key in busy or", "if False or",
+            "test_nfq2_slow_save_does_not_stall_loop_and_concurrent_quotes_queue_once"),
+    "N15": ("_nfq2_transition", "if result.rowcount != 1:", "if False:",
+            "test_nfq2_worker_cas_refuses_retired_generation_without_feedback"),
+    "N16": ("_sweep_nfq2_holds", 'if now - self.__dict__.get("_eh_price_hold_last_sweep", float("-inf")) < cadence:',
+            "if False:", "test_nfq2_periodic_proof_runs_off_loop_and_is_not_tick_rate_driven"),
+    "N17": ("_evaluate_nfq2_holds",
+            "changed = await self._run_db(lambda session: self._nfq2_transition(\n                session, before, after, reason=reason))",
+            "with self.session_factory() as session:\n                changed = self._nfq2_transition(session, before, after, reason=reason)\n                session.commit()",
+            "test_nfq2_quote_transition_persists_on_worker_without_tick_ownership_queries"),
 }
 
 
@@ -46,8 +60,8 @@ def main():
     exec(compile("from __future__ import annotations\n" + source.replace(old, new),
                  f"<nfq2-mutation-{name}>", "exec"), namespace)
     setattr(EhFreshPriceMixin, method, namespace[method])
-    result = pytest.main(["-p", "no:cacheprovider", "-q",
-                          "tests/unit/test_nfq2_eh_fresh_price.py::" + test])
+    module = "test_nfq2_tick_path" if name in {"N12", "N13", "N14", "N15", "N16", "N17"} else "test_nfq2_eh_fresh_price"
+    result = pytest.main(["-p", "no:cacheprovider", "-q", f"tests/unit/{module}.py::" + test])
     print(f"MUTATION {name} pytest_rc={result} {'RED' if result == 1 else 'NOT_RED'}")
     return 0 if result == 1 else 1
 
