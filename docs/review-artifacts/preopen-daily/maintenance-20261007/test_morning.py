@@ -54,7 +54,16 @@ def test_acknowledged_restart_report_discloses_actual_counter_not_pass():
     ("", "| Another | missing | UNKNOWN |\n"), ("", "| Another | bad | FAIL |\n")])
 def test_ack_does_not_waive_other_failure_or_unknown(extra, unknown):
     value = raw(extra, unknown)
-    assert ack.render(value, record()) == (value, False)
+    rendered, allowed = ack.render(value, record())
+    assert not allowed and "Final call: EXPECTED BY DESIGN;" not in rendered
+    assert extra in rendered and unknown in rendered
+    assert "ACKNOWLEDGED_UPGRADE_RESTART" in rendered
+
+
+def test_another_service_restart_failure_is_not_admitted():
+    rendered, allowed = ack.render(raw("- oms did not return active/running on a new PID\n"), record())
+    assert not allowed and "| FAIL |" in rendered
+    assert "Final call: REAL FAILURE; oms did not return" in rendered
 
 
 def test_git_exact_directory_not_global_trust(tmp_path):

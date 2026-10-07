@@ -679,6 +679,37 @@ def test_journal_non_action_large_archive_not_new_derivation_gate(tmp_path):
     assert actions==[] and refs=={}
 
 
+def test_classifier_refusal_writes_official_failure_report_and_keeps_each_rerun(monkeypatch,tmp_path):
+    spec=importlib.util.spec_from_file_location("test_morning_official",REPO/"ops/health/v2_restart_evidence.py")
+    official=importlib.util.module_from_spec(spec)
+    sys.modules[spec.name]=official; spec.loader.exec_module(official)
+    report=tmp_path/"report.md"
+    def refusal(*args):
+        raise p.Stop("LINESRC exception before16 ET")
+    monkeypatch.setattr(restart_report,"classify",refusal)
+    original=official.parse_log_files
+    def main(argv):
+        result=official.parse_log_files([("CONTROLLED",traceback())],since=NOW,service="schwab-1m-v2")
+        assert len(result.traceback_times_utc)==1
+        raw="Overall: REAL FAILURE\nFinal call: REAL FAILURE; unclassified traceback\n"
+        report.write_text(raw); print(raw,end="")
+        return 1
+    official.main=main
+    loader=SimpleNamespace(exec_module=lambda _:None)
+    monkeypatch.setattr(restart_report.importlib.util,"spec_from_file_location",lambda *a:SimpleNamespace(name=spec.name,loader=loader))
+    monkeypatch.setattr(restart_report.importlib.util,"module_from_spec",lambda _:official)
+    for _ in range(2):
+        official.parse_log_files=original
+        assert restart_report.main(["report","--output",str(report)])==1
+    assert "Final call: REAL FAILURE;" in report.read_text()
+    assert "not waived" in report.read_text()
+    sidecars=list(tmp_path.glob("report.md.*.linesrc.json"))
+    assert len(sidecars)==2 and len(list(tmp_path.glob("report.md.*.official-unaccepted-scope.txt")))==2
+    for path in sidecars:
+        receipt=json.loads(path.read_bytes())
+        assert receipt["accepted_open_count"]==0 and len(receipt["unclassified"])==1
+
+
 def test_catalog_duplicate_identity_blocks():
     row=dict(name="controlled",owning_service="oms")
     with pytest.raises(p.Stop,match="duplicated"): catalog_policy.identities([row,row])

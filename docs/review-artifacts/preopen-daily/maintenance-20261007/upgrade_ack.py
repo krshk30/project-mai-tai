@@ -45,17 +45,24 @@ def render(raw, proof):
     failures = [line[2:] for line in raw.split("\nFailures:\n", 1)[1].splitlines() if line.startswith("- ")]
     rows = [line for line in raw.splitlines() if line.startswith("| ")]
     failed = [line.split("|")[1].strip() for line in rows if line.endswith("| FAIL |")]
-    if (failures != [failure] or failed != ["Restarted services"]
-            or "\nUnknowns:" in raw or any(line.endswith("| UNKNOWN |") for line in rows)):
+    if failure not in failures or "Restarted services" not in failed:
         return raw, False
     import re
-    out = raw.split("\nFailures:\n", 1)[0]
-    out = re.sub(r"^Overall:.*$", "Overall: EXPECTED BY DESIGN (acknowledged upgrade restart; not all NRestarts zero)", out, flags=re.M)
-    out = re.sub(r"^Final call:.*$", "Final call: EXPECTED BY DESIGN; exact Redis upgrade restart acknowledged; all other checks measured", out, flags=re.M)
-    out = re.sub(r"^(\| Restarted services \| .*\| )FAIL( \|)$", r"\1ACKNOWLEDGED_UPGRADE_RESTART\2", out, flags=re.M)
+    remaining = [value for value in failures if value != failure]
+    other_restart_failure = any("did not return active/running on a new PID" in value for value in remaining)
+    sole = not remaining and failed == ["Restarted services"] and "\nUnknowns:" not in raw and not any(line.endswith("| UNKNOWN |") for line in rows)
+    out = raw.replace("- " + failure + "\n", "")
+    if not other_restart_failure:
+        out = re.sub(r"^(\| Restarted services \| .*\| )FAIL( \|)$", r"\1ACKNOWLEDGED_UPGRADE_RESTART\2", out, flags=re.M)
+    if sole:
+        out = out.split("\nFailures:\n", 1)[0]
+        out = re.sub(r"^Overall:.*$", "Overall: EXPECTED BY DESIGN (acknowledged upgrade restart; not all NRestarts zero)", out, flags=re.M)
+        out = re.sub(r"^Final call:.*$", "Final call: EXPECTED BY DESIGN; exact Redis upgrade restart acknowledged; all other checks measured", out, flags=re.M)
+    elif remaining:
+        out = re.sub(r"^Final call:.*$", "Final call: REAL FAILURE; " + "; ".join(remaining), out, flags=re.M)
     out += "\nAcknowledged restart (original collector FAIL retained in immutable sidecar):\n"
     out += json.dumps(proof, sort_keys=True) + "\n"
-    return out, True
+    return out, sole
 
 
 if __name__ == "__main__":

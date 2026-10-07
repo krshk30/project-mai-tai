@@ -69,7 +69,7 @@ def main(argv=None):
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    original, receipts = module.parse_log_files, []
+    original, receipts, unclassified = module.parse_log_files, [], []
 
     def reviewed(files, *, since, service=None):
         files = [(name, list(lines)) for name, lines in files]
@@ -84,7 +84,13 @@ def main(argv=None):
                 if stamp is not None and stamp >= since:
                     selected.append(line.rstrip("\n"))
                     source_indexes.append(i)
-            admitted, headers = classify(service, selected)
+            try:
+                admitted, headers = classify(service, selected)
+            except Exception as exc:
+                # A classification refusal must not suppress the official failure report.
+                admitted, headers = [], set()
+                unclassified.append(dict(service=service, path=name, reason=str(exc),
+                                         raw_sha256=digest(("\n".join(selected) + "\n").encode())))
             receipts.extend(admitted)
             remove = {source_indexes[index] for index in headers}
             filtered.append((name, [line for i, line in enumerate(lines) if i not in remove]))
@@ -111,13 +117,16 @@ def main(argv=None):
     if fallback:
         rendered += '\nExpected seeded boot fallback (not fresh-bar restoration):\n' + '\n'.join(
             '- ' + row['at_utc'] + ' ' + row['reason'] + ' raw_sha256=' + row['raw_sha256'] for row in fallback) + '\n'
+    if unclassified:
+        rendered += '\nUnclassified log evidence (not waived; official parser received original lines):\n'
+        rendered += json.dumps(unclassified, sort_keys=True) + '\n'
     if held_path is not None:
         rendered = render_held(rendered, json.loads(held_path.read_bytes()), datetime.now(timezone.utc))
         rc = 0
     output.write_text(rendered)
     exclusive(output.with_name(output.name + "." + run_id + ".linesrc.json"), canonical(dict(
         accepted_open_count=len(receipts), classification="ACCEPTED_OPEN_LINESRC1" if receipts else "NONE",
-        receipts=receipts, official_unaccepted_scope_sha256=digest(raw.encode()))))
+        receipts=receipts, unclassified=unclassified, official_unaccepted_scope_sha256=digest(raw.encode()))))
     print(rendered, end="")
     return rc
 
@@ -126,5 +135,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print("UNKNOWN restart disposition error_type=" + type(exc).__name__, file=sys.stderr)
+        print("UNKNOWN restart disposition error_type=" + type(exc).__name__ + " reason=" + str(exc), file=sys.stderr)
         raise SystemExit(2)
