@@ -7431,3 +7431,16 @@ systemd inactive/PID0/Resultsuccess, phase1 recorded. OMS611906/strategy612007
 active unchanged. Literal attended sequence continues with existing refresh
 before each step; no added gate, no CancelledError expectation, no recovery.
 No COMPLETE/continuity claim until actual final proofs. No scheduled bars after20.
+
+2026-10-06 21:33 ET codex-2 C120: Install2 STOP21:32:00 phase=start-oms,
+completed3, runner rc1; strict-flat rc2 on three bounded rereads60s apart.
+All three stderr files say live:orb stored positions stale/unreadable/future.
+OMS owns sync_account_positions; timestamps froze01:26:41UTC, OMSstop01:26:45.
+At21:29:50 fresh read-only SQL ages189.3s, over120s; intervening full95-parent
+census takes110s. This is a runner-quiesce/freshness coupling, not a measured
+holding. Three stopped services remain inactive/PID0/success/NRestarts0;
+control612101 and non-scoped units unchanged. Page adapterrc0, STOP journaled.
+Checkout5b8b and exactlyfour env additions applied; no migration/DBedit/recovery.
+Asked user for narrow proof-first continuation, no blanket freshness waiver or
+manual start. No COMPLETE, post-start flags/numeric, preopen re-pin or timer.
+Logsha c328dfd994a01236a00fd229ae68b8792baffc22cb077dff5d20c074110d84fd.
