@@ -7716,3 +7716,13 @@ run and bothValidate pending, no readiness/merge/install claim. Raw proof,
 roll-forward scope and older-code receipt compatibility risk documented.
 App attachment refused due to100-attachment limit; PR URL remains available.
 Tonight's staged package and all production services untouched here.
+
+2026-10-07 16:46 ET codex-2: RETRYLEFT1 draft1118 now cda4849c015a0221369194e856238bcb71b444dd,
+docs-only result update after tested source215d3853 (src/tests/ops diff empty).
+Complete unit7155PASS56FAIL460.41s vs current main9947114PASS56FAIL455.80s,
+exact failed-name added/removed bothempty, 13mutationsRED. Committed actual
+stdout/JUnit, baseline stdout/receipt and complete name table. Naive initial
+comparison preserved because baseline stderr was joined to one node id;
+existing exact-node parser confirms no changedfailure. BothValidate pending
+at publishedhead, no readiness/pin/merge/install. NFQ writer has released
+localCPU slot for final benchmark/full; pairedjob/ORB remain unchanged.
