@@ -59,7 +59,7 @@
       "name": "market_data_subscription_startup_enabled",
       "expected": true,
       "owning_service": "strategy",
-      "also_check_services": ["schwab-1m-v2", "orb", "orb-schwab", "momentum-paper"],
+      "also_check_services": ["schwab-1m-v2", "orb-schwab", "momentum-paper"],
       "reason": "COLDSTART1 announces each consumer's current subscription set on startup, even when empty.",
       "ruling": "2026-10-03 operator: every bot tells the gateway its watchlist on startup; Redis persistence stays OFF. Ships ON with the next reviewed RPG1/COLDSTART1 install."
     },
@@ -220,11 +220,10 @@
     {
       "name": "orb_enabled",
       "expected": true,
-      "owning_service": "orb",
+      "owning_service": "orb-schwab",
       "reason": "Enabled in the owning running service for the approved live configuration.",
       "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit.",
       "also_check_services": [
-        "orb-schwab",
         "oms"
       ]
     },
@@ -256,56 +255,56 @@
     {
       "name": "orb_intrabar_reclaim_enabled",
       "expected": false,
-      "owning_service": "orb",
+      "owning_service": "orb-schwab",
       "reason": "Dormant legacy or paper-only branch, not an active live fix.",
       "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
     },
     {
       "name": "orb_running_high_enabled",
       "expected": true,
-      "owning_service": "orb",
+      "owning_service": "orb-schwab",
       "reason": "Enabled in the owning running service for the approved live configuration.",
       "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
     },
     {
       "name": "orb_oms_quote_priced_entry_enabled",
       "expected": true,
-      "owning_service": "orb",
+      "owning_service": "orb-schwab",
       "reason": "Enabled in the owning running service for the approved live configuration.",
       "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
     },
     {
       "name": "orb_resting_entry_enabled",
       "expected": true,
-      "owning_service": "orb",
+      "owning_service": "orb-schwab",
       "reason": "Enabled in the owning running service for the approved live configuration.",
       "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
     },
     {
       "name": "orb_paper_lifecycle_enabled",
       "expected": true,
-      "owning_service": "orb",
+      "owning_service": "orb-schwab",
       "reason": "Enabled in the owning running service for the approved live configuration.",
       "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
     },
     {
       "name": "orb_paper_atr_exit_enabled",
       "expected": true,
-      "owning_service": "orb",
+      "owning_service": "orb-schwab",
       "reason": "Baseline default-ON capability in the owning running service.",
       "ruling": "2026-09-29 operator FLAGGATE approval; reviewed settings.py default at main 71edb961."
     },
     {
       "name": "orb_paper_atr_entry_gate_enabled",
       "expected": false,
-      "owning_service": "orb",
+      "owning_service": "orb-schwab",
       "reason": "Dormant legacy or paper-only branch, not an active live fix.",
       "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
     },
     {
       "name": "orb_paper_four_red_delay_enabled",
       "expected": false,
-      "owning_service": "orb",
+      "owning_service": "orb-schwab",
       "reason": "Dormant legacy or paper-only branch, not an active live fix.",
       "ruling": "2026-09-27 operator: no dark flag gets enabled without my ruling; 09-27 flag audit."
     },

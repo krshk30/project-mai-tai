@@ -2078,8 +2078,17 @@ class ControlPlaneRepository:
                 for key, timestamp in (("recent_orders", "updated_at"), ("recent_fills", "filled_at"), ("recent_intents", "updated_at")):
                     live_view[key] = [
                         item for item in live_view[key]
-                        if _orb_within_display_session(item.get(timestamp))
+                        if item.get("broker_account_name") == account_name
+                        and _orb_within_display_session(item.get(timestamp))
                     ]
+                # Refusals may create no BrokerOrder. They are decisions, not trades.
+                live_view["recent_decisions"] = [
+                    {"symbol": item["symbol"], "status": "blocked", "path": "ORB Live",
+                     "last_bar_at": item["updated_at"],
+                     "reason": item.get("refusal_code") or item.get("reason") or item["status"]}
+                    for item in live_view["recent_intents"]
+                    if item.get("intent_type") == "open" and item.get("status") in {"rejected", "aborted"}
+                ] + list(live_view.get("recent_decisions", []))
                 cycles = collect_completed_trade_cycles(
                     strategy_code=code,
                     broker_account_name=account_name,
@@ -2691,6 +2700,7 @@ class ControlPlaneRepository:
                     account = account_lookup.get(intent.broker_account_id)
                     recent_intents.append(
                         {
+                            "intent_id": str(intent.id),
                             "strategy_code": strategy.code if strategy else str(intent.strategy_id),
                             "broker_account_name": account.name if account else str(intent.broker_account_id),
                             "symbol": intent.symbol,
@@ -2699,6 +2709,7 @@ class ControlPlaneRepository:
                             "quantity": _decimal_str(intent.quantity),
                             "status": intent.status,
                             "reason": intent.reason,
+                            "refusal_code": str((intent.payload or {}).get("refusal_code") or ""),
                             "updated_at": _datetime_str(intent.updated_at),
                         }
                     )
@@ -2778,6 +2789,7 @@ class ControlPlaneRepository:
                     intent_reason = intent.reason if intent is not None else ""
                     recent_orders.append(
                         {
+                            "intent_id": str(order.intent_id) if order.intent_id else "",
                             "strategy_code": strategy.code if strategy else str(order.strategy_id),
                             "broker_account_name": account.name if account else str(order.broker_account_id),
                             "symbol": order.symbol,
@@ -4203,10 +4215,6 @@ def build_app(
     async def bot_orb_page() -> str:
         return await _render_bot_page_with_trade_coach("orb_schwab")
 
-    @app.get("/bot/orb-paper", response_class=HTMLResponse)
-    async def bot_orb_paper_page() -> str:
-        return await _render_bot_page_with_trade_coach("orb")
-
     @app.get("/api/bot/orb-schwab")
     async def bot_orb_schwab_status() -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
@@ -4316,7 +4324,6 @@ CONTROL_PLANE_ACTIVE_BOT_CODES = (
     "momentum_30s",
     "momentum_60s",
     "polygon_30s",
-    "orb",
     "orb_schwab",
 )
 CONTROL_PLANE_DOCK_SERVICES = (
@@ -4598,7 +4605,6 @@ def _compact_bot_page_url(code: str) -> str:
         "momentum_30s": "/bot/momentum-30",
         "momentum_60s": "/bot/momentum-60",
         "polygon_30s": "/bot/30s-polygon",
-        "orb": "/bot/orb-paper",
         "orb_schwab": "/bot/orb",
     }.get(code, "/")
 
@@ -4611,10 +4617,8 @@ def _compact_bot_route_line(code: str, bot: dict[str, Any]) -> str:
     if code in {"momentum_30s", "momentum_60s"}:
         window = "30-second" if code == "momentum_30s" else "60-second"
         return f"paper · +30% over trailing {window} low · Massive raw trades"
-    if code == "orb":
-        account = str(bot.get("account_name") or "-")
-        mode = "paper" if account.startswith("paper:") else "live"
-        return f'{mode} · ORB (P6 OPEN) · {account}'
+    if code == "orb_schwab":
+        return f'live · Schwab · {bot.get("account_name", "-")}'
     return f'{bot.get("execution_mode", "-")} · {bot.get("provider", "-")} · {bot.get("account_display_name", "-")}'
 
 
@@ -4671,8 +4675,8 @@ def _compact_bot_card(
     exceptions = str(details.get("loop_exceptions_total") or details.get("exceptions_total") or "0")
     exception_tone = "warn" if exceptions not in {"", "0"} else ""
     name = str(bot.get("display_name") or code.replace("_", " ").title())
-    if code == "orb":
-        name = "ORB paper (observer)"
+    if code == "orb_schwab":
+        name = "ORB Live"
     route = _compact_bot_route_line(code, bot)
     bot_page_url = _compact_bot_page_url(code)
     # Paper vs live badge — paper-routed accounts (e.g. "paper:orb") must not read as LIVE.
@@ -5004,15 +5008,8 @@ BOT_PAGE_META = {
         "color": "#e91e63",
         "path": "/bot/runner",
     },
-    "orb": {
-        "title": "ORB paper (observer)",
-        "nav_title": "ORB paper (observer)",
-        "badge": "ORB",
-        "color": "#8e44ad",
-        "path": "/bot/orb-paper",
-    },
     "orb_schwab": {
-        "title": "ORB Schwab Live",
+        "title": "ORB Live",
         "nav_title": "ORB Live",
         "badge": "ORB",
         "color": "#00897b",
@@ -5144,7 +5141,7 @@ def _build_orb_live_listening_status(
     tick_age = _seconds_since_eastern_label(latest_tick)
     state, detail, color = "UNKNOWN", "ORB-Schwab activity is not reported by the installed service.", "#ffcc5b"
     if bot.get("positions"):
-        state, color = "HOLDING", "#5fff8d"
+        state, color = "IN TRADE", "#5fff8d"
         detail = (
             "ORB strategy book has an open managed row. Display window ended at 16:00 ET; auto-refresh is paused."
             if _orb_display_refresh_paused(bot)
@@ -5156,7 +5153,7 @@ def _build_orb_live_listening_status(
     elif str(service.get("effective_status", service.get("status", ""))).lower() in {"inactive", "stopped", "stopping", "failed"}:
         state, detail, color = "STOPPED", "ORB-Schwab service is not running.", "#ff6b6b"
     elif tick_age is not None and 0 <= tick_age <= 90:
-        state, detail, color = "LISTENING", "Fresh ticks reached ORB-Schwab.", "#5fff8d"
+        state, detail, color = "WATCHING", "Fresh ticks reached ORB-Schwab.", "#5fff8d"
     elif latest_tick:
         state, detail = "STALE", "No fresh ORB-Schwab tick activity."
     return {
@@ -10146,6 +10143,21 @@ def _decision_reason_with_details(item: dict[str, Any]) -> str:
 def _build_failed_action_rows(bot: dict[str, Any]) -> tuple[str, int]:
     failed_statuses = {"rejected", "canceled", "cancelled", "aborted", "failed", "expired", "error"}
     failures: list[dict[str, str]] = []
+
+    if bot.get("strategy_code") == "orb_schwab":
+        for item in bot.get("recent_intents", []):
+            if (item.get("intent_type") == "open" and item.get("status") in {"rejected", "aborted"}
+                    and not any(item.get("intent_id")
+                                and order.get("intent_id") == item["intent_id"]
+                                for order in bot.get("recent_orders", []))):
+                failures.append({
+                    "updated": str(item.get("updated_at") or ""), "stage": "intent",
+                    "ticker": str(item.get("symbol") or ""), "side": str(item.get("side") or ""),
+                    "intent_type": "open", "qty": str(item.get("quantity") or ""),
+                    "status": str(item["status"]),
+                    "reason": str(item.get("refusal_code") or item.get("reason") or item["status"]),
+                    "note": "Refused before a broker order was created",
+                })
 
     for item in bot.get("recent_orders", []):
         status = str(item.get("status", "") or "").lower()
