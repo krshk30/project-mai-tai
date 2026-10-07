@@ -7296,3 +7296,15 @@ test_all_on_pm replay awaits complete merged candidate. #1106 new0ca05fc8
 CI still running and independent pin missing; no merge bypass. No Install2
 production action or daily timer installation. Separate runner and LINESRC1
 sole writers continue; parent alone owns main, deployment and shared C rows.
+
+2026-10-06 20:24 ET codex-2 C108: #1106 both Validate green, fresh committed
+pin479a468c locally PASS for0ca05fc8/base52659779. Hosted pin rerun37550617529
+fails rc3 before evaluating fresh coverage: stale reviewer-owned record for
+34b6bb5b cannot load that original head in CI. Local repo retains it, therefore
+local verifier warns/ignores old base instead. Exact superseded path is
+records/34b6bb5b9817f92d9c983d92bbcea34c44b1efe5/
+pr-1106--4805ddc81184c76b4d5cef5c483c809edb666fe6--claude-1.json.
+Cleanup requested in PR comment6028051703, no ledger/verifier mutation or check
+bypass. Main526 unchanged; one-at-a-time rule means #1104 is not rebased before
+#1106 merges. No Install2 service action or timer installation. Sole-writer
+runner and LINESRC1 lanes continue; they cannot replace missing hosted pin.
