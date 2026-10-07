@@ -7467,3 +7467,12 @@ Mechanics7c3da379 runner92PASS, finalreleasefcfaf016e205ed548b4bfb1553e018d159f1
 continuation2ef71cf5995ba129965a9020c8288adbea2e631a014f2e3747c80d7dc7fddf20.
 Phase7 closeout has no serviceaction; app5b8b/flags/policyunchanged. Original
 STOPs retained. Final proofs/timer running; Wedrelease/scannerUNMEASURED.
+
+2026-10-06 22:33 ET codex-2 C124: corrected C123 pending state by actual
+22:00:12.771ET v2 seeded fallback369s (elapsed373.1), evaluated/confirmed/released7,
+DBconfirmed and allslotsconsumed, reconstructed_uncapped0. BOOT-HOLDreleased
+literally; not fresh-source restoration. Existing code and officialcollector
+validatefallback. Exact ERROR-level shape recognized, anothererrorstillblocks.
+105runnerPASS; mechanics82461902, releasefc1c523e8a44eba554a517a0f01e05725797ddfc6d95420420fea7f26492aae5.
+Finalphase7 closeout has0 extraactions, originalSTOPs retained; allfourPIDs
+active/NRestarts0. Catalog/preopen/timer/COMPLETE stillpending, nextsessionproofunmeasured.
