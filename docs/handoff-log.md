@@ -7670,3 +7670,15 @@ No stale RPG rows, parked source, production state or staged job changed.
 both exact-head Validate succeeded and the six NFQ conflicts are resolved.
 PR comment records both stacked heads and the pending NFQ-only gates.
 NFQ #1112 remains draft, no pin/merge/activation or stale-row edit.
+
+2026-10-07 16:16 ET - C134, completed NFQ/SLOT integration full pair.
+Main9947114PASS56FAIL versus source-equivalent composed5d77/c6007247PASS56FAIL;
+own sorted failed-name diff is empty. Complete run20:04:11.630121-
+20:14:10.573913UTC, pytest593.36s, exit1 not timeout. Raw output hash
+840b28ee71c3e09fb8a2b970383bf4f1f2b4d3ee6324be01fde398615d3811a1;
+full raw output/result and pair/source receipts retained in isolated proof
+worktree. Evidence executed on5d77, not relabeled as execution on c600;
+src/tests/ops objects equal exactly. No source edit or avoidable head churn.
+Both new c600 Validate still running at20:16UTC. SLOT remains review-ready;
+NFQ broader recovery/restart coverage limits stay disclosed, draft retained.
+All56 main failures remain unwaived; no stale RPG or production edit.
