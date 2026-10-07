@@ -13,6 +13,7 @@ import pytest
 
 from project_mai_tai.events import StrategyStateSnapshotEvent, StrategyStateSnapshotPayload
 from project_mai_tai.confirmation_exit import ConfirmationEntry
+from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.market_data.schwab_v2_rest_client import SchwabV2RestClient
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy, TradeIntentDraft
@@ -126,7 +127,7 @@ async def test_recorded_empty_event_is_once_waiting_without_callback_retry(symbo
     # invented observed candle for these measured empty names.
     _scanner(bot, set())
     bot._request_line_repairs(_scanner(bot, {symbol}))
-    await bot._line_source_events_pass()
+    await asyncio.wait_for(bot._line_source_events_pass(), timeout=2.0)
     ledger = bot._line_sessions[symbol]
     assert ledger._coverage is None and not ledger._bars
     assert bot.rest_client._line_source_states[symbol][0] == "waiting"
@@ -137,10 +138,29 @@ async def test_recorded_empty_event_is_once_waiting_without_callback_retry(symbo
         now[0] = current + (minute + 1) * 60_000 + 1_000
         bot._request_line_repairs(_scanner(bot, {symbol}, price=minute))
         bot._line_source_event.set()
-        await bot._line_source_events_pass()
+        await asyncio.wait_for(bot._line_source_events_pass(), timeout=2.0)
         assert not bot._line_buy_ready(symbol)
     assert bot.rest_client._authorized_get.call_count == 1
     assert not bot._line_source_pending and not bot._line_published
+
+
+@pytest.mark.asyncio
+async def test_recorded_empty_control_times_out_when_queue_refuses(monkeypatch):
+    monkeypatch.setattr(SchwabV2BotService, "_queue_line_source_event", lambda *args: False)
+    real_wait_for = asyncio.wait_for
+    timeouts = []
+
+    async def tracked_wait_for(awaitable, timeout):
+        timeouts.append(timeout)
+        return await real_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", tracked_wait_for)
+    # The outer watchdog bounds this negative control even if its inner guard regresses.
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(
+            test_recorded_empty_event_is_once_waiting_without_callback_retry("BIYA"), timeout=3.0,
+        )
+    assert timeouts == [3.0, 2.0]
 
 
 @pytest.mark.asyncio
