@@ -7523,3 +7523,28 @@ Restoration and retained hold become true; hand-off remains false per13:45 rulin
 archived rollback row remains archived. #1115 and RPGSTALE1 parked, no further work.
 Parallel NFQ2 proof must include one active hold with the HOTFIX drift path enabled;
 earlier drift-disabled throughput receipt is not whole OMS hot-path proof.
+
+### [codex] 2026-10-07 14:50 ET - C127 NFQ2 proof and fresh-SELL scope
+
+Published codex/nfq2-hotfix1-activehold-proof at
+e4578d44c8e48a1bbbe0f8b0185ae05908bafb1c; PR1112 comment6044574785.
+Exact runtime: main994f08ae plus clean NFQ-only0318ef84 sequence, source unchanged
+after composition; final test freeze a5479b42ac633f144d70930b44e99d5417c86d10.
+Three60s real elapsed active-hold/drift-ENABLED gates:14400events/run,240/s;
+maxstall48.385250/35.860500/29.370750ms. Each:0tickSQL/0loop-threadSQL,
+24 periodic ownership/cache transactions off-loop at5s cadence. Final exact UTC
+18:44:53.335307-18:45:53.336535. Nine new controls and361 focused regressions
+PASS;23/23mutation controls RED. Scopes/stubs/raw hashes/full commands and gaps
+in docs/review-artifacts/nfq2-hotfix1-proof/{RESULTS,PROOF_SCOPE}.md on that branch.
+No full NFQ2 readiness/CI/live OMS/exit certification inferred. Original source
+branch0318ef84 remains untouched; lifecycle/uncertain-wire/SLOT integration gaps remain.
+Parent exact994 six-file run:260PASS/1FAIL142.04s; retained-ON60s gate starts
+14:42:19, watchdog79.737304ms fails50ms while239.9988/s,SQL1firstturn/0after1s,
+handler20.515917ms,GC0. Isolated unmodified ON rerun14:46:25-14:47:26 PASS60.58s:
+14400/60.000593=239.997628/s,watchdog23.378119ms,handler16.293917ms,SQLsameflat.
+These parent metrics are from captured terminal output, not a retained raw-log file.
+No threshold weakened, initial failure unwaived, no concurrency cause asserted.
+Latest user releases #1113 fresh-SELL reconstruction control. CLAIM14:49ET
+comment6044589754 on clean original d68d25e0; one writer owns that branch, bounded
+SXTC13:45-14:44 and DKI14:21-14:32 log pulls/replay/tests in progress. No pin or
+production action. #1115/RPGSTALE remain parked; paired install is separate.
