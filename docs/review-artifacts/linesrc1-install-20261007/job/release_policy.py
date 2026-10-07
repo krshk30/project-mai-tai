@@ -18,6 +18,9 @@ DAY = "2026-10-07"
 ET = ZoneInfo("America/New_York")
 UTC = timezone.utc
 FLAG = "MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED"
+RETAINED_FLAG = "MAI_TAI_OMS_V2_WEBULL_MIRROR_RETAINED_HOLD_ENABLED"
+CATALOG_BASE_SHA = "2f80d2d86601aed63416d0acc902bedf41215796ea16388bd51fde10fd4c6be1"
+ROLLBACK_BASELINE_SHA = "72d5dc135dac66100817663699af3a85d8b160fbc005ef1ceeae8ff9416880e5"
 PREFIX = "MAI_TAI_STRATEGY_SCHWAB_1M_V2_"
 # Restoration is the only changed flag. These eight already-live keys stay literal true.
 LIVE_KEYS = tuple(PREFIX + suffix for suffix in (
@@ -59,6 +62,46 @@ def canonical(value):
     return (json.dumps(value, indent=2, sort_keys=True, default=str) + "\n").encode()
 
 
+def rollback_baseline():
+    raw = Path(__file__).with_name("rollback-baseline.json").read_bytes()
+    need(digest(raw) == ROLLBACK_BASELINE_SHA, "exact authorized rollback capture differs")
+    return json.loads(raw)
+
+
+def require_rollback_baseline(value):
+    recorded = rollback_baseline()
+    need(all(value.get(key) == expected for key, expected in recorded.items()),
+         "release did not bind exact authorized rollback baseline")
+
+
+def rollback_catalog(raw):
+    need(digest(raw) == CATALOG_BASE_SHA, "source/installed Boolean catalog baseline differs")
+    data = json.loads(raw)
+    rows = [row for row in data["flags"] if row["name"] == "oms_v2_webull_mirror_retained_hold_enabled"]
+    need(len(rows) == 1 and rows[0]["expected"] is True and rows[0]["owning_service"] == "oms"
+         and not rows[0].get("also_check_services"), "retained-hold overlay owner/value drift")
+    rows[0]["expected"] = False
+    return canonical(data)
+
+
+def rollback_runtime(raw, flags):
+    need(digest(raw) == "ef103a82b59cf8b93e6b8bb7dd613edc4e3f956f935e19e393550e89b7ebda1c",
+         "recorded pre-rollback runtime baseline differs")
+    data = json.loads(raw)
+    path = "/home/trader/restart_evidence/expected_flags.json"
+    need(data["evidence_inputs"].get(path) == CATALOG_BASE_SHA, "runtime source catalog pin differs")
+    data["evidence_inputs"][path] = digest(flags)
+    return canonical(data)
+
+
+def retained_off(raw):
+    need(type(raw) is bytes and 0 < len(raw) <= 262144, "proc environment missing/overflow")
+    pairs = [piece.decode().split("=", 1) for piece in raw.split(b"\0") if piece]
+    need(all(len(pair) == 2 for pair in pairs), "malformed proc environment")
+    need([(key, value) for key, value in pairs if key.upper() == RETAINED_FLAG] == [(RETAINED_FLAG, "false")],
+         "authorized retained-hold OFF missing/alias/duplicate")
+
+
 def moment(value):
     result = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     need(result.tzinfo is not None, "timestamp lacks zone")
@@ -87,6 +130,9 @@ def env_candidate(raw):
     need(found == [(FLAG, "false")], "restoration must be explicit single literal false")
     pattern = rf"(?m)^{FLAG}=false$"
     need(len(re.findall(pattern, text)) == 1, "restoration assignment must be literal")
+    need([(row.key, row.value) for row in bindings if row.key and row.key.upper() == RETAINED_FLAG]
+         == [(RETAINED_FLAG, "false")] and re.search(rf"(?m)^{RETAINED_FLAG}=false$", text),
+         "rollback retained hold must stay explicit single literal false")
     for key in LIVE_KEYS:
         need([(row.key, row.value) for row in bindings if row.key and row.key.upper() == key]
              == [(key, "true")], "live key drift: " + key)
@@ -98,6 +144,9 @@ def process_values(raw, restoration):
     pairs = [piece.decode().split("=", 1) for piece in raw.split(b"\0") if piece]
     need(all(len(pair) == 2 for pair in pairs), "malformed proc environment")
     expected = {**{key: "true" for key in LIVE_KEYS}, FLAG: restoration}
+    if restoration == "true":
+        retained_off(raw)
+        expected[RETAINED_FLAG] = "false"
     for key, value in expected.items():
         need([(name, val) for name, val in pairs if name.upper() == key] == [(key, value)],
              "proc value missing/alias/duplicate: " + key)
@@ -131,7 +180,7 @@ def assignment(text, key, value):
     return re.sub(pattern, lambda _: key + "=" + shlex.quote(str(value)), text)
 
 
-def gate_candidate(raw, state, snapshot, record):
+def gate_candidate(raw, state, snapshot, record, untouched_oms=None):
     need(digest(raw) == GATE_SHA, "current morning gate baseline differs")
     text = raw.decode()
     for marker in ("upgrade_ack.py", "daily.py paper", "${EXPECTED_DATE//-/}"):
@@ -141,6 +190,10 @@ def gate_candidate(raw, state, snapshot, record):
     text = assignment(text, "EXPECTED_START", state["ExecMainStartTimestamp"])
     text = assignment(text, "SNAPSHOT", snapshot)
     text = assignment(text, "INSTALL_RECORD", record)
+    if untouched_oms is not None:
+        need(untouched_oms == rollback_baseline()["fleet_before"]["oms"], "authorized untouched OMS identity differs")
+        text = assignment(text, "EXPECTED_OMS_PID", untouched_oms["MainPID"])
+        text = assignment(text, "EXPECTED_OMS_START", untouched_oms["ExecMainStartTimestamp"])
     # The new evidence baseline classifies this restart only; old grouped flags
     # are retained separately in the original gate backup, never attributed to OMS.
     text = re.sub(r"(?m)^\s*--restarted [^\n]+\n", "", text)
@@ -151,6 +204,7 @@ def gate_candidate(raw, state, snapshot, record):
     additions = "  --restarted schwab-1m-v2 \\\n"
     additions += "".join("  --expect-flag 'schwab-1m-v2:" + key + "=" + value + "' \\\n"
                          for key, value in flags.items())
+    additions += "  --expect-flag '" + V2 + ":" + RETAINED_FLAG + "=false' \\\n"
     text = text.replace(anchor, additions + anchor)
     return text.encode()
 

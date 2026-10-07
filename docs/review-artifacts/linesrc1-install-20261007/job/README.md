@@ -17,6 +17,20 @@ Only `MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED=false`
 becomes literal `true`; duplicate/case aliases, missing and already-true refuse.
 All other EnvironmentFile bytes remain identical. Explicit already-live keys
 and full 157-check Boolean/numeric catalog are verified independently.
+Latest Oct7 rollback binds the actual14:11:54Z capture: OMS1043365,
+14:02:34UTC, invocation35da3942f315475a8d7c9721ada1a4cb, NRestarts0;
+env SHA550717747a5839738a1ee170426e4a3e4b0ffd4373a2b5b0b236a6a7535dd0a2.
+Retained-hold stays explicit false. The prior authorized OMS restart is NOT a
+LINESRC action; no new OMS restart is permitted. All13 states remain exact.
+
+The installed/source catalog was still expected=true at capture. The reviewed
+rollback overlay changes ONLY the retained-hold OMS expected value to false,
+leaving owners, all other entries, APP/source and157 denominator unchanged.
+Old reason/ruling fields remain historical source metadata, not current ON
+authority. The runtime overlay changes ONLY that catalog evidence-input hash.
+Parent must stage both exact overlays before this recut: old expected=true bytes
+fail, never become a catalog waiver. OMS OFF is read from its exact process each
+phase; the restarted v2 must also prove OFF.
 
 Stop v2 cleanly -> start v2 once. No other APPLICATION service actions, pip/dependency
 installation, migrations, token refresh, trading writes, clearing Redis/ledger,
@@ -79,17 +93,18 @@ Parent supplies a LOCAL JSON metadata file with exactly these fields:
 
 ```json
 {
-  "environment_sha256": "6677c4bd25fadc5c229b2a0c682f5d1ae8a4bc30052b9121bc044ea2932f35ce",
+  "environment_sha256": "550717747a5839738a1ee170426e4a3e4b0ffd4373a2b5b0b236a6a7535dd0a2",
   "fleet_before": {"each of the13 release_policy.SERVICES": "actual complete runner.FIELDS object"},
   "authorization_provenance": "same human standing GO; exact reviewed runner/package receipt"
 }
 ```
 
-The exact12:53:02Z morning fleet may bind a staged-NOW package. Core11 identities
-remain byte-for-byte exact. Only paper and daily-guard can transition from those
-saved active PIDs to clean inactive after scheduled09:40ET, preserving original
-invocation/start/monotonic/configuration and NRestarts0. Positive scheduled-close
-audit proof is required; no predicted future PID or arbitrary later adoption.
+This recut requires exact committed rollback-baseline.json, byte-identical to
+parent's14:11:54Z metadata. Generic future fleet/env adoption is refused. The
+12:53:02Z capture remains historical in fixtures, not the new release. Paper/guard
+are already clean inactive with original invocation/start/monotonic/configuration
+and NRestarts0. Positive scheduled-close audit is still required and retained
+even though no paper transition occurs during this installer.
 The exact audit path is
 `/home/trader/after-hours/2026-10-07/option-a-daily/run-20261007T074001494845Z/option-a-guard.jsonl`.
 Only its bounded262144-byte tail is read at admission; the mutable whole file
@@ -103,7 +118,7 @@ The supplied env hash must still match at actual first admission; any drift bloc
 
 ```sh
 python -B docs/review-artifacts/linesrc1-install-20261007/job/make_release.py \
-  --plan FULL_COMMITTED_PLAN_SHA --baseline actual-morning-metadata.json \
+  --plan FULL_COMMITTED_PLAN_SHA --baseline /tmp/linesrc1-oct7-rollback-actual-baseline.json \
   --package NEW_LOCAL_DIRECTORY
 ```
 
@@ -111,7 +126,7 @@ This binds executable artifacts to exact committed bytes, APP/TREE/BOX, original
 recorded morning hashes, actual full fleet and same-user authority provenance.
 It emits release.json, release.sha256 and literal standing-GO approval.json.
 Parent publishes the release hash and alone stages the immutable root package at
-`/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job` (root-owned; no group or
+`/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job-rollback-1002` (root-owned; no group or
 other writes). Only after exact review, parent may stage/verify these distinct units:
 `project-mai-tai-linesrc1-20261007.service` and `.timer`. They do not install or
 duplicate the existing `project-mai-tai-preopen.timer` (nextOct8 06:20ET/10:20UTC).
@@ -126,11 +141,27 @@ write occurs before the dated window and an actually green unmodified nativegate
 After COMPLETE or STOP the runner disables/stops only its installer timer, not
 its own service. Existing daily preopen timer remains enabled and unchanged.
 
+Previously staged job/approval/release43811903... remain immutable and preserved,
+not amended in place. Parent verifies old unit hashes
+service fafbff10f3306cb44c3b732d2ddc9d4a753bcfb04ebc9f0fa5ce833e73ab40d0 and
+timer 0ce5a48081cd9e462483b3fb5c1bc3450e7c4d8af5f9dd73f9133f884e988fe6,
+MainPID0/unclaimed state, backs up units/hashes, and pauses ONLY installer.timer.
+It creates the new sibling job, installs the exact catalog/runtime overlays
+together under the existing daily lock after verifying original hashes, replaces
+the two named units, reloads systemd and enables ONLY the same installer.timer.
+A crash between overlay replacements fails closed on hashes, without repair.
+No daily timer or trading service action is staged. Exact local overlay hashes:
+rollback-expected_flags.json acf5a6dc55d1e8c54bb3b1a7c24ed7b093673c9729bd7accef83a2a848d19652;
+rollback-runtime.json d585c601eded25732dcaa05ec7886df44b42f506ed3e9efc933c5037649dc13d.
+Targets: /home/trader/restart_evidence/expected_flags.json and
+/home/trader/preopen-daily/runtime.json. Original hashes are2f80d2d8... andef103a82...
+respectively; original bytes remain preserved in fixtures and parent backups.
+
 Direct diagnostic invocation of the staged package (named unit normally runs it):
 
 ```sh
 sudo /home/trader/project-mai-tai/.venv/bin/python -B \
-  /home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job/runner.py RELEASE_SHA256
+  /home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job-rollback-1002/runner.py RELEASE_SHA256
 ```
 
 ## Proof And Existing Morning Repin
@@ -164,7 +195,11 @@ reporting policy; only actual healthy release can satisfy restoration then.
 
 Closeout patches actual `40e57465...` morning gate, NOT the old builder. It repins
 only new v2 PID/start, APP and new one-v2 snapshot/record; removes stale grouped
-restart flags/declarations. Existing dynamic ET date, paper shape, UTC timestamps,
+restart flags/declarations. OMS morning PID/start are separately repinned to the
+exact prior authorized rollback baseline1043365/14:02:34UTC, not declared as
+restarted by LINESRC. Only v2 has collector --expect-flag checks: the unchanged
+official collector rejects non-restarted OMS flags. OMS OFF uses retained_proc
+and the truthful installed OMS catalog. Existing dynamic ET date, paper shape, UTC timestamps,
 all other identities, exact Redis-upgrade acknowledgement PID765206/NRestarts1/
 06:31:14UTC/invocationde16f6a... remain intact. Historical evidence_inputs and
 original Oct6 record paths/hashes remain retained, with new v2 evidence added.

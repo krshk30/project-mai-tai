@@ -73,7 +73,7 @@ def admit(before, current, now, close):
         normalized[role] = deepcopy(new)
         transitioned.append(role)
     p.states(normalized, current, 0)
-    if transitioned:
+    if transitioned or all(current[role]["ActiveState"] == "inactive" for role in ROLES):
         p.need(isinstance(close, dict) and close.get("action") == "stop_paper"
                and close.get("reason") == "scheduled_session_close" and type(close.get("systemctl_rc")) is int
                and close["systemctl_rc"] == 0, "normal scheduled guard close positive audit absent")
@@ -82,6 +82,6 @@ def admit(before, current, now, close):
                and audit_in_stop_interval(current[ROLES[0]], current[ROLES[1]], stamp),
                "guard close audit outside actual saved invocation stop interval")
     return dict(scope="core11 exact; saved paper/guard scheduled close only", transitioned=transitioned,
-                close_audit=close if transitioned else None, no_service_actions=True,
+                close_audit=close, no_service_actions=True,
                 stop_timestamp_precision_seconds=1, audit_upper_bound="strictly before guard exit second + 1s",
                 paper=current[ROLES[0]], guard=current[ROLES[1]])

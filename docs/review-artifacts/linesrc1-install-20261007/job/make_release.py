@@ -14,7 +14,8 @@ REL = "docs/review-artifacts/linesrc1-install-20261007/job/"
 ARTIFACTS = ("runner.py", "release_policy.py", "strict_flat_readonly.py", "armed_readonly.py",
              "redis_checkpoint.py", "ticket_inventory.py", "census_readonly.py", "log_ranges.py",
              "flag_admission.py", "continuity_readonly.py", "operator_flat_policy.py", "paper_lifecycle.py", "abort_reader.py",
-             "make_release.py", "run.sh", "README.md",
+             "make_release.py", "run.sh", "README.md", "rollback-baseline.json",
+             "rollback-expected_flags.json", "rollback-runtime.json",
              "project-mai-tai-linesrc1-20261007.service", "project-mai-tai-linesrc1-20261007.timer")
 
 
@@ -28,6 +29,7 @@ def assemble(plan, baseline, target):
     p.need(re.fullmatch(r"[0-9a-f]{40}", plan), "full committed plan SHA required")
     p.need(set(baseline) == {"fleet_before", "environment_sha256", "authorization_provenance"},
            "parent baseline fields differ; no environment secrets required")
+    p.require_rollback_baseline(baseline)
     p.need(re.fullmatch(r"[0-9a-f]{64}", baseline["environment_sha256"]), "actual env SHA256 required")
     p.need(isinstance(baseline["authorization_provenance"], str) and baseline["authorization_provenance"].strip(),
            "same-user standing GO provenance required")
@@ -50,13 +52,17 @@ def assemble(plan, baseline, target):
                "assembly baseline fixture differs from committed plan: " + path)
     gate = (fixture / "preopen.sh").read_bytes()
     runtime_raw = (fixture / "preopen-daily/runtime.json").read_bytes()
-    runtime = json.loads(runtime_raw)
+    source_flags = git("show", p.APP + ":ops/health/expected_flags.json")
+    flags = p.rollback_catalog(source_flags)
+    runtime_candidate = p.rollback_runtime(runtime_raw, flags)
+    p.need(raw["rollback-expected_flags.json"] == flags and raw["rollback-runtime.json"] == runtime_candidate,
+           "committed rollback overlay differs from exact transformation")
+    runtime = json.loads(runtime_candidate)
     p.need(p.digest(gate) == p.GATE_SHA and runtime["approved_sha"] == p.BOX, "recorded current baseline differs")
-    flags = git("show", p.APP + ":ops/health/expected_flags.json")
     numeric = (fixture / "restart_evidence/expected_numeric.json").read_bytes()
     counts = p.catalog_counts(flags, numeric)
     hashes = {"/home/trader/preopen.sh": p.GATE_SHA,
-              "/home/trader/preopen-daily/runtime.json": p.digest(runtime_raw),
+              "/home/trader/preopen-daily/runtime.json": p.digest(runtime_candidate),
               **{"/home/trader/preopen-daily/" + name: sha for name, sha in runtime["artifacts"].items()},
               **runtime["evidence_inputs"],
               "/home/trader/project-mai-tai/ops/health/preopen_alert.sh": runtime["adapter_sha256"]}
@@ -71,6 +77,9 @@ def assemble(plan, baseline, target):
         application_blobs={name: p.digest(git("show", p.APP + ":" + name)) for name in p.SOURCES},
         baseline_hashes=hashes, catalog_hashes=dict(flags=p.digest(flags), numeric=p.digest(numeric)),
         catalog_counts=counts, **baseline)
+    release["catalog_overlay"] = dict(source_sha256=p.digest(source_flags), candidate_sha256=p.digest(flags),
+        setting="oms_v2_webull_mirror_retained_hold_enabled", owner="oms", expected=False,
+        authority="Latest human Oct7 MIRRORHOLD rollback; APP catalog metadata retained as historical provenance")
     release_raw = p.canonical(release)
     sha = p.digest(release_raw)
     exclusive(target / "release.json", release_raw)
@@ -78,7 +87,9 @@ def assemble(plan, baseline, target):
     exclusive(target / "approval.json", p.canonical(dict(authority="operator-standing-mechanics-authority",
         decision="APPROVED", application=p.APP, plan_commit=plan, date_et=p.DAY, scope=p.SCOPE, release_sha256=sha)))
     return dict(package=str(target), release_sha256=sha, catalog_counts=counts,
-                production_run=False, baseline_lifecycle="exact core11 plus bound scheduled paper/guard stop")
+                production_run=False, baseline_lifecycle="exact authorized rollback fleet; no new OMS action",
+                staging_overlays=dict(flags=str(target / "rollback-expected_flags.json"),
+                    runtime=str(target / "rollback-runtime.json")))
 
 
 def main():
