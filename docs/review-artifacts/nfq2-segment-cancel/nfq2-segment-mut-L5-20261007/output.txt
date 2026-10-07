@@ -1,0 +1,19 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_unsafe_legacy_does_not_reset_owned_intent_or_existing_bound_hold[held] __
+tests/unit/test_nfq2_recovery_legacy.py:332: in test_unsafe_legacy_does_not_reset_owned_intent_or_existing_bound_hold
+    assert service._nfq2_holds[service._nfq2_key(held.event)] is held and held.phase == "held"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: ('paper:schwab_1m_v2', 'd585906e-7867-515b-9524-a1ea3a6b5a2b')
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:09:17,084 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:09:17,087 WARNING [oms-risk] [OMS-NFQ2] legacy_identity_unproven symbol=BIYA account=paper:schwab_1m_v2 intent=c188b646-63a3-4d1e-9b94-4d775e845a98 owned=False
+2026-10-07 17:09:17,088 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=v2_replaced ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+WARNING  oms-risk:eh_fresh_price.py:289 [OMS-NFQ2] legacy_identity_unproven symbol=BIYA account=paper:schwab_1m_v2 intent=c188b646-63a3-4d1e-9b94-4d775e845a98 owned=False
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=v2_replaced ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unsafe_legacy_does_not_reset_owned_intent_or_existing_bound_hold[held]
+1 failed in 0.28s
+RESIDUAL_MUTATION L5 pytest_rc=1 RED

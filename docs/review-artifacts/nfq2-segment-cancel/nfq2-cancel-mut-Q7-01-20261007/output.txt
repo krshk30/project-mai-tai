@@ -1,0 +1,19 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________ test_barrier_cas_mismatch_never_erases_won_dispatch ______________
+tests/unit/test_nfq2_segment_cancel.py:175: in test_barrier_cas_mismatch_never_erases_won_dispatch
+    assert held.phase == "held" and service._nfq2_holds
+E   AssertionError: assert ('retired' == 'held'
+E     
+E     - held
+E     + retired)
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:07:54,514 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 17:07:54,521 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:7050 [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_segment_cancel.py::test_barrier_cas_mismatch_never_erases_won_dispatch
+1 failed in 0.30s
+CANCEL_MUTATION Q7 pytest_rc=1 RED

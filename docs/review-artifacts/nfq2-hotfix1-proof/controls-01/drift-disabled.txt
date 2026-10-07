@@ -1,0 +1,40 @@
+2026-10-07 14:43:38,186 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+F
+=================================== FAILURES ===================================
+__________ test_combined_drift_dispatch_enabled_offloop_and_isolated ___________
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10947f620>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109449580>
+
+    @pytest.mark.asyncio
+    async def test_combined_drift_dispatch_enabled_offloop_and_isolated(service, monkeypatch):
+        from tests.unit.test_oms_direct_cancel_dead_target_bound import _DirectCancelAdapter
+    
+        await configured(service)
+        active = hold(service, biya())
+        seed_drift(service, "DRIFT")
+        await service._refresh_drift_working_cache()
+        adapter = _DirectCancelAdapter(cancel_event_type="cancelled", cancel_reason="offline control")
+        monkeypatch.setattr(service, "broker_adapter", adapter)
+        original = service._collect_drift_cancel_candidates
+        started, release = Event(), Event()
+    
+        def slow(*args):
+            started.set()
+            assert release.wait(2)
+            return original(*args)
+    
+        monkeypatch.setattr(service, "_collect_drift_cancel_candidates", slow)
+        meter = Meter(service, monkeypatch)
+        try:
+            await tagged("drift-eligible", service._handle_quote_tick_event, tick("DRIFT", ask="2.70"))
+>           assert await asyncio.to_thread(started.wait, 2)
+E           assert False
+
+tests/unit/test_nfq2_hotfix1_combined_proof.py:207: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_hotfix1_combined_proof.py::test_combined_drift_dispatch_enabled_offloop_and_isolated
+1 failed in 2.14s
+MUTATION drift-disabled pytest_rc=1 RED

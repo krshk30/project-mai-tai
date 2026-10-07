@@ -1,0 +1,31 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_delayed_duplicate_recorded_sell_cannot_retire_the_new_first_rest_owner[300000] _
+
+max_age_ms = 300000
+
+    @pytest.mark.parametrize("max_age_ms", [120000, 300000])
+    def test_delayed_duplicate_recorded_sell_cannot_retire_the_new_first_rest_owner(max_age_ms):
+        strategy, state, clock, _, owners, _ = seeded(partial=True)
+        strategy._resting_max_bar_age_ms = max_age_ms  # Freshness-setting counterfactual, same recorded candles.
+        probes = list(recorded_probes("SXTC"))[:4]
+        for probe in probes:
+            observe(strategy, state, clock, probe)
+        first = strategy.drain_pending_intents()
+        assert len(first) == 1
+        strategy.drain_webull_direct_intents()
+        opportunity = state.flip_owner_opportunity_id
+        writes = len(owners)
+        state.bars.append(probes[0][1])  # Duplicate of a recorded bar, not a fabricated candle.
+        state.atr_short_flip_bar_ts = SELL
+        strategy._cw_v2_track(state, probes[0][2])
+>       assert state.resting_active and state.flip_owner_opportunity_id == opportunity
+E       AssertionError: assert (True and 0 == 1791397741119)
+E        +  where True = SymbolState(symbol='SXTC', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791397500000, open=6.36, ...ero_hold_started_ms=0, webull_resting_active=True, webull_resting_generation_id='804c69b9-56c0-43ce-b137-1f8e2c59df7c').resting_active
+E        +  and   0 = SymbolState(symbol='SXTC', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791397500000, open=6.36, ...ero_hold_started_ms=0, webull_resting_active=True, webull_resting_generation_id='804c69b9-56c0-43ce-b137-1f8e2c59df7c').flip_owner_opportunity_id
+
+tests/unit/test_slotclear1_fresh_sell.py:239: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_delayed_duplicate_recorded_sell_cannot_retire_the_new_first_rest_owner[300000]
+1 failed in 0.07s
+MUTATION F8 pytest_rc=1 RED

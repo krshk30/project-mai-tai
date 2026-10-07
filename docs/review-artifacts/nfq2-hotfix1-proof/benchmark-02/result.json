@@ -1,0 +1,259 @@
+{
+  "head": "ba265afe4085f301b0182cf800bfa38cdab2c80f",
+  "tree": "d2236af7bd35044639c695a8496380d9a87933ec",
+  "files_and_head_unchanged": true,
+  "runs": [
+    {
+      "name": "benchmark",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        "-s",
+        "tests/unit/test_nfq2_hotfix1_combined_proof.py",
+        "-k",
+        "60_seconds"
+      ],
+      "exit": 0,
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/benchmark-02/benchmark.txt",
+      "sha256": "e45a8ff0e8b38d1634e9f7721f794c09222eb7d096ad3ddcba370ecc8bc3e484",
+      "metrics": [
+        {
+          "drift_cache_candidates": 1,
+          "drift_price_checks": 7200,
+          "drift_reader_calls": 14400,
+          "drift_tolerance_cents": 1.0,
+          "events": 14400,
+          "events_by_lane": {
+            "tick-irrelevant": 7200,
+            "tick-stale": 7200
+          },
+          "hold_phase": "held",
+          "holds": 1,
+          "max_handler_ms": 16.770541988080367,
+          "max_loop_stall_ms": 35.86049999285024,
+          "on_loop_sql": 0,
+          "periodic_cadence_seconds": 5,
+          "periodic_drift_times_seconds": [
+            0.001935624997713603,
+            5.031687666996731,
+            10.058394874999067,
+            15.069081458990695,
+            20.09133137499157,
+            25.100267958987388,
+            30.12606616699486,
+            35.15380720898975,
+            40.172476209001616,
+            45.22117174998857,
+            50.23939449999307,
+            55.25392779200047
+          ],
+          "phase_violations": 0,
+          "rate": 239.9982620126233,
+          "retry_messages": 0,
+          "seconds": 60.00043449999066,
+          "sessions": {
+            "periodic-drift-cache": 12,
+            "periodic-nfq2": 12
+          },
+          "statements": {
+            "periodic-drift-cache": 60,
+            "periodic-nfq2": 24
+          },
+          "tick_transactions_per_second": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "transaction_times": [
+            [
+              0.00040079199243336916,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              0.0020477499929256737,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              5.029756874995655,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              5.031871041996055,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              10.056134749989724,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              10.058638834001613,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              15.068279125000117,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              15.069208499990054,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              20.090146083995933,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              20.091557416992146,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              25.099515750000137,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              25.100477166997734,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              30.10944566699618,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              30.127537666994613,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              35.15310112498992,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              35.153916541996296,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              40.170484292000765,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              40.17271579199587,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              45.21971287499764,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              45.221550916990964,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              50.238705958996434,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              50.239605499999016,
+              "periodic-drift-cache",
+              false
+            ],
+            [
+              55.25257829199836,
+              "periodic-nfq2",
+              false
+            ],
+            [
+              55.25416287498956,
+              "periodic-drift-cache",
+              false
+            ]
+          ],
+          "transactions": {
+            "periodic-drift-cache": 12,
+            "periodic-nfq2": 12
+          },
+          "watchdog_samples": 10434
+        }
+      ]
+    }
+  ]
+}

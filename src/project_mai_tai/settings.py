@@ -1186,7 +1186,11 @@ class Settings(BaseSettings):
     # Max-cross cap for the EH reactive entry: the limit may never exceed the strategy's signal price
     # (metadata entry_price, the break level) by more than this %. If the live ask is already past the cap
     # the market has run away from the signal -> ABANDON (skip submit), preferring no fill to a bad one.
-    oms_v2_eh_entry_max_cross_pct: float = 1.0
+    oms_v2_eh_entry_max_cross_pct: float = 0.5
+    # Mirror-on-fill is not an NFQ2 entry producer; preserve its existing 1% cap.
+    oms_v2_mirror_eh_max_cross_pct: float = 1.0
+    # NFQ2 retains missing-price EH entries and gives only serially claimed holds a 1% cap.
+    oms_v2_eh_fresh_price_enabled: bool = False
     # Max ask staleness (ms) the EH reactive entry will price off. No fresh ask within this window ->
     # ABANDON (never submit a blind limit). Mirrors the ORB quote-priced entry's 2000ms default.
     oms_v2_eh_entry_quote_max_age_ms: int = 2000

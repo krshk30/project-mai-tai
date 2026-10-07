@@ -1,0 +1,42 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_biya_stale_serial_token_cannot_claim_a_requeued_hold ___________
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x1094f4f80>
+
+    @pytest.mark.asyncio
+    async def test_biya_stale_serial_token_cannot_claim_a_requeued_hold(service):
+        held = hold(service, biya())
+        quote(service)
+        await service._evaluate_nfq2_holds("BIYA")
+        stale = retry(service)
+        assert service._claim_nfq2_retry(stale)
+        service._latest_quotes_by_symbol.clear()
+        with service.session_factory() as session:
+            intent = session.get(TradeIntent, held.intent_id)
+            assert service._nfq2_pre_submit(session, stale, intent)
+            session.commit()
+        quote(service)
+        await service._evaluate_nfq2_holds("BIYA")
+        current = retry(service)
+        assert stale.payload.metadata["nfq2_retry_token"] != current.payload.metadata["nfq2_retry_token"]
+>       assert not service._claim_nfq2_retry(stale)
+E       AssertionError: assert not True
+E        +  where True = _claim_nfq2_retry(TradeIntentEvent(event_id=UUID('13e6ece0-b307-4101-968c-be36712501a2'), event_type='trade_intent', source_service='oms..._id': '576170ca-0f3e-4d8d-af5a-6dcd8821008a', 'fanout_predecessor_attempt_id': 'schwab_1m_v2-BIYA-open-13e6ece0b307'})))
+E        +    where _claim_nfq2_retry = <project_mai_tai.oms.service.OmsRiskService object at 0x1094f4f80>._claim_nfq2_retry
+
+tests/unit/test_nfq2_eh_fresh_price.py:232: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:09:20,442 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:09:20,447 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 17:09:20,449 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:09:20,451 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_stale_serial_token_cannot_claim_a_requeued_hold
+1 failed in 0.27s
+MUTATION N2 pytest_rc=1 RED

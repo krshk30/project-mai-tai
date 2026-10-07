@@ -1,0 +1,69 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_any_related_order_is_not_proven_local_even_with_terminal_label[accepted] _
+tests/unit/test_nfq2_segment_cancel.py:121: in test_any_related_order_is_not_proven_local_even_with_terminal_label
+    assert held.phase == "held"
+E   AssertionError: assert 'retired' == 'held'
+E     
+E     - held
+E     + retired
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:07:50,892 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 17:07:50,900 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:07:50,906 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:7050 [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+_ test_any_related_order_is_not_proven_local_even_with_terminal_label[cancelled] _
+tests/unit/test_nfq2_segment_cancel.py:121: in test_any_related_order_is_not_proven_local_even_with_terminal_label
+    assert held.phase == "held"
+E   AssertionError: assert 'retired' == 'held'
+E     
+E     - held
+E     + retired
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:07:50,955 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 17:07:50,960 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:07:50,965 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:7050 [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+_ test_any_related_order_is_not_proven_local_even_with_terminal_label[filled] __
+tests/unit/test_nfq2_segment_cancel.py:121: in test_any_related_order_is_not_proven_local_even_with_terminal_label
+    assert held.phase == "held"
+E   AssertionError: assert 'retired' == 'held'
+E     
+E     - held
+E     + retired
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:07:50,994 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 17:07:50,998 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:07:51,004 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:7050 [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+_ test_any_related_order_is_not_proven_local_even_with_terminal_label[aborted] _
+tests/unit/test_nfq2_segment_cancel.py:121: in test_any_related_order_is_not_proven_local_even_with_terminal_label
+    assert held.phase == "held"
+E   AssertionError: assert 'retired' == 'held'
+E     
+E     - held
+E     + retired
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:07:51,030 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 17:07:51,035 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:07:51,040 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:7050 [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_segment_cancel.py::test_any_related_order_is_not_proven_local_even_with_terminal_label[accepted]
+FAILED tests/unit/test_nfq2_segment_cancel.py::test_any_related_order_is_not_proven_local_even_with_terminal_label[cancelled]
+FAILED tests/unit/test_nfq2_segment_cancel.py::test_any_related_order_is_not_proven_local_even_with_terminal_label[filled]
+FAILED tests/unit/test_nfq2_segment_cancel.py::test_any_related_order_is_not_proven_local_even_with_terminal_label[aborted]
+4 failed in 0.40s
+CANCEL_MUTATION Q4 pytest_rc=1 RED

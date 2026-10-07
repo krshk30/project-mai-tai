@@ -1,0 +1,772 @@
+[
+  {
+    "event_key": "momentum_30s:BIYA:1791360831526:00000002:FILLED",
+    "logical_id": "momentum_30s:BIYA:1791360831526",
+    "strategy_code": "momentum_30s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T08:13:51.534+00:00",
+    "payload": {
+      "fill": {
+        "price": "2.5897",
+        "sip_ts_ms": 1791360831534
+      },
+      "quantity": 193
+    }
+  },
+  {
+    "event_key": "momentum_60s:BIYA:1791360831526:00000002:FILLED",
+    "logical_id": "momentum_60s:BIYA:1791360831526",
+    "strategy_code": "momentum_60s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T08:13:51.534+00:00",
+    "payload": {
+      "fill": {
+        "price": "2.5897",
+        "sip_ts_ms": 1791360831534
+      },
+      "quantity": 193
+    }
+  },
+  {
+    "event_key": "momentum_30s:BIYA:1791360831526:00000003:EXITED",
+    "logical_id": "momentum_30s:BIYA:1791360831526",
+    "strategy_code": "momentum_30s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T08:13:54.171+00:00",
+    "payload": {
+      "exit": {
+        "price": "2.72",
+        "sip_ts_ms": 1791360834171
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:BIYA:1791360831526:00000003:EXITED",
+    "logical_id": "momentum_60s:BIYA:1791360831526",
+    "strategy_code": "momentum_60s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T08:13:54.171+00:00",
+    "payload": {
+      "exit": {
+        "price": "2.72",
+        "sip_ts_ms": 1791360834171
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:SXTC:1791361069877:00000002:FILLED",
+    "logical_id": "momentum_60s:SXTC:1791361069877",
+    "strategy_code": "momentum_60s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "SXTC",
+    "observed_at": "2026-10-07T08:17:52.213+00:00",
+    "payload": {
+      "fill": {
+        "price": "2.07",
+        "sip_ts_ms": 1791361072213
+      },
+      "quantity": 241
+    }
+  },
+  {
+    "event_key": "momentum_60s:SXTC:1791361069877:00000003:EXITED",
+    "logical_id": "momentum_60s:SXTC:1791361069877",
+    "strategy_code": "momentum_60s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "SXTC",
+    "observed_at": "2026-10-07T08:17:53.519+00:00",
+    "payload": {
+      "exit": {
+        "price": "2.1796",
+        "sip_ts_ms": 1791361073519
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_30s:BIYA:1791360831526:00000004:FINAL",
+    "logical_id": "momentum_30s:BIYA:1791360831526",
+    "strategy_code": "momentum_30s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T08:23:51.704+00:00",
+    "payload": {
+      "fill": {
+        "price": "2.5897",
+        "sip_ts_ms": 1791360831534
+      },
+      "exit": {
+        "price": "2.72",
+        "sip_ts_ms": 1791360834171
+      },
+      "quantity": 193,
+      "pnl": "25.1479",
+      "pnl_pct": "5.031470826736687647217824500",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:BIYA:1791360831526:00000004:FINAL",
+    "logical_id": "momentum_60s:BIYA:1791360831526",
+    "strategy_code": "momentum_60s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T08:23:51.704+00:00",
+    "payload": {
+      "fill": {
+        "price": "2.5897",
+        "sip_ts_ms": 1791360831534
+      },
+      "exit": {
+        "price": "2.72",
+        "sip_ts_ms": 1791360834171
+      },
+      "quantity": 193,
+      "pnl": "25.1479",
+      "pnl_pct": "5.031470826736687647217824500",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:SXTC:1791361069877:00000004:FINAL",
+    "logical_id": "momentum_60s:SXTC:1791361069877",
+    "strategy_code": "momentum_60s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "SXTC",
+    "observed_at": "2026-10-07T08:27:52.328+00:00",
+    "payload": {
+      "fill": {
+        "price": "2.07",
+        "sip_ts_ms": 1791361072213
+      },
+      "exit": {
+        "price": "2.1796",
+        "sip_ts_ms": 1791361073519
+      },
+      "quantity": 241,
+      "pnl": "26.4136",
+      "pnl_pct": "5.294685990338164251207729500",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_30s:SXTC:1791375402416:00000002:FILLED",
+    "logical_id": "momentum_30s:SXTC:1791375402416",
+    "strategy_code": "momentum_30s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "SXTC",
+    "observed_at": "2026-10-07T12:16:42.465+00:00",
+    "payload": {
+      "fill": {
+        "price": "6.57",
+        "sip_ts_ms": 1791375402465
+      },
+      "quantity": 76
+    }
+  },
+  {
+    "event_key": "momentum_60s:SXTC:1791375402416:00000002:FILLED",
+    "logical_id": "momentum_60s:SXTC:1791375402416",
+    "strategy_code": "momentum_60s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "SXTC",
+    "observed_at": "2026-10-07T12:16:42.465+00:00",
+    "payload": {
+      "fill": {
+        "price": "6.57",
+        "sip_ts_ms": 1791375402465
+      },
+      "quantity": 76
+    }
+  },
+  {
+    "event_key": "momentum_30s:SXTC:1791375402416:00000003:EXITED",
+    "logical_id": "momentum_30s:SXTC:1791375402416",
+    "strategy_code": "momentum_30s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "SXTC",
+    "observed_at": "2026-10-07T12:16:44.598+00:00",
+    "payload": {
+      "exit": {
+        "price": "6.94",
+        "sip_ts_ms": 1791375404598
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:SXTC:1791375402416:00000003:EXITED",
+    "logical_id": "momentum_60s:SXTC:1791375402416",
+    "strategy_code": "momentum_60s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "SXTC",
+    "observed_at": "2026-10-07T12:16:44.598+00:00",
+    "payload": {
+      "exit": {
+        "price": "6.94",
+        "sip_ts_ms": 1791375404598
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_30s:BIYA:1791375650680:00000002:FILLED",
+    "logical_id": "momentum_30s:BIYA:1791375650680",
+    "strategy_code": "momentum_30s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T12:20:50.707+00:00",
+    "payload": {
+      "fill": {
+        "price": "11.28",
+        "sip_ts_ms": 1791375650707
+      },
+      "quantity": 44
+    }
+  },
+  {
+    "event_key": "momentum_60s:BIYA:1791375650680:00000002:FILLED",
+    "logical_id": "momentum_60s:BIYA:1791375650680",
+    "strategy_code": "momentum_60s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T12:20:50.707+00:00",
+    "payload": {
+      "fill": {
+        "price": "11.28",
+        "sip_ts_ms": 1791375650707
+      },
+      "quantity": 44
+    }
+  },
+  {
+    "event_key": "momentum_30s:BIYA:1791375650680:00000003:EXITED",
+    "logical_id": "momentum_30s:BIYA:1791375650680",
+    "strategy_code": "momentum_30s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T12:20:50.747+00:00",
+    "payload": {
+      "exit": {
+        "price": "11.97",
+        "sip_ts_ms": 1791375650747
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:BIYA:1791375650680:00000003:EXITED",
+    "logical_id": "momentum_60s:BIYA:1791375650680",
+    "strategy_code": "momentum_60s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T12:20:50.747+00:00",
+    "payload": {
+      "exit": {
+        "price": "11.97",
+        "sip_ts_ms": 1791375650747
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_30s:SXTC:1791375402416:00000004:FINAL",
+    "logical_id": "momentum_30s:SXTC:1791375402416",
+    "strategy_code": "momentum_30s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "SXTC",
+    "observed_at": "2026-10-07T12:26:42.55+00:00",
+    "payload": {
+      "fill": {
+        "price": "6.57",
+        "sip_ts_ms": 1791375402465
+      },
+      "exit": {
+        "price": "6.94",
+        "sip_ts_ms": 1791375404598
+      },
+      "quantity": 76,
+      "pnl": "28.12",
+      "pnl_pct": "5.631659056316590563165905600",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:SXTC:1791375402416:00000004:FINAL",
+    "logical_id": "momentum_60s:SXTC:1791375402416",
+    "strategy_code": "momentum_60s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "SXTC",
+    "observed_at": "2026-10-07T12:26:42.55+00:00",
+    "payload": {
+      "fill": {
+        "price": "6.57",
+        "sip_ts_ms": 1791375402465
+      },
+      "exit": {
+        "price": "6.94",
+        "sip_ts_ms": 1791375404598
+      },
+      "quantity": 76,
+      "pnl": "28.12",
+      "pnl_pct": "5.631659056316590563165905600",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:BYAH:1791376017084:00000002:FILLED",
+    "logical_id": "momentum_60s:BYAH:1791376017084",
+    "strategy_code": "momentum_60s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "BYAH",
+    "observed_at": "2026-10-07T12:26:59.013+00:00",
+    "payload": {
+      "fill": {
+        "price": "2.898",
+        "sip_ts_ms": 1791376019013
+      },
+      "quantity": 172
+    }
+  },
+  {
+    "event_key": "momentum_60s:BYAH:1791376017084:00000003:EXITED",
+    "logical_id": "momentum_60s:BYAH:1791376017084",
+    "strategy_code": "momentum_60s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "BYAH",
+    "observed_at": "2026-10-07T12:26:59.941+00:00",
+    "payload": {
+      "exit": {
+        "price": "3.07",
+        "sip_ts_ms": 1791376019941
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_30s:BYAH:1791376069652:00000002:FILLED",
+    "logical_id": "momentum_30s:BYAH:1791376069652",
+    "strategy_code": "momentum_30s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "BYAH",
+    "observed_at": "2026-10-07T12:27:49.931+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.7",
+        "sip_ts_ms": 1791376069931
+      },
+      "quantity": 135
+    }
+  },
+  {
+    "event_key": "momentum_60s:BYAH:1791376069652:00000002:FILLED",
+    "logical_id": "momentum_60s:BYAH:1791376069652",
+    "strategy_code": "momentum_60s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "BYAH",
+    "observed_at": "2026-10-07T12:27:49.931+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.7",
+        "sip_ts_ms": 1791376069931
+      },
+      "quantity": 135
+    }
+  },
+  {
+    "event_key": "momentum_30s:BYAH:1791376069652:00000003:EXITED",
+    "logical_id": "momentum_30s:BYAH:1791376069652",
+    "strategy_code": "momentum_30s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "BYAH",
+    "observed_at": "2026-10-07T12:27:50.133+00:00",
+    "payload": {
+      "exit": {
+        "price": "3.89",
+        "sip_ts_ms": 1791376070133
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:BYAH:1791376069652:00000003:EXITED",
+    "logical_id": "momentum_60s:BYAH:1791376069652",
+    "strategy_code": "momentum_60s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "BYAH",
+    "observed_at": "2026-10-07T12:27:50.133+00:00",
+    "payload": {
+      "exit": {
+        "price": "3.89",
+        "sip_ts_ms": 1791376070133
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_30s:BIYA:1791375650680:00000004:FINAL",
+    "logical_id": "momentum_30s:BIYA:1791375650680",
+    "strategy_code": "momentum_30s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T12:30:50.71+00:00",
+    "payload": {
+      "fill": {
+        "price": "11.28",
+        "sip_ts_ms": 1791375650707
+      },
+      "exit": {
+        "price": "11.97",
+        "sip_ts_ms": 1791375650747
+      },
+      "quantity": 44,
+      "pnl": "30.36",
+      "pnl_pct": "6.117021276595744680851063800",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:BIYA:1791375650680:00000004:FINAL",
+    "logical_id": "momentum_60s:BIYA:1791375650680",
+    "strategy_code": "momentum_60s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "BIYA",
+    "observed_at": "2026-10-07T12:30:50.71+00:00",
+    "payload": {
+      "fill": {
+        "price": "11.28",
+        "sip_ts_ms": 1791375650707
+      },
+      "exit": {
+        "price": "11.97",
+        "sip_ts_ms": 1791375650747
+      },
+      "quantity": 44,
+      "pnl": "30.36",
+      "pnl_pct": "6.117021276595744680851063800",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:BYAH:1791376017084:00000004:FINAL",
+    "logical_id": "momentum_60s:BYAH:1791376017084",
+    "strategy_code": "momentum_60s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "BYAH",
+    "observed_at": "2026-10-07T12:36:59.436+00:00",
+    "payload": {
+      "fill": {
+        "price": "2.898",
+        "sip_ts_ms": 1791376019013
+      },
+      "exit": {
+        "price": "3.07",
+        "sip_ts_ms": 1791376019941
+      },
+      "quantity": 172,
+      "pnl": "29.584",
+      "pnl_pct": "5.935127674258109040717736400",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_30s:BYAH:1791376069652:00000004:FINAL",
+    "logical_id": "momentum_30s:BYAH:1791376069652",
+    "strategy_code": "momentum_30s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "BYAH",
+    "observed_at": "2026-10-07T12:37:50.058+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.7",
+        "sip_ts_ms": 1791376069931
+      },
+      "exit": {
+        "price": "3.89",
+        "sip_ts_ms": 1791376070133
+      },
+      "quantity": 135,
+      "pnl": "25.65",
+      "pnl_pct": "5.135135135135135135135135100",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:BYAH:1791376069652:00000004:FINAL",
+    "logical_id": "momentum_60s:BYAH:1791376069652",
+    "strategy_code": "momentum_60s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "BYAH",
+    "observed_at": "2026-10-07T12:37:50.058+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.7",
+        "sip_ts_ms": 1791376069931
+      },
+      "exit": {
+        "price": "3.89",
+        "sip_ts_ms": 1791376070133
+      },
+      "quantity": 135,
+      "pnl": "25.65",
+      "pnl_pct": "5.135135135135135135135135100",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:LGCL:1791378053813:00000002:FILLED",
+    "logical_id": "momentum_60s:LGCL:1791378053813",
+    "strategy_code": "momentum_60s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:00:56.272+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.11",
+        "sip_ts_ms": 1791378056272
+      },
+      "quantity": 160
+    }
+  },
+  {
+    "event_key": "momentum_60s:LGCL:1791378053813:00000003:EXITED",
+    "logical_id": "momentum_60s:LGCL:1791378053813",
+    "strategy_code": "momentum_60s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:00:57.397+00:00",
+    "payload": {
+      "exit": {
+        "price": "3.48",
+        "sip_ts_ms": 1791378057397
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_30s:LGCL:1791378060869:00000002:FILLED",
+    "logical_id": "momentum_30s:LGCL:1791378060869",
+    "strategy_code": "momentum_30s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:01:01.384+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.4343",
+        "sip_ts_ms": 1791378061384
+      },
+      "quantity": 145
+    }
+  },
+  {
+    "event_key": "momentum_30s:LGCL:1791378060869:00000003:EXITED",
+    "logical_id": "momentum_30s:LGCL:1791378060869",
+    "strategy_code": "momentum_30s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:01:04.2+00:00",
+    "payload": {
+      "exit": {
+        "price": "2.9",
+        "sip_ts_ms": 1791378064200
+      },
+      "exit_reason": "STOP"
+    }
+  },
+  {
+    "event_key": "momentum_60s:LGCL:1791378185699:00000002:FILLED",
+    "logical_id": "momentum_60s:LGCL:1791378185699",
+    "strategy_code": "momentum_60s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:03:05.769+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.17",
+        "sip_ts_ms": 1791378185769
+      },
+      "quantity": 157
+    }
+  },
+  {
+    "event_key": "momentum_60s:LGCL:1791378185699:00000003:EXITED",
+    "logical_id": "momentum_60s:LGCL:1791378185699",
+    "strategy_code": "momentum_60s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:03:20.397+00:00",
+    "payload": {
+      "exit": {
+        "price": "2.69",
+        "sip_ts_ms": 1791378200397
+      },
+      "exit_reason": "STOP"
+    }
+  },
+  {
+    "event_key": "momentum_60s:LGCL:1791378313951:00000002:FILLED",
+    "logical_id": "momentum_60s:LGCL:1791378313951",
+    "strategy_code": "momentum_60s",
+    "event_type": "FILLED",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:05:13.978+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.89",
+        "sip_ts_ms": 1791378313978
+      },
+      "quantity": 128
+    }
+  },
+  {
+    "event_key": "momentum_60s:LGCL:1791378313951:00000003:EXITED",
+    "logical_id": "momentum_60s:LGCL:1791378313951",
+    "strategy_code": "momentum_60s",
+    "event_type": "EXITED",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:06:28.988+00:00",
+    "payload": {
+      "exit": {
+        "price": "4.1",
+        "sip_ts_ms": 1791378388988
+      },
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_60s:LGCL:1791378053813:00000004:FINAL",
+    "logical_id": "momentum_60s:LGCL:1791378053813",
+    "strategy_code": "momentum_60s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:10:56.286+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.11",
+        "sip_ts_ms": 1791378056272
+      },
+      "exit": {
+        "price": "3.48",
+        "sip_ts_ms": 1791378057397
+      },
+      "quantity": 160,
+      "pnl": "59.20",
+      "pnl_pct": "11.89710610932475884244372990",
+      "exit_reason": "TARGET"
+    }
+  },
+  {
+    "event_key": "momentum_30s:LGCL:1791378060869:00000004:FINAL",
+    "logical_id": "momentum_30s:LGCL:1791378060869",
+    "strategy_code": "momentum_30s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:11:01.402+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.4343",
+        "sip_ts_ms": 1791378061384
+      },
+      "exit": {
+        "price": "2.9",
+        "sip_ts_ms": 1791378064200
+      },
+      "quantity": 145,
+      "pnl": "-77.4735",
+      "pnl_pct": "-15.55775558337943685758378709",
+      "exit_reason": "STOP"
+    }
+  },
+  {
+    "event_key": "momentum_60s:LGCL:1791378185699:00000004:FINAL",
+    "logical_id": "momentum_60s:LGCL:1791378185699",
+    "strategy_code": "momentum_60s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:13:06.059+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.17",
+        "sip_ts_ms": 1791378185769
+      },
+      "exit": {
+        "price": "2.69",
+        "sip_ts_ms": 1791378200397
+      },
+      "quantity": 157,
+      "pnl": "-75.36",
+      "pnl_pct": "-15.14195583596214511041009464",
+      "exit_reason": "STOP"
+    }
+  },
+  {
+    "event_key": "momentum_60s:LGCL:1791378313951:00000004:FINAL",
+    "logical_id": "momentum_60s:LGCL:1791378313951",
+    "strategy_code": "momentum_60s",
+    "event_type": "FINAL",
+    "session_date": "2026-10-07",
+    "symbol": "LGCL",
+    "observed_at": "2026-10-07T13:15:14.163+00:00",
+    "payload": {
+      "fill": {
+        "price": "3.89",
+        "sip_ts_ms": 1791378313978
+      },
+      "exit": {
+        "price": "4.1",
+        "sip_ts_ms": 1791378388988
+      },
+      "quantity": 128,
+      "pnl": "26.88",
+      "pnl_pct": "5.398457583547557840616966600",
+      "exit_reason": "TARGET"
+    }
+  }
+]

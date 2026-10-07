@@ -1,0 +1,30 @@
+{
+  "cwd": "/tmp/codex-nfq2-on-slotclear1-linear-20261007",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "-m",
+    "pytest",
+    "docs/review-artifacts/nfq2-recovery-legacy/test_protocol_cancel_control.py",
+    "-q",
+    "-s",
+    "--tb=short"
+  ],
+  "head": "8ea8a824ce2f7c8ee3e0c0e0b62702b4fe6cebb3",
+  "tree": "d8860465ac2f0da6cb07123b34da153136dd557e",
+  "status_before": "?? docs/review-artifacts/nfq2-hotfix1-proof/recovery-activehold-01/\n?? docs/review-artifacts/nfq2-recovery-legacy/finish_receipt.py\n?? docs/review-artifacts/nfq2-recovery-legacy/test_protocol_cancel_control.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T20:59:20.706597+00:00",
+  "end_utc": "2026-10-07T20:59:21.849870+00:00",
+  "returncode": 1,
+  "timed_out": false,
+  "timeout_seconds": 60.0,
+  "output_sha256": "f73d50d3b4cb302a091a9db7df389c7d784130247042b70102e91338dba2a2dd",
+  "failed_names": [
+    "docs/review-artifacts/nfq2-recovery-legacy/test_protocol_cancel_control.py::test_typed_segment_barrier_retires_proven_local_reclaim_hold[held-False]",
+    "docs/review-artifacts/nfq2-recovery-legacy/test_protocol_cancel_control.py::test_typed_segment_barrier_retires_proven_local_reclaim_hold[held-True]",
+    "docs/review-artifacts/nfq2-recovery-legacy/test_protocol_cancel_control.py::test_typed_segment_barrier_retires_proven_local_reclaim_hold[queued-False]",
+    "docs/review-artifacts/nfq2-recovery-legacy/test_protocol_cancel_control.py::test_typed_segment_barrier_retires_proven_local_reclaim_hold[queued-True]"
+  ]
+}

@@ -1,0 +1,11 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_present_durable_sxtc_tickets_veto_entry_after_recorded_sell_even_handoff_off _
+docs/review-artifacts/slotclear1/test_both_paths.py:66: in test_present_durable_sxtc_tickets_veto_entry_after_recorded_sell_even_handoff_off
+    assert strategy._rpg_entry_owned(state, account=PRIMARY, slot="first")
+E   AssertionError: assert False
+E    +  where False = <lambda>(SymbolState(symbol='SXTC', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id=''), account='live:schwab_1m_v2', slot='first')
+E    +    where <lambda> = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10d98c2c0>._rpg_entry_owned
+=========================== short test summary info ============================
+FAILED docs/review-artifacts/slotclear1/test_both_paths.py::test_present_durable_sxtc_tickets_veto_entry_after_recorded_sell_even_handoff_off
+1 failed in 0.06s

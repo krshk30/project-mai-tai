@@ -1,0 +1,10 @@
+..............................F..........                                [100%]
+=================================== FAILURES ===================================
+_ test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[rejected-broker-terminal_confirmed-False] _
+tests/unit/test_retryleft1.py:277: in test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof
+    assert proof.clear is clear
+E   AssertionError: assert True is False
+E    +  where True = RemovedWaitProof(request=RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='f68a1b55-41dd-4d4f-b16d-894d1...), purpose='retry_exhausted'), observed_at_ms=1791400258069, clear=True, reason='retry_leftovers_cancelled_owner_kept').clear
+=========================== short test summary info ============================
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[rejected-broker-terminal_confirmed-False]
+1 failed, 40 passed in 0.41s

@@ -1,0 +1,12 @@
+[Unit]
+Description=RETAIN1 daily Momentum plumbing pruning (1-day retention)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+ExecStart=/home/trader/project-mai-tai/.venv/bin/python scripts/prune_market_ticks.py --go --tables momentum_paper_events --keep-days 1 --event-types PATH_PRINT,FEED_GAP --batch 10000 --max-rows 1000000 --max-seconds 3600
+TimeoutStartSec=2h
+Nice=10

@@ -1,0 +1,28 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_biya_eh_hold_does_not_migrate_into_unpriced_regular_hours ________
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x108eeddf0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108faf800>
+
+    @pytest.mark.asyncio
+    async def test_biya_eh_hold_does_not_migrate_into_unpriced_regular_hours(service, monkeypatch):
+        hold(service, biya())
+        quote(service)
+        monkeypatch.setattr(oms_module, "_is_regular_market_session", lambda *args: True)
+        monkeypatch.setattr(oms_module, "_extended_hours_session", lambda *args: None)
+        await service._evaluate_nfq2_holds()
+        await service._evaluate_nfq2_holds("BIYA")
+>       assert not service._nfq2_holds and not service.redis.entries
+E       AssertionError: assert (not {('paper:schwab_1m_v2', 'd585906e-7867-515b-9524-a1ea3a6b5a2b'): EhHold(event=TradeIntentEvent(event_id=UUID('4497c490... intent_id=UUID('6c75178b-289a-48bc-9d92-62415876a39e'), phase='queued', token='e0b8b80d-6b50-487f-8585-25fd5c47819d')})
+E        +  where {('paper:schwab_1m_v2', 'd585906e-7867-515b-9524-a1ea3a6b5a2b'): EhHold(event=TradeIntentEvent(event_id=UUID('4497c490... intent_id=UUID('6c75178b-289a-48bc-9d92-62415876a39e'), phase='queued', token='e0b8b80d-6b50-487f-8585-25fd5c47819d')} = <project_mai_tai.oms.service.OmsRiskService object at 0x108eeddf0>._nfq2_holds
+
+tests/unit/test_nfq2_eh_fresh_price.py:414: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 15:52:24,567 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_eh_hold_does_not_migrate_into_unpriced_regular_hours
+1 failed in 0.26s
+MUTATION N11 pytest_rc=1 RED

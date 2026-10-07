@@ -1,0 +1,173 @@
+1:  0239726f = 1:  81670de1 NFQ2: record independent path and cache assessment
+2:  16c435b0 ! 2:  a8519b5d NFQ2: retain both EH entry paths for serial fresh-ask recheck
+    @@ src/project_mai_tai/oms/service.py: class OmsRiskService(MirrorRetainedHoldMixin
+              self._restore_nfq_holds()
+     +        self._restore_nfq2_holds()
+              self._restore_mirrorhold()
+    +         await self._refresh_drift_working_cache()
+              await self._rehydrate_armed_hard_stops()  # F2: rebuild the ORB stop registry from the durable mirror
+    -         await self._publish_heartbeat(
+     @@ src/project_mai_tai/oms/service.py: class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
+              while not stop_event.is_set():
+                  loop_now = asyncio.get_running_loop().time()
+    @@ src/project_mai_tai/oms/service.py: class OmsRiskService(MirrorRetainedHoldMixin
+                  self.logger.info(
+     @@ src/project_mai_tai/oms/service.py: class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
+              await self._cancel_drifted_working_orders(symbol)
+    -         await self._evaluate_webull_mirror_deferred_resubmits(symbol)
+    +         self._schedule_webull_mirror_tick(symbol)
+              await self._evaluate_nfq_holds(symbol)
+     +        await self._evaluate_nfq2_holds(symbol)
+              # Slice-3: run the v2 exit ladder on this quote, but ONLY for symbols with an
+    @@ src/project_mai_tai/oms/service.py: class OmsRiskService(MirrorRetainedHoldMixin
+                      reason_detail=f"no fresh ask within {max_age_ms}ms for {symbol}",
+                  )
+     -        max_cross_pct = float(getattr(self.settings, "oms_v2_eh_entry_max_cross_pct", 1.0))
+    +-        if (md.get("slotclear_first") == "true"
+    +-                and not getattr(self, "_nfq2_held_dispatch", lambda event: False)(event)):
+     +        max_cross_pct = (1.0 if self._nfq2_held_dispatch(event) else
+     +                         float(getattr(self.settings, "oms_v2_eh_entry_max_cross_pct", 0.5)))
+    ++        if md.get("slotclear_first") == "true" and not self._nfq2_held_dispatch(event):
+    +             max_cross_pct = 0.5
+              cap = signal_px * (1.0 + max_cross_pct / 100.0)
+              if ask > cap:
+    -             # The live ask has run past the signal by more than the cap -> the market moved away from the
+     @@ src/project_mai_tai/oms/service.py: class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
+              max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
+              # The RTH reactive limit shares this helper. Only the AM resting call uses decimal cap
+    @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+                  state.symbol, px, trig, fl, state.cw_bar_low_so_far, state.cw_entries_this_flip,
+              )
+              shared_fanout_identity: dict[str, str] = {}
+    --        if self._dual_broker_fanout_enabled:
+    -+        if self._dual_broker_fanout_enabled or getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False):
+    +-        if self._dual_broker_fanout_enabled or fresh_first:
+    ++        if (self._dual_broker_fanout_enabled or fresh_first
+    ++                or getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False)):
+                  shared_fanout_identity = self._fanout_identity_metadata(
+                      state,
+    -                 source="reactive",
+    +                 source="eh_resting" if fresh_first else "reactive",
+     @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+              was_trigger = self._active_resting_trigger(state)
+              was_webull_trigger = self._active_resting_trigger(state, leg="webull")
+    @@ src/project_mai_tai/strategy_core/schwab_1m_v2.py: class SchwabV2Strategy:
+                  side="buy",
+     
+      ## tests/unit/test_all_on_pm.py ##
+    -@@ tests/unit/test_all_on_pm.py: from tests.unit import test_pmprint1_pmflip1 as pmprint  # noqa: E402
+    - _bot, _send_levelone = stream_helpers._bot, stream_helpers._send_levelone
+    - 
+    +@@ tests/unit/test_all_on_pm.py: _bot, _send_levelone = stream_helpers._bot, stream_helpers._send_levelone
+      ALL_ON = {
+    +     "strategy_schwab_1m_v2_slotclear_fresh_flip_enabled": True,
+    +     "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled": True,
+     +    "oms_v2_eh_fresh_price_enabled": True,
+          "strategy_schwab_1m_v2_pm_print_ask_confirm_enabled": True,
+          "strategy_schwab_1m_v2_pm_flip_wait_enabled": True,
+    @@ tests/unit/test_all_on_pm.py: def completed_seeded_line(monkeypatch):
+      
+      
+      def assert_all_on(settings):
+    --    assert len(ALL_ON) == 8
+    -+    assert len(ALL_ON) == 9
+    +-    assert len(ALL_ON) == 10
+    ++    assert len(ALL_ON) == 11
+          assert all(getattr(settings, key) is True for key in ALL_ON)
+      
+      
+    @@ tests/unit/test_all_on_pm.py: def test_all_on_rth_conversion_preserves_original_
+      
+      
+      def test_all_on_catalog_audit_committed_live_set_requires_both_consumers():
+    --    assert len(ALL_ON) == 8
+    -+    assert len(ALL_ON) == 9
+    +-    assert len(ALL_ON) == 10
+    ++    assert len(ALL_ON) == 11
+          root = Path(__file__).parents[2]
+          flags = json.loads((root / "ops/health/expected_flags.json").read_text())["flags"]
+          numeric = json.loads((root / "ops/health/expected_numeric.json").read_text())["settings"]
+          by_name = {entry["name"]: entry for entry in flags}
+          mismatches = {key for key in ALL_ON if by_name[key]["expected"] is not True}
+          assert mismatches == set()
+    --    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 147
+    -+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 149
+    +-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 149
+    ++    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 151
+          assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["expected"] is True
+          assert by_name["strategy_schwab_1m_v2_resting_buy_round_up_enabled"]["expected"] is True
+          assert sum(1 + len(entry.get("also_check_services", [])) for entry in numeric) == 8
+    @@ tests/unit/test_all_on_pm.py: def test_all_on_process_catalog_checker_refuses_th
+      
+          rc, lines = audit(entries, environment_reader=controlled_proc)
+          assert rc == 1
+    --    assert lines[-1] == "Final call: REAL FAILURE; checked=155/155 mismatches=6 unknown=0"
+    -+    assert lines[-1] == "Final call: REAL FAILURE; checked=157/157 mismatches=6 unknown=0"
+    +-    assert lines[-1] == "Final call: REAL FAILURE; checked=157/157 mismatches=6 unknown=0"
+    ++    assert lines[-1] == "Final call: REAL FAILURE; checked=159/159 mismatches=6 unknown=0"
+          assert len(readers) == len(set(readers)) == 9
+          assert len([line for line in lines if line.startswith("REAL FAILURE")]) == 6
+     
+    @@ tests/unit/test_expected_flags_check.py: def _proc_reader(
+      
+      def test_catalog_covers_every_settings_bool_exactly_once() -> None:
+          entries = flags.load_catalog(CATALOG)
+    --    assert len(entries) == 134
+    -+    assert len(entries) == 135
+    +-    assert len(entries) == 136
+    ++    assert len(entries) == 137
+          assert {entry["name"] for entry in entries} == {
+              name
+              for name, field in Settings.model_fields.items()
+    @@ tests/unit/test_keeprest1.py: def test_liquid_bar_resets_thin_streak_and_reclaim
+      @pytest.mark.parametrize("stream", [False, True])
+      def test_all_on_later_olox_price_proxy_crosses_once_with_sizing_and_grace(stream):
+          strategy, state, clock = seeded(all_on=True)
+    --    assert len(COMPOSED) == 9 and all(getattr(strategy.settings, f) for f in COMPOSED)
+    -+    assert len(COMPOSED) == 10 and all(getattr(strategy.settings, f) for f in COMPOSED)
+    +-    assert len(COMPOSED) == 11 and all(getattr(strategy.settings, f) for f in COMPOSED)
+    ++    assert len(COMPOSED) == 12 and all(getattr(strategy.settings, f) for f in COMPOSED)
+          track(strategy, state, flip="BUY")
+          case = CASES[-1]
+          clock[0] = ms(case["first_later_bar_high_reach"]["bar_time"].replace(" ", "T")) + 1000
+    @@ tests/unit/test_keeprest1.py: def test_all_on_effective_catalog_zero_with_contro
+              for service in [entry["owning_service"], *entry.get("also_check_services", [])]:
+                  environments.setdefault(service, {})["MAI_TAI_" + entry["name"].upper()] = str(entry["expected"]).lower()
+          settings = Settings(_env_file=None, **COMPOSED)
+    --    assert len(COMPOSED) == 9 and all(getattr(settings, key) for key in COMPOSED)
+    -+    assert len(COMPOSED) == 10 and all(getattr(settings, key) for key in COMPOSED)
+    +-    assert len(COMPOSED) == 11 and all(getattr(settings, key) for key in COMPOSED)
+    ++    assert len(COMPOSED) == 12 and all(getattr(settings, key) for key in COMPOSED)
+          rc, lines = audit(entries, environment_reader=lambda service: ServiceEnvironment(
+              101, environments[service], frozenset(), None))
+          assert rc == 0
+    --    assert lines[-1] == "Final call: PASS; checked=155/155 mismatches=0 unknown=0"
+    -+    assert lines[-1] == "Final call: PASS; checked=157/157 mismatches=0 unknown=0"
+    +-    assert lines[-1] == "Final call: PASS; checked=157/157 mismatches=0 unknown=0"
+    ++    assert lines[-1] == "Final call: PASS; checked=159/159 mismatches=0 unknown=0"
+          assert len(environments) == 9
+      
+      
+    @@ tests/unit/test_mirrorhold1_retained_hold.py: async def test_rpg_nonces_after_ma
+          h = await runtime(monkeypatch, "webull", strategy_overrides=overrides)
+          if all_on:
+              h.service.settings = h.service.settings.model_copy(update=overrides)
+    --        assert len(overrides) == 8
+    -+        assert len(overrides) == 9
+    +-        assert len(overrides) == 10
+    ++        assert len(overrides) == 11
+              assert all(getattr(h.strategy.settings, key) is True and getattr(h.service.settings, key) is True
+                         for key in overrides)
+          h.service.settings.oms_v2_webull_mirror_retained_hold_enabled = True
+    @@ tests/unit/test_pmprint1_tonight_flags.py: def test_s6_catalog_matches_all_on_li
+          assert {key: flags[key] for key in TONIGHT} == {key: True for key in TONIGHT}
+          numeric = json.loads((Path(__file__).parents[2] / "ops/health/expected_numeric.json").read_text())
+          entries = catalog["flags"] + numeric["settings"]
+    --    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 155
+    -+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 157
+    +-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 157
+    ++    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 159
+          assert flags["webull_list_primary_reads_enabled"] is True
+          assert flags["strategy_schwab_1m_v2_line_chart_restoration_enabled"] is True
+      
+3:  0318ef84 = 3:  6a6f5005 fix: move NFQ2 quote persistence and periodic proof off loop

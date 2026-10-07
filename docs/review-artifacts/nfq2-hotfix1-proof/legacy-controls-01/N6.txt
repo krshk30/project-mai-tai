@@ -1,0 +1,141 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-False] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10936bdd0>
+webull = False, reactive = False
+
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    @pytest.mark.asyncio
+    async def test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent(service, webull, reactive):
+        event = biya(webull=webull, reactive=reactive)
+        hold(service, event)
+        quote(service, "2.56")  # Counterfactual +0.7874%, outside fresh band, inside held band.
+        await service._evaluate_nfq2_holds("BIYA")
+>       message = retry(service)
+                  ^^^^^^^^^^^^^^
+
+tests/unit/test_nfq2_eh_fresh_price.py:86: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10936bdd0>
+
+    def retry(service):
+>       return TradeIntentEvent.model_validate(service.redis.entries[-1][1])
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_nfq2_eh_fresh_price.py:75: IndexError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:44:21,472 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:44:21,475 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=ask_past_held_cap ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=ask_past_held_cap ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-True] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10967b500>
+webull = True, reactive = False
+
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    @pytest.mark.asyncio
+    async def test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent(service, webull, reactive):
+        event = biya(webull=webull, reactive=reactive)
+        hold(service, event)
+        quote(service, "2.56")  # Counterfactual +0.7874%, outside fresh band, inside held band.
+        await service._evaluate_nfq2_holds("BIYA")
+>       message = retry(service)
+                  ^^^^^^^^^^^^^^
+
+tests/unit/test_nfq2_eh_fresh_price.py:86: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10967b500>
+
+    def retry(service):
+>       return TradeIntentEvent.model_validate(service.redis.entries[-1][1])
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_nfq2_eh_fresh_price.py:75: IndexError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:44:21,529 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:44:21,532 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=ask_past_held_cap ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=ask_past_held_cap ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-False] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x108c576e0>
+webull = False, reactive = True
+
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    @pytest.mark.asyncio
+    async def test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent(service, webull, reactive):
+        event = biya(webull=webull, reactive=reactive)
+        hold(service, event)
+        quote(service, "2.56")  # Counterfactual +0.7874%, outside fresh band, inside held band.
+        await service._evaluate_nfq2_holds("BIYA")
+>       message = retry(service)
+                  ^^^^^^^^^^^^^^
+
+tests/unit/test_nfq2_eh_fresh_price.py:86: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x108c576e0>
+
+    def retry(service):
+>       return TradeIntentEvent.model_validate(service.redis.entries[-1][1])
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_nfq2_eh_fresh_price.py:75: IndexError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:44:21,562 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:44:21,564 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=ask_past_held_cap ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=ask_past_held_cap ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-True] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10975a750>
+webull = True, reactive = True
+
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    @pytest.mark.asyncio
+    async def test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent(service, webull, reactive):
+        event = biya(webull=webull, reactive=reactive)
+        hold(service, event)
+        quote(service, "2.56")  # Counterfactual +0.7874%, outside fresh band, inside held band.
+        await service._evaluate_nfq2_holds("BIYA")
+>       message = retry(service)
+                  ^^^^^^^^^^^^^^
+
+tests/unit/test_nfq2_eh_fresh_price.py:86: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10975a750>
+
+    def retry(service):
+>       return TradeIntentEvent.model_validate(service.redis.entries[-1][1])
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_nfq2_eh_fresh_price.py:75: IndexError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:44:21,593 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:44:21,595 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=ask_past_held_cap ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=ask_past_held_cap ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-False]
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-True]
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-False]
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-True]
+4 failed in 0.37s
+MUTATION N6 pytest_rc=1 RED

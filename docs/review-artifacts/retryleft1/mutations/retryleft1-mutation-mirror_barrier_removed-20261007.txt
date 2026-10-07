@@ -1,0 +1,236 @@
+FF.FFFFFFFFFFFFFFFF....FF...........FFF..                                [100%]
+=================================== FAILURES ===================================
+______ test_recorded_ncpl_close_cancels_sibling_at_191018_before_next_bar ______
+tests/unit/test_retryleft1.py:92: in test_recorded_ncpl_close_cancels_sibling_at_191018_before_next_bar
+    mirror, = strategy.drain_webull_direct_intents()
+    ^^^^^^^
+E   ValueError: not enough values to unpack (expected 1, got 0)
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:2152 [V2-FLIP-OWNER-CROSS-ACCOUNT-EVIDENCE] NCPL evaluated=1 known=1 pending=0 unknown=0 open=0 filled_accounts=1 position_ids=1
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:1789 [V2-RETRY-LEFTOVER-CANCEL] NCPL account=live:orb qty=182 reason=retry_budget_exhausted
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:1745 [V2-FLIP-OWNER-RETRY] NCPL segment_id=1791399420000 closes_in_segment=1 retries_left=0 action=held reason=retry_budget_exhausted
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:2237 [V2-FLIP-OWNER-PREFLIP-CLOSE-EVALUATED] NCPL evaluated=1 released=0 consumed=1 unknown=0 entry_allowed=0 confirmation_closed=0 closed_by_any_exit=1
+_ test_recorded_artl_close_cancels_schwab_at_first_owner_check_under_zero_retry_policy _
+tests/unit/test_retryleft1.py:122: in test_recorded_artl_close_cancels_schwab_at_first_owner_check_under_zero_retry_policy
+    mirror, = strategy.drain_webull_direct_intents()
+    ^^^^^^^
+E   ValueError: not enough values to unpack (expected 1, got 0)
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-False-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f82030>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f82030>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-False-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f82240>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f82240>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f82c00>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f82c00>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f837d0>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f837d0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-False-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108cbe150>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108cbe150>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-False-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10900c710>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10900c710>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f83aa0>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f83aa0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f82fc0>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f82fc0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-False-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f824e0>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f824e0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-False-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108a32db0>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108a32db0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f1c050>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108f1c050>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108ee7a70>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108ee7a70>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-False-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108b93410>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108b93410>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-False-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108babaa0>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108babaa0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108cbfec0>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108cbfec0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10900da60>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10900da60>.drain_webull_direct_intents
+__________ test_recorded_ncpl_bound_owner_kept_but_leftover_cancelled __________
+tests/unit/test_retryleft1.py:206: in test_recorded_ncpl_bound_owner_kept_but_leftover_cancelled
+    assert len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1091f8260>.drain_webull_direct_intents
+____________ test_recorded_ncpl_consumed_restart_emits_barrier_once ____________
+tests/unit/test_retryleft1.py:216: in test_recorded_ncpl_consumed_restart_emits_barrier_once
+    assert len(restarted.drain_pending_intents()) == len(restarted.drain_webull_direct_intents()) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})])
+E    +    where [TradeIntentDraft(symbol='NCPL', side='buy', intent_type='cancel', quantity=Decimal('364'), reason='retry exhausted ca...out_segment_id': '1791399663104', 'fanout_slot': 'resting', 'fanout_slot_id': 'bc8f04fd-3c26-5cf6-a342-f017ed042b69'})] = drain_pending_intents()
+E    +      where drain_pending_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1092bf740>.drain_pending_intents
+E    +  and   0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1092bf740>.drain_webull_direct_intents
+_ test_recorded_ncpl_barrier_persists_and_restores_without_clearing_filled_owner _
+tests/unit/test_retryleft1.py:334: in test_recorded_ncpl_barrier_persists_and_restores_without_clearing_filled_owner
+    assert len(restarted.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10935dd00>.drain_webull_direct_intents
+_ test_recorded_ncpl_cancel_barrier_selects_only_its_waiting_buy_not_protective_sell _
+tests/unit/test_retryleft1.py:350: in test_recorded_ncpl_cancel_barrier_selects_only_its_waiting_buy_not_protective_sell
+    mirror, = strategy.drain_webull_direct_intents()
+    ^^^^^^^
+E   ValueError: not enough values to unpack (expected 1, got 0)
+_______ test_scanner_removal_payload_and_barrier_remain_legacy_unchanged _______
+tests/unit/test_retryleft1.py:392: in test_scanner_removal_payload_and_barrier_remain_legacy_unchanged
+    mirror, = strategy.drain_webull_direct_intents()
+    ^^^^^^^
+E   ValueError: not enough values to unpack (expected 1, got 0)
+=========================== short test summary info ============================
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_cancels_sibling_at_191018_before_next_bar
+FAILED tests/unit/test_retryleft1.py::test_recorded_artl_close_cancels_schwab_at_first_owner_check_under_zero_retry_policy
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-False-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-False-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-False-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-False-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-False-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-False-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-False-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-False-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_bound_owner_kept_but_leftover_cancelled
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_consumed_restart_emits_barrier_once
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_barrier_persists_and_restores_without_clearing_filled_owner
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_cancel_barrier_selects_only_its_waiting_buy_not_protective_sell
+FAILED tests/unit/test_retryleft1.py::test_scanner_removal_payload_and_barrier_remain_legacy_unchanged
+23 failed, 18 passed in 0.55s

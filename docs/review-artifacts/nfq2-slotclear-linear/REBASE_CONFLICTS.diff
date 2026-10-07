@@ -1,0 +1,162 @@
+diff --cc src/project_mai_tai/oms/service.py
+index a24c1275,fa323498..00000000
+--- a/src/project_mai_tai/oms/service.py
++++ b/src/project_mai_tai/oms/service.py
+@@@ -1011,8 -996,8 +1012,9 @@@ class OmsRiskService(EhFreshPriceMixin
+          )
+          self._rehydrate_managed_v2_symbols()  # slice-3: re-arm quote eval for open v2 rows
+          self._restore_nfq_holds()
++         self._restore_nfq2_holds()
+          self._restore_mirrorhold()
+ +        await self._refresh_drift_working_cache()
+          await self._rehydrate_armed_hard_stops()  # F2: rebuild the ORB stop registry from the durable mirror
+          await self._publish_heartbeat(
+              "starting",
+@@@ -11137,8 -11131,9 +11151,9 @@@
+          if self._armed_hard_stops:
+              await self._evaluate_hard_stop_market_event(symbol)
+          await self._cancel_drifted_working_orders(symbol)
+ -        await self._evaluate_webull_mirror_deferred_resubmits(symbol)
+ +        self._schedule_webull_mirror_tick(symbol)
+          await self._evaluate_nfq_holds(symbol)
++         await self._evaluate_nfq2_holds(symbol)
+          # Slice-3: run the v2 exit ladder on this quote, but ONLY for symbols with an
+          # open v2 managed row (the in-memory guard keeps the hot path free of DB hits
+          # for everything else; empty set when the flag is OFF → no-op).
+@@@ -14811,10 -14797,8 +14827,15 @@@
+                  event=event, intent=intent, reason_code="NO_FRESH_QUOTE",
+                  reason_detail=f"no fresh ask within {max_age_ms}ms for {symbol}",
+              )
+++<<<<<<< HEAD
+ +        max_cross_pct = float(getattr(self.settings, "oms_v2_eh_entry_max_cross_pct", 1.0))
+ +        if (md.get("slotclear_first") == "true"
+ +                and not getattr(self, "_nfq2_held_dispatch", lambda event: False)(event)):
+ +            max_cross_pct = 0.5
+++=======
++         max_cross_pct = (1.0 if self._nfq2_held_dispatch(event) else
++                          float(getattr(self.settings, "oms_v2_eh_entry_max_cross_pct", 0.5)))
+++>>>>>>> 16c435b0 (NFQ2: retain both EH entry paths for serial fresh-ask recheck)
+          cap = signal_px * (1.0 + max_cross_pct / 100.0)
+          if ask > cap:
+              # The live ask has run past the signal by more than the cap -> the market moved away from the
+diff --cc src/project_mai_tai/strategy_core/schwab_1m_v2.py
+index e76726b5,7526c289..00000000
+--- a/src/project_mai_tai/strategy_core/schwab_1m_v2.py
++++ b/src/project_mai_tai/strategy_core/schwab_1m_v2.py
+@@@ -5136,10 -5025,10 +5173,14 @@@ class SchwabV2Strategy
+              state.symbol, px, trig, fl, state.cw_bar_low_so_far, state.cw_entries_this_flip,
+          )
+          shared_fanout_identity: dict[str, str] = {}
+++<<<<<<< HEAD
+ +        if self._dual_broker_fanout_enabled or fresh_first:
+++=======
++         if self._dual_broker_fanout_enabled or getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False):
+++>>>>>>> 16c435b0 (NFQ2: retain both EH entry paths for serial fresh-ask recheck)
+              shared_fanout_identity = self._fanout_identity_metadata(
+                  state,
+ -                source="reactive",
+ +                source="eh_resting" if fresh_first else "reactive",
+              )
+          # Dual-broker fan-out: co-queue the parallel Webull MARKET leg at the same reactive cross
+          # (once, on the same claim that produced this primary). No-op unless fan-out is on.
+diff --cc tests/unit/test_all_on_pm.py
+index 48805615,9f28c09d..00000000
+--- a/tests/unit/test_all_on_pm.py
++++ b/tests/unit/test_all_on_pm.py
+@@@ -29,8 -29,7 +29,12 @@@ from tests.unit import test_pmprint1_pm
+  _bot, _send_levelone = stream_helpers._bot, stream_helpers._send_levelone
+  
+  ALL_ON = {
+++<<<<<<< HEAD
+ +    "strategy_schwab_1m_v2_slotclear_fresh_flip_enabled": True,
+ +    "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled": True,
+++=======
++     "oms_v2_eh_fresh_price_enabled": True,
+++>>>>>>> 16c435b0 (NFQ2: retain both EH entry paths for serial fresh-ask recheck)
+      "strategy_schwab_1m_v2_pm_print_ask_confirm_enabled": True,
+      "strategy_schwab_1m_v2_pm_flip_wait_enabled": True,
+      "strategy_schwab_1m_v2_pm_rest_reprice_enabled": True,
+@@@ -84,7 -83,7 +88,11 @@@ def completed_seeded_line(monkeypatch)
+  
+  
+  def assert_all_on(settings):
+++<<<<<<< HEAD
+ +    assert len(ALL_ON) == 10
+++=======
++     assert len(ALL_ON) == 9
+++>>>>>>> 16c435b0 (NFQ2: retain both EH entry paths for serial fresh-ask recheck)
+      assert all(getattr(settings, key) is True for key in ALL_ON)
+  
+  
+@@@ -347,7 -346,7 +355,11 @@@ def test_all_on_rth_conversion_preserve
+  
+  
+  def test_all_on_catalog_audit_committed_live_set_requires_both_consumers():
+++<<<<<<< HEAD
+ +    assert len(ALL_ON) == 10
+++=======
++     assert len(ALL_ON) == 9
+++>>>>>>> 16c435b0 (NFQ2: retain both EH entry paths for serial fresh-ask recheck)
+      root = Path(__file__).parents[2]
+      flags = json.loads((root / "ops/health/expected_flags.json").read_text())["flags"]
+      numeric = json.loads((root / "ops/health/expected_numeric.json").read_text())["settings"]
+diff --cc tests/unit/test_expected_flags_check.py
+index 26f89f76,dd622e5f..00000000
+--- a/tests/unit/test_expected_flags_check.py
++++ b/tests/unit/test_expected_flags_check.py
+@@@ -50,7 -50,7 +50,11 @@@ def _proc_reader
+  
+  def test_catalog_covers_every_settings_bool_exactly_once() -> None:
+      entries = flags.load_catalog(CATALOG)
+++<<<<<<< HEAD
+ +    assert len(entries) == 136
+++=======
++     assert len(entries) == 135
+++>>>>>>> 16c435b0 (NFQ2: retain both EH entry paths for serial fresh-ask recheck)
+      assert {entry["name"] for entry in entries} == {
+          name
+          for name, field in Settings.model_fields.items()
+diff --cc tests/unit/test_keeprest1.py
+index 65d84f12,e4509934..00000000
+--- a/tests/unit/test_keeprest1.py
++++ b/tests/unit/test_keeprest1.py
+@@@ -183,7 -183,7 +183,11 @@@ def test_liquid_bar_resets_thin_streak_
+  @pytest.mark.parametrize("stream", [False, True])
+  def test_all_on_later_olox_price_proxy_crosses_once_with_sizing_and_grace(stream):
+      strategy, state, clock = seeded(all_on=True)
+++<<<<<<< HEAD
+ +    assert len(COMPOSED) == 11 and all(getattr(strategy.settings, f) for f in COMPOSED)
+++=======
++     assert len(COMPOSED) == 10 and all(getattr(strategy.settings, f) for f in COMPOSED)
+++>>>>>>> 16c435b0 (NFQ2: retain both EH entry paths for serial fresh-ask recheck)
+      track(strategy, state, flip="BUY")
+      case = CASES[-1]
+      clock[0] = ms(case["first_later_bar_high_reach"]["bar_time"].replace(" ", "T")) + 1000
+@@@ -297,7 -297,7 +301,11 @@@ def test_all_on_effective_catalog_zero_
+          for service in [entry["owning_service"], *entry.get("also_check_services", [])]:
+              environments.setdefault(service, {})["MAI_TAI_" + entry["name"].upper()] = str(entry["expected"]).lower()
+      settings = Settings(_env_file=None, **COMPOSED)
+++<<<<<<< HEAD
+ +    assert len(COMPOSED) == 11 and all(getattr(settings, key) for key in COMPOSED)
+++=======
++     assert len(COMPOSED) == 10 and all(getattr(settings, key) for key in COMPOSED)
+++>>>>>>> 16c435b0 (NFQ2: retain both EH entry paths for serial fresh-ask recheck)
+      rc, lines = audit(entries, environment_reader=lambda service: ServiceEnvironment(
+          101, environments[service], frozenset(), None))
+      assert rc == 0
+diff --cc tests/unit/test_mirrorhold1_retained_hold.py
+index ba092009,33afa436..00000000
+--- a/tests/unit/test_mirrorhold1_retained_hold.py
++++ b/tests/unit/test_mirrorhold1_retained_hold.py
+@@@ -572,7 -572,7 +572,11 @@@ async def test_rpg_nonces_after_many_fr
+      h = await runtime(monkeypatch, "webull", strategy_overrides=overrides)
+      if all_on:
+          h.service.settings = h.service.settings.model_copy(update=overrides)
+++<<<<<<< HEAD
+ +        assert len(overrides) == 10
+++=======
++         assert len(overrides) == 9
+++>>>>>>> 16c435b0 (NFQ2: retain both EH entry paths for serial fresh-ask recheck)
+          assert all(getattr(h.strategy.settings, key) is True and getattr(h.service.settings, key) is True
+                     for key in overrides)
+      h.service.settings.oms_v2_webull_mirror_retained_hold_enabled = True

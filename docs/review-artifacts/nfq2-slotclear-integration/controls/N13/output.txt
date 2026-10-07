@@ -1,0 +1,47 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_nfq2_unrelated_or_stale_tick_never_opens_session_or_copies_hold_map[BIYA] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10b83a810>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ae65c70>
+tick = 'BIYA'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tick", ["OTHER", "BIYA"])
+    async def test_nfq2_unrelated_or_stale_tick_never_opens_session_or_copies_hold_map(service, monkeypatch, tick):
+        active = hold(service, biya())
+        quote(service, age=10001)
+    
+        def forbidden(*args, **kwargs):
+            pytest.fail("tick performed DB/proof/copy work before eligibility")
+    
+        monkeypatch.setattr(service, "session_factory", forbidden)
+        monkeypatch.setattr(service, "_nfq2_reason", forbidden)
+        monkeypatch.setattr(service, "_nfq2_copy", forbidden)
+        if tick == "OTHER":
+            monkeypatch.setattr(service, "_nfq2_reading", forbidden)
+        for _ in range(1000):
+>           await service._evaluate_nfq2_holds(tick)
+
+tests/unit/test_nfq2_tick_path.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<nfq2-mutation-N13>:31: in _evaluate_nfq2_holds
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = (EhHold(event=TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', sourc...468eb6-9d37-4cd1-8d3f-364a31b4a76a'), intent_id=UUID('7aeecbdf-742e-4e78-b7c7-89adda72dace'), phase='held', token=''),)
+kwargs = {}
+
+    def forbidden(*args, **kwargs):
+>       pytest.fail("tick performed DB/proof/copy work before eligibility")
+E       Failed: tick performed DB/proof/copy work before eligibility
+
+tests/unit/test_nfq2_tick_path.py:26: Failed
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 15:52:26,547 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_tick_path.py::test_nfq2_unrelated_or_stale_tick_never_opens_session_or_copies_hold_map[BIYA]
+1 failed, 1 passed in 0.26s
+MUTATION N13 pytest_rc=1 RED

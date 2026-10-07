@@ -1,0 +1,20 @@
+..................................F.....F                                [100%]
+=================================== FAILURES ===================================
+_____ test_retry_cancel_receipts_never_retire_owner_or_allow_second_entry ______
+tests/unit/test_retryleft1.py:291: in test_retry_cancel_receipts_never_retire_owner_or_allow_second_entry
+    assert state.flip_owner_phase == "consumed"
+E   AssertionError: assert 'idle' == 'consumed'
+E     
+E     - consumed
+E     + idle
+____ test_retry_cancel_receipts_polled_off_thread_without_removed_wait_flag ____
+tests/unit/test_retryleft1.py:433: in test_retry_cancel_receipts_polled_off_thread_without_removed_wait_flag
+    assert state.flip_owner_phase == "consumed"
+E   AssertionError: assert 'idle' == 'consumed'
+E     
+E     - consumed
+E     + idle
+=========================== short test summary info ============================
+FAILED tests/unit/test_retryleft1.py::test_retry_cancel_receipts_never_retire_owner_or_allow_second_entry
+FAILED tests/unit/test_retryleft1.py::test_retry_cancel_receipts_polled_off_thread_without_removed_wait_flag
+2 failed, 39 passed in 0.43s

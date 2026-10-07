@@ -1,0 +1,248 @@
+FF.FFFFFFFFFFFFFFFF....F..FFFFFFFFF..F..F                                [100%]
+=================================== FAILURES ===================================
+______ test_recorded_ncpl_close_cancels_sibling_at_191018_before_next_bar ______
+tests/unit/test_retryleft1.py:91: in test_recorded_ncpl_close_cancels_sibling_at_191018_before_next_bar
+    primary, = strategy.drain_pending_intents()
+    ^^^^^^^^
+E   ValueError: not enough values to unpack (expected 1, got 0)
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:2152 [V2-FLIP-OWNER-CROSS-ACCOUNT-EVIDENCE] NCPL evaluated=1 known=1 pending=0 unknown=0 open=0 filled_accounts=1 position_ids=1
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:<retryleft1-mutation:cancel_not_emitted>:29 [V2-RETRY-LEFTOVER-CANCEL] NCPL account=live:orb qty=182 reason=retry_budget_exhausted
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:1745 [V2-FLIP-OWNER-RETRY] NCPL segment_id=1791399420000 closes_in_segment=1 retries_left=0 action=held reason=retry_budget_exhausted
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:2237 [V2-FLIP-OWNER-PREFLIP-CLOSE-EVALUATED] NCPL evaluated=1 released=0 consumed=1 unknown=0 entry_allowed=0 confirmation_closed=0 closed_by_any_exit=1
+_ test_recorded_artl_close_cancels_schwab_at_first_owner_check_under_zero_retry_policy _
+tests/unit/test_retryleft1.py:121: in test_recorded_artl_close_cancels_schwab_at_first_owner_check_under_zero_retry_policy
+    primary, = strategy.drain_pending_intents()
+    ^^^^^^^^
+E   ValueError: not enough values to unpack (expected 1, got 0)
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-False-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x109161760>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-False-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x109161970>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1091623c0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x109162f90>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-False-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x109163a10>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-False-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1091d02c0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x109163c80>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1091638c0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-False-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1091606b0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-False-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1091611c0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1086ab170>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1090c79b0>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-False-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1090c6a50>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-False-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108d85d90>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x108e9b890>.drain_webull_direct_intents
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:orb] _
+tests/unit/test_retryleft1.py:168: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert len(strategy.drain_pending_intents()) == len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1091d0950>.drain_webull_direct_intents
+__________ test_recorded_ncpl_bound_owner_kept_but_leftover_cancelled __________
+tests/unit/test_retryleft1.py:206: in test_recorded_ncpl_bound_owner_kept_but_leftover_cancelled
+    assert len(strategy.drain_webull_direct_intents()) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+E    +    where [] = drain_webull_direct_intents()
+E    +      where drain_webull_direct_intents = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x1090c7380>.drain_webull_direct_intents
+_________ test_retry_leftover_unknown_cancel_stays_blocking[accepted] __________
+tests/unit/test_retryleft1.py:252: in test_retry_leftover_unknown_cancel_stays_blocking
+    assert not receipts(strategy, request, now, status=status).clear
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_retryleft1.py:233: in receipts
+    slot = next(iter(strategy._pending_intents)).metadata
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   StopIteration
+_________ test_retry_leftover_unknown_cancel_stays_blocking[rejected] __________
+tests/unit/test_retryleft1.py:252: in test_retry_leftover_unknown_cancel_stays_blocking
+    assert not receipts(strategy, request, now, status=status).clear
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_retryleft1.py:233: in receipts
+    slot = next(iter(strategy._pending_intents)).metadata
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   StopIteration
+__________ test_retry_leftover_unknown_cancel_stays_blocking[failed] ___________
+tests/unit/test_retryleft1.py:252: in test_retry_leftover_unknown_cancel_stays_blocking
+    assert not receipts(strategy, request, now, status=status).clear
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_retryleft1.py:233: in receipts
+    slot = next(iter(strategy._pending_intents)).metadata
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   StopIteration
+_ test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-broker-terminal_confirmed-True] _
+tests/unit/test_retryleft1.py:268: in test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof
+    metadata = strategy._pending_intents[0].metadata
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+_ test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[rejected-broker-terminal_confirmed-False] _
+tests/unit/test_retryleft1.py:268: in test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof
+    metadata = strategy._pending_intents[0].metadata
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+_ test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-client-terminal_confirmed-False] _
+tests/unit/test_retryleft1.py:268: in test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof
+    metadata = strategy._pending_intents[0].metadata
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+_ test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-broker-could_not_tell-False] _
+tests/unit/test_retryleft1.py:268: in test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof
+    metadata = strategy._pending_intents[0].metadata
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+_ test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-broker-already_absent-False] _
+tests/unit/test_retryleft1.py:268: in test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof
+    metadata = strategy._pending_intents[0].metadata
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+_____ test_retry_cancel_receipts_never_retire_owner_or_allow_second_entry ______
+tests/unit/test_retryleft1.py:286: in test_retry_cancel_receipts_never_retire_owner_or_allow_second_entry
+    proof = receipts(strategy, request, now)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_retryleft1.py:233: in receipts
+    slot = next(iter(strategy._pending_intents)).metadata
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   StopIteration
+_ test_recorded_ncpl_cancel_barrier_selects_only_its_waiting_buy_not_protective_sell _
+tests/unit/test_retryleft1.py:349: in test_recorded_ncpl_cancel_barrier_selects_only_its_waiting_buy_not_protective_sell
+    primary, = strategy.drain_pending_intents()
+    ^^^^^^^^
+E   ValueError: not enough values to unpack (expected 1, got 0)
+____ test_retry_cancel_receipts_polled_off_thread_without_removed_wait_flag ____
+tests/unit/test_retryleft1.py:421: in test_retry_cancel_receipts_polled_off_thread_without_removed_wait_flag
+    proof = receipts(strategy, request, AT + timedelta(seconds=40))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_retryleft1.py:233: in receipts
+    slot = next(iter(strategy._pending_intents)).metadata
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   StopIteration
+
+The above exception was the direct cause of the following exception:
+../../../../Projects/project-mai-tai/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:549: in runtest
+    super().runtest()
+../../../../Projects/project-mai-tai/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:1069: in inner
+    _loop.run_until_complete(task)
+../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+E   RuntimeError: coroutine raised StopIteration
+=========================== short test summary info ============================
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_cancels_sibling_at_191018_before_next_bar
+FAILED tests/unit/test_retryleft1.py::test_recorded_artl_close_cancels_schwab_at_first_owner_check_under_zero_retry_policy
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-False-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-False-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-False-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-False-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-False-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-False-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-False-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-False-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_bound_owner_kept_but_leftover_cancelled
+FAILED tests/unit/test_retryleft1.py::test_retry_leftover_unknown_cancel_stays_blocking[accepted]
+FAILED tests/unit/test_retryleft1.py::test_retry_leftover_unknown_cancel_stays_blocking[rejected]
+FAILED tests/unit/test_retryleft1.py::test_retry_leftover_unknown_cancel_stays_blocking[failed]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-broker-terminal_confirmed-True]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[rejected-broker-terminal_confirmed-False]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-client-terminal_confirmed-False]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-broker-could_not_tell-False]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-broker-already_absent-False]
+FAILED tests/unit/test_retryleft1.py::test_retry_cancel_receipts_never_retire_owner_or_allow_second_entry
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_cancel_barrier_selects_only_its_waiting_buy_not_protective_sell
+FAILED tests/unit/test_retryleft1.py::test_retry_cancel_receipts_polled_off_thread_without_removed_wait_flag
+30 failed, 11 passed in 0.65s

@@ -1,0 +1,32 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_biya_cancel_after_enqueue_invalidates_the_serial_copy __________
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10ae5e810>
+
+    @pytest.mark.asyncio
+    async def test_biya_cancel_after_enqueue_invalidates_the_serial_copy(service):
+        event = biya()
+        hold(service, event)
+        quote(service)
+        await service._evaluate_nfq2_holds("BIYA")
+        queued = retry(service)
+        cancel = event.model_copy(deep=True)
+        cancel.payload.intent_type = "cancel"
+        service._nfq2_observe(cancel)
+>       assert not service._claim_nfq2_retry(queued)
+E       AssertionError: assert not True
+E        +  where True = _claim_nfq2_retry(TradeIntentEvent(event_id=UUID('2b018aa0-0016-42f9-94ae-c4eaa09612c2'), event_type='trade_intent', source_service='oms..._id': 'b4daa239-5504-429f-9436-788fdccf9f63', 'fanout_predecessor_attempt_id': 'schwab_1m_v2-BIYA-open-5cbff1fa89d8'})))
+E        +    where _claim_nfq2_retry = <project_mai_tai.oms.service.OmsRiskService object at 0x10ae5e810>._claim_nfq2_retry
+
+tests/unit/test_nfq2_eh_fresh_price.py:132: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 15:52:18,125 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 15:52:18,131 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_cancel_after_enqueue_invalidates_the_serial_copy
+1 failed in 0.25s
+MUTATION N5 pytest_rc=1 RED

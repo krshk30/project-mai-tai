@@ -1,0 +1,11 @@
+{
+  "base_sha": "994f08aee2c35b3809b3c3384e0d8628807dcfb7",
+  "base_passed": 7114,
+  "base_failed": 56,
+  "head_passed": 7185,
+  "head_failed": 56,
+  "seconds": "478.789",
+  "candidate_only": [],
+  "base_only": [],
+  "receipt": "/tmp/retain1-followup-unit-20261007.xml"
+}

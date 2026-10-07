@@ -56,6 +56,7 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.broker_adapters.schwab_token_manager import atomic_write_json
 from project_mai_tai.log import configure_logging
+from project_mai_tai.momentum_page_history import load_completed_today
 from project_mai_tai.paper_exit_store import PaperExitStore
 from project_mai_tai.runtime_registry import configured_strategy_registrations
 from project_mai_tai.services.schwab_token_refresher import SchwabTokenRefresher
@@ -4157,6 +4158,15 @@ def build_app(
                 strategy_code,
                 trade_coach_enabled=active_settings.trade_coach_enabled,
             )
+
+        if strategy_code in {"momentum_30s", "momentum_60s"}:
+            closed_today, daily_pnl = await asyncio.to_thread(
+                load_completed_today, active_session_factory, strategy_code,
+                utcnow().astimezone(EASTERN_TZ).date(),
+            )
+            # Page-local copy: preserve live positions/status and the shared cached snapshot.
+            bot = {**bot, "closed_today": closed_today, "daily_pnl": float(daily_pnl)}
+            data = {**data, "bots": [bot if item["strategy_code"] == strategy_code else item for item in data["bots"]]}
 
         advisories: list[dict[str, Any]] = []
         if active_settings.trade_coach_enabled:

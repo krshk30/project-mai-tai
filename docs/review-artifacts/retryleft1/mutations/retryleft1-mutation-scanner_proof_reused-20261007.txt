@@ -1,0 +1,11 @@
+..................................F......                                [100%]
+=================================== FAILURES ===================================
+_____ test_retry_cancel_receipts_never_retire_owner_or_allow_second_entry ______
+tests/unit/test_retryleft1.py:303: in test_retry_cancel_receipts_never_retire_owner_or_allow_second_entry
+    assert state.symbol in strategy._removed_wait_requests
+E   AssertionError: assert 'NCPL' in {}
+E    +  where 'NCPL' = SymbolState(symbol='NCPL', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').symbol
+E    +  and   {} = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10b4c1040>._removed_wait_requests
+=========================== short test summary info ============================
+FAILED tests/unit/test_retryleft1.py::test_retry_cancel_receipts_never_retire_owner_or_allow_second_entry
+1 failed, 40 passed in 0.44s

@@ -1,0 +1,21 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_runtime_generation_change_during_read_never_retires_durable_owner ____
+tests/unit/test_nfq2_recovery_legacy.py:228: in test_runtime_generation_change_during_read_never_retires_durable_owner
+    assert session.get(BrokerOrder, oid).status == "accepted"
+E   AssertionError: assert 'cancelled' == 'accepted'
+E     
+E     - accepted
+E     + cancelled
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:46:04,938 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:46:04,943 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 16:46:04,952 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=rejected_client_abort reason=dispatch_proven_clear ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=rejected_client_abort reason=dispatch_proven_clear ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_runtime_generation_change_during_read_never_retires_durable_owner
+1 failed in 0.28s
+RESIDUAL_MUTATION R11 pytest_rc=1 RED

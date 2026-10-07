@@ -1,0 +1,35 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_biya_uncertain_dispatch_is_not_released_by_window_or_new_open ______
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10aee1070>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b86c140>
+
+    @pytest.mark.asyncio
+    async def test_biya_uncertain_dispatch_is_not_released_by_window_or_new_open(service, monkeypatch):
+        event = biya()
+        held = hold(service, event)
+        held.phase = "uncertain"
+        with service.session_factory() as session:
+            service._nfq2_save(session, held)
+            session.commit()
+        quote(service)
+        replacement = event.model_copy(deep=True)
+        replacement.event_id = uuid4()
+        replacement.payload.metadata["fanout_slot_id"] = "next-slot"
+        with service.session_factory() as session:
+            intent = session.get(TradeIntent, held.intent_id)
+>           assert service._nfq2_pre_submit(session, replacement, intent)
+E           AssertionError: assert False
+E            +  where False = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10aee01a0>, TradeIntentEvent(event_id=UUID('cab34c33-dc76-4423-af9e-a1b11618123e'), event_type='trade_intent', source_service='sch...1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM', 'resting_entry': 'true', 'eh_resting': 'true'})), <project_mai_tai.db.models.TradeIntent object at 0x10ba58a70>)
+E            +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10aee1070>._nfq2_pre_submit
+
+tests/unit/test_nfq2_eh_fresh_price.py:360: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 15:52:21,444 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_uncertain_dispatch_is_not_released_by_window_or_new_open
+1 failed in 0.26s
+MUTATION N8 pytest_rc=1 RED

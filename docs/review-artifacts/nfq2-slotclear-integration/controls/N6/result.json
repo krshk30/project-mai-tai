@@ -1,0 +1,26 @@
+{
+  "cwd": "/private/tmp/codex-nfq2-on-slotclear1-integration-20261007",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "docs/review-artifacts/nfq2/check_mutations.py",
+    "N6"
+  ],
+  "head": "5d77d48f213203d23ee2ef6d8ac354655ecc0e83",
+  "tree": "32b92dc004a761b5b198c5f966e11a18afc1b95d",
+  "status_before": "?? docs/review-artifacts/nfq2-slotclear-integration/controls/\n?? docs/review-artifacts/nfq2-slotclear-integration/joint-final/",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T19:52:18.524394+00:00",
+  "end_utc": "2026-10-07T19:52:19.565105+00:00",
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 60.0,
+  "output_sha256": "bc0eff12f38982f52932cb30c8ae40fa9488afe031b12de46509faa0a4a1885d",
+  "failed_names": [
+    "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-False]",
+    "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-True]",
+    "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-False]",
+    "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-True]"
+  ]
+}

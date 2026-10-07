@@ -63,6 +63,7 @@ from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.mirror_fresh_price import MirrorFreshPriceMixin
+from project_mai_tai.oms.eh_fresh_price import EhFreshPriceMixin
 from project_mai_tai.oms.mirror_retained_hold import MirrorRetainedHoldMixin
 from project_mai_tai.oms.atr_reprice_runtime import AtrRepriceRuntimeMixin
 from project_mai_tai.oms.orb_schwab_eod import close_orb_schwab_before_close, close_orb_schwab_on_signal
@@ -563,7 +564,7 @@ def resolve_cancel_intent_status(intent_type: str, report_event_type: str) -> st
     return report_event_type
 
 
-class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
+class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFreshPriceMixin):
     # Operator manual-stop cache window. Short enough that a stop takes effect on the next intent
     # cycle (no restart, which was the whole point), long enough that it is not a per-intent query.
     _MANUAL_STOP_CACHE_SECS = 10.0
@@ -1011,6 +1012,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         )
         self._rehydrate_managed_v2_symbols()  # slice-3: re-arm quote eval for open v2 rows
         self._restore_nfq_holds()
+        self._restore_nfq2_holds()
         self._restore_mirrorhold()
         await self._refresh_drift_working_cache()
         await self._rehydrate_armed_hard_stops()  # F2: rebuild the ORB stop registry from the durable mirror
@@ -1067,6 +1069,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         while not stop_event.is_set():
             loop_now = asyncio.get_running_loop().time()
             await self._evaluate_nfq_holds()  # expiry/segment retirement also runs without ticks
+            await self._evaluate_nfq2_holds()
             try:
                 broker_sync_interval_secs = await self._broker_sync_interval_seconds()
             except asyncio.CancelledError:
@@ -1324,6 +1327,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
             finally:
                 self._finish_webull_mirror_deferred_resubmit(event)
                 self._finish_nfq_retry(event, completed=completed)
+                self._finish_nfq2_retry(event, completed=completed)
             return
         # Quote/trade ticks: must reach the handler even without armed hard
         # stops so the Tier 1 quote-drift cancel can fire on working open
@@ -1627,6 +1631,11 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         if not self._mirrorhold_admit(event):
             return []
         if not self._claim_nfq_retry(event):
+            return []
+        if not self._claim_nfq2_retry(event):
+            return []
+        self._nfq2_observe(event)
+        if event.payload.metadata.get("nfq2_hold_cancel_only") == "true":
             return []
         self._nfq_observe_intent(event)
         self._observe_webull_mirror_deferred_intent(event)
@@ -2150,6 +2159,11 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
             # so the same dict copy below carries the bracket fields to the adapter. RTH-only:
             # in EH this is a no-op (the native OCO is a regular-session construct).
             self._apply_v2_oco_bracket_entry(event=event)
+            if self._nfq2_pre_submit(session, event, intent):
+                session.commit()
+                for prior_event in pre_submit_events:
+                    await self._publish_order_event(prior_event)
+                return pre_submit_events
 
             # P-B1: re-price the v2 REACTIVE entry as a marketable, max-cross-capped EH-LIMIT off the
             # OMS's own fresh ask (flag-gated OFF; no-op / byte-identical when off or non-v2-EH-reactive
@@ -2740,7 +2754,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 symbol, max_age_ms,
             )
             return None
-        max_cross_pct = float(getattr(self.settings, "oms_v2_eh_entry_max_cross_pct", 1.0))
+        max_cross_pct = float(getattr(self.settings, "oms_v2_mirror_eh_max_cross_pct", 1.0))
         cap = float(schwab_fill_price) * (1.0 + max_cross_pct / 100.0)
         if ask > cap:
             self.logger.info(
@@ -11139,6 +11153,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         await self._cancel_drifted_working_orders(symbol)
         self._schedule_webull_mirror_tick(symbol)
         await self._evaluate_nfq_holds(symbol)
+        await self._evaluate_nfq2_holds(symbol)
         # Slice-3: run the v2 exit ladder on this quote, but ONLY for symbols with an
         # open v2 managed row (the in-memory guard keeps the hot path free of DB hits
         # for everything else; empty set when the flag is OFF → no-op).
@@ -14804,16 +14819,17 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 event=event, intent=intent, reason_code="MISSING_SIGNAL",
                 reason_detail=f"entry_price non-positive ({signal_px})",
             )
-        max_age_ms = int(getattr(self.settings, "oms_v2_eh_entry_quote_max_age_ms", 2000))
+        max_age_ms = (10000 if self._nfq2_applies(event) else
+                      int(getattr(self.settings, "oms_v2_eh_entry_quote_max_age_ms", 2000)))
         ask = self._fresh_ask(symbol, max_age_ms)
         if ask is None:
             return self._abandon_v2_eh_entry(
                 event=event, intent=intent, reason_code="NO_FRESH_QUOTE",
                 reason_detail=f"no fresh ask within {max_age_ms}ms for {symbol}",
             )
-        max_cross_pct = float(getattr(self.settings, "oms_v2_eh_entry_max_cross_pct", 1.0))
-        if (md.get("slotclear_first") == "true"
-                and not getattr(self, "_nfq2_held_dispatch", lambda event: False)(event)):
+        max_cross_pct = (1.0 if self._nfq2_held_dispatch(event) else
+                         float(getattr(self.settings, "oms_v2_eh_entry_max_cross_pct", 0.5)))
+        if md.get("slotclear_first") == "true" and not self._nfq2_held_dispatch(event):
             max_cross_pct = 0.5
         cap = signal_px * (1.0 + max_cross_pct / 100.0)
         if ask > cap:
@@ -15199,11 +15215,16 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         max_age_ms = int(getattr(self.settings, "oms_v2_eh_resting_entry_quote_max_age_ms", 2000))
         # The RTH reactive limit shares this helper. Only the AM resting call uses decimal cap
         # comparison, so an ask exactly at the band boundary is not lost to float rounding.
+        held_dispatch = self._nfq2_held_dispatch(event)
+        if self._nfq2_applies(event):
+            max_age_ms = 10000
+        if held_dispatch:
+            band_pct = 1.0
         limit_s, ask, cap = self._band_capped_marketable_limit(
             symbol=symbol, level=level, band_pct=band_pct, max_age_ms=max_age_ms,
             exact_cap_boundary=session_code == "AM",
             wire_cap=(Decimal(md["resting_wire_limit_price"])
-                      if md.get("resting_buy_round_up") == "true" else None),
+                      if md.get("resting_buy_round_up") == "true" and not held_dispatch else None),
         )
         if limit_s is None:
             reason_code, reason_detail = ask, cap
