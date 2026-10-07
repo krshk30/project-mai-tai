@@ -37,7 +37,7 @@ class _NoIntentRedis:
 
 
 @pytest.mark.parametrize("provider", ("webull", "schwab", "alpaca"))
-def test_orb_runtime_is_hard_coded_paper_even_with_hostile_broker_settings(
+def test_orblive1_never_registers_retired_simulation_with_hostile_broker_settings(
     provider: str,
 ) -> None:
     settings = Settings(
@@ -47,11 +47,7 @@ def test_orb_runtime_is_hard_coded_paper_even_with_hostile_broker_settings(
         webull_account_id="WB-LIVE",
     )
 
-    registration = strategy_registration_map(settings)["orb"]
-    assert registration.account_name == ORB_PAPER_ACCOUNT_NAME
-    assert registration.execution_mode == "paper"
-    assert registration.runtime_kind == "orb_paper"
-    assert registration.metadata["provider"] == "none"
+    assert "orb" not in strategy_registration_map(settings)
     assert all(item.name != ORB_PAPER_ACCOUNT_NAME for item in configured_broker_account_registrations(settings))
     assert "live:orb" not in configured_webull_accounts(settings)
 
@@ -251,17 +247,33 @@ def test_the_paper_account_LABEL_itself_is_pinned_not_just_its_symbol() -> None:
     assert not ORB_PAPER_ACCOUNT_NAME.startswith("live:")
 
 
-def test_the_registration_carries_the_literal_paper_label_end_to_end() -> None:
-    """The same pin one layer out: a rename must also turn the REGISTRATION red, not just the
-    constant. Hostile broker settings, exactly as the parametrised test above supplies them."""
+def test_orblive1_registration_is_live_and_simulation_never_registered() -> None:
     settings = Settings(
         orb_enabled=True,
+        orb_live_schwab_orders_enabled=True,
         orb_broker_account_name="live:orb",
         orb_broker_provider="webull",
         webull_account_id="WB-LIVE",
     )
-    registration = strategy_registration_map(settings)["orb"]
-    assert registration.account_name == "paper:orb"
+    registrations = strategy_registration_map(settings)
+    assert "orb" not in registrations
+    registration = registrations["orb_schwab"]
+    assert registration.display_name == "ORB Live"
+    assert registration.execution_mode == "live"
     assert all(
         item.name != "paper:orb" for item in configured_broker_account_registrations(settings)
     ), "the paper label must never become a configured BROKER account"
+
+
+def test_orblive1_service_entrypoint_remains_running(monkeypatch) -> None:
+    from project_mai_tai.services import orb_app
+
+    started = []
+
+    class Service:
+        async def run(self):
+            started.append(True)
+
+    monkeypatch.setattr(orb_app, "OrbService", Service)
+    asyncio.run(orb_app.main())
+    assert started == [True]

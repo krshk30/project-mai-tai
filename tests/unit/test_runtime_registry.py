@@ -44,6 +44,7 @@ def test_atr_and_orb_use_operator_names_without_changing_their_routes() -> None:
             strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
             strategy_schwab_1m_v2_webull_account_name="live:orb",
             orb_enabled=True,
+            orb_live_schwab_orders_enabled=True,
         )
     )
     by_code = {registration.code: registration for registration in registrations}
@@ -53,13 +54,11 @@ def test_atr_and_orb_use_operator_names_without_changing_their_routes() -> None:
     assert BOT_PAGE_META["schwab_1m_v2"]["title"] == "ATR Bot"
     assert BOT_PAGE_META["schwab_1m_v2"]["nav_title"] == "ATR Bot"
 
-    assert by_code["orb"].display_name == "ORB Bot"
-    assert by_code["orb"].account_name == "paper:orb"
-    assert by_code["orb"].execution_mode == "paper"
-    assert by_code["orb"].metadata["provider"] == "none"
-    assert by_code["orb"].metadata["account_display_name"] == "Paper Simulation"
-    assert BOT_PAGE_META["orb"]["title"] == "ORB paper (observer)"
-    assert BOT_PAGE_META["orb"]["nav_title"] == "ORB paper (observer)"
-    assert BOT_PAGE_META["orb"]["path"] == "/bot/orb-paper"
-    assert BOT_PAGE_META["orb_schwab"]["title"] == "ORB Schwab Live"
+    # ORBLIVE1 (operator 10-07): one ORB bot, live; no paper registration, page or label.
+    assert "orb" not in by_code
+    assert "orb" not in BOT_PAGE_META
+    assert by_code["orb_schwab"].display_name == "ORB Live"
+    assert by_code["orb_schwab"].execution_mode == "live"
+    assert BOT_PAGE_META["orb_schwab"]["title"] == "ORB Live"
+    assert BOT_PAGE_META["orb_schwab"]["nav_title"] == "ORB Live"
     assert BOT_PAGE_META["orb_schwab"]["path"] == "/bot/orb"

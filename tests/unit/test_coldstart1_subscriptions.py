@@ -237,13 +237,13 @@ async def test_flag_off_keeps_old_initial_empty_debounce(name, monkeypatch):
     assert redis.entries == []
 
 
-def test_flag_default_and_catalog_cover_all_five_processes():
+def test_flag_default_and_catalog_cover_all_four_live_processes():
     assert Settings(_env_file=None).market_data_subscription_startup_enabled is True
     catalog = json.loads((Path(__file__).parents[2] / "ops/health/expected_flags.json").read_text())
     flag = next(row for row in catalog["flags"] if row["name"] == "market_data_subscription_startup_enabled")
     assert flag["expected"] is True
     assert {flag["owning_service"], *flag["also_check_services"]} == {
-        "strategy", "orb", "orb-schwab", "schwab-1m-v2", "momentum-paper",
+        "strategy", "orb-schwab", "schwab-1m-v2", "momentum-paper",
     }
 
 
