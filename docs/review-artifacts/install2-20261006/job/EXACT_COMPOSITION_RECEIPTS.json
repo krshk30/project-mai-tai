@@ -1,0 +1,722 @@
+{
+  "schema_version": 1,
+  "writer": "Codex",
+  "recorded_at_utc": "2026-10-07T00:46:57Z",
+  "scope": "External docs-only exact Install2 controlled composition; no application edits or production I/O",
+  "candidate": "aed1a358c0da4043ce248550c2b1d02cecdc76ff",
+  "tree": "b28df7b3d492d0be4e72e1233ce0fff55e43fca4",
+  "candidate_root": "/Users/velkris/.codex/worktrees/install2-reviewed-batch-20261006/project-mai-tai",
+  "source_clean_assertion": "git diff candidate -- src ops tests empty before final run and after run",
+  "environment": {
+    "python": "3.12.13",
+    "pytest": "8.4.2",
+    "executable": "/Users/velkris/Projects/project-mai-tai/.venv/bin/python"
+  },
+  "settings": {
+    "old_all_on_eight": true,
+    "parent_plugin_four_new_true": true,
+    "retry_enabled": true,
+    "max_retries": 0,
+    "construction_before_strategy_cache": true
+  },
+  "artifacts": {
+    "suite_sha256": "bcc31b778c34140930af5b86b8468ac89fba5846844c22070f96887f16ce1e99",
+    "parent_combination_plugin_sha256": "c5aef938687eb48d4db2ca903c3668671caa3c51da598235044e6ab6ac5cf589"
+  },
+  "runs": [
+    {
+      "path": "/tmp/wbpower-install2-exact-composition.xml",
+      "command_reference": "EXACT_COMPOSITION.md Exact Execution; candidate cwd, its config/root, parent plugin, absolute external suite",
+      "sha256": "dc86f0cb149228c3d0d49df7f9f64880bc0b3a2d1f6c85ac4a2ba9dd4183af57",
+      "suite": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "102",
+        "time": "6.715",
+        "timestamp": "2026-10-06T20:46:31.800927-04:00",
+        "hostname": "Shirleys-MacBook-Pro-2.local"
+      },
+      "classification": "SUPPORTED_CONTROLS_PASS",
+      "cases": [
+        {
+          "name": "test_exact_constructed_settings_and_cached_strategy",
+          "seconds": "0.057",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[first-SAIQ-stream]",
+          "seconds": "0.012",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[first-SAIQ-five_second_rest]",
+          "seconds": "0.012",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[first-VEEA-stream]",
+          "seconds": "0.012",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[first-VEEA-five_second_rest]",
+          "seconds": "0.012",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[first-CLRO-stream]",
+          "seconds": "0.012",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[first-CLRO-five_second_rest]",
+          "seconds": "0.012",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[reclaim-SAIQ-stream]",
+          "seconds": "0.011",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[reclaim-SAIQ-five_second_rest]",
+          "seconds": "0.012",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[reclaim-VEEA-stream]",
+          "seconds": "0.011",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[reclaim-VEEA-five_second_rest]",
+          "seconds": "0.012",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[reclaim-CLRO-stream]",
+          "seconds": "0.012",
+          "status": "PASS"
+        },
+        {
+          "name": "test_retained_pm_service_cross_both_brokers[reclaim-CLRO-five_second_rest]",
+          "seconds": "0.011",
+          "status": "PASS"
+        },
+        {
+          "name": "test_incomplete_completed_line_refuses_without_consuming[first-True]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_incomplete_completed_line_refuses_without_consuming[first-False]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_incomplete_completed_line_refuses_without_consuming[reclaim-True]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_incomplete_completed_line_refuses_without_consuming[reclaim-False]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_service_rechecks_completed_line_version",
+          "seconds": "0.011",
+          "status": "PASS"
+        },
+        {
+          "name": "test_pm_software_move_not_broker_handoff[first]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_pm_software_move_not_broker_handoff[reclaim]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_pm_held_rest_cannot_move_or_cross[True-boot]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_pm_held_rest_cannot_move_or_cross[True-gap]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_pm_held_rest_cannot_move_or_cross[False-boot]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_pm_held_rest_cannot_move_or_cross[False-gap]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_new_pm_reclaim_remains_disallowed",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_schwab_rth_real_handoff_remains_owned[first]",
+          "seconds": "0.175",
+          "status": "PASS"
+        },
+        {
+          "name": "test_schwab_rth_real_handoff_remains_owned[reclaim]",
+          "seconds": "0.129",
+          "status": "PASS"
+        },
+        {
+          "name": "test_rth_conversion_still_honors_thin_bar_cancel[09:30:02]",
+          "seconds": "0.007",
+          "status": "PASS"
+        },
+        {
+          "name": "test_rth_conversion_still_honors_thin_bar_cancel[09:31:02]",
+          "seconds": "0.007",
+          "status": "PASS"
+        },
+        {
+          "name": "test_actual_source_catalog_on_owners",
+          "seconds": "0.001",
+          "status": "PASS"
+        },
+        {
+          "name": "test_sell_flip_still_ends_pm_wait",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_both_broker_clear_handoffs_wait_on_incomplete_line[schwab]",
+          "seconds": "0.107",
+          "status": "PASS"
+        },
+        {
+          "name": "test_both_broker_clear_handoffs_wait_on_incomplete_line[webull]",
+          "seconds": "0.111",
+          "status": "PASS"
+        },
+        {
+          "name": "test_obsolete_dark_process_catalog_is_real_failure",
+          "seconds": "0.013",
+          "status": "PASS"
+        },
+        {
+          "name": "test_webull_actual_rpg_nonces_free_waits_then_serial_wire[first]",
+          "seconds": "0.352",
+          "status": "PASS"
+        },
+        {
+          "name": "test_webull_actual_rpg_nonces_free_waits_then_serial_wire[reclaim]",
+          "seconds": "0.357",
+          "status": "PASS"
+        },
+        {
+          "name": "test_current_retained_no_wire_reprice_never_invents_cancel",
+          "seconds": "0.139",
+          "status": "PASS"
+        },
+        {
+          "name": "test_actual_rpg_authorization_cannot_resurrect_after_current_gate[buy_flip]",
+          "seconds": "0.141",
+          "status": "PASS"
+        },
+        {
+          "name": "test_actual_rpg_authorization_cannot_resurrect_after_current_gate[1545]",
+          "seconds": "0.140",
+          "status": "PASS"
+        },
+        {
+          "name": "test_real_legacy_nfq_hold_transfers_and_old_queue_is_fenced",
+          "seconds": "0.122",
+          "status": "PASS"
+        },
+        {
+          "name": "test_real_legacy_nfq_uncertain_transfer_never_second_posts",
+          "seconds": "0.117",
+          "status": "PASS"
+        },
+        {
+          "name": "test_current_retained_queue_and_duplicates_spend_one_wire",
+          "seconds": "0.184",
+          "status": "PASS"
+        },
+        {
+          "name": "test_real_collision_guard_refuses_other_armed_webull_owner",
+          "seconds": "0.091",
+          "status": "PASS"
+        },
+        {
+          "name": "test_real_queue_claim_rejects_changed_serial_identity[token]",
+          "seconds": "0.103",
+          "status": "PASS"
+        },
+        {
+          "name": "test_real_queue_claim_rejects_changed_serial_identity[quantity]",
+          "seconds": "0.100",
+          "status": "PASS"
+        },
+        {
+          "name": "test_real_queue_claim_rejects_changed_serial_identity[price]",
+          "seconds": "0.099",
+          "status": "PASS"
+        },
+        {
+          "name": "test_terminal_cancel_fences_actual_retained_queue[buy_flip]",
+          "seconds": "0.117",
+          "status": "PASS"
+        },
+        {
+          "name": "test_terminal_cancel_fences_actual_retained_queue[window_closed]",
+          "seconds": "0.115",
+          "status": "PASS"
+        },
+        {
+          "name": "test_terminal_cancel_fences_actual_retained_queue[segment_end]",
+          "seconds": "0.115",
+          "status": "PASS"
+        },
+        {
+          "name": "test_restored_queue_fences_actual_old_token",
+          "seconds": "0.142",
+          "status": "PASS"
+        },
+        {
+          "name": "test_unknown_dispatch_remains_addressable_never_second_posts[transport_after_post]",
+          "seconds": "0.138",
+          "status": "PASS"
+        },
+        {
+          "name": "test_unknown_dispatch_remains_addressable_never_second_posts[crash_after_report]",
+          "seconds": "0.127",
+          "status": "PASS"
+        },
+        {
+          "name": "test_primary_sibling_outcome_never_retires_webull_hold[rejected]",
+          "seconds": "0.121",
+          "status": "PASS"
+        },
+        {
+          "name": "test_primary_sibling_outcome_never_retires_webull_hold[accepted]",
+          "seconds": "0.123",
+          "status": "PASS"
+        },
+        {
+          "name": "test_primary_sibling_outcome_never_retires_webull_hold[partially_filled]",
+          "seconds": "0.123",
+          "status": "PASS"
+        },
+        {
+          "name": "test_primary_sibling_outcome_never_retires_webull_hold[filled]",
+          "seconds": "0.126",
+          "status": "PASS"
+        },
+        {
+          "name": "test_webull_own_fill_terminal_no_rebuy[partially_filled]",
+          "seconds": "0.202",
+          "status": "PASS"
+        },
+        {
+          "name": "test_webull_own_fill_terminal_no_rebuy[filled]",
+          "seconds": "0.141",
+          "status": "PASS"
+        },
+        {
+          "name": "test_actual_handoff_partial_fill_accounts_old_buy_no_replacement[schwab-197-31]",
+          "seconds": "0.126",
+          "status": "PASS"
+        },
+        {
+          "name": "test_actual_handoff_partial_fill_accounts_old_buy_no_replacement[webull-98-17]",
+          "seconds": "0.134",
+          "status": "PASS"
+        },
+        {
+          "name": "test_t43_abort_proof_not_arbitrary_refusal[rpg_old_buy_still_owned-True]",
+          "seconds": "0.127",
+          "status": "PASS"
+        },
+        {
+          "name": "test_t43_abort_proof_not_arbitrary_refusal[CONTROLLED authorization changed after reservation-False]",
+          "seconds": "0.115",
+          "status": "PASS"
+        },
+        {
+          "name": "test_rth_retained_hold_cannot_widen_to_pm_or_next_day",
+          "seconds": "0.108",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_frozen_waiting_buy_without_legacy_expiry[False]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_frozen_waiting_buy_without_legacy_expiry[True]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_sell_cancels_only_waiting_owned_legs[False]",
+          "seconds": "0.005",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_sell_cancels_only_waiting_owned_legs[True]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_real_canonical_cleanup[fill]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_real_canonical_cleanup[fill_after_owner_clear]",
+          "seconds": "0.008",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_real_canonical_cleanup[window]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_real_canonical_cleanup[gap]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_real_canonical_cleanup[session]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_actual_gap_transition_cancels_frozen_rth_both_owned_legs",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_later_proxy_cross_with_controlled_executable_ask_once[False]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_later_proxy_cross_with_controlled_executable_ask_once[True]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_completed_thin_bars_not_evaluation_count",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_keep_liquid_bar_reset_and_reclaim_unchanged",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_removal_barriers_before_both_session_new_episode[False]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_removal_barriers_before_both_session_new_episode[True]",
+          "seconds": "0.006",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_unknown_or_owned_rows_never_become_absence[missing_receipt]",
+          "seconds": "0.002",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_unknown_or_owned_rows_never_become_absence[unknown_cancel]",
+          "seconds": "0.002",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_unknown_or_owned_rows_never_become_absence[late_fill]",
+          "seconds": "0.002",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_unknown_or_owned_rows_never_become_absence[position]",
+          "seconds": "0.002",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_unknown_or_owned_rows_never_become_absence[nfq_hold]",
+          "seconds": "0.002",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_unknown_or_owned_rows_never_become_absence[rpg_unknown]",
+          "seconds": "0.002",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_unknown_or_owned_rows_never_become_absence[missing_webull]",
+          "seconds": "0.002",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_unknown_or_owned_rows_never_become_absence[unclassified_abort]",
+          "seconds": "0.002",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_real_recorded_rows_with_explicit_controlled_terminal_receipts[AIXI]",
+          "seconds": "0.003",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_real_recorded_rows_with_explicit_controlled_terminal_receipts[XHG]",
+          "seconds": "0.001",
+          "status": "PASS"
+        },
+        {
+          "name": "test_clear_real_recorded_rows_with_explicit_controlled_terminal_receipts[AIFA]",
+          "seconds": "0.001",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_coalesces_working_rows_without_detail",
+          "seconds": "0.000",
+          "status": "PASS"
+        },
+        {
+          "name": "test_actual_adapter_constructor_caches_on_and_uses_list",
+          "seconds": "0.005",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_missing_is_unknown_not_flat[bad0]",
+          "seconds": "0.001",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_missing_is_unknown_not_flat[bad1]",
+          "seconds": "0.001",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_missing_is_unknown_not_flat[bad2]",
+          "seconds": "0.001",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_terminal_partial_real_oms_lifecycle[0-CANCELLED]",
+          "seconds": "0.040",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_terminal_partial_real_oms_lifecycle[0-REJECTED]",
+          "seconds": "0.039",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_terminal_partial_real_oms_lifecycle[1-CANCELLED]",
+          "seconds": "0.040",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_terminal_partial_real_oms_lifecycle[1-REJECTED]",
+          "seconds": "0.046",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_terminal_partial_real_oms_lifecycle[2-CANCELLED]",
+          "seconds": "0.043",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_terminal_partial_real_oms_lifecycle[2-REJECTED]",
+          "seconds": "0.129",
+          "status": "PASS"
+        },
+        {
+          "name": "test_list_primary_strict_permit_and_failed_attempts_count",
+          "seconds": "0.000",
+          "status": "PASS"
+        }
+      ]
+    },
+    {
+      "path": "/tmp/wbpower-install2-normal-feature-controls.xml",
+      "command": "env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:. python -m pytest -p no:cacheprovider tests/unit/test_all_on_pm.py tests/unit/test_keeprest1.py tests/unit/test_clearwait1_removed_wait.py tests/unit/test_mirrorhold1_retained_hold.py tests/unit/test_webull_list_primary.py -q --tb=short --show-capture=no --junitxml=/tmp/wbpower-install2-normal-feature-controls.xml",
+      "sha256": "e23a293fd3c690936d9828db46d6e58f626ae0d0853552970b075365680ea662",
+      "suite": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "307",
+        "time": "14.056",
+        "timestamp": "2026-10-06T20:43:07.351537-04:00",
+        "hostname": "Shirleys-MacBook-Pro-2.local"
+      },
+      "classification": "UNCHANGED_NORMAL_TESTS_PASS",
+      "cases": []
+    },
+    {
+      "path": "/tmp/wbpower-install2-legacy-off.xml",
+      "command": "env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:. python -m pytest -p no:cacheprovider tests/unit/test_all_on_pm.py -q --tb=short --show-capture=no --junitxml=/tmp/wbpower-install2-legacy-off.xml",
+      "sha256": "09fe822e6081dc417218d6424aaffe4237c1eb20785cccc5bd903ab5969660d0",
+      "suite": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "41",
+        "time": "2.897",
+        "timestamp": "2026-10-06T20:40:32.997245-04:00",
+        "hostname": "Shirleys-MacBook-Pro-2.local"
+      },
+      "classification": "UNCHANGED_NORMAL_TESTS_PASS",
+      "cases": []
+    },
+    {
+      "path": "/tmp/install2-exact-combination.xml",
+      "command_classification": "Parent-provided original forcing run, inspected/hash-retained; not rerun or relabeled here",
+      "sha256": "7461177338ea9521548f534c5927001353991fe0f10dd0cbfab637accdaf0746",
+      "suite": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "8",
+        "skipped": "0",
+        "tests": "41",
+        "time": "3.235",
+        "timestamp": "2026-10-06T20:37:18.667773-04:00",
+        "hostname": "Shirleys-MacBook-Pro-2.local"
+      },
+      "classification": "PARENT_SUPPLIED_ORIGINAL_FORCED_RUN_33_PASS_8_FAIL_NOT_RELABELED",
+      "cases": [
+        {
+          "name": "test_all_on_rth_broker_reprice_owned_by_handoff[first-webull]",
+          "seconds": "0.161",
+          "status": "FAIL"
+        },
+        {
+          "name": "test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-webull]",
+          "seconds": "0.162",
+          "status": "FAIL"
+        },
+        {
+          "name": "test_all_on_existing_nfq_handoff_regressions[cancel_clear]",
+          "seconds": "0.198",
+          "status": "FAIL"
+        },
+        {
+          "name": "test_all_on_existing_nfq_handoff_regressions[no_wire]",
+          "seconds": "0.115",
+          "status": "FAIL"
+        },
+        {
+          "name": "test_all_on_existing_nfq_handoff_regressions[buy_flip]",
+          "seconds": "0.162",
+          "status": "FAIL"
+        },
+        {
+          "name": "test_all_on_existing_nfq_handoff_regressions[1545]",
+          "seconds": "0.158",
+          "status": "FAIL"
+        },
+        {
+          "name": "test_all_on_flip_wait_takedown_and_rth_latch_regressions[no_fill_takedown]",
+          "seconds": "0.006",
+          "status": "FAIL"
+        },
+        {
+          "name": "test_all_on_flip_wait_takedown_and_rth_latch_regressions[rth_flip]",
+          "seconds": "0.011",
+          "status": "FAIL"
+        }
+      ]
+    }
+  ],
+  "failed_legacy_mapping": [
+    {
+      "legacy_failed_case": "test_all_on_rth_broker_reprice_owned_by_handoff[first-webull]",
+      "replacement_controls": "test_webull_actual_rpg_nonces_free_waits_then_serial_wire[first]",
+      "reason": "MIRROR ON retains price waits and reauthorizes through real RPG journal nonces, not an NFQ queue token.",
+      "classification": "SUPPORTED_CONTROL_PASS; original legacy forced failure retained"
+    },
+    {
+      "legacy_failed_case": "test_all_on_rth_broker_reprice_owned_by_handoff[reclaim-webull]",
+      "replacement_controls": "test_webull_actual_rpg_nonces_free_waits_then_serial_wire[reclaim]",
+      "reason": "Same owned reauthorization on the reclaim slot; waits do not spend additional wire budget.",
+      "classification": "SUPPORTED_CONTROL_PASS; original legacy forced failure retained"
+    },
+    {
+      "legacy_failed_case": "test_all_on_existing_nfq_handoff_regressions[cancel_clear]",
+      "replacement_controls": "test_real_legacy_nfq_hold_transfers_and_old_queue_is_fenced; test_current_retained_queue_and_duplicates_spend_one_wire; test_restored_queue_fences_actual_old_token",
+      "reason": "Real legacy queued identity transfers to one retained owner; only the real newly-issued queue can submit once.",
+      "classification": "SUPPORTED_CONTROL_PASS; original legacy forced failure retained"
+    },
+    {
+      "legacy_failed_case": "test_all_on_existing_nfq_handoff_regressions[no_wire]",
+      "replacement_controls": "test_current_retained_no_wire_reprice_never_invents_cancel",
+      "reason": "Controlled no-venue-order starting ledger, real held projection and distance_proven_no_wire RPG journal; zero cancellation/readback calls then one replacement.",
+      "classification": "SUPPORTED_CONTROL_PASS; original legacy forced failure retained"
+    },
+    {
+      "legacy_failed_case": "test_all_on_existing_nfq_handoff_regressions[buy_flip]",
+      "replacement_controls": "test_actual_rpg_authorization_cannot_resurrect_after_current_gate[buy_flip]; test_terminal_cancel_fences_actual_retained_queue[buy_flip]",
+      "reason": "Actual RPG authorization expires and cannot externally wire; actual retained queue is fenced by terminal cancel.",
+      "classification": "SUPPORTED_CONTROL_PASS; original legacy forced failure retained"
+    },
+    {
+      "legacy_failed_case": "test_all_on_existing_nfq_handoff_regressions[1545]",
+      "replacement_controls": "test_actual_rpg_authorization_cannot_resurrect_after_current_gate[1545]; test_terminal_cancel_fences_actual_retained_queue[window_closed]",
+      "reason": "Controlled 15:45 window boundary expires actual RPG permission; queued retained identity cannot resurrect.",
+      "classification": "SUPPORTED_CONTROL_PASS; original legacy forced failure retained"
+    },
+    {
+      "legacy_failed_case": "test_all_on_flip_wait_takedown_and_rth_latch_regressions[no_fill_takedown]",
+      "replacement_controls": "test_keep_frozen_waiting_buy_without_legacy_expiry[False]; test_keep_later_proxy_cross_with_controlled_executable_ask_once",
+      "reason": "KEEP ON preserves exact untaken PM wait without expiry/reprice; controlled executable later ask consumes once with preserved sizing/grace.",
+      "classification": "SUPPORTED_CONTROL_PASS; original legacy forced failure retained"
+    },
+    {
+      "legacy_failed_case": "test_all_on_flip_wait_takedown_and_rth_latch_regressions[rth_flip]",
+      "replacement_controls": "test_keep_frozen_waiting_buy_without_legacy_expiry[True]; test_keep_sell_cancels_only_waiting_owned_legs[True]; test_keep_real_canonical_cleanup",
+      "reason": "KEEP ON freezes untaken RTH wait, not the old false cross latch. Actual sell/fill/window/gap/session boundaries retain cleanup.",
+      "classification": "SUPPORTED_CONTROL_PASS; original legacy forced failure retained"
+    }
+  ],
+  "retained_legacy_cases": "33 non-conflicting cases exercised as unchanged function/control calls in exact suite; all original 41 retained and run normally without plugin, no edits/skips/xfails",
+  "additional_controls": [
+    "real collision guard restored from permissive inherited helper and armed-other-owner no-wire negative exercised",
+    "actual Webull constructor caches list-primary ON; injected fake SDK list path, no detail",
+    "MIRROR SDK __new__ historical cached OFF restored to exact ON with controlled query reader/runtime",
+    "legacy NFQ held and uncertain owners use actual queued identities, transfer and late report; OFF only establishes legacy upgrade state, final flag ON",
+    "actual T43 callback rpg_old_buy_still_owned versus unknown-code negative control; unknown cannot be accepted as no-wire proof",
+    "PM/RTH wait, sell, own fill/partial fill, cross-broker sibling isolation, window/session retirement, scalar queue identity mutations, unknown post/crash and restarted stale queue",
+    "CLEAR removal/readd with controlled completed bar prerequisite; exact terminal receipts and unknown/owned/missing-account refusals",
+    "list-primary coalescence, missing/foreign UNKNOWN, real OMS terminal partial accounting and strict permit accounting"
+  ],
+  "resolved_harness_issues": [
+    "initial collection used runner-root pytest namespace; reran from frozen candidate with its config/root and absolute external suite",
+    "direct gap reader lambda in legacy unit helper leaves wait retained under line readiness hold; replaced that synthetic reader-only transition with actual begin_gap_hold, verifying PM wait cleanup and two-leg RTH cancels before line revocation"
+  ],
+  "not_measured": [
+    "live broker calls, observed SDK acceptance/fills, historical executable asks or missing historical fields",
+    "ATR restoration mathematics or source correctness: controlled completed-line output prerequisite retained",
+    "parent full same-environment application unit pair/CI/application mutations, hosted validation or merge readiness",
+    "production process environment/pins, daily root installation, next-session delivery",
+    "complete factorial matrix or every unrelated catalog flag; fixture account/transport/clock/liquidity inputs remain controlled",
+    "cumulative Install1 receipt repair: now parent-owned; no changes to cumulative.py or fabrication of absent historical commands/journals"
+  ],
+  "verdict": "PASS_FOR_102_SUPPORTED_EXACT_SETTING_CONTROLS_ONLY; NOT_ORIGINAL_41_FORCED_PASS_OR_PRODUCTION_ACCEPTANCE"
+}
