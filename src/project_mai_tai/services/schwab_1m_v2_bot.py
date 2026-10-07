@@ -798,7 +798,7 @@ class SchwabV2BotService:
         )
 
     def _configure_removed_wait_store(self) -> None:
-        if not self.strategy._removed_wait_enabled:
+        if not (self.strategy._removed_wait_enabled or getattr(self.strategy, "_retry_one_enabled", False)):
             return
         store = None
         try:
@@ -815,7 +815,8 @@ class SchwabV2BotService:
         self._removed_wait_store = store
 
     async def _removed_wait_poll(self) -> None:
-        if not getattr(self.strategy, "_removed_wait_enabled", False):
+        if not (getattr(self.strategy, "_removed_wait_enabled", False)
+                or getattr(self.strategy, "_retry_one_enabled", False)):
             return
         requests = tuple(self.strategy._removed_wait_requests.values())
         if not requests:

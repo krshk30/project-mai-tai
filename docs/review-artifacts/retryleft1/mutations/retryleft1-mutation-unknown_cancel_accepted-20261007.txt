@@ -1,0 +1,25 @@
+..........................FFF............                                [100%]
+=================================== FAILURES ===================================
+_________ test_retry_leftover_unknown_cancel_stays_blocking[accepted] __________
+tests/unit/test_retryleft1.py:252: in test_retry_leftover_unknown_cancel_stays_blocking
+    assert not receipts(strategy, request, now, status=status).clear
+E   AssertionError: assert not True
+E    +  where True = RemovedWaitProof(request=RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='f05e3414-6b39-4e13-9248-5b6f7...), purpose='retry_exhausted'), observed_at_ms=1791400258069, clear=True, reason='retry_leftovers_cancelled_owner_kept').clear
+E    +    where RemovedWaitProof(request=RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='f05e3414-6b39-4e13-9248-5b6f7...), purpose='retry_exhausted'), observed_at_ms=1791400258069, clear=True, reason='retry_leftovers_cancelled_owner_kept') = receipts(<project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10b16f9e0>, RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='f05e3414-6b39-4e13-9248-5b6f728dd7d1', requested_at_ms=1791400218069, account_names=('live:schwab_1m_v2', 'live:orb'), purpose='retry_exhausted'), datetime.datetime(2026, 10, 7, 19, 10, 58, 69000, tzinfo=datetime.timezone.utc), status='accepted')
+_________ test_retry_leftover_unknown_cancel_stays_blocking[rejected] __________
+tests/unit/test_retryleft1.py:252: in test_retry_leftover_unknown_cancel_stays_blocking
+    assert not receipts(strategy, request, now, status=status).clear
+E   AssertionError: assert not True
+E    +  where True = RemovedWaitProof(request=RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='b05d7b9e-89f4-4cdd-8337-16c3e...), purpose='retry_exhausted'), observed_at_ms=1791400258069, clear=True, reason='retry_leftovers_cancelled_owner_kept').clear
+E    +    where RemovedWaitProof(request=RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='b05d7b9e-89f4-4cdd-8337-16c3e...), purpose='retry_exhausted'), observed_at_ms=1791400258069, clear=True, reason='retry_leftovers_cancelled_owner_kept') = receipts(<project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10ae096a0>, RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='b05d7b9e-89f4-4cdd-8337-16c3ef94697d', requested_at_ms=1791400218069, account_names=('live:schwab_1m_v2', 'live:orb'), purpose='retry_exhausted'), datetime.datetime(2026, 10, 7, 19, 10, 58, 69000, tzinfo=datetime.timezone.utc), status='rejected')
+__________ test_retry_leftover_unknown_cancel_stays_blocking[failed] ___________
+tests/unit/test_retryleft1.py:252: in test_retry_leftover_unknown_cancel_stays_blocking
+    assert not receipts(strategy, request, now, status=status).clear
+E   AssertionError: assert not True
+E    +  where True = RemovedWaitProof(request=RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='5548344f-6f58-4747-b8d5-88b8b...), purpose='retry_exhausted'), observed_at_ms=1791400258069, clear=True, reason='retry_leftovers_cancelled_owner_kept').clear
+E    +    where RemovedWaitProof(request=RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='5548344f-6f58-4747-b8d5-88b8b...), purpose='retry_exhausted'), observed_at_ms=1791400258069, clear=True, reason='retry_leftovers_cancelled_owner_kept') = receipts(<project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10b1dc350>, RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='5548344f-6f58-4747-b8d5-88b8b6a0a85b', requested_at_ms=1791400218069, account_names=('live:schwab_1m_v2', 'live:orb'), purpose='retry_exhausted'), datetime.datetime(2026, 10, 7, 19, 10, 58, 69000, tzinfo=datetime.timezone.utc), status='failed')
+=========================== short test summary info ============================
+FAILED tests/unit/test_retryleft1.py::test_retry_leftover_unknown_cancel_stays_blocking[accepted]
+FAILED tests/unit/test_retryleft1.py::test_retry_leftover_unknown_cancel_stays_blocking[rejected]
+FAILED tests/unit/test_retryleft1.py::test_retry_leftover_unknown_cancel_stays_blocking[failed]
+3 failed, 38 passed in 0.45s

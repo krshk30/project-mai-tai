@@ -40,9 +40,10 @@ class RemovedWait:
     token: str
     requested_at_ms: int
     account_names: tuple[str, ...]
+    purpose: str = "scanner_removal"
 
     def payload(self, *, active: bool) -> dict:
-        return {
+        payload = {
             "schema_version": 1,
             "strategy_code": "schwab_1m_v2",
             "symbol": self.symbol,
@@ -52,6 +53,9 @@ class RemovedWait:
             "account_names": list(self.account_names),
             "active": active,
         }
+        if self.purpose != "scanner_removal":
+            payload["purpose"] = self.purpose
+        return payload
 
 
 @dataclass(frozen=True)
@@ -123,6 +127,68 @@ def assess_removed_wait(
         or len(set(request.account_names)) != len(request.account_names)
     ):
         return result("accounts_unreadable")
+
+    if request.purpose == "retry_exhausted":
+        # Cancellation-only receipt: historical fills stay owned. This proof must
+        # never be used to retire the opportunity or grant another entry.
+        if has_position:
+            return result("position_stays_managed")
+        if not any(r.snapshot_type == SNAPSHOT_TYPE
+                   and r.payload == request.payload(active=True) for r in snapshots):
+            return result("removal_not_durable")
+        receipts: set[str] = set()
+        own_intent_ids = {i.id for i in intents if i.intent_type == "open" and exact(metadata(i))}
+        intent_by_id = {i.id: i for i in intents}
+        for order in orders:
+            if exact(metadata(order)) or order.intent_id in own_intent_ids:
+                if order.status not in TERMINAL | {"filled", "aborted"}:
+                    return result("opening_order_not_terminal")
+                if order.status != "filled":
+                    own = intent_by_id.get(order.intent_id)
+                    p = own.payload if own is not None else {}
+                    no_wire = (not order.broker_order_id and own is not None
+                               and p.get("refusal_origin") in {"skipped_before_submit", "client_abort"}
+                               and bool(p.get("refusal_code")))
+                    status = "cancelled" if order.status == "canceled" else order.status
+                    terminal = any(e.order_id == order.id and e.event_source == "broker"
+                                   and ("cancelled" if e.event_type == "canceled" else e.event_type) == status
+                                   and e.event_type in TERMINAL and _utc(e.event_at) <= cutoff
+                                   and metadata(e).get("cancel_outcome") not in {
+                                       "already_absent", "confirmed_after_accepted_request",
+                                       "could_not_tell", "not_confirmed"}
+                                   for e in order_events)
+                    if not settled(order) or not (terminal or no_wire):
+                        return result("broker_terminal_unproven")
+        for intent in intents:
+            md = metadata(intent)
+            if intent.intent_type == "open" and exact(md) and intent.status not in TERMINAL | {"filled", "aborted"}:
+                return result("intent_not_terminal")
+            if md.get("clearwait_removal_token") != request.token:
+                continue
+            if (intent.intent_type != "cancel" or not exact(md)
+                    or str(md.get("clearwait_opportunity_id")) != str(request.opportunity_id)
+                    or md.get("clearwait_buy_only") != "true"
+                    or md.get("reason") != "retry_budget_exhausted"
+                    or _utc(intent.created_at).timestamp() * 1000 < request.requested_at_ms):
+                return result("cancel_receipt_invalid")
+            p = intent.payload or {}
+            no_target = (intent.status == "rejected"
+                         and p.get("refusal_origin") == "skipped_before_submit"
+                         and p.get("refusal_code") == "cancel_target_not_found")
+            if intent.status not in {"cancelled", "canceled"} and not no_target:
+                return result("cancel_unknown_or_refused")
+            if not settled(intent):
+                return result("cancel_receipt_settling")
+            account = accounts.get(intent.broker_account_id)
+            if account is None:
+                return result("cancel_account_unproven")
+            receipts.add(account)
+        if receipts != set(request.account_names):
+            return result("waiting_for_all_cancel_receipts")
+        return result("retry_leftovers_cancelled_owner_kept", True)
+    if request.purpose != "scanner_removal":
+        return result("purpose_unreadable")
+
     own_intent_ids = {i.id for i in intents if i.intent_type == "open" and exact(metadata(i))}
     if request.opportunity_id == 0 and any(
         o.id in filled_order_ids or str(o.status).lower() in {"filled", "partially_filled"}
@@ -461,7 +527,10 @@ class RemovedWaitStore:
                 str(p["token"]),
                 int(p["requested_at_ms"]),
                 tuple(raw_accounts),
+                str(p.get("purpose", "scanner_removal")),
             )
+            if request.purpose not in {"scanner_removal", "retry_exhausted"}:
+                raise ValueError("invalid cancellation purpose")
             if request.opportunity_id < 0 or not request.token or request.requested_at_ms <= 0:
                 raise ValueError("invalid removal identity")
             if p["active"]:

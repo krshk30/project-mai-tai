@@ -1,0 +1,12 @@
+......................F..................                                [100%]
+=================================== FAILURES ===================================
+___________ test_recorded_ncpl_retry_allowed_does_not_cancel_sibling ___________
+tests/unit/test_retryleft1.py:199: in test_recorded_ncpl_retry_allowed_does_not_cancel_sibling
+    assert state.flip_owner_phase == "idle"
+E   AssertionError: assert 'consumed' == 'idle'
+E     
+E     - idle
+E     + consumed
+=========================== short test summary info ============================
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_retry_allowed_does_not_cancel_sibling
+1 failed, 40 passed in 0.44s
