@@ -38,7 +38,7 @@ def derive(inputs, current_path, provenance, output):
                   original_complete=False, snapshot_captured_at_utc=snapshot["captured_at_utc"],
                   source_journal=inputs["journal"]["path"],
                   continuation_journal=inputs["continuation_journal"]["path"],
-                  service_actions={name: "restarted" if name in {"schwab-1m-v2", "oms", "orb-schwab", "control"}
+                  service_actions={name: "restarted" if name in CUMULATIVE
                                    else "deliberately_untouched" for name in snapshot["services"]},
                   derivation=evidence["proof"])
     exclusive(destination / "install1-derived-record.json", canonical(record))

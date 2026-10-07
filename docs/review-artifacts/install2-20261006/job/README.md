@@ -32,6 +32,12 @@ five current PID/start pins, and retains Install1 INCOMPLETE/original_complete=f
 No existing install-record/final-fleet JSON or original COMPLETE is assumed.
 Adapt the receipt to actual reviewed records;
 do not synthesize production identities, timestamps, history or acceptance.
+The actual original JSONL contains six command receipts: stop v2, stop ORB-Schwab,
+restart OMS, restart strategy, restart control, start ORB-Schwab. The separate
+continuation text log is hash-preserved as provenance, including its disclosed
+receipt collision, not parsed as fictitious JSONL. V2's new start is positively
+proved by its changed PID/start and the human VERIFIED review; its command
+receipt is explicitly UNAVAILABLE. No stop/start-OMS commands are invented.
 
 Local assembly (never production staging):
 

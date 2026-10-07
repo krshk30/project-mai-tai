@@ -72,7 +72,7 @@ def binding_value():
 
 def prior_files(tmp_path,current):
     before=copy.deepcopy(current)
-    for name in {"schwab-1m-v2","oms","orb-schwab","control"}:
+    for name in p.CUMULATIVE:
         before[name]["MainPID"]-=1
         before[name]["ExecMainStartTimestamp"]="Tue 2026-10-06 20:01:00 UTC"
     snapshot=dict(captured_at_utc="2026-10-06T20:01:00+00:00",services={
@@ -82,9 +82,8 @@ def prior_files(tmp_path,current):
     actions=sorted(cumulative.INSTALL1_ACTIONS)
     raws=dict(snapshot=p.canonical(snapshot),fleet_before=p.canonical(before),
               journal=b"\n".join(json.dumps(dict(argv=["systemctl",a,"project-mai-tai-"+n+".service"],rc=0)).encode()
-                                for a,n in actions[:3])+b"\n",
-              continuation_journal=b"\n".join(json.dumps(dict(argv=["systemctl",a,"project-mai-tai-"+n+".service"],rc=0)).encode()
-                                             for a,n in actions[3:])+b"\n")
+                                for a,n in actions)+b"\n",
+              continuation_journal=b"CONTROLLED text log: continuation receipts and disclosed FileExistsError\n")
     raws["human_review"]=p.canonical(dict(kind="DERIVED_HUMAN_VERIFIED_INSTALL1_INCOMPLETE",
         application=p.BOX,original_complete=False,evidence_hashes={n:p.digest(v) for n,v in raws.items()},
         provenance=dict(human_quote="CONTROLLED fixture: user VERIFIED Install1",source="CONTROLLED test, not live"),
@@ -264,6 +263,34 @@ def test_literal_install2_daily_cumulative(monkeypatch,tmp_path):
     assert fx.release["catalog_counts"]["total"]!=153
     assert p.RETRY_MAX not in (fx.attempt/"env.diff").read_text()
     assert p.RETRY_ENABLED not in (fx.attempt/"env.diff").read_text()
+
+
+def test_install1_actual_continuation_not_fabricated_stop_start(monkeypatch,tmp_path):
+    fx,_,_=setup(monkeypatch,tmp_path)
+    previous=cumulative.load_install1(fx.release["binding"],fx.system)
+    actual={tuple(row) for row in previous["proof"]["actual_actions"]}
+    assert actual==cumulative.INSTALL1_ACTIONS
+    assert ("restart","strategy") in actual and ("restart","oms") in actual
+    assert ("stop","oms") not in actual and ("start","schwab-1m-v2") not in actual
+    inferred=previous["proof"]["identity_derived_start"]
+    assert inferred["command_receipt"]=="UNAVAILABLE"
+    assert inferred["old_pid"]!=inferred["new_pid"]
+    assert previous["proof"]["original_complete"] is False
+
+
+@pytest.mark.parametrize("field",["MainPID","ExecMainStartTimestamp"])
+def test_install1_v2_missing_command_requires_positive_new_identity(monkeypatch,tmp_path,field):
+    fx,_,_=setup(monkeypatch,tmp_path)
+    data=fx.release["binding"]
+    old=json.loads(Path(data["install1"]["fleet_before"]["path"]).read_bytes())
+    fx.system["schwab-1m-v2"][field]=old["schwab-1m-v2"][field]
+    path=Path(data["install1"]["human_review"]["path"])
+    review=json.loads(path.read_bytes())
+    review["verified_pins"]["schwab-1m-v2"][field]=fx.system["schwab-1m-v2"][field]
+    raw=p.canonical(review);path.write_bytes(raw)
+    data["install1"]["human_review"]["sha256"]=p.digest(raw)
+    with pytest.raises(p.Stop,match="Install1 restart not measured"):
+        cumulative.load_install1(data,fx.system)
 
 
 def test_first_stop_clock_fence_does_not_abort_stopped_sequence(monkeypatch,tmp_path):
@@ -459,12 +486,12 @@ def test_prior_derivation_mutations_block(monkeypatch,tmp_path,mutation):
 
 def test_real_journal_receipt_hashes_not_just_declared_actions(tmp_path):
     path=tmp_path/"runner-journal.jsonl"
-    command=p.canonical(dict(argv=["systemctl","start","project-mai-tai-oms.service"],rc=0))
+    command=p.canonical(dict(argv=["systemctl","restart","project-mai-tai-oms.service"],rc=0))
     receipt=tmp_path/"001-command.json"
     receipt.write_bytes(command)
     raw=(json.dumps(dict(receipt=receipt.name,sha256=p.digest(command),bytes=len(command)))+"\n").encode()
     actions,hashes=cumulative.journal_actions(path,raw)
-    assert actions==[("start","oms")] and hashes[str(receipt)]==p.digest(command)
+    assert actions==[("restart","oms")] and hashes[str(receipt)]==p.digest(command)
     receipt.write_bytes(command+b" ")
     with pytest.raises(p.Stop): cumulative.journal_actions(path,raw)
 

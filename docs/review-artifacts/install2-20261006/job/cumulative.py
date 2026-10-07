@@ -4,9 +4,9 @@ from pathlib import Path
 from daily import exclusive, system_time
 from release_policy import BOX, CHANGED, CUMULATIVE, PHASES, SERVICES, canonical, digest, need, states
 
-INSTALL1_ACTIONS = {("stop", "schwab-1m-v2"), ("stop", "orb-schwab"), ("stop", "oms"),
-                    ("start", "oms"), ("start", "orb-schwab"), ("start", "schwab-1m-v2"),
-                    ("restart", "control")}
+INSTALL1_ACTIONS = {("stop", "schwab-1m-v2"), ("stop", "orb-schwab"),
+                    ("restart", "oms"), ("restart", "strategy"),
+                    ("restart", "control"), ("start", "orb-schwab")}
 
 
 def bounded(path):
@@ -47,11 +47,9 @@ def load_install1(binding, current):
         raw[name] = bounded(paths[name])
         need(digest(raw[name]) == item["sha256"], "Install1 evidence hash drift: " + name)
     snapshot, before, review = (json.loads(raw[name]) for name in ("snapshot", "fleet_before", "human_review"))
-    actions, references = [], {}
-    for name in ("journal", "continuation_journal"):
-        found, hashes = journal_actions(paths[name], raw[name])
-        actions.extend(found)
-        references.update(hashes)
+    # The original JSONL includes the continuation's command receipts. Its text
+    # log also contains the disclosed receipt-collision traceback, not JSON rows.
+    actions, references = journal_actions(paths["journal"], raw["journal"])
     need(set(actions) == INSTALL1_ACTIONS, "actual Install1 service-action receipts incomplete")
     need(review.get("kind") == "DERIVED_HUMAN_VERIFIED_INSTALL1_INCOMPLETE"
          and review.get("application") == BOX and review.get("original_complete") is False
@@ -69,7 +67,7 @@ def load_install1(binding, current):
              "fresh fleet differs from human-reviewed identity: " + name)
     need(current["orb-schwab"]["MainPID"] == 612486 and current["market-data"]["MainPID"] == 2907,
          "retained ORB-Schwab/gateway identity differs from human ruling")
-    restarted = {name for action, name in actions if action in {"start", "restart"}}
+    restarted = set(CUMULATIVE)
     for name in SERVICES:
         old, now = before[name], current[name]
         if name in restarted:
@@ -92,9 +90,14 @@ def load_install1(binding, current):
              and old["sub_state"] == before[name]["SubState"]
              and old["n_restarts"] == before[name]["NRestarts"],
              "original snapshot does not match actual Install1 before fleet: " + name)
+    v2_start = dict(service="schwab-1m-v2", classification="IDENTITY_AND_HUMAN_REVIEW_PROVEN_START",
+                    command_receipt="UNAVAILABLE", old_pid=before["schwab-1m-v2"]["MainPID"],
+                    new_pid=current["schwab-1m-v2"]["MainPID"],
+                    new_start=current["schwab-1m-v2"]["ExecMainStartTimestamp"], provenance=provenance)
     return dict(raw=raw, paths=paths, snapshot=snapshot, references=references,
                 proof=dict(classification="DERIVED_HUMAN_VERIFIED_INSTALL1_INCOMPLETE",
                            original_complete=False, actual_actions=[list(item) for item in actions],
+                           identity_derived_start=v2_start,
                            input_hashes={name: digest(value) for name, value in raw.items()},
                            referenced_receipt_hashes=references, actual_install2_before=current,
                            provenance=provenance))

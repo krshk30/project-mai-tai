@@ -28,3 +28,26 @@ the final isolated clock test does not claim those fake stamps are fresh.
 
 No production file edit, service action, migration, ledger write, automatic
 recovery, pin-verifier change or Install2 deployment occurred in this review.
+
+## Actual Install1 Continuation
+
+As-of20:45ET own read of original runner-journal.jsonl and its hash-referenced
+command receipts found exactly six scoped successful commands: stopv2 at
+23:09:01Z, stoporb-schwab23:11:43Z, restartOMS23:49:08Z,
+restartstrategy23:49:27Z, restartcontrol23:49:45Z, startorb-schwab23:50:33Z.
+The template incorrectly required separate stop/startOMS and omitted strategy.
+The continuation's original text log contains its known FileExistsError, not
+JSONL; the command receipts were appended to the original structured journal.
+The builder now retains that text log/hash as provenance and derives commands
+only from the actual JSONL. V2's new PID611572/start23:48:01Z was separately
+human VERIFIED; its command receipt is UNAVAILABLE and explicitly labelled
+identity-and-human-review proven, never synthesized as an argv/rc receipt.
+All five cumulative restarted owners require changed positive PID/start,
+active/NRestarts0/success and human matching pins; untouched identities remain
+equal to actual before. No original INCOMPLETE or collision receipt is changed.
+
+Three additional controls pin the actual command set and require positive
+new V2 PID and start even if the hash-bound human receipt is internally
+adjusted. Final local runner suite77PASS9.95s; the prior73PASS/1FAIL run caught
+one stale test fixture expecting the template's startOMS and was corrected to
+the recorded restartOMS. No production action or release approval asserted.
