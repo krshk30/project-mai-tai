@@ -894,6 +894,14 @@
       "ruling": "2026-09-29 operator FLAGGATE approval and 20:20 ET /proc live-fix audit."
     },
     {
+      "name": "oms_v2_eh_fresh_price_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "also_check_services": ["schwab-1m-v2"],
+      "reason": "NFQ2 holds both v2 EH entry paths for a fresh ask, with a held-only 1% cap.",
+      "ruling": "Operator 2026-10-07 NFQ2: fresh 0.5%, held 1%, both brokers and EH paths."
+    },
+    {
       "name": "oms_v2_cw_floor_exit_enabled",
       "expected": false,
       "owning_service": "oms",

@@ -142,7 +142,7 @@ def test_flag_defaults_off():
     s = Settings()
     assert s.oms_v2_eh_entry_enabled is False
     assert s.oms_v2_eh_entry_limit_buffer_pct == 0.3
-    assert s.oms_v2_eh_entry_max_cross_pct == 1.0
+    assert s.oms_v2_eh_entry_max_cross_pct == 0.5
     assert s.oms_v2_eh_entry_quote_max_age_ms == 2000
 
 
@@ -151,7 +151,7 @@ def test_flag_defaults_off():
 @pytest.mark.asyncio
 async def test_eh_prices_marketable_buffered_limit(eh):
     service = _oms(oms_v2_eh_entry_enabled=True)
-    # signal 2.00, cap = 2.00*1.01 = 2.02; ask 1.92 -> limit = 1.92*1.003 = 1.92576 -> 1.92 (round-down).
+    # NFQ2 operator ruling: fresh reactive cap 1.0% -> 0.5%; ask buffer stays 0.3%.
     _set_quote(service, "FOO", ask=1.92, bid=1.90)
     events = await service.process_trade_intent(_v2_open(_routed_meta()))
     assert [e.payload.status for e in events] == ["accepted", "filled"]
@@ -162,14 +162,15 @@ async def test_eh_prices_marketable_buffered_limit(eh):
     assert order.payload["extended_hours"] == "true"
     assert order.payload["oms_v2_eh_entry"] == "true"
     assert order.payload["oms_v2_eh_entry_ask"] == "1.9200"
-    assert order.payload["oms_v2_eh_entry_cap"] == "2.0200"
+    assert order.payload["oms_v2_eh_entry_cap"] == "2.0100"
     assert order.payload["limit_price"] == "1.92"   # ask*(1+0.3%) rounded down to tick
     assert order.payload["reference_price"] == "1.92"
 
 
 @pytest.mark.asyncio
 async def test_eh_limit_floored_to_max_cross_cap(eh):
-    service = _oms(oms_v2_eh_entry_enabled=True, oms_v2_eh_entry_limit_buffer_pct=2.0)
+    service = _oms(oms_v2_eh_entry_enabled=True, oms_v2_eh_entry_limit_buffer_pct=2.0,
+                   oms_v2_eh_entry_max_cross_pct=1.0)
     # signal 2.00 -> cap 2.02. ask 2.015 (<= cap). ask*(1+2%) = 2.0553 would exceed cap -> floored to 2.02.
     _set_quote(service, "FOO", ask=2.015, bid=2.00)
     events = await service.process_trade_intent(_v2_open(_routed_meta()))

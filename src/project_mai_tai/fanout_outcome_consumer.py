@@ -95,7 +95,8 @@ class FanoutOutcome:
 
 def identity_from_metadata(metadata: Mapping[str, object] | None) -> dict[str, str] | None:
     md = metadata or {}
-    if str(md.get("fanout_leg", "")).strip().lower() != "webull":
+    if (str(md.get("fanout_leg", "")).strip().lower() != "webull"
+            and md.get("nfq2_feedback") != "true"):
         return None
     segment = str(md.get("fanout_segment_id", "")).strip()
     slot = str(md.get("fanout_slot", "")).strip().lower()
