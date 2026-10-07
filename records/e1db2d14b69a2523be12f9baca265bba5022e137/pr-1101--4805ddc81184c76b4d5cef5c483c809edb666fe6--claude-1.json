@@ -1,0 +1,9 @@
+{
+  "pr_number": 1101,
+  "range_base": "4805ddc81184c76b4d5cef5c483c809edb666fe6",
+  "range_head": "e1db2d14b69a2523be12f9baca265bba5022e137",
+  "reviewed_at": "2026-10-07T00:07:08Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "WEBULL429 re-pin on the marker-only re-push (patch byte-identical to e624ed13): shared per-host query budget; list-today primary with validated executions; one budgeted detail read to confirm a terminal state with durable proof; a 429 on the confirm read is never proof; unknown/conflicting list statuses refused; cancel path untouched. Focused 700 pass; full suite 48 failed = base minus the pinned SCKT clock test; my mutations RED: budget never claimed (1), 429 accepted as proof (1), list validation disabled (5)."
+}
