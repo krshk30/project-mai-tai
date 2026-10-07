@@ -7617,3 +7617,19 @@ are disclosed, not force-cleared. PresentSXTC payload control remains zeroopen
 with slots released; DKI nofreshflip stayscapped. Default-OFF switches unchanged.
 This draft is NOT the staged application: evening job stays exact994/f2ed/C128.
 #1115/RPGSTALE remain parked. No production/merge/pin/activation in SLOT lane.
+
+### [codex] 2026-10-07 15:57 ET - C131 RETRYLEFT claim / joint conflict writer
+
+CLAIM codex/retryleft1-segment-leftover from994f08ae. Parent read reviewer case
+first, then independently queried NCPL orders/fills/owner snapshots and retained
+v2 logs. Own pull confirms consumed retry at19:10:18UTC and Webull cancellation
+19:32:49; code has no sibling cancellation at budget exhaustion. Existing
+CLEARWAIT proof rejects fill history by design; new cancellation-only receipt
+must never retire consumed ownership or grant a buy. NCPL sanitized raw pull
+and SQL retained in isolated RETRYLEFT worktree. Class/APUS replication pending;
+no claimed population result or pin. OMS tick path remains untouched.
+Reviewer authorized resolving six #1112/#1113 conflicts with one writer.
+Halley owns NFQ2-onto-SLOTCLEAR integration; parent does not edit either source
+branch. Original heads remain preserved until joint evidence is verified.
+No stale atr_reprice_handoff write, RPG parked patches unchanged. Staged paired
+install staysAPP994/f2/C128; RETRYLEFT is not implicitly an install candidate.
