@@ -41,7 +41,7 @@ turning the flag OFF cannot erase that obligation.
 
 Recovery is periodic only, behind the existing broker-sync sweep cadence:
 max(1s, configured oms_broker_sync_interval_seconds), default **5s**. At most
-one in-flight read per hold; each await is bounded at **2s**. No ticks drive
+one awaited recovery operation per hold; each await is bounded at **2s**. No ticks drive
 recovery SQL/network. Default steady-state upper rate is **12 reads/minute per
 eligible uncertain hold** (an initial sweep can occur immediately), proportional
 to eligible holds, not ticks. Two eligible account holds imply at most 24/minute;
@@ -51,6 +51,11 @@ age-based release: repeated unknowns remain owned and may be reread at cadence
 until positive proof appears. Missing binding/reader and sticky-fill owners do
 not issue broker reads. This is explicit fail-closed policy, not guaranteed
 recovery of every legacy order or an aggregate venue-rate certification.
+
+The await timeout does not terminate a Webull SDK worker already running in
+asyncio.to_thread. Physical read requests may overlap after timeouts; this
+offline proof does not certify transport cancellation or live concurrency.
+The 12/minute figure bounds new admissions, not completed physical requests.
 
 Controlled unknown-budget receipt read-budget-01: virtual elapsed 0/5/10s
 produced exactly 1/2/3 reads, 18/36/54 SQL statements, 3/6/9 DB transactions,

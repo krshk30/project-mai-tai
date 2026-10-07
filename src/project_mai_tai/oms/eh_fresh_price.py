@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from time import monotonic
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback
 from project_mai_tai.broker_adapters.protocols import OrderRequest
@@ -207,15 +207,68 @@ class EhFreshPriceMixin:
                     slot = new.metadata.get("fanout_slot_id")
                     if segment and segment != old.metadata.get("fanout_segment_id"):
                         continue
-                    if slot and slot != old.metadata.get("fanout_slot_id"):
-                        continue
                     generation = new.metadata.get("nfq2_generation")
                     if generation and generation != old.metadata.get("nfq2_generation"):
+                        continue
+                    if self._nfq2_segment_cancel_barrier(event):
+                        self._nfq2_retire_local_segment_hold(session, hold)
+                        continue
+                    if slot and slot != old.metadata.get("fanout_slot_id"):
                         continue
                 elif event.event_id == hold.event.event_id:
                     continue
                 self._nfq2_retire(session, hold, "v2_cancel" if new.intent_type == "cancel" else "v2_replaced")
             session.commit()
+
+    def _nfq2_segment_cancel_barrier(self, event):
+        md = event.payload.metadata
+        try:
+            UUID(md.get("clearwait_removal_token", ""))
+        except (TypeError, ValueError, AttributeError):
+            return False
+        return (event.payload.intent_type == "cancel" and event.payload.side == "buy"
+                and md.get("clearwait_buy_only") == "true" and md.get("fanout_slot") == "resting"
+                and md.get("clearwait_opportunity_id") == md.get("fanout_segment_id")
+                and self._nfq2_bound_identity(event))
+
+    def _nfq2_retire_local_segment_hold(self, session, hold):
+        """A typed opportunity barrier can revoke local waits, never wire/uncertainty."""
+        if hold.phase not in {"held", "queued"} or hold.dispatch is not None or not self._nfq2_bound_identity(hold.event):
+            return False
+        row = session.scalar(select(DashboardSnapshot).where(DashboardSnapshot.id == hold.row_id).with_for_update())
+        if row is None or row.snapshot_type != SNAPSHOT_TYPE:
+            return False
+        try:
+            p = row.payload
+            before = EhHold(TradeIntentEvent.model_validate(p["event"]), row.id, UUID(p["intent_id"]),
+                            p["phase"], p["token"], deepcopy(p.get("dispatch")))
+        except (KeyError, TypeError, ValueError):
+            return False
+        if (before.phase not in {"held", "queued"} or before.dispatch is not None
+                or before.intent_id != hold.intent_id
+                or before.event.model_dump(mode="json") != hold.event.model_dump(mode="json")):
+            return False
+        intent = session.get(TradeIntent, before.intent_id)
+        if intent is None or intent.status != "held" or not self._nfq2_intent_matches(session, intent, before.event):
+            return False
+        md = before.event.payload.metadata
+        related_order = session.scalar(select(BrokerOrder.id).where(or_(
+            BrokerOrder.intent_id == intent.id,
+            BrokerOrder.client_order_id == md.get("fanout_attempt_id", ""),
+            BrokerOrder.payload["nfq2_hold_id"].as_string() == str(before.row_id),
+            and_(BrokerOrder.strategy_id == intent.strategy_id, BrokerOrder.broker_account_id == intent.broker_account_id,
+                 BrokerOrder.symbol == intent.symbol, BrokerOrder.side == "buy",
+                 BrokerOrder.payload["fanout_slot_id"].as_string() == md["fanout_slot_id"],
+                 BrokerOrder.payload["fanout_segment_id"].as_string() == md["fanout_segment_id"]),
+        )).limit(1))
+        if related_order is not None:
+            return False
+        after = self._nfq2_copy(before, phase="retired", token="")
+        if not self._nfq2_transition(session, before, after, reason="v2_cancel_segment_barrier"):
+            return False
+        hold.phase, hold.token = after.phase, after.token
+        self._nfq2_holds.pop(self._nfq2_key(hold.event), None)
+        return True
 
     @staticmethod
     def _nfq2_intent_matches(session, intent, event):

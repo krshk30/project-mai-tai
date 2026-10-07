@@ -1,0 +1,24 @@
+{
+  "cwd": "/tmp/codex-nfq2-on-slotclear1-linear-20261007",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "docs/review-artifacts/nfq2/check_mutations.py",
+    "N4"
+  ],
+  "head": "8ea8a824ce2f7c8ee3e0c0e0b62702b4fe6cebb3",
+  "tree": "d8860465ac2f0da6cb07123b34da153136dd557e",
+  "status_before": "M docs/review-artifacts/nfq2-recovery-legacy/REPRO.md\n M src/project_mai_tai/oms/eh_fresh_price.py\n?? docs/review-artifacts/nfq2-hotfix1-proof/recovery-activehold-01/\n?? docs/review-artifacts/nfq2-recovery-legacy/check_cancel_mutations.py\n?? docs/review-artifacts/nfq2-recovery-legacy/finish_receipt.py\n?? docs/review-artifacts/nfq2-recovery-legacy/test_protocol_cancel_control.py\n?? docs/review-artifacts/nfq2-segment-cancel/\n?? tests/unit/test_nfq2_segment_cancel.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T21:09:22.106081+00:00",
+  "end_utc": "2026-10-07T21:09:23.096543+00:00",
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 120.0,
+  "output_sha256": "f21ca2bb3c94075cb09bca961ea960b7fe804984b2a14c35f18d2e97cb9cd8b5",
+  "failed_names": [
+    "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_fresh_order_outside_half_percent_is_refused_not_given_held_cap[False]",
+    "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_fresh_order_outside_half_percent_is_refused_not_given_held_cap[True]"
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "head": "8ea8a824ce2f7c8ee3e0c0e0b62702b4fe6cebb3",
+  "tree": "d8860465ac2f0da6cb07123b34da153136dd557e",
+  "end_utc": "2026-10-07T21:10:21.801052+00:00",
+  "files_and_head_unchanged": true,
+  "runs": [
+    {
+      "name": "nfq-tick-sql",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "segment-cancel-controls-01",
+        "--mutation-child",
+        "nfq-tick-sql"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T21:10:01.960277+00:00",
+      "command_end_utc": "2026-10-07T21:10:03.219723+00:00",
+      "log": "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/segment-cancel-controls-01/nfq-tick-sql.txt",
+      "sha256": "0c5cbad247396c6ab50a0da2975f799f5c63bf893f9a310da31358654c19bb14",
+      "metrics": []
+    },
+    {
+      "name": "nfq-eligible-loop-sql",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "segment-cancel-controls-01",
+        "--mutation-child",
+        "nfq-eligible-loop-sql"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T21:10:03.220251+00:00",
+      "command_end_utc": "2026-10-07T21:10:04.331788+00:00",
+      "log": "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/segment-cancel-controls-01/nfq-eligible-loop-sql.txt",
+      "sha256": "055a0761fb1cf8214a7060176ad814d13821c8db9977bf0cfffcb2dec2fbcf71",
+      "metrics": []
+    },
+    {
+      "name": "drift-tick-sql",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "segment-cancel-controls-01",
+        "--mutation-child",
+        "drift-tick-sql"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T21:10:04.332568+00:00",
+      "command_end_utc": "2026-10-07T21:10:05.590159+00:00",
+      "log": "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/segment-cancel-controls-01/drift-tick-sql.txt",
+      "sha256": "b7206b66ef5778e72c68b3f2060e061ec9ff55948b27401b9d91d0df2d6656fd",
+      "metrics": []
+    },
+    {
+      "name": "irrelevant-symbol-read",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "segment-cancel-controls-01",
+        "--mutation-child",
+        "irrelevant-symbol-read"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T21:10:05.590751+00:00",
+      "command_end_utc": "2026-10-07T21:10:06.535332+00:00",
+      "log": "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/segment-cancel-controls-01/irrelevant-symbol-read.txt",
+      "sha256": "dec192976f71ad3bc904cb3bc0371fe144bcec97fbed2a9aa33fe9d6dc42ec4b",
+      "metrics": []
+    },
+    {
+      "name": "duplicate-inflight",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "segment-cancel-controls-01",
+        "--mutation-child",
+        "duplicate-inflight"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T21:10:06.536119+00:00",
+      "command_end_utc": "2026-10-07T21:10:18.774424+00:00",
+      "log": "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/segment-cancel-controls-01/duplicate-inflight.txt",
+      "sha256": "fa864cebb9cb14ea61a213d2c42b71ccedc318e6b43a4ac0b70e870041d3dd60",
+      "metrics": []
+    },
+    {
+      "name": "drift-disabled",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "segment-cancel-controls-01",
+        "--mutation-child",
+        "drift-disabled"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T21:10:18.776080+00:00",
+      "command_end_utc": "2026-10-07T21:10:21.776444+00:00",
+      "log": "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-hotfix1-proof/segment-cancel-controls-01/drift-disabled.txt",
+      "sha256": "f31030ef05af2604aec02c18b537313f6745fb553f01f2eb8c082d4052616051",
+      "metrics": []
+    }
+  ]
+}

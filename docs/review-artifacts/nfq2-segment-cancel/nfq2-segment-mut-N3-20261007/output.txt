@@ -1,0 +1,105 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_biya_real_intent_and_serial_consumer_submit_once_after_hold[False-False] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10b262e70>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10aab9f70>
+webull = False, reactive = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    async def test_biya_real_intent_and_serial_consumer_submit_once_after_hold(service, monkeypatch, webull, reactive):
+        monkeypatch.setattr(service, "_market_is_fillable", lambda *args: True)
+        service._fanout_webull_collision_reason = lambda **kwargs: None
+        event = biya(webull=webull, reactive=reactive)
+>       assert await service.process_trade_intent(event) == []
+E       AssertionError: assert [OrderEventEv...abandoned'}))] == []
+E         
+E         Left contains one more item: OrderEventEvent(event_id=UUID('16722535-207b-4079-99da-f36d6a239531'), event_type='order_event', source_service='oms-r...': 'NO_FRESH_QUOTE', 'abandon_reason_detail': 'no fresh ask within 10000ms for BIYA', 'oms_v2_eh_entry': 'abandoned'}))
+E         Use -v to get more diff
+
+tests/unit/test_nfq2_eh_fresh_price.py:197: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:09:21,549 INFO [oms-risk] [OMS-ABANDON-INTENT] code=NO_FRESH_QUOTE symbol=BIYA strategy=schwab_1m_v2 side=buy reason=no fresh ask within 10000ms for BIYA
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:service.py:14888 [OMS-ABANDON-INTENT] code=NO_FRESH_QUOTE symbol=BIYA strategy=schwab_1m_v2 side=buy reason=no fresh ask within 10000ms for BIYA
+_ test_biya_real_intent_and_serial_consumer_submit_once_after_hold[False-True] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10ac15310>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b64b260>
+webull = True, reactive = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    async def test_biya_real_intent_and_serial_consumer_submit_once_after_hold(service, monkeypatch, webull, reactive):
+        monkeypatch.setattr(service, "_market_is_fillable", lambda *args: True)
+        service._fanout_webull_collision_reason = lambda **kwargs: None
+        event = biya(webull=webull, reactive=reactive)
+>       assert await service.process_trade_intent(event) == []
+E       AssertionError: assert [OrderEventEv...abandoned'}))] == []
+E         
+E         Left contains one more item: OrderEventEvent(event_id=UUID('4bac36ff-be2b-47c7-8c9f-24f8335abdbd'), event_type='order_event', source_service='oms-r...': 'NO_FRESH_QUOTE', 'abandon_reason_detail': 'no fresh ask within 10000ms for BIYA', 'oms_v2_eh_entry': 'abandoned'}))
+E         Use -v to get more diff
+
+tests/unit/test_nfq2_eh_fresh_price.py:197: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:09:21,604 INFO [oms-risk] [OMS-ABANDON-INTENT] code=NO_FRESH_QUOTE symbol=BIYA strategy=schwab_1m_v2 side=buy reason=no fresh ask within 10000ms for BIYA
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:service.py:14888 [OMS-ABANDON-INTENT] code=NO_FRESH_QUOTE symbol=BIYA strategy=schwab_1m_v2 side=buy reason=no fresh ask within 10000ms for BIYA
+_ test_biya_real_intent_and_serial_consumer_submit_once_after_hold[True-False] _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10b48e6f0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b64bd70>
+webull = False, reactive = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    async def test_biya_real_intent_and_serial_consumer_submit_once_after_hold(service, monkeypatch, webull, reactive):
+        monkeypatch.setattr(service, "_market_is_fillable", lambda *args: True)
+        service._fanout_webull_collision_reason = lambda **kwargs: None
+        event = biya(webull=webull, reactive=reactive)
+>       assert await service.process_trade_intent(event) == []
+E       AssertionError: assert [OrderEventEv...abandoned'}))] == []
+E         
+E         Left contains one more item: OrderEventEvent(event_id=UUID('9b23d44c-1e1d-46ae-a32f-2358d7500f62'), event_type='order_event', source_service='oms-r...': 'NO_FRESH_QUOTE', 'abandon_reason_detail': 'no fresh ask within 10000ms for BIYA', 'oms_v2_eh_entry': 'abandoned'}))
+E         Use -v to get more diff
+
+tests/unit/test_nfq2_eh_fresh_price.py:197: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:09:21,636 INFO [oms-risk] [OMS-ABANDON-INTENT] code=NO_FRESH_QUOTE symbol=BIYA strategy=schwab_1m_v2 side=buy reason=no fresh ask within 10000ms for BIYA
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:service.py:14888 [OMS-ABANDON-INTENT] code=NO_FRESH_QUOTE symbol=BIYA strategy=schwab_1m_v2 side=buy reason=no fresh ask within 10000ms for BIYA
+_ test_biya_real_intent_and_serial_consumer_submit_once_after_hold[True-True] __
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10b71e510>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b704050>
+webull = True, reactive = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("webull", [False, True])
+    @pytest.mark.parametrize("reactive", [False, True])
+    async def test_biya_real_intent_and_serial_consumer_submit_once_after_hold(service, monkeypatch, webull, reactive):
+        monkeypatch.setattr(service, "_market_is_fillable", lambda *args: True)
+        service._fanout_webull_collision_reason = lambda **kwargs: None
+        event = biya(webull=webull, reactive=reactive)
+>       assert await service.process_trade_intent(event) == []
+E       AssertionError: assert [OrderEventEv...abandoned'}))] == []
+E         
+E         Left contains one more item: OrderEventEvent(event_id=UUID('f6ba52c3-a8fa-47e1-8e1c-4cc5948551b1'), event_type='order_event', source_service='oms-r...': 'NO_FRESH_QUOTE', 'abandon_reason_detail': 'no fresh ask within 10000ms for BIYA', 'oms_v2_eh_entry': 'abandoned'}))
+E         Use -v to get more diff
+
+tests/unit/test_nfq2_eh_fresh_price.py:197: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:09:21,666 INFO [oms-risk] [OMS-ABANDON-INTENT] code=NO_FRESH_QUOTE symbol=BIYA strategy=schwab_1m_v2 side=buy reason=no fresh ask within 10000ms for BIYA
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:service.py:14888 [OMS-ABANDON-INTENT] code=NO_FRESH_QUOTE symbol=BIYA strategy=schwab_1m_v2 side=buy reason=no fresh ask within 10000ms for BIYA
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_real_intent_and_serial_consumer_submit_once_after_hold[False-False]
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_real_intent_and_serial_consumer_submit_once_after_hold[False-True]
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_real_intent_and_serial_consumer_submit_once_after_hold[True-False]
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_real_intent_and_serial_consumer_submit_once_after_hold[True-True]
+4 failed in 0.37s
+MUTATION N3 pytest_rc=1 RED
