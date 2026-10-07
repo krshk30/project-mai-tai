@@ -1,0 +1,19 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_unsafe_legacy_does_not_reset_owned_intent_or_existing_bound_hold[pending] _
+tests/unit/test_nfq2_recovery_legacy.py:304: in test_unsafe_legacy_does_not_reset_owned_intent_or_existing_bound_hold
+    assert intent.status == status
+E   AssertionError: assert 'rejected' == 'pending'
+E     
+E     - pending
+E     + rejected
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:15,386 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:43:15,390 WARNING [oms-risk] [OMS-NFQ2] legacy_identity_unproven symbol=BIYA account=paper:schwab_1m_v2 intent=fa6bbd5e-e301-441e-9e34-4601a4b157bf owned=True
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+WARNING  oms-risk:<nfq2-residual-mutation-L3>:7 [OMS-NFQ2] legacy_identity_unproven symbol=BIYA account=paper:schwab_1m_v2 intent=fa6bbd5e-e301-441e-9e34-4601a4b157bf owned=True
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unsafe_legacy_does_not_reset_owned_intent_or_existing_bound_hold[pending]
+1 failed in 0.27s
+RESIDUAL_MUTATION L3 pytest_rc=1 RED

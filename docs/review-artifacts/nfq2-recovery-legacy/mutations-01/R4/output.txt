@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-recovery-legacy/check_mutations.py", line 69, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/docs/review-artifacts/nfq2-recovery-legacy/check_mutations.py", line 56, in main
+    assert source.count(old) == 1, (name, source.count(old))
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('R4', 0)

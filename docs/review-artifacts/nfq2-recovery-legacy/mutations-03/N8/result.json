@@ -1,0 +1,23 @@
+{
+  "cwd": "/tmp/codex-nfq2-on-slotclear1-linear-20261007",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "docs/review-artifacts/nfq2/check_mutations.py",
+    "N8"
+  ],
+  "head": "c6004bd59f06fd856b1a8bb5a1ff6d96cbe094dc",
+  "tree": "90a37f8b3e5f0de83b7c86886b968f9ca1017570",
+  "status_before": "M docs/review-artifacts/nfq2/check_mutations.py\n M src/project_mai_tai/oms/eh_fresh_price.py\n?? docs/review-artifacts/nfq2-recovery-legacy/\n?? tests/unit/test_nfq2_recovery_legacy.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T20:46:05.353086+00:00",
+  "end_utc": "2026-10-07T20:46:06.354916+00:00",
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 30.0,
+  "output_sha256": "bb5dca3939f647bd5237d651709987ccf37fb9c540b8742e5f48205210cfdf3d",
+  "failed_names": [
+    "tests/unit/test_nfq2_recovery_legacy.py::test_missing_order_never_expires_or_resends_and_off_still_blocks"
+  ]
+}

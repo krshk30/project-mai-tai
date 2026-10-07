@@ -1,0 +1,12 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_current_segment_is_required_even_when_canonical_identity_and_quote_are_fresh _
+tests/unit/test_nfq2_recovery_legacy.py:333: in test_current_segment_is_required_even_when_canonical_identity_and_quote_are_fresh
+    assert service._nfq2_pre_submit(session, event, intent)
+E   AssertionError: assert False
+E    +  where False = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x1087f7f50>, TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch...1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM', 'resting_entry': 'true', 'eh_resting': 'true'})), <project_mai_tai.db.models.TradeIntent object at 0x109296300>)
+E    +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x108f63bf0>._nfq2_pre_submit
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_current_segment_is_required_even_when_canonical_identity_and_quote_are_fresh
+1 failed in 0.32s
+RESIDUAL_MUTATION L2 pytest_rc=1 RED

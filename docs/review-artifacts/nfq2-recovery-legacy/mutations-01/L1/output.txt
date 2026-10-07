@@ -1,0 +1,138 @@
+FFFFFFFFFFFFFF                                                           [100%]
+=================================== FAILURES ===================================
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-None-False] _
+tests/unit/test_nfq2_recovery_legacy.py:281: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert intent.status == "rejected"
+E   AssertionError: assert 'held' == 'rejected'
+E     
+E     - rejected
+E     + held
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:01,382 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=None outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=None outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-None-True] _
+tests/unit/test_nfq2_recovery_legacy.py:280: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert service._nfq2_pre_submit(session, event, intent)
+E   AssertionError: assert False
+E    +  where False = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10d3c3980>, TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch...1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM', 'resting_entry': 'true', 'eh_resting': 'true'})), <project_mai_tai.db.models.TradeIntent object at 0x10d684230>)
+E    +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10cb910a0>._nfq2_pre_submit
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-None-False] _
+tests/unit/test_nfq2_recovery_legacy.py:281: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert intent.status == "rejected"
+E   AssertionError: assert 'held' == 'rejected'
+E     
+E     - rejected
+E     + held
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:01,458 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-None-True] _
+tests/unit/test_nfq2_recovery_legacy.py:280: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert service._nfq2_pre_submit(session, event, intent)
+E   AssertionError: assert False
+E    +  where False = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10d6feab0>, TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch...1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM', 'resting_entry': 'true', 'eh_resting': 'true'})), <project_mai_tai.db.models.TradeIntent object at 0x10d6b0c80>)
+E    +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10d6ff3b0>._nfq2_pre_submit
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-None-False] _
+tests/unit/test_nfq2_recovery_legacy.py:281: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert intent.status == "rejected"
+E   AssertionError: assert 'held' == 'rejected'
+E     
+E     - rejected
+E     + held
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:01,514 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-None-True] _
+tests/unit/test_nfq2_recovery_legacy.py:280: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert service._nfq2_pre_submit(session, event, intent)
+E   AssertionError: assert False
+E    +  where False = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10d6e35f0>, TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch...1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM', 'resting_entry': 'true', 'eh_resting': 'true'})), <project_mai_tai.db.models.TradeIntent object at 0x10d6b3ec0>)
+E    +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10d6f3d10>._nfq2_pre_submit
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-invented-False] _
+tests/unit/test_nfq2_recovery_legacy.py:281: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert intent.status == "rejected"
+E   AssertionError: assert 'held' == 'rejected'
+E     
+E     - rejected
+E     + held
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:01,571 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=invented outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=invented outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-invented-True] _
+tests/unit/test_nfq2_recovery_legacy.py:280: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert service._nfq2_pre_submit(session, event, intent)
+E   AssertionError: assert False
+E    +  where False = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10d407590>, TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch...1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM', 'resting_entry': 'true', 'eh_resting': 'true'})), <project_mai_tai.db.models.TradeIntent object at 0x10d74dc70>)
+E    +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10d266ba0>._nfq2_pre_submit
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-invalid-False] _
+tests/unit/test_nfq2_recovery_legacy.py:281: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert intent.status == "rejected"
+E   AssertionError: assert 'held' == 'rejected'
+E     
+E     - rejected
+E     + held
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:01,625 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-invalid-True] _
+tests/unit/test_nfq2_recovery_legacy.py:280: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert service._nfq2_pre_submit(session, event, intent)
+E   AssertionError: assert False
+E    +  where False = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10d89a1e0>, TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch...1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM', 'resting_entry': 'true', 'eh_resting': 'true'})), <project_mai_tai.db.models.TradeIntent object at 0x10d875820>)
+E    +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10d898e30>._nfq2_pre_submit
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-unknown-False] _
+tests/unit/test_nfq2_recovery_legacy.py:281: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert intent.status == "rejected"
+E   AssertionError: assert 'held' == 'rejected'
+E     
+E     - rejected
+E     + held
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:01,680 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-unknown-True] _
+tests/unit/test_nfq2_recovery_legacy.py:280: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert service._nfq2_pre_submit(session, event, intent)
+E   AssertionError: assert False
+E    +  where False = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10d686660>, TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch...1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM', 'resting_entry': 'true', 'eh_resting': 'true'})), <project_mai_tai.db.models.TradeIntent object at 0x10d956ff0>)
+E    +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10d6e0b00>._nfq2_pre_submit
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id- -False] _
+tests/unit/test_nfq2_recovery_legacy.py:281: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert intent.status == "rejected"
+E   AssertionError: assert 'held' == 'rejected'
+E     
+E     - rejected
+E     + held
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:01,731 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=  outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=  outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+_ test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id- -True] _
+tests/unit/test_nfq2_recovery_legacy.py:280: in test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration
+    assert service._nfq2_pre_submit(session, event, intent)
+E   AssertionError: assert False
+E    +  where False = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10d94f320>, TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch...1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM', 'resting_entry': 'true', 'eh_resting': 'true'})), <project_mai_tai.db.models.TradeIntent object at 0x10d8d4470>)
+E    +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10d94df70>._nfq2_pre_submit
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-None-False]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-None-True]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-None-False]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-None-True]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-None-False]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-None-True]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-invented-False]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-invented-True]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-invalid-False]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-invalid-True]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-unknown-False]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-unknown-True]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id- -False]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id- -True]
+14 failed in 0.62s
+RESIDUAL_MUTATION L1 pytest_rc=1 RED

@@ -1,0 +1,23 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ test_only_exact_local_legacy_prewire_refusal_finishes[quantity] ________
+tests/unit/test_nfq2_recovery_legacy.py:496: in test_only_exact_local_legacy_prewire_refusal_finishes
+    assert held.phase == ("retired" if change is None else "uncertain")
+E   AssertionError: assert 'retired' == 'uncertain'
+E     
+E     - uncertain
+E     + retired
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:18,529 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:43:18,534 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 16:43:18,538 WARNING [oms-risk] [OMS-NFQ2] legacy_identity_unproven symbol=BIYA account=paper:schwab_1m_v2 intent=0557c5b4-bd3a-4b2d-9f11-9dbc783d893b owned=False
+2026-10-07 16:43:18,541 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=legacy_identity_unproven ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+WARNING  oms-risk:eh_fresh_price.py:236 [OMS-NFQ2] legacy_identity_unproven symbol=BIYA account=paper:schwab_1m_v2 intent=0557c5b4-bd3a-4b2d-9f11-9dbc783d893b owned=False
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=legacy_identity_unproven ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_only_exact_local_legacy_prewire_refusal_finishes[quantity]
+1 failed in 0.28s
+RESIDUAL_MUTATION L6 pytest_rc=1 RED

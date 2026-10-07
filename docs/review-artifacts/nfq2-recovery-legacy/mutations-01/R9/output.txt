@@ -1,0 +1,19 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_finish_durable_generation_race_never_overwrites_new_owner ________
+tests/unit/test_nfq2_recovery_legacy.py:459: in test_finish_durable_generation_race_never_overwrites_new_owner
+    assert session.get(DashboardSnapshot, held.row_id).payload["dispatch"]["generation"] == "new-owner"
+E   AssertionError: assert '15365796-34e...-83f63a5a398b' == 'new-owner'
+E     
+E     - new-owner
+E     + 15365796-34e1-4ba8-a641-83f63a5a398b
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:42:59,330 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:42:59,335 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_finish_durable_generation_race_never_overwrites_new_owner
+1 failed in 0.28s
+RESIDUAL_MUTATION R9 pytest_rc=1 RED

@@ -1,0 +1,23 @@
+{
+  "cwd": "/tmp/codex-nfq2-on-slotclear1-linear-20261007",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "docs/review-artifacts/nfq2/check_mutations.py",
+    "N5"
+  ],
+  "head": "c6004bd59f06fd856b1a8bb5a1ff6d96cbe094dc",
+  "tree": "90a37f8b3e5f0de83b7c86886b968f9ca1017570",
+  "status_before": "M src/project_mai_tai/oms/eh_fresh_price.py\n?? docs/review-artifacts/nfq2-recovery-legacy/\n?? tests/unit/test_nfq2_recovery_legacy.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T20:44:33.062709+00:00",
+  "end_utc": "2026-10-07T20:44:33.987281+00:00",
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 30.0,
+  "output_sha256": "61d555a2431769e4a0c38d540ae285df3b6b2bf86cb6519e488af8eed2c75bed",
+  "failed_names": [
+    "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_cancel_after_enqueue_invalidates_the_serial_copy"
+  ]
+}

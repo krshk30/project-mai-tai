@@ -1,0 +1,18 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_claim_persists_exact_generation_before_any_wire_and_refuses_durable_race _
+tests/unit/test_nfq2_recovery_legacy.py:535: in test_claim_persists_exact_generation_before_any_wire_and_refuses_durable_race
+    assert not service._claim_nfq2_retry(event)
+E   AssertionError: assert not True
+E    +  where True = _claim_nfq2_retry(TradeIntentEvent(event_id=UUID('e2cc660d-2d07-445c-a303-605755ae8587'), event_type='trade_intent', source_service='oms..._id': 'e180f598-112b-4446-beca-55eb87565f7e', 'fanout_predecessor_attempt_id': 'schwab_1m_v2-BIYA-open-5cbff1fa89d8'})))
+E    +    where _claim_nfq2_retry = <project_mai_tai.oms.service.OmsRiskService object at 0x1093c4c80>._claim_nfq2_retry
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:00,353 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:43:00,358 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_claim_persists_exact_generation_before_any_wire_and_refuses_durable_race
+1 failed in 0.27s
+RESIDUAL_MUTATION R10 pytest_rc=1 RED
