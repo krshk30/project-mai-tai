@@ -1,0 +1,16 @@
+{
+  "agent": "OpenAI Codex",
+  "started_utc": "2026-10-07T10:38:51.075676+00:00",
+  "started_et": "2026-10-07T06:38:51.075676-04:00",
+  "method": "Four serialized readonly Schwab history GETs",
+  "max_requests": 4,
+  "retries": 0,
+  "timeout_seconds_each": 15,
+  "token_refresh": false,
+  "remote_file_writes": false,
+  "rows": [],
+  "official_status": "FAIL",
+  "exception_type": "PermissionError",
+  "error_detail": "Probe setup failed; no credentials printed; no refresh/write/retry",
+  "finished_utc": "2026-10-07T10:38:51.075766+00:00"
+}

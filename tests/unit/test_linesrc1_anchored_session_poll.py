@@ -20,6 +20,9 @@ from tests.unit.test_line_chart_restoration_integration import (
 EMPTY_MEASUREMENT = json.loads((Path(__file__).parents[1] / "fixtures" /
                                "linesrc1_oct7_empty_history_measurement.json").read_text())
 EMPTY_RESPONSES = EMPTY_MEASUREMENT["responses"]
+OWN_EMPTY_RECEIPT = json.loads((Path(__file__).parents[1] / "fixtures" /
+                              "linesrc1_oct7_empty_history_own_receipt.json").read_text())
+OWN_EMPTY_ROWS = {row["symbol"]: row for row in OWN_EMPTY_RECEIPT["rows"]}
 
 
 @pytest.mark.parametrize("day", ["2026-01-06", "2026-07-06", "2026-03-08", "2026-11-01"])
@@ -317,13 +320,15 @@ async def test_oct7_measured_empty_names_do_not_poll_before_first_0700_close(mon
 def test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session(row, empty):
     from urllib.parse import parse_qs, urlparse
 
-    # No recorded prices are available for these names. Only the measured
-    # empty/count shape is replayed at a controlled in-session clock.
+    # Actual 06:39 empty envelopes, replayed at a controlled in-session clock.
+    # False is a counterfactual flag control, not an observed live response.
     symbol = row["symbol"]
     anchor = _ms(EMPTY_MEASUREMENT["anchor_et"])
     current = _ms("2026-10-07T07:00:00-04:00")
     client = _client(_bot(symbol, current))
-    client._authorized_get = Mock(return_value={"symbol": symbol, "empty": empty, "candles": []})
+    payload = deepcopy(OWN_EMPTY_ROWS[symbol]["raw_marketdata_response"])
+    payload["empty"] = empty
+    client._authorized_get = Mock(return_value=payload)
     try:
         bars, proof = client.fetch_session_history(symbol, anchor, current)
     except ValueError as exc:
@@ -341,7 +346,7 @@ async def test_oct7_empty_session_waits_without_epoch_failure_or_warning_flood(m
     bot = _bot(symbol, _ms("2026-10-07T07:00:00-04:00"))
     ledger = bot._line_sessions[symbol]
     client = _client(bot)
-    client._authorized_get = Mock(return_value={"symbol": symbol, "empty": True, "candles": []})
+    client._authorized_get = Mock(return_value=deepcopy(OWN_EMPTY_ROWS[symbol]["raw_marketdata_response"]))
     monkeypatch.setattr("project_mai_tai.market_data.schwab_v2_rest_client.sleep_or_stop", AsyncMock())
     with caplog.at_level(logging.WARNING):
         await client._anchored_bar_loop_pass([symbol], 5)
@@ -419,3 +424,20 @@ async def test_valid_empty_response_retains_prior_recorded_coverage_but_cannot_r
     assert not bot.strategy.drain_pending_intents()
     client._on_session_failure.assert_not_called()
     client._on_chart_bar.assert_not_awaited()
+
+
+@pytest.mark.parametrize("symbol", ["BIYA", "MI", "MTEN", "SXTC"])
+def test_own_oct7_live_receipt_is_bounded_readonly_and_matches_empty_shape(symbol):
+    receipt = OWN_EMPTY_RECEIPT
+    row = OWN_EMPTY_ROWS[symbol]
+    assert receipt["official_status"] == "MEASURED" and len(receipt["rows"]) == 4
+    assert receipt["max_requests"] == 4 and receipt["retries"] == 0
+    assert receipt["token_refresh"] is False and receipt["remote_file_writes"] is False
+    assert receipt["anchor_et"] == "2026-10-07T04:00:00-04:00"
+    local = datetime.fromisoformat(row["request_et"])
+    assert local.date().isoformat() == "2026-10-07" and local.hour < 7
+    assert row["status"] == "MEASURED" and row["http_status"] == 200
+    assert row["reproduces_empty_true_zero"] is True
+    assert row["raw_marketdata_response"] == {"symbol": symbol, "empty": True, "candles": []}
+    assert row["other_response_field_names"] == []
+    assert len(row["raw_body_sha256"]) == 64

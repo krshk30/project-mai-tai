@@ -2,18 +2,22 @@
 
 [codex] Sole source writer on `codex/linesrc1-anchored-session-poll`, continuing
 `a2a41012be2b9b007e0f0084f4a1bd295f79e376` / PR #1107 without rebase. AGREE on
-the newly measured empty-response remedy. No production, broker, DB, token,
-service, Redis, merge, review-pin, install or shared-handoff action.
+the newly measured empty-response remedy. No production/order/DB/token writes,
+service, Redis, merge, review-pin, install or shared-handoff action. After the
+initial source checkpoint, the human separately authorized four bounded
+read-only provider GETs; see `OCT7_OWN_READONLY.md` for that independent receipt.
 
 ## Evidence And Scope
 
 The human reports October7 06:21 ET Schwab history anchored at 04:00 ET for
 BIYA, MI, MTEN and SXTC: each `empty=true`, zero candles. This lane was not
-given raw provider envelopes or price bars and made no production GET. The
+given raw provider envelopes or price bars at the source checkpoint. The
 fixture `tests/fixtures/linesrc1_oct7_empty_history_measurement.json` preserves
 only those reported symbols/counts/flags/time, explicitly not raw-price data.
 In-session response envelopes and clocks are controlled tests, not later live
-measurements. No OHLC, volume, market pause or historical completeness is
+measurements. The later own 06:39 read reproduced the four empty envelopes;
+the tests now consume those retained fields at controlled in-session clocks.
+No OHLC, volume, market pause or historical completeness is
 invented for the four names.
 
 The prior client rejects valid empty history as completeness failure and
@@ -36,8 +40,10 @@ state suppression and repeated real-error invalidation remain intact.
 ## Verification
 
 - Own unchanged a2 focused baseline: 149 passed in 6.17s.
-- Final frozen focused candidate: 199 passed in 6.56s, zero failures/errors. This
-  includes 102 LINESRC1, 12 ledger, 52 restoration integration, 18 R6 spanning,
+- Source checkpoint focused candidate: 199 passed in 6.56s, zero failures/errors.
+  The later own-read fixture adds four provenance controls; its current-head
+  receipt is `OCT7_OWN_READONLY_RECEIPT.json`.
+  The source checkpoint includes 102 LINESRC1, 12 ledger, 52 restoration integration, 18 R6 spanning,
   3 R6 assessment and 12 reviewer-factory controls. The increase is 47 new
   LINESRC1 cases plus three existing assessment cases added to the invocation.
 - Named measured/control families:
@@ -74,8 +80,9 @@ new source/test hashes are recorded in `OCT7_RECEIPT.json`.
 
 ## Remaining Coverage
 
-Raw envelopes/prices for the four names, actual in-session provider recovery,
-historical fills/execution and deployed behavior are UNMEASURED. No new-head
+Raw pre07 empty metadata is now measured by this lane. No price bars were
+returned. Actual in-session provider recovery, historical fills/execution and
+deployed behavior remain UNMEASURED. No new-head
 local full-unit GREEN or complete hosted CI result is inherited from a2's
 older receipts. Fresh hosted CI, parent-coordinated rebase if needed,
 independent review and exact-head pin remain separate gates. Parent alone

@@ -1,0 +1,99 @@
+{
+  "agent": "OpenAI Codex",
+  "started_utc": "2026-10-07T10:39:07.550261+00:00",
+  "started_et": "2026-10-07T06:39:07.550261-04:00",
+  "method": "Four serialized readonly Schwab history GETs",
+  "max_requests": 4,
+  "retries": 0,
+  "timeout_seconds_each": 15,
+  "token_refresh": false,
+  "remote_file_writes": false,
+  "rows": [
+    {
+      "symbol": "BIYA",
+      "request_utc": "2026-10-07T10:39:07.647899+00:00",
+      "request_et": "2026-10-07T06:39:07.647899-04:00",
+      "request_url": "https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=BIYA&periodType=day&frequencyType=minute&frequency=1&startDate=1791360000000&endDate=1791369539999&needExtendedHoursData=true",
+      "http_status": 200,
+      "raw_body_bytes": 43,
+      "raw_body_sha256": "abb7279e38e02bd2926e0a4c82872505aa2012d71c53214e63d0da467c67ff7b",
+      "raw_marketdata_response": {
+        "symbol": "BIYA",
+        "empty": true,
+        "candles": []
+      },
+      "other_response_field_names": [],
+      "empty": true,
+      "candle_count": 0,
+      "reproduces_empty_true_zero": true,
+      "status": "MEASURED",
+      "finished_utc": "2026-10-07T10:39:07.880029+00:00"
+    },
+    {
+      "symbol": "MI",
+      "request_utc": "2026-10-07T10:39:08.882449+00:00",
+      "request_et": "2026-10-07T06:39:08.882449-04:00",
+      "request_url": "https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=MI&periodType=day&frequencyType=minute&frequency=1&startDate=1791360000000&endDate=1791369539999&needExtendedHoursData=true",
+      "http_status": 200,
+      "raw_body_bytes": 41,
+      "raw_body_sha256": "429143225576fdf7430be4db7856d19698c0ffa8618287bdf3c659a4969ff0c6",
+      "raw_marketdata_response": {
+        "symbol": "MI",
+        "empty": true,
+        "candles": []
+      },
+      "other_response_field_names": [],
+      "empty": true,
+      "candle_count": 0,
+      "reproduces_empty_true_zero": true,
+      "status": "MEASURED",
+      "finished_utc": "2026-10-07T10:39:09.086863+00:00"
+    },
+    {
+      "symbol": "MTEN",
+      "request_utc": "2026-10-07T10:39:10.087004+00:00",
+      "request_et": "2026-10-07T06:39:10.087004-04:00",
+      "request_url": "https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=MTEN&periodType=day&frequencyType=minute&frequency=1&startDate=1791360000000&endDate=1791369539999&needExtendedHoursData=true",
+      "http_status": 200,
+      "raw_body_bytes": 43,
+      "raw_body_sha256": "164328589c32804ce28678494f7d73cd25b72ea72f171147f1ad0494772b8ab1",
+      "raw_marketdata_response": {
+        "symbol": "MTEN",
+        "empty": true,
+        "candles": []
+      },
+      "other_response_field_names": [],
+      "empty": true,
+      "candle_count": 0,
+      "reproduces_empty_true_zero": true,
+      "status": "MEASURED",
+      "finished_utc": "2026-10-07T10:39:10.295482+00:00"
+    },
+    {
+      "symbol": "SXTC",
+      "request_utc": "2026-10-07T10:39:11.295856+00:00",
+      "request_et": "2026-10-07T06:39:11.295856-04:00",
+      "request_url": "https://api.schwabapi.com/marketdata/v1/pricehistory?symbol=SXTC&periodType=day&frequencyType=minute&frequency=1&startDate=1791360000000&endDate=1791369539999&needExtendedHoursData=true",
+      "http_status": 200,
+      "raw_body_bytes": 43,
+      "raw_body_sha256": "6535b99a47383f8d62ce0621676af7bd9dec80cde67f1a09f7b32c38e920b39e",
+      "raw_marketdata_response": {
+        "symbol": "SXTC",
+        "empty": true,
+        "candles": []
+      },
+      "other_response_field_names": [],
+      "empty": true,
+      "candle_count": 0,
+      "reproduces_empty_true_zero": true,
+      "status": "MEASURED",
+      "finished_utc": "2026-10-07T10:39:11.733507+00:00"
+    }
+  ],
+  "anchor_ms": 1791360000000,
+  "anchor_et": "2026-10-07T04:00:00-04:00",
+  "current_closed_ms": 1791369480000,
+  "end_ms": 1791369539999,
+  "official_status": "MEASURED",
+  "finished_utc": "2026-10-07T10:39:11.733545+00:00"
+}
