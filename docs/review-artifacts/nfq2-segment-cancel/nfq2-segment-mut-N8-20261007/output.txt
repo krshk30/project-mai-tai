@@ -1,0 +1,37 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ test_missing_order_never_expires_or_resends_and_off_still_blocks _______
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10b95bf50>
+
+    @pytest.mark.asyncio
+    async def test_missing_order_never_expires_or_resends_and_off_still_blocks(service):
+        held = hold(service, biya())
+        quote(service)
+        await service._evaluate_nfq2_holds("BIYA")
+        dispatched = retry(service)
+        assert service._claim_nfq2_retry(dispatched)
+        service._finish_nfq2_retry(dispatched, completed=True)
+        assert held.phase == "uncertain"
+        service.settings.oms_v2_eh_fresh_price_enabled = False
+        event = biya()
+        event.event_id = uuid4()
+        iid = intent_for(service, event)
+        with service.session_factory() as session:
+            intent = session.get(TradeIntent, iid)
+>           assert service._nfq2_pre_submit(session, event, intent)
+E           AssertionError: assert False
+E            +  where False = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10af93110>, TradeIntentEvent(event_id=UUID('fd1c6eee-b016-447f-bb2b-22f98ce33777'), event_type='trade_intent', source_service='sch...1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM', 'resting_entry': 'true', 'eh_resting': 'true'})), <project_mai_tai.db.models.TradeIntent object at 0x10bbdcf50>)
+E            +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10b95bf50>._nfq2_pre_submit
+
+tests/unit/test_nfq2_recovery_legacy.py:279: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:09:27,406 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:09:27,412 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_missing_order_never_expires_or_resends_and_off_still_blocks
+1 failed in 0.29s
+MUTATION N8 pytest_rc=1 RED

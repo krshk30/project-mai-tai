@@ -1,0 +1,36 @@
+{
+  "cwd": "/tmp/codex-nfq2-on-slotclear1-linear-20261007",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "docs/review-artifacts/nfq2-recovery-legacy/check_mutations.py",
+    "L1"
+  ],
+  "head": "8ea8a824ce2f7c8ee3e0c0e0b62702b4fe6cebb3",
+  "tree": "d8860465ac2f0da6cb07123b34da153136dd557e",
+  "status_before": "M docs/review-artifacts/nfq2-recovery-legacy/REPRO.md\n M src/project_mai_tai/oms/eh_fresh_price.py\n?? docs/review-artifacts/nfq2-hotfix1-proof/recovery-activehold-01/\n?? docs/review-artifacts/nfq2-recovery-legacy/check_cancel_mutations.py\n?? docs/review-artifacts/nfq2-recovery-legacy/finish_receipt.py\n?? docs/review-artifacts/nfq2-recovery-legacy/test_protocol_cancel_control.py\n?? docs/review-artifacts/nfq2-segment-cancel/\n?? tests/unit/test_nfq2_segment_cancel.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T21:09:11.613964+00:00",
+  "end_utc": "2026-10-07T21:09:12.981830+00:00",
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 120.0,
+  "output_sha256": "e429c6bf84fe052b569e0cb9f0312703e2753ae24c52e479c0b3cf9c19ab7008",
+  "failed_names": [
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-None-False]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-None-True]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-invalid-False]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_segment_id-invalid-True]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-None-False]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-None-True]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-unknown-False]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot-unknown-True]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id- -False]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id- -True]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-None-False]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-None-True]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-invented-False]",
+    "tests/unit/test_nfq2_recovery_legacy.py::test_legacy_identity_refused_even_with_fresh_quote_no_guessed_migration[fanout_slot_id-invented-True]"
+  ]
+}

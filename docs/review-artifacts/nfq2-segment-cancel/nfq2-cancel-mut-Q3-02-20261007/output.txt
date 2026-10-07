@@ -1,0 +1,21 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_typed_barrier_never_retires_dispatch_or_uncertainty[dispatching] _____
+tests/unit/test_nfq2_segment_cancel.py:103: in test_typed_barrier_never_retires_dispatch_or_uncertainty
+    assert held.phase == phase and held.token == "controlled-dispatch-generation"
+E   AssertionError: assert ('retired' == 'dispatching'
+E     
+E     - dispatching
+E     + retired)
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:07:42,871 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-07 17:07:42,878 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:07:42,885 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:7050 [V2-FANOUT-SLOT-BOUND] BIYA source=reactive slot=reclaim slot_id=7513d141-8976-5000-a8af-a2d071b3059a segment_id=1791375362370 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_segment_cancel.py::test_typed_barrier_never_retires_dispatch_or_uncertainty[dispatching]
+1 failed in 0.29s
+CANCEL_MUTATION Q3 pytest_rc=1 RED

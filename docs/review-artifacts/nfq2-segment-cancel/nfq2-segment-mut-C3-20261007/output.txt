@@ -1,0 +1,11 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_joint_fresh_buy_identity_and_dedup_with_nfq_enabled[False-False] _____
+tests/unit/test_nfq2_slotclear_composition.py:33: in test_joint_fresh_buy_identity_and_dedup_with_nfq_enabled
+    assert draft.metadata["fanout_segment_id"] and draft.metadata["fanout_slot_id"]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'fanout_segment_id'
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_slotclear_composition.py::test_joint_fresh_buy_identity_and_dedup_with_nfq_enabled[False-False]
+1 failed in 0.09s
+JOINT_MUTATION C3 pytest_rc=1

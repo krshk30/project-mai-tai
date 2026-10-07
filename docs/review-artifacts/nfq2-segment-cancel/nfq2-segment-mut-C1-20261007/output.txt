@@ -1,0 +1,27 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+______ test_joint_slotclear_fresh_reactive_never_borrows_held_cap[False] _______
+tests/unit/test_nfq2_slotclear_composition.py:52: in test_joint_slotclear_fresh_reactive_never_borrows_held_cap
+    assert service._apply_v2_eh_reactive_entry(session=session, event=event, intent=intent) is not None
+E   AssertionError: assert None is not None
+E    +  where None = _apply_v2_eh_reactive_entry(session=<sqlalchemy.orm.session.Session object at 0x10d367890>, event=TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch..., 'price_source': 'ask', 'oms_v2_eh_entry': 'true', 'oms_v2_eh_entry_ask': '2.5600', 'oms_v2_eh_entry_cap': '2.5908'})), intent=namespace(id=None, status='created', payload={}))
+E    +    where _apply_v2_eh_reactive_entry = <project_mai_tai.oms.service.OmsRiskService object at 0x10d328620>._apply_v2_eh_reactive_entry
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:09:50,584 INFO [oms-risk] [OMS-V2-EH-ENTRY] symbol=BIYA session=AM ask=2.5600 signal=2.5400 cap=2.5908 limit=2.56
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:<joint-mutation-C1>:84 [OMS-V2-EH-ENTRY] symbol=BIYA session=AM ask=2.5600 signal=2.5400 cap=2.5908 limit=2.56
+_______ test_joint_slotclear_fresh_reactive_never_borrows_held_cap[True] _______
+tests/unit/test_nfq2_slotclear_composition.py:52: in test_joint_slotclear_fresh_reactive_never_borrows_held_cap
+    assert service._apply_v2_eh_reactive_entry(session=session, event=event, intent=intent) is not None
+E   AssertionError: assert None is not None
+E    +  where None = _apply_v2_eh_reactive_entry(session=<sqlalchemy.orm.session.Session object at 0x10da2f260>, event=TradeIntentEvent(event_id=UUID('6f993e4c-2c4f-4475-8ba8-fe95cfb9d342'), event_type='trade_intent', source_service='sch..., 'price_source': 'ask', 'oms_v2_eh_entry': 'true', 'oms_v2_eh_entry_ask': '2.5600', 'oms_v2_eh_entry_cap': '2.5908'})), intent=namespace(id=None, status='created', payload={}))
+E    +    where _apply_v2_eh_reactive_entry = <project_mai_tai.oms.service.OmsRiskService object at 0x10d398170>._apply_v2_eh_reactive_entry
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 17:09:50,629 INFO [oms-risk] [OMS-V2-EH-ENTRY] symbol=BIYA session=AM ask=2.5600 signal=2.5400 cap=2.5908 limit=2.56
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:<joint-mutation-C1>:84 [OMS-V2-EH-ENTRY] symbol=BIYA session=AM ask=2.5600 signal=2.5400 cap=2.5908 limit=2.56
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_slotclear_composition.py::test_joint_slotclear_fresh_reactive_never_borrows_held_cap[False]
+FAILED tests/unit/test_nfq2_slotclear_composition.py::test_joint_slotclear_fresh_reactive_never_borrows_held_cap[True]
+2 failed in 0.14s
+JOINT_MUTATION C1 pytest_rc=1

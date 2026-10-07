@@ -1,0 +1,14 @@
+2026-10-07 17:02:35,182 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:02:35,194 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+PROTOCOL_CANCEL_CONTROL {'historical_reclaim_claim': False, 'webull': False, 'before': 'held', 'after': 'retired', 'hold_slot': 'reclaim', 'barrier_slot': 'resting'}
+.2026-10-07 17:02:35,218 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:02:35,228 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=None cache_age_ms=None source=none timestamp=None
+PROTOCOL_CANCEL_CONTROL {'historical_reclaim_claim': False, 'webull': True, 'before': 'held', 'after': 'retired', 'hold_slot': 'reclaim', 'barrier_slot': 'resting'}
+.2026-10-07 17:02:35,253 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:02:35,268 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+PROTOCOL_CANCEL_CONTROL {'historical_reclaim_claim': False, 'webull': False, 'before': 'queued', 'after': 'retired', 'hold_slot': 'reclaim', 'barrier_slot': 'resting'}
+.2026-10-07 17:02:35,292 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 17:02:35,304 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=7513d141-8976-5000-a8af-a2d071b3059a outcome=rejected_client_abort reason=v2_cancel_segment_barrier ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+PROTOCOL_CANCEL_CONTROL {'historical_reclaim_claim': False, 'webull': True, 'before': 'queued', 'after': 'retired', 'hold_slot': 'reclaim', 'barrier_slot': 'resting'}
+.
+4 passed in 0.87s
