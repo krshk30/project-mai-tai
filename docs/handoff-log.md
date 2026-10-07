@@ -7742,3 +7742,16 @@ tickSQL/sessions/tx0,24offloopperiodictx84SQL in60s, oneactivehold plusdrift.
 Actualgate20:47:23.516561-20:48:23.518256UTC, rawbenchmarkhashd3d4b241e716c0e5797b66abc4a0e57f8c3aa941d128d085efa8f51650671def.
 SQLite/faketransport, notliveperformance. Full/current-main pair and CIpending;
 no readiness/merge/deploy. PinnedSLOT and stagedjob/ORB untouched.
+
+2026-10-07 17:03 ET codex-2: RETRYLEFT1 PR1118 cda4849c local delivery
+complete:246focusedPASS,13assertionmutationsRED,7155PASS56FAIL vs main7114/56,
+exact failed names identical. PRValidate37684518722 PASS11m51s; push37684510555
+still on PostgreSQL provisioning/migration since20:46:23UTC; running logs404,
+cause unmeasured, no CI bypass or source change. Remains draft.
+NFQ2 final source8ea8 complete full run20:48:38.284406-20:58:54.487446UTC:
+7333PASS56FAIL610.17s, output13a7d7f3311e191998f0b255c296f7d428d4122d974781f25c5caedbc32b4d39.
+Existing ownmix1 exact-node parser confirms added/removed IDs both empty
+against main baseline1ea8b8fa. Both Validate pending; sole NFQ writer assesses
+typed opportunity-wide cancel/canonicalRECLAIM localhold composition. BIYA
+recorded slotRESTING is not a historic reproducer; no invented print claim.
+Pinned SLOT9951 for tomorrow and tonight's staged APP994 job/ORB unchanged.
