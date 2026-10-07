@@ -1,0 +1,9 @@
+[Unit]
+Description=RETAIN1 Sunday 05:45 ET weekly retention
+
+[Timer]
+OnCalendar=Sun *-*-* 05:45:00 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,9 +1,9 @@
 [Unit]
-Description=Daily 09:30 UTC retention prune for central market-capture tables (tight 14-day keep)
+Description=RETAIN1 Sunday 05:30 ET capture retention
 
 [Timer]
-OnCalendar=*-*-* 09:30:00 UTC
-Persistent=true
+OnCalendar=Sun *-*-* 05:30:00 America/New_York
+Persistent=false
 
 [Install]
 WantedBy=timers.target

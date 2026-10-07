@@ -1,5 +1,5 @@
 [Unit]
-Description=Prune central market-capture tables (trades/quotes/bars) older than 14 days
+Description=RETAIN1 weekly capture pruning (7-day retention)
 After=network-online.target
 
 [Service]
@@ -7,4 +7,6 @@ Type=oneshot
 User=trader
 WorkingDirectory=/home/trader/project-mai-tai
 EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
-ExecStart=/home/trader/project-mai-tai/.venv/bin/python scripts/prune_market_ticks.py --keep-days 14 --tables market_capture_trades,market_capture_quotes,market_capture_bars
+ExecStart=/home/trader/project-mai-tai/.venv/bin/python scripts/prune_market_ticks.py --go --tables market_capture_trades,market_capture_quotes,market_capture_bars --keep-days 7 --batch 10000 --max-rows 50000000 --max-seconds 3600
+TimeoutStartSec=2h
+Nice=10
