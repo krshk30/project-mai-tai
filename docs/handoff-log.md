@@ -7703,3 +7703,8 @@ Full-unit run active, no full-pair readiness claim. Raw mutation outputs
 /tmp/retryleft1-mutation-*-20261007.txt and current full output
 /tmp/retryleft1-complete-unit-20261007.txt. Paired package hashes/PIDs unchanged
 on16:35ET read, clock-pending; no production writes or ORB action here.
+
+2026-10-07 16:38 ET codex-2: correction to the immediately preceding narrative
+and C136: its as-of clock was mistyped16:45ET; actual current UTC read
+2026-10-07T20:38:42Z confirms16:38ET. Results and raw sources unchanged.
+Narrative retained append-only; own C136 corrected, no reviewer row touched.
