@@ -1,0 +1,9 @@
+{
+  "pr_number": 1117,
+  "range_base": "994f08aee2c35b3809b3c3384e0d8628807dcfb7",
+  "range_head": "42feaeaf582cd0d1d9872bf0f2098a2c38062739",
+  "reviewed_at": "2026-10-07T20:34:33Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "MOMPAGE1: the Momentum 30/60 pages build completed_today and daily_pnl from the record (momentum_paper_events FILLED/EXITED/FINAL for the ET session date, ordered, bounded by MAX_TERMINAL_ROWS, loaded in to_thread) instead of the running service's snapshot, so the day's trades stay on the page after the 09:40 guard stop. Operator card 10-07 16:1x: 'this is the one thing I wanted, no other changes'. Verified by me: diff read \u2014 no label/title/nav change, no bot code, no OMS tick-path change; 11 focused tests pass; my mutations prior-days-leak (session_date <=) 1 RED and PATH_PRINT-admitted 1 RED; codex 7 mutations RED; full unit suite failed names identical to base 994f08ae (48); query plan on the box uses ix_momentum_paper_events_session_strategy, 0.28 ms on the 1.4 GB table. Ships tomorrow night. Exercise: the page after the 09:40 stop shows the day's trades."
+}
