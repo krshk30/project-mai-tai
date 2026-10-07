@@ -1,0 +1,9 @@
+{
+  "pr_number": 1113,
+  "range_base": "994f08aee2c35b3809b3c3384e0d8628807dcfb7",
+  "range_head": "9951b473f8203590f48c667770c07e1f9c3096b6",
+  "reviewed_at": "2026-10-07T20:18:28Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "SLOTCLEAR1: after a re-add or restart the seed cap refuses ONLY the stale pre-watch flip; a fresh BUY flip after the re-add may take the narrow reactive first entry (fresh quote proof required, cap trigger x1.005, flip owner persisted) and a fresh SELL flip clears the reconstructed slot so the normal rest arms after 3 short bars. Operator ruling 10-07 09:3x (re-add + fresh flip = take it; defect against the CLEARWAIT1 meaning) and option 1 confirmed 10-07. Verified by me: diff read; bot-side in-memory, no DB or OMS tick-path additions (OMS change = fresh cap 0.5% for slotclear_first); 305 focused tests pass on this head; my mutation (_slotclear_live_close_after_watch forced True = stale flip treated as fresh, the FTFT 09-16 shape) 3 RED; codex 19/19 mutations RED; full suite failed names = main (56); both Validate runs green. Cases: LPCN/MTEN/BIYA/DKI/PFAI/SXTC 10-07, JAGX 10-06. Flag strategy_schwab_1m_v2_slotclear_fresh_flip_enabled ON at deploy, catalog true; ships tomorrow night. Exercise tomorrow: the first re-add followed by a flip within minutes."
+}
