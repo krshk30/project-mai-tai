@@ -7682,3 +7682,13 @@ src/tests/ops objects equal exactly. No source edit or avoidable head churn.
 Both new c600 Validate still running at20:16UTC. SLOT remains review-ready;
 NFQ broader recovery/restart coverage limits stay disclosed, draft retained.
 All56 main failures remain unwaived; no stale RPG or production edit.
+
+2026-10-07 16:27 ET - C135, corrected RETRYLEFT acceptance released.
+Reviewer accepts APUS's fill-before-close correction; NCPL positive and ARTL
+second cancellation case now govern the build. Parent resumes RETRYLEFT only,
+existing NFQ writer closes the two named remaining review items separately.
+Own source read preserves filled ownership and scanner-removal semantics;
+164 focused RETRYLEFT/CLEARWAIT/KEEPREST controls pass, no full readiness claim.
+ARTL raw replay and APUS negative control being completed, then mutations and
+the current-main full pair. SLOT9951 pin acknowledged, no merge performed.
+Tonight's staged exact APP994/planf2 and running ORB remain untouched.
