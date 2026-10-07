@@ -665,7 +665,9 @@ def test_wrapper_actual_official_parser_only_filters_exact_known_header(monkeypa
     monkeypatch.setattr(restart_report.importlib.util,"module_from_spec",lambda _:official)
     assert restart_report.main(["report","--output",str(report)])==0
     assert "Final call: ACCEPTED_OPEN_LINESRC1;" in report.read_text()
-    receipt=json.loads(report.with_name("report.md.linesrc.json").read_bytes())
+    sidecars=list(tmp_path.glob("report.md.*.linesrc.json"))
+    assert len(sidecars)==1
+    receipt=json.loads(sidecars[0].read_bytes())
     assert receipt["accepted_open_count"]==1
     # The original parser still reports the same actual raw header.
     assert len(original([("CONTROLLED",traceback())],since=NOW,service="schwab-1m-v2").traceback_times_utc)==1

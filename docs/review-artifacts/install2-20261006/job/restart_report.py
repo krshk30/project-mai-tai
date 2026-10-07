@@ -96,10 +96,17 @@ def main(argv=None):
         rc = module.main(args)
     raw = capture.getvalue()
     need(len(raw.encode()) <= 3_000_000 and output.is_file(), "official report missing/overflow")
-    official = output.with_name(output.name + ".official-unaccepted-scope.txt")
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    official = output.with_name(output.name + "." + run_id + ".official-unaccepted-scope.txt")
     from daily import exclusive
     exclusive(official, raw.encode())
     rendered = render(raw, [row for row in receipts if row['classification'] == 'ACCEPTED_OPEN_LINESRC1'])
+    # Optional root-pinned acknowledgement admits one measured identity, never a future restart.
+    if Path('/home/trader/preopen-daily/upgrade-ack.json').is_file():
+        from upgrade_ack import current, render as render_upgrade
+        rendered, acknowledged = render_upgrade(rendered, current())
+        if acknowledged:
+            rc = 0
     fallback = [row for row in receipts if row['classification'] == 'EXPECTED_BY_DESIGN_SEEDED_BOOT_FALLBACK']
     if fallback:
         rendered += '\nExpected seeded boot fallback (not fresh-bar restoration):\n' + '\n'.join(
@@ -108,7 +115,7 @@ def main(argv=None):
         rendered = render_held(rendered, json.loads(held_path.read_bytes()), datetime.now(timezone.utc))
         rc = 0
     output.write_text(rendered)
-    exclusive(output.with_name(output.name + ".linesrc.json"), canonical(dict(
+    exclusive(output.with_name(output.name + "." + run_id + ".linesrc.json"), canonical(dict(
         accepted_open_count=len(receipts), classification="ACCEPTED_OPEN_LINESRC1" if receipts else "NONE",
         receipts=receipts, official_unaccepted_scope_sha256=digest(raw.encode()))))
     print(rendered, end="")
