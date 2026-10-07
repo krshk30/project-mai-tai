@@ -2516,7 +2516,8 @@ class OrbService:
 
 
 async def main() -> None:
-    raise RuntimeError("ORB simulation retired; use mai-tai-orb-schwab for ORB Live")
+    logging.basicConfig(level=logging.INFO)
+    await OrbService().run()
 
 
 def run() -> None:
