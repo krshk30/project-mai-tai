@@ -188,13 +188,21 @@ def collect(effects, baseline, started, owners=CHANGED):
     # It is NOT the preopen gate, and it is not invoked with a fabricated future date.
     from attended import PY, REPO
     from closeout import install_record
-    record = install_record(effects, owners)
-    output = effects.attempt / "restart-evidence-current.md"
+    report_owners = CHANGED if 'control' in effects.started else owners
+    record = install_record(effects, report_owners)
+    output = effects.attempt / ("restart-evidence-current-" + str(effects.counter) + ".md")
     args = [PY, effects.job / "restart_report.py", "report", "--snapshot", effects.attempt / "before-restart.json",
             "--install-record", record, "--no-schema-change", "--expected-alembic-head", "20261005_0022",
             "--output", output]
-    for name in owners:
+    for name in report_owners:
         args += ["--restarted", name]
+    if graded['schwab-1m-v2'].get('restoration'):
+        from daily import exclusive
+        from release_policy import canonical
+        held = effects.attempt / ('overnight-hold-' + str(effects.counter) + '.json')
+        exclusive(held, canonical(dict(state=started['schwab-1m-v2'],
+                                      lines=graded['schwab-1m-v2']['lines'])))
+        args += ['--overnight-hold-proof', held]
     for name in ("oms", "schwab-1m-v2"):
         for key in PM:
             args += ["--expect-flag", name + ":" + key + "=true"]
@@ -209,6 +217,7 @@ def collect(effects, baseline, started, owners=CHANGED):
     result = effects.command(args, check=False, timeout=240)
     need(result.returncode == 0, "official restart/bar evidence FAIL or UNKNOWN; no N/A guessed")
     raw = output.read_bytes()
-    need(b"Final call: PASS;" in raw or b"Final call: EXPECTED BY DESIGN;" in raw or b"Final call: ACCEPTED_OPEN_LINESRC1;" in raw, "official report final unproven")
+    need(b"Final call: PASS;" in raw or b"Final call: EXPECTED BY DESIGN;" in raw or b"Final call: ACCEPTED_OPEN_LINESRC1;" in raw
+         or b'Final call: ACCEPTED_HELD_OFFSESSION;' in raw, "official report final unproven")
     return dict(process_flags=flags, logs=graded, official_report=str(output), official_report_sha256=digest(raw),
                 date_et=effects.now().astimezone(ET).date().isoformat(), future_live_delivery="UNMEASURED")

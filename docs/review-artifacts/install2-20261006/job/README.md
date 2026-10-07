@@ -129,4 +129,10 @@ literal BOOT-RESTORE with evaluated=confirmed=pending>0, warmed=0, timeout=0,
 distinct complete pending names and a BOOT-HOLD HELD without release. This is not
 restoration PASS: restoration and release remain UNMEASURED until the next
 scheduled bars (Wed07:00 read). Other process, error, account, Redis, no-buy,
-catalog and timer proofs are unchanged. Local runner tests:92PASS.
+catalog and timer proofs are unchanged. Local runner tests:95PASS.
+The raw official collector report is retained. Only its exact two absent
+warmup/release failures may be labelled ACCEPTED_HELD_OFFSESSION when the
+independent fresh literal hold and N/A_OFF_SESSION bar result are present;
+any other failure or unknown still blocks. Control is declared in the actual
+restart set, with its original identity and action receipt. No check is called
+PASS on pending evidence. The daily gate itself is not run early or waived.

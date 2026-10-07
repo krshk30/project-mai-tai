@@ -8,11 +8,39 @@ import pytest
 from datetime import datetime, timezone
 from post_proof import overnight_hold
 from release_policy import Unknown
+from release_policy import Stop
+from restart_report import render_held
 
 RECORDED_RESTORE = '2026-10-07 01:55:57,523 WARNING project_mai_tai.services.schwab_1m_v2_bot | [V2-BOOT-RESTORE] restoration_complete=0 evaluated=7 confirmed=7 rest_warmed=0 timeout_released=0 warmup_pending=7 warmup_pending_symbols=APUS,BIYA,IPDN,MOBX,MTEN,OLOX,SMXT reason=rest_warmup_incomplete; waiting for a fresh REST or streamer bar within 300s'
 RECORDED_HOLD = '2026-10-07 01:55:54,253 WARNING project_mai_tai.services.schwab_1m_v2_bot | [V2-BOOT-HOLD] HELD restoration_complete=0'
 RECORDED_STATE = {'ExecMainStartTimestamp': 'Wed 2026-10-07 01:53:49 UTC'}
 RECORDED_NOW = datetime(2026, 10, 7, 1, 56, tzinfo=timezone.utc)
+
+OFFICIAL_HELD = '''Overall: REAL FAILURE (2 failed checks / 0 unknown checks / 9 reported checks)
+Final call: REAL FAILURE; no post-restart restoration_complete=1 line
+| Check | Measured evidence | Result |
+| Restarted services | new active/running | PASS |
+| REST warmup | complete markers=0 | FAIL |
+| BOOT-HOLD released | release markers=0 | FAIL |
+| Bar continuity | restart outside bar session | N/A_OFF_SESSION |
+Failures:
+- no post-restart restoration_complete=1 line
+- no literal post-restart BOOT-HOLD release with restoration_complete=1
+'''
+
+
+def test_official_held_pair_never_rendered_as_pass():
+    proof = dict(lines=[RECORDED_HOLD, RECORDED_RESTORE], state=RECORDED_STATE)
+    text = render_held(OFFICIAL_HELD, proof, RECORDED_NOW)
+    assert 'Final call: ACCEPTED_HELD_OFFSESSION;' in text
+    assert 'HELD_EXPECTED_OFFSESSION' in text and 'restoration/release UNMEASURED' in text
+    assert '| REST warmup | complete markers=0 | PASS |' not in text
+
+
+@pytest.mark.parametrize('extra', ['\n- unrelated real failure', '\nUnknowns:\n- unrelated unknown'])
+def test_official_other_failure_or_unknown_is_not_admitted(extra):
+    with pytest.raises(Stop):
+        render_held(OFFICIAL_HELD + extra, dict(lines=[RECORDED_HOLD, RECORDED_RESTORE], state=RECORDED_STATE), RECORDED_NOW)
 
 
 def test_recorded_overnight_hold_is_literal_held_not_restoration_pass():
