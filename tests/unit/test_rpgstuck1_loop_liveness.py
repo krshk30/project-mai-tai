@@ -114,14 +114,51 @@ async def test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_cle
 
     monkeypatch.setattr(h.service, "_rpg_retry_pause", pump)
     await h.service._run_rpg_retry_loop(stop)
-    # A proven no-wire generation returns to v2, never to the saved BUY loop.
+    expected = "expired" if outside else "placed"
+    # A committed acceptance may wake one same-generation proof evaluation;
+    # it must not replay the opening or start a periodic terminal scan.
     for token in tokens:
-        assert phases[token] == ["refused"]
-        assert journal.read(token)["release_reason"] == "old_local_no_wire_return_to_strategy"
-    assert all(journal.read(token)["phase"] == "refused" and old_buy_proven_clear(journal.read(token))
+        assert phases[token][:2] == ["clear", expected]
+        assert phases[token][2:] in ([], ["placed"] if not outside else [])
+    assert all(journal.read(token)["phase"] == expected and old_buy_proven_clear(journal.read(token))
                for token in tokens)
-    assert not h.adapter.opens and not h.adapter.cancels
-    assert not ignored_bot_ticks
+    assert len(h.adapter.opens) == (0 if outside else 4)
+    assert len({request.metadata["fanout_slot_id"] for request in h.adapter.opens}) == len(h.adapter.opens)
+    assert all(request.broker_account_name == "live:orb" for request in h.adapter.opens)
+    assert ignored_bot_ticks and not h.adapter.cancels
+
+
+@pytest.mark.asyncio
+async def test_recorded_apus0932_distance_refusal_releases_then_later_same_segment_webull_places_once(
+        monkeypatch, fake_sdk):
+    row = next(row for row in AUTH_ROWS if row["id"].startswith("bd6ac0b9"))
+    h, token, md = await stage(monkeypatch, row, row, market="4.78")
+    wire_adapters(monkeypatch, h)
+    from tests.unit.test_rpg1_runtime import feedback
+    await feedback(h)
+    journal = HandoffJournal(h.factory)
+    refused = deepcopy(journal.read(token))
+    assert refused["phase"] == "refused" and "webull_mirror_precheck_deferred" in refused["replacement_reasons"]
+    assert md["stop_price"] == "5.2720" and not h.webull_client.calls.get("place", 0)
+    await feedback(h)
+    assert old_buy_proven_clear(refused) and not h.strategy._rpg_entry_owned(h.state, account="live:orb")
+    segment = h.state.fanout_segment_id
+    h.clock[0] += timedelta(minutes=1)
+    price(h, h.state, "5.25")  # Distinct later CONTROLLED quote, never substituted into refusal.
+    h.strategy._queue_resting_place(h.state, h.state.atr_trail, slot="first")
+    mirror, = h.strategy.drain_webull_direct_intents()
+    h.strategy.drain_pending_intents()  # This proof exercises only the released mirror leg.
+    assert int(mirror.metadata["fanout_segment_id"]) == segment == refused["segment_id"]
+    assert mirror.metadata["rpg_resting_generation"] != refused["old"]["metadata"]["rpg_resting_generation"]
+    event = TradeIntentEvent(source_service="schwab-1m-v2", produced_at=h.clock[0],
+        payload=TradeIntentPayload(strategy_code="schwab_1m_v2", broker_account_name="live:orb",
+            symbol="APUS", side="buy", intent_type="open", quantity=mirror.quantity,
+            reason=mirror.reason, metadata=mirror.metadata))
+    for _ in range(4):
+        await h.service._handle_stream_message({"data": event.model_dump_json()})
+    assert h.webull_client.calls.get("place", 0) == 1 and not h.wires
+    assert journal.read(token)["phase"] == "refused"
+    assert journal.read(token)["authorization"] == refused["authorization"]
 
 
 @pytest.mark.asyncio
@@ -180,36 +217,3 @@ async def test_l7_wired_terminal_zero_controlled_recovery_real_loop_keeps_advanc
     await h.service._run_rpg_retry_loop(stop)
     assert phases[:2] == ["clear", "expired" if outside else "placed"]
     assert len(h.adapter.opens) == int(not outside)
-
-
-@pytest.mark.asyncio
-async def test_recorded_apus0932_distance_refusal_releases_then_later_same_segment_webull_places_once(
-        monkeypatch, fake_sdk):
-    row = next(row for row in AUTH_ROWS if row["id"].startswith("bd6ac0b9"))
-    h, token, md = await stage(monkeypatch, row, row, market="4.78")
-    wire_adapters(monkeypatch, h)
-    from tests.unit.test_rpg1_runtime import feedback
-    await feedback(h)
-    journal = HandoffJournal(h.factory)
-    refused = deepcopy(journal.read(token))
-    assert refused["phase"] == "refused" and "webull_mirror_precheck_deferred" in refused["replacement_reasons"]
-    assert md["stop_price"] == "5.2720" and not h.webull_client.calls.get("place", 0)
-    await feedback(h)
-    assert old_buy_proven_clear(refused) and not h.strategy._rpg_entry_owned(h.state, account="live:orb")
-    segment = h.state.fanout_segment_id
-    h.clock[0] += timedelta(minutes=1)
-    price(h, h.state, "5.25")  # Distinct later CONTROLLED quote, never substituted into refusal.
-    h.strategy._queue_resting_place(h.state, h.state.atr_trail, slot="first")
-    mirror, = h.strategy.drain_webull_direct_intents()
-    h.strategy.drain_pending_intents()  # This proof exercises only the released mirror leg.
-    assert int(mirror.metadata["fanout_segment_id"]) == segment == refused["segment_id"]
-    assert mirror.metadata["rpg_resting_generation"] != refused["old"]["metadata"]["rpg_resting_generation"]
-    event = TradeIntentEvent(source_service="schwab-1m-v2", produced_at=h.clock[0],
-        payload=TradeIntentPayload(strategy_code="schwab_1m_v2", broker_account_name="live:orb",
-            symbol="APUS", side="buy", intent_type="open", quantity=mirror.quantity,
-            reason=mirror.reason, metadata=mirror.metadata))
-    for _ in range(4):
-        await h.service._handle_stream_message({"data": event.model_dump_json()})
-    assert h.webull_client.calls.get("place", 0) == 1 and not h.wires
-    assert journal.read(token)["phase"] == "refused"
-    assert journal.read(token)["authorization"] == refused["authorization"]

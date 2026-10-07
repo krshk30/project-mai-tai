@@ -33,7 +33,7 @@ TICKETS = rows("sxtc-tickets-20261007.jsonl")
 INTENTS = rows("sxtc-intents-20261007.jsonl")
 
 
-async def sxtc(monkeypatch):
+async def sxtc(monkeypatch, *, terminal_phase="refused"):
     h = await runtime(monkeypatch, "webull", notional=300)
     h.clock[0] = datetime.fromisoformat("2026-10-07T14:12:00+00:00")
     h.events = {}
@@ -56,8 +56,13 @@ async def sxtc(monkeypatch):
             intent.status, intent.payload = source["status"], deepcopy(source["payload"])
             h.events[str(intent.id)] = event
         for source in TICKETS:
+            payload = deepcopy(source["payload"])
+            # Controlled terminal transition of the recording, not a claim that
+            # the captured held_unknown/price_wait tickets were already terminal.
+            if terminal_phase is not None:
+                payload["phase"] = terminal_phase
             session.add(DashboardSnapshot(id=UUID(source["id"]), snapshot_type=SNAPSHOT_TYPE,
-                payload=deepcopy(source["payload"])))
+                payload=payload))
         session.commit()
     return h
 
@@ -68,8 +73,9 @@ async def serial_tick(h, token):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", TICKETS, ids=["Schwab-cache-refusal", "Webull-thirteen-held-replacements"])
-async def test_sxtc_serial_proof_feedback_releases_only_matching_v2_leg_no_saved_buy(monkeypatch, source):
-    h = await sxtc(monkeypatch)
+@pytest.mark.parametrize("terminal_phase", ["refused", "expired"])
+async def test_sxtc_serial_proof_feedback_releases_only_matching_v2_leg_no_saved_buy(monkeypatch, source, terminal_phase):
+    h = await sxtc(monkeypatch, terminal_phase=terminal_phase)
     token = UUID(source["id"])
     state = h.strategy.watchlist_state("SXTC")
     state.fanout_segment_id = source["payload"]["segment_id"]
@@ -86,6 +92,7 @@ async def test_sxtc_serial_proof_feedback_releases_only_matching_v2_leg_no_saved
     job = HandoffJournal(h.factory).read(token)
     assert job["phase"] == "refused" and job["local_no_wire"]
     assert job["release_reason"] == "old_local_no_wire_return_to_strategy"
+    revision = job["revision"]
     await h.bot._rpg_handoff_pass()
     assert not h.strategy._rpg_entry_owned(state, account=account, slot="first")
     if account == "live:orb":
@@ -99,6 +106,7 @@ async def test_sxtc_serial_proof_feedback_releases_only_matching_v2_leg_no_saved
         await serial_tick(h, token)
         await h.bot._rpg_handoff_pass()
     assert not h.adapter.opens
+    assert HandoffJournal(h.factory).read(token)["revision"] == revision
     captures = rows("sxtc-next-bar-20261007.jsonl")
     bar = next(row for row in captures if row.get("bar_time") == "2026-10-07T14:12:00+00:00")
     quote = next(row for row in captures if row.get("event_ts", "") >= "2026-10-07T14:13:03" and row.get("ask_price"))
@@ -148,7 +156,7 @@ async def test_sxtc_exact_intent_identity_or_positive_refusal_missing_stays_owne
         session.commit()
     await serial_tick(h, UUID(source["id"]))
     job = HandoffJournal(h.factory).read(UUID(source["id"]))
-    assert job["phase"] == "held_unknown" and not job.get("local_no_wire")
+    assert job["phase"] == "refused" and not job.get("local_no_wire")
     assert rpg_buy_owned(job)
     assert not h.adapter.opens
 
@@ -176,7 +184,7 @@ async def test_sxtc_later_broker_order_of_exact_generation_never_becomes_no_wire
     # Call the proof-only operation: the ordinary runtime retains its existing
     # cancellation/reconciliation behaviour for a genuinely wired order.
     assert h.service._rpg_release_unwired(UUID(source["id"]), HandoffJournal(h.factory).read(UUID(source["id"]))) is None
-    assert HandoffJournal(h.factory).read(UUID(source["id"]))["phase"] == "price_wait"
+    assert HandoffJournal(h.factory).read(UUID(source["id"]))["phase"] == "refused"
 
 
 @pytest.mark.asyncio
@@ -253,7 +261,7 @@ async def test_retained_unknown_dispatch_fill_or_other_generation_cannot_transfe
         session.commit()
     token = UUID(TICKETS[1]["id"])
     assert h.service._rpg_release_unwired(token, HandoffJournal(h.factory).read(token)) is None
-    assert HandoffJournal(h.factory).read(token)["phase"] == "price_wait"
+    assert HandoffJournal(h.factory).read(token)["phase"] == "refused"
 
 
 @pytest.mark.asyncio
@@ -291,7 +299,7 @@ async def test_pre_submit_label_with_contradictory_wire_or_fill_evidence_stays_o
         session.commit()
     token = UUID(TICKETS[0]["id"])
     await serial_tick(h, token)
-    assert HandoffJournal(h.factory).read(token)["phase"] == "held_unknown"
+    assert HandoffJournal(h.factory).read(token)["phase"] == "refused"
 
 
 @pytest.mark.asyncio
@@ -330,7 +338,7 @@ async def test_positive_fill_without_matching_order_generation_still_blocks_no_w
     token = UUID(TICKETS[0]["id"])
     await serial_tick(h, token)
     job = HandoffJournal(h.factory).read(token)
-    assert job["phase"] == "held_unknown" and not job["local_no_wire"]
+    assert job["phase"] == "refused" and not job["local_no_wire"]
     assert not h.adapter.opens
 
 
@@ -379,7 +387,7 @@ async def test_prepared_transfer_survives_restart_without_old_serial_dispatch(mo
 
 
 @pytest.mark.asyncio
-async def test_recorded_primary_no_wire_begin_cancel_publishes_terminal_feedback_immediately(monkeypatch):
+async def test_recorded_primary_no_wire_begin_cancel_retains_active_protocol(monkeypatch):
     h = await sxtc(monkeypatch)
     token = UUID(TICKETS[0]["id"])
     event = TradeIntentEvent(source_service="schwab-1m-v2", produced_at=h.clock[0],
@@ -391,14 +399,15 @@ async def test_recorded_primary_no_wire_begin_cancel_publishes_terminal_feedback
     jobs = HandoffJournal(h.factory).jobs()
     primary = [job for _, job in jobs if job["old"]["broker_account_name"] == "live:schwab_1m_v2"]
     assert len(primary) == 1
-    assert primary[0]["phase"] == "refused"
-    assert primary[0]["release_reason"] == "old_local_no_wire_return_to_strategy"
+    assert primary[0]["phase"] == "clear" and primary[0]["local_no_wire"]
+    assert "release_reason" not in primary[0]
+    assert rpg_buy_owned(primary[0])
     assert not h.adapter.opens and not h.adapter.cancels
 
 
 @pytest.mark.asyncio
 async def test_wired_unknown_primary_actual_serial_lane_remains_blocking(monkeypatch):
-    h = await sxtc(monkeypatch)
+    h = await sxtc(monkeypatch, terminal_phase=None)
     event = h.events[INTENTS[0]["id"]]
     with h.factory() as session:
         intent = session.get(TradeIntent, UUID(INTENTS[0]["id"]))
@@ -445,3 +454,90 @@ async def test_positive_fill_latch_never_released_even_with_local_intent_proof(m
     job = journal.change(token, job["revision"], **{filled_guard: True})
     assert h.service._rpg_release_unwired(token, job) is None
     assert journal.read(token)[filled_guard] and rpg_buy_owned(journal.read(token))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", TICKETS, ids=["Schwab-held-unknown", "Webull-price-wait"])
+async def test_recorded_sxtc_nonterminal_positive_proof_preserves_existing_serial_protocol(monkeypatch, source):
+    h = await sxtc(monkeypatch, terminal_phase=None)
+    token = UUID(source["id"])
+    journal = HandoffJournal(h.factory)
+    before = journal.read(token)
+    assert before["phase"] in {"held_unknown", "price_wait"}
+    # Positive exact durable intent proof is present, but phase is not terminal.
+    assert h.service._rpg_release_unwired(token, before) is None
+    assert journal.read(token) == before
+    state = h.strategy.watchlist_state("SXTC")
+    state.fanout_segment_id = before["segment_id"]
+    state.resting_active = state.resting_is_broker_order = state.webull_resting_active = True
+    state.resting_slot = "first"
+    generation = before["old"]["metadata"]["rpg_resting_generation"]
+    state.resting_schwab_generation = state.resting_webull_generation = generation
+    state.resting_schwab_quantity, state.resting_webull_quantity = 185, 92
+    h.strategy._rpg_handoffs = {row["id"]: deepcopy(row["payload"]) for row in TICKETS}
+    await serial_tick(h, token)
+    await h.bot._rpg_handoff_pass()
+    after = journal.read(token)
+    assert after["phase"] == ("clear" if before["phase"] == "held_unknown" else "price_wait")
+    assert "release_reason" not in after
+    assert after.get("replacement") == before.get("replacement")
+    assert rpg_buy_owned(after)
+    assert h.strategy._rpg_entry_owned(state, account=before["old"]["broker_account_name"], slot="first")
+    assert state.resting_webull_generation == generation and state.resting_webull_quantity == 92
+    if before["phase"] == "held_unknown":
+        # Existing clear authorization retires the exact old primary latch;
+        # the active ticket still owns that account and the saved replacement.
+        assert state.resting_schwab_generation == "" and state.resting_schwab_quantity == 0
+    else:
+        assert state.resting_schwab_generation == generation and state.resting_schwab_quantity == 185
+    assert not h.adapter.opens and not h.adapter.cancels and not h.adapter.reads
+    assert not h.strategy.drain_pending_intents() and not h.strategy.drain_webull_direct_intents()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["prepared", "waiting", "fills_waiting", "clear", "held_unknown",
+    "submitting", "submit_unknown", "price_wait", "placed", "filled"])
+async def test_positive_no_wire_intent_never_synthesizes_terminal_phase(monkeypatch, phase):
+    h = await sxtc(monkeypatch, terminal_phase=phase)
+    token = UUID(TICKETS[1]["id"])
+    journal = HandoffJournal(h.factory)
+    before = journal.read(token)
+    assert h.service._rpg_release_unwired(token, before) is None
+    assert journal.read(token) == before
+    assert rpg_buy_owned(before)
+    assert not h.adapter.opens
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", TICKETS, ids=["Schwab-cache-refusal", "Webull-held-replacement"])
+@pytest.mark.parametrize("terminal_phase", ["refused", "expired"])
+async def test_terminal_sxtc_absence_reads_zero_and_label_without_positive_intent_never_release(monkeypatch, source, terminal_phase):
+    h = await sxtc(monkeypatch, terminal_phase=terminal_phase)
+    token = UUID(source["id"])
+    journal = HandoffJournal(h.factory)
+    before = journal.read(token)
+    with h.factory() as session:
+        # Deliberate loss-of-proof control, not a production cleanup. Keep the
+        # exact ticket, reads=0 and no BrokerOrder while removing its positive proof.
+        session.execute(delete(TradeIntent))
+        session.commit()
+    assert before["reads"] == 0
+    assert h.service._rpg_release_unwired(token, before) is None
+    assert journal.read(token) == before
+    await serial_tick(h, token)
+    assert "release_reason" not in journal.read(token)
+    assert rpg_buy_owned(journal.read(token))
+    assert not h.adapter.opens
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", TICKETS, ids=["Schwab-held-unknown", "Webull-price-wait"])
+async def test_sxtc_terminal_copy_cannot_override_locked_nonterminal_phase(monkeypatch, source):
+    h = await sxtc(monkeypatch, terminal_phase=None)
+    token = UUID(source["id"])
+    journal = HandoffJournal(h.factory)
+    current = journal.read(token)
+    copied = {**current, "phase": "refused"}
+    assert h.service._rpg_release_unwired(token, copied) is None
+    assert journal.read(token) == current
+    assert not h.adapter.opens

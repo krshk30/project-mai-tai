@@ -1,5 +1,46 @@
 # RPGNOWIRE1 test contract
 
+## Latest reviewer terminal rule (supersedes the active-release contract below)
+
+The follow-up on 5185d6b8 requires phase refused/expired AND exact positive
+no-wire proof before the transfer. The locked journal phase must equal the
+captured phase in addition to revision CAS. Active clear/held_unknown/price_wait
+jobs retain their existing coordinator protocol. Filled, placed and uncertain
+dispatches are never inferred terminal from reads=0, a label or missing rows.
+
+Both recorded SXTC jobs are replayed unchanged in the nonterminal branch:
+primary held_unknown recovers to clear under the existing positive-intent path;
+mirror price_wait keeps waiting. They retain RPG ownership and send no BUY in
+that observed turn. Existing clear authorization can retire its matching old
+latch while the ticket still owns the account; this is not terminal release.
+Terminal refused/expired variants are explicitly controlled transitions of those
+same recordings. Real serial runtime -> bot feedback -> recorded next bar drafts
+only the released account. Saved BUY is never sent by terminal release.
+
+All existing proof, identity, Fill and retained token fences below remain.
+Repeated released-terminal delivery is idempotent. The old refusal feedback
+contract (phase refused, reason replacement_refused) is retained because the
+normal per-leg retry path requires it; an expired input was already terminal
+before that proof-only feedback is emitted.
+
+The eight legacy active-release adaptations described below have been withdrawn.
+Five files return byte-for-byte to main 1a70; loop liveness returns to main's local
+clear -> placed/expired assertions while retaining the separately disclosed wired
+control. Only two startup tests additionally evaluate the already-terminal
+local expiry, then require exact refused feedback/release reason. No blanket
+phase acceptance. The all-14, both-window census and NFQ composition remain the
+original active-protocol tests.
+
+Additional assertion controls: all ten nonterminal/filled/placed phases reject
+forced transfer; both accounts and both terminal phases refuse when the positive
+intent is removed; a terminal copy at the same revision cannot override a locked
+nonterminal row; repeat feedback cannot rewrite the release revision.
+Mutations N18/N19/N20 pin phase, idempotence and the locked phase respectively.
+
+ASSESSMENT.md and FINAL_RECEIPT_2026-10-07.md below are historical 5185d6b8
+receipts, not the follow-up verdict. TERMINAL_RULE_ASSESSMENT_2026-10-07.md is
+the new assessment; the subsequent terminal receipt supplies the final results.
+
 ## Frozen source scope
 
 Runtime proof-only release and the shared identity-bearing no-wire refusal-code

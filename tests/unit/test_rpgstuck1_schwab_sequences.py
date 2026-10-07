@@ -211,8 +211,7 @@ async def test_recorded_apus_1025_1026_1027_place_keep_reprice_to_schwab_wire(mo
     journal, token = HandoffJournal(h.factory), UUID(row["id"])
     assert len(h.cancel_reads) == 1 and len(h.wires) == 1
     local_job = next(job for _, job in journal.jobs() if job["old"]["broker_account_name"] == "live:orb")
-    assert local_job["local_no_wire"] and local_job["phase"] == "refused"
-    assert local_job["release_reason"] == "old_local_no_wire_return_to_strategy"
+    assert local_job["local_no_wire"] and local_job["phase"] == "clear"
     h.clock[0] = datetime.fromtimestamp(row["payload"]["authorization"]["at"], UTC)
     h.state.last_quote = Quote("APUS", 4.62, 4.63, 4.62, h.strategy._now_ms())
     # Exercise the real bot callback/persistence. Only the Schwab serial delivery

@@ -42,6 +42,12 @@ CASES = {
             '                    ("rpg_resting_generation", "webull_mirror_generation_id"))', 'and True')],
     },
     "N17-positive-filled-metadata": {"_rpg_persisted_local_open": [("or filled != 0", "or False")]},
+    "N18-terminal-phase-required": {"_rpg_release_unwired": [(
+        'job["phase"] not in {"refused", "expired"}', 'False')]},
+    "N19-idempotent-terminal-feedback": {"_rpg_release_unwired": [(
+        'or job.get("release_reason") == "old_local_no_wire_return_to_strategy"', 'or False')]},
+    "N20-locked-terminal-phase": {"_rpg_release_unwired": [(
+        'or row.payload["phase"] != job["phase"]', 'or False')]},
 }
 
 

@@ -348,19 +348,22 @@ class AtrRepriceRuntimeMixin:
         return job
 
     def _rpg_release_unwired(self, token, job):
-        """Transfer only positively proven, never-dispatched generations to v2.
+        """Transfer only terminal, positively proven never-wired generations to v2.
 
         Old-order proof does not prove a saved replacement. Lock the journal and
         invalidate its exact queued owner in the same transaction before feedback.
+        Active no-wire tickets continue through the existing coordinator protocol.
         """
-        if (job["phase"] not in {"clear", "held_unknown", "price_wait"}
-                or job.get("no_rebuy") or job.get("replacement_filled")):
+        if (job["phase"] not in {"refused", "expired"}
+                or job.get("no_rebuy") or job.get("replacement_filled")
+                or job.get("release_reason") == "old_local_no_wire_return_to_strategy"):
             return None
         with self.session_factory() as session:
             row = session.scalar(select(DashboardSnapshot).where(
                 DashboardSnapshot.id == token, DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
             ).with_for_update())
-            if row is None or row.payload["revision"] != job["revision"]:
+            if (row is None or row.payload["revision"] != job["revision"]
+                    or row.payload["phase"] != job["phase"]):
                 return None
 
             def proof(request):
