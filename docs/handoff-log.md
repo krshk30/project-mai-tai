@@ -7444,3 +7444,11 @@ Checkout5b8b and exactlyfour env additions applied; no migration/DBedit/recovery
 Asked user for narrow proof-first continuation, no blanket freshness waiver or
 manual start. No COMPLETE, post-start flags/numeric, preopen re-pin or timer.
 Logsha c328dfd994a01236a00fd229ae68b8792baffc22cb077dff5d20c074110d84fd.
+
+2026-10-06 21:53 ET codex-2 C121: direct user approved OMS-first continuation,
+freshness only after OMS up and checkout4805 fallback only on failed start.
+Committed92aeec69, two tests PASS, staged87f8d622 hash verified. Original
+release3a55a2ee and all32 bytes verified; original STOP remains intact.
+OMS626190 active/start21:53:03ET/NRestarts0, live:orb syncok1/failed0.
+Freshness gates now run with their actual writer active. Attended sequence
+continues v2/strategy/control/proofs/preopen daily timer; no COMPLETE claim.
