@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from project_mai_tai.momentum_paper.models import MOMENTUM_ACCOUNT_NAME
-from project_mai_tai.orb_paper_store import ORB_PAPER_ACCOUNT_NAME
 from project_mai_tai.settings import Settings
 
 
@@ -144,35 +143,12 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                 },
             )
         )
-    if settings.orb_enabled:
-        registrations.append(
-            StrategyRegistration(
-                code="orb",
-                display_name="ORB Bot",
-                account_name=ORB_PAPER_ACCOUNT_NAME,
-                interval_secs=60,
-                runtime_kind="orb_paper",
-                execution_mode="paper",
-                metadata={
-                    "account_name": ORB_PAPER_ACCOUNT_NAME,
-                    "account_display_name": "Paper Simulation",
-                    "interval_secs": 60,
-                    "runtime_kind": "orb_paper",
-                    "provider": "none",
-                    "market_data_provider": settings.market_data_provider_for_strategy("orb"),
-                    # Isolated process (project-mai-tai-orb); the strategy-engine
-                    # must not run it. Registered here only so the control-plane
-                    # dashboard renders its card + detail page.
-                    "isolated_service": True,
-                },
-            )
-        )
     if settings.orb_enabled and settings.orb_live_schwab_orders_enabled:
         account_name = settings.strategy_schwab_1m_v2_account_name
         registrations.append(
             StrategyRegistration(
                 code="orb_schwab",
-                display_name="ORB Schwab Live",
+                display_name="ORB Live",
                 account_name=account_name,
                 interval_secs=60,
                 runtime_kind="orb_schwab",
