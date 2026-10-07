@@ -353,7 +353,10 @@ def test_all_on_catalog_audit_committed_live_set_requires_both_consumers():
     flags = json.loads((root / "ops/health/expected_flags.json").read_text())["flags"]
     numeric = json.loads((root / "ops/health/expected_numeric.json").read_text())["settings"]
     by_name = {entry["name"]: entry for entry in flags}
-    mismatches = {key for key in ALL_ON if by_name[key]["expected"] is not True}
+    # Keep the all-on behavior fixture; the installed RPG1 ruling is OFF.
+    live_set = {**ALL_ON, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": False}
+    mismatches = {key for key, expected in live_set.items()
+                  if by_name[key]["expected"] is not expected}
     assert mismatches == set()
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 151
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["expected"] is True

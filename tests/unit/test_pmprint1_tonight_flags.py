@@ -99,7 +99,10 @@ def test_s5_tonight_pm_rest_off_keeps_recorded_saiq_disarm_rearm():
 def test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on():
     catalog = json.loads((Path(__file__).parents[2] / "ops/health/expected_flags.json").read_text())
     flags = {entry["name"]: entry["expected"] for entry in catalog["flags"]}
-    assert {key: flags[key] for key in TONIGHT} == {key: True for key in TONIGHT}
+    # The historical behavior fixture is separate from the live RPG1 OFF ruling.
+    live_set = {key: key != "strategy_schwab_1m_v2_atr_reprice_handoff_enabled"
+                for key in TONIGHT}
+    assert {key: flags[key] for key in live_set} == live_set
     numeric = json.loads((Path(__file__).parents[2] / "ops/health/expected_numeric.json").read_text())
     entries = catalog["flags"] + numeric["settings"]
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 159
