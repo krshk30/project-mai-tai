@@ -1,12 +1,12 @@
 F                                                                        [100%]
 =================================== FAILURES ===================================
 ____ test_stale_drift_cache_revalidates_terminal_order_before_broker_cancel ____
-tests/unit/test_hotfix1_symbol_tick_cache.py:242: in test_stale_drift_cache_revalidates_terminal_order_before_broker_cancel
+tests/unit/test_hotfix1_symbol_tick_cache.py:244: in test_stale_drift_cache_revalidates_terminal_order_before_broker_cancel
     assert not adapter.requests
 E   AssertionError: assert not [OrderRequest(client_order_id='LASE-target-1', broker_account_name='live:schwab_1m_v2', strategy_code='schwab_1m_v2', ...detail': 'quote drift 0.0c past limit (tolerance 1.0c); ask/bid moved away'}, order_type='limit', time_in_force='day')]
-E    +  where [OrderRequest(client_order_id='LASE-target-1', broker_account_name='live:schwab_1m_v2', strategy_code='schwab_1m_v2', ...detail': 'quote drift 0.0c past limit (tolerance 1.0c); ask/bid moved away'}, order_type='limit', time_in_force='day')] = <tests.unit.test_oms_direct_cancel_dead_target_bound._DirectCancelAdapter object at 0x10ac42780>.requests
+E    +  where [OrderRequest(client_order_id='LASE-target-1', broker_account_name='live:schwab_1m_v2', strategy_code='schwab_1m_v2', ...detail': 'quote drift 0.0c past limit (tolerance 1.0c); ask/bid moved away'}, order_type='limit', time_in_force='day')] = <tests.unit.test_oms_direct_cancel_dead_target_bound._DirectCancelAdapter object at 0x10da5bd70>.requests
 ----------------------------- Captured stdout call -----------------------------
-2026-10-07 11:02:43,538 INFO [oms-risk] [OMS-ABANDON-INTENT] code=QUOTE_DRIFT_CANCEL symbol=BIYA strategy=schwab_1m_v2 side=buy intent_age_s=10964958.9 limit=2.55 reason=quote drift 0.0c past limit (tolerance 1.0c); ask/bid moved away
+2026-10-07 11:28:43,995 INFO [oms-risk] [OMS-ABANDON-INTENT] code=QUOTE_DRIFT_CANCEL symbol=BIYA strategy=schwab_1m_v2 side=buy intent_age_s=10966519.3 limit=2.55 reason=quote drift 0.0c past limit (tolerance 1.0c); ask/bid moved away
 =========================== short test summary info ============================
 FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_stale_drift_cache_revalidates_terminal_order_before_broker_cancel
-1 failed, 23 deselected in 0.15s
+1 failed, 36 deselected in 0.18s

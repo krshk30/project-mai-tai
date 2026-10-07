@@ -1,0 +1,18 @@
+..F.                                                                     [100%]
+=================================== FAILURES ===================================
+___ test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work[retired] ___
+tests/unit/test_hotfix1_symbol_tick_cache.py:420: in test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work
+    assert not service.__dict__.get("_symbol_tick_work")
+E   AssertionError: assert not {('legacy-mirror', 'SXTC'): <Task pending name='Task-6' coro=<OmsRiskService._schedule_symbol_tick_work.<locals>.execu...t /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:15848>>}
+E    +  where {('legacy-mirror', 'SXTC'): <Task pending name='Task-6' coro=<OmsRiskService._schedule_symbol_tick_work.<locals>.execu...t /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:15848>>} = <built-in method get of dict object at 0x109410840>('_symbol_tick_work')
+E    +    where <built-in method get of dict object at 0x109410840> = {'_a2_escalated': set(), '_a2_last_probe': {}, '_a2_not_sellable_since': {}, '_armed_hard_stops': {}, ...}.get
+E    +      where {'_a2_escalated': set(), '_a2_last_probe': {}, '_a2_not_sellable_since': {}, '_armed_hard_stops': {}, ...} = <project_mai_tai.oms.service.OmsRiskService object at 0x109857d10>.__dict__
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:28:55,844 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+2026-10-07 11:28:55,849 INFO [oms-risk] [OMS-WEBULL-MIRROR-DEFERRED] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 decision=queued attempt=1/3 market=3.23 market_source=ask stop=3.2300 threshold=2.971600 - polarity: queued means no broker await occurred on the market-tick task; the serial intent lane owns submission
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+INFO     oms-risk:service.py:14013 [OMS-WEBULL-MIRROR-DEFERRED] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 decision=queued attempt=1/3 market=3.23 market_source=ask stop=3.2300 threshold=2.971600 - polarity: queued means no broker await occurred on the market-tick task; the serial intent lane owns submission
+=========================== short test summary info ============================
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work[retired]
+1 failed, 3 passed, 33 deselected in 0.49s

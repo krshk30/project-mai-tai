@@ -1,10 +1,10 @@
 F                                                                        [100%]
 =================================== FAILURES ===================================
 __________ test_broker_sync_refreshes_detached_working_order_snapshot __________
-tests/unit/test_hotfix1_symbol_tick_cache.py:271: in test_broker_sync_refreshes_detached_working_order_snapshot
+tests/unit/test_hotfix1_symbol_tick_cache.py:273: in test_broker_sync_refreshes_detached_working_order_snapshot
     assert service._drift_working_by_symbol["BIYA"][0].limit_price == "2.55"
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E   AttributeError: 'OmsRiskService' object has no attribute '_drift_working_by_symbol'
 =========================== short test summary info ============================
 FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_broker_sync_refreshes_detached_working_order_snapshot
-1 failed, 23 deselected in 0.20s
+1 failed, 36 deselected in 0.23s

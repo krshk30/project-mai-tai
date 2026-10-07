@@ -1,14 +1,14 @@
 F                                                                        [100%]
 =================================== FAILURES ===================================
 ____________ test_shutdown_drains_db_and_invalidates_reserved_token ____________
-tests/unit/test_hotfix1_symbol_tick_cache.py:206: in test_shutdown_drains_db_and_invalidates_reserved_token
+tests/unit/test_hotfix1_symbol_tick_cache.py:208: in test_shutdown_drains_db_and_invalidates_reserved_token
     assert not queued(lane)
-E   AssertionError: assert not [TradeIntentEvent(event_id=UUID('0ce6fe0d-5dd4-4bae-a7b3-9ae4436ed733'), event_type='trade_intent', source_service='om...-open-5a5c116269bf', 'mirrorhold_token': '4ba05f6f-52f9-4ea5-a193-5e306d8de44e', 'webull_deferred_resubmit': 'true'}))]
-E    +  where [TradeIntentEvent(event_id=UUID('0ce6fe0d-5dd4-4bae-a7b3-9ae4436ed733'), event_type='trade_intent', source_service='om...-open-5a5c116269bf', 'mirrorhold_token': '4ba05f6f-52f9-4ea5-a193-5e306d8de44e', 'webull_deferred_resubmit': 'true'}))] = queued((<project_mai_tai.oms.service.OmsRiskService object at 0x10b204b60>, <tests.unit.test_webull_adapter._FakeClient objec...flush=True, expire_on_commit=False), [datetime.datetime(2026, 10, 7, 13, 42, 5, 944542, tzinfo=datetime.timezone.utc)]))
+E   AssertionError: assert not [TradeIntentEvent(event_id=UUID('f6fae2b4-ee1d-47d7-aa4c-bbd20d96fc78'), event_type='trade_intent', source_service='om...-open-5a5c116269bf', 'mirrorhold_token': 'c323d420-2e10-4e0a-a5fa-698cdf4fecb9', 'webull_deferred_resubmit': 'true'}))]
+E    +  where [TradeIntentEvent(event_id=UUID('f6fae2b4-ee1d-47d7-aa4c-bbd20d96fc78'), event_type='trade_intent', source_service='om...-open-5a5c116269bf', 'mirrorhold_token': 'c323d420-2e10-4e0a-a5fa-698cdf4fecb9', 'webull_deferred_resubmit': 'true'}))] = queued((<project_mai_tai.oms.service.OmsRiskService object at 0x10b9c65a0>, <tests.unit.test_webull_adapter._FakeClient objec...flush=True, expire_on_commit=False), [datetime.datetime(2026, 10, 7, 13, 42, 5, 944542, tzinfo=datetime.timezone.utc)]))
 ----------------------------- Captured stdout call -----------------------------
-2026-10-07 11:02:40,300 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+2026-10-07 11:28:40,388 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
 ------------------------------ Captured log call -------------------------------
 INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
 =========================== short test summary info ============================
 FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_shutdown_drains_db_and_invalidates_reserved_token
-1 failed, 23 deselected in 0.23s
+1 failed, 36 deselected in 0.23s

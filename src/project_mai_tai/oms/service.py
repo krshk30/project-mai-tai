@@ -13935,10 +13935,9 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
 
     def _schedule_webull_mirror_tick(self, symbol: str) -> None:
         symbol = symbol.upper()
-        if self._mirrorhold_enabled():
+        if self._mirrorhold_new_enabled():
             self._mirrorhold_schedule(symbol)
-            if self._mirrorhold_new_enabled():
-                return
+            return
         if any(state.symbol == symbol and not self._mirrorhold_scope(state.event)
                for state in tuple(self.__dict__.get("_webull_mirror_deferred_by_slot", {}).values())):
             self._schedule_symbol_tick_work(("legacy-mirror", symbol),

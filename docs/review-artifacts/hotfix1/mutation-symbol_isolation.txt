@@ -1,23 +1,23 @@
 F                                                                        [100%]
 =================================== FAILURES ===================================
 _______ test_unrelated_empty_outside_and_rpg_owned_ticks_make_no_db_call _______
-tests/unit/test_hotfix1_symbol_tick_cache.py:120: in test_unrelated_empty_outside_and_rpg_owned_ticks_make_no_db_call
+tests/unit/test_hotfix1_symbol_tick_cache.py:122: in test_unrelated_empty_outside_and_rpg_owned_ticks_make_no_db_call
     assert not service.__dict__.get("_symbol_tick_work")
-E   AssertionError: assert not {('mirrorhold', 'OTHER'): <Task pending name='Task-2' coro=<OmsRiskService._schedule_symbol_tick_work.<locals>.execute...t /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:15849>>}
-E    +  where {('mirrorhold', 'OTHER'): <Task pending name='Task-2' coro=<OmsRiskService._schedule_symbol_tick_work.<locals>.execute...t /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:15849>>} = <built-in method get of dict object at 0x1090f1700>('_symbol_tick_work')
-E    +    where <built-in method get of dict object at 0x1090f1700> = {'_a2_escalated': set(), '_a2_last_probe': {}, '_a2_not_sellable_since': {}, '_armed_hard_stops': {}, ...}.get
-E    +      where {'_a2_escalated': set(), '_a2_last_probe': {}, '_a2_not_sellable_since': {}, '_armed_hard_stops': {}, ...} = <project_mai_tai.oms.service.OmsRiskService object at 0x1090950a0>.__dict__
+E   AssertionError: assert not {('mirrorhold', 'OTHER'): <Task pending name='Task-2' coro=<OmsRiskService._schedule_symbol_tick_work.<locals>.execute...t /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:15848>>}
+E    +  where {('mirrorhold', 'OTHER'): <Task pending name='Task-2' coro=<OmsRiskService._schedule_symbol_tick_work.<locals>.execute...t /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:15848>>} = <built-in method get of dict object at 0x108fcff00>('_symbol_tick_work')
+E    +    where <built-in method get of dict object at 0x108fcff00> = {'_a2_escalated': set(), '_a2_last_probe': {}, '_a2_not_sellable_since': {}, '_armed_hard_stops': {}, ...}.get
+E    +      where {'_a2_escalated': set(), '_a2_last_probe': {}, '_a2_not_sellable_since': {}, '_armed_hard_stops': {}, ...} = <project_mai_tai.oms.service.OmsRiskService object at 0x10892d9a0>.__dict__
 ----------------------------- Captured stdout call -----------------------------
-2026-10-07 11:02:35,674 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+2026-10-07 11:28:35,770 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
 ------------------------------ Captured log call -------------------------------
 INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
 --------------------------- Captured stdout teardown ---------------------------
-2026-10-07 11:02:35,705 ERROR [asyncio] Task exception was never retrieved
-future: <Task finished name='Task-2' coro=<OmsRiskService._schedule_symbol_tick_work.<locals>.execute() done, defined at /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:15849> exception=tick opened a DB session>
+2026-10-07 11:28:35,805 ERROR [asyncio] Task exception was never retrieved
+future: <Task finished name='Task-2' coro=<OmsRiskService._schedule_symbol_tick_work.<locals>.execute() done, defined at /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:15848> exception=tick opened a DB session>
 Traceback (most recent call last):
-  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py", line 15851, in execute
+  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py", line 15850, in execute
     await work()
-  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/mirror_retained_hold.py", line 602, in _mirrorhold_evaluate_off_loop
+  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/mirror_retained_hold.py", line 620, in _mirrorhold_evaluate_off_loop
     queued = await asyncio.to_thread(self._mirrorhold_prepare_queue, symbol, keys)
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py", line 25, in to_thread
@@ -26,10 +26,10 @@ Traceback (most recent call last):
   File "/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
     result = self.fn(*self.args, **self.kwargs)
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/mirror_retained_hold.py", line 628, in _mirrorhold_prepare_queue
+  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/mirror_retained_hold.py", line 646, in _mirrorhold_prepare_queue
     with self.session_factory() as session:
          ^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/tests/unit/test_hotfix1_symbol_tick_cache.py", line 116, in <lambda>
+  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/tests/unit/test_hotfix1_symbol_tick_cache.py", line 118, in <lambda>
     monkeypatch.setattr(service, "session_factory", lambda: pytest.fail("tick opened a DB session"))
                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/_pytest/outcomes.py", line 177, in fail
@@ -37,11 +37,11 @@ Traceback (most recent call last):
 Failed: tick opened a DB session
 ---------------------------- Captured log teardown -----------------------------
 ERROR    asyncio:base_events.py:1833 Task exception was never retrieved
-future: <Task finished name='Task-2' coro=<OmsRiskService._schedule_symbol_tick_work.<locals>.execute() done, defined at /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:15849> exception=tick opened a DB session>
+future: <Task finished name='Task-2' coro=<OmsRiskService._schedule_symbol_tick_work.<locals>.execute() done, defined at /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:15848> exception=tick opened a DB session>
 Traceback (most recent call last):
-  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py", line 15851, in execute
+  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py", line 15850, in execute
     await work()
-  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/mirror_retained_hold.py", line 602, in _mirrorhold_evaluate_off_loop
+  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/mirror_retained_hold.py", line 620, in _mirrorhold_evaluate_off_loop
     queued = await asyncio.to_thread(self._mirrorhold_prepare_queue, symbol, keys)
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py", line 25, in to_thread
@@ -50,10 +50,10 @@ Traceback (most recent call last):
   File "/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
     result = self.fn(*self.args, **self.kwargs)
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/mirror_retained_hold.py", line 628, in _mirrorhold_prepare_queue
+  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/mirror_retained_hold.py", line 646, in _mirrorhold_prepare_queue
     with self.session_factory() as session:
          ^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/tests/unit/test_hotfix1_symbol_tick_cache.py", line 116, in <lambda>
+  File "/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/tests/unit/test_hotfix1_symbol_tick_cache.py", line 118, in <lambda>
     monkeypatch.setattr(service, "session_factory", lambda: pytest.fail("tick opened a DB session"))
                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/_pytest/outcomes.py", line 177, in fail
@@ -61,4 +61,4 @@ Traceback (most recent call last):
 Failed: tick opened a DB session
 =========================== short test summary info ============================
 FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_unrelated_empty_outside_and_rpg_owned_ticks_make_no_db_call
-1 failed, 23 deselected in 0.22s
+1 failed, 36 deselected in 0.24s

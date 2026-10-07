@@ -1,7 +1,7 @@
 F                                                                        [100%]
 =================================== FAILURES ===================================
 _________ test_generic_worker_dedup_allows_one_active_task_per_symbol __________
-tests/unit/test_hotfix1_symbol_tick_cache.py:328: in test_generic_worker_dedup_allows_one_active_task_per_symbol
+tests/unit/test_hotfix1_symbol_tick_cache.py:330: in test_generic_worker_dedup_allows_one_active_task_per_symbol
     assert calls == ["started"]
 E   AssertionError: assert ['started', '...started', ...] == ['started']
 E     
@@ -9,7 +9,7 @@ E     Left contains 99 more items, first extra item: 'started'
 E     Use -v to get more diff
 =========================== short test summary info ============================
 FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_generic_worker_dedup_allows_one_active_task_per_symbol
-1 failed, 23 deselected in 0.20s
+1 failed, 36 deselected in 0.25s
 --- Logging error ---
 Traceback (most recent call last):
   File "/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/logging/__init__.py", line 1163, in emit

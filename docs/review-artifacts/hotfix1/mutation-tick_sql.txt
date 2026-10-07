@@ -1,23 +1,23 @@
 F                                                                        [100%]
 =================================== FAILURES ===================================
 _______ test_unrelated_empty_outside_and_rpg_owned_ticks_make_no_db_call _______
-tests/unit/test_hotfix1_symbol_tick_cache.py:118: in test_unrelated_empty_outside_and_rpg_owned_ticks_make_no_db_call
+tests/unit/test_hotfix1_symbol_tick_cache.py:120: in test_unrelated_empty_outside_and_rpg_owned_ticks_make_no_db_call
     service._schedule_webull_mirror_tick("OTHER")
 src/project_mai_tai/oms/service.py:13939: in _schedule_webull_mirror_tick
     self._mirrorhold_schedule(symbol)
 <HOTFIX1 tick_sql>:2: in _mirrorhold_schedule
     ???
-src/project_mai_tai/oms/mirror_retained_hold.py:628: in _mirrorhold_prepare_queue
+src/project_mai_tai/oms/mirror_retained_hold.py:646: in _mirrorhold_prepare_queue
     with self.session_factory() as session:
          ^^^^^^^^^^^^^^^^^^^^^^
-tests/unit/test_hotfix1_symbol_tick_cache.py:116: in <lambda>
+tests/unit/test_hotfix1_symbol_tick_cache.py:118: in <lambda>
     monkeypatch.setattr(service, "session_factory", lambda: pytest.fail("tick opened a DB session"))
                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E   Failed: tick opened a DB session
 ----------------------------- Captured stdout call -----------------------------
-2026-10-07 11:02:31,301 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+2026-10-07 11:28:30,926 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
 ------------------------------ Captured log call -------------------------------
 INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
 =========================== short test summary info ============================
 FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_unrelated_empty_outside_and_rpg_owned_ticks_make_no_db_call
-1 failed, 23 deselected in 0.35s
+1 failed, 36 deselected in 0.39s

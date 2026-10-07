@@ -1,5 +1,26 @@
 # HOTFIX1 independent Step 0
 
+## October 7 rollback addendum
+
+AGREE from my own source read: the startup query selected every retained
+snapshot phase and put every ID into the ownership set. Tick admission used
+that set as an alternative to the flag, so OFF was not inert. The recorded
+SXTC event from my own pull is replayed with explicitly controlled lifecycle
+phases; these mutations are not claimed as additional historical events.
+
+Correction: startup restores only held/queued opportunities. A separate
+serial-only fence retains uncertain dispatch proof (including a retired row
+with unresolved dispatch); dropping that proof would risk a duplicate buy.
+The flag directly gates both retained tick entry points, independently of
+rows or fences. Periodic retirement and serial reconciliation remain safe.
+Committed terminal rows lose both their opportunity membership and any
+stale deferred projection; otherwise OFF could turn that projection into a
+legacy retry. Ownership publication is commit-only, not pre-commit.
+
+The archived production row is untouched. Performance, full-suite and
+assertion-level mutation receipts for this follow-up are recorded separately
+in VALIDATION.md. A fresh exact-head review/pin is required; no deploy or merge.
+
 Assessment reported before the first source edit on 2026-10-07. The parent
 received the assessment after edits had started; implementation was paused
 until the parent acknowledged it and released the scoped work again.

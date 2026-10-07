@@ -19,6 +19,13 @@ CASES = {
     "sync_refresh": "broker_sync_refreshes",
     "drift_revalidate": "stale_drift_cache",
     "dirty_wakeup": "last_tick_new_committed",
+    "restore_all_phases": "startup_restores_only_held_queued",
+    "off_outer_owner_bypass": "flag_off_recorded_sxtc_rows",
+    "off_inner_owner_bypass": "flag_off_recorded_sxtc_rows",
+    "terminal_owner_leak": "each_committed_owner_phase",
+    "discard_uncertain_fence": "uncertain_wire_is_serial_fence",
+    "off_nfq_retained_scan": "flag_off_recorded_sxtc_rows",
+    "terminal_projection_leak": "flag_off_recorded_sxtc_rows",
 }
 
 directory = Path(__file__).parent

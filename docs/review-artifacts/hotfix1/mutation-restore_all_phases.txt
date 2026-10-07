@@ -1,0 +1,64 @@
+..FFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_recorded_sxtc_startup_restores_only_held_queued_opportunities[retired] __
+tests/unit/test_hotfix1_symbol_tick_cache.py:386: in test_recorded_sxtc_startup_restores_only_held_queued_opportunities
+    assert projected == (["held"] if active else [])
+E   AssertionError: assert ['retired'] == []
+E     
+E     Left contains one more item: 'retired'
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:28:47,294 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+__ test_recorded_sxtc_startup_restores_only_held_queued_opportunities[filled] __
+tests/unit/test_hotfix1_symbol_tick_cache.py:386: in test_recorded_sxtc_startup_restores_only_held_queued_opportunities
+    assert projected == (["held"] if active else [])
+E   AssertionError: assert ['filled'] == []
+E     
+E     Left contains one more item: 'filled'
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:28:47,416 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+_ test_recorded_sxtc_startup_restores_only_held_queued_opportunities[accepted] _
+tests/unit/test_hotfix1_symbol_tick_cache.py:386: in test_recorded_sxtc_startup_restores_only_held_queued_opportunities
+    assert projected == (["held"] if active else [])
+E   AssertionError: assert ['accepted'] == []
+E     
+E     Left contains one more item: 'accepted'
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:28:47,513 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+__ test_recorded_sxtc_startup_restores_only_held_queued_opportunities[capped] __
+tests/unit/test_hotfix1_symbol_tick_cache.py:386: in test_recorded_sxtc_startup_restores_only_held_queued_opportunities
+    assert projected == (["held"] if active else [])
+E   AssertionError: assert ['capped'] == []
+E     
+E     Left contains one more item: 'capped'
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:28:47,611 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+_ test_recorded_sxtc_startup_restores_only_held_queued_opportunities[prepared] _
+tests/unit/test_hotfix1_symbol_tick_cache.py:386: in test_recorded_sxtc_startup_restores_only_held_queued_opportunities
+    assert projected == (["held"] if active else [])
+E   AssertionError: assert ['prepared'] == []
+E     
+E     Left contains one more item: 'prepared'
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:28:47,711 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+=========================== short test summary info ============================
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_recorded_sxtc_startup_restores_only_held_queued_opportunities[retired]
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_recorded_sxtc_startup_restores_only_held_queued_opportunities[filled]
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_recorded_sxtc_startup_restores_only_held_queued_opportunities[accepted]
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_recorded_sxtc_startup_restores_only_held_queued_opportunities[capped]
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_recorded_sxtc_startup_restores_only_held_queued_opportunities[prepared]
+5 failed, 2 passed, 30 deselected in 0.83s
