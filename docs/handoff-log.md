@@ -7308,3 +7308,18 @@ Cleanup requested in PR comment6028051703, no ledger/verifier mutation or check
 bypass. Main526 unchanged; one-at-a-time rule means #1104 is not rebased before
 #1106 merges. No Install2 service action or timer installation. Sole-writer
 runner and LINESRC1 lanes continue; they cannot replace missing hosted pin.
+
+2026-10-06 20:30 ET codex-2 C109: #1106 exact0ca merged after fresh hosted
+pin and both Validate green. Mainf80a9c4af5e79beaa214e99f448bfe408c596df1,
+whole0903ab670a7f22ab890aed60c80310c9ee3f4855 tree equals pinned0ca.
+#1104 alone rebased onto that main, published4343c9bd66a5c1c34a13bfe5b1978aec5be5d40a
+with exact lease. One conflict in ALL-ON catalog test retained upstream
+retained-hold expected=true assertion. Source/ops unified-zero additions and
+deletions byte-identical to original4805..030df3d2; tests range differs because
+upstream already carries former count increments. Fresh run153PASS5FAIL3.54s,
+all five failures exact catalog counts now145 boolean/153 total/132 entries.
+PRcomment6028130949 discloses all names and narrow test-only refresh needed;
+no silent assertion changes under byte-identical instruction. #1099/#1105/
+#1101 not rebased before #1104 merge. No Install2 production action or timer
+install; production4805 retained. Missing counts are integration bookkeeping,
+not an added install gate or trading blocker, but CI must be green for merge.
