@@ -1,0 +1,47 @@
+2026-10-07 14:43:22,862 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+F
+=================================== FAILURES ===================================
+_______ test_combined_slow_eligible_persistence_offloop_duplicate_quotes _______
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10b83da30>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bab5e20>
+
+    @pytest.mark.asyncio
+    async def test_combined_slow_eligible_persistence_offloop_duplicate_quotes(service, monkeypatch):
+        await configured(service)
+        active = hold(service, biya())
+        original = service._nfq2_transition
+        started = Event()
+        transitions = []
+    
+        def slow(*args, **kwargs):
+            transitions.append(get_ident())
+            started.set()
+            sleep(0.15)
+            return original(*args, **kwargs)
+    
+        monkeypatch.setattr(service, "_nfq2_transition", slow)
+        meter = Meter(service, monkeypatch)
+        event = tick()
+        first = asyncio.create_task(tagged("eligible", service._handle_quote_tick_event, event))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            gate_start_utc = datetime.now(UTC).isoformat()
+            begin = monotonic()
+            await asyncio.gather(*(tagged("duplicate", service._handle_quote_tick_event, event)
+                                   for _ in range(1000)))
+            duplicate_seconds = monotonic() - begin
+            gate_end_utc = datetime.now(UTC).isoformat()
+            await asyncio.wait_for(first, 2)
+            assert duplicate_seconds < 0.05
+>           assert transitions and all(thread != meter.loop_thread for thread in transitions)
+E           assert ([8158052224] and False)
+E            +  where False = all(<generator object test_combined_slow_eligible_persistence_offloop_duplicate_quotes.<locals>.<genexpr> at 0x10bc95e50>)
+
+tests/unit/test_nfq2_hotfix1_combined_proof.py:170: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_hotfix1_combined_proof.py::test_combined_slow_eligible_persistence_offloop_duplicate_quotes
+1 failed in 0.28s
+MUTATION nfq-eligible-loop-sql pytest_rc=1 RED

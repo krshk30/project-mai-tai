@@ -1,0 +1,31 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ test_nfq2_worker_cas_refuses_retired_generation_without_feedback _______
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10983d760>
+
+    def test_nfq2_worker_cas_refuses_retired_generation_without_feedback(service):
+        event = biya()
+        active = hold(service, event)
+        before = service._nfq2_copy(active)
+        after = service._nfq2_copy(active, phase="queued", token="stale-save")
+        cancel = event.model_copy(deep=True)
+        cancel.payload.intent_type = "cancel"
+        service._nfq2_observe(cancel)
+        with service.session_factory() as session:
+>           assert not service._nfq2_transition(session, before, after)
+E           AssertionError: assert not True
+E            +  where True = _nfq2_transition(<sqlalchemy.orm.session.Session object at 0x109911ac0>, EhHold(event=TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source...174bd997-c780-41ac-b587-cd5123f433c6'), intent_id=UUID('f4213e55-89f9-46a7-8ec8-e81000c5424b'), phase='held', token=''), EhHold(event=TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source...0-41ac-b587-cd5123f433c6'), intent_id=UUID('f4213e55-89f9-46a7-8ec8-e81000c5424b'), phase='queued', token='stale-save'))
+E            +    where _nfq2_transition = <project_mai_tai.oms.service.OmsRiskService object at 0x10983d760>._nfq2_transition
+
+tests/unit/test_nfq2_tick_path.py:150: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:44:41,223 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:44:41,225 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=v2_cancel ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=rejected_client_abort reason=v2_cancel ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_tick_path.py::test_nfq2_worker_cas_refuses_retired_generation_without_feedback
+1 failed in 0.25s
+MUTATION N15 pytest_rc=1 RED

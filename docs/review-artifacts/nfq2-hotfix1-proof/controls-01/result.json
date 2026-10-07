@@ -1,0 +1,116 @@
+{
+  "head": "a5479b42ac633f144d70930b44e99d5417c86d10",
+  "tree": "8736a3d0df5b327b540690f3eca8c5882c39fbb0",
+  "end_utc": "2026-10-07T18:43:40.483486+00:00",
+  "files_and_head_unchanged": true,
+  "runs": [
+    {
+      "name": "nfq-tick-sql",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "controls-01",
+        "--mutation-child",
+        "nfq-tick-sql"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:43:21.132817+00:00",
+      "command_end_utc": "2026-10-07T18:43:22.273936+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/controls-01/nfq-tick-sql.txt",
+      "sha256": "482eec6e1337b94d41a617b913ad602cb72d2539f5bb595c6275804d6d8fba48",
+      "metrics": []
+    },
+    {
+      "name": "nfq-eligible-loop-sql",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "controls-01",
+        "--mutation-child",
+        "nfq-eligible-loop-sql"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:43:22.274383+00:00",
+      "command_end_utc": "2026-10-07T18:43:23.262919+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/controls-01/nfq-eligible-loop-sql.txt",
+      "sha256": "4a625a159184d9365912d55fea0a8eef8533755c0278ae79933f74fd6f9ad40f",
+      "metrics": []
+    },
+    {
+      "name": "drift-tick-sql",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "controls-01",
+        "--mutation-child",
+        "drift-tick-sql"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:43:23.263278+00:00",
+      "command_end_utc": "2026-10-07T18:43:24.356861+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/controls-01/drift-tick-sql.txt",
+      "sha256": "04da9d7db4e1e62c1e229be055abe1a1cc23d2ec5f8453da00f7b9ee9717f14e",
+      "metrics": []
+    },
+    {
+      "name": "irrelevant-symbol-read",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "controls-01",
+        "--mutation-child",
+        "irrelevant-symbol-read"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:43:24.357445+00:00",
+      "command_end_utc": "2026-10-07T18:43:25.192305+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/controls-01/irrelevant-symbol-read.txt",
+      "sha256": "aebff669bb7cfb08ba813684e0e2ed1156e235f5341d340c3931d3ab3d2966e0",
+      "metrics": []
+    },
+    {
+      "name": "duplicate-inflight",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "controls-01",
+        "--mutation-child",
+        "duplicate-inflight"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:43:25.192848+00:00",
+      "command_end_utc": "2026-10-07T18:43:37.538659+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/controls-01/duplicate-inflight.txt",
+      "sha256": "1ed2de3d0db58e9d07dba3feaad24b36b2419420af6356b0af0d735a7360e92a",
+      "metrics": []
+    },
+    {
+      "name": "drift-disabled",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/run_proof.py",
+        "controls",
+        "--label",
+        "controls-01",
+        "--mutation-child",
+        "drift-disabled"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:43:37.540748+00:00",
+      "command_end_utc": "2026-10-07T18:43:40.461822+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/controls-01/drift-disabled.txt",
+      "sha256": "216024c534d7fda0b2b5ca78ffdf95bf3731df4d7aa20201fea8b070fd6c2093",
+      "metrics": []
+    }
+  ]
+}

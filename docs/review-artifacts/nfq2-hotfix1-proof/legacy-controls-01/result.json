@@ -1,0 +1,246 @@
+{
+  "head": "a5479b42ac633f144d70930b44e99d5417c86d10",
+  "tree": "8736a3d0df5b327b540690f3eca8c5882c39fbb0",
+  "end_utc": "2026-10-07T18:44:43.605347+00:00",
+  "files_and_head_unchanged": true,
+  "runs": [
+    {
+      "name": "N1",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N1"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:16.393224+00:00",
+      "command_end_utc": "2026-10-07T18:44:17.300962+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N1.txt",
+      "sha256": "fb8ade1f2076d2c1f43ddaa11593f6c0ddb3163cfa5e6edf720abc72bfd82aa1",
+      "metrics": []
+    },
+    {
+      "name": "N2",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N2"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:17.301357+00:00",
+      "command_end_utc": "2026-10-07T18:44:18.152832+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N2.txt",
+      "sha256": "eb57ce5f09bd4ad97de6acc194ef2a72fc3852368e0b4c79d6e0a52516c097b7",
+      "metrics": []
+    },
+    {
+      "name": "N3",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N3"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:18.153372+00:00",
+      "command_end_utc": "2026-10-07T18:44:19.092021+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N3.txt",
+      "sha256": "b0a7c54d2c0184d0ea30f658a8e8fda16d8e578c5813efb4689fc7cb899bf5ff",
+      "metrics": []
+    },
+    {
+      "name": "N4",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N4"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:19.092532+00:00",
+      "command_end_utc": "2026-10-07T18:44:19.954779+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N4.txt",
+      "sha256": "06036bb4a6b22053604a4252e3e70d33d7b485281ec1eede3359c320b4471071",
+      "metrics": []
+    },
+    {
+      "name": "N5",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N5"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:19.955134+00:00",
+      "command_end_utc": "2026-10-07T18:44:20.844953+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N5.txt",
+      "sha256": "0c09befc09ad6e034ced0fc9398b24b96dff7ef0b1ca626d16b26193ad0bf446",
+      "metrics": []
+    },
+    {
+      "name": "N6",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N6"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:20.845279+00:00",
+      "command_end_utc": "2026-10-07T18:44:21.861302+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N6.txt",
+      "sha256": "9dc0a3896f0273bd3dadc824853e6e802f3a35748db0f94764486028506fee11",
+      "metrics": []
+    },
+    {
+      "name": "N7",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N7"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:21.861708+00:00",
+      "command_end_utc": "2026-10-07T18:44:22.873370+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N7.txt",
+      "sha256": "dd395d3225753b75e00368aab50a0114ef9a624c0177a850e7f614b2c7ad113b",
+      "metrics": []
+    },
+    {
+      "name": "N8",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N8"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:22.873766+00:00",
+      "command_end_utc": "2026-10-07T18:44:23.771949+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N8.txt",
+      "sha256": "ae3683374e08ed2442eeb298bf81d02c6c1c7d7cb7d7ccbb5ae02a63cf8d2c56",
+      "metrics": []
+    },
+    {
+      "name": "N9",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N9"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:23.772266+00:00",
+      "command_end_utc": "2026-10-07T18:44:24.702080+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N9.txt",
+      "sha256": "8eef17ab06d7443bec28b89d145f5044f7818a111deead7825fd807abb19b5a7",
+      "metrics": []
+    },
+    {
+      "name": "N10",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N10"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:24.702436+00:00",
+      "command_end_utc": "2026-10-07T18:44:25.647195+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N10.txt",
+      "sha256": "4df41f752106202d4ce83add950d78209d24cb6f80011100986449a3bdc9de93",
+      "metrics": []
+    },
+    {
+      "name": "N11",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N11"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:25.647570+00:00",
+      "command_end_utc": "2026-10-07T18:44:26.556260+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N11.txt",
+      "sha256": "1da40e46307345313afba336d670004905aff855c73787d836ff0253036d9a4b",
+      "metrics": []
+    },
+    {
+      "name": "N12",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N12"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:26.556639+00:00",
+      "command_end_utc": "2026-10-07T18:44:27.482110+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N12.txt",
+      "sha256": "1ab4dd3de4fda20d3993a21e689be2d9bb14d0dbe9c7660fc8b3acc094292358",
+      "metrics": []
+    },
+    {
+      "name": "N13",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N13"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:27.482453+00:00",
+      "command_end_utc": "2026-10-07T18:44:28.392085+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N13.txt",
+      "sha256": "b86a4ef1b756a85ce09a5a9b636d7912b658fa4a3e159f9c60732a0575e92761",
+      "metrics": []
+    },
+    {
+      "name": "N14",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N14"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:28.392457+00:00",
+      "command_end_utc": "2026-10-07T18:44:40.625957+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N14.txt",
+      "sha256": "450f37990306f80970b7b8a43866e9f0fa835be5016731525581f5478fdfe09c",
+      "metrics": []
+    },
+    {
+      "name": "N15",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N15"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:40.627188+00:00",
+      "command_end_utc": "2026-10-07T18:44:41.493930+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N15.txt",
+      "sha256": "6e686e7a5dfe190d40403f75c208d9a5b6da17bb31cd3c74fda7a651960c859b",
+      "metrics": []
+    },
+    {
+      "name": "N16",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N16"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:41.494609+00:00",
+      "command_end_utc": "2026-10-07T18:44:42.768103+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N16.txt",
+      "sha256": "72b5281196d2af06ef5164126a26609e661214f37ac3695e05b911d65698625b",
+      "metrics": []
+    },
+    {
+      "name": "N17",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/nfq2/check_mutations.py",
+        "N17"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:42.768702+00:00",
+      "command_end_utc": "2026-10-07T18:44:43.584591+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/legacy-controls-01/N17.txt",
+      "sha256": "a067cb3456378e46387873f339e3bb8e613074d8fe060dd100043bb58e0c1d4e",
+      "metrics": []
+    }
+  ]
+}

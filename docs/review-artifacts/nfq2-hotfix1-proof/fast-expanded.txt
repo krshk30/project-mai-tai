@@ -1,0 +1,94 @@
+2026-10-07 14:39:46,556 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+COMBINED-MEMORY {"case": "irrelevant-active", "events": 1000, "sessions": {}, "transactions": {}, "statements": {}, "on_loop_sql": 0}
+.2026-10-07 14:39:46,589 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+COMBINED-MEMORY {"case": "stale-active", "events": 1000, "sessions": {}, "transactions": {}, "statements": {}, "on_loop_sql": 0}
+.COMBINED-MEMORY {"case": "no-hold", "events": 1000, "sessions": {}, "transactions": {}, "statements": {}, "on_loop_sql": 0}
+.2026-10-07 14:39:46,655 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+COMBINED-SLOW {"duplicate_events": 1000, "duplicate_seconds": 0.011253292002948001, "retry_messages": 1, "sessions": {"eligible": 1}, "transactions": {"eligible": 1}, "statements": {"eligible": 1}, "on_loop_sql": 0}
+.2026-10-07 14:39:46,857 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+F2026-10-07 14:39:46,933 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:39:46,939 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 14:39:46,940 INFO [oms-risk] [OMS-V2-EH-RESTING] symbol=BIYA session=AM ask=2.5600 level=2.5400 cap=2.5654 limit=2.56
+2026-10-07 14:39:46,950 INFO [oms-risk] [OMS-BROKER-SYNC-PASS] id=1 phase=start accounts=paper:schwab_1m_v2
+2026-10-07 14:39:46,952 INFO [oms-risk] [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -
+2026-10-07 14:39:46,952 INFO [oms-risk] [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 2 attempted since boot (⛔ read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only — the fill and the position update are no longer gated on it.
+2026-10-07 14:39:46,952 INFO [oms-risk] [BROKER-SYNC-CENSUS] no account was read this window — UNMEASURED, not clean.
+2026-10-07 14:39:46,956 INFO [oms-risk] [OMS-BROKER-SYNC-PASS] id=1 phase=end outcome=ok duration_ms=5.117 exceeds_note_age=False
+2026-10-07 14:39:46,960 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=filled reason=pipeline_completed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+COMBINED-SERIAL {"webull": false, "reactive": false, "quote_events": 101, "serial_deliveries": 2, "simulated_orders": 1}
+.2026-10-07 14:39:46,987 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:39:46,993 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 14:39:46,994 INFO [oms-risk] [OMS-V2-EH-RESTING] symbol=BIYA session=AM ask=2.5600 level=2.5400 cap=2.5654 limit=2.56
+2026-10-07 14:39:47,002 INFO [oms-risk] [OMS-BROKER-SYNC-PASS] id=1 phase=start accounts=paper:orb
+2026-10-07 14:39:47,004 INFO [oms-risk] [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -
+2026-10-07 14:39:47,004 INFO [oms-risk] [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 2 attempted since boot (⛔ read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only — the fill and the position update are no longer gated on it.
+2026-10-07 14:39:47,004 INFO [oms-risk] [BROKER-SYNC-CENSUS] no account was read this window — UNMEASURED, not clean.
+2026-10-07 14:39:47,007 INFO [oms-risk] [OMS-BROKER-SYNC-PASS] id=1 phase=end outcome=ok duration_ms=4.832 exceeds_note_age=False
+2026-10-07 14:39:47,011 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=filled reason=pipeline_completed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+COMBINED-SERIAL {"webull": true, "reactive": false, "quote_events": 101, "serial_deliveries": 2, "simulated_orders": 1}
+.2026-10-07 14:39:47,069 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:39:47,075 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 14:39:47,076 INFO [oms-risk] [OMS-V2-EH-ENTRY] symbol=BIYA session=AM ask=2.5600 signal=2.5400 cap=2.5654 limit=2.56
+2026-10-07 14:39:47,085 INFO [oms-risk] [OMS-BROKER-SYNC-PASS] id=1 phase=start accounts=paper:schwab_1m_v2
+2026-10-07 14:39:47,087 INFO [oms-risk] [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -
+2026-10-07 14:39:47,087 INFO [oms-risk] [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 2 attempted since boot (⛔ read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only — the fill and the position update are no longer gated on it.
+2026-10-07 14:39:47,087 INFO [oms-risk] [BROKER-SYNC-CENSUS] no account was read this window — UNMEASURED, not clean.
+2026-10-07 14:39:47,091 INFO [oms-risk] [OMS-BROKER-SYNC-PASS] id=1 phase=end outcome=ok duration_ms=6.443 exceeds_note_age=False
+2026-10-07 14:39:47,095 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=filled reason=pipeline_completed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+COMBINED-SERIAL {"webull": false, "reactive": true, "quote_events": 101, "serial_deliveries": 2, "simulated_orders": 1}
+.2026-10-07 14:39:47,122 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:39:47,127 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 14:39:47,128 INFO [oms-risk] [OMS-V2-EH-ENTRY] symbol=BIYA session=AM ask=2.5600 signal=2.5400 cap=2.5654 limit=2.56
+2026-10-07 14:39:47,137 INFO [oms-risk] [OMS-BROKER-SYNC-PASS] id=1 phase=start accounts=paper:orb
+2026-10-07 14:39:47,140 INFO [oms-risk] [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -
+2026-10-07 14:39:47,140 INFO [oms-risk] [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 2 attempted since boot (⛔ read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only — the fill and the position update are no longer gated on it.
+2026-10-07 14:39:47,140 INFO [oms-risk] [BROKER-SYNC-CENSUS] no account was read this window — UNMEASURED, not clean.
+2026-10-07 14:39:47,142 INFO [oms-risk] [OMS-BROKER-SYNC-PASS] id=1 phase=end outcome=ok duration_ms=4.990 exceeds_note_age=False
+2026-10-07 14:39:47,145 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=filled reason=pipeline_completed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+COMBINED-SERIAL {"webull": true, "reactive": true, "quote_events": 101, "serial_deliveries": 2, "simulated_orders": 1}
+.
+=================================== FAILURES ===================================
+__________ test_combined_drift_dispatch_enabled_offloop_and_isolated ___________
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10d104290>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d03fcb0>
+
+    @pytest.mark.asyncio
+    async def test_combined_drift_dispatch_enabled_offloop_and_isolated(service, monkeypatch):
+        from tests.unit.test_oms_direct_cancel_dead_target_bound import _DirectCancelAdapter
+    
+        await configured(service)
+        active = hold(service, biya())
+        seed_drift(service, "DRIFT")
+        await service._refresh_drift_working_cache()
+        adapter = _DirectCancelAdapter(cancel_event_type="cancelled", cancel_reason="offline control")
+        monkeypatch.setattr(service, "broker_adapter", adapter)
+        original = service._collect_drift_cancel_candidates
+        started, release = Event(), Event()
+    
+        def slow(*args):
+            started.set()
+            assert release.wait(2)
+            return original(*args)
+    
+        monkeypatch.setattr(service, "_collect_drift_cancel_candidates", slow)
+        meter = Meter(service, monkeypatch)
+        try:
+            await tagged("drift-eligible", service._handle_quote_tick_event, tick("DRIFT", ask="2.70"))
+            assert await asyncio.to_thread(started.wait, 2)
+            for _ in range(1000):
+                await tagged("irrelevant", service._handle_quote_tick_event, tick("OTHER"))
+                await tagged("drift-duplicate", service._handle_quote_tick_event, tick("DRIFT", ask="2.70"))
+            release.set()
+            await service._shutdown_symbol_tick_work()
+>           assert len(adapter.requests) == 1
+E           assert 0 == 1
+E            +  where 0 = len([])
+E            +    where [] = <tests.unit.test_oms_direct_cancel_dead_target_bound._DirectCancelAdapter object at 0x10d10e7e0>.requests
+
+tests/unit/test_nfq2_hotfix1_combined_proof.py:209: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_hotfix1_combined_proof.py::test_combined_drift_dispatch_enabled_offloop_and_isolated
+1 failed, 8 passed, 1 deselected in 1.12s

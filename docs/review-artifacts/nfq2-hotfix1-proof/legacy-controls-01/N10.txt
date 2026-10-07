@@ -1,0 +1,51 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_biya_serial_rehold_moves_v2_attempt_then_giveup_releases_exact_webull_latch _
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x109097da0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109097f80>
+
+    @pytest.mark.asyncio
+    async def test_biya_serial_rehold_moves_v2_attempt_then_giveup_releases_exact_webull_latch(
+            service, monkeypatch):
+        from project_mai_tai.fanout_outcome_consumer import FanoutOutcomeJournal
+        from tests.unit.test_v2_flip_owned_first_entry import _strategy
+        strategy, clock, _, _ = _strategy(dual=True)
+        strategy._flip_owner_primary_account = "paper:schwab_1m_v2"
+        strategy._flip_owner_webull_account = "paper:orb"
+        clock[0] = int(NOW.timestamp() * 1000)
+        state = strategy.watchlist_state("BIYA")
+        state.fanout_segment_id = SEGMENT
+        state.resting_is_broker_order = False
+        journal = FanoutOutcomeJournal(service.session_factory)
+        monkeypatch.setattr(service, "_market_is_fillable", lambda *args: True)
+        service._fanout_webull_collision_reason = lambda **kwargs: None
+        event = biya(webull=True)
+        await service.process_trade_intent(event)
+        journal.poll(strategy.apply_fanout_outcome)
+        assert state.fanout_webull_claimed
+        quote(service)
+        await service._evaluate_nfq2_holds("BIYA")
+        message = retry(service)
+        service._latest_quotes_by_symbol.clear()
+        await service._handle_stream_message({"data": message.model_dump_json()})
+        journal.poll(strategy.apply_fanout_outcome)
+>       assert state.fanout_claim_attempt_id == service._build_client_order_id(message)
+E       AssertionError: assert 'schwab_1m_v2...-6f993e4c2c4f' == 'schwab_1m_v2...-831a8a3aadf4'
+E         
+E         - schwab_1m_v2-BIYA-open-831a8a3aadf4
+E         + schwab_1m_v2-BIYA-open-6f993e4c2c4f
+
+tests/unit/test_nfq2_eh_fresh_price.py:442: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:44:25,360 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:44:25,363 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-OUTCOME] BIYA slot_id=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote held=1 evidence=positive exact_slot=0 — every held latch names its evidence
+2026-10-07 14:44:25,370 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     project_mai_tai.strategy_core.schwab_1m_v2:schwab_1m_v2.py:2727 [V2-FANOUT-OUTCOME] BIYA slot_id=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote held=1 evidence=positive exact_slot=0 — every held latch names its evidence
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_serial_rehold_moves_v2_attempt_then_giveup_releases_exact_webull_latch
+1 failed in 0.30s
+MUTATION N10 pytest_rc=1 RED

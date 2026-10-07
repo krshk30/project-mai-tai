@@ -1,0 +1,29 @@
+{
+  "head": "a5479b42ac633f144d70930b44e99d5417c86d10",
+  "tree": "8736a3d0df5b327b540690f3eca8c5882c39fbb0",
+  "end_utc": "2026-10-07T18:44:45.651869+00:00",
+  "files_and_head_unchanged": true,
+  "runs": [
+    {
+      "name": "fast",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        "-s",
+        "tests/unit/test_nfq2_hotfix1_combined_proof.py",
+        "-k",
+        "not 60_seconds"
+      ],
+      "exit": 0,
+      "command_start_utc": "2026-10-07T18:44:44.282516+00:00",
+      "command_end_utc": "2026-10-07T18:44:45.629942+00:00",
+      "log": "/Users/velkris/.codex/worktrees/nfq2-hotfix1-activehold-proof/project-mai-tai/docs/review-artifacts/nfq2-hotfix1-proof/fast-utc-01/fast.txt",
+      "sha256": "00b5c7e71365948c13e8db94d3ac25539f41677f54ea0b5c098753b5f04b3ad4",
+      "metrics": []
+    }
+  ]
+}
