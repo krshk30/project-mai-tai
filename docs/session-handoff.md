@@ -399,6 +399,8 @@
 | 07:13 → 16:13, every 30 min | FULL VALIDATION (`mai-tai-fullscan/run.sh`): every bot, every trade, every buy flip on a watched name (traded / skipped by rule / missed and why), anything short with no buy order, new errors; **first live reprice with the hand-off ON** (cancel→place seconds per broker, no stuck ticket); first OWNMIX1 fill binding | each new line explained before it is reported |
 | 15:55 | ORB Schwab position (Board A row 46) | flat or an explained partial |
 
+| C126 | HOTFIX1 merged; Oct7 paired unattended release being assembled | #1114 merged994f08aee2c35b3809b3c3384e0d8628807dcfb7, tree7d827a407825d1d93aae8c3946d8b55320b9680f whole-tree identical to pinned5525739a. Fresh baseline OMS1051883/start14:12:15UTC, v21207761/start17:45:25UTC; source/env unchanged. Only obsolete installer.timer stopped to prevent the superseded v2-only package from dispatching; installer service inactive/PID0 | As-of14:43ET10-07 own GitHub merge, local whole-tree diff and SSH systemctl/hash reads14:35-14:41. ENV40ec5bf52b1ffb2b37dc84399e6449a9b796a3897c0207b8939402985ddfe653. Plan sole writer branch codex/1007-linesrc1-hotfix1-install-plan; paired package NOT staged yet | codex-2 | Paired v2+OMS release: restoration/retained true, hand-off false retained; archived rollback row stays archived. Preserve native gate and fresh BOT-flat/order/row/census proofs; timer re-enabled only after exact tested paired staging. #1115/RPGSTALE1 PARKED; NFQ2 active-hold HOTFIX composition proof parallel, no activation or readiness claimed |
+
 ## 2026-10-05 (Mon) — LIVE DAY NOTES (shared: both agents add rows as things happen; full sweep at close-out)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |

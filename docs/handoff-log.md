@@ -7504,3 +7504,22 @@ otheridentities/SHA pinned. Actualroot project-mai-tai-preopen.timer NEXT
 Wed2026-10-07 10:20UTC/06:20ET; never ran tomorrowgateearly.
 Firstdailyrehearsal, fresh-line/scanner/live-delivery still UNMEASURED;
 Claude06:22 handcheck and07:00-07:15 scannercheck remain owners.
+
+### [codex] 2026-10-07 14:43 ET - C126 HOTFIX merge and paired release cut
+
+Merged #1114 by matched-head rebase at the reviewed5525739a after local committed
+review-pin verification and hosted checks. Main994f08aee2c35b3809b3c3384e0d8628807dcfb7
+has whole tree7d827a407825d1d93aae8c3946d8b55320b9680f identical to the pinned head.
+No application, environment, archived row or app service change from this merge.
+Fresh SSH14:35UTC18:35 proves OMS1051883/start14:12:15UTC and v21207761/start17:45:25UTC,
+both NRestarts0. Envsha40ec5bf52b1ffb2b37dc84399e6449a9b796a3897c0207b8939402985ddfe653.
+The previous v2-only plan is superseded by the operator's paired LINESRC1/HOTFIX1
+scope. Stopped only project-mai-tai-linesrc1-20261007.timer around14:41ET:
+timer inactive/NEXT empty, installer service inactive/MainPID0 before and after.
+This prevents an obsolete package from dispatching, not an application stop.
+The sole plan writer owns codex/1007-linesrc1-hotfix1-install-plan and is assembling
+and testing the literal v2+OMS release. No paired staging or COMPLETE claimed.
+Restoration and retained hold become true; hand-off remains false per13:45 ruling;
+archived rollback row remains archived. #1115 and RPGSTALE1 parked, no further work.
+Parallel NFQ2 proof must include one active hold with the HOTFIX drift path enabled;
+earlier drift-disabled throughput receipt is not whole OMS hot-path proof.
