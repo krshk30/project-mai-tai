@@ -338,6 +338,8 @@
 
 | C118 | Install2 backup passed; source/env applied, attended service sequence pending | Clean checkout5b8b4f642bbc3c312be436d0e92adbc22d9e9f95; exact env.diff adds four true keys only KEEP_REST_AFTER_BUY, REMOVED_WAIT_CLEAR, OMS retained hold, WEBULL list-primary. Source40,673,280byte backup persisted under tested64MiB limit. v2611572/OMS611906/strategy612007 still active unchanged as-of21:18 | As-of21:18ET10-06 own remote HEAD/env.diff/systemd reads; runner-archive64.log and job-archive64/attempt-install2-oct6-attended, release3a55a2ee. Gates and full103ticket census refreshing before v2 stop | codex-2 | Actively attend literal stops/starts and closeout; no COMPLETE claim. From first application write no recovery/rollback/additional action beyond runner. Daily timer not installed yet; accepted exact LINESRC1 noise remains OPEN |
 
+| C119 | Install2 first scoped stop clean; sequence remains attended | v2 stop21:20:58ET rc0, PID0/inactive/Resultsuccess, phase-1.json persisted. OMS611906 and strategy612007 still active/success. Fresh103ticket/95terminal-parent census, direct flat/zero orders/rows and unmodified v2 gate GO preceded stop; no armed/clock override | As-of21:21ET10-06 own action receipts and direct systemd read, job-archive64/attempt-install2-oct6-attended and live runner-archive64.log; no STOP/COMPLETE. APP5b8b remains clean | codex-2 | Attending refresh before strategy/OMS stops then OMS/v2/strategy starts; plain control restart last. No service manually recovered and no new gate. After20 no scheduled bars; formal continuity proof still pending |
+
 ### What to READ Tuesday 10-06 — claude-1, UNPROMPTED (scheduled in the claude-1 session, CronList)
 | Time ET | Read | Pass looks like |
 |---|---|---|
