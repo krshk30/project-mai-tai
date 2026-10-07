@@ -1,0 +1,102 @@
+{
+  "packaged_at_utc": "2026-10-07T20:32:05.812269+00:00",
+  "database_collected_at_utc": "2026-10-07T20:30:57.050742+00:00",
+  "files": {
+    "apus-both-filled-own-read.json": {
+      "sha256": "4e355392695f90b687622fd1f0c5a37fc8060ce1f979f9b1895f8d6b20b85904",
+      "bytes": 58440
+    },
+    "apus_oms.raw.log": {
+      "sha256": "6fb3d0a47191e1bc1df80c6c204413f54d6480fba0a5bd490bb2e976f5367982",
+      "bytes": 80917
+    },
+    "apus_v2.raw.log": {
+      "sha256": "c58590eb189adf500eb710d4d98d0cb29d49baa4bcb62e668942ccb11db296a7",
+      "bytes": 116405
+    },
+    "artl-own-read.json": {
+      "sha256": "7362d7d4de1b9edcafdddad9ad69dde545149f54a5c663f4ac3236aba6a67374",
+      "bytes": 65786
+    },
+    "artl_oms.raw.log": {
+      "sha256": "6ff81c80c2d5bc96d27eaec8da27aa2ef36f24a44bdcd5772472065ee101d8f8",
+      "bytes": 6913
+    },
+    "artl_segment_start.raw.log": {
+      "sha256": "9e55dd4b0626fa780eb9f94f0ee8b6dfd9d4957429e50eb76d27bf627029ae26",
+      "bytes": 10590
+    },
+    "artl_v2.raw.log": {
+      "sha256": "0b73980c17b462c6c877d8ed7b0075f3ac888f2402144410814e71ef53a2584d",
+      "bytes": 67095
+    },
+    "bars.raw.json": {
+      "sha256": "5a4992931f90e8c4666a8b9c743774a71b104f3ea01f98f7c7380122e2793a14",
+      "bytes": 47491
+    },
+    "collect_export.sh": {
+      "sha256": "57a6b85860ce86f578964886527e42f5597408d0f484fb9d17b3450b14a28877",
+      "bytes": 626
+    },
+    "collect_initial.sh": {
+      "sha256": "3f91ae1647e4b7663750a1eddcc224eaa35065f2bac9c29da377777bd0c24568",
+      "bytes": 1080
+    },
+    "events.raw.json": {
+      "sha256": "031a4fd832a1ece0f2a8c1f2e1b8f5ff0993979b9b0a564fa910bdbfc1310f2f",
+      "bytes": 17603
+    },
+    "export.sql": {
+      "sha256": "7f073c81f7ee992209dec3748b0dde67284356f0117722076db145adc11ca649",
+      "bytes": 5208
+    },
+    "export_stream.raw.txt": {
+      "sha256": "75c7dc14fad018e8d05dd61a4e81a7c9dd7105077b1e668047a4a38b78cd188a",
+      "bytes": 83042
+    },
+    "fills.raw.json": {
+      "sha256": "1b5479bc4d7abcb6c8adaab3575c32a10eb04d23080377c238aa9a08819658ca",
+      "bytes": 1997
+    },
+    "inspect.raw.txt": {
+      "sha256": "475a94460f370a12ead5634d317e8735fcba664cee9e6f4f57319f12a101d601",
+      "bytes": 25372
+    },
+    "inspect.sql": {
+      "sha256": "09f3fddfcceedb7a63bf01b76d6dbf6faa7de2b92285876a4ce2457c73ac7d04",
+      "bytes": 1704
+    },
+    "intents.raw.json": {
+      "sha256": "9f77ef5d42bce1a17d3d2240f424802cee0e8cb64c76ae82540510677386ec16",
+      "bytes": 7146
+    },
+    "make_fixtures.py": {
+      "sha256": "7da6cf145143a85b4f01f9136de825e6ed5456e3efdd2b0cabdebf60a60ef5a7",
+      "bytes": 9304
+    },
+    "managed_rows.raw.json": {
+      "sha256": "d593bd2fd9bee67411b65dc3ed71f72100114e899a10e8142d9bfe246b4d5179",
+      "bytes": 1309
+    },
+    "ncpl-minute-bars-own-read.json": {
+      "sha256": "1124d33a4f13420a1b7b3ed444677ea3965a270df99755b082a780050a1ba7b8",
+      "bytes": 19322
+    },
+    "ncpl_bars.raw.json": {
+      "sha256": "8851e571a8994c9cc52447ca68a8dfb2d23155acf16871358ccb34a5d136f12f",
+      "bytes": 14908
+    },
+    "ncpl_bars.sql": {
+      "sha256": "63b6b9aa682754bbb791780e346a387b56c131061b3c07da122b8d7b551f5cd1",
+      "bytes": 528
+    },
+    "orders.raw.json": {
+      "sha256": "f75e35c811c3d50655a482e7d660bd4ace498fd941ec4302c091e4f9ab6fb75d",
+      "bytes": 7171
+    },
+    "snapshot.raw.json": {
+      "sha256": "1d4e24aa77246d6fefa579a6cdd584af0c9f3e5ca6ee39bc93dc7e2fc21089f1",
+      "bytes": 144
+    }
+  }
+}

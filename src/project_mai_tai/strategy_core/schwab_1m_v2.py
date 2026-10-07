@@ -1143,10 +1143,11 @@ class SchwabV2Strategy:
         self._removed_wait_restore_readable = readable
         self._removed_wait_requests = dict(restored)
         self._removed_wait_dispatch_persist = dispatch_persist
-        self._removed_scanner_symbols.update(restored)
+        self._removed_scanner_symbols.update(
+            symbol for symbol, request in restored.items() if request.purpose == "scanner_removal")
         for symbol, request in restored.items():
             state = self.watchlist_state(symbol)
-            if not self._removed_wait_has_owner(state):
+            if request.purpose == "retry_exhausted" or not self._removed_wait_has_owner(state):
                 self._queue_removed_wait_barriers(state, request)
 
     def scanner_readded(self, symbol: str) -> None:
@@ -1196,6 +1197,12 @@ class SchwabV2Strategy:
         return True
 
     def _removed_wait_gate_closed(self, symbol: str) -> bool:
+        request = getattr(self, "_removed_wait_requests", {}).get(symbol.upper())
+        if request is not None and request.purpose == "retry_exhausted":
+            return True
+        if (getattr(self, "_retry_one_enabled", False)
+                and not getattr(self, "_removed_wait_restore_readable", True)):
+            return True
         return getattr(self, "_removed_wait_enabled", False) and (
             not self._removed_wait_restore_readable
             or symbol.upper() in self._removed_wait_requests
@@ -1212,6 +1219,23 @@ class SchwabV2Strategy:
         for proof in proofs:
             request = proof.request
             state = self._symbol_states.get(request.symbol)
+            if request.purpose == "retry_exhausted":
+                if (proof.clear and proof.reason == "retry_leftovers_cancelled_owner_kept"
+                        and self._removed_wait_requests.get(request.symbol) == request
+                        and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+                    try:
+                        if self._removed_wait_persist is None:
+                            raise RuntimeError("cancellation store unavailable")
+                        self._removed_wait_persist(request, False)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=UNKNOWN", request.symbol)
+                    else:
+                        self._removed_wait_requests.pop(request.symbol, None)
+                        self.__dict__.setdefault("_retry_leftover_receipts", set()).add(
+                            (request.symbol, request.opportunity_id))
+                        logger.info("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=confirmed owner_kept=1",
+                                    request.symbol)
+                continue
             if (self._removed_wait_enabled and proof.reason == "own_fill_stays_owned"
                     and not proof.clear and self._removed_wait_requests.get(request.symbol) == request
                     and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
@@ -1306,7 +1330,8 @@ class SchwabV2Strategy:
         symbol = state.symbol
         md = {"clearwait_removal_token": request.token,
               "clearwait_opportunity_id": str(request.opportunity_id),
-              "resting_entry_cancel": "true", "reason": "watchlist-removed",
+              "resting_entry_cancel": "true", "reason": (
+                  "retry_budget_exhausted" if request.purpose == "retry_exhausted" else "watchlist-removed"),
               "clearwait_buy_only": "true",
               "source": STRATEGY_CODE, "strategy_version": STRATEGY_VERSION}
         if request.opportunity_id:
@@ -1314,12 +1339,18 @@ class SchwabV2Strategy:
                       fanout_slot_id=fanout_slot_id(strategy_code=STRATEGY_CODE, symbol=symbol,
                           segment_id=request.opportunity_id, slot="resting"))
         # Ordinary serial-lane cancels also revoke deferred mirror/NFQ retries.
+        retry_cancel = request.purpose == "retry_exhausted"
         self._pending_intents.append(TradeIntentDraft(symbol=symbol, side="buy", intent_type="cancel",
-            quantity=Decimal(self._atr_qty), reason="scanner removal cancellation barrier", metadata=dict(md)))
+            quantity=Decimal((state.resting_schwab_quantity or self._atr_qty) if retry_cancel else self._atr_qty),
+            reason="retry exhausted cancellation barrier" if retry_cancel else "scanner removal cancellation barrier",
+            metadata=dict(md)))
         if self._dual_broker_fanout_enabled and self.settings.strategy_schwab_1m_v2_webull_account_name:
             self._pending_webull_direct_intents.append(TradeIntentDraft(
-                symbol=symbol, side="buy", intent_type="cancel", quantity=Decimal(self._webull_fanout_qty),
-                reason="scanner removal cancellation barrier (webull)",
+                symbol=symbol, side="buy", intent_type="cancel",
+                quantity=Decimal((state.resting_webull_quantity or self._webull_fanout_qty)
+                                 if retry_cancel else self._webull_fanout_qty),
+                reason=("retry exhausted cancellation barrier (webull)" if retry_cancel
+                        else "scanner removal cancellation barrier (webull)"),
                 metadata={**md, "fanout_leg": "webull", "fanout_source": "rth_resting_mirror"}))
 
     @staticmethod
@@ -1717,6 +1748,8 @@ class SchwabV2Strategy:
         if not released:
             state.flip_owner_phase = "consumed"
             self._persist_flip_owner(state, active=True, reason=reason)
+        if persisted and closes_in_segment >= max_closes:
+            self._cancel_retry_leftovers(state)
         logger.info(
             "[V2-FLIP-OWNER-RETRY] %s segment_id=%d closes_in_segment=%d "
             "retries_left=%d action=%s reason=%s",
@@ -1732,6 +1765,42 @@ class SchwabV2Strategy:
             ),
         )
         return released
+
+    def _cancel_retry_leftovers(self, state: SymbolState) -> None:
+        opportunity = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+        key = (state.symbol, opportunity)
+        if (opportunity <= 0 or state.flip_owner_open_positions
+                or state.symbol in self._removed_wait_requests
+                or key in self.__dict__.get("_retry_leftover_receipts", set())):
+            return
+        accounts = self._removed_wait_accounts()
+        if set(accounts) <= state.flip_owner_fill_accounts:
+            return
+        request = RemovedWait(state.symbol, opportunity, str(uuid4()), self._now_ms(),
+                              accounts, "retry_exhausted")
+        self._removed_wait_requests[state.symbol] = request
+        try:
+            if self._removed_wait_persist is None:
+                raise RuntimeError("cancellation store unavailable")
+            self._removed_wait_persist(request, True)
+        except Exception:  # noqa: BLE001 - cancelling is still safe if the receipt cannot be persisted
+            logger.exception("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=UNKNOWN reason=request_write_failed",
+                             state.symbol)
+        self._finish_first_rest_quote_wait(state, action="gave_up", reason="retry_budget_exhausted")
+        for name in ("_pending_intents", "_pending_webull_direct_intents", "_pending_webull_fanout_intents"):
+            setattr(self, name, self._drop_queued_open_intents_for_symbol(getattr(self, name), state.symbol))
+        self._queue_removed_wait_barriers(state, request)
+        for account, qty in ((accounts[0], state.resting_schwab_quantity or "unknown"),
+                             *([(accounts[1], state.resting_webull_quantity or "unknown")]
+                               if len(accounts) > 1 else [])):
+            if account not in state.flip_owner_fill_accounts:
+                logger.info("[V2-RETRY-LEFTOVER-CANCEL] %s account=%s qty=%s reason=retry_budget_exhausted",
+                            state.symbol, account, qty)
+        state.cw_armed = False
+        state.cw_arm_bar_ts = 0
+        state.atr_hold_pending = None
+        state.resting_active = False
+        state.webull_resting_active = False
 
     @staticmethod
     def _flip_owner_leg_matches_episode(
@@ -1985,7 +2054,21 @@ class SchwabV2Strategy:
         # managed row disappeared before the poll captured it. The next genuine SELL still retires
         # the opportunity in `_end_flip_owner_on_sell`.
         if phase == "consumed" and not open_positions:
+            if (self._retry_one_enabled and state.retry_one_budget_readable
+                    and state.flip_owner_retry_segment_id == state.retry_one_segment_id
+                    and state.retry_one_closes_in_segment >= 1 + self._retry_one_max_retries
+                    and self._flip_owner_closed_by_any_exit(state, position_closes) is not None):
+                self._cancel_retry_leftovers(state)
             return
+        if (phase == "bound" and not open_positions and self._retry_one_enabled
+                and self._retry_one_max_retries == 0
+                and state.flip_owner_retry_segment_id == state.retry_one_segment_id):
+            reason = self._flip_owner_closed_by_any_exit(state, position_closes)
+            if reason is not None:
+                # A BUY-confirmed episode remains bound exactly as before. The
+                # cancellation receipt is not permission to release that owner.
+                self._cancel_retry_leftovers(state)
+                return
         valid = True
         unexpected_accounts = set(open_positions) - state.flip_owner_fill_accounts
         if unexpected_accounts:

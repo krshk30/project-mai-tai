@@ -1,0 +1,16 @@
+................................FF.......                                [100%]
+=================================== FAILURES ===================================
+_ test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-broker-could_not_tell-False] _
+tests/unit/test_retryleft1.py:277: in test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof
+    assert proof.clear is clear
+E   AssertionError: assert True is False
+E    +  where True = RemovedWaitProof(request=RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='bd098f48-2155-4c60-ac2f-ff3d9...), purpose='retry_exhausted'), observed_at_ms=1791400258069, clear=True, reason='retry_leftovers_cancelled_owner_kept').clear
+_ test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-broker-already_absent-False] _
+tests/unit/test_retryleft1.py:277: in test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof
+    assert proof.clear is clear
+E   AssertionError: assert True is False
+E    +  where True = RemovedWaitProof(request=RemovedWait(symbol='NCPL', opportunity_id=1791399663104, token='1dc744e8-638e-4f5b-8c6c-59198...), purpose='retry_exhausted'), observed_at_ms=1791400258069, clear=True, reason='retry_leftovers_cancelled_owner_kept').clear
+=========================== short test summary info ============================
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-broker-could_not_tell-False]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_terminal_receipt_requires_matching_positive_broker_proof[cancelled-broker-already_absent-False]
+2 failed, 39 passed in 0.43s

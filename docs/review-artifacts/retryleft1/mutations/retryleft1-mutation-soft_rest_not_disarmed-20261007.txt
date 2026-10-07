@@ -1,0 +1,52 @@
+.....FF..FF..FF..FF......................                                [100%]
+=================================== FAILURES ===================================
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:169: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert not state.cw_armed
+E   AssertionError: assert not True
+E    +  where True = SymbolState(symbol='NCPL', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_armed
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:orb] _
+tests/unit/test_retryleft1.py:169: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert not state.cw_armed
+E   AssertionError: assert not True
+E    +  where True = SymbolState(symbol='NCPL', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_armed
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:169: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert not state.cw_armed
+E   AssertionError: assert not True
+E    +  where True = SymbolState(symbol='NCPL', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_armed
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:orb] _
+tests/unit/test_retryleft1.py:169: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert not state.cw_armed
+E   AssertionError: assert not True
+E    +  where True = SymbolState(symbol='NCPL', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_armed
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:169: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert not state.cw_armed
+E   AssertionError: assert not True
+E    +  where True = SymbolState(symbol='NCPL', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_armed
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:orb] _
+tests/unit/test_retryleft1.py:169: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert not state.cw_armed
+E   AssertionError: assert not True
+E    +  where True = SymbolState(symbol='NCPL', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_armed
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:schwab_1m_v2] _
+tests/unit/test_retryleft1.py:169: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert not state.cw_armed
+E   AssertionError: assert not True
+E    +  where True = SymbolState(symbol='NCPL', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_armed
+_ test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:orb] _
+tests/unit/test_retryleft1.py:169: in test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons
+    assert not state.cw_armed
+E   AssertionError: assert not True
+E    +  where True = SymbolState(symbol='NCPL', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_armed
+=========================== short test summary info ============================
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CONFIRMATION_EXIT-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[OCO_RESOLVED_FLAT-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[CW_HARD_STOP-True-live:orb]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:schwab_1m_v2]
+FAILED tests/unit/test_retryleft1.py::test_recorded_ncpl_close_routing_controls_both_sessions_and_exit_reasons[ATR_FLIP-True-live:orb]
+8 failed, 33 passed in 0.47s

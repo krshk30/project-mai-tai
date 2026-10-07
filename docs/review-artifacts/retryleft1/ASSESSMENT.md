@@ -84,3 +84,28 @@ Durable cancellation requests use existing DashboardSnapshot records and
 existing v2 periodic off-thread proof read. OMS source and per-tick handlers
 are unchanged. A reviewed install requires v2 restart only. This PR is not
 part of the already staged LINESRC1/HOTFIX1 exact-SHA job.
+
+## Corrected disposition accepted, 2026-10-07
+
+The reviewer withdrew APUS as a positive case and accepted the independent
+cause correction. AGREE on the revised card and the two retained waiting cases:
+NCPL is the positive recorded owner replay; ARTL is the second cancellation
+control under today's retry budget zero. APUS is explicitly both-filled.
+Build resumed on the same branch. Earlier STOP and interrupted test results
+above remain historical evidence, not the current readiness status.
+
+The corrected reviewer denominator is 2/159; own bounded strategy-specific
+extraction remains 2 lifecycle-inferred cases/157 closed broker-leg lots.
+The different account/strategy scopes are not silently reconciled. Actual
+continuous historical broker status is still UNMEASURED.
+
+ARTL's fresh read-only evidence is artl-own-read.json: close fill18:53:09.111UTC,
+first logged owner follow-up18:53:12.758, same waiting Schwab order eventually
+cancelled19:01:02. Its causal SELL bar1790186640000 is not its entry opportunity
+1790186882699. Historical owner journal was not retained; the test labels its
+current-policy reconstruction. New cancel emission is3.647s after close,
+before the next recorded bar probe; old broker cancellation was472.889s later.
+NCPL's new emission is8.069s after close, versus the recorded old cancellation
+1359.902s later. Neither simulated receipt asserts new live broker latency.
+APUS's Webull buy19:54:58.742 precedes Schwab close20:26:30; a held sibling is
+not a waiting buy. Its later manual sell20:34:21.184 does not change that fact.

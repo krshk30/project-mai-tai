@@ -1,0 +1,11 @@
+...................................F.....                                [100%]
+=================================== FAILURES ===================================
+____________ test_retry_receipt_wrong_token_or_stale_keeps_barrier _____________
+tests/unit/test_retryleft1.py:314: in test_retry_receipt_wrong_token_or_stale_keeps_barrier
+    assert state.symbol in strategy._removed_wait_requests
+E   AssertionError: assert 'NCPL' in {}
+E    +  where 'NCPL' = SymbolState(symbol='NCPL', line_restore_reset_after_ms=0, bars=deque([], maxlen=300), last_quote=None, position_qty=0,...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').symbol
+E    +  and   {} = <project_mai_tai.strategy_core.schwab_1m_v2.SchwabV2Strategy object at 0x10d6cd4f0>._removed_wait_requests
+=========================== short test summary info ============================
+FAILED tests/unit/test_retryleft1.py::test_retry_receipt_wrong_token_or_stale_keeps_barrier
+1 failed, 40 passed in 0.44s
