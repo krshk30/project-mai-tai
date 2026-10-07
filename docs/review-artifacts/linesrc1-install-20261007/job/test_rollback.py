@@ -8,20 +8,20 @@ import pytest
 import paper_lifecycle as life
 import release_policy as p
 import runner
-from test_runner import HERE, FIX, ROOT, NOW, env, new_v2
+from test_runner import HERE, FIX, ROOT, NOW, env, new_v2, new_oms
 
 
-def test_overlay_only_expected_false_no_source_owner_population_or_other_setting_change():
+def test_overlay_only_handoff_false_retained_true_no_other_change():
     original=(ROOT/"ops/health/expected_flags.json").read_bytes()
     candidate=p.rollback_catalog(original)
     assert candidate==(HERE/"rollback-expected_flags.json").read_bytes()
     source=json.loads(original); applied=json.loads(candidate)
     row=next(row for row in source["flags"] if row["name"]=="oms_v2_webull_mirror_retained_hold_enabled")
     assert row["owning_service"]=="oms" and row["expected"] is True
-    row["expected"]=False
+    next(row for row in source["flags"] if row["name"]=="strategy_schwab_1m_v2_atr_reprice_handoff_enabled")["expected"]=False
     assert source==applied
     assert p.catalog_counts(candidate,(FIX/"restart_evidence/expected_numeric.json").read_bytes())["total"]==157
-    old=(FIX/"preopen-daily/runtime.json").read_bytes()
+    old=(FIX/"paired-current-runtime.json").read_bytes()
     new=p.rollback_runtime(old,candidate)
     assert new==(HERE/"rollback-runtime.json").read_bytes()
     expected=json.loads(old); expected["evidence_inputs"]["/home/trader/restart_evidence/expected_flags.json"]=p.digest(candidate)
@@ -57,7 +57,7 @@ def test_release_cannot_adopt_any_other_identity_environment_or_authority(damage
 
 
 @pytest.mark.parametrize("damage",[None,"true","missing","duplicate","alias"])
-def test_env_only_restoration_change_retained_literal_false_is_not_reactivated(damage):
+def test_env_exact_two_on_handoff_stays_false(damage):
     raw=env()
     if damage=="true": raw=raw.replace((p.RETAINED_FLAG+"=false").encode(),(p.RETAINED_FLAG+"=true").encode())
     elif damage=="missing": raw=raw.replace((p.RETAINED_FLAG+"=false\n").encode(),b"")
@@ -67,27 +67,27 @@ def test_env_only_restoration_change_retained_literal_false_is_not_reactivated(d
         with pytest.raises(p.Stop): p.env_candidate(raw)
     else:
         candidate=p.env_candidate(raw)
-        assert candidate==raw.replace((p.FLAG+"=false").encode(),(p.FLAG+"=true").encode())
-        p.retained_off(candidate.replace(b"\n",b"\0"))
-        assert p.process_values(candidate.replace(b"\n",b"\0"),"true")[p.RETAINED_FLAG]=="false"
+        assert candidate==raw.replace((p.FLAG+"=false").encode(),(p.FLAG+"=true").encode()).replace((p.RETAINED_FLAG+"=false").encode(),(p.RETAINED_FLAG+"=true").encode())
+        p.retained_off(candidate.replace(b"\n",b"\0"),"true")
+        assert p.process_values(candidate.replace(b"\n",b"\0"),"true")[p.RETAINED_FLAG]=="true"
 
 
-def test_new_morning_OMS_pin_is_prior_rollback_not_a_second_LINESRC_restart():
+def test_new_morning_dual_pins_only_approved_pair():
     baseline=p.rollback_baseline()
     raw=p.gate_candidate((FIX/"preopen.sh").read_bytes(),new_v2(),"CONTROLLED_SNAPSHOT","CONTROLLED_RECORD",
-        untouched_oms=baseline["fleet_before"]["oms"])
+        untouched_oms=new_oms())
     text=raw.decode()
-    assert "EXPECTED_OMS_PID=1051883" in text
-    assert "EXPECTED_OMS_START='Wed 2026-10-07 14:12:15 UTC'" in text
-    assert "--restarted oms" not in text and text.count("--restarted ")==1
-    assert "--expect-flag 'oms:" not in text
-    assert "schwab-1m-v2:"+p.RETAINED_FLAG+"=false" in text
+    assert "EXPECTED_OMS_PID=999002" in text
+    assert "EXPECTED_OMS_START='Wed 2026-10-07 23:29:59 UTC'" in text
+    assert "--restarted oms" in text and text.count("--restarted ")==2
+    assert "--expect-flag 'oms:" in text
+    assert "schwab-1m-v2:"+p.RETAINED_FLAG+"=true" in text
     for role in ("STRATEGY","ORB","ORB_SCHWAB","CONTROL"):
         for suffix in ("PID","START"):
             import re
             key="EXPECTED_"+role+"_"+suffix
             assert re.search("(?m)^"+key+"=.*$",text)[0]==re.search("(?m)^"+key+"=.*$",(FIX/"preopen.sh").read_text())[0]
-    baseline["fleet_before"]["oms"]["MainPID"]+=1
+    baseline["fleet_before"]["oms"]["MainPID"]=0
     with pytest.raises(p.Stop): p.gate_candidate((FIX/"preopen.sh").read_bytes(),new_v2(),"S","R",untouched_oms=baseline["fleet_before"]["oms"])
 
 
@@ -124,21 +124,26 @@ def test_actual_official_collector_nonrestarted_flag_refuses_and_new_gate_flags_
     module=load("controlled_existing_collector_tests",ROOT/"tests/unit/test_v2_restart_evidence.py")
     args,current,logs=module._report_fixture(monkeypatch,tmp_path)
     vre=module.vre
-    gate=p.gate_candidate((FIX/"preopen.sh").read_bytes(),new_v2(),"S","R",p.rollback_baseline()["fleet_before"]["oms"]).decode()
+    gate=p.gate_candidate((FIX/"preopen.sh").read_bytes(),new_v2(),"S","R",new_oms()).decode()
+    args.restarted.append("oms")
+    from datetime import datetime, timezone
+    current["oms"]=vre.ServiceState(service="oms",pid=901,active_state="active",sub_state="running",n_restarts=0,
+        started_at_utc=datetime(2026,9,11,0,25,tzinfo=timezone.utc).isoformat())
+    logs["oms"]=[("oms.log",["2026-09-11 00:25:03,000 INFO OMS healthy"])]
     flags=re.findall(r"--expect-flag '([^']+)'",gate)
     args.expect_flag=flags
     values={vre._parse_expected_flag(value)[1]:vre._parse_expected_flag(value)[2] for value in flags}
     monkeypatch.setattr(vre,"_process_environment",lambda pid,runner:values)
     assert vre.report(args,runner=lambda command:"")==0
-    assert all(vre._parse_expected_flag(value)[0]==vre.V2_SERVICE for value in flags)
-    args.expect_flag.append("oms:"+p.RETAINED_FLAG+"=false")
-    with pytest.raises(vre.EvidenceUnknown,match="flag check names non-restarted service 'oms'"):
+    assert {vre._parse_expected_flag(value)[0] for value in flags}=={vre.V2_SERVICE,"oms"}
+    args.expect_flag.append("strategy:"+p.RETAINED_FLAG+"=false")
+    with pytest.raises(vre.EvidenceUnknown,match="flag check names non-restarted service 'strategy'"):
         vre.report(args,runner=lambda command:"")
 
 
 def test_recut_unit_only_new_immutable_sibling_conditions_same_oneshot_and_timer():
     service=(HERE/"project-mai-tai-linesrc1-20261007.service").read_text()
-    root="/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job-rollback-1002"
+    root="/home/trader/after-hours/2026-10-07/linesrc1-hotfix1-994f08ae/job"
     assert "WorkingDirectory="+root in service and "ExecStart="+root+"/run.sh" in service
     assert "ConditionPathExists="+root+"/approval.json" in service
     assert "ConditionPathExists=!"+root+"/write-started.json" in service

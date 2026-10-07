@@ -1,4 +1,4 @@
-"""[codex] Oct7 v2-only policy. Pure transformations; no operational effects."""
+"""[codex] Oct7 paired policy. Pure transformations; no operational effects."""
 from datetime import datetime, time, timezone
 import hashlib
 from io import StringIO
@@ -10,9 +10,9 @@ from zoneinfo import ZoneInfo
 
 from dotenv.parser import parse_stream
 
-PLAN_BASE = "f9c9bd332392e2c905fc39b954421c88970844d7"
-APP = "1a70da19176d2cad486e8518e1c9030f1cabb968"
-TREE = "666be962a8968cd436d6e50cfb6d09d33d6693d7"
+PLAN_BASE = "994f08aee2c35b3809b3c3384e0d8628807dcfb7"
+APP = PLAN_BASE
+TREE = "7d827a407825d1d93aae8c3946d8b55320b9680f"
 BOX = "5b8b4f642bbc3c312be436d0e92adbc22d9e9f95"
 DAY = "2026-10-07"
 ET = ZoneInfo("America/New_York")
@@ -20,12 +20,13 @@ UTC = timezone.utc
 FLAG = "MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED"
 RETAINED_FLAG = "MAI_TAI_OMS_V2_WEBULL_MIRROR_RETAINED_HOLD_ENABLED"
 CATALOG_BASE_SHA = "2f80d2d86601aed63416d0acc902bedf41215796ea16388bd51fde10fd4c6be1"
-ROLLBACK_BASELINE_SHA = "dd7640df3ea90169ba4b8e8a65450e066ff532071f96573fa6380081cc11dc60"
+ROLLBACK_BASELINE_SHA = "fd05165a80683dd1979f428fa67ccd73ab36040a4d88cefff3ea3459f4c3066b"
+HANDOFF_FLAG = "MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_REPRICE_HANDOFF_ENABLED"
 PREFIX = "MAI_TAI_STRATEGY_SCHWAB_1M_V2_"
-# Restoration is the only changed flag. These eight already-live keys stay literal true.
+# Seven live keys stay true; handoff stays false. Restoration and retained hold turn on.
 LIVE_KEYS = tuple(PREFIX + suffix for suffix in (
     "PM_PRINT_ASK_CONFIRM_ENABLED", "PM_FLIP_WAIT_ENABLED", "PM_REST_REPRICE_ENABLED",
-    "ATR_REPRICE_HANDOFF_ENABLED", "GAP_HOLD_ENABLED", "RESTING_BUY_ROUND_UP_ENABLED",
+    "GAP_HOLD_ENABLED", "RESTING_BUY_ROUND_UP_ENABLED",
     "KEEP_REST_AFTER_BUY_ENABLED", "REMOVED_WAIT_CLEAR_ENABLED"))
 V2 = "schwab-1m-v2"
 SERVICES = ("control", "market-capture", "market-data", "oms", "orb", "orb-schwab",
@@ -33,9 +34,10 @@ SERVICES = ("control", "market-capture", "market-data", "oms", "orb", "orb-schwa
             "redis", "postgresql")
 SOURCES = tuple("src/project_mai_tai/" + path for path in (
     "market_data/schwab_v2_rest_client.py", "services/schwab_1m_v2_bot.py",
-    "strategy_core/session_line_restore.py"))
+    "strategy_core/session_line_restore.py", "oms/mirror_retained_hold.py", "oms/service.py"))
 GATE_SHA = "40e57465f08c9cd9e34dc5739a3c68585d162ee2a5daa3e6b387b5d9fa24972e"
-SCOPE = "linesrc1-oct7-unattended-one-v2-stop-start"
+SCOPE = "linesrc1-hotfix1-oct7-unattended-paired-v2-oms"
+PHASES = (("stop", V2), ("restart", "oms"), ("start", V2))
 ACK_STATE = {"MainPID": "765206", "NRestarts": "1", "ActiveState": "active",
              "SubState": "running", "ExecMainStartTimestamp": "Wed 2026-10-07 06:31:14 UTC",
              "InvocationID": "de16f6a3ae8f438a8aae3d294d7db686"}
@@ -63,7 +65,7 @@ def canonical(value):
 
 
 def rollback_baseline():
-    raw = Path(__file__).with_name("rollback-baseline.json").read_bytes()
+    raw = Path(__file__).with_name("paired-baseline.json").read_bytes()
     need(digest(raw) == ROLLBACK_BASELINE_SHA, "exact authorized rollback capture differs")
     return json.loads(raw)
 
@@ -80,25 +82,27 @@ def rollback_catalog(raw):
     rows = [row for row in data["flags"] if row["name"] == "oms_v2_webull_mirror_retained_hold_enabled"]
     need(len(rows) == 1 and rows[0]["expected"] is True and rows[0]["owning_service"] == "oms"
          and not rows[0].get("also_check_services"), "retained-hold overlay owner/value drift")
-    rows[0]["expected"] = False
+    handoff = [row for row in data["flags"] if row["name"] == "strategy_schwab_1m_v2_atr_reprice_handoff_enabled"]
+    need(len(handoff) == 1 and handoff[0]["expected"] is True, "source handoff catalog differs")
+    handoff[0]["expected"] = False
     return canonical(data)
 
 
 def rollback_runtime(raw, flags):
-    need(digest(raw) == "ef103a82b59cf8b93e6b8bb7dd613edc4e3f956f935e19e393550e89b7ebda1c",
+    need(digest(raw) == "d585c601eded25732dcaa05ec7886df44b42f506ed3e9efc933c5037649dc13d",
          "recorded pre-rollback runtime baseline differs")
     data = json.loads(raw)
     path = "/home/trader/restart_evidence/expected_flags.json"
-    need(data["evidence_inputs"].get(path) == CATALOG_BASE_SHA, "runtime source catalog pin differs")
+    need(data["evidence_inputs"].get(path) == "acf5a6dc55d1e8c54bb3b1a7c24ed7b093673c9729bd7accef83a2a848d19652", "runtime installed catalog pin differs")
     data["evidence_inputs"][path] = digest(flags)
     return canonical(data)
 
 
-def retained_off(raw):
+def retained_off(raw, value="false"):
     need(type(raw) is bytes and 0 < len(raw) <= 262144, "proc environment missing/overflow")
     pairs = [piece.decode().split("=", 1) for piece in raw.split(b"\0") if piece]
     need(all(len(pair) == 2 for pair in pairs), "malformed proc environment")
-    need([(key, value) for key, value in pairs if key.upper() == RETAINED_FLAG] == [(RETAINED_FLAG, "false")],
+    need([(key, actual) for key, actual in pairs if key.upper() == RETAINED_FLAG] == [(RETAINED_FLAG, value)],
          "authorized retained-hold OFF missing/alias/duplicate")
 
 
@@ -133,20 +137,22 @@ def env_candidate(raw):
     need([(row.key, row.value) for row in bindings if row.key and row.key.upper() == RETAINED_FLAG]
          == [(RETAINED_FLAG, "false")] and re.search(rf"(?m)^{RETAINED_FLAG}=false$", text),
          "rollback retained hold must stay explicit single literal false")
+    need([(row.key, row.value) for row in bindings if row.key and row.key.upper() == HANDOFF_FLAG]
+         == [(HANDOFF_FLAG, "false")] and re.search(rf"(?m)^{HANDOFF_FLAG}=false$", text), "RPG handoff must remain literal OFF")
     for key in LIVE_KEYS:
         need([(row.key, row.value) for row in bindings if row.key and row.key.upper() == key]
              == [(key, "true")], "live key drift: " + key)
-    return re.sub(pattern, FLAG + "=true", text).encode()
+    return re.sub(rf"(?m)^{RETAINED_FLAG}=false$", RETAINED_FLAG + "=true", re.sub(pattern, FLAG + "=true", text)).encode()
 
 
-def process_values(raw, restoration):
+def process_values(raw, restoration, handoff="false"):
     need(type(raw) is bytes and 0 < len(raw) <= 262144, "proc environment missing/overflow")
     pairs = [piece.decode().split("=", 1) for piece in raw.split(b"\0") if piece]
     need(all(len(pair) == 2 for pair in pairs), "malformed proc environment")
-    expected = {**{key: "true" for key in LIVE_KEYS}, FLAG: restoration}
+    expected = {**{key: "true" for key in LIVE_KEYS}, FLAG: restoration, HANDOFF_FLAG: handoff}
     if restoration == "true":
-        retained_off(raw)
-        expected[RETAINED_FLAG] = "false"
+        retained_off(raw, "true")
+        expected[RETAINED_FLAG] = "true"
     for key, value in expected.items():
         need([(name, val) for name, val in pairs if name.upper() == key] == [(key, value)],
              "proc value missing/alias/duplicate: " + key)
@@ -155,23 +161,29 @@ def process_values(raw, restoration):
 
 def states(before, current, phase):
     need(set(before) == set(current) == set(SERVICES), "fleet population incomplete")
-    need(phase in {0, 1, 2}, "phase invalid")
+    need(phase in range(4), "phase invalid")
+    stopped = {name for action, name in PHASES[:phase] if action in {"stop", "restart"}}
+    started = {name for action, name in PHASES[:phase] if action in {"start", "restart"}}
     for name, state in current.items():
         old = before[name]
-        if name != V2 or phase == 0:
+        if name not in stopped:
             need(state == old, "untouched identity drift: " + name)
-        elif phase == 1:
+        elif name not in started:
             need(state["MainPID"] == 0 and state["ActiveState"] == "inactive"
                  and state["SubState"] == "dead" and state["Result"] == "success"
                  and state["ExecMainStatus"] == 0 and state["NRestarts"] == 0,
                  "v2 stop not ordinary clean success")
+            stable = set(old) - {"MainPID", "ActiveState", "SubState", "Result", "ExecMainCode", "ExecMainStatus", "InactiveEnterTimestamp"}
+            need(all(state[key] == old[key] for key in stable), "stopped owner identity/config drift: " + name)
         else:
             need(state["MainPID"] > 0 and state["MainPID"] != old["MainPID"]
                  and state["ActiveState"] == "active" and state["SubState"] == "running"
                  and state["Result"] == "success" and state["NRestarts"] == 0
+                 and state["ExecMainStatus"] == 0
                  and state["ExecMainStartTimestampMonotonic"] > old["ExecMainStartTimestampMonotonic"]
                  and re.fullmatch(r"[0-9a-f]{32}", state["InvocationID"])
                  and state["InvocationID"] != old["InvocationID"], "new v2 identity not proven")
+            need(all(state[key] == old[key] for key in ("FragmentPath", "DropInPaths", "EnvironmentFiles")), "new owner config drift")
 
 
 def assignment(text, key, value):
@@ -191,20 +203,18 @@ def gate_candidate(raw, state, snapshot, record, untouched_oms=None):
     text = assignment(text, "SNAPSHOT", snapshot)
     text = assignment(text, "INSTALL_RECORD", record)
     if untouched_oms is not None:
-        need(untouched_oms == rollback_baseline()["fleet_before"]["oms"], "authorized untouched OMS identity differs")
+        need(untouched_oms["MainPID"] > 0 and untouched_oms["NRestarts"] == 0, "new OMS identity incomplete")
         text = assignment(text, "EXPECTED_OMS_PID", untouched_oms["MainPID"])
         text = assignment(text, "EXPECTED_OMS_START", untouched_oms["ExecMainStartTimestamp"])
-    # The new evidence baseline classifies this restart only; old grouped flags
-    # are retained separately in the original gate backup, never attributed to OMS.
+    # Classify only this pair; old grouped flags stay in the historical gate backup.
     text = re.sub(r"(?m)^\s*--restarted [^\n]+\n", "", text)
     text = re.sub(r"(?m)^\s*--expect-flag [^\n]+\n", "", text)
     anchor = "  --expected-alembic-head 20261005_0022"
     need(text.count(anchor) == 1 and "--no-schema-change" in text, "collector schema anchor drift")
-    flags = {**{key: "true" for key in LIVE_KEYS}, FLAG: "true"}
-    additions = "  --restarted schwab-1m-v2 \\\n"
-    additions += "".join("  --expect-flag 'schwab-1m-v2:" + key + "=" + value + "' \\\n"
-                         for key, value in flags.items())
-    additions += "  --expect-flag '" + V2 + ":" + RETAINED_FLAG + "=false' \\\n"
+    flags = {**{key: "true" for key in LIVE_KEYS}, FLAG: "true", RETAINED_FLAG: "true", HANDOFF_FLAG: "false"}
+    additions = "  --restarted schwab-1m-v2 \\\n  --restarted oms \\\n"
+    additions += "".join("  --expect-flag '" + owner + ":" + key + "=" + value + "' \\\n"
+                         for owner in (V2, "oms") for key, value in flags.items())
     text = text.replace(anchor, additions + anchor)
     return text.encode()
 
@@ -240,11 +250,11 @@ def catalog_counts(flags, numeric):
     return {"boolean": len(b), "numeric": len(n), "total": len(b) + len(n)}
 
 
-def held_logs(text, state, now, stopped=None):
+def held_logs(text, state, now, stopped=None, allow_official_release=False):
     start = system_time(state["ExecMainStartTimestamp"])
     anchor = start if stopped is None else stopped
     need(anchor.astimezone(ET).date().isoformat() == DAY and anchor.astimezone(ET).hour >= 16
-         and 0 <= (start - anchor).total_seconds() <= 240,
+         and start >= anchor,
          "held admission is only this after16 restart")
     records, stamp = [], None
     for line in text.splitlines():
@@ -259,18 +269,49 @@ def held_logs(text, state, now, stopped=None):
                  for _, line in records), "startup/error log blocker")
     holds = [(stamp, line) for stamp, line in records
              if "[V2-BOOT-HOLD] HELD" in line and "restoration_complete=0" in line]
+    releases = [(stamp, line) for stamp, line in records if "[V2-BOOT-HOLD] released" in line]
+    if releases and allow_official_release:
+        stamp, line = releases[-1]
+        need(stamp <= now and "restoration_complete=1" in line and "reconstructed_uncapped=0" in line,
+             "released BOOT marker not exact safe shape")
+        need(not any(moment > stamp and "[V2-BOOT-HOLD] HELD" in record for moment, record in records),
+             "released state contradicted by later hold")
+        return dict(verdict="RELEASED_MARKER_REQUIRES_OFFICIAL_PROOF", literal_hold=line,
+                    entry_allowed="source boot hold released; entry window unchanged",
+                    next_session="2026-10-08 07:00 ET live line acceptance UNMEASURED")
     need(holds and 0 <= (now - holds[-1][0]).total_seconds() <= 120, "literal fresh BOOT-HOLD missing")
     need(not any("[V2-BOOT-HOLD] released" in line for _, line in records), "held receipt contradicted by release")
     return {"verdict": "HELD_AFTER16_NOT_RESTORATION_PASS", "entry_allowed": False,
             "literal_hold": holds[-1][1], "next_session": "2026-10-08 07:00 ET UNMEASURED"}
 
 
+def oms_logs(text, state, now):
+    start = system_time(state["ExecMainStartTimestamp"])
+    stamp, scoped = None, []
+    for line in text.splitlines():
+        match = re.match(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3})", line)
+        if match:
+            stamp = datetime.strptime(match[1], "%Y-%m-%d %H:%M:%S,%f").replace(tzinfo=UTC)
+        need(stamp is not None or not line.strip(), "OMS new-range unscoped prefix")
+        if stamp is not None and start <= stamp <= now:
+            scoped.append(line)
+    need(scoped and not any(re.search(r"\bERROR\b|Traceback|SCHWAB-TOKEN-DEAD", line) for line in scoped),
+         "new OMS startup/error evidence unproven")
+    return dict(scoped_records=len(scoped), errors=0, start_utc=start.isoformat(),
+                freshness="separate current process/general-health proof; no aging startup-log exemption")
+
+
 def report_disposition(rc, raw, held, continuity=None):
     # The official verdict remains raw. Only the explicitly authorized mechanical
     # restart gap and pending future callback are disclosed, never made PASS.
-    expected = ["no post-restart restoration_complete=1 line",
+    released = held.get("verdict") == "RELEASED_MARKER_REQUIRES_OFFICIAL_PROOF"
+    expected = [] if released else ["no post-restart restoration_complete=1 line",
                 "no literal post-restart BOOT-HOLD release with restoration_complete=1"]
     rows = [line for line in raw.splitlines() if line.startswith("| ")]
+    if released:
+        for name in ("REST warmup", "BOOT-HOLD released"):
+            matching = [line for line in rows if line.split("|")[1].strip() == name]
+            need(len(matching) == 1 and matching[0].endswith("| PASS |"), "released state lacks official " + name + " PASS")
     if rc == 0:
         need(re.search(r"(?m)^Final call: (PASS|EXPECTED BY DESIGN);", raw), "zero collector verdict differs")
         return raw
@@ -310,7 +351,7 @@ def report_disposition(rc, raw, held, continuity=None):
              "official unreadable/unrelated unknown, not a pending future callback")
     fail_names = [line.split("|")[1].strip() for line in rows if line.endswith("| FAIL |")]
     need(set(fail_names) <= {"REST warmup", "BOOT-HOLD released", "Bar continuity"}, "other official failed row")
-    need(held["verdict"] == "HELD_AFTER16_NOT_RESTORATION_PASS", "literal hold not proven")
-    return raw + "\nMECHANICS: COMPLETE_HELD_AFTER16, not collector PASS. " \
+    need(released or held["verdict"] == "HELD_AFTER16_NOT_RESTORATION_PASS", "literal boot state not proven")
+    return raw + "\nMECHANICS: COMPLETE_AFTER16, not collector PASS. " \
         "Known bounded restart minutes and/or future first closed callback are disclosed separately. " \
         "Next07:00 restoration/release remains UNMEASURED.\n" + held["literal_hold"] + "\n"

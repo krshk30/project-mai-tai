@@ -26,7 +26,7 @@ NOW = datetime(2026, 10, 7, 23, 30, tzinfo=timezone.utc)
 
 def env():
     return ("UNCHANGED=abc\n" + "\n".join(key + "=true" for key in p.LIVE_KEYS)
-            + "\n" + p.FLAG + "=false\n" + p.RETAINED_FLAG + "=false\n").encode()
+            + "\n" + p.FLAG + "=false\n" + p.RETAINED_FLAG + "=false\n" + p.HANDOFF_FLAG + "=false\n").encode()
 
 
 def fleet():
@@ -35,7 +35,7 @@ def fleet():
         ExecMainStartTimestamp="Wed 2026-10-07 11:00:00 UTC", ExecMainStartTimestampMonotonic=100,
         FragmentPath="CONTROLLED", DropInPaths="", EnvironmentFiles="CONTROLLED", InactiveEnterTimestamp="")
         for index, name in enumerate(p.SERVICES)}
-    result[p.V2].update(MainPID=917354, ExecMainStartTimestamp="Wed 2026-10-07 11:14:07 UTC")
+    result[p.V2].update(MainPID=1207761, ExecMainStartTimestamp="Wed 2026-10-07 17:45:25 UTC")
     result["orb-schwab"].update({key: int(value) if key in {"MainPID", "NRestarts"} else value
                                 for key, value in p.ACK_STATE.items()})
     result["momentum-paper"].update(MainPID=0, ActiveState="inactive", SubState="dead",
@@ -47,6 +47,21 @@ def new_v2():
     value = deepcopy(fleet()[p.V2])
     value.update(MainPID=999001, ExecMainStartTimestamp="Wed 2026-10-07 23:30:00 UTC",
                  InvocationID="f" * 32, ExecMainStartTimestampMonotonic=200)
+    return value
+
+
+def new_oms():
+    value = deepcopy(fleet()["oms"])
+    value.update(MainPID=999002, ExecMainStartTimestamp="Wed 2026-10-07 23:29:59 UTC",
+                 InvocationID="e" * 32, ExecMainStartTimestampMonotonic=199)
+    return value
+
+
+def phase_fleet(phase):
+    value = fleet()
+    if phase >= 1: value[p.V2].update(MainPID=0, ActiveState="inactive", SubState="dead")
+    if phase >= 2: value["oms"] = new_oms()
+    if phase >= 3: value[p.V2] = new_v2()
     return value
 
 
@@ -63,7 +78,7 @@ def test_recorded_byte_hashes_and_actual_catalog_147_plus10():
 
 
 def test_env_only_literal_false_to_true_byte_change():
-    assert p.env_candidate(env()) == env().replace((p.FLAG + "=false").encode(), (p.FLAG + "=true").encode())
+    assert p.env_candidate(env()) == env().replace((p.FLAG + "=false").encode(), (p.FLAG + "=true").encode()).replace((p.RETAINED_FLAG + "=false").encode(), (p.RETAINED_FLAG + "=true").encode())
 
 
 @pytest.mark.parametrize("damage", ["duplicate", "alias", "missing", "already_true", "quoted", "malformed", "old_key"])
@@ -88,13 +103,11 @@ def test_first_stop_window_exact_ET_boundaries(stamp, green):
         with pytest.raises(p.Pending): p.first_stop_window(datetime.fromisoformat(stamp))
 
 
-@pytest.mark.parametrize("phase", [0,1,2])
+@pytest.mark.parametrize("phase", [0,1,2,3])
 def test_all_untouched_identities_exact_including_ack_NRestarts1(phase):
-    before, after = fleet(), fleet()
-    if phase == 1: after[p.V2].update(MainPID=0, ActiveState="inactive", SubState="dead")
-    if phase == 2: after[p.V2] = new_v2()
+    before, after = fleet(), phase_fleet(phase)
     p.states(before, after, phase)
-    after["oms"]["MainPID"] += 1
+    after["strategy"]["MainPID"] += 1
     with pytest.raises(p.Stop): p.states(before, after, phase)
 
 
@@ -109,15 +122,15 @@ def test_nonclean_stop_refuses_without_reset_waiver(field,value):
 
 def test_actual_morning_patch_only_new_v2_scope_keeps_ack_dynamic_date_paper():
     raw = (FIX / "preopen.sh").read_bytes()
-    candidate = p.gate_candidate(raw, new_v2(), "/CONTROLLED/snapshot.json", "/CONTROLLED/record.json")
+    candidate = p.gate_candidate(raw, new_v2(), "/CONTROLLED/snapshot.json", "/CONTROLLED/record.json", new_oms())
     assert subprocess.run(["bash","-n"], input=candidate, capture_output=True).returncode == 0
     text = candidate.decode()
     assert "EXPECTED_PID=999001" in text and "EXPECTED_SHA=" + p.APP in text
-    assert text.count("--restarted ") == 1 and "--restarted schwab-1m-v2" in text
-    assert "--expect-flag 'oms:" not in text
+    assert text.count("--restarted ") == 2 and "--restarted schwab-1m-v2" in text
+    assert "--expect-flag 'oms:" in text
     assert "upgrade_ack.py" in text and "daily.py paper" in text
     assert 'EXPECTED_DATE="$(TZ=America/New_York date +%F)"' in text
-    for prefix in ("OMS_", "STRATEGY_", "ORB_", "ORB_SCHWAB_", "CONTROL_", "MARKET_DATA_", "PAPER_"):
+    for prefix in ("STRATEGY_", "ORB_", "ORB_SCHWAB_", "CONTROL_", "MARKET_DATA_", "PAPER_"):
         for key in ("PID","START"):
             import re
             pattern = "(?m)^EXPECTED_" + prefix + key + "=.*$"
@@ -265,7 +278,7 @@ class FX:
     def prepare(self): self.hit("prepare")
     def gates(self,phase): self.hit("gates"+str(phase))
     def v2_gate(self): self.hit("v2_gate")
-    def action(self,action): self.hit(action)
+    def action(self,action,owner=p.V2): self.hit(action + ":" + owner)
     def checkpoint(self,phase): self.hit("checkpoint"+str(phase))
     def prove(self): self.hit("prove")
     def closeout(self): self.hit("closeout")
@@ -281,18 +294,18 @@ def test_literal_stop_start_only_and_after_stop_midnight_not_abort():
         if phase==1: fx.clock=datetime(2026,10,8,4,1,tzinfo=timezone.utc)
     fx.checkpoint=crossed
     runner.Sequence(fx).run()
-    assert fx.calls==["initial","claim","prepare","gates0","v2_gate","stop","checkpoint1",
-                      "gates1","start","checkpoint2","prove","closeout","complete"]
+    assert fx.calls==["initial","claim","prepare","gates0","v2_gate","stop:"+p.V2,"checkpoint1",
+                      "gates1","restart:oms","checkpoint2","gates2","start:"+p.V2,"checkpoint3","prove","closeout","complete"]
 
 
-@pytest.mark.parametrize("failure", ["initial","claim","prepare","gates0","v2_gate","stop","checkpoint1",
-                                    "gates1","start","checkpoint2","prove","closeout","complete"])
+@pytest.mark.parametrize("failure", ["initial","claim","prepare","gates0","v2_gate","stop:"+p.V2,"checkpoint1",
+                                    "gates1","restart:oms","checkpoint2","gates2","start:"+p.V2,"checkpoint3","prove","closeout","complete"])
 def test_every_abort_no_recovery_or_repeat_start(failure):
     fx=FX(failure)
     with pytest.raises(p.Stop): runner.Sequence(fx).run()
-    assert fx.calls[-1]=="abort" and fx.calls.count("start")<=1
-    if failure in {"initial","claim","prepare","gates0","v2_gate","stop","checkpoint1","gates1"}:
-        assert "start" not in fx.calls
+    assert fx.calls[-1]=="abort" and fx.calls.count("start:"+p.V2)<=1 and fx.calls.count("restart:oms")<=1
+    if failure in {"initial","claim","prepare","gates0","v2_gate","stop:"+p.V2,"checkpoint1","gates1","restart:oms","checkpoint2","gates2"}:
+        assert "start:"+p.V2 not in fx.calls
 
 
 @pytest.mark.parametrize("codes,reads,sleeps", [([0],1,0),([2,0],2,1),([2,2,0],3,2),([2,2,2],3,2),([1],1,0),([124],1,0)])
@@ -338,7 +351,7 @@ def test_no_bulk_snapshot_or_service_writes_in_units():
     service=(HERE/"project-mai-tai-linesrc1-20261007.service").read_text()
     timer=(HERE/"project-mai-tai-linesrc1-20261007.timer").read_text()
     assert "ConditionPathExists=!" in service and "write-started.json" in service and "Restart=no" in service
-    assert "ConditionPathExists=/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job-rollback-1002/approval.json" in service
+    assert "ConditionPathExists=/home/trader/after-hours/2026-10-07/linesrc1-hotfix1-994f08ae/job/approval.json" in service
     assert "approval.pending.json" not in (HERE/"make_release.py").read_text()
     assert "SuccessExitStatus=75" in service and "Requires=" not in service
     assert "2026-10-07 16..23:" in timer and "Persistent=false" in timer
@@ -360,19 +373,19 @@ def test_proof_calls_direct_official_collector_before_ack_repin(monkeypatch,tmp_
     job=tmp_path/"job"; job.mkdir()
     attempt=tmp_path/"attempt"; attempt.mkdir()
     fx=runner.Real(job,{},attempt)
-    fx.started=new_v2(); fx.log_base={}; fx.start_returned=NOW; fx.stop_started=NOW
+    fx.started=new_v2(); fx.started_owners={"oms":new_oms()}; fx.log_base={}; fx.log_bases={}; fx.start_returned=NOW; fx.stop_started=NOW
     fx.now=lambda: NOW+timedelta(seconds=2)
     fx.gates=Mock(); fx.proc=Mock(); fx.flaggate=Mock()
     fx.measure_continuity=lambda: dict(verdict="N/A_OFF_SESSION")
     snapshot=dict(captured_at_utc=NOW.isoformat(),v2_watchlist=dict(symbols=["RETO"]),services=fleet())
     (attempt/"before-restart.json").write_bytes(p.canonical(snapshot))
-    monkeypatch.setattr(log_ranges,"logs",lambda base: {p.V2: dict(text=held_text())})
+    monkeypatch.setattr(log_ranges,"logs",lambda base: {p.V2: dict(text=held_text()), "oms":dict(text="2026-10-07 23:30:01,000 INFO OMS started\n")})
     fx.command=Mock(return_value=subprocess.CompletedProcess([],1,official().encode(),b""))
     fx.prove()
     args=fx.command.call_args.args[0]
     assert args[2]==runner.REPO/"ops/health/v2_restart_evidence.py"
     assert "report" in args and runner.DAILY/"restart_report.py" not in args
-    assert (attempt/"v2-only-install-record.json").exists()
+    assert (attempt/"paired-install-record.json").exists()
     assert list(attempt.glob("*-official-raw-report.md"))[0].read_text()==official()
 
 
@@ -387,11 +400,12 @@ def test_actual_closeout_bundle_and_imported_daily_ack_contract(monkeypatch,tmp_
     gate=tmp_path/"preopen.sh"; gate.write_bytes((FIX/"preopen.sh").read_bytes()); gate.chmod(0o700)
     job=tmp_path/"job"; job.mkdir(); (job/"release.json").write_bytes(b'{"controlled_release":true}\n')
     attempt=tmp_path/"attempt"; attempt.mkdir()
-    for name in ("v2-only-install-record.json","before-restart.json","sealed-actions.json"):
+    for name in ("paired-install-record.json","before-restart.json","sealed-actions.json"):
         (attempt/name).write_bytes(b'{"controlled_not_production":true}\n')
-    fx=runner.Real(job,{},attempt); fx.started=new_v2(); fx.record=attempt/"v2-only-install-record.json"
+    fx=runner.Real(job,{},attempt); fx.started=new_v2(); fx.record=attempt/"paired-install-record.json"
     current=fleet(); current[p.V2]=fx.started
-    current["oms"]=deepcopy(p.rollback_baseline()["fleet_before"]["oms"])
+    current["oms"]=new_oms(); fx.started_owners={"oms":current["oms"]}
+    fx.hold=dict(verdict="HELD_AFTER16_NOT_RESTORATION_PASS")
     fx.before=deepcopy(current)
     fx.fleet=lambda: current; fx.baseline=Mock(); fx.command=Mock()
     fx.replace=lambda path,raw: path.write_bytes(raw)
@@ -452,7 +466,7 @@ def test_abort_notification_errors_leave_actual_STOP_no_service_action(monkeypat
     fx.command=Mock(side_effect=TimeoutError("CONTROLLED notification timeout"))
     fx.abort("start-v2",1)
     value=json.loads((tmp_path/"STOP.json").read_bytes())
-    assert value["phase"]=="start-v2" and value["actual"][p.V2]["MainPID"]==917354
+    assert value["phase"]=="start-v2" and value["actual"][p.V2]["MainPID"]==1207761
     assert not value["recovery_authorized"]
     assert list(tmp_path.glob("*-alert-unreadable.json"))
     assert "systemctl" not in fx.command.call_args.args[0]
@@ -464,7 +478,7 @@ def test_local_package_exact_bytes_standing_GO_present_and_tamper_refused(monkey
     def git(*args):
         if args[0]=="rev-parse": return (p.TREE+"\n").encode()
         if args[0]=="merge-base": return b""
-        if args[0]=="diff": return b"" if "src" in args else (make_release.REL+"runner.py\n").encode()
+        if args[0]=="diff": return ("\n".join(p.SOURCES)+"\n").encode() if "src" in args else (make_release.REL+"runner.py\n").encode()
         assert args[0]=="show"
         sha,path=args[1].split(":",1)
         return (HERE/path.removeprefix(make_release.REL)).read_bytes() if sha==plan else (ROOT/path).read_bytes()
@@ -491,7 +505,7 @@ def test_published_manifest_admission_refuses_each_tamper(monkeypatch,tmp_path,d
                  plan_commit="a"*40,artifacts={name:p.digest(value) for name,value in raw.items()},
                  catalog_hashes=dict(flags=p.digest(raw["rollback-expected_flags.json"])),
                  baseline_hashes={str(runner.DAILY/"runtime.json"):p.digest(raw["rollback-runtime.json"])},
-                 **p.rollback_baseline())
+                 archived_rows=json.loads(raw["archived-baseline.json"]), **p.rollback_baseline())
     if damage=="scope": release["application"]=p.BOX
     if damage=="inventory": del release["artifacts"]["strict_flat_readonly.py"]
     release_raw=p.canonical(release); expected=p.digest(release_raw)
@@ -536,7 +550,7 @@ def test_prepare_git_success_notice_requires_exact_readback_before_env(monkeypat
     for name in ("runtime.json","binding.json","upgrade_ack.py","upgrade-ack.json"):
         (dailyroot/name).write_bytes((FIX/"preopen-daily"/name).read_bytes())
     monkeypatch.setattr(runner,"GATE",gate); monkeypatch.setattr(runner,"ENV",envfile)
-    monkeypatch.setattr(runner,"DAILY",dailyroot); monkeypatch.setattr(runner,"LOG",logfile)
+    monkeypatch.setattr(runner,"DAILY",dailyroot); monkeypatch.setattr(runner,"LOG",logfile); monkeypatch.setattr(runner,"OMS_LOG",logfile)
     helpers=tmp_path/"helpers"; helpers.mkdir()
     (helpers/"expected_flags.json").write_bytes((HERE/"rollback-expected_flags.json").read_bytes())
     monkeypatch.setattr(runner,"HELPERS",helpers)
@@ -567,7 +581,9 @@ def test_midnight_clean_restart_still_proves_actual_held_no_clock_abort():
     state=new_v2(); state["ExecMainStartTimestamp"]="Thu 2026-10-08 04:00:05 UTC"
     raw="2026-10-08 04:00:06,000 WARNING [V2-BOOT-HOLD] HELD restoration_complete=0\n"
     assert p.held_logs(raw,state,started+timedelta(seconds=2),stopped)["entry_allowed"] is False
-    with pytest.raises(p.Stop): p.held_logs(raw,state,started+timedelta(seconds=2),stopped-timedelta(minutes=5))
+    # The paired authorization adds no elapsed-clock abort after a clean stop.
+    assert p.held_logs(raw,state,started+timedelta(seconds=2),stopped-timedelta(minutes=5))["entry_allowed"] is False
+    with pytest.raises(p.Stop): p.held_logs(raw,state,started+timedelta(seconds=2),stopped-timedelta(days=1))
 
 
 def test_actual_empty_watched_population_not_fabricated_unreadable_or_tape():

@@ -32,7 +32,7 @@
     "/home/trader/after-hours/2026-10-06/install2-5b8b4f64/job-archive64/attempt-install2-oct6-attended/install1-original-before-restart.json": "fdf63d0d2265e9fc60dbc3d8ac7457eb6e00b60cf4123d42d7066977019b6334",
     "/home/trader/project-mai-tai/ops/health/v2_restart_evidence.py": "8cd39eb5b94b979ea6d016b17ee57e0eaace417b545ec3db7c3deecad4d79ce7",
     "/home/trader/project-mai-tai/src/project_mai_tai/strategy_core/time_utils.py": "4cf376949ac56e8a5ae93f9f344faa67433e59f51e351754c05dd6ae00fcfe3a",
-    "/home/trader/restart_evidence/expected_flags.json": "acf2888765bbbb7bfba76119a79594af60cd8a1c60062b652bd3b8afbdb89e82",
+    "/home/trader/restart_evidence/expected_flags.json": "acf5a6dc55d1e8c54bb3b1a7c24ed7b093673c9729bd7accef83a2a848d19652",
     "/home/trader/restart_evidence/expected_flags_check.py": "4822bcc1733429ec31b18de0b3a67d6e5fd517418b9505f7fbb8c7d3a67fdd58",
     "/home/trader/restart_evidence/expected_numeric.json": "9b8e164c0e3f41ed487d344c3ecbde889be3444b0e87e13ec736057ca58f452a",
     "/home/trader/restart_evidence/preopen_restart_evidence.sh": "e8a4c4d8e2b273641054208ac778cf60fe691ebab0069917bedd5221fc0640ea",

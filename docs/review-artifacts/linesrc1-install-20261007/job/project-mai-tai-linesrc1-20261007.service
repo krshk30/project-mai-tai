@@ -1,16 +1,16 @@
 # [codex] Parent stages this exact named one-shot only after review.
 [Unit]
-Description=Authorized unattended Oct7 LINESRC1 one-v2 install
-ConditionPathExists=/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job-rollback-1002/approval.json
-ConditionPathExists=!/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job-rollback-1002/write-started.json
+Description=Authorized unattended Oct7 LINESRC1+HOTFIX1 paired v2/OMS install
+ConditionPathExists=/home/trader/after-hours/2026-10-07/linesrc1-hotfix1-994f08ae/job/approval.json
+ConditionPathExists=!/home/trader/after-hours/2026-10-07/linesrc1-hotfix1-994f08ae/job/write-started.json
 
 [Service]
 Type=oneshot
 User=root
 Group=root
-WorkingDirectory=/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job-rollback-1002
+WorkingDirectory=/home/trader/after-hours/2026-10-07/linesrc1-hotfix1-994f08ae/job
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job-rollback-1002/run.sh
+ExecStart=/home/trader/after-hours/2026-10-07/linesrc1-hotfix1-994f08ae/job/run.sh
 SuccessExitStatus=75
 TimeoutStartSec=5400
 Restart=no

@@ -56,7 +56,7 @@
       "also_check_services": [
         "oms"
       ],
-      "expected": false,
+      "expected": true,
       "name": "strategy_schwab_1m_v2_atr_reprice_handoff_enabled",
       "owning_service": "schwab-1m-v2",
       "reason": "RPG1 admits new durable fast-reprice handoffs; OFF never abandons existing ownership.",
@@ -83,7 +83,7 @@
       "ruling": "Operator BUGS v3 FINAL 2026-10-02: on with the NFQ1 deploy, separate from tonight's b8 install."
     },
     {
-      "expected": true,
+      "expected": false,
       "name": "oms_v2_webull_mirror_retained_hold_enabled",
       "owning_service": "oms",
       "reason": "MIRRORHOLD1 retained mirror holds are expected ON under the operator's all-switches-on ruling.",

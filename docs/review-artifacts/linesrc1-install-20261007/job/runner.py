@@ -1,4 +1,4 @@
-"""[codex] Literal Oct7 install: only v2 stop/start; no recovery on any abort."""
+"""[codex] Literal Oct7 paired v2 stop, OMS restart, v2 start; no recovery."""
 from datetime import datetime, timezone
 from difflib import unified_diff
 import fcntl
@@ -22,6 +22,7 @@ GATE = Path("/home/trader/preopen.sh")
 DAILY = Path("/home/trader/preopen-daily")
 HELPERS = Path("/home/trader/restart_evidence")
 LOG = Path("/var/log/project-mai-tai/schwab-1m-v2.log")
+OMS_LOG = Path("/var/log/project-mai-tai/oms.log")
 FIELDS = ("MainPID", "NRestarts", "ActiveState", "SubState", "Result", "ExecMainCode",
           "ExecMainStatus", "ExecMainStartTimestamp", "ExecMainStartTimestampMonotonic",
           "FragmentPath", "DropInPaths", "EnvironmentFiles", "InactiveEnterTimestamp", "InvocationID")
@@ -45,20 +46,15 @@ class Sequence:
             p.first_stop_window(self.fx.now())
             self.fx.claim()
             self.fx.prepare()
-            self.phase = "stop-v2"
-            self.fx.gates(0)
-            self.fx.v2_gate()
-            p.first_stop_window(self.fx.now())
-            self.fx.action("stop")
-            self.completed = 1
-            self.fx.checkpoint(1)
-            self.phase = "start-v2"
-            self.fx.gates(1)
-            # No wall-clock abort after a clean stop; restoring this one owner
-            # is the literal approved success path, not an abort recovery action.
-            self.fx.action("start")
-            self.completed = 2
-            self.fx.checkpoint(2)
+            for index, (action, owner) in enumerate(p.PHASES):
+                self.phase = action + "-" + owner
+                self.fx.gates(index)
+                if index == 0:
+                    self.fx.v2_gate()
+                    p.first_stop_window(self.fx.now())
+                self.fx.action(action, owner)
+                self.completed = index + 1
+                self.fx.checkpoint(self.completed)
             self.phase = "new-process-proof"
             self.fx.prove()
             self.phase = "repin-existing-morning"
@@ -97,9 +93,9 @@ def verify(job, expected):
     p.need(re.fullmatch(r"[0-9a-f]{40}", value["plan_commit"]), "plan commit unbound")
     p.require_rollback_baseline(value)
     flags = (job / "rollback-expected_flags.json").read_bytes()
-    p.need(value["catalog_hashes"]["flags"] == p.digest(flags)
-           and value["baseline_hashes"][str(DAILY / "runtime.json")] == p.digest((job / "rollback-runtime.json").read_bytes()),
-           "release did not bind installed OFF catalog/runtime overlay")
+    p.need(value["catalog_hashes"]["flags"] == p.digest(flags), "paired catalog pin differs")
+    p.need(value["archived_rows"] == json.loads((job / "archived-baseline.json").read_bytes()),
+           "archived preservation receipt differs")
     return value
 
 
@@ -108,6 +104,7 @@ class Real:
         self.job, self.release, self.attempt = job, release, attempt
         self.claimed, self.counter, self.started = False, 0, None
         self.since = None
+        self.started_owners = {}
 
     def now(self):
         return datetime.now(timezone.utc)
@@ -231,18 +228,18 @@ class Real:
             self.redis_before = self.attempt / "redis-before.json"
             exclusive(self.redis_before, raw)
 
-    def proc(self, state, value):
+    def proc(self, state, value, role=p.V2):
         with Path(f"/proc/{state['MainPID']}/environ").open("rb") as stream:
             raw = stream.read(262145)
-        found = p.process_values(raw, value)
+        found = p.process_values(raw, value, handoff="true" if role == "oms" and value == "false" else "false")
         self.receipt("process-flags.json", p.canonical(dict(pid=state["MainPID"], sha256=p.digest(raw), values=found)))
 
-    def retained_proc(self, state):
+    def retained_proc(self, state, value="false"):
         with Path(f"/proc/{state['MainPID']}/environ").open("rb") as stream:
             raw = stream.read(262145)
-        p.retained_off(raw)
+        p.retained_off(raw, value)
         self.receipt("rollback-retained-OFF.json", p.canonical(dict(pid=state["MainPID"], sha256=p.digest(raw),
-            retained_hold="false", origin="prior authorized MIRRORHOLD rollback; not LINESRC restart")))
+            retained_hold=value, origin="paired phase-specific owner proof")))
 
     def v2_gate(self):
         self.flat("oms")
@@ -284,7 +281,7 @@ class Real:
         self.command(["git", "-C", REPO, "merge-base", "--is-ancestor", p.BOX, p.APP])
         self.command(["git", "-C", REPO, "merge-base", "--is-ancestor", p.APP, "origin/main"])
         changed = self.command(["git", "-C", REPO, "diff", "--name-only", p.BOX, p.APP, "--", "src", "ops"]).stdout.decode().splitlines()
-        p.need(set(changed) == set(p.SOURCES), "application scope not only three v2 source files")
+        p.need(set(changed) == set(p.SOURCES), "application scope differs from exact five-file paired allowlist")
         info = ENV.stat()
         p.need(info.st_uid == 0 and info.st_mode & 0o777 == 0o600 and not ENV.is_symlink(), "env owner/mode")
         self.env_before = ENV.read_bytes()
@@ -295,17 +292,20 @@ class Real:
         self.lifecycle = admit_paper_lifecycle(self.release["fleet_before"], self.before, self.now(), self.paper_close_receipt())
         self.receipt("scheduled-paper-lifecycle.json", p.canonical(self.lifecycle))
         old = self.before[p.V2]
-        p.need(old["MainPID"] == 917354 and old["ExecMainStartTimestamp"] == "Wed 2026-10-07 11:14:07 UTC"
+        p.need(old["MainPID"] == 1207761 and old["ExecMainStartTimestamp"] == "Wed 2026-10-07 17:45:25 UTC"
                and old["NRestarts"] == 0 and old["ActiveState"] == "active" and old["SubState"] == "running"
                and old["Result"] == "success", "Oct7 OFF v2 identity differs")
         for key, value in p.ACK_STATE.items():
             p.need(str(self.before["orb-schwab"][key]) == value, "acknowledged ORB identity differs")
         self.proc(old, "false")
+        self.proc(self.before["oms"], "false", "oms")
         self.retained_proc(self.before["oms"])
         self.catalog()
         self.flat()
         self.census()
         self.redis()
+        self.archived_before = json.loads(self.reader("archived_readonly.py"))
+        p.need(self.archived_before == self.release["archived_rows"], "archived rollback evidence drift")
         self.v2_gate()
 
     def claim(self):
@@ -347,7 +347,10 @@ class Real:
         self.replace(ENV, self.env_after)
         info = LOG.stat()
         self.log_base = dict(path=str(LOG), inode=info.st_ino, device=info.st_dev, offset=info.st_size)
-        exclusive(self.attempt / "logs-before-stop.json", p.canonical(self.log_base))
+        omslog = OMS_LOG
+        info = omslog.stat()
+        self.log_bases = {p.V2: self.log_base, "oms": dict(path=str(omslog), inode=info.st_ino, device=info.st_dev, offset=info.st_size)}
+        exclusive(self.attempt / "logs-before-stop.json", p.canonical(self.log_bases))
 
     def replace(self, path, raw):
         info = path.stat()
@@ -360,30 +363,46 @@ class Real:
     def gates(self, phase):
         current = self.fleet()
         p.states(self.before, current, phase)
-        self.retained_proc(current["oms"])
+        if phase < 2:
+            self.retained_proc(current["oms"])
+        elif phase >= 2:
+            p.need(current["oms"] == self.started_owners["oms"], "new OMS moved")
+            self.proc(current["oms"], "true", "oms")
         if self.started is not None:
             p.need(current[p.V2] == self.started, "new v2 process moved")
         self.source(p.APP if getattr(self, "advanced", False) else p.BOX)
         self.census()
         self.redis()
         self.flat()
+        if phase == 2:
+            state = self.started_owners["oms"]
+            raw = self.reader("oms_health_readonly.py", "--start", p.system_time(state["ExecMainStartTimestamp"]).isoformat())
+            proof = json.loads(raw)
+            p.need(proof["rc"] == 0 and proof["service"] == "oms", "new OMS health unproven")
+        if phase in {0, 3}:
+            self.flat("oms")
+            self.flat("strategy")
 
-    def action(self, action):
-        p.need(action in {"stop", "start"}, "foreign service action")
-        if action == "stop":
+    def action(self, action, owner=p.V2):
+        p.need((action, owner) in p.PHASES, "foreign service action")
+        if action == "stop" and owner == p.V2:
             self.stop_started = self.now()
-        result = self.command(["systemctl", action, "project-mai-tai-schwab-1m-v2.service"], check=False, timeout=120)
-        if action == "start":
+        result = self.command(["systemctl", action, "project-mai-tai-" + owner + ".service"], check=False, timeout=120)
+        if action == "start" and owner == p.V2:
             self.start_returned = self.now()
             exclusive(self.attempt / "restart-interval.json", p.canonical(dict(
                 stop_started_utc=self.stop_started.isoformat(), start_returned_utc=self.start_returned.isoformat())))
-        p.need(result.returncode == 0 and not result.stderr.strip(), "v2 systemctl failed/unreadable")
-        p.states(self.before, self.fleet(), 1 if action == "stop" else 2)
+        p.need(result.returncode == 0 and not result.stderr.strip(), "approved systemctl action failed/unreadable")
+        p.states(self.before, self.fleet(), p.PHASES.index((action, owner)) + 1)
 
     def checkpoint(self, phase):
         current = self.fleet()
         p.states(self.before, current, phase)
         if phase == 2:
+            p.need("oms" not in self.started_owners, "OMS already pinned")
+            self.started_owners["oms"] = current["oms"]
+        if phase == 3:
+            p.need(current["oms"] == self.started_owners["oms"], "OMS moved after phase2 pin")
             self.started = current[p.V2]
         exclusive(self.attempt / f"phase-{phase}.json", p.canonical(current))
 
@@ -408,7 +427,7 @@ class Real:
         return proof
 
     def prove(self):
-        self.gates(2)
+        self.gates(3)
         self.proc(self.started, "true")
         # Imported byte-identical bounded log reader, not the old multi-owner collector.
         from log_ranges import logs
@@ -416,7 +435,7 @@ class Real:
         while True:
             try:
                 found = logs({p.V2: self.log_base})[p.V2]
-                self.hold = p.held_logs(found["text"], self.started, self.now(), self.stop_started)
+                self.hold = p.held_logs(found["text"], self.started, self.now(), self.stop_started, allow_official_release=True)
                 break
             except p.Stop:
                 if time.monotonic() >= deadline:
@@ -424,33 +443,40 @@ class Real:
                 time.sleep(5)
         self.receipt("new-v2-log-ranges.json", p.canonical(found))
         self.receipt("literal-held.json", p.canonical(self.hold))
+        found_oms = logs(self.log_bases)["oms"]
+        p.oms_logs(found_oms["text"], self.started_owners["oms"], self.now())
+        self.receipt("new-oms-log-ranges.json", p.canonical(found_oms))
         snapshot = json.loads((self.attempt / "before-restart.json").read_bytes())
         self.receipt("watched-population.json", p.canonical(snapshot["v2_watchlist"]))
         self.continuity = self.measure_continuity()
-        self.record = self.attempt / "v2-only-install-record.json"
+        self.record = self.attempt / "paired-install-record.json"
         journal = self.attempt / "sealed-actions.json"
-        exclusive(journal, p.canonical(dict(actions=[["stop", p.V2], ["start", p.V2]],
+        exclusive(journal, p.canonical(dict(actions=list(p.PHASES),
                                             source_journal=str(self.attempt / "runner-journal.jsonl"),
                                             checkpoint_sha256=p.digest((self.attempt / "runner-journal.jsonl").read_bytes()))))
         exclusive(self.record, p.canonical(dict(schema_version=1, snapshot_captured_at_utc=snapshot["captured_at_utc"],
-            source_journal=str(journal), classification="OCT7_V2_ONLY_NOT_OLD_GROUP_RESTART",
-            service_actions={name: "restarted" if name == p.V2 else "deliberately_untouched"
+            source_journal=str(journal), classification="OCT7_PAIRED_V2_OMS_ONLY",
+            service_actions={name: "restarted" if name in {p.V2, "oms"} else "deliberately_untouched"
                              for name in snapshot["services"]})))
+        self.official_report()
+        self.flaggate()
+        self.gates(3)
+
+    def official_report(self):
         output = self.attempt / "official-restart-evidence.md"
         # The unchanged morning wrapper still has BOX-bound acknowledgement until
         # closeout. Tonight use the exact official collector with no error filter;
         # the morning wrapper is preserved and validated after its narrow repin.
         args = [PY, "-B", REPO / "ops/health/v2_restart_evidence.py", "report", "--snapshot", self.attempt / "before-restart.json",
-                "--install-record", self.record, "--restarted", p.V2, "--no-schema-change",
+                "--install-record", self.record, "--restarted", p.V2, "--restarted", "oms", "--no-schema-change",
                 "--expected-alembic-head", "20261005_0022", "--output", output]
-        for key, value in {**{key: "true" for key in p.LIVE_KEYS}, p.FLAG: "true", p.RETAINED_FLAG: "false"}.items():
-            args += ["--expect-flag", p.V2 + ":" + key + "=" + value]
+        for owner in (p.V2, "oms"):
+            for key, value in {**{key: "true" for key in p.LIVE_KEYS}, p.FLAG: "true", p.RETAINED_FLAG: "true", p.HANDOFF_FLAG: "false"}.items():
+                args += ["--expect-flag", owner + ":" + key + "=" + value]
         result = self.command(args, check=False, timeout=240)
         raw = output.read_text() if output.exists() else result.stdout.decode()
         self.receipt("official-raw-report.md", raw.encode())
         self.receipt("install-disposition.md", p.report_disposition(result.returncode, raw, self.hold, self.continuity).encode())
-        self.flaggate()
-        self.gates(2)
 
     def measure_continuity(self):
         if not 4 <= self.start_returned.astimezone(p.ET).hour < 20:
@@ -476,9 +502,9 @@ class Real:
         state = self.fleet()[p.V2]
         p.need(state == self.started, "v2 pin changed before closeout")
         before = GATE.read_bytes()
-        p.need(self.fleet()["oms"] == self.before["oms"], "authorized untouched OMS drift before repin")
+        p.need(self.fleet()["oms"] == self.started_owners["oms"], "new OMS drift before repin")
         after = p.gate_candidate(before, state, self.attempt / "before-restart.json", self.record,
-                                 untouched_oms=self.before["oms"])
+                                 untouched_oms=self.started_owners["oms"])
         candidate = self.attempt / "preopen.candidate.sh"
         exclusive(candidate, after, 0o700)
         self.command(["bash", "-n", candidate])
@@ -487,7 +513,7 @@ class Real:
         p.need(binding["approved_sha"] == p.BOX, "daily imported APP binding differs")
         binding.update(approved_sha=p.APP, tree=p.TREE)
         binding["linesrc1_oct7"] = dict(application=p.APP, tree=p.TREE, previous_application=p.BOX,
-                                      merge_pr=1107, proof_scope="only-v2; historical Oct6 receipts retained")
+                                      merge_prs=[1107, 1111, 1114], proof_scope="paired-v2-oms; historical Oct6 receipts retained")
         replacements = {"upgrade_ack.py": helper, "upgrade-ack.json": ack, "binding.json": p.canonical(binding)}
         runtime = json.loads((DAILY / "runtime.json").read_bytes())
         p.need(runtime["approved_sha"] == p.BOX, "runtime baseline application differs")
@@ -497,7 +523,8 @@ class Real:
         runtime["evidence_inputs"].update({str(file): p.digest(file.read_bytes()) for file in
             (self.record, self.attempt / "before-restart.json", self.attempt / "sealed-actions.json")})
         runtime["linesrc1_oct7"] = dict(release_sha256=p.digest((self.job / "release.json").read_bytes()),
-            attempt=str(self.attempt), restoration="HELD/next07:00 UNMEASURED", v2=state)
+            attempt=str(self.attempt), boot_state=self.hold["verdict"],
+            restoration="next07:00 live-line acceptance UNMEASURED", v2=state, oms=self.started_owners["oms"])
         # Existing daily run lock excludes the checker during the multi-file repin.
         # A crash still leaves a hash mismatch fail-closed, never an auto-repair.
         for name, raw in replacements.items():
@@ -511,21 +538,28 @@ class Real:
             (GATE, DAILY / "runtime.json", *[DAILY / name for name in replacements])}))
 
     def complete(self):
-        self.gates(2)
+        self.gates(3)
         self.proc(self.started, "true")
         self.flaggate()
         from log_ranges import logs
         found = logs({p.V2: self.log_base})[p.V2]
-        self.hold = p.held_logs(found["text"], self.started, self.now(), self.stop_started)
+        self.hold = p.held_logs(found["text"], self.started, self.now(), self.stop_started, allow_official_release=True)
+        if self.hold["verdict"] == "RELEASED_MARKER_REQUIRES_OFFICIAL_PROOF":
+            self.official_report()
         self.receipt("complete-new-v2-log-ranges.json", p.canonical(found))
         self.receipt("complete-literal-held.json", p.canonical(self.hold))
-        raw = p.canonical(dict(verdict="COMPLETE_HELD_AFTER16", application=p.APP, tree=p.TREE,
-            actual=self.fleet(), actions=[["stop", p.V2], ["start", p.V2]], next07="UNMEASURED",
+        found_oms = logs(self.log_bases)["oms"]
+        p.oms_logs(found_oms["text"], self.started_owners["oms"], self.now())
+        self.receipt("complete-new-oms-log-ranges.json", p.canonical(found_oms))
+        p.need(json.loads(self.reader("archived_readonly.py")) == self.archived_before, "archived rollback evidence changed")
+        verdict = "COMPLETE_HELD_AFTER16" if self.hold["verdict"] == "HELD_AFTER16_NOT_RESTORATION_PASS" else "COMPLETE_RELEASED_OFFICIAL_AFTER16"
+        raw = p.canonical(dict(verdict=verdict, application=p.APP, tree=p.TREE,
+            actual=self.fleet(), actions=list(p.PHASES), next07="UNMEASURED",
             held=self.hold, continuity=self.continuity,
             raw_journal_sha256=p.digest((self.attempt / "runner-journal.jsonl").read_bytes())))
         self.retire_timer()
         exclusive(self.attempt / "COMPLETE.json", raw)
-        self.deployment_note("COMPLETE_HELD_AFTER16", self.attempt / "COMPLETE.json")
+        self.deployment_note(verdict, self.attempt / "COMPLETE.json")
 
     def deployment_note(self, verdict, receipt):
         path = Path("/home/trader/fleet_health/deployments-20261007.md")

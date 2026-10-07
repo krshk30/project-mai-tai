@@ -156,7 +156,7 @@ def test_repeated_unclaimed_PENDING_then_single_sequence_no_abort_or_duplicate()
         assert not fx.claimed and not fx.calls
     fx.initial=original
     runner.Sequence(fx).run()
-    assert fx.calls.count("stop")==fx.calls.count("start")==1 and "abort" not in fx.calls
+    assert fx.calls.count("stop:"+p.V2)==fx.calls.count("restart:oms")==fx.calls.count("start:"+p.V2)==1 and "abort" not in fx.calls
 
 
 def test_pre18_efficiency_pending_does_not_claim_unrun_native_or_broker_gates(tmp_path):

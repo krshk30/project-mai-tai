@@ -1,0 +1,251 @@
+{
+  "baseline": {
+    "authorization_provenance": "Latest human Oct7 paired LINESRC1+HOTFIX1114 standing GO; RPG handoff stays FALSE; #1115 parked; fresh read-only capture 2026-10-07T18:41:53.204920+00:00",
+    "environment_sha256": "40ec5bf52b1ffb2b37dc84399e6449a9b796a3897c0207b8939402985ddfe653",
+    "fleet_before": {
+      "control": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
+        "ExecMainCode": 0,
+        "ExecMainStartTimestamp": "Wed 2026-10-07 01:54:15 UTC",
+        "ExecMainStartTimestampMonotonic": 274370574260,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-control.service",
+        "InactiveEnterTimestamp": "Wed 2026-10-07 01:54:15 UTC",
+        "InvocationID": "2af23649b86e474388dc86dcadf03e85",
+        "MainPID": 626835,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "running"
+      },
+      "market-capture": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
+        "ExecMainCode": 0,
+        "ExecMainStartTimestamp": "Sat 2026-10-03 22:03:17 UTC",
+        "ExecMainStartTimestampMonotonic": 1312247348,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-market-capture.service",
+        "InactiveEnterTimestamp": "",
+        "InvocationID": "1235181131fe4113bd63073a30102351",
+        "MainPID": 2917,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "running"
+      },
+      "market-data": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
+        "ExecMainCode": 0,
+        "ExecMainStartTimestamp": "Sat 2026-10-03 22:03:17 UTC",
+        "ExecMainStartTimestampMonotonic": 1311990238,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-market-data.service",
+        "InactiveEnterTimestamp": "",
+        "InvocationID": "f681ad1bf9d04ee5853f5b5333530142",
+        "MainPID": 2907,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "running"
+      },
+      "momentum-paper": {
+        "ActiveState": "inactive",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
+        "ExecMainCode": 1,
+        "ExecMainStartTimestamp": "Wed 2026-10-07 07:40:04 UTC",
+        "ExecMainStartTimestampMonotonic": 295118810675,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-momentum-paper.service",
+        "InactiveEnterTimestamp": "Wed 2026-10-07 13:40:00 UTC",
+        "InvocationID": "0a4eb9f31f4641e28fba739743a86f1f",
+        "MainPID": 0,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "dead"
+      },
+      "oms": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
+        "ExecMainCode": 0,
+        "ExecMainStartTimestamp": "Wed 2026-10-07 14:12:15 UTC",
+        "ExecMainStartTimestampMonotonic": 318650110341,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-oms.service",
+        "InactiveEnterTimestamp": "Wed 2026-10-07 14:12:15 UTC",
+        "InvocationID": "9508a735e64f40a9a561fb0530b201dc",
+        "MainPID": 1051883,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "running"
+      },
+      "option-a-daily-guard": {
+        "ActiveState": "inactive",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
+        "ExecMainCode": 1,
+        "ExecMainStartTimestamp": "Wed 2026-10-07 07:40:00 UTC",
+        "ExecMainStartTimestampMonotonic": 295115557318,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-option-a-daily-guard.service",
+        "InactiveEnterTimestamp": "Wed 2026-10-07 13:40:04 UTC",
+        "InvocationID": "2344e807c3c143cf8709994f1019aafe",
+        "MainPID": 0,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "dead"
+      },
+      "orb": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/orb-paper.env (ignore_errors=no)",
+        "ExecMainCode": 0,
+        "ExecMainStartTimestamp": "Sun 2026-10-04 03:13:49 UTC",
+        "ExecMainStartTimestampMonotonic": 19944410282,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-orb.service",
+        "InactiveEnterTimestamp": "Sun 2026-10-04 03:13:49 UTC",
+        "InvocationID": "eaa34d569576428883ff5fef11f04b07",
+        "MainPID": 30225,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "running"
+      },
+      "orb-schwab": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
+        "ExecMainCode": 0,
+        "ExecMainStartTimestamp": "Wed 2026-10-07 06:31:14 UTC",
+        "ExecMainStartTimestampMonotonic": 290989120227,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-orb-schwab.service",
+        "InactiveEnterTimestamp": "Wed 2026-10-07 06:31:09 UTC",
+        "InvocationID": "de16f6a3ae8f438a8aae3d294d7db686",
+        "MainPID": 765206,
+        "NRestarts": 1,
+        "Result": "success",
+        "SubState": "running"
+      },
+      "postgresql": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "",
+        "ExecMainCode": 1,
+        "ExecMainStartTimestamp": "Sat 2026-10-03 21:41:36 UTC",
+        "ExecMainStartTimestampMonotonic": 12839304,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/usr/lib/systemd/system/postgresql.service",
+        "InactiveEnterTimestamp": "",
+        "InvocationID": "195933ccdab6415fbf1c415ebfcf7621",
+        "MainPID": 0,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "exited"
+      },
+      "reconciler": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
+        "ExecMainCode": 0,
+        "ExecMainStartTimestamp": "Sat 2026-10-03 22:03:17 UTC",
+        "ExecMainStartTimestampMonotonic": 1312254148,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-reconciler.service",
+        "InactiveEnterTimestamp": "",
+        "InvocationID": "afc0302b563f48a5addf4ad0a410820b",
+        "MainPID": 2918,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "running"
+      },
+      "redis": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "",
+        "ExecMainCode": 0,
+        "ExecMainStartTimestamp": "Wed 2026-10-07 06:31:08 UTC",
+        "ExecMainStartTimestampMonotonic": 290983572791,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/usr/lib/systemd/system/redis-server.service",
+        "InactiveEnterTimestamp": "Wed 2026-10-07 06:31:08 UTC",
+        "InvocationID": "250fb6738d6848af81acb6785d229dba",
+        "MainPID": 765088,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "running"
+      },
+      "schwab-1m-v2": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
+        "ExecMainCode": 0,
+        "ExecMainStartTimestamp": "Wed 2026-10-07 17:45:25 UTC",
+        "ExecMainStartTimestampMonotonic": 331439790209,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-schwab-1m-v2.service",
+        "InactiveEnterTimestamp": "Wed 2026-10-07 17:45:25 UTC",
+        "InvocationID": "fc08281cd51a45639f44dd5b953e06b3",
+        "MainPID": 1207761,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "running"
+      },
+      "strategy": {
+        "ActiveState": "active",
+        "DropInPaths": "",
+        "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
+        "ExecMainCode": 0,
+        "ExecMainStartTimestamp": "Wed 2026-10-07 01:54:13 UTC",
+        "ExecMainStartTimestampMonotonic": 274368656538,
+        "ExecMainStatus": 0,
+        "FragmentPath": "/etc/systemd/system/project-mai-tai-strategy.service",
+        "InactiveEnterTimestamp": "Wed 2026-10-07 01:23:32 UTC",
+        "InvocationID": "7cc8541638c74c58a3f3964acbf3cb01",
+        "MainPID": 626773,
+        "NRestarts": 0,
+        "Result": "success",
+        "SubState": "running"
+      }
+    }
+  },
+  "checkout": "5b8b4f642bbc3c312be436d0e92adbc22d9e9f95",
+  "dirty": "",
+  "hashes": {
+    "/etc/project-mai-tai/project-mai-tai.env": "40ec5bf52b1ffb2b37dc84399e6449a9b796a3897c0207b8939402985ddfe653",
+    "/home/trader/preopen-daily/runtime.json": "d585c601eded25732dcaa05ec7886df44b42f506ed3e9efc933c5037649dc13d",
+    "/home/trader/preopen.sh": "40e57465f08c9cd9e34dc5739a3c68585d162ee2a5daa3e6b387b5d9fa24972e",
+    "/home/trader/restart_evidence/expected_flags.json": "acf5a6dc55d1e8c54bb3b1a7c24ed7b093673c9729bd7accef83a2a848d19652",
+    "/home/trader/restart_evidence/expected_numeric.json": "9b8e164c0e3f41ed487d344c3ecbde889be3444b0e87e13ec736057ca58f452a"
+  },
+  "installer": "MainPID=0\nActiveState=inactive\n",
+  "process_flags": {
+    "oms": {
+      "MAI_TAI_OMS_V2_WEBULL_MIRROR_RETAINED_HOLD_ENABLED": [
+        "false"
+      ],
+      "MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_REPRICE_HANDOFF_ENABLED": [
+        "true"
+      ],
+      "MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED": [
+        "false"
+      ]
+    },
+    "schwab-1m-v2": {
+      "MAI_TAI_OMS_V2_WEBULL_MIRROR_RETAINED_HOLD_ENABLED": [
+        "false"
+      ],
+      "MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_REPRICE_HANDOFF_ENABLED": [
+        "false"
+      ],
+      "MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED": [
+        "false"
+      ]
+    }
+  },
+  "timer": "NextElapseUSecRealtime=\nActiveState=inactive\n"
+}

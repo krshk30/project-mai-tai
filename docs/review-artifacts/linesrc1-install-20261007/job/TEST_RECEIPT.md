@@ -1,5 +1,65 @@
 # [codex] Oct7 Local Runner Receipt
 
+## Current Paired LINESRC1 + HOTFIX1 Recut
+
+All following sections are historical except this section. Latest scope binds APP
+994f08aee2c35b3809b3c3384e0d8628807dcfb7/tree7d827a407825d1d93aae8c3946d8b55320b9680f,
+BOX5b8b4f64 and exact new paired-baseline.json SHA
+fd05165a80683dd1979f428fa67ccd73ab36040a4d88cefff3ea3459f4c3066b.
+Literal actions stop-v2/restart-OMS/start-v2; LINE+RETAINED ON, RPG handoff OFF.
+Fresh independently captured identities OMS1051883/v2 1207761 are old admission,
+not claimed newly installed owners. Exact archived row count1/id/payload hash is
+captured read-only and preserved; no unarchive. Other eleven units untouched.
+
+Candidate local run: **262 passed in1.60s**, zero failures/errors.
+XML /tmp/linesrc1-hotfix1-paired-20261007-candidate.xml;
+SHA2565d55105c3380263c8ab35adebe689eefda355e8f10b9e64edf0f6e45729efe92.
+Shell syntax and whitespace PASS. No semantic mutation count is claimed.
+The final exact committed artifact run is delivered separately with its raw XML.
+
+```sh
+env PYTHONDONTWRITEBYTECODE=1 \
+ PYTHONPATH=src:docs/review-artifacts/linesrc1-install-20261007/job \
+ /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest \
+ -q -p no:cacheprovider --tb=short \
+ --junitxml=/tmp/linesrc1-hotfix1-paired-20261007-candidate.xml \
+ docs/review-artifacts/linesrc1-install-20261007/job
+```
+
+Strict flat byte SHA b0a11b1e21647a5e39d3977824223f9417dc0ada4137ede26a8a16c67cf755ee
+is unchanged from parent-transferred25bf8913. MI/NXL/native policy unchanged.
+There is no OMS-down read phase: atomic restart plus mandatory fresh strict book,
+new process flags and new-OMS healthy heartbeat precede start-v2. Tests pin OMS
+only at phase2 and reject phase3 overwrite/external restart, failed restart with
+no recovery/start, all11 foreign identities, source allowlist, env only TWO ON,
+handoff false on both new owners, typed archival unknown, duplicate seals,
+unmodified actual dual official-collector flag semantics and dual morning pins.
+Long-closeout release is accepted only with exact safe marker plus unchanged
+official warmup/hold PASS rows; late ERROR always blocks. Future timing, broker,
+SQL and service controls remain CONTROLLED, not observed install/fill proof.
+
+New metadata overlay hashes:
+flags acf2888765bbbb7bfba76119a79594af60cd8a1c60062b652bd3b8afbdb89e82;
+runtime9beb5fbc5c97d437296875ee6573b1bb4962e7224cfabea15a3a693537d046f7.
+Raw capture SHA5b90d7695c6641c394f8faf75e327d9ab32967c6472639af83b2ff1314fd63c2;
+archived receipt SHA059ffcb19fc8e6f55d6338f5f551332564c06a1a9039fbfbd9c9cd57d8dbe0ba.
+Service SHA8e47f4f520ef0c7228c46b90ed09a51aeacf0cafe33f688c9b3f058422cd38f0;
+timer0ce5a48081cd9e462483b3fb5c1bc3450e7c4d8af5f9dd73f9133f884e988fe6 unchanged.
+Target /home/trader/after-hours/2026-10-07/linesrc1-hotfix1-994f08ae/job.
+Parent alone performs immutable package/root staging; old installer timer paused
+by parent, not by this lane. No remote source/env/unit/DB/broker writes performed.
+
+Parent main994 performance: first260PASS/1FAIL142.04s, watchdog79.737ms >50ms
+14:42:19..14:43:19, handler20.516ms, SQL1firstturn/0after1s/GC0. FAIL retained
+unwaived. Later isolated ON PASS60.58s14:46:25..14:47:26, 14400/60.000593s=
+239.9976/s, watchdog23.378ms/handler16.294ms/SQL1firstturn/0after1s/0buys/GC0,
+no other pytest visible at launch. These are parent receipts, not our new source
+acceptance. NFQ e4578d44 is scoped parent-reported evidence, not this release.
+#1115/RPGSTALE remain parked. Literal zero-LINE-REBUILD-CYCLE criterion still
+fails the known recorded ten-marker case; no substituted acceptance criterion.
+Live new-owner proof,157 flags, native admission, notifications, actual bar-hole
+and next07:00 acceptance remain UNMEASURED until parent records execution.
+
 ## Historical Attended Revision
 
 Base APP: f9c9bd332392e2c905fc39b954421c88970844d7.

@@ -14,7 +14,8 @@ REL = "docs/review-artifacts/linesrc1-install-20261007/job/"
 ARTIFACTS = ("runner.py", "release_policy.py", "strict_flat_readonly.py", "armed_readonly.py",
              "redis_checkpoint.py", "ticket_inventory.py", "census_readonly.py", "log_ranges.py",
              "flag_admission.py", "continuity_readonly.py", "operator_flat_policy.py", "paper_lifecycle.py", "abort_reader.py",
-             "make_release.py", "run.sh", "README.md", "rollback-baseline.json",
+             "make_release.py", "run.sh", "README.md", "paired-baseline.json",
+             "archived_readonly.py", "archived-baseline.json", "oms_health_readonly.py",
              "rollback-expected_flags.json", "rollback-runtime.json",
              "project-mai-tai-linesrc1-20261007.service", "project-mai-tai-linesrc1-20261007.timer")
 
@@ -39,19 +40,19 @@ def assemble(plan, baseline, target):
     p.need(git("rev-parse", p.APP + "^{tree}").decode().strip() == p.TREE, "APP tree binding differs")
     git("merge-base", "--is-ancestor", p.APP, plan)
     git("merge-base", "--is-ancestor", p.PLAN_BASE, p.APP)
-    p.need(not git("diff", "--name-only", p.PLAN_BASE, p.APP, "--", "src", "ops", "scripts").strip(),
-           "new APP is not the authorized test-only successor")
+    changed = git("diff", "--name-only", p.BOX, p.APP, "--", "src", "ops", "scripts").decode().splitlines()
+    p.need(set(changed) == set(p.SOURCES), "BOX..APP is not exact five-path authorized source delta")
     paths = git("diff", "--name-only", p.APP, plan).decode().splitlines()
     p.need(paths and all(path.startswith(REL) for path in paths), "plan changes outside isolated job")
     raw = {name: git("show", plan + ":" + REL + name) for name in ARTIFACTS}
     p.need(all(value == (HERE / name).read_bytes() for name, value in raw.items()),
            "local files differ from committed reviewed artifact bytes")
     fixture = HERE / "fixtures"
-    for path in ("preopen.sh", "preopen-daily/runtime.json", "restart_evidence/expected_numeric.json"):
+    for path in ("preopen.sh", "paired-current-runtime.json", "restart_evidence/expected_numeric.json"):
         p.need((fixture / path).read_bytes() == git("show", plan + ":" + REL + "fixtures/" + path),
                "assembly baseline fixture differs from committed plan: " + path)
     gate = (fixture / "preopen.sh").read_bytes()
-    runtime_raw = (fixture / "preopen-daily/runtime.json").read_bytes()
+    runtime_raw = (fixture / "paired-current-runtime.json").read_bytes()
     source_flags = git("show", p.APP + ":ops/health/expected_flags.json")
     flags = p.rollback_catalog(source_flags)
     runtime_candidate = p.rollback_runtime(runtime_raw, flags)
@@ -76,10 +77,11 @@ def assemble(plan, baseline, target):
         plan_commit=plan, artifacts={name: p.digest(value) for name, value in raw.items()},
         application_blobs={name: p.digest(git("show", p.APP + ":" + name)) for name in p.SOURCES},
         baseline_hashes=hashes, catalog_hashes=dict(flags=p.digest(flags), numeric=p.digest(numeric)),
-        catalog_counts=counts, **baseline)
+        catalog_counts=counts, archived_rows=json.loads(raw["archived-baseline.json"]), **baseline)
     release["catalog_overlay"] = dict(source_sha256=p.digest(source_flags), candidate_sha256=p.digest(flags),
-        setting="oms_v2_webull_mirror_retained_hold_enabled", owner="oms", expected=False,
-        authority="Latest human Oct7 MIRRORHOLD rollback; APP catalog metadata retained as historical provenance")
+        setting="strategy_schwab_1m_v2_atr_reprice_handoff_enabled", expected=False,
+        retained_hold_expected=True,
+        authority="Latest human Oct7 paired LINESRC1+HOTFIX1 GO; RPG handoff remains false and #1115 parked")
     release_raw = p.canonical(release)
     sha = p.digest(release_raw)
     exclusive(target / "release.json", release_raw)
@@ -87,7 +89,7 @@ def assemble(plan, baseline, target):
     exclusive(target / "approval.json", p.canonical(dict(authority="operator-standing-mechanics-authority",
         decision="APPROVED", application=p.APP, plan_commit=plan, date_et=p.DAY, scope=p.SCOPE, release_sha256=sha)))
     return dict(package=str(target), release_sha256=sha, catalog_counts=counts,
-                production_run=False, baseline_lifecycle="exact authorized rollback fleet; no new OMS action",
+                production_run=False, baseline_lifecycle="exact captured fleet; stop v2, restart OMS, start v2",
                 staging_overlays=dict(flags=str(target / "rollback-expected_flags.json"),
                     runtime=str(target / "rollback-runtime.json")))
 
