@@ -55,3 +55,21 @@ is measured. Source unchanged during the full-pair run.
 
 No source activation, service restart, migration, broker write, ledger change,
 production approval/staging or daily timer installation accompanies this file.
+
+## Review-Ready Follow-Up
+
+As-of20:49ET10-06: both hosted Validate runs SUCCESS (37552847225 at00:44:53Z,
+37552843800 at00:47:05Z), head/base unchanged. External exact-setting102 controls
+PASS6.71s; parent's independent rerun102PASS6.73s,0skips/errors/failures,
+/tmp/install2-parent-exact-composition.xml. Real collision guard restored and
+Webull cached list-primary ON verified. Exact eight prior flags plus four new
+flags true, retry-enabled true/max0 at construction. All eight obsolete-for-this-
+set failures map to retained-owner/free-hold and KEEP frozen-wait controls;
+original forced33/8 receipt remains unchanged. Unmodified normal307PASS and
+legacy41/41PASS; scope/limitations in job/EXACT_COMPOSITION.md and hashed raw
+receipts in job/EXACT_COMPOSITION_RECEIPTS.json. Controlled completed-line/SDK
+outputs are not historical venue or restoration-math proof.
+
+PR1108 is ready for independent one-batch review at the exact frozen head;
+independent record/label/pin still required before merge. No self-pin, no
+old-record rewrite, no installation. LINESRC1/PINHASH1 excluded from this PR.
