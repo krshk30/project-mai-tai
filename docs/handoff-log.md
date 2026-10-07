@@ -7801,3 +7801,12 @@ Sole writer reruns full and PRCIattempt2 on unchanged502; no threshold,
 assertion or source change/waiver. Await actual gates before readiness.
 RETRY1118 cda already ready; no SLOT amendment, production/ORB action or
 change to tonight's staged exact APP994 package.
+
+2026-10-07 17:39 ET codex-2: independently verified NFQ502 unchanged-head
+rerun7357PASS56FAIL602.35s vs exactmain9947114/56, failed-ID added/removed[]/[].
+Actualrerun21:24:46.865832-21:34:56.067617UTC; raw
+/tmp/nfq2-segment-cancel-final-full-rerun-01-20261007/output.txt sha256ebdd78175608a9dbe56dadec9c5abfdc0bff0bd1853d39a94eb0e3f4607e18a9.
+No source/assertion/50ms threshold change. Originalextra64.971ms timingfail
+and PRCI139segfault retained; causes unmeasured, no causal fix claim.
+PushCIgreen/PRattempt2 stilltesting; NFQdraftuntilactualCIclean. RETRYready;
+SLOT9951/today's stagedAPP994/ORB untouched.
