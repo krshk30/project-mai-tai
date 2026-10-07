@@ -7418,3 +7418,10 @@ Fresh exclusive job-archive64 attempt began21:11:37; originalSTOP/INCOMPLETE
 preserved, recorded in deployments-20261006.md. No admission change, source
 patch, different APP, trading action, migration, rollback or recovery; no service
 stopped yet. Active supervision continues; no COMPLETE/timer claim.
+
+2026-10-06 21:18 ET codex-2 C118: tested bounded source backup completed,
+checkout advanced exactly5b8b4f64; env.diff contains four approvedtrue additions
+only. v2/OMS/strategy still on old active identities at direct21:18 read;
+the attended runner refreshes flat/order/103ticket gates before firststop.
+No migration, ledger write, rollback, other service action or timer yet.
+Source/environment applied is not COMPLETE; release3a55a2ee/planece0eaf4.
