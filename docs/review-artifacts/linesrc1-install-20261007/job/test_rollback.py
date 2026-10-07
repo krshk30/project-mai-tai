@@ -44,11 +44,11 @@ def test_any_nonreviewed_source_catalog_mutation_refuses_overlay(damage):
 @pytest.mark.parametrize("damage",["oldOMS","OMSrestart","OMSstart","OMSnonce","otherowner","oldenv","authority"])
 def test_release_cannot_adopt_any_other_identity_environment_or_authority(damage):
     baseline=p.rollback_baseline()
-    assert baseline["fleet_before"]["oms"]["MainPID"]==1043365
-    assert baseline["fleet_before"]["oms"]["ExecMainStartTimestamp"]=="Wed 2026-10-07 14:02:34 UTC"
-    if damage=="oldOMS": baseline["fleet_before"]["oms"]["MainPID"]=626190
+    assert baseline["fleet_before"]["oms"]["MainPID"]==1051883
+    assert baseline["fleet_before"]["oms"]["ExecMainStartTimestamp"]=="Wed 2026-10-07 14:12:15 UTC"
+    if damage=="oldOMS": baseline["fleet_before"]["oms"]["MainPID"]=1043365
     elif damage=="OMSrestart": baseline["fleet_before"]["oms"]["NRestarts"]=1
-    elif damage=="OMSstart": baseline["fleet_before"]["oms"]["ExecMainStartTimestamp"]="Wed 2026-10-07 14:02:35 UTC"
+    elif damage=="OMSstart": baseline["fleet_before"]["oms"]["ExecMainStartTimestamp"]="Wed 2026-10-07 14:12:16 UTC"
     elif damage=="OMSnonce": baseline["fleet_before"]["oms"]["InvocationID"]="0"*32
     elif damage=="otherowner": baseline["fleet_before"]["strategy"]["MainPID"]+=1
     elif damage=="oldenv": baseline["environment_sha256"]="6677c4bd25fadc5c229b2a0c682f5d1ae8a4bc30052b9121bc044ea2932f35ce"
@@ -77,8 +77,8 @@ def test_new_morning_OMS_pin_is_prior_rollback_not_a_second_LINESRC_restart():
     raw=p.gate_candidate((FIX/"preopen.sh").read_bytes(),new_v2(),"CONTROLLED_SNAPSHOT","CONTROLLED_RECORD",
         untouched_oms=baseline["fleet_before"]["oms"])
     text=raw.decode()
-    assert "EXPECTED_OMS_PID=1043365" in text
-    assert "EXPECTED_OMS_START='Wed 2026-10-07 14:02:34 UTC'" in text
+    assert "EXPECTED_OMS_PID=1051883" in text
+    assert "EXPECTED_OMS_START='Wed 2026-10-07 14:12:15 UTC'" in text
     assert "--restarted oms" not in text and text.count("--restarted ")==1
     assert "--expect-flag 'oms:" not in text
     assert "schwab-1m-v2:"+p.RETAINED_FLAG+"=false" in text

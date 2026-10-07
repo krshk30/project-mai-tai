@@ -138,3 +138,20 @@ backup/unclaimed checks, installer-only timer pause, exact metadata overlays
 under the daily lock, sibling package/unit installation and timer activation.
 Those staging actions and Linux verification remain UNMEASURED in this lane.
 No production request/action, trading source edit or parked #1110 work occurred.
+
+## Acknowledged Second OMS Rollback Restart
+
+Latest human ACK confirms both reviewer rollback restarts, including 10:12:15 ET.
+Fresh systemd read at 16:27:09Z confirms OMS1051883/14:12:15UTC/NRestarts0,
+invocation9508a735e64f40a9a561fb0530b201dc; v2 remains917354/11:14:07UTC.
+Only the exact OMS identity and authorization provenance in rollback-baseline.json
+change; the other twelve states and EnvironmentFile hash are unchanged.
+New baseline SHA256: dd7640df3ea90169ba4b8e8a65450e066ff532071f96573fa6380081cc11dc60.
+
+The same five-file local mechanics harness: **221 passed in 2.02s**; bash syntax
+PASS. XML: /tmp/linesrc1-oms1051883-recut-20261007.xml;
+SHA2565b6c347071a8a3c9c0f0a1a359370d96b8bdef31e257f03db2105a48e0eeeb49.
+Identity mutation controls reject the first rollback PID1043365, a changed start,
+nonce, restart count, other owner, env hash or generic authority. Generated morning
+gate pins the acknowledged untouched OMS, never declares it restarted by LINESRC.
+These tests do not claim deployment completion or a future production gate PASS.

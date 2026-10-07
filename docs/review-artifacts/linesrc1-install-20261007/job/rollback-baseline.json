@@ -1,5 +1,5 @@
 {
-  "authorization_provenance": "Latest human Oct7 MIRRORHOLD rollback: retained flag false and OMS1043365 restart authorized; LINESRC target unchanged; captured 2026-10-07T14:11:54.263326+00:00",
+  "authorization_provenance": "Latest human Oct7 ACK confirms both reviewer MIRRORHOLD rollback restarts (10:02:34 and 10:12:15 ET); untouched OMS1051883/14:12:15UTC and v2 917354 confirmed 2026-10-07T16:27:09Z; retained flag false; LINESRC target unchanged",
   "environment_sha256": "550717747a5839738a1ee170426e4a3e4b0ffd4373a2b5b0b236a6a7535dd0a2",
   "fleet_before": {
     "control": {
@@ -71,13 +71,13 @@
       "DropInPaths": "",
       "EnvironmentFiles": "/etc/project-mai-tai/project-mai-tai.env (ignore_errors=no)",
       "ExecMainCode": 0,
-      "ExecMainStartTimestamp": "Wed 2026-10-07 14:02:34 UTC",
-      "ExecMainStartTimestampMonotonic": 318069684259,
+      "ExecMainStartTimestamp": "Wed 2026-10-07 14:12:15 UTC",
+      "ExecMainStartTimestampMonotonic": 318650110341,
       "ExecMainStatus": 0,
       "FragmentPath": "/etc/systemd/system/project-mai-tai-oms.service",
-      "InactiveEnterTimestamp": "Wed 2026-10-07 14:02:34 UTC",
-      "InvocationID": "35da3942f315475a8d7c9721ada1a4cb",
-      "MainPID": 1043365,
+      "InactiveEnterTimestamp": "Wed 2026-10-07 14:12:15 UTC",
+      "InvocationID": "9508a735e64f40a9a561fb0530b201dc",
+      "MainPID": 1051883,
       "NRestarts": 0,
       "Result": "success",
       "SubState": "running"

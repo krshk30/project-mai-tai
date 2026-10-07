@@ -17,8 +17,9 @@ Only `MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED=false`
 becomes literal `true`; duplicate/case aliases, missing and already-true refuse.
 All other EnvironmentFile bytes remain identical. Explicit already-live keys
 and full 157-check Boolean/numeric catalog are verified independently.
-Latest Oct7 rollback binds the actual14:11:54Z capture: OMS1043365,
-14:02:34UTC, invocation35da3942f315475a8d7c9721ada1a4cb, NRestarts0;
+Latest Oct7 ACK confirms both reviewer rollback restarts and binds the fresh
+16:27:09Z read: OMS1051883, 14:12:15UTC,
+invocation9508a735e64f40a9a561fb0530b201dc, NRestarts0;
 env SHA550717747a5839738a1ee170426e4a3e4b0ffd4373a2b5b0b236a6a7535dd0a2.
 Retained-hold stays explicit false. The prior authorized OMS restart is NOT a
 LINESRC action; no new OMS restart is permitted. All13 states remain exact.
@@ -100,7 +101,7 @@ Parent supplies a LOCAL JSON metadata file with exactly these fields:
 ```
 
 This recut requires exact committed rollback-baseline.json, byte-identical to
-parent's14:11:54Z metadata. Generic future fleet/env adoption is refused. The
+the acknowledged 1051883 metadata. Generic future fleet/env adoption is refused. The
 12:53:02Z capture remains historical in fixtures, not the new release. Paper/guard
 are already clean inactive with original invocation/start/monotonic/configuration
 and NRestarts0. Positive scheduled-close audit is still required and retained
@@ -196,7 +197,7 @@ reporting policy; only actual healthy release can satisfy restoration then.
 Closeout patches actual `40e57465...` morning gate, NOT the old builder. It repins
 only new v2 PID/start, APP and new one-v2 snapshot/record; removes stale grouped
 restart flags/declarations. OMS morning PID/start are separately repinned to the
-exact prior authorized rollback baseline1043365/14:02:34UTC, not declared as
+exact prior authorized rollback baseline1051883/14:12:15UTC, not declared as
 restarted by LINESRC. Only v2 has collector --expect-flag checks: the unchanged
 official collector rejects non-restarted OMS flags. OMS OFF uses retained_proc
 and the truthful installed OMS catalog. Existing dynamic ET date, paper shape, UTC timestamps,
