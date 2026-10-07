@@ -103,10 +103,10 @@ first, the target or the stop; bars to target. Then the operator picks the exit 
 | 4 | Paper trades under the card for ≥5 sessions; then live, smallest size, its own book | codex / claude-1 | after approval only |
 
 ## 6. Decisions log
+- 10-07 07:5x: **own book** — pullback scalping shares nothing with the ATR bot and is not tied to ATR segments; the one-trade-per-segment rule does not apply to it. **Measure before building anything**: today and yesterday first (readable on the chart), then a week, then more sessions, then build. Spread is measured, not assumed.
 - 10-07 07:2x: strategy named **Pullback Scalping**; take it slow; step 1 = document + task (T111).
 - 10-07 07:4x: the four questions above are the study; exit is measured, never assumed; one draft PR holds everything.
 
 ## 7. Open points for the operator (not guesses)
-- Separate book or inside the ATR segment rule (see 4.5)?
 - Paper bot or v2 as the live observer host? (default: paper bot)
 - Which thinkorswim session to export for the parity test? (default: LPCN 10-07 pre-market, the screenshot)
