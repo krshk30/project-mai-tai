@@ -1,0 +1,14 @@
+{"event": "test_start", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_parser_keeps_only_massive_trade_events", "utc": "2026-10-07T19:21:11.197477+00:00"}
+{"event": "test_end", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_parser_keeps_only_massive_trade_events", "utc": "2026-10-07T19:21:11.198557+00:00"}
+{"event": "test_start", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_malformed_frame_is_counted_and_not_forwarded", "utc": "2026-10-07T19:21:11.198709+00:00"}
+{"event": "test_end", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_malformed_frame_is_counted_and_not_forwarded", "utc": "2026-10-07T19:21:11.199054+00:00"}
+{"event": "test_start", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_non_trade_frame_is_ignored_without_becoming_a_parse_failure", "utc": "2026-10-07T19:21:11.199174+00:00"}
+{"event": "test_end", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_non_trade_frame_is_ignored_without_becoming_a_parse_failure", "utc": "2026-10-07T19:21:11.199483+00:00"}
+{"event": "test_start", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_dead_consumer_drops_oldest_without_awaiting", "utc": "2026-10-07T19:21:11.199599+00:00"}
+{"event": "test_end", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_dead_consumer_drops_oldest_without_awaiting", "utc": "2026-10-07T19:21:11.199937+00:00"}
+{"event": "test_start", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_active_consumer_receives_frame", "utc": "2026-10-07T19:21:11.200110+00:00"}
+{"event": "test_end", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_active_consumer_receives_frame", "utc": "2026-10-07T19:21:11.201328+00:00"}
+{"event": "test_start", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_handoff_crosses_into_a_separate_consumer_process", "utc": "2026-10-07T19:21:11.201551+00:00"}
+{"event": "test_end", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_handoff_crosses_into_a_separate_consumer_process", "utc": "2026-10-07T19:21:11.384347+00:00"}
+{"event": "test_start", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_dead_cross_process_consumer_raises_socket_drop_counter", "utc": "2026-10-07T19:21:11.384708+00:00"}
+{"event": "test_end", "nodeid": "tests/unit/test_momentum_gateway_handoff.py::test_dead_cross_process_consumer_raises_socket_drop_counter", "utc": "2026-10-07T19:21:11.526421+00:00"}

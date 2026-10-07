@@ -1,0 +1,38 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_sell_requires_live_completed_bar_after_watch_and_boot[cold_boot] _____
+
+kind = 'cold_boot'
+
+    @pytest.mark.parametrize("kind", ["replay_signal", "replay_handler", "pre_watch", "cold_boot", "stale", "wrong_flip_bar"])
+    def test_sell_requires_live_completed_bar_after_watch_and_boot(kind):
+        strategy, state, clock, _, _, _ = seeded(partial=True)
+        now, bar, signal = list(recorded_probes("SXTC"))[0]
+        signal = dict(signal)
+        if kind == "replay_signal":
+            signal["observation_phase"] = "replay"
+        elif kind == "replay_handler":
+            strategy._bar_observation_phase = "replay"
+        elif kind == "pre_watch":
+            state.slotclear_reconstructed_watch_start_ms = bar.timestamp_ms + 60001
+        elif kind == "cold_boot":
+            strategy._boot_ms = bar.timestamp_ms + 60001
+        elif kind == "stale":
+            now += 600000
+        if kind == "wrong_flip_bar":
+            state.bars.append(bar)
+            state.atr_short_flip_bar_ts = bar.timestamp_ms - 60000
+            clock[0] = now
+            _book(strategy, clock, "SXTC")
+            strategy._cw_v2_track(state, signal)
+        else:
+            observe(strategy, state, clock, (now, bar, signal))
+>       assert state.cw_resting_taken and state.cw_reclaim_taken
+E       AssertionError: assert (False)
+E        +  where False = SymbolState(symbol='SXTC', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791397500000, open=6.36, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_resting_taken
+
+tests/unit/test_slotclear1_fresh_sell.py:190: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[cold_boot]
+1 failed in 0.08s
+MUTATION F2 pytest_rc=1 RED

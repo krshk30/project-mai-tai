@@ -1,0 +1,19 @@
+{
+  "cwd": "/tmp/codex-slotclear-nfq-hotfix-composition-20261007",
+  "command": [
+    "/usr/bin/git",
+    "diff",
+    "--cc"
+  ],
+  "head": "fc504e676aa48b7b7e86fd151d99046a9afaf47c",
+  "tree": "250c28aada09998d51c8a09a52e94d1a46955b44",
+  "status_before": "M  docs/review-artifacts/nfq2/ASSESSMENT_2026-10-07.md\nA  docs/review-artifacts/nfq2/BUILD_2026-10-07.md\nA  docs/review-artifacts/nfq2/PR_BODY.md\nA  docs/review-artifacts/nfq2/check_mutations.py\nM  ops/health/expected_flags.json\nM  src/project_mai_tai/fanout_outcome_consumer.py\nA  src/project_mai_tai/oms/eh_fresh_price.py\nUU src/project_mai_tai/oms/service.py\nM  src/project_mai_tai/settings.py\nUU src/project_mai_tai/strategy_core/schwab_1m_v2.py\nUU tests/unit/test_all_on_pm.py\nUU tests/unit/test_expected_flags_check.py\nUU tests/unit/test_keeprest1.py\nUU tests/unit/test_mirrorhold1_retained_hold.py\nA  tests/unit/test_nfq2_eh_fresh_price.py\nM  tests/unit/test_oms_v2_eh_reactive_entry.py\nM  tests/unit/test_oms_v2_eh_resting_entry.py\nM  tests/unit/test_webull_mirror_eh.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src",
+  "start_utc": "2026-10-07T19:06:35.028617+00:00",
+  "end_utc": "2026-10-07T19:06:35.058478+00:00",
+  "returncode": 0,
+  "output_sha256": "3db4679b90805beb718a0a40d5c8f26cb0c2361a54142e742841f6ebe7ac68d7",
+  "failed_names": []
+}

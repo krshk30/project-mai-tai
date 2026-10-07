@@ -1,0 +1,4 @@
+{"case": "SXTC recorded 14:26-14:44 ET", "sell_flag": false, "probe_count": 19, "first_arm_age": null, "primary_open_drafts": 0, "mirror_open_drafts": 0, "primary_cancel_drafts": 0, "mirror_cancel_drafts": 0, "suppressed_bars": 16, "boundary": "controlled fresh empty owner book, window/liquidity/stop-ask; no fills or quotes invented"}
+.{"case": "SXTC recorded 14:26-14:44 ET", "sell_flag": true, "probe_count": 19, "first_arm_age": 3, "primary_open_drafts": 3, "mirror_open_drafts": 3, "primary_cancel_drafts": 2, "mirror_cancel_drafts": 2, "suppressed_bars": 0, "boundary": "controlled fresh empty owner book, window/liquidity/stop-ask; no fills or quotes invented"}
+.
+2 passed in 0.48s

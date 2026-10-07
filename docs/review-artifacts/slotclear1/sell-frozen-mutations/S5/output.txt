@@ -1,0 +1,47 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[replay] _
+
+phase = 'replay'
+
+    @pytest.mark.parametrize("phase", ["replay", "db-seed", "rest-warmup"])
+    def test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry(phase):
+        strategy, state, clock, _, _ = lpcn()
+        buy(strategy, state, phase=phase)
+>       assert state.cw_resting_taken and state.cw_reclaim_taken
+E       AssertionError: assert (False)
+E        +  where False = SymbolState(symbol='LPCN', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791376740000, open=2.83, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_resting_taken
+
+tests/unit/test_slotclear1_fresh_flip.py:86: AssertionError
+_ test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[db-seed] _
+
+phase = 'db-seed'
+
+    @pytest.mark.parametrize("phase", ["replay", "db-seed", "rest-warmup"])
+    def test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry(phase):
+        strategy, state, clock, _, _ = lpcn()
+        buy(strategy, state, phase=phase)
+>       assert state.cw_resting_taken and state.cw_reclaim_taken
+E       AssertionError: assert (False)
+E        +  where False = SymbolState(symbol='LPCN', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791376740000, open=2.83, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_resting_taken
+
+tests/unit/test_slotclear1_fresh_flip.py:86: AssertionError
+_ test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[rest-warmup] _
+
+phase = 'rest-warmup'
+
+    @pytest.mark.parametrize("phase", ["replay", "db-seed", "rest-warmup"])
+    def test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry(phase):
+        strategy, state, clock, _, _ = lpcn()
+        buy(strategy, state, phase=phase)
+>       assert state.cw_resting_taken and state.cw_reclaim_taken
+E       AssertionError: assert (False)
+E        +  where False = SymbolState(symbol='LPCN', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791376740000, open=2.83, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_resting_taken
+
+tests/unit/test_slotclear1_fresh_flip.py:86: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[replay]
+FAILED tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[db-seed]
+FAILED tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[rest-warmup]
+3 failed in 0.09s
+MUTATION S5 pytest_rc=1 RED

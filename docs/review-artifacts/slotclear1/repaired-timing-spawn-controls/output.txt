@@ -1,0 +1,18 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/velkris/Projects/project-mai-tai/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/velkris/Projects/project-mai-tai-slotclear1-side
+configfile: pyproject.toml
+plugins: asyncio-0.26.0, anyio-4.15.1
+asyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 7 items
+
+tests/unit/test_momentum_gateway_handoff.py::test_parser_keeps_only_massive_trade_events PASSED [ 14%]
+tests/unit/test_momentum_gateway_handoff.py::test_malformed_frame_is_counted_and_not_forwarded PASSED [ 28%]
+tests/unit/test_momentum_gateway_handoff.py::test_non_trade_frame_is_ignored_without_becoming_a_parse_failure PASSED [ 42%]
+tests/unit/test_momentum_gateway_handoff.py::test_dead_consumer_drops_oldest_without_awaiting PASSED [ 57%]
+tests/unit/test_momentum_gateway_handoff.py::test_active_consumer_receives_frame PASSED [ 71%]
+tests/unit/test_momentum_gateway_handoff.py::test_handoff_crosses_into_a_separate_consumer_process PASSED [ 85%]
+tests/unit/test_momentum_gateway_handoff.py::test_dead_cross_process_consumer_raises_socket_drop_counter PASSED [100%]
+
+============================== 7 passed in 0.38s ===============================

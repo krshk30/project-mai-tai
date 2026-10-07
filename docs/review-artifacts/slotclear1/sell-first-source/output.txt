@@ -1,0 +1,50 @@
+.FFFF.......F.........F......F................................           [100%]
+=================================== FAILURES ===================================
+_ test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True] _
+tests/unit/test_slotclear1_fresh_sell.py:100: in test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once
+    assert len(primary) == len(mirror) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='SXTC', side='buy', intent_type='open', quantity=Decimal('84'), reason='schwab_1m_v2 ATR Flip...600', 'entry_size_price_basis': 'stop_limit_wire_limit', 'entry_size_price': '7.1263', 'entry_computed_shares': '84'})])
+E    +  and   0 = len([])
+_ test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-False] _
+tests/unit/test_slotclear1_fresh_sell.py:100: in test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once
+    assert len(primary) == len(mirror) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='SXTC', side='buy', intent_type='open', quantity=Decimal('84'), reason='schwab_1m_v2 ATR Flip...600', 'entry_size_price_basis': 'stop_limit_wire_limit', 'entry_size_price': '7.1263', 'entry_computed_shares': '84'})])
+E    +  and   0 = len([])
+_ test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[False-True] _
+tests/unit/test_slotclear1_fresh_sell.py:100: in test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once
+    assert len(primary) == len(mirror) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='SXTC', side='buy', intent_type='open', quantity=Decimal('84'), reason='schwab_1m_v2 ATR Flip...600', 'entry_size_price_basis': 'stop_limit_wire_limit', 'entry_size_price': '7.1263', 'entry_computed_shares': '84'})])
+E    +  and   0 = len([])
+_ test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[False-False] _
+tests/unit/test_slotclear1_fresh_sell.py:100: in test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once
+    assert len(primary) == len(mirror) == 1
+E   AssertionError: assert 1 == 0
+E    +  where 1 = len([TradeIntentDraft(symbol='SXTC', side='buy', intent_type='open', quantity=Decimal('84'), reason='schwab_1m_v2 ATR Flip...600', 'entry_size_price_basis': 'stop_limit_wire_limit', 'entry_size_price': '7.1263', 'entry_computed_shares': '84'})])
+E    +  and   0 = len([])
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[emit] __
+tests/unit/test_slotclear1_fresh_sell.py:161: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    assert state.cw_resting_taken and state.cw_reclaim_taken
+E   AssertionError: assert (False)
+E    +  where False = SymbolState(symbol='SXTC', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791397500000, open=6.36, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_resting_taken
+_ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[removed] _
+tests/unit/test_slotclear1_fresh_sell.py:161: in test_fresh_sell_never_releases_held_working_unknown_or_unready_claims
+    assert state.cw_resting_taken and state.cw_reclaim_taken
+E   AssertionError: assert (False)
+E    +  where False = SymbolState(symbol='SXTC', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791397500000, open=6.36, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_resting_taken
+_______ test_recorded_dki_no_fresh_flip_retains_reconstructed_short_cap ________
+tests/unit/test_slotclear1_fresh_sell.py:199: in test_recorded_dki_no_fresh_flip_retains_reconstructed_short_cap
+    assert len(probes) == 12 and all(p[2]["flip"] is None for p in probes)
+E   AssertionError: assert (11 == 12)
+E    +  where 11 = len([(1791397322726, OHLCVBar(timestamp_ms=1791397260000, open=1.88, high=1.88, low=1.87, close=1.875, volume=2623), {'fli...close=1.8209, volume=10203), {'flip': None, 'observation_phase': 'live', 'state': 'short', 'state_age': 21, ...}), ...])
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-False]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[False-True]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[False-False]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[emit]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[removed]
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_dki_no_fresh_flip_retains_reconstructed_short_cap
+7 failed, 55 passed in 1.21s

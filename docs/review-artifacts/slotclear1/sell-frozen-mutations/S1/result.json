@@ -1,0 +1,21 @@
+{
+  "cwd": "/Users/velkris/Projects/project-mai-tai-slotclear1-side",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "docs/review-artifacts/slotclear1/check_mutations.py",
+    "S1"
+  ],
+  "head": "e246cc144d4efa86ec4ddbd60ddb5a9de6ade368",
+  "tree": "f046e51cdb2081f2e9ff82beda215a4e5c5e984f",
+  "status_before": "M docs/review-artifacts/slotclear1/PR_BODY.md\n?? docs/review-artifacts/slotclear1/SELL_PULL_STDERR.txt\n?? docs/review-artifacts/slotclear1/remote-checkout-head/\n?? docs/review-artifacts/slotclear1/sell-baseline-d68/\n?? docs/review-artifacts/slotclear1/sell-before-source/\n?? docs/review-artifacts/slotclear1/sell-candidate-unit/\n?? docs/review-artifacts/slotclear1/sell-first-source/\n?? docs/review-artifacts/slotclear1/sell-focused-02/\n?? docs/review-artifacts/slotclear1/sell-focused-03/\n?? docs/review-artifacts/slotclear1/sell-focused-04/\n?? docs/review-artifacts/slotclear1/sell-focused-05/\n?? docs/review-artifacts/slotclear1/sell-focused-06/\n?? docs/review-artifacts/slotclear1/sell-frozen-focused/\n?? docs/review-artifacts/slotclear1/sell-mutations/\n?? docs/review-artifacts/slotclear1/sell-recorded-full-window/",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src",
+  "start_utc": "2026-10-07T19:00:23.717416+00:00",
+  "end_utc": "2026-10-07T19:00:24.674896+00:00",
+  "returncode": 0,
+  "output_sha256": "f50205ca233f1824af50b4d1c881b9b75e235df6fee58c92259b2779dd2b666f",
+  "failed_names": [
+    "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_recorded_bar_with_later_watch_boundary_cannot_become_a_fresh_buy"
+  ]
+}

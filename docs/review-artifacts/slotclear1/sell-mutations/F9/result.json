@@ -1,0 +1,21 @@
+{
+  "cwd": "/Users/velkris/Projects/project-mai-tai-slotclear1-side",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "/Users/velkris/Projects/project-mai-tai-slotclear1-side/docs/review-artifacts/slotclear1/check_sell_mutations.py",
+    "F9"
+  ],
+  "head": "d68d25e0bf8cca33d6c22da39fa550b5977b5da3",
+  "tree": "816fc69197ff9a33eedfe94db00c4a4c64ada3dc",
+  "status_before": "M docs/review-artifacts/slotclear1/PR_BODY.md\n M ops/health/expected_flags.json\n M src/project_mai_tai/services/schwab_1m_v2_bot.py\n M src/project_mai_tai/settings.py\n M src/project_mai_tai/strategy_core/schwab_1m_v2.py\n M tests/unit/test_all_on_pm.py\n M tests/unit/test_expected_flags_check.py\n M tests/unit/test_keeprest1.py\n M tests/unit/test_mirrorhold1_retained_hold.py\n?? docs/review-artifacts/slotclear1/SELL_EVIDENCE_2026-10-07.json\n?? docs/review-artifacts/slotclear1/SELL_FOLLOWUP_JOURNAL.md\n?? docs/review-artifacts/slotclear1/SELL_PULL_STDERR.txt\n?? docs/review-artifacts/slotclear1/check_sell_mutations.py\n?? docs/review-artifacts/slotclear1/pull_sell_evidence.py\n?? docs/review-artifacts/slotclear1/run_mutation_batch.py\n?? docs/review-artifacts/slotclear1/run_receipt.py\n?? docs/review-artifacts/slotclear1/sell-baseline-d68/\n?? docs/review-artifacts/slotclear1/sell-before-source/\n?? docs/review-artifacts/slotclear1/sell-first-source/\n?? docs/review-artifacts/slotclear1/sell-focused-02/\n?? docs/review-artifacts/slotclear1/sell-focused-03/\n?? docs/review-artifacts/slotclear1/sell-focused-04/\n?? docs/review-artifacts/slotclear1/sell-focused-05/\n?? docs/review-artifacts/slotclear1/sell-focused-06/\n?? docs/review-artifacts/slotclear1/sell-mutations/\n?? tests/unit/test_slotclear1_fresh_sell.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src",
+  "start_utc": "2026-10-07T18:58:08.407699+00:00",
+  "end_utc": "2026-10-07T18:58:09.246500+00:00",
+  "returncode": 0,
+  "output_sha256": "e512ec9d0a6afb08373d07cd7f68b3fec0d3cc49dd503a23a71d0b07303ab5fe",
+  "failed_names": [
+    "tests/unit/test_slotclear1_fresh_sell.py::test_keeprest_sell_cancels_existing_order_without_granting_another_slot"
+  ]
+}

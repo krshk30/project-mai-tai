@@ -1,0 +1,57 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__ test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[gap] __
+
+blocker = 'gap'
+
+    @pytest.mark.parametrize("blocker", ["held_primary", "held_mirror", "held_qty", "union_qty", "working",
+                                        "mirror_working", "emit", "filled_claim", "owner_id", "owner_rows",
+                                        "stale_book", "unreadable", "restore", "boot", "gap", "line", "removed"])
+    def test_fresh_sell_never_releases_held_working_unknown_or_unready_claims(blocker):
+        strategy, state, clock, _, _, _ = seeded(partial=True)
+        probe = list(recorded_probes("SXTC"))[0]
+        clock[0] = probe[0]
+        _book(strategy, clock, "SXTC")
+        if blocker in {"held_primary", "held_mirror"}:
+            _book(strategy, clock, "SXTC", _leg(PRIMARY if blocker == "held_primary" else WEBULL, "owned", entered_ms=WATCH))
+        elif blocker == "held_qty":
+            state.position_qty_held = 2
+        elif blocker == "union_qty":
+            state.position_qty = 2
+        elif blocker == "working":
+            state.resting_active = True
+        elif blocker == "mirror_working":
+            state.webull_resting_active = True
+        elif blocker == "emit":
+            state.cw_v2_emit_claimed, state.cw_v2_emit_ms = True, probe[0]
+        elif blocker == "filled_claim":
+            state.fanout_claim_outcome = "filled"
+        elif blocker == "owner_id":
+            state.flip_owner_opportunity_id = WATCH
+        elif blocker == "owner_rows":
+            state.flip_owner_position_ids = {PRIMARY: "owned"}
+        elif blocker == "stale_book":
+            state.flip_owner_evidence_at_ms = WATCH
+        elif blocker == "unreadable":
+            state.flip_owner_evidence_readable = False
+        elif blocker == "restore":
+            strategy._flip_owner_restore_readable = False
+        elif blocker == "boot":
+            strategy._entries_held = True
+        elif blocker == "gap":
+            strategy.gap_hold_active = lambda symbol: True
+        elif blocker == "line":
+            strategy.line_buy_ready = lambda symbol: False
+        elif blocker == "removed":
+            strategy._removed_wait_enabled = True
+            strategy._removed_scanner_symbols.add("SXTC")
+        observe(strategy, state, clock, probe, book=False)
+>       assert state.cw_resting_taken and state.cw_reclaim_taken
+E       AssertionError: assert (False)
+E        +  where False = SymbolState(symbol='SXTC', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791397500000, open=6.36, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_resting_taken
+
+tests/unit/test_slotclear1_fresh_sell.py:163: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[gap]
+1 failed in 0.08s
+MUTATION F10 pytest_rc=1 RED

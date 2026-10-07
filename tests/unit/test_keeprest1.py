@@ -183,7 +183,7 @@ def test_liquid_bar_resets_thin_streak_and_reclaim_is_untouched():
 @pytest.mark.parametrize("stream", [False, True])
 def test_all_on_later_olox_price_proxy_crosses_once_with_sizing_and_grace(stream):
     strategy, state, clock = seeded(all_on=True)
-    assert len(COMPOSED) == 9 and all(getattr(strategy.settings, f) for f in COMPOSED)
+    assert len(COMPOSED) == 11 and all(getattr(strategy.settings, f) for f in COMPOSED)
     track(strategy, state, flip="BUY")
     case = CASES[-1]
     clock[0] = ms(case["first_later_bar_high_reach"]["bar_time"].replace(" ", "T")) + 1000
@@ -297,11 +297,11 @@ def test_all_on_effective_catalog_zero_with_controlled_process_environments():
         for service in [entry["owning_service"], *entry.get("also_check_services", [])]:
             environments.setdefault(service, {})["MAI_TAI_" + entry["name"].upper()] = str(entry["expected"]).lower()
     settings = Settings(_env_file=None, **COMPOSED)
-    assert len(COMPOSED) == 9 and all(getattr(settings, key) for key in COMPOSED)
+    assert len(COMPOSED) == 11 and all(getattr(settings, key) for key in COMPOSED)
     rc, lines = audit(entries, environment_reader=lambda service: ServiceEnvironment(
         101, environments[service], frozenset(), None))
     assert rc == 0
-    assert lines[-1] == "Final call: PASS; checked=155/155 mismatches=0 unknown=0"
+    assert lines[-1] == "Final call: PASS; checked=157/157 mismatches=0 unknown=0"
     assert len(environments) == 9
 
 

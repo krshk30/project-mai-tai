@@ -46,9 +46,9 @@ def test_the_population_is_guaranteed_by_rule_6_not_by_a_local_gate() -> None:
 
     from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 
-    src = inspect.getsource(SchwabV2Strategy)
+    src = inspect.getsource(SchwabV2Strategy._cw_v2_quote)
     before = src.split(MARKER, 1)[0]
-    rule6 = "if trig <= 0.0 or px <= trig:"
+    rule6 = "if trig <= 0.0 or (px < trig if fresh_first else px <= trig):"
     rule7 = "if fl <= 0.0 or px <= fl or state.cw_bar_low_so_far <= fl:"
     assert before.index(rule6) < before.index(rule7), (
         "rule 6 must still return before rule 7 is reached — that ordering IS the population guard"

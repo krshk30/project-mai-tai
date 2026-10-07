@@ -1,0 +1,19 @@
+........................................................................ [ 19%]
+........................................................................ [ 39%]
+........................................................................ [ 58%]
+........................................................................ [ 78%]
+.......F................................................................ [ 98%]
+.......                                                                  [100%]
+=================================== FAILURES ===================================
+___ test_all_on_effective_catalog_zero_with_controlled_process_environments ____
+tests/unit/test_keeprest1.py:304: in test_all_on_effective_catalog_zero_with_controlled_process_environments
+    assert lines[-1] == "Final call: PASS; checked=156/156 mismatches=0 unknown=0"
+E   AssertionError: assert 'Final call: ...s=0 unknown=0' == 'Final call: ...s=0 unknown=0'
+E     
+E     - Final call: PASS; checked=156/156 mismatches=0 unknown=0
+E     ?                             ^   ^
+E     + Final call: PASS; checked=157/157 mismatches=0 unknown=0
+E     ?                             ^   ^
+=========================== short test summary info ============================
+FAILED tests/unit/test_keeprest1.py::test_all_on_effective_catalog_zero_with_controlled_process_environments
+1 failed, 366 passed in 12.75s

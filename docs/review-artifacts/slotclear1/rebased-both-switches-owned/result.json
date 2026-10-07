@@ -1,0 +1,22 @@
+{
+  "cwd": "/Users/velkris/Projects/project-mai-tai-slotclear1-side",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "-m",
+    "pytest",
+    "docs/review-artifacts/slotclear1/test_both_paths.py",
+    "-q",
+    "--tb=short"
+  ],
+  "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+  "tree": "b63dff06a63ce2313c1bbf206935901c0edc16fe",
+  "status_before": "M docs/review-artifacts/slotclear1/test_both_paths.py\n?? docs/review-artifacts/slotclear1/rebased-focused/\n?? docs/review-artifacts/slotclear1/rebased-nfq-conflicts/\n?? docs/review-artifacts/slotclear1/run_timed_pytest.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T19:07:04.503693+00:00",
+  "end_utc": "2026-10-07T19:07:05.436114+00:00",
+  "returncode": 0,
+  "output_sha256": "0af95f18d6ea1d8b2f0752fa3f1e9b96d6499d1058015db987e20fec243adae7",
+  "failed_names": []
+}

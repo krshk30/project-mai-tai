@@ -1,0 +1,21 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___ test_keeprest_sell_cancels_existing_order_without_granting_another_slot ____
+
+    def test_keeprest_sell_cancels_existing_order_without_granting_another_slot():
+        strategy, state, clock, _, _, _ = seeded(partial=True)
+        strategy.settings.strategy_schwab_1m_v2_keep_rest_after_buy_enabled = True
+        state.resting_active = state.resting_buy_frozen = True
+        observe(strategy, state, clock, list(recorded_probes("SXTC"))[0])
+        intents = strategy.drain_pending_intents()
+        assert len(intents) == 1 and intents[0].intent_type == "cancel"
+        assert intents[0].metadata["reason"] == "keep_rest_sell"
+>       assert state.cw_resting_taken and state.cw_reclaim_taken
+E       AssertionError: assert (False)
+E        +  where False = SymbolState(symbol='SXTC', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791397500000, open=6.36, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_resting_taken
+
+tests/unit/test_slotclear1_fresh_sell.py:217: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_keeprest_sell_cancels_existing_order_without_granting_another_slot
+1 failed in 0.07s
+MUTATION F9 pytest_rc=1 RED

@@ -1,0 +1,25 @@
+{
+  "cwd": "/Users/velkris/Projects/project-mai-tai-slotclear1-side",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "-m",
+    "pytest",
+    "docs/review-artifacts/slotclear1/test_both_paths.py",
+    "-q",
+    "-s",
+    "--tb=short"
+  ],
+  "head": "95cfbae86c737b522051f6ff57c5b9e285cf55ef",
+  "tree": "e085678096f55ef7634c0cc170d065eb56a43769",
+  "status_before": "M docs/review-artifacts/slotclear1/test_both_paths.py\n?? docs/review-artifacts/slotclear1/REPRO_CURRENT_MAIN.md\n?? docs/review-artifacts/slotclear1/rebased-candidate-unit/\n?? docs/review-artifacts/slotclear1/rebased-mutations/T1/\n?? docs/review-artifacts/slotclear1/summarize_current_pair.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T19:15:37.300736+00:00",
+  "end_utc": "2026-10-07T19:15:38.502497+00:00",
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 900.0,
+  "output_sha256": "465f4418229ead3135495045c53a4ce43e94b1e424ff89475169e734d896af4d",
+  "failed_names": []
+}

@@ -1,0 +1,22 @@
+{
+  "cwd": "/Users/velkris/Projects/project-mai-tai-slotclear1-side",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "-m",
+    "pytest",
+    "tests/unit",
+    "--collect-only",
+    "-q"
+  ],
+  "head": "e246cc144d4efa86ec4ddbd60ddb5a9de6ade368",
+  "tree": "f046e51cdb2081f2e9ff82beda215a4e5c5e984f",
+  "status_before": "M docs/review-artifacts/slotclear1/PR_BODY.md\n M docs/review-artifacts/slotclear1/SELL_FOLLOWUP_JOURNAL.md\n M docs/review-artifacts/slotclear1/SELL_SCOPE.md\n?? docs/review-artifacts/slotclear1/NFQ_HOTFIX_READONLY_COMPATIBILITY.md\n?? docs/review-artifacts/slotclear1/SELL_PULL_STDERR.txt\n?? docs/review-artifacts/slotclear1/SELL_SOURCE_HASHES.txt\n?? docs/review-artifacts/slotclear1/remote-checkout-head/\n?? docs/review-artifacts/slotclear1/sell-baseline-d68/\n?? docs/review-artifacts/slotclear1/sell-before-source/\n?? docs/review-artifacts/slotclear1/sell-both-switches/\n?? docs/review-artifacts/slotclear1/sell-candidate-unit/\n?? docs/review-artifacts/slotclear1/sell-first-source/\n?? docs/review-artifacts/slotclear1/sell-focused-02/\n?? docs/review-artifacts/slotclear1/sell-focused-03/\n?? docs/review-artifacts/slotclear1/sell-focused-04/\n?? docs/review-artifacts/slotclear1/sell-focused-05/\n?? docs/review-artifacts/slotclear1/sell-focused-06/\n?? docs/review-artifacts/slotclear1/sell-frozen-focused/\n?? docs/review-artifacts/slotclear1/sell-frozen-full-window/\n?? docs/review-artifacts/slotclear1/sell-frozen-mutations/\n?? docs/review-artifacts/slotclear1/sell-mutations/\n?? docs/review-artifacts/slotclear1/sell-recorded-full-window/\n?? docs/review-artifacts/slotclear1/test_both_paths.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src",
+  "start_utc": "2026-10-07T19:04:13.595480+00:00",
+  "end_utc": "2026-10-07T19:04:17.574423+00:00",
+  "returncode": 0,
+  "output_sha256": "eeddb0d7038cc270f869852aafa4a6ee62d44b7be13f4dfb67d930bb99fc5092",
+  "failed_names": []
+}

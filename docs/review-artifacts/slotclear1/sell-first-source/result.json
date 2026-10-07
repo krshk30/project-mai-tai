@@ -1,0 +1,31 @@
+{
+  "cwd": "/Users/velkris/Projects/project-mai-tai-slotclear1-side",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "-m",
+    "pytest",
+    "tests/unit/test_slotclear1_fresh_sell.py",
+    "tests/unit/test_slotclear1_fresh_flip.py",
+    "-q",
+    "--tb=short"
+  ],
+  "head": "d68d25e0bf8cca33d6c22da39fa550b5977b5da3",
+  "tree": "816fc69197ff9a33eedfe94db00c4a4c64ada3dc",
+  "status_before": "M docs/review-artifacts/slotclear1/PR_BODY.md\n M src/project_mai_tai/services/schwab_1m_v2_bot.py\n M src/project_mai_tai/settings.py\n M src/project_mai_tai/strategy_core/schwab_1m_v2.py\n?? docs/review-artifacts/slotclear1/SELL_EVIDENCE_2026-10-07.json\n?? docs/review-artifacts/slotclear1/SELL_FOLLOWUP_JOURNAL.md\n?? docs/review-artifacts/slotclear1/SELL_PULL_STDERR.txt\n?? docs/review-artifacts/slotclear1/pull_sell_evidence.py\n?? docs/review-artifacts/slotclear1/run_receipt.py\n?? docs/review-artifacts/slotclear1/sell-baseline-d68/\n?? docs/review-artifacts/slotclear1/sell-before-source/\n?? tests/unit/test_slotclear1_fresh_sell.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src",
+  "start_utc": "2026-10-07T18:54:29.032486+00:00",
+  "end_utc": "2026-10-07T18:54:30.596996+00:00",
+  "returncode": 1,
+  "output_sha256": "4f4755d227503571b296f4518b3aee2489a5ce5ce47bacb9d3140edf8e4ba70f",
+  "failed_names": [
+    "tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[emit]",
+    "tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[removed]",
+    "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_dki_no_fresh_flip_retains_reconstructed_short_cap",
+    "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[False-False]",
+    "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[False-True]",
+    "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-False]",
+    "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]"
+  ]
+}
