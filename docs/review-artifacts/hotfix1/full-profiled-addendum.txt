@@ -1,0 +1,525 @@
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  7%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+......................................FF......FFFFFFFFFFFFF......FFFFFF. [ 15%]
+.....FFFFFFFFFFFFFFFFFFFFFFF............................................ [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+.......F................................................................ [ 25%]
+........................................................................ [ 26%]
+..................................................................F..... [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+........................................................................ [ 31%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 37%]
+........................................................................ [ 38%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 41%]
+........................................................................ [ 42%]
+........................................................................ [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 50%]
+........................................................................ [ 51%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+........................................................................ [ 57%]
+........................................................................ [ 58%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 63%]
+........................................................................ [ 64%]
+........................................................................ [ 65%]
+........................................................................ [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+........................................................................ [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 74%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+.............................FFFFFFFF...F............................... [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 82%]
+..........................................F............................. [ 83%]
+........................................................................ [ 84%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 90%]
+........................................................................ [ 91%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+........................................................................ [ 94%]
+........................................................................ [ 95%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+........................................................................ [ 98%]
+........................................................................ [ 99%]
+..........................................                               [100%]
+=================================== FAILURES ===================================
+___________ test_whole_installer_succeeds_with_one_managed_schedule ____________
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1103: in test_whole_installer_succeeds_with_one_managed_schedule
+    assert result.returncode == 0, result.stderr
+E   AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_succeeds_0/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E     /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_succeeds_0/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E     REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_succeeds_0/repo/ops/health/fanout_outcome_acceptance.py
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_succeeds_0/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+____ test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block ____
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1143: in test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block
+    assert first.returncode == 0, first.stderr
+E   AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_is_idempo0/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E     /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_is_idempo0/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E     REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_is_idempo0/repo/ops/health/fanout_outcome_acceptance.py
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_is_idempo0/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+_ test_differing_reinstall_preserves_a_pre_versioned_copy[check.py-fanout_outcome_acceptance.py] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1198: in test_differing_reinstall_preserves_a_pre_versioned_copy
+    assert first.returncode == 0, first.stderr
+E   AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_differing_reinstall_prese0/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E     /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_differing_reinstall_prese0/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E     REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_differing_reinstall_prese0/repo/ops/health/fanout_outcome_acceptance.py
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_differing_reinstall_prese0/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+_ test_differing_reinstall_preserves_a_pre_versioned_copy[cron.py-fanout_outcome_acceptance_cron.py] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1198: in test_differing_reinstall_preserves_a_pre_versioned_copy
+    assert first.returncode == 0, first.stderr
+E   AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_differing_reinstall_prese1/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E     /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_differing_reinstall_prese1/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E     REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_differing_reinstall_prese1/repo/ops/health/fanout_outcome_acceptance.py
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_differing_reinstall_prese1/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: in test_backup_failure_refuses_before_overwriting_even_without_errexit
+    assert first.returncode == 0, first.stderr
+E   AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be0/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E     /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be0/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E     REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be0/repo/ops/health/fanout_outcome_acceptance.py
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be0/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-without-set-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: in test_backup_failure_refuses_before_overwriting_even_without_errexit
+    assert first.returncode == 0, first.stderr
+E   AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be1/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E     /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be1/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E     REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be1/repo/ops/health/fanout_outcome_acceptance.py
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be1/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: in test_backup_failure_refuses_before_overwriting_even_without_errexit
+    assert first.returncode == 0, first.stderr
+E   AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be2/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E     /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be2/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E     REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be2/repo/ops/health/fanout_outcome_acceptance.py
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be2/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-normal] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: in test_backup_failure_refuses_before_overwriting_even_without_errexit
+    assert first.returncode == 0, first.stderr
+E   AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be3/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E     /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be3/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E     REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be3/repo/ops/health/fanout_outcome_acceptance.py
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be3/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-without-set-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: in test_backup_failure_refuses_before_overwriting_even_without_errexit
+    assert first.returncode == 0, first.stderr
+E   AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be4/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E     /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be4/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E     REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be4/repo/ops/health/fanout_outcome_acceptance.py
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be4/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+_ test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-insert-set-plus-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1225: in test_backup_failure_refuses_before_overwriting_even_without_errexit
+    assert first.returncode == 0, first.stderr
+E   AssertionError: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be5/runtime/fake-bin/sha256sum: line 8: /usr/bin/sha256sum: No such file or directory
+E     /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be5/runtime/fake-bin/sha256sum: line 8: exec: /usr/bin/sha256sum: cannot execute: No such file or directory
+E     REFUSED: could not hash reviewed D6 acceptance source: /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be5/repo/ops/health/fanout_outcome_acceptance.py
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_backup_failure_refuses_be5/repo/ops/health/fanout_outcome_acceptance.py\n').returncode
+_ test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance.py-check.py] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1270: in test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy
+    assert "backup path already exists" in result.stderr
+E   AssertionError: assert 'backup path already exists' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_existing_backup_path_refu0...p40000gp/T/pytest-of-velkris/pytest-536/test_existing_backup_path_refu0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_existing_backup_path_refu0...p40000gp/T/pytest-of-velkris/pytest-536/test_existing_backup_path_refu0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_existing_backup_path_refu0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance_cron.py-cron.py] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1270: in test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy
+    assert "backup path already exists" in result.stderr
+E   AssertionError: assert 'backup path already exists' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_existing_backup_path_refu1...p40000gp/T/pytest-of-velkris/pytest-536/test_existing_backup_path_refu1/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_existing_backup_path_refu1...p40000gp/T/pytest-of-velkris/pytest-536/test_existing_backup_path_refu1/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_existing_backup_path_refu1/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+______ test_runtime_failure_rolls_back_every_target_mutation[new-install] ______
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1303: in test_runtime_failure_rolls_back_every_target_mutation
+    assert "module-scope rollback sentinel" in result.stderr
+E   AssertionError: assert 'module-scope rollback sentinel' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_runtime_failure_rolls_bac0...p40000gp/T/pytest-of-velkris/pytest-536/test_runtime_failure_rolls_bac0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_runtime_failure_rolls_bac0...p40000gp/T/pytest-of-velkris/pytest-536/test_runtime_failure_rolls_bac0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_runtime_failure_rolls_bac0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_______ test_runtime_failure_rolls_back_every_target_mutation[reinstall] _______
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1303: in test_runtime_failure_rolls_back_every_target_mutation
+    assert "module-scope rollback sentinel" in result.stderr
+E   AssertionError: assert 'module-scope rollback sentinel' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_runtime_failure_rolls_bac1...p40000gp/T/pytest-of-velkris/pytest-536/test_runtime_failure_rolls_bac1/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_runtime_failure_rolls_bac1...p40000gp/T/pytest-of-velkris/pytest-536/test_runtime_failure_rolls_bac1/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_runtime_failure_rolls_bac1/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_post_write_confirmation_failure_restores_root_cron_and_prior_artifacts __
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1336: in test_post_write_confirmation_failure_restores_root_cron_and_prior_artifacts
+    assert "could not confirm the installed D6 root crontab" in result.stderr
+E   AssertionError: assert 'could not confirm the installed D6 root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_post_write_confirmation_f0...p40000gp/T/pytest-of-velkris/pytest-536/test_post_write_confirmation_f0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_post_write_confirmation_f0...p40000gp/T/pytest-of-velkris/pytest-536/test_post_write_confirmation_f0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_post_write_confirmation_f0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-normal] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: in test_uid_and_backup_timestamp_fail_closed_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_6...p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_6/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_6...p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_6/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_6/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-without-set-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: in test_uid_and_backup_timestamp_fail_closed_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_7...p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_7/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_7...p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_7/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_7/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-insert-set-plus-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: in test_uid_and_backup_timestamp_fail_closed_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_8...p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_8/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_8...p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_8/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_8/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-normal] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: in test_uid_and_backup_timestamp_fail_closed_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_9...p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_9/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_9...p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_9/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_9/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-without-set-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: in test_uid_and_backup_timestamp_fail_closed_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_1...40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_10/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_1...40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_10/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...0000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_10/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-insert-set-plus-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1378: in test_uid_and_backup_timestamp_fail_closed_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'unique D6 backup timestamp' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_1...40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_11/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_1...40000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_11/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...0000gp/T/pytest-of-velkris/pytest-536/test_uid_and_backup_timestamp_11/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-normal] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no6...p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no6/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no6...p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no6/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no6/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-without-set-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no7...p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no7/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no7...p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no7/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no7/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-insert-set-plus-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no8...p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no8/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no8...p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no8/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no8/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-normal] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no9...p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no9/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no9...p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no9/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no9/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-without-set-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no10/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no10/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...0000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no10/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-insert-set-plus-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 acceptance hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no11/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no11/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...0000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no11/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-normal] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no12/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no12/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...0000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no12/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-without-set-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no13/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no13/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...0000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no13/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-insert-set-plus-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no14/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no14/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...0000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no14/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-normal] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no15/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no15/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...0000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no15/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-without-set-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no16/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no16/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...0000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no16/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-insert-set-plus-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1429: in test_every_operator_hash_is_nonempty_and_guarded_without_errexit
+    assert expected_message in result.stderr
+E   AssertionError: assert 'installed D6 cron-runner hash' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no17/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no1...40000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no17/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...0000gp/T/pytest-of-velkris/pytest-536/test_every_operator_hash_is_no17/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+__ test_proposed_crontab_is_validated_before_root_crontab_is_written[normal] ___
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1459: in test_proposed_crontab_is_validated_before_root_crontab_is_written
+    assert "proposed root crontab does not contain the reviewed D6 schedule" in result.stderr
+E   AssertionError: assert 'proposed root crontab does not contain the reviewed D6 schedule' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid0...p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid0...p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_proposed_crontab_is_validated_before_root_crontab_is_written[without-set-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1459: in test_proposed_crontab_is_validated_before_root_crontab_is_written
+    assert "proposed root crontab does not contain the reviewed D6 schedule" in result.stderr
+E   AssertionError: assert 'proposed root crontab does not contain the reviewed D6 schedule' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid1...p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid1/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid1...p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid1/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid1/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_proposed_crontab_is_validated_before_root_crontab_is_written[insert-set-plus-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1459: in test_proposed_crontab_is_validated_before_root_crontab_is_written
+    assert "proposed root crontab does not contain the reviewed D6 schedule" in result.stderr
+E   AssertionError: assert 'proposed root crontab does not contain the reviewed D6 schedule' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid2...p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid2/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid2...p40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid2/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_proposed_crontab_is_valid2/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+________ test_single_cron_composition_command_refuses_as_a_unit[normal] ________
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1485: in test_single_cron_composition_command_refuses_as_a_unit
+    assert "REFUSED: could not compose proposed D6 root crontab" in result.stderr
+E   AssertionError: assert 'REFUSED: could not compose proposed D6 root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c0...p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c0...p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+____ test_single_cron_composition_command_refuses_as_a_unit[without-set-e] _____
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1485: in test_single_cron_composition_command_refuses_as_a_unit
+    assert "REFUSED: could not compose proposed D6 root crontab" in result.stderr
+E   AssertionError: assert 'REFUSED: could not compose proposed D6 root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c1...p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c1/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c1...p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c1/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c1/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+__ test_single_cron_composition_command_refuses_as_a_unit[insert-set-plus-e] ___
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1485: in test_single_cron_composition_command_refuses_as_a_unit
+    assert "REFUSED: could not compose proposed D6 root crontab" in result.stderr
+E   AssertionError: assert 'REFUSED: could not compose proposed D6 root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c2...p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c2/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c2...p40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c2/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_single_cron_composition_c2/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1527: in test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled
+    assert "REFUSED: could not derive proposed root crontab" in result.stderr
+E   AssertionError: assert 'REFUSED: could not derive proposed root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_preservation_invariant_re0...p40000gp/T/pytest-of-velkris/pytest-536/test_preservation_invariant_re0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_preservation_invariant_re0...p40000gp/T/pytest-of-velkris/pytest-536/test_preservation_invariant_re0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_preservation_invariant_re0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_____ test_lossy_successful_awk_is_refused_before_root_crontab_is_written ______
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1559: in test_lossy_successful_awk_is_refused_before_root_crontab_is_written
+    assert "would alter or lose a non-D6 line" in result.stderr
+E   AssertionError: assert 'would alter or lose a non-D6 line' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_lossy_successful_awk_is_r0...p40000gp/T/pytest-of-velkris/pytest-536/test_lossy_successful_awk_is_r0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_lossy_successful_awk_is_r0...p40000gp/T/pytest-of-velkris/pytest-536/test_lossy_successful_awk_is_r0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_lossy_successful_awk_is_r0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[normal] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1586: in test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit
+    assert "REFUSED: could not read the existing root crontab" in result.stderr
+E   AssertionError: assert 'REFUSED: could not read the existing root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u0...p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u0/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u0...p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u0/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u0/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[without-set-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1586: in test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit
+    assert "REFUSED: could not read the existing root crontab" in result.stderr
+E   AssertionError: assert 'REFUSED: could not read the existing root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u1...p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u1/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u1...p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u1/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u1/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_ test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[insert-set-plus-e] _
+tests/unit/test_fanout_outcome_acceptance_schedule.py:1586: in test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit
+    assert "REFUSED: could not read the existing root crontab" in result.stderr
+E   AssertionError: assert 'REFUSED: could not read the existing root crontab' in '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u2...p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u2/repo/ops/health/fanout_outcome_acceptance.py\n'
+E    +  where '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u2...p40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u2/repo/ops/health/fanout_outcome_acceptance.py\n' = CompletedProcess(args=['/bin/bash', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest...40000gp/T/pytest-of-velkris/pytest-536/test_whole_installer_refuses_u2/repo/ops/health/fanout_outcome_acceptance.py\n').stderr
+_____________________ test_installer_shell_fault_controls ______________________
+tests/unit/test_log_retention_policy.py:13: in test_installer_shell_fault_controls
+    subprocess.run(["bash", "ops/logrotate/test_install.sh"], cwd=ROOT, check=True)
+../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['bash', 'ops/logrotate/test_install.sh']' returned non-zero exit status 1.
+----------------------------- Captured stderr call -----------------------------
+/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/logrotate/install.sh: line 27: PRIV[@]: unbound variable
+___________ test_real_dead_consumer_cannot_block_the_paced_producer ____________
+tests/unit/test_momentum_gateway_throughput.py:377: in test_real_dead_consumer_cannot_block_the_paced_producer
+    assert not hung, "a dead consumer blocked the producer process"
+E   AssertionError: a dead consumer blocked the producer process
+E   assert not True
+______ test_sync_only_fast_forwards_safe_delta_without_mutating_services _______
+tests/unit/test_sync_checkout_only.py:198: in test_sync_only_fast_forwards_safe_delta_without_mutating_services
+    result = _run(*_sync_args(box, target), cwd=box, env=_env(fake))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_sync_checkout_only.py:34: in _run
+    return subprocess.run(
+../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['bash', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/sync_checkout_only.sh', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_sync_only_fast_forwards_s0/box', 'main', '51ad2dd468cfcca3e95e25b75b6c64bc4b432afd', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/sync_only_unloaded_files.tsv']' returned non-zero exit status 1.
+____ test_sync_only_refuses_behavioral_python_change_before_checkout_moves _____
+tests/unit/test_sync_checkout_only.py:224: in test_sync_only_refuses_behavioral_python_change_before_checkout_moves
+    assert "behavior-bearing Python change" in result.stderr
+E   assert 'behavior-bearing Python change' in 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_sync_only_refuses_beh...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n'
+E    +  where 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_sync_only_refuses_beh...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n' = CompletedProcess(args=['bash', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/...:\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n').stderr
+______ test_sync_only_refuses_unlisted_runtime_path_before_checkout_moves ______
+tests/unit/test_sync_checkout_only.py:241: in test_sync_only_refuses_unlisted_runtime_path_before_checkout_moves
+    assert "path is not sync-only-safe" in result.stderr
+E   assert 'path is not sync-only-safe' in 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_sync_only_refuses_unl...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n'
+E    +  where 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_sync_only_refuses_unl...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n' = CompletedProcess(args=['bash', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/...:\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n').stderr
+_ test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet[ops/health/fanout_identity_acceptance.py] _
+tests/unit/test_sync_checkout_only.py:262: in test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet
+    result = _run(*_sync_args(box, target), cwd=box, env=_env(fake))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_sync_checkout_only.py:34: in _run
+    return subprocess.run(
+../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['bash', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/sync_checkout_only.sh', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_sync_only_accepts_each_de0/box', 'main', '9300b36ce6f860cc17b382bc773ca57dfd1dd84d', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/sync_only_unloaded_files.tsv']' returned non-zero exit status 1.
+_ test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet[ops/health/field_acceptance.py] _
+tests/unit/test_sync_checkout_only.py:262: in test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet
+    result = _run(*_sync_args(box, target), cwd=box, env=_env(fake))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_sync_checkout_only.py:34: in _run
+    return subprocess.run(
+../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['bash', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/sync_checkout_only.sh', '/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_sync_only_accepts_each_de1/box', 'main', 'aded6ec8b07d549c33f3ddbc6ceb0d08c0fecfda', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/sync_only_unloaded_files.tsv']' returned non-zero exit status 1.
+_ test_live_reference_vetoes_a_declared_file_before_checkout_moves[current-crontab] _
+tests/unit/test_sync_checkout_only.py:294: in test_live_reference_vetoes_a_declared_file_before_checkout_moves
+    assert "live cron/systemd reference" in result.stderr
+E   assert 'live cron/systemd reference' in 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_live_reference_vetoes...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n'
+E    +  where 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_live_reference_vetoes...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n' = CompletedProcess(args=['bash', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/...:\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n').stderr
+_ test_live_reference_vetoes_a_declared_file_before_checkout_moves[root-crontab] _
+tests/unit/test_sync_checkout_only.py:294: in test_live_reference_vetoes_a_declared_file_before_checkout_moves
+    assert "live cron/systemd reference" in result.stderr
+E   assert 'live cron/systemd reference' in 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_live_reference_vetoes...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n'
+E    +  where 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_live_reference_vetoes...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n' = CompletedProcess(args=['bash', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/...:\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n').stderr
+__ test_live_reference_vetoes_a_declared_file_before_checkout_moves[systemd] ___
+tests/unit/test_sync_checkout_only.py:294: in test_live_reference_vetoes_a_declared_file_before_checkout_moves
+    assert "live cron/systemd reference" in result.stderr
+E   assert 'live cron/systemd reference' in 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_live_reference_vetoes...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n'
+E    +  where 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_live_reference_vetoes...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n' = CompletedProcess(args=['bash', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/...:\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n').stderr
+_________ test_sync_only_refuses_success_if_any_process_identity_moves _________
+tests/unit/test_sync_checkout_only.py:377: in test_sync_only_refuses_success_if_any_process_identity_moves
+    assert "managed process identity changed" in result.stderr
+E   assert 'managed process identity changed' in 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_sync_only_refuses_suc...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n'
+E    +  where 'From /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/pytest-of-velkris/pytest-536/test_sync_only_refuses_suc...):\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n' = CompletedProcess(args=['bash', '/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/systemd/...:\n  File "<stdin>", line 109, in <module>\nTypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'\n').stderr
+__________________ test_installer_and_notifier_fault_controls __________________
+tests/unit/test_unattended_upgrade_policy.py:15: in test_installer_and_notifier_fault_controls
+    subprocess.run(
+../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/subprocess.py:571: in run
+    raise CalledProcessError(retcode, process.args,
+E   subprocess.CalledProcessError: Command '['bash', 'ops/bootstrap/test_unattended_upgrade_policy.sh']' returned non-zero exit status 127.
+----------------------------- Captured stderr call -----------------------------
+/Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/ops/bootstrap/11_install_unattended_upgrade_policy.sh: line 35: systemd-analyze: command not found
+=============================== warnings summary ===============================
+../../../../Projects/project-mai-tai/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+../../../../Projects/project-mai-tai/.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/unit/test_control_plane.py: 452 warnings
+  /Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor.execute(statement, parameters)
+
+tests/unit/test_rpgstuck1_all_on.py::test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_buy[recorded-proof-in-window]
+tests/unit/test_rpgstuck1_all_on.py::test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_buy[recorded-proof-after-2000]
+tests/unit/test_rpgstuck1_all_on.py::test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_buy[true-unknown-in-window]
+tests/unit/test_rpgstuck1_all_on.py::test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_buy[true-unknown-after-2000]
+  tests/unit/test_rpgstuck1_all_on.py:73: PytestWarning: record_property is incompatible with junit_family 'xunit2' (use 'legacy' or 'xunit1')
+    @pytest.mark.asyncio
+
+tests/unit/test_webull_hard_stop_floor_shared_path.py::test_a_never_protected_share_is_not_reported_as_released
+  /Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:3980: RuntimeWarning: coroutine 'OmsRiskService._attach_webull_protection' was never awaited
+    def bindparam_string(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+----- generated xml file: /tmp/hotfix1-addendum-profiled-full-20261007.xml -----
+=========================== short test summary info ============================
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_succeeds_with_one_managed_schedule
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_is_idempotent_and_keeps_exactly_one_managed_block
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_differing_reinstall_preserves_a_pre_versioned_copy[check.py-fanout_outcome_acceptance.py]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_differing_reinstall_preserves_a_pre_versioned_copy[cron.py-fanout_outcome_acceptance_cron.py]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[check.py-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_backup_failure_refuses_before_overwriting_even_without_errexit[cron.py-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance.py-check.py]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_existing_backup_path_refuses_instead_of_overwriting_prior_rollback_copy[fanout_outcome_acceptance_cron.py-cron.py]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_runtime_failure_rolls_back_every_target_mutation[new-install]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_runtime_failure_rolls_back_every_target_mutation[reinstall]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_post_write_confirmation_failure_restores_root_cron_and_prior_artifacts
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-fails-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_uid_and_backup_timestamp_fail_closed_without_errexit[date-empty-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-fails-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-check-hash-empty-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-fails-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_every_operator_hash_is_nonempty_and_guarded_without_errexit[summary-cron-hash-empty-insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_proposed_crontab_is_validated_before_root_crontab_is_written[insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_single_cron_composition_command_refuses_as_a_unit[insert-set-plus-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_preservation_invariant_refuses_failed_awk_even_when_errexit_is_disabled
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_lossy_successful_awk_is_refused_before_root_crontab_is_written
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[normal]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[without-set-e]
+FAILED tests/unit/test_fanout_outcome_acceptance_schedule.py::test_whole_installer_refuses_unreadable_crontab_without_relying_on_errexit[insert-set-plus-e]
+FAILED tests/unit/test_log_retention_policy.py::test_installer_shell_fault_controls
+FAILED tests/unit/test_momentum_gateway_throughput.py::test_real_dead_consumer_cannot_block_the_paced_producer
+FAILED tests/unit/test_sync_checkout_only.py::test_sync_only_fast_forwards_safe_delta_without_mutating_services
+FAILED tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_behavioral_python_change_before_checkout_moves
+FAILED tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_unlisted_runtime_path_before_checkout_moves
+FAILED tests/unit/test_sync_checkout_only.py::test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet[ops/health/fanout_identity_acceptance.py]
+FAILED tests/unit/test_sync_checkout_only.py::test_sync_only_accepts_each_declared_file_when_live_refuter_is_quiet[ops/health/field_acceptance.py]
+FAILED tests/unit/test_sync_checkout_only.py::test_live_reference_vetoes_a_declared_file_before_checkout_moves[current-crontab]
+FAILED tests/unit/test_sync_checkout_only.py::test_live_reference_vetoes_a_declared_file_before_checkout_moves[root-crontab]
+FAILED tests/unit/test_sync_checkout_only.py::test_live_reference_vetoes_a_declared_file_before_checkout_moves[systemd]
+FAILED tests/unit/test_sync_checkout_only.py::test_sync_only_refuses_success_if_any_process_identity_moves
+FAILED tests/unit/test_unattended_upgrade_policy.py::test_installer_and_notifier_fault_controls
+56 failed, 7114 passed, 459 warnings in 465.83s (0:07:45)

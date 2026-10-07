@@ -4,6 +4,16 @@ Base: 1a70da19176d2cad486e8518e1c9030f1cabb968. No production action.
 
 ## Current status: NOT READY FOR RE-PIN
 
+Latest frozen diagnostic run on 9fd10f2c742b7417c1067b107a7cc804f772d980:
+**56 failed / 7,114 passed / 0 skipped**, 465.83 seconds, identical failed
+names to main; both unchanged 60-second rate assertions pass. Exact pair:
+`full-suite-pair-profiled-addendum.json`; raw log `full-profiled-addendum.txt`;
+XML `/tmp/hotfix1-addendum-profiled-full-20261007.xml`. No runtime, assertions
+or thresholds changed to obtain it. Passing-case output is not retained by
+this pytest capture mode, so no GC duration or exact stall maximum is claimed
+from this full run. It does not explain or waive the prior 158.858 ms failure.
+Fresh independent, repeatable performance qualification is still required.
+
 The frozen runtime/test-tree 2eb55e370ba65fb46bcc22f3471a99ca8a8c8e01 run
 finished **57 failed / 7,113 passed / 0 skipped**, 465.75 seconds. Main's
 existing receipt is **56 failed / 7,077 passed**. One additional failed name:
