@@ -73,6 +73,10 @@ the timed gate, as disclosed in PROOF_SCOPE.md and environment.json.
 Final benchmark raw-log SHA256:
 `6e64c951328c38acae8c5a8fd3e47ed603cd4d6946ffbe0c304e94fadf1756d7`.
 All result.json receipts assert files_and_head_unchanged=true for their runs.
+Authored Python/Markdown/JSON pass diff whitespace checks and the new test/runner
+pass Ruff. A whole receipt-commit diff whitespace check reports trailing spaces
+in raw pytest failure output. Those .txt receipts remain byte-for-byte intact
+with their original hashes; they were not reformatted to hide failed controls.
 
 ## Functional and mutation controls
 
