@@ -497,6 +497,9 @@ async def test_mi_working_limit_still_quote_drift_cancelled():
     # Actual next capture3246089: ask2.79; controlled working-order precondition.
     await service._handle_stream_message({"data": QuoteTickEvent(source_service="market-data", payload=QuoteTickPayload(
         symbol="MI", bid_price=Decimal("2.75"), ask_price=Decimal("2.79"))).model_dump_json()})
+    # HOTFIX1: await the admitted worker, not the nonblocking quote callback.
+    import asyncio
+    await asyncio.gather(*tuple(service._symbol_tick_work.values()))
     with factory() as session:
         order = session.scalar(select(BrokerOrder).where(BrokerOrder.symbol == "MI"))
         assert order.status == "cancelled"

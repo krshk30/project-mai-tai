@@ -906,12 +906,16 @@ def test_pa1_is_wired_to_intents_reports_and_both_market_tick_paths() -> None:
     assert "self._observe_webull_mirror_deferred_reports(" in inspect.getsource(
         OmsRiskService.sync_broker_orders
     )
-    assert "await self._evaluate_webull_mirror_deferred_resubmits(symbol)" in inspect.getsource(
+    assert "self._schedule_webull_mirror_tick(symbol)" in inspect.getsource(
         OmsRiskService._handle_quote_tick_event
     )
-    assert "await self._evaluate_webull_mirror_deferred_resubmits(symbol)" in inspect.getsource(
+    assert "self._schedule_webull_mirror_tick(symbol)" in inspect.getsource(
         OmsRiskService._handle_trade_tick_event
     )
+    scheduler = inspect.getsource(OmsRiskService._schedule_webull_mirror_tick)
+    assert "self._mirrorhold_schedule(symbol)" in scheduler
+    assert "self._schedule_symbol_tick_work(" in scheduler
+    assert "self._evaluate_webull_mirror_deferred_resubmits(symbol)" in scheduler
     evaluator = inspect.getsource(OmsRiskService._evaluate_webull_mirror_deferred_resubmits)
     assert "self.redis.xadd(" in evaluator
     assert "process_trade_intent" not in evaluator

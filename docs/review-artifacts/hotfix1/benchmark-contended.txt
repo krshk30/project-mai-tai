@@ -1,0 +1,14 @@
+2026-10-07 10:59:54,398 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+HOTFIX1_BENCHMARK={"buys_queued": 0, "database_transactions": 1, "events": 14400, "events_per_second": 239.99762318757084, "hard_stop_reader_calls": 14400, "max_loop_stall_ms": 80.35736283636652, "scope": "offline real recorded quote/trade prices; controlled in-band gate and 200ms DB delay; exits mocked", "seconds": 60.00059420899197, "transactions_after_first_second": 0}
+F
+=================================== FAILURES ===================================
+___ test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions ___
+tests/unit/test_hotfix1_symbol_tick_cache.py:433: in test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions
+    assert max(stalls) < 0.05
+E   assert 0.08035736283636652 < 0.05
+E    +  where 0.08035736283636652 = max([0.00037399999564513564, 0.00020570799824781716, 0.00034149999555666, 0.0004765419871546328, 0.0005789169808849692, 9.441697329748422e-05, ...])
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+=========================== short test summary info ============================
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions
+1 failed, 23 deselected in 60.68s (0:01:00)

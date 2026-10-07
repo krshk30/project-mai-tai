@@ -7,6 +7,7 @@ import re
 import socket
 import time
 from dataclasses import dataclass, field, replace
+from functools import wraps
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from enum import Enum
@@ -514,6 +515,21 @@ class _DriftCancelCandidate:
     terminal_cancel_reports: int
 
 
+def _refresh_working_cache_after_intent(method):
+    @wraps(method)
+    async def refreshed(self, event):
+        try:
+            return await method(self, event)
+        finally:
+            # Refresh in the serial lane before the first post-placement tick.
+            # A cache-read failure must never turn a completed submit into a retry.
+            try:
+                await self._refresh_drift_working_cache()
+            except Exception:
+                self.logger.exception("[OMS-HOTFIX1] working-order cache refresh failed after intent")
+    return refreshed
+
+
 # A trade intent is DONE at these statuses; anything else keeps it in the reconciler's
 # stuck-intent sweep. Mirrors `INFLIGHT_INTENT_STATUSES_TERMINAL` in schwab_1m_v2_bot.
 _TERMINAL_INTENT_STATUSES = ("filled", "rejected", "aborted", "cancelled")
@@ -996,6 +1012,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         self._rehydrate_managed_v2_symbols()  # slice-3: re-arm quote eval for open v2 rows
         self._restore_nfq_holds()
         self._restore_mirrorhold()
+        await self._refresh_drift_working_cache()
         await self._rehydrate_armed_hard_stops()  # F2: rebuild the ORB stop registry from the durable mirror
         await self._publish_heartbeat(
             "starting",
@@ -1028,6 +1045,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 await tick_task
             except asyncio.CancelledError:
                 pass
+            await self._shutdown_symbol_tick_work()
 
         await self._publish_heartbeat(
             "stopping",
@@ -1529,6 +1547,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
             self._report_confirmation_fanout(decision)
             return
 
+    @_refresh_working_cache_after_intent
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
         if self._rpg_external_retry(event):
             return []
@@ -10957,6 +10976,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         # account as an INDEPENDENT post-step (own session, all-swallowing) — a Webull failure
         # can NEVER unwind the already-committed Schwab fill. Dormant when the flag is off (no
         # candidate is ever queued).
+        await self._refresh_drift_working_cache()
         for sym, qty, px, md in mirror_fill_candidates:
             await self._mirror_v2_fill_to_webull(
                 symbol=sym, quantity=qty, schwab_fill_price=px, source_metadata=md
@@ -11117,7 +11137,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         if self._armed_hard_stops:
             await self._evaluate_hard_stop_market_event(symbol)
         await self._cancel_drifted_working_orders(symbol)
-        await self._evaluate_webull_mirror_deferred_resubmits(symbol)
+        self._schedule_webull_mirror_tick(symbol)
         await self._evaluate_nfq_holds(symbol)
         # Slice-3: run the v2 exit ladder on this quote, but ONLY for symbols with an
         # open v2 managed row (the in-memory guard keeps the hot path free of DB hits
@@ -11161,7 +11181,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
             "received_at": self._event_time(event),
         }
         await self._evaluate_hard_stop_market_event(symbol)
-        await self._evaluate_webull_mirror_deferred_resubmits(symbol)
+        self._schedule_webull_mirror_tick(symbol)
         await self._evaluate_nfq_holds(symbol)
 
     @staticmethod
@@ -13913,6 +13933,17 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 return price, source
         return None
 
+    def _schedule_webull_mirror_tick(self, symbol: str) -> None:
+        symbol = symbol.upper()
+        if self._mirrorhold_enabled():
+            self._mirrorhold_schedule(symbol)
+            if self._mirrorhold_new_enabled():
+                return
+        if any(state.symbol == symbol and not self._mirrorhold_scope(state.event)
+               for state in tuple(self.__dict__.get("_webull_mirror_deferred_by_slot", {}).values())):
+            self._schedule_symbol_tick_work(("legacy-mirror", symbol),
+                lambda: self._evaluate_webull_mirror_deferred_resubmits(symbol))
+
     async def _evaluate_webull_mirror_deferred_resubmits(self, symbol: str) -> None:
         """Resubmit each eligible PA1 slot once per market event through the normal pipeline."""
         if self._mirrorhold_enabled():
@@ -13923,7 +13954,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
             return
         normalized = str(symbol).upper()
         deferred = self.__dict__.setdefault("_webull_mirror_deferred_by_slot", {})
-        matching = [state for state in deferred.values() if state.symbol == normalized
+        matching = [state for state in tuple(deferred.values()) if state.symbol == normalized
                     and not self._mirrorhold_scope(state.event)]
         if not matching:
             return
@@ -15795,28 +15826,90 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         tolerance_dollars = self._quote_drift_tolerance_dollars()
         if tolerance_dollars <= 0:
             return
+        if not self.__dict__.get("_drift_working_by_symbol", {}).get(symbol.upper()):
+            return
         quote = self._latest_quotes_by_symbol.get(symbol.upper())
         if not quote:
             return
-        try:
-            await self._run_drift_cancel(symbol.upper(), quote, tolerance_dollars)
-        except Exception as exc:  # noqa: BLE001 — the quote path must never die; a stall here
-            # must NEVER skip the downstream v2 hard-stop eval that runs later in the same
-            # quote handler (loop-hardening; the happy path is unchanged).
-            self.logger.warning("quote-drift cancel failed for %s: %s", symbol, exc)
+        cached = self._drift_working_by_symbol[symbol.upper()]
+        if not any(not self._direct_cancel_dead_target_bound_reached_count(candidate.terminal_cancel_reports)
+                   and (drift := self._cached_quote_drift(candidate, quote)) is not None
+                   and drift > tolerance_dollars for candidate in cached):
+            return
+        self._schedule_symbol_tick_work(("drift", symbol.upper()),
+            lambda: self._run_drift_cancel(symbol.upper(), dict(quote), tolerance_dollars))
+
+    def _schedule_symbol_tick_work(self, key, work):
+        if self.__dict__.get("_symbol_tick_work_closing", False):
+            return False
+        tasks = self.__dict__.setdefault("_symbol_tick_work", {})
+        if key in tasks:
+            self.__dict__.setdefault("_symbol_tick_work_dirty", set()).add(key)
+            return False
+        async def execute():
+            try:
+                await work()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger.exception("[OMS-HOTFIX1] symbol worker failed key=%s", key)
+            finally:
+                tasks.pop(key, None)
+                dirty = self.__dict__.setdefault("_symbol_tick_work_dirty", set())
+                if key in dirty:
+                    dirty.discard(key)
+                    if not self.__dict__.get("_symbol_tick_work_closing", False):
+                        if key[0] == "mirrorhold":
+                            self._mirrorhold_schedule(key[1])
+                        elif key[0] == "drift":
+                            await self._cancel_drifted_working_orders(key[1])
+                        elif key[0] == "legacy-mirror":
+                            self._schedule_webull_mirror_tick(key[1])
+        tasks[key] = asyncio.create_task(execute())
+        return True
+
+    async def _shutdown_symbol_tick_work(self):
+        # Do not cancel a DB thread mid-commit. Drain admitted work after ticks
+        # stop; mirror workers invalidate queued claims rather than emit them.
+        self._symbol_tick_work_closing = True
+        tasks = tuple(self.__dict__.get("_symbol_tick_work", {}).values())
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _run_drift_cancel(self, symbol: str, quote: dict, tolerance_dollars: float) -> None:
         """The drift-cancel phases (off-loop read -> on-loop broker cancels -> off-loop
         write-back), split out so ``_cancel_drifted_working_orders`` can wrap them in the
         never-die guard. ``symbol`` arrives already upper-cased."""
-        # Phase 1 — READ (off-loop): drift-eligible candidates as plain snapshots.
+        if "_drift_working_by_symbol" not in self.__dict__:
+            await self._refresh_drift_working_cache()
+        cached = self._drift_working_by_symbol.get(symbol, ())
+        eligible = {candidate.order_id for candidate in cached
+                    if (drift := self._cached_quote_drift(candidate, quote)) is not None
+                    and drift > tolerance_dollars}
+        if not eligible:
+            return
+        busy = self.__dict__.setdefault("_drift_cancel_in_progress", set())
+        eligible.difference_update(busy)
+        if not eligible:
+            return
+        busy.update(eligible)
+        try:
+            await self._dispatch_drift_cancel(symbol, quote, tolerance_dollars, eligible)
+        finally:
+            busy.difference_update(eligible)
+
+    async def _dispatch_drift_cancel(self, symbol, quote, tolerance_dollars, eligible):
+        # Revalidate at dispatch: cache membership is never broker authority.
         candidates = await self._run_db(
             lambda session: self._collect_drift_cancel_candidates(
                 session, symbol, quote, tolerance_dollars
             ),
             commit=False,
         )
+        candidates = [candidate for candidate in candidates if candidate.order_id in eligible]
         if not candidates:
+            return
+        if self.__dict__.get("_symbol_tick_work_closing", False):
             return
         # Phase 2 — BROKER (on-loop): submit each cancel, collect the reports.
         results: list[tuple[_DriftCancelCandidate, list[ExecutionReport], str]] = []
@@ -15864,6 +15957,7 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         await self._run_db(
             lambda session: self._apply_drift_cancel_writes(session, results), commit=True
         )
+        await self._refresh_drift_working_cache()
         # Logging on-loop — parity with the prior [OMS-ABANDON-INTENT] line (always emitted).
         for candidate, _reports, reason_detail in results:
             self.logger.info(
@@ -15878,6 +15972,26 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 reason_detail,
             )
 
+    @staticmethod
+    def _cached_quote_drift(candidate, quote):
+        value = quote.get("ask" if candidate.side == "buy" else "bid")
+        if not isinstance(value, (int, float)) or value <= 0:
+            return None
+        limit = float(candidate.limit_price)
+        return float(value) - limit if candidate.side == "buy" else limit - float(value)
+
+    async def _refresh_drift_working_cache(self):
+        lock = self.__dict__.setdefault("_drift_cache_refresh_lock", asyncio.Lock())
+        async with lock:
+            candidates = await self._run_db(
+                lambda session: self._collect_drift_cancel_candidates(session, None, None, 0),
+                commit=False,
+            )
+            cache = {}
+            for candidate in candidates:
+                cache.setdefault(candidate.symbol.upper(), []).append(candidate)
+            self._drift_working_by_symbol = cache
+
     def _collect_drift_cancel_candidates(
         self, session: Session, symbol: str, quote: dict, tolerance_dollars: float
     ) -> list[_DriftCancelCandidate]:
@@ -15885,11 +15999,10 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         the limit beyond tolerance, as plain snapshots (no ORM crosses the thread).
         Mirrors the prior in-line filter exactly: open-intent only; stop-guard / non-limit
         orders are excluded by ``_quote_drift_dollars_against`` returning None."""
-        orders = session.scalars(
-            select(BrokerOrder)
-            .where(BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES))
-            .where(BrokerOrder.symbol == symbol)
-        ).all()
+        query = select(BrokerOrder).where(BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES))
+        if symbol is not None:
+            query = query.where(BrokerOrder.symbol == symbol)
+        orders = session.scalars(query).all()
         if not orders:
             return []
         account_lookup = {
@@ -15902,9 +16015,19 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
         for order in orders:
             if order.intent_id is None:
                 continue
-            drift = self._quote_drift_dollars_against(order, quote)
-            if drift is None or drift <= tolerance_dollars:
-                continue
+            if quote is None:
+                if self._is_stop_guard_order(order) or str((order.payload or {}).get("order_type", "")).lower() != "limit":
+                    continue
+                try:
+                    if float((order.payload or {}).get("limit_price", "")) <= 0:
+                        continue
+                except (ValueError, TypeError):
+                    continue
+                drift = 0.0
+            else:
+                drift = self._quote_drift_dollars_against(order, quote)
+                if drift is None or drift <= tolerance_dollars:
+                    continue
             intent = session.get(TradeIntent, order.intent_id)
             if intent is None:
                 continue

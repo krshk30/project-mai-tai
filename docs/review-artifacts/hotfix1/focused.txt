@@ -1,0 +1,12 @@
+........................................................................ [ 18%]
+........................................................................ [ 37%]
+........................................................................ [ 55%]
+........................................................................ [ 74%]
+........................................................................ [ 92%]
+.............................                                            [100%]2026-10-07 11:05:07,424 ERROR [asyncio] Task was destroyed but it is pending!
+task: <Task pending name='Task-686' coro=<OmsRiskService._recover_released_confirmation_webull_leg() running at /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:5931> wait_for=<Task pending name='Task-688' coro=<OmsRiskService._attach_webull_protection() running at /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:3325> cb=[set.discard(), <1 more>, Task.task_wakeup()]> cb=[set.discard(), OmsRiskService._spawn_confirmation_webull_recovery.<locals>._forget() at /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:6009]>
+2026-10-07 11:05:07,424 ERROR [asyncio] Task was destroyed but it is pending!
+task: <Task pending name='Task-688' coro=<OmsRiskService._attach_webull_protection() running at /Users/velkris/.codex/worktrees/hotfix1-symbol-tick-cache/project-mai-tai/src/project_mai_tai/oms/service.py:3325> cb=[set.discard(), <1 more>, Task.task_wakeup()]>
+
+--------- generated xml file: /tmp/hotfix1-focused-final-20261007.xml ----------
+389 passed, 1 deselected in 36.83s

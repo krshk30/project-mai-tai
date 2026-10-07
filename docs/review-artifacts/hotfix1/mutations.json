@@ -1,0 +1,80 @@
+[
+  {
+    "mutation": "tick_sql",
+    "test_selector": "unrelated_empty_outside",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "publish_before_commit",
+    "test_selector": "cache_publication",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "rollback_publish",
+    "test_selector": "cache_publication",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "stale_revision",
+    "test_selector": "older_worker_revision",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "symbol_isolation",
+    "test_selector": "unrelated_empty_outside",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "worker_dedup",
+    "test_selector": "generic_worker_dedup",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "revision_budget",
+    "test_selector": "unknown_gate_is_once",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "retirement_phase",
+    "test_selector": "durable_retirement",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "shutdown_invalidate",
+    "test_selector": "shutdown_drains",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "hold_log",
+    "test_selector": "sxtc_hold_restores",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "sync_refresh",
+    "test_selector": "broker_sync_refreshes",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "drift_revalidate",
+    "test_selector": "stale_drift_cache",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "dirty_wakeup",
+    "test_selector": "last_tick_new_committed",
+    "exit": 1,
+    "verdict": "RED"
+  }
+]
