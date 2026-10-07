@@ -2593,6 +2593,43 @@ class SchwabV2Strategy:
             return "duplicate"
         state.fanout_outcome_evidence_ids.add(evidence_key)
 
+        if record.reason.startswith("v2_eh_nfq2:"):
+            if record.broker_account_name not in {
+                    self._flip_owner_primary_account, self._flip_owner_webull_account}:
+                return "wrong_account"
+            if record.slot_id != fanout_slot_id(strategy_code=STRATEGY_CODE,
+                    symbol=record.symbol, segment_id=active_segment, slot=record.slot):
+                return "wrong_slot"
+            if (record.outcome == "held_no_fresh_quote" and (
+                    state.flip_owner_fill_accounts or state.position_qty_held
+                    or state.fanout_claim_outcome == "filled")):
+                return "filled_wins"
+            key = (record.broker_account_name, record.slot_id)
+            waits = self.__dict__.setdefault("_nfq2_waits", {})
+            if record.outcome == "queued" and record.predecessor_attempt_id == waits.get(key):
+                waits[key] = record.attempt_id
+                if (record.broker_account_name == self._flip_owner_webull_account
+                        and state.fanout_claim_slot_id == record.slot_id
+                        and state.fanout_claim_attempt_id == record.predecessor_attempt_id):
+                    state.fanout_claim_attempt_id = record.attempt_id
+                return "retry_queued"
+            if record.outcome == "held_no_fresh_quote":
+                waits[key] = record.attempt_id
+                state.resting_active = True
+            elif record.outcome in TERMINAL_RELEASE_OUTCOMES:
+                if waits.get(key) != record.attempt_id:
+                    return "wrong_attempt"
+                waits.pop(key, None)
+                if record.broker_account_name == self._flip_owner_webull_account:
+                    state.webull_resting_active = False
+                if (not state.resting_is_broker_order and not state.position_qty_held
+                        and not any(slot == record.slot_id for _, slot in waits)):
+                    state.resting_active = False
+            if record.broker_account_name == self._flip_owner_primary_account:
+                logger.info("[V2-FANOUT-OUTCOME] %s account=%s outcome=%s reason=%s",
+                            record.symbol, record.broker_account_name, record.outcome, record.reason)
+                return "held" if record.outcome == "held_no_fresh_quote" else "primary_nfq2"
+
         exact = record.slot_id == state.fanout_claim_slot_id
         if (
             exact and record.outcome == "queued" and record.event_source == "client"
@@ -5136,7 +5173,8 @@ class SchwabV2Strategy:
             state.symbol, px, trig, fl, state.cw_bar_low_so_far, state.cw_entries_this_flip,
         )
         shared_fanout_identity: dict[str, str] = {}
-        if self._dual_broker_fanout_enabled or fresh_first:
+        if (self._dual_broker_fanout_enabled or fresh_first
+                or getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False)):
             shared_fanout_identity = self._fanout_identity_metadata(
                 state,
                 source="eh_resting" if fresh_first else "reactive",
@@ -5745,6 +5783,20 @@ class SchwabV2Strategy:
         was_trigger = self._active_resting_trigger(state)
         was_webull_trigger = self._active_resting_trigger(state, leg="webull")
         was_broker_order = state.resting_is_broker_order
+        if (not was_broker_order and state.resting_flip_ms
+                and getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False)):
+            identity = self._fanout_identity_metadata(state, source="eh_resting")
+            for account, queue in ((self._flip_owner_primary_account, self._pending_intents),
+                                   (self._flip_owner_webull_account, self._pending_webull_direct_intents)):
+                if account and (account == self._flip_owner_primary_account or self._dual_broker_fanout_enabled):
+                    queue.append(TradeIntentDraft(
+                        symbol=state.symbol, side="buy", intent_type="cancel", quantity=Decimal("1"),
+                        reason="schwab_1m_v2 EH price hold cancel",
+                        metadata={**identity, "nfq2_hold_cancel_only": "true", "reason": reason,
+                                  "broker_account_name": account,
+                                  "nfq2_generation": (state.resting_schwab_generation
+                                      if account == self._flip_owner_primary_account else state.resting_webull_generation)},
+                    ))
         was_webull_resting = state.webull_resting_active
         was_webull_generation = state.webull_resting_generation_id
         was_schwab_quantity = state.resting_schwab_quantity
@@ -6857,7 +6909,8 @@ class SchwabV2Strategy:
             self._resting_offset_pct_value(),
         )
         shared_fanout_identity: dict[str, str] = {}
-        if self._dual_broker_fanout_enabled or self._flip_owned_first_entry_enabled:
+        if (self._dual_broker_fanout_enabled or self._flip_owned_first_entry_enabled
+                or getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False)):
             shared_fanout_identity = self._fanout_identity_metadata(
                 state,
                 source="eh_resting",
@@ -6902,6 +6955,8 @@ class SchwabV2Strategy:
                 "resting_offset_pct": f"{self._resting_offset_pct_value()}",
                 "cw_flip_level": f"{line:.4f}",
                 "resting_entry": "true", "eh_resting": "true",
+                **({"nfq2_generation": state.resting_schwab_generation}
+                   if getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False) else {}),
                 "cw_entry_slot": state.last_resting_placed_slot,
                 **shared_fanout_identity,
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
@@ -7131,6 +7186,8 @@ class SchwabV2Strategy:
             md["resting_offset_pct"] = f"{self._resting_offset_pct_value()}"
             md.update(self._resting_wire_metadata(
                 band_anchor if band_anchor is not None else entry_px, leg="webull"))
+            if source == "eh_resting" and getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False):
+                md["nfq2_generation"] = state.resting_webull_generation
         return TradeIntentDraft(
             symbol=state.symbol,
             side="buy",

@@ -80,3 +80,12 @@ economic slot; cancel/replace retirement and restart dispatch require proof.
 Neither a hold nor a terminal outcome may be mislabeled as an immediate abort.
 No implementation, acceptance replay, mutation result, or full-suite result is
 claimed by this assessment.
+
+## Subsequent Scope Resolution
+
+The October 7 scope/pricing replies resolve the disputed build scope: BOTH v2
+EH paths, both accounts; a fresh reactive cap changes from 1.0% to 0.5%; only a
+durably held, serially claimed order gets 1.0%. The reactive ask +0.3% buffer
+remains under that cap. ORB and the NFQ1 broker-rest mirror stay unchanged.
+This does not resolve the historical OMS copy-age question: it remains
+UNMEASURED and must not be attributed to gateway lag without evidence.

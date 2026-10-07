@@ -306,7 +306,7 @@ async def test_max_cross_cap_threshold_is_pinned(eh):
     # 2.0% -> cap 2.55; the SAME ask now fits -> a LIMIT is built.
     adapter2 = _CaptureAdapter()
     svc2 = _oms(adapter=adapter2, mirror_on=True, mirror_eh_on=True)
-    svc2.settings.oms_v2_eh_entry_max_cross_pct = 2.0
+    svc2.settings.oms_v2_mirror_eh_max_cross_pct = 2.0
     _seed_fresh_ask(svc2, "VSME", ask=2.5251)
     await _mirror(svc2, symbol="VSME", fill=2.50)
     assert len(adapter2.requests) == 1
