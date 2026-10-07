@@ -3476,6 +3476,10 @@ async def test_oms_service_cancels_buy_limit_when_ask_drifts_past_limit() -> Non
         }
     )
 
+    # HOTFIX1: ticks admit background work; cancellation assertions remain exact.
+    import asyncio
+    await asyncio.gather(*tuple(service._symbol_tick_work.values()))
+
     with session_factory() as session:
         intent = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "AUUD"))
         orders = session.scalars(

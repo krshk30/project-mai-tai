@@ -1,0 +1,14 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_durable_retirement_fences_already_admitted_stale_worker _________
+tests/unit/test_hotfix1_symbol_tick_cache.py:174: in test_durable_retirement_fences_already_admitted_stale_worker
+    assert not queued(lane)
+E   AssertionError: assert not [TradeIntentEvent(event_id=UUID('1cf5f1da-8bc3-4b03-8578-6c8cceba4979'), event_type='trade_intent', source_service='om...-open-5a5c116269bf', 'mirrorhold_token': '165124d0-d474-4e05-bf5a-92c0e9673291', 'webull_deferred_resubmit': 'true'}))]
+E    +  where [TradeIntentEvent(event_id=UUID('1cf5f1da-8bc3-4b03-8578-6c8cceba4979'), event_type='trade_intent', source_service='om...-open-5a5c116269bf', 'mirrorhold_token': '165124d0-d474-4e05-bf5a-92c0e9673291', 'webull_deferred_resubmit': 'true'}))] = queued((<project_mai_tai.oms.service.OmsRiskService object at 0x10a9ade80>, <tests.unit.test_webull_adapter._FakeClient objec...flush=True, expire_on_commit=False), [datetime.datetime(2026, 10, 7, 13, 42, 5, 944542, tzinfo=datetime.timezone.utc)]))
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:02:39,121 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+=========================== short test summary info ============================
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_durable_retirement_fences_already_admitted_stale_worker
+1 failed, 23 deselected in 0.24s

@@ -4,10 +4,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from copy import deepcopy
+from threading import RLock
 from decimal import Decimal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from sqlalchemy import select, update
+from sqlalchemy import event as sqlalchemy_event, select, update
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
@@ -51,6 +53,41 @@ def price_generation(event):
 
 
 class MirrorRetainedHoldMixin:
+    def _mirrorhold_cache(self):
+        return self.__dict__.setdefault("_mirrorhold_by_symbol", {})
+
+    def _mirrorhold_cache_lock(self):
+        return self.__dict__.setdefault("_mirrorhold_cache_mutex", RLock())
+
+    def _mirrorhold_cache_after_commit(self, session, key, data):
+        # Publish only committed revisions. A rolled-back queue claim must never
+        # hide a held owner from the tick consumer.
+        pending_key = "hotfix1_mirrorhold_committed_cache"
+        if pending_key not in session.info:
+            session.info[pending_key] = {}
+            def publish(_session):
+                pending = dict(_session.info[pending_key])
+                _session.info[pending_key].clear()
+                with self._mirrorhold_cache_lock():
+                    revisions = self.__dict__.setdefault("_mirrorhold_cache_revisions", {})
+                    for owner, snapshot in pending.items():
+                        if revisions.get(owner, -1) > snapshot["revision"]:
+                            continue
+                        revisions[owner] = snapshot["revision"]
+                        symbol = snapshot["identity"][2].upper()
+                        bucket = self._mirrorhold_cache().setdefault(symbol, {})
+                        if snapshot["phase"] in {"held", "queued"}:
+                            bucket[owner] = snapshot
+                        else:
+                            bucket.pop(owner, None)
+                        if not bucket:
+                            self._mirrorhold_cache().pop(symbol, None)
+            def rollback(_session):
+                _session.info[pending_key].clear()
+            sqlalchemy_event.listen(session, "after_commit", publish)
+            sqlalchemy_event.listen(session, "after_rollback", rollback)
+        session.info[pending_key][key] = deepcopy(data)
+
     def _mirrorhold_new_enabled(self):
         return bool(getattr(self.settings, "oms_v2_webull_mirror_retained_hold_enabled", False))
 
@@ -128,6 +165,7 @@ class MirrorRetainedHoldMixin:
         if changed != 1:
             raise RuntimeError("mirrorhold1 stale revision; no dispatch")
         session.expire(row, ["payload"])
+        self._mirrorhold_cache_after_commit(session, row.id, data)
         return data
 
     def _mirrorhold_log(self, data, reason):
@@ -168,6 +206,7 @@ class MirrorRetainedHoldMixin:
             })
             session.add(row)
             session.flush()
+            self._mirrorhold_cache_after_commit(session, row.id, row.payload)
             self.__dict__.setdefault("_mirrorhold_durable_owner_ids", set()).add(row.id)
             return row
         data = row.payload
@@ -376,6 +415,8 @@ class MirrorRetainedHoldMixin:
     def _mirrorhold_dispatch(self, session, event):
         if not self._mirrorhold_scope(event):
             return None
+        if self.__dict__.get("_symbol_tick_work_closing", False):
+            return "mirrorhold_shutdown"
         row = self._mirrorhold_read(session, event)
         if row is None:
             return "mirrorhold_owner_missing"
@@ -520,15 +561,79 @@ class MirrorRetainedHoldMixin:
                 and data["identity"] == identity(event)
                 and Decimal(data["event"]["payload"]["quantity"]) == event.payload.quantity)
 
+    def _mirrorhold_schedule(self, symbol):
+        if not self._mirrorhold_enabled():
+            return
+        if symbol is not None:
+            symbol = symbol.upper()
+            with self._mirrorhold_cache_lock():
+                snapshots = tuple(self._mirrorhold_cache().get(symbol, {}).items())
+            reading = self._mirror_reading(symbol)
+            keys = [key for key, data in snapshots
+                    if data["phase"] == "held"
+                    and not data["event"]["payload"]["metadata"].get("rpg_handoff_token")
+                    and reading.fresh
+                    and reading.price >= Decimal(data["event"]["payload"]["metadata"]["stop_price"]) * Decimal("0.92")
+                    and data["wire_submissions"] < MAX_WIRE_SUBMISSIONS
+                    and (key, data["revision"]) not in self.__dict__.get("_mirrorhold_tick_attempts", set())]
+            if not keys:
+                return
+            attempts = self.__dict__.setdefault("_mirrorhold_tick_attempts", set())
+            if self._schedule_symbol_tick_work(("mirrorhold", symbol),
+                    lambda: self._mirrorhold_evaluate_off_loop(symbol, keys)):
+                attempts.update((key, data["revision"]) for key, data in snapshots if key in keys)
+            return
+
     async def _mirrorhold_evaluate(self, symbol=None):
         if not self._mirrorhold_enabled():
             return
+        busy = self.__dict__.setdefault("_mirrorhold_evaluating", set())
+        if symbol in busy:
+            return
+        busy.add(symbol)
+        try:
+            await self._mirrorhold_evaluate_off_loop(symbol, None)
+        finally:
+            busy.discard(symbol)
+            if symbol is None:
+                self.__dict__.setdefault("_mirrorhold_tick_attempts", set()).clear()
+
+    async def _mirrorhold_evaluate_off_loop(self, symbol, keys):
+        queued = await asyncio.to_thread(self._mirrorhold_prepare_queue, symbol, keys)
+        for event, token, retry in queued:
+            if self.__dict__.get("_symbol_tick_work_closing", False):
+                await asyncio.to_thread(self._mirrorhold_invalidate_enqueue, event, token)
+                continue
+            try:
+                await self.redis.xadd(stream_name(self.settings.redis_stream_prefix, "strategy-intents"),
+                    {"data": retry.model_dump_json()}, maxlen=self.settings.redis_strategy_intent_stream_maxlen,
+                    approximate=True)
+            except (Exception, asyncio.CancelledError) as exc:
+                await asyncio.to_thread(self._mirrorhold_invalidate_enqueue, event, token)
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                self.logger.exception("[OMS-MIRRORHOLD1] enqueue unconfirmed; durable claim fenced")
+
+    def _mirrorhold_invalidate_enqueue(self, event, token):
+        with self.session_factory() as session:
+            row = self._mirrorhold_read(session, event)
+            if row is not None and row.payload["phase"] == "queued" and row.payload["token"] == token:
+                data = self._mirrorhold_write(session, row, {**row.payload, "phase": "held",
+                    "token": "", "reason": "enqueue_token_invalidated"})
+                self._mirrorhold_project(data)
+            session.commit()
+
+    def _mirrorhold_prepare_queue(self, symbol, keys):
         queued = []
         with self.session_factory() as session:
-            rows = session.scalars(select(DashboardSnapshot).where(
+            query = select(DashboardSnapshot).where(
                 DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
-                DashboardSnapshot.payload["phase"].as_string().in_(["held", "queued"]),
-            ).with_for_update()).all()
+            )
+            if keys is not None:
+                query = query.where(DashboardSnapshot.id.in_(keys))
+            else:
+                query = query.where(DashboardSnapshot.payload["phase"].as_string().in_(["held", "queued"]))
+            rows = session.scalars(query.with_for_update()).all()
             for row in rows:
                 data = row.payload
                 event = TradeIntentEvent.model_validate(data["event"])
@@ -563,24 +668,7 @@ class MirrorRetainedHoldMixin:
                 self._mirrorhold_project(data)
                 queued.append((event, token, retry))
             session.commit()
-        for event, token, retry in queued:
-            try:
-                await self.redis.xadd(stream_name(self.settings.redis_stream_prefix, "strategy-intents"),
-                    {"data": retry.model_dump_json()}, maxlen=self.settings.redis_strategy_intent_stream_maxlen,
-                    approximate=True)
-            except (Exception, asyncio.CancelledError) as exc:
-                # Lost acknowledgements cannot dispatch after durable token invalidation.
-                # If the serial consumer already reserved wire, retain that fence instead.
-                with self.session_factory() as session:
-                    row = self._mirrorhold_read(session, event)
-                    if row.payload["phase"] == "queued" and row.payload["token"] == token:
-                        data = self._mirrorhold_write(session, row, {**row.payload, "phase": "held",
-                            "token": "", "reason": "enqueue_token_invalidated"})
-                        self._mirrorhold_project(data)
-                    session.commit()
-                if isinstance(exc, asyncio.CancelledError):
-                    raise
-                self.logger.exception("[OMS-MIRRORHOLD1] enqueue unconfirmed; durable claim fenced")
+        return queued
 
     def _restore_mirrorhold(self):
         with self.session_factory() as session:
@@ -646,6 +734,7 @@ class MirrorRetainedHoldMixin:
                         data = self._mirrorhold_write(session, row, {**data, "phase": "retired", "token": "",
                             "reason": reason})
                 self._mirrorhold_project(data)
+                self._mirrorhold_cache_after_commit(session, row.id, data)
             session.commit()
 
     def _nfq_enabled(self):
@@ -667,6 +756,7 @@ class MirrorRetainedHoldMixin:
         if not self._mirror_reading(event.payload.symbol).fresh:
             self._mirrorhold_project(row.payload)
             self._nfq_outcome(session, event, "held_no_fresh_quote", HELD_REASON)
+            self._nfq_log(event, "held", "no_fresh_quote")
             return HELD_REASON
         return None
 

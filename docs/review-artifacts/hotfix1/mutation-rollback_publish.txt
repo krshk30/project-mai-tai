@@ -1,0 +1,13 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ test_cache_publication_is_commit_only_and_rollback_does_not_leak _______
+tests/unit/test_hotfix1_symbol_tick_cache.py:82: in test_cache_publication_is_commit_only_and_rollback_does_not_leak
+    assert key not in service._mirrorhold_cache().get("IPDN", {})
+E   AssertionError: assert UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') not in {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b'): {'dispatch_client': '', 'dispatch_unresolved': False, 'event': {'correl..., ...}, ...}, 'identity': ['live:orb', 'schwab_1m_v2', 'IPDN', '1791296823073', 'controlled-slot-1791296823073'], ...}}
+E    +  where {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b'): {'dispatch_client': '', 'dispatch_unresolved': False, 'event': {'correl..., ...}, ...}, 'identity': ['live:orb', 'schwab_1m_v2', 'IPDN', '1791296823073', 'controlled-slot-1791296823073'], ...}} = <built-in method get of dict object at 0x10b5937c0>('IPDN', {})
+E    +    where <built-in method get of dict object at 0x10b5937c0> = {'IPDN': {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b'): {'dispatch_client': '', 'dispatch_unresolved': False, 'event':... ...}, ...}, 'identity': ['live:orb', 'schwab_1m_v2', 'IPDN', '1791296823073', 'controlled-slot-1791296823073'], ...}}}.get
+E    +      where {'IPDN': {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b'): {'dispatch_client': '', 'dispatch_unresolved': False, 'event':... ...}, ...}, 'identity': ['live:orb', 'schwab_1m_v2', 'IPDN', '1791296823073', 'controlled-slot-1791296823073'], ...}}} = _mirrorhold_cache()
+E    +        where _mirrorhold_cache = <project_mai_tai.oms.service.OmsRiskService object at 0x10acfe900>._mirrorhold_cache
+=========================== short test summary info ============================
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_cache_publication_is_commit_only_and_rollback_does_not_leak
+1 failed, 23 deselected in 0.20s
