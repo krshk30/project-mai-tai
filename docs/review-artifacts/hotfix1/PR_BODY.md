@@ -1,12 +1,14 @@
 ## Independent Step 0
 
-**NOT READY FOR RE-PIN: frozen full-suite performance gate failed.**
-The functional addendum is implemented, but the frozen rerun is **57 failed /
-7,113 passed** versus main **56 / 7,077**: the one new failure is the retained-ON
-60-second benchmark, **158.858 ms** maximum loop delay against **<50 ms**.
+**RE-PIN HELD: intermittent performance failure remains unexplained.**
+The latest frozen diagnostic full run (9fd10f2c) is **56 failed / 7,114 passed**
+versus main **56 / 7,077**, identical failed names; both rate variants pass.
+The prior frozen rerun was **57 failed / 7,113 passed**: the one new failure was
+the retained-ON 60-second benchmark, **158.858 ms** against **<50 ms**.
 The failure is preserved in `full-frozen-failed-addendum.txt` and the exact
-failed-name diff in `full-suite-pair-addendum.json`. Flat DB work and passing
-isolated trials do not turn that failure into PASS. Cause remains UNMEASURED;
+failed-name diff in `full-suite-pair-addendum.json`; the latest passing pair is
+in `full-suite-pair-profiled-addendum.json`. Later passes and flat DB work do
+not turn the earlier failure into PASS. Cause remains UNMEASURED;
 no attribution to host contention or GC is asserted. No merge or deployment.
 
 ### Rollback addendum: AGREE; fresh exact-head review required
