@@ -1,0 +1,15 @@
+........................................................................ [ 21%]
+........................................................................ [ 43%]
+........................................................................ [ 64%]
+........................................................................ [ 86%]
+..............................................                           [100%]
+=============================== warnings summary ===============================
+tests/unit/test_webull_hard_stop_floor_shared_path.py::test_a_never_protected_share_is_not_reported_as_released
+  /Users/velkris/Projects/project-mai-tai/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py:3839: RuntimeWarning: coroutine 'OmsRiskService._attach_webull_protection' was never awaited
+    if bp.key in cksm:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+-------- generated xml file: /tmp/hotfix1-addendum-focused-20261007.xml --------
+334 passed, 2 deselected, 1 warning in 31.68s

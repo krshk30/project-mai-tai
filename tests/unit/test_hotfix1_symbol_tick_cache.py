@@ -3,6 +3,7 @@ import asyncio
 from copy import deepcopy
 from datetime import datetime
 from decimal import Decimal
+import gc
 import json
 from pathlib import Path
 import threading
@@ -486,6 +487,14 @@ async def test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactio
     monkeypatch.setattr(service, "_evaluate_hard_stop_market_event", count_exit)
     service._armed_hard_stops = {"controlled-active-reader": object()}
     transactions = []
+    gc_intervals = []
+    gc_started = {}
+    def record_gc(phase, info):
+        key = (threading.get_ident(), info["generation"])
+        if phase == "start":
+            gc_started[key] = time.monotonic()
+        elif key in gc_started:
+            gc_intervals.append((gc_started.pop(key), time.monotonic(), key))
     engine = factory.kw["bind"]
     def begin(_connection):
         transactions.append(time.monotonic())
@@ -499,6 +508,7 @@ async def test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactio
             await asyncio.sleep(max(0, deadline - time.monotonic()))
             stalls.append(max(0, time.monotonic() - deadline))
     watch = asyncio.create_task(watchdog())
+    gc.callbacks.append(record_gc)
     trades = json.loads((ROOT / "recorded-trades.json").read_text())
     replay = []
     for raw in RECORDED["quotes"]:
@@ -508,13 +518,16 @@ async def test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactio
         replay.append(TradeTickEvent(source_service="recorded-offline", produced_at=clock[0],
             payload=TradeTickPayload(symbol=raw["symbol"], price=raw["price"], size=raw["size"])))
     count, start = 0, time.monotonic()
+    max_handler_seconds = 0.0
     try:
         while time.monotonic() - start < 60:
             tick = replay[count % len(replay)]
+            handler_start = time.monotonic()
             if isinstance(tick, QuoteTickEvent):
                 await service._handle_quote_tick_event(tick)
             else:
                 await service._handle_trade_tick_event(tick)
+            max_handler_seconds = max(max_handler_seconds, time.monotonic() - handler_start)
             count += 1
             await asyncio.sleep(max(0, start + count / 240 - time.monotonic()))
         elapsed = time.monotonic() - start
@@ -523,10 +536,14 @@ async def test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactio
         stop.set()
         await watch
         sql_event.remove(engine, "begin", begin)
+        gc.callbacks.remove(record_gc)
     receipt = {"scope": "offline real recorded quote/trade prices; controlled in-band gate and 200ms DB delay; exits mocked",
         "retained_enabled": enabled, "retained_tick_admissions": retained_admissions,
         "seconds": elapsed, "events": count, "events_per_second": count / elapsed,
         "max_loop_stall_ms": max(stalls) * 1000, "database_transactions": len(transactions),
+        "max_handler_ms": max_handler_seconds * 1000,
+        "max_gc_ms": max((end - begin for begin, end, _ in gc_intervals), default=0) * 1000,
+        "gc_collections": len(gc_intervals),
         "transactions_after_first_second": sum(t >= start + 1 for t in transactions),
         "hard_stop_reader_calls": exit_count, "buys_queued": len(queued(lane))}
     print("HOTFIX1_BENCHMARK=" + json.dumps(receipt, sort_keys=True))
