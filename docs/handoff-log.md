@@ -7755,3 +7755,13 @@ against main baseline1ea8b8fa. Both Validate pending; sole NFQ writer assesses
 typed opportunity-wide cancel/canonicalRECLAIM localhold composition. BIYA
 recorded slotRESTING is not a historic reproducer; no invented print claim.
 Pinned SLOT9951 for tomorrow and tonight's staged APP994 job/ORB unchanged.
+
+2026-10-07 17:08 ET codex-2: retained RETRYLEFT1 unchanged-head CI attempt1,
+37684510555, cancelled after18m35s apt-get update stall before migrations/tests.
+Rawlog /tmp/retryleft1-ci-push-cda4849c-attempt1.log sha256f5157da7bc912ad09420c30a57dbca1ca123ccf906bf3f6f1137290b033e7949:
+Ubuntu azure archive Ign lines and mirror downloads then no progress; exact
+network cause unmeasured. Same head PRValidate PASS; re-run attempt2 clears
+setup, unit step starts21:06:26UTC. No source/workflow change or check bypass.
+NFQ8ea8 both Validate PASS; new typed opportunity-wide localhold cancellation
+delta remains solely with NFQ writer and needs fresh final-source receipts.
+No new-head readiness or production action; SLOT and paired APP994 unchanged.
