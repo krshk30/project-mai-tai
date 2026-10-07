@@ -1,0 +1,9 @@
+{
+  "pr_number": 1119,
+  "range_base": "994f08aee2c35b3809b3c3384e0d8628807dcfb7",
+  "range_head": "b67dcc3f581397b43b6fb21b17ee384d66abc8a9",
+  "reviewed_at": "2026-10-07T21:42:34Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "RETAIN1 (operator-approved 10-07 'you make the call\u2026 go ahead'): bounded retention. prune_market_ticks.py gains a fixed target map \u2014 market_trade_ticks/market_quote_ticks/market_capture_{trades,quotes,bars}/reconciliation_{findings,runs}/scanner_cycle_history (dashboard_snapshots scoped by snapshot_type)/scanner_confirmed_events = 7 days, strategy_bar_history = 45 days, momentum_paper_events only PATH_PRINT/FEED_GAP = 1 day; any other table or event type is refused ('refusing protected or unknown target'); batched deletes (\u226450000) with --max-rows/--max-seconds and a dry-run count per target; reconciliation_runs kept while findings reference them. momentum_paper_app stops writing PATH_PRINT rows (transitions stay durable). Timers: daily 05:00 ET (paper plumbing), Sun 05:30 (capture), Sun 05:45 (weekly). Trade/fill/order/P&L tables are not targets and cannot be named. Verified by claude-1: focused 101 passed; my mutations in a separate worktree all RED (protected-table guard removed 11F, bars 45\u21927 2F, FILLED admitted to the paper purge 3F); full unit suite failed-name set identical to base 994f08ae; box check: 0 scanner_cycle_history rows >7d today, 22,688 other dashboard_snapshots rows >7d untouched by the predicate. Not verified: DELETE timing on the live DB (first run after tonight's job 2, sizes before/after recorded then); CI validate segfaulted once on the runner (re-run requested, parallel run on the same head passed). Residual: backtest/momentum_live_rule_baseline.py counts PATH_PRINT rows and will see none going forward (study tool only)."
+}
