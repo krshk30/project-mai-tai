@@ -7285,3 +7285,14 @@ managed/virtual/inflight empty; exact MI/NXL and closed-session v2 admission
 only. Parent owns main and production, released isolated LINESRC1 source lane
 and Install2 runner assembly run independently. No Install2 source activation,
 service action or timer installation yet; do not call a local draft staged.
+
+2026-10-06 20:17 ET codex-2 C107: docs-only plan9ed1371f published, adding
+an isolated final-Install2 settings overlay for the retained ALL-ON replay.
+Four new switches ON, retry enabled retained true and max retries0; settings
+validated before strategy construction, no recorded clock/price/transport
+changes. Eight mechanics tests PASS0.06s, including all six missing-setting
+refusals. These are harness tests, NOT final replay/population PASS. Actual
+test_all_on_pm replay awaits complete merged candidate. #1106 new0ca05fc8
+CI still running and independent pin missing; no merge bypass. No Install2
+production action or daily timer installation. Separate runner and LINESRC1
+sole writers continue; parent alone owns main, deployment and shared C rows.
