@@ -7548,3 +7548,28 @@ Latest user releases #1113 fresh-SELL reconstruction control. CLAIM14:49ET
 comment6044589754 on clean original d68d25e0; one writer owns that branch, bounded
 SXTC13:45-14:44 and DKI14:21-14:32 log pulls/replay/tests in progress. No pin or
 production action. #1115/RPGSTALE remain parked; paired install is separate.
+
+### [codex] 2026-10-07 15:07 ET - C128 actual paired staging
+
+Root staging completed15:06:06.688186ET before user15:30deadline. Plan
+f2ed49e832a8e9415ee70824e51424b41ce7cd71; APP994f08aee2c35b3809b3c3384e0d8628807dcfb7;
+tree7d827a407825d1d93aae8c3946d8b55320b9680f. Manifest
+c8f096cd0ae29d2f9e42d5bb76d8f4d251e2264dd23e7f264578646cccd90091,
+approvalfa8e55df4ba1d93ded417c04ba30d402327e94de0c216485b1014e621c774209.
+All24artifact hashes verified against committed package, root approval verification
+PASS, systemd-analyze verify PASS. Parent independent rerun262PASS1.68s;
+stager12PASS0.07s. Initial parent test command named nonexistent test_release_policy.py
+and collected0; corrected complete job-directory invocation produced262PASS.
+Package /home/trader/after-hours/2026-10-07/linesrc1-hotfix1-994f08ae/job;
+staging-receipt.json SHA761164018955a89e6f9b5a48145651eb09fca6658938879f6a7e6056c51388b0.
+Backups inside staging-backups; unchanged old packages retained. Only metadata
+catalog/runtime and named installerunit updated; application actions0, env40ec/source5b
+unchanged, OMS1051883/v21207761 unchanged. Actual list-timers NEXT20:00UTC/16ET,
+project-mai-tai-linesrc1-20261007.timer enabledactive; installerPID0.
+Native gate remains>=18, no override/fixed dispatch time: before18 read-onlypending.
+Approved threeaction sequence stopv2/restartOMS/startv2 avoids running stored-freshness
+gate while OMS is deliberately down. NewOMS healthy/current-book proof still required.
+RPGhandoff remainsfalse, two flags become true only at actualrun; archivedrow preserved.
+Journal deployments-20261007.md records staging, NOT installationCOMPLETE.
+Actual newPIDs/proc/catalog157/Redis/dualpreopenpin/next07acceptance not yet measured.
+Heartbeat updated to supervise this exact box job, never a duplicate installer.
