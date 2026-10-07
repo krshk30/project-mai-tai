@@ -1,0 +1,16 @@
+[Unit]
+Description=Notify existing ntfy adapter of a preopen nonzero or monitor error
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/home/trader/project-mai-tai
+UnsetEnvironment=TZ
+ExecStart=/home/trader/preopen-daily/notify.sh
+TimeoutStartSec=45
+Restart=no
+UMask=0077
+StandardOutput=journal
+StandardError=journal

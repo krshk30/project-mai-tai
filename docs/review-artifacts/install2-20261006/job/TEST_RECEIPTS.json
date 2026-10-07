@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-07T00:33:27Z",
+  "writer": "Codex",
+  "scope": "Install2 runner candidate only; controlled local tests, no production I/O",
+  "base": "f4a61ea89d47e0dc6f97e6be3dab496ef40f9cfc",
+  "branch": "codex/install2-runner-20261006",
+  "environment": {
+    "python": "3.12.13",
+    "pytest": "8.4.2",
+    "executable": "/Users/velkris/Projects/project-mai-tai/.venv/bin/python"
+  },
+  "runs": [
+    {
+      "command": "python -m pytest docs/review-artifacts/install2-20261006/job/test_install2.py -q --tb=short --show-capture=no",
+      "rc": 0,
+      "passed": 68,
+      "failed": 0,
+      "seconds": 9.33,
+      "classification": "controlled runner rehearsal including revised two-merge/one-batch provenance"
+    },
+    {
+      "command": "python -m pytest docs/review-artifacts/roundup1/job -q --tb=short --show-capture=no",
+      "rc": 0,
+      "passed": 754,
+      "failed": 0,
+      "seconds": 39.69,
+      "classification": "unchanged original Install1 mechanics, same local environment; not production completion"
+    },
+    {
+      "command": "python -m compileall -q docs/review-artifacts/install2-20261006/job",
+      "rc": 0
+    },
+    {
+      "command": "bash -n job/runner_mechanics.sh job/daily-run.sh job/daily-notify.sh job/preopen.baseline.sh",
+      "rc": 0,
+      "classification": "job paths relative to docs/review-artifacts/install2-20261006; generated dynamic gate syntax also checked by literal rehearsal"
+    }
+  ],
+  "mutations": {
+    "scope": "runner-only, not application combination acceptance",
+    "killed": 4,
+    "total": 4,
+    "receipts": [
+      {
+        "name": "start-order",
+        "control_rc": 0,
+        "mutant_rc": 1,
+        "killed": true,
+        "stdout": "F                                                                        [100%]\n=================================== FAILURES ===================================\n____________________ test_literal_install2_daily_cumulative ____________________\ndocs/review-artifacts/install2-20261006/job/test_install2.py:247: in test_literal_install2_daily_cumulative\n    assert p.PHASES==EXPECTED_PHASES\nE   AssertionError: assert (('stop', 'sc...-1m-v2'), ...) == (('stop', 'sc...rategy'), ...)\nE     \nE     At index 4 diff: ('start', 'strategy') != ('start', 'schwab-1m-v2')\nE     Use -v to get more diff\n=========================== short test summary info ============================\nFAILED docs/review-artifacts/install2-20261006/job/test_install2.py::test_literal_install2_daily_cumulative\n1 failed, 67 deselected in 0.07s\n",
+        "stderr": ""
+      },
+      {
+        "name": "after16",
+        "control_rc": 0,
+        "mutant_rc": 1,
+        "killed": true,
+        "stdout": "F.......                                                                 [100%]\n=================================== FAILURES ===================================\n_____________________ test_linesrc_near_miss_blocks[clock] _____________________\ndocs/review-artifacts/install2-20261006/job/test_install2.py:316: in test_linesrc_near_miss_blocks\n    with pytest.raises(p.Stop): linesrc.grade(service,lines)\n         ^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'release_policy.Stop'>\n=========================== short test summary info ============================\nFAILED docs/review-artifacts/install2-20261006/job/test_install2.py::test_linesrc_near_miss_blocks[clock]\n1 failed, 7 passed, 60 deselected in 0.07s\n",
+        "stderr": ""
+      },
+      {
+        "name": "duplicate-catalog",
+        "control_rc": 0,
+        "mutant_rc": 1,
+        "killed": true,
+        "stdout": "F                                                                        [100%]\n=================================== FAILURES ===================================\n____________________ test_catalog_duplicate_identity_blocks ____________________\ndocs/review-artifacts/install2-20261006/job/test_install2.py:583: in test_catalog_duplicate_identity_blocks\n    with pytest.raises(p.Stop,match=\"duplicated\"): catalog_policy.identities([row,row])\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'release_policy.Stop'>\n=========================== short test summary info ============================\nFAILED docs/review-artifacts/install2-20261006/job/test_install2.py::test_catalog_duplicate_identity_blocks\n1 failed, 67 deselected in 0.07s\n",
+        "stderr": ""
+      },
+      {
+        "name": "clean-exit",
+        "control_rc": 0,
+        "mutant_rc": 1,
+        "killed": true,
+        "stdout": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_______________ test_zero_result_nonzero_exit_is_not_clean_stop ________________\ndocs/review-artifacts/install2-20261006/job/test_install2.py:595: in test_zero_result_nonzero_exit_is_not_clean_stop\n    with pytest.raises(p.Stop,match=\"not clean\"): attended.Sequence(fx).run()\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'release_policy.Stop'>\n=========================== short test summary info ============================\nFAILED docs/review-artifacts/install2-20261006/job/test_install2.py::test_zero_result_nonzero_exit_is_not_clean_stop\n1 failed, 67 deselected in 0.69s\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "artifact_sha256": {
+    "armed_readonly.py": "e1bb2153f45b8b559845e15f4dc3b8aa636594532a1d9757fd5495d42dc78c28",
+    "attended.py": "e12287f96b2537cebf25532c70c9c19f6fc52fd04873bba2b045b4474791b185",
+    "binding.py": "87d5a074612a419438fab61399d496c1f64398855f2b8b7d826af1be16bf4356",
+    "catalog_policy.py": "901302ddc151953712344ace3fe4eb229040d46411f31274bcd784b2e4430239",
+    "census_readonly.py": "74d3128687309655a0df3fb18b5c03570885a04edc9bccd038359608684930e8",
+    "closeout.py": "7ae417953c08fea87a7c82b9c09799d7d987110a7934ba707628a19361f8cc0b",
+    "control_display_proof.py": "a3f014641627e97b55a20b10b2f6aa0727fa35aa51af65619e36b0e09e7cc26c",
+    "cumulative.py": "7f1e9266d00d1537da59bb74cad6dbbc2493993dfd0bfbbde7d37d4d888dbac6",
+    "daily.py": "4b9bac8bab772ec296ad99012b0115a50a5b3c5648f1d05f38690c0fd8a08c1c",
+    "derive_install1.py": "3bc8c2ed89bd469331b6b207f2c609695fa94ebb61eb13d02fc68d8f7a498ff7",
+    "gate_patch.py": "b354666338fa88f1b4f488d7527df4083a56e88254336af3ab1015d55254bbfa",
+    "linesrc_disposition.py": "a53eafe5c38621c03dc81fcd55a1e5732d20207c6d75ae26a95194bea8ea1ba2",
+    "make_approval.py": "03c55b46bd356a4663f531949f1c3477e654035b596707ef983acf5e5067f5b8",
+    "make_release.py": "f81f67c16a04a7d5e8eefb59feb397abe205e0b4cc4ad4548c7d9dc0c2e582aa",
+    "mutation_probe.py": "258c23cbdb7d103f06e9d02bc8172f15da09eb68369d482588da9f53cfd077bd",
+    "post_proof.py": "c10e1c76a940f75a90dbca1b5569fdb5a38990e1bc611b2e7f80968d7251324e",
+    "raw_gate_admission.py": "36030ee7c1ecd043c0a96f3bdfeb04a72fa219faf3a68a36464e1557807a570e",
+    "redis_checkpoint.py": "a0ee2fb76e269144dbcb627fba7b26cc8624b73b3ffbe8535d2380333d8c145f",
+    "release_policy.py": "7d1a7efb5ef031942b2637f4c9de1c27c5a7bcfbf8052fd65074e3dac84c5e32",
+    "restart_report.py": "81a19eead426a4b325f003ca4cab001bcdb250b62dc9e7267148c4d55a659515",
+    "retry_zero_readonly.py": "2919e1227d40f57b56d98767fcc7716aebff8e9b5d77331c18689107ca16103c",
+    "strict_flat_readonly.py": "cf05c8cb689dd1ac1eeff6c07acce57e1d1baab4eef88ff61daea457be134905",
+    "test_install2.py": "88c426b25ef3962914a1efdc1044800054a5578a9a48d577c75534f3bfed5a7b",
+    "ticket_inventory.py": "9af8088a5b8a7d71362607182511a7d0dbb4ee6c443ab81ff0e29d61f95fc74d",
+    "daily-notify.sh": "e63759d441d3a82e1d80226dd0d396ecc60c969dab25cb4972fda95702c4b009",
+    "daily-run.sh": "046c19bfde92eae5b446dd0f577eb01385a5667a5143867c606254dc59894403",
+    "preopen.baseline.sh": "8cdafcded0f748b6779696953cc8a101409b6bc0ce9a2314938d7f4fa82cf15a",
+    "runner_mechanics.sh": "d555d24f2da6ec52c0618373d9761d944be62b441d97325bdc50f8dc0f2950f9",
+    "binding.template.json": "9dca5fa648426771d152852a368d781469388ae9a4b817612dc2fbeb8c136e9d",
+    "README.md": "a1b6a88053deb17237baf527388be1d1f4738aca499256f0bf141cdb8300d03b",
+    "project-mai-tai-preopen-failure.service": "820fb7fa64729118db494891756268bf8f591683d0c2d8bf4998446d4255be17",
+    "project-mai-tai-preopen.service": "537e863623c93fd5247dccd67eeb4285765625a668af7eda05ac238f63e94bc7",
+    "project-mai-tai-preopen.timer": "a698529a9d26f06d47c3f6a02788d59483b54b6d1d2f6594024c242c68d0ee84"
+  },
+  "provenance": "Two actual completed merges (#1102/#1106) plus one actual reviewed batch PR covering [1104,1099,1105,1101]. No four synthetic merge receipts.",
+  "not_claimed": [
+    "final APP/TREE binding",
+    "parent final source-combination full same-environment unit pair",
+    "parent application ALL_ON/CI/mutations",
+    "live source correctness",
+    "Install1 original COMPLETE",
+    "production/daily installation",
+    "next-session delivery"
+  ],
+  "blockers": [
+    "parent actual batch merge PR/SHA and final APP/TREE",
+    "exact parent source-combination acceptance receipt and path allowlist",
+    "actual old helper hashes and exact T43 catalog identity",
+    "hash-bound original Install1 snapshots/runner+continuation journals and quoted DERIVED human VERIFIED provenance/current measured identities"
+  ]
+}
