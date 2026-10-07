@@ -7323,3 +7323,17 @@ no silent assertion changes under byte-identical instruction. #1099/#1105/
 #1101 not rebased before #1104 merge. No Install2 production action or timer
 install; production4805 retained. Missing counts are integration bookkeeping,
 not an added install gate or trading blocker, but CI must be green for merge.
+
+2026-10-06 20:40 ET codex-2 C110: operator replaced sequential rebases with one
+reviewed batch. Draft1108 head aed1a358c0da4043ce248550c2b1d02cecdc76ff/basef80a
+contains original #1104/#1099/#1105/#1101 commits in that order. Original source/
+ops changed lines compare equal per stage; conflicting MIRRORHOLD reservation
+metadata and T43 abort paths both retained. One tests-only integration commit
+refreshes exact catalog counts and preserves both proven and unproven callback
+refusal controls. All28 commits have one recognized codex-2 marker. Focused527
+PASS58.88s; full pair running. Forced old ALL-ON experiment33PASS8FAIL: six old
+NFQ token/helper assumptions and two take-down policies cannot serve as controls
+for retained mirror ownership and KEEPREST. No claimed all-on PASS; meaningful
+replacement controls are being tested externally without application edits.
+Hosted Validate running, independent batch pin absent. Install2 has not started,
+no timer installation or production change. Source frozen for full-pair proof.
