@@ -7822,3 +7822,17 @@ recovery, legacy failclosed and localtypedbarrier controls published. Earlier
 claim or safetythreshold change. Source remains exactly502.
 No pin/merge/deploy; RETRY1118cda ready, SLOT9951tomorrow, tonight's exact
 pairedAPP994 package/approval and ORB unchanged; no staleRPG/ledger action.
+
+2026-10-07 18:02 ET codex-2: accepted reviewer correction: SLOTCLEAR1113
+already merged a6f295e9, not held for tomorrow. Batch1120 is reviewer-owned;
+source PR1117/1119/1118/1112 receive no further pushes tonight. Job2 local
+mechanics prepared separately, no merged M yet and no staging/execution.
+Job1 reached native18:00 window and STOPPED before appwrites at18:00:06ET:
+installedbaseline drift ops/health/preopen_alert.sh. Actual SHAa9f2407612baf48ee4b0577e42ccd0c714be1c1315b8276f5f9638a2999a1aaa
+equals manifest; mode0775 violates its existing no-group-write guard.
+STOP receipt54879b9914262620c41a3f5da4b0fb53a7850a44f3947a3c7c07aebc80e88243
+in attempt-20261007T220001065520Z, claimedfalse/completed0. Alertdeliveryrc0;
+installer timerinactive/disabled. OMS1051883 andv21207761 activeunchanged,
+NRestarts0. Job2 gatePASS remainsUNMEASURED because job1COMPLETEabsent.
+No manualinstaller/serviceaction, unseal, rollback, archivedrow orledgerwrite.
+Supervision heartbeat removed afterverifiedABORT; rootdailyunitsunchanged.
