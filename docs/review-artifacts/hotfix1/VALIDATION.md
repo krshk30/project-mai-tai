@@ -66,7 +66,28 @@ ticks do not query. Exit ladder and hard-stop decisions remain on the existing
 paths. Legacy NFQ's separate synchronous preparation remains outside this
 patch; no blanket claim of a database-free OMS is made.
 
-Full-suite pair: final receipt pending. The first development run was
-62 failed / 7,086 passed against 56 failed / 7,077 passed; its six new failures
-were diagnosed rather than hidden. Final compatibility fixes require a fresh
-pair before this branch is review-ready.
+## Full-suite pair
+
+Python 3.12, `PYTHONPATH=src`, `pytest tests/unit -q --tb=short`:
+
+- Exact main 1a70: 56 failed / 7,077 passed / 0 skipped, 379.53 seconds.
+  XML: `/tmp/main-1a70-hotfix-rpgnowire-baseline-20261007.xml` (parent's baseline).
+- Final HOTFIX1 runtime/tests: 56 failed / 7,101 passed / 0 skipped,
+  400.81 seconds. XML: `/tmp/hotfix1-head-final-20261007.xml`.
+- Failed-name diff: no additions, no removals. The throughput failure on main
+  remains a failure on head; no volatile count is suppressed.
+- Focused compatibility run: 389 passed, 1 benchmark deselected, 36.83 seconds.
+  The full suite includes the 60-second benchmark, which passed too.
+
+`full-suite-pair.json` lists every baseline/head failed name and raw XML path.
+Runtime and ordinary tests did not change during or after that final run.
+The only test-file edit during the run was the standalone mutation plugin's
+early-publication anchor; the ordinary suite does not load that plugin. A
+redundant frozen-commit rerun was interrupted after the parent accepted the
+exact XML pair and directed no whole-suite rerun for that harness-only change;
+the interrupted rerun is not presented as a completed receipt.
+
+The first development run was 62 failed / 7,086 passed. Its six new failures
+were fixed without weakening the original cancellation assertions. Focused and
+full runs still emit pending confirmation-recovery/protection task warnings;
+this patch does not claim to fix those separate task lifecycles.
