@@ -7233,3 +7233,37 @@ CancelledError exists there, not in captured journal. No reset/start/recovery,
 no control action, no COMPLETE claim. Requested same-attempt continuation.
 Raw STOP, states, runner hash/last30 and gate receipts recorded in
 docs/review-artifacts/roundup1/INSTALL1_ROW47_STOP_2026-10-06.md.
+
+2026-10-06 19:56:32 ET codex-2 C104: reviewer19:43 continuation executed:
+start v2 at19:48:01; restart OMS19:49:08, strategy19:49:27, control19:49:45.
+Original pending orb-schwab start completed19:50:33 after recording its
+already-stopped row47 disposition/reset; no duplicate application restart.
+PIDs611572/611906/612007/612101/612486 respectively, all active/NRestarts0.
+Control page initially unreadable during startup; subsequent actual receipt
+23:56:31Z proves LIVE/SCHWAB. Two simultaneous continuation readers collided
+on exclusive receipt numbering; no original receipt overwritten. This is OUR
+runner defect, recorded rather than attributed to the service. Later proofs
+serialized under the deploy lock. Mechanical strategy re-pin scope tested,
+754PASS; f4a61ea8 release5e09dee1 staged27/27, not closeout execution.
+Fresh directflat/working/openrows/inflight/new-buy proofs remain green,
+schema0022 verified read-only; Redis0->0 evictions, five owners+marker,
+used_memory809628864B at23:56:29Z. Actual candidate+reviewed numeric checker
+151/153 UNKNOWN2, exactly inactive-paper rows; no false total-PASS claim.
+Existing new-process-log proof FAILS: v2 anchored history poll has554
+tracebacks in captured tail after startup (526 foreign/duplicate session
+candle,28 current closed candle absent); OMS/strategy/orb-schwab0. This is
+an application fault, not missing shutdown evidence. Service downtime v2
+19:09:01->19:48:01 was39minutes; actual bar-continuity query still UNMEASURED,
+not after-hours N/A because scheduled bars flow until20:00. INCOMPLETE receipt
+and journal written, pageadapter rc0. Preopen/catalog/daily-timer closeout not
+executed, no rollback/source hotfix/extra restart or Install2 merge/deploy.
+Raw /home/trader/roundup1-install1-20261006-01ed2458/attempt-oct6-attended/
+CONTINUATION_INCOMPLETE.json and continuation-error-census.json; root
+poststart-error-closeout.log. Reviewer disposition needed for this real fault.
+
+2026-10-06 19:56 ET codex-2 C105: authorized marker-only rewrites pushed
+#1102 72983395df6450465b876860a528662f30c09e5d and #1101
+e1db2d14b69a2523be12f9baca265bba5022e137. Only docs commit trailers changed;
+all descendant patches equal, whole trees unchanged,13/13 markers PASS.
+Exact leases used, worktrees clean. Fresh CI/reviewer exact-head pins pending;
+no main merge, production change or Install2 claim.
