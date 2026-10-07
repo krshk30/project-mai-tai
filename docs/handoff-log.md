@@ -7788,3 +7788,16 @@ and3.647s withinonebar;246focusedPASS/13assertionmutationsRED; full7155/56
 vs main7114/56, identical failednames. Actual new brokerlatencyUNMEASURED.
 No pin/merge/install; NFQ502 finalfull/CI pending, pinned SLOT9951 tomorrow
 and tonight's exact APP994 paired package/ORB unchanged.
+
+2026-10-07 17:26 ET codex-2: NFQ502 NOT READY. Full7356PASS57FAIL600.73s;
+main7114/56, one added failednode retained-on HOTFIX60sgate, removednone.
+Observed maxloop64.971ms against unchanged50ms limit, handler10.885ms,
+14400events239.997/s and0ticktransactions afterfirstsecond; raw retained in
+/tmp/nfq2-segment-cancel-final-full-20261007/output.txt. Causes unmeasured.
+PRCI37687551177 exits139 at21:24:17UTC: sqlalchemy ORM loading on worker
+-> OMSstore.get_open_managed_position through _read_v2_managed_snapshot.
+Failed log/tmp/nfq2-50264417-pr-ci-failed.txt retained; pushValidatePASS.
+Sole writer reruns full and PRCIattempt2 on unchanged502; no threshold,
+assertion or source change/waiver. Await actual gates before readiness.
+RETRY1118 cda already ready; no SLOT amendment, production/ORB action or
+change to tonight's staged exact APP994 package.
