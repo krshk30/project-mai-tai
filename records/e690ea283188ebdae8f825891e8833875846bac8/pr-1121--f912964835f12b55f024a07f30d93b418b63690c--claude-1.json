@@ -1,0 +1,9 @@
+{
+  "pr_number": 1121,
+  "range_base": "f912964835f12b55f024a07f30d93b418b63690c",
+  "range_head": "e690ea283188ebdae8f825891e8833875846bac8",
+  "reviewed_at": "2026-10-07T22:55:47Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Flag catalog: strategy_schwab_1m_v2_atr_reprice_handoff_enabled expected false with the operator's 2026-10-07 13:45 ruling (RPG1 OFF after the PFAI stale resting order); oms_v2_eh_fresh_price_enabled already expected true/oms, unchanged. Tests updated so the catalog value drives the expectation (test_expected_flags_check.py 56/56, test_all_on_pm.py and test_pmprint1_tonight_flags.py pass; the first head left 14 red and was refused). No checker or production change. Verified by claude-1: diff read (1 catalog line + 3 test files, 3 codex commits), 56 passed on the catalog file, 113 across the three files per codex, suite failed-name set identical to main per codex's pair (not re-run by me: docs/tests only). Live box check 18:1x: /proc shows handoff=false on v2 and OMS, so this catalog makes the pre-open audit PASS."
+}
