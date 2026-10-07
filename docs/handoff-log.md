@@ -7337,3 +7337,14 @@ for retained mirror ownership and KEEPREST. No claimed all-on PASS; meaningful
 replacement controls are being tested externally without application edits.
 Hosted Validate running, independent batch pin absent. Install2 has not started,
 no timer installation or production change. Source frozen for full-pair proof.
+
+2026-10-06 20:42 ET codex-2 C111: published PINHASH1 own Step0 docs-only at
+9cde6f3f3d4dfc346c57a88e44c2dfcb16b948aa, codex/pinhash1-step0. AGREE issue
+and reuse goal; DISAGREE bare +/- hash alone suffices. Own source read locates
+old-record commit loading before coverage selection, causing today's stale pin
+failure. Own diagnostic hashes show RESERVE1 same changed lines despite changed
+context; MIRRORHOLD marker repair same hash despite missing old marker; KEEPREST
+rebase whole patch changed because upstream absorbed tests. Metadata, binary,
+EOF, function-context and immutable ledger bytes need an explicit reviewed
+contract. Current-range marker/self-review checks stay mandatory. No PINHASH1
+implementation, generated tests, gate edit, record mutation or production touch.

@@ -334,6 +334,8 @@
 | 07:13 → 16:13, every 30 min | FULL VALIDATION (`mai-tai-fullscan/run.sh`): every bot, every trade, every buy flip on a watched name (traded / skipped by rule / missed and why), anything short with no buy order, new errors; **first live reprice with the hand-off ON** (cancel→place seconds per broker, no stuck ticket); first OWNMIX1 fill binding | each new line explained before it is reported |
 | 15:55 | ORB Schwab position (Board A row 46) | flat or an explained partial |
 
+| C111 | PINHASH1 Step0 published; implementation tomorrow, not built | codex/pinhash1-step0 head9cde6f3f3d4dfc346c57a88e44c2dfcb16b948aa; docs/review-artifacts/pinhash1/STEP0_2026-10-06.md. AGREE unchanged-patch reuse and ignoring superseded records; DISAGREE bare changed-line SHA alone is sufficient authorization; implementation/adversarial controls UNMEASURED | As-of20:42ET10-06 own source/committed-record reads and diagnostic hashes: #1106 old34/new0ca hash equal despite differing context; #1102 marker repair equal despite missing marker; #1104 old030/new4343 whole patch CHANGED despite source-only equality. Raw +/- misses mode/binary/EOF and context changes | codex-2 | Tomorrow require explicit versioned metadata/path/binary/EOF identity plus committed-ledger bytes, current-marker independence and fresh integration. No pin-gate/workflow/ledger implementation or production action tonight |
+
 ## 2026-10-05 (Mon) — LIVE DAY NOTES (shared: both agents add rows as things happen; full sweep at close-out)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
