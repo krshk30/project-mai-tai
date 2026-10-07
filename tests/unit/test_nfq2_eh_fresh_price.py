@@ -293,6 +293,7 @@ async def test_biya_segment_or_entry_window_end_retires_hold_without_enqueue(ser
         symbol="BIYA", segment_id=SEGMENT, active=False, reason="recorded_cancel",
         now=NOW + timedelta(microseconds=1))
     quote(service)
+    await service._evaluate_nfq2_holds()
     await service._evaluate_nfq2_holds("BIYA")
     assert not service._nfq2_holds and not service.redis.entries
 
@@ -397,6 +398,7 @@ async def test_biya_configured_cutoff_never_sends_saved_buy(service, monkeypatch
     hold(service, biya())
     quote(service)
     monkeypatch.setattr(oms_module, "utcnow", lambda: NOW.replace(hour=20, minute=0))
+    await service._evaluate_nfq2_holds()
     await service._evaluate_nfq2_holds("BIYA")
     assert not service._nfq2_holds and not service.redis.entries
 
@@ -407,6 +409,7 @@ async def test_biya_eh_hold_does_not_migrate_into_unpriced_regular_hours(service
     quote(service)
     monkeypatch.setattr(oms_module, "_is_regular_market_session", lambda *args: True)
     monkeypatch.setattr(oms_module, "_extended_hours_session", lambda *args: None)
+    await service._evaluate_nfq2_holds()
     await service._evaluate_nfq2_holds("BIYA")
     assert not service._nfq2_holds and not service.redis.entries
 
