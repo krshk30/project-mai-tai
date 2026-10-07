@@ -28,6 +28,7 @@ REPO = Path("/home/trader/project-mai-tai")
 PY = REPO / ".venv/bin/python"
 ENV = Path("/etc/project-mai-tai/project-mai-tai.env")
 GATE = Path("/home/trader/preopen.sh")
+SOURCE_ARCHIVE_LIMIT = 64 * 1024 * 1024
 UNIT_FIELDS = ("MainPID", "NRestarts", "ActiveState", "SubState", "Result", "ExecMainCode",
                "ExecMainStatus", "ExecMainStartTimestamp", "ExecMainStartTimestampMonotonic",
                "FragmentPath", "DropInPaths", "EnvironmentFiles", "InactiveEnterTimestamp", "InvocationID")
@@ -408,7 +409,7 @@ class Real:
             raw = (HELPERS / name).read_bytes()
             need(digest(raw) == expected, "isolated helper changed before source backup")
             exclusive(self.attempt / (name + ".before"), raw)
-        archive = self.command(["git", "-C", REPO, "archive", BOX], limit=40_000_000).stdout
+        archive = self.command(["git", "-C", REPO, "archive", BOX], limit=SOURCE_ARCHIVE_LIMIT).stdout
         exclusive(self.attempt / "source-before.tar", archive)
         self.receipt("backup-hashes.json", canonical({name: digest((self.attempt / name).read_bytes())
                       for name in ("env.before", "preopen.before", "source-before.tar")}))

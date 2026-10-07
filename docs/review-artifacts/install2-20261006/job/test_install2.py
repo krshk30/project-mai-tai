@@ -432,6 +432,35 @@ def test_rc2_retry_only_three_attempts_60(monkeypatch,tmp_path):
     assert len(calls)==1
 
 
+def test_measured_box_archive_fits_bounded_backup_before_source_change(monkeypatch,tmp_path):
+    fx,_,_=setup(monkeypatch,tmp_path)
+    fx.initial()
+    original=fx.command
+    measured=b"x"*40_673_280
+    limits=[]
+    def command(args,**kw):
+        if "archive" in list(map(str,args)):
+            limits.append(kw["limit"])
+            monkeypatch.setattr(attended.subprocess,"run",lambda *a,**k:
+                SimpleNamespace(returncode=0,stdout=measured,stderr=b""))
+            return attended.Real.command(fx,args,**kw)
+        return original(args,**kw)
+    monkeypatch.setattr(fx,"command",command)
+    fx.prepare()
+    assert limits==[64*1024*1024]
+    assert (fx.attempt/"source-before.tar").read_bytes()==measured
+    assert fx.head==p.APP
+
+
+def test_archive_over_64mib_still_refuses_before_output_persistence(monkeypatch,tmp_path):
+    fx=attended.Real(tmp_path,{},tmp_path)
+    monkeypatch.setattr(attended.subprocess,"run",lambda *a,**k:
+        SimpleNamespace(returncode=0,stdout=b"x"*(attended.SOURCE_ARCHIVE_LIMIT+1),stderr=b""))
+    with pytest.raises(p.Stop,match="command output exceeds bound"):
+        fx.command(["git","archive",p.BOX],limit=attended.SOURCE_ARCHIVE_LIMIT)
+    assert list(tmp_path.iterdir())==[]
+
+
 def test_local_derivation_retains_incomplete_no_original_record(monkeypatch,tmp_path):
     import derive_install1
     fx,_,_=setup(monkeypatch,tmp_path)
