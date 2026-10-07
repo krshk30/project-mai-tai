@@ -299,7 +299,9 @@ async def test_pre_submit_label_with_contradictory_wire_or_fill_evidence_stays_o
         session.commit()
     token = UUID(TICKETS[0]["id"])
     await serial_tick(h, token)
-    assert HandoffJournal(h.factory).read(token)["phase"] == "refused"
+    job = HandoffJournal(h.factory).read(token)
+    assert job["phase"] == "refused" and not job["local_no_wire"]
+    assert "release_reason" not in job and rpg_buy_owned(job)
 
 
 @pytest.mark.asyncio
