@@ -7708,3 +7708,11 @@ on16:35ET read, clock-pending; no production writes or ORB action here.
 and C136: its as-of clock was mistyped16:45ET; actual current UTC read
 2026-10-07T20:38:42Z confirms16:38ET. Results and raw sources unchanged.
 Narrative retained append-only; own C136 corrected, no reviewer row touched.
+
+2026-10-07 16:40 ET codex-2: published draft RETRYLEFT1 PR1118 at
+215d3853298204c43db756c264d7a938a26b412c. Two recorded positives and APUS
+both-filled negative, 41new/246focused pass,13mutationsRED. Complete unit
+run and bothValidate pending, no readiness/merge/install claim. Raw proof,
+roll-forward scope and older-code receipt compatibility risk documented.
+App attachment refused due to100-attachment limit; PR URL remains available.
+Tonight's staged package and all production services untouched here.
