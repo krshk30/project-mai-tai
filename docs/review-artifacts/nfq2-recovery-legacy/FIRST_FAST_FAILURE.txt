@@ -1,0 +1,19 @@
+First fast command (working-tree implementation, HEAD c600, no source freeze yet):
+env PYTHONPATH=src:. /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest tests/unit/test_nfq2_eh_fresh_price.py tests/unit/test_nfq2_tick_path.py tests/unit/test_nfq2_slotclear_composition.py tests/unit/test_nfq2_hotfix1_combined_proof.py -q --tb=short -k 'not 60_seconds'
+
+Original tool-captured output retained below; no original disk log/hash existed.
+No CPU/concurrency cause is established. Threshold remains unchanged50ms.
+
+........................................................F.....           [100%]
+=================================== FAILURES ===================================
+_______ test_combined_slow_eligible_persistence_offloop_duplicate_quotes _______
+tests/unit/test_nfq2_hotfix1_combined_proof.py:174: in test_combined_slow_eligible_persistence_offloop_duplicate_quotes
+    assert duplicate_seconds < 0.05
+E   assert 0.06272458299645223 < 0.05
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:31:09,230 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:109 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_hotfix1_combined_proof.py::test_combined_slow_eligible_persistence_offloop_duplicate_quotes
+1 failed, 61 passed, 2 deselected in 3.84s

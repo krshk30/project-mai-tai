@@ -26,7 +26,7 @@ MUTATIONS = {
     "N7": ("_claim_nfq2_retry", 'or hold.phase != "queued"', "or False",
            "test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent"),
     "N8": ("_nfq2_pre_submit", "if uncertain is not None:", "if False:",
-           "test_biya_uncertain_dispatch_is_not_released_by_window_or_new_open"),
+           "test_missing_order_never_expires_or_resends_and_off_still_blocks"),
     "N9": ("_nfq2_reason", "for order in orders:", "for order in []:",
            "test_biya_restart_with_own_filled_slot_retires_hold_without_rebuy"),
     "N10": ("_claim_nfq2_retry", 'self._nfq2_feedback(session, event, "queued", "retry_claimed")', "pass",
@@ -60,7 +60,8 @@ def main():
     exec(compile("from __future__ import annotations\n" + source.replace(old, new),
                  f"<nfq2-mutation-{name}>", "exec"), namespace)
     setattr(EhFreshPriceMixin, method, namespace[method])
-    module = "test_nfq2_tick_path" if name in {"N12", "N13", "N14", "N15", "N16", "N17"} else "test_nfq2_eh_fresh_price"
+    module = ("test_nfq2_recovery_legacy" if name == "N8" else "test_nfq2_tick_path"
+              if name in {"N12", "N13", "N14", "N15", "N16", "N17"} else "test_nfq2_eh_fresh_price")
     result = pytest.main(["-p", "no:cacheprovider", "-q", f"tests/unit/{module}.py::" + test])
     print(f"MUTATION {name} pytest_rc={result} {'RED' if result == 1 else 'NOT_RED'}")
     return 0 if result == 1 else 1

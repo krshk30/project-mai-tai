@@ -1,0 +1,35 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_joint_slotclear_real_nfq_dispatch_retains_held_cap_and_single_claim[False] _
+tests/unit/test_nfq2_slotclear_composition.py:71: in test_joint_slotclear_real_nfq_dispatch_retains_held_cap_and_single_claim
+    assert service._apply_v2_eh_reactive_entry(session=session, event=message, intent=intent) is None
+E   AssertionError: assert OrderEventEvent(event_id=UUID('9ea36243-472f-4a80-b7e0-fae8a2726b96'), event_type='order_event', source_service='oms-r...abandon_reason_detail': 'ask 2.5600 past max-cross cap 2.5527 (signal 2.5400 +0.5%)', 'oms_v2_eh_entry': 'abandoned'})) is None
+E    +  where OrderEventEvent(event_id=UUID('9ea36243-472f-4a80-b7e0-fae8a2726b96'), event_type='order_event', source_service='oms-r...abandon_reason_detail': 'ask 2.5600 past max-cross cap 2.5527 (signal 2.5400 +0.5%)', 'oms_v2_eh_entry': 'abandoned'})) = _apply_v2_eh_reactive_entry(session=<sqlalchemy.orm.session.Session object at 0x109ed6f00>, event=TradeIntentEvent(event_id=UUID('e803e82c-999a-47f1-8325-e9e76533780f'), event_type='trade_intent', source_service='oms...abandon_reason_detail': 'ask 2.5600 past max-cross cap 2.5527 (signal 2.5400 +0.5%)', 'oms_v2_eh_entry': 'abandoned'})), intent=<project_mai_tai.db.models.TradeIntent object at 0x109f5b080>)
+E    +    where _apply_v2_eh_reactive_entry = <project_mai_tai.oms.service.OmsRiskService object at 0x109900800>._apply_v2_eh_reactive_entry
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:46:08,248 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:46:08,253 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 16:46:08,254 INFO [oms-risk] [OMS-ABANDON-INTENT] code=ASK_PAST_CROSS_CAP symbol=BIYA strategy=schwab_1m_v2 side=buy reason=ask 2.5600 past max-cross cap 2.5527 (signal 2.5400 +0.5%)
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+INFO     oms-risk:service.py:14888 [OMS-ABANDON-INTENT] code=ASK_PAST_CROSS_CAP symbol=BIYA strategy=schwab_1m_v2 side=buy reason=ask 2.5600 past max-cross cap 2.5527 (signal 2.5400 +0.5%)
+_ test_joint_slotclear_real_nfq_dispatch_retains_held_cap_and_single_claim[True] _
+tests/unit/test_nfq2_slotclear_composition.py:71: in test_joint_slotclear_real_nfq_dispatch_retains_held_cap_and_single_claim
+    assert service._apply_v2_eh_reactive_entry(session=session, event=message, intent=intent) is None
+E   AssertionError: assert OrderEventEvent(event_id=UUID('72858b64-501d-48d1-bdf6-4789ac31ad10'), event_type='order_event', source_service='oms-r...abandon_reason_detail': 'ask 2.5600 past max-cross cap 2.5527 (signal 2.5400 +0.5%)', 'oms_v2_eh_entry': 'abandoned'})) is None
+E    +  where OrderEventEvent(event_id=UUID('72858b64-501d-48d1-bdf6-4789ac31ad10'), event_type='order_event', source_service='oms-r...abandon_reason_detail': 'ask 2.5600 past max-cross cap 2.5527 (signal 2.5400 +0.5%)', 'oms_v2_eh_entry': 'abandoned'})) = _apply_v2_eh_reactive_entry(session=<sqlalchemy.orm.session.Session object at 0x109f5bb90>, event=TradeIntentEvent(event_id=UUID('11200e66-6b29-47f7-8cd8-9bd066389048'), event_type='trade_intent', source_service='oms...abandon_reason_detail': 'ask 2.5600 past max-cross cap 2.5527 (signal 2.5400 +0.5%)', 'oms_v2_eh_entry': 'abandoned'})), intent=<project_mai_tai.db.models.TradeIntent object at 0x109fe9490>)
+E    +    where _apply_v2_eh_reactive_entry = <project_mai_tai.oms.service.OmsRiskService object at 0x109d6bf50>._apply_v2_eh_reactive_entry
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:46:08,304 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:46:08,308 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 16:46:08,308 INFO [oms-risk] [OMS-ABANDON-INTENT] code=ASK_PAST_CROSS_CAP symbol=BIYA strategy=schwab_1m_v2 side=buy reason=ask 2.5600 past max-cross cap 2.5527 (signal 2.5400 +0.5%)
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:orb slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.56 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+INFO     oms-risk:service.py:14888 [OMS-ABANDON-INTENT] code=ASK_PAST_CROSS_CAP symbol=BIYA strategy=schwab_1m_v2 side=buy reason=ask 2.5600 past max-cross cap 2.5527 (signal 2.5400 +0.5%)
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_slotclear_composition.py::test_joint_slotclear_real_nfq_dispatch_retains_held_cap_and_single_claim[False]
+FAILED tests/unit/test_nfq2_slotclear_composition.py::test_joint_slotclear_real_nfq_dispatch_retains_held_cap_and_single_claim[True]
+2 failed in 0.16s
+JOINT_MUTATION C2 pytest_rc=1

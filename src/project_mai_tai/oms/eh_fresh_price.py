@@ -1,6 +1,8 @@
 """NFQ2: account-scoped EH price waits; only the serial intent lane submits."""
 from __future__ import annotations
 
+import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from time import monotonic
@@ -8,12 +10,15 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
 
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, TradeIntent
+from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback
+from project_mai_tai.broker_adapters.protocols import OrderRequest
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, Strategy, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, stream_name
+from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.fanout_outcome_consumer import append_outcome, broker_outcome
 from project_mai_tai.fanout_segment_store import SNAPSHOT_TYPE as SEGMENT_SNAPSHOT, current_session_anchor
 from project_mai_tai.oms.mirror_fresh_price import mirror_reading
-from project_mai_tai.oms.atr_reprice_handoff import local_rpg_abort_proof
+from project_mai_tai.oms.atr_reprice_handoff import local_rpg_abort_proof, replacement_has_fills, replacement_unknown_fill_report
 from project_mai_tai.strategy_core.entry_gate import within_entry_window
 
 
@@ -28,6 +33,7 @@ class EhHold:
     intent_id: UUID
     phase: str = "held"
     token: str = ""
+    dispatch: dict | None = None
 
 
 class EhFreshPriceMixin:
@@ -46,6 +52,26 @@ class EhFreshPriceMixin:
         return (self._nfq2_enabled() or self._nfq2_held_dispatch(event)) and (
             self._v2_eh_reactive_entry_applies(event) or self._v2_eh_resting_entry_applies(event))
 
+    @staticmethod
+    def _nfq2_bound_identity(event):
+        md = event.payload.metadata
+        try:
+            return md.get("fanout_slot_id") == fanout_slot_id(strategy_code=event.payload.strategy_code,
+                symbol=event.payload.symbol, segment_id=md.get("fanout_segment_id"), slot=md.get("fanout_slot", ""))
+        except (TypeError, ValueError):
+            return False
+
+    def _nfq2_segment_current(self, session, event):
+        latest = session.scalar(select(DashboardSnapshot).where(
+            DashboardSnapshot.snapshot_type == SEGMENT_SNAPSHOT,
+            DashboardSnapshot.payload["symbol"].as_string() == event.payload.symbol,
+        ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc()).limit(1))
+        proof = latest.payload if latest is not None and isinstance(latest.payload, dict) else {}
+        return (proof.get("strategy_code") == "schwab_1m_v2"
+                and proof.get("session_anchor") == current_session_anchor(self._nfq_now()).isoformat()
+                and proof.get("active") is True
+                and str(proof.get("fanout_segment_id")) == event.payload.metadata.get("fanout_segment_id"))
+
     def _nfq2_reading(self, symbol):
         # A last trade is not an executable ask. NFQ1's trade fallback is intentionally NOT used.
         return mirror_reading(self.__dict__.get("_latest_quotes_by_symbol", {}), {},
@@ -62,19 +88,21 @@ class EhFreshPriceMixin:
     @staticmethod
     def _nfq2_payload(hold):
         return {"event": hold.event.model_dump(mode="json"), "intent_id": str(hold.intent_id),
-                "phase": hold.phase, "token": hold.token}
+                "phase": hold.phase, "token": hold.token, "dispatch": deepcopy(hold.dispatch)}
 
     @staticmethod
     def _nfq2_copy(hold, *, phase=None, token=None):
         return EhHold(hold.event.model_copy(deep=True), hold.row_id, hold.intent_id,
-                      hold.phase if phase is None else phase, hold.token if token is None else token)
+                      hold.phase if phase is None else phase, hold.token if token is None else token,
+                      deepcopy(hold.dispatch))
 
     @staticmethod
     def _nfq2_same(current, expected):
         return bool(current is not None and current.row_id == expected.row_id
                     and current.intent_id == expected.intent_id
                     and current.event.event_id == expected.event.event_id
-                    and current.phase == expected.phase and current.token == expected.token)
+                    and current.phase == expected.phase and current.token == expected.token
+                    and current.dispatch == expected.dispatch)
 
     def _nfq2_transition(self, session, before, after, *, reason=None, outcome="rejected_client_abort"):
         # Atomic durable CAS: an off-loop write must never resurrect a cancelled/replaced hold.
@@ -84,6 +112,8 @@ class EhFreshPriceMixin:
             DashboardSnapshot.payload["token"].as_string() == before.token,
             DashboardSnapshot.payload["intent_id"].as_string() == str(before.intent_id),
             DashboardSnapshot.payload["event"]["event_id"].as_string() == str(before.event.event_id),
+            DashboardSnapshot.payload["dispatch"]["generation"].as_string() ==
+                (before.dispatch or {}).get("generation"),
         ).values(payload=self._nfq2_payload(after)), execution_options={"synchronize_session": False})
         if result.rowcount != 1:
             return False
@@ -121,8 +151,9 @@ class EhFreshPriceMixin:
         event = hold.event
         md = event.payload.metadata
         now = self._nfq_now()
-        orders = session.scalars(select(BrokerOrder).join(BrokerAccount).where(
+        orders = session.scalars(select(BrokerOrder).join(BrokerAccount).join(Strategy).where(
             BrokerAccount.name == event.payload.broker_account_name,
+            Strategy.code == "schwab_1m_v2",
             BrokerOrder.symbol == event.payload.symbol, BrokerOrder.side == "buy",
             BrokerOrder.payload["fanout_slot_id"].as_string() == md.get("fanout_slot_id"),
         )).all()
@@ -136,7 +167,7 @@ class EhFreshPriceMixin:
             if order.status == "aborted" and local_rpg_abort_proof(session, order) is None:
                 return "dispatch_uncertain"
             if order.status not in {"cancelled", "canceled", "rejected", "aborted", "expired"}:
-                return "existing_buy"
+                return "dispatch_uncertain" if hold.phase == "uncertain" else "existing_buy"
         if hold.phase == "uncertain":
             return "dispatch_uncertain"
         if (not within_entry_window(now, self.settings)
@@ -159,7 +190,11 @@ class EhFreshPriceMixin:
     def _nfq2_observe(self, event):
         if not self._nfq2_holds or event.payload.strategy_code != "schwab_1m_v2":
             return
+        if not self._nfq2_bound_identity(event):
+            return
         with self.session_factory() as session:
+            if event.payload.intent_type == "open" and not self._nfq2_segment_current(session, event):
+                return
             for hold in list(self._nfq2_holds.values()):
                 old, new = hold.event.payload, event.payload
                 if (old.symbol != new.symbol or old.broker_account_name != new.broker_account_name
@@ -182,21 +217,42 @@ class EhFreshPriceMixin:
                 self._nfq2_retire(session, hold, "v2_cancel" if new.intent_type == "cancel" else "v2_replaced")
             session.commit()
 
+    @staticmethod
+    def _nfq2_intent_matches(session, intent, event):
+        account = session.get(BrokerAccount, intent.broker_account_id)
+        strategy = session.get(Strategy, intent.strategy_id)
+        return bool(account and strategy and account.name == event.payload.broker_account_name
+                    and strategy.code == event.payload.strategy_code == "schwab_1m_v2"
+                    and intent.symbol == event.payload.symbol and intent.side == event.payload.side == "buy"
+                    and intent.intent_type == event.payload.intent_type == "open"
+                    and intent.quantity == event.payload.quantity
+                    and (intent.payload or {}).get("event_id") == str(event.event_id))
+
+    def _nfq2_refuse_pre_wire(self, session, event, intent, reason):
+        owned = session.scalar(select(BrokerOrder.id).where(BrokerOrder.intent_id == intent.id).limit(1))
+        if (intent.status in {"pending", "created"} and owned is None
+                and self._nfq2_intent_matches(session, intent, event)):
+            self.store.mark_intent_refused(intent, origin="client_abort", code=PREFIX + reason)
+        self.logger.warning("[OMS-NFQ2] %s symbol=%s account=%s intent=%s owned=%s", reason,
+                            event.payload.symbol, event.payload.broker_account_name, intent.id, owned is not None)
+
     def _nfq2_pre_submit(self, session, event, intent):
-        if not self._nfq2_applies(event):
-            return False
-        md = event.payload.metadata
-        if not md.get("fanout_slot_id") or not md.get("fanout_segment_id"):
-            # Legacy unbound entries cannot be retained safely; their existing pricer owns refusal.
-            return False
-        reading = self._nfq2_reading(event.payload.symbol)
         uncertain = next((h for h in self._nfq2_holds.values() if h.phase == "uncertain"
+                          and event.payload.strategy_code == "schwab_1m_v2"
+                          and event.payload.intent_type == "open" and event.payload.side == "buy"
                           and h.event.payload.symbol == event.payload.symbol
                           and h.event.payload.broker_account_name == event.payload.broker_account_name), None)
         if uncertain is not None:
-            self.store.mark_intent_refused(intent, origin="client_abort", code=PREFIX + "dispatch_uncertain")
+            self._nfq2_refuse_pre_wire(session, event, intent, "dispatch_uncertain")
             self._nfq2_feedback(session, uncertain.event, "could_not_tell", "dispatch_uncertain")
             return True
+        if not self._nfq2_applies(event):
+            return False
+        if not self._nfq2_bound_identity(event) or not self._nfq2_segment_current(session, event):
+            # Drain only this exact pre-wire intent; never infer identity or retire another owner.
+            self._nfq2_refuse_pre_wire(session, event, intent, "legacy_identity_unproven")
+            return True
+        reading = self._nfq2_reading(event.payload.symbol)
         hold = self._nfq2_holds.get(self._nfq2_key(event))
         if reading.fresh:
             return False
@@ -211,6 +267,7 @@ class EhFreshPriceMixin:
             hold.event = event.model_copy(deep=True)
             hold.intent_id = intent.id
             hold.phase, hold.token = "held", ""
+            hold.dispatch = None
         intent.status = "held"
         self._nfq2_save(session, hold)
         self._nfq2_feedback(session, event, "held_no_fresh_quote", "held")
@@ -225,7 +282,8 @@ class EhFreshPriceMixin:
             for row in rows:
                 p = row.payload
                 hold = EhHold(TradeIntentEvent.model_validate(p["event"]), row.id, UUID(p["intent_id"]),
-                              "uncertain" if p["phase"] in {"dispatching", "uncertain"} else "held")
+                              "uncertain" if p["phase"] in {"dispatching", "uncertain"} else "held",
+                              dispatch=deepcopy(p.get("dispatch")))
                 self._nfq2_holds[self._nfq2_key(hold.event)] = hold
                 reason = self._nfq2_reason(session, hold)
                 if reason == "dispatch_uncertain":
@@ -318,6 +376,10 @@ class EhFreshPriceMixin:
             verdicts = await self._run_db(lambda session: [
                 (key, before, self._nfq2_reason(session, before)) for key, before in snapshots], commit=False)
             for key, before, reason in verdicts:
+                if (reason == "dispatch_uncertain" and before.phase == "uncertain"
+                        and key not in busy and self._nfq2_same(self._nfq2_holds.get(key), before)):
+                    await self._recover_nfq2_uncertain(key, before)
+                    continue
                 if (not reason or key in busy or not self._nfq2_same(self._nfq2_holds.get(key), before)
                         or reason == "dispatch_uncertain" and before.phase == "uncertain"):
                     continue
@@ -339,6 +401,147 @@ class EhFreshPriceMixin:
         except Exception:
             self.logger.exception("[OMS-NFQ2] periodic_proof_failed; holds remain blocking")
 
+    def _nfq2_recovery_order(self, session, hold, *, lock=False, allow_fills=False):
+        """Bind a read to exact durable intent/attempt evidence, never an order-age/status label."""
+        if hold.dispatch is not None and not isinstance(hold.dispatch, dict):
+            return None
+        dispatch = hold.dispatch or {}
+        if dispatch.get("fill_seen"):
+            return None
+        md, payload = hold.event.payload.metadata, hold.event.payload
+        client = dispatch.get("client_order_id") or md.get("fanout_attempt_id")
+        if not client:
+            return None
+        statement = select(BrokerOrder).where(BrokerOrder.client_order_id == client)
+        order = session.scalar(statement.with_for_update() if lock else statement)
+        if order is None:
+            return None
+        intent = session.get(TradeIntent, order.intent_id) if order.intent_id else None
+        account, strategy = session.get(BrokerAccount, order.broker_account_id), session.get(Strategy, order.strategy_id)
+        if intent is None or account is None or strategy is None:
+            return None
+        imd, omd = (intent.payload or {}).get("metadata", {}), order.payload or {}
+        if not isinstance(imd, dict) or not isinstance(omd, dict):
+            return None
+        event_id, generation = (intent.payload or {}).get("event_id"), imd.get("nfq2_retry_token")
+        try:
+            dispatched = hold.event.model_copy(deep=True)
+            dispatched.event_id = UUID(event_id)
+        except (TypeError, ValueError, AttributeError):
+            return None
+        identity = {"event_id": event_id, "client_order_id": client,
+                    "generation": generation, "hold_id": str(hold.row_id)}
+        if (not generation or imd.get("nfq2_hold_id") != str(hold.row_id)
+                or self._build_client_order_id(dispatched) != client
+                or dispatch and any(dispatch.get(key) != value for key, value in identity.items())
+                or strategy.code != payload.strategy_code or strategy.code != "schwab_1m_v2"
+                or account.name != payload.broker_account_name or order.symbol != payload.symbol
+                or order.side != payload.side or order.side != "buy" or order.quantity != payload.quantity
+                or not order.quantity.is_finite() or order.quantity <= 0
+                or intent.strategy_id != order.strategy_id or intent.broker_account_id != order.broker_account_id
+                or intent.symbol != order.symbol or intent.side != "buy" or intent.intent_type != "open"
+                or intent.quantity != order.quantity or omd.get("fanout_attempt_id") != client
+                or omd.get("nfq2_retry_token") != generation or omd.get("nfq2_hold_id") != str(hold.row_id)
+                or any(not md.get(key) or imd.get(key) != md[key] or omd.get(key) != md[key]
+                       for key in ("fanout_slot_id", "fanout_segment_id"))
+                or imd.get("nfq2_generation", "") != md.get("nfq2_generation", "")
+                or omd.get("nfq2_generation", "") != md.get("nfq2_generation", "")
+                or (not allow_fills and replacement_has_fills(session, order))
+                or replacement_unknown_fill_report(session, order)):
+            return None
+        local = local_rpg_abort_proof(session, order) is not None if order.status == "aborted" else False
+        if not local and not order.broker_order_id and account.provider != "webull":
+            return None
+        return {"order_id": str(order.id), "intent_id": str(intent.id), "dispatch": identity,
+                "client_order_id": client, "broker_order_id": order.broker_order_id or "",
+                "broker_account_name": account.name, "strategy_code": strategy.code,
+                "symbol": order.symbol, "quantity": str(order.quantity), "local_no_wire": local,
+                "order_type": order.order_type, "time_in_force": order.time_in_force,
+                "metadata": {key: md.get(key, "") for key in
+                             ("fanout_slot_id", "fanout_segment_id", "nfq2_generation")}}
+
+    def _nfq2_commit_recovery(self, session, before, identity, readback):
+        # Re-read after network yield, lock the exact parent, and CAS the same hold generation.
+        current = self._nfq2_recovery_order(session, before, lock=True)
+        if current != identity or self._nfq2_reason(session, before) != "dispatch_uncertain":
+            return None
+        after = self._nfq2_copy(before)
+        after.dispatch = deepcopy(identity["dispatch"])
+        if readback is not None and readback.outcome == "fills":
+            filled = readback.cumulative_filled
+            if filled is None or not filled.is_finite() or not 0 < filled <= before.event.payload.quantity:
+                return None
+            after.dispatch["fill_seen"] = str(filled)
+            return after if self._nfq2_transition(session, before, after) else None
+        empty = bool(readback is not None and isinstance(readback.cumulative_filled, Decimal)
+                     and readback.cumulative_filled.is_finite() and readback.cumulative_filled == Decimal(0)
+                     and (identity["broker_order_id"] or readback.broker_order_id)
+                     and (readback.can_replace and readback.broker_status in {"CANCELED", "CANCELLED"}
+                          or readback.outcome == "rejected_empty"
+                          and readback.broker_status == "REJECTED"))
+        if not identity["local_no_wire"] and not empty:
+            return None
+        after.phase, after.token = "retired", ""
+        after.dispatch["recovery"] = {"source": "client_audit" if identity["local_no_wire"] else "broker_readback",
+            "order_id": identity["order_id"],
+            "broker_order_id": identity["broker_order_id"] or (readback.broker_order_id if readback else ""),
+            "status": "aborted" if identity["local_no_wire"] else readback.broker_status,
+            "filled_quantity": "0", "observed_at": self._nfq_now().isoformat()}
+        if not self._nfq2_transition(session, before, after, reason="dispatch_proven_clear"):
+            return None
+        if not identity["local_no_wire"]:
+            order = session.get(BrokerOrder, UUID(identity["order_id"]))
+            order.status = "rejected" if readback.outcome == "rejected_empty" else "cancelled"
+            order.broker_order_id = identity["broker_order_id"] or readback.broker_order_id
+            dispatched_intent = session.get(TradeIntent, order.intent_id)
+            dispatched_intent.status = order.status
+            session.add(BrokerOrderEvent(order_id=order.id, event_type=order.status, event_source="broker",
+                event_at=self._nfq_now(), payload={"client_order_id": order.client_order_id,
+                    "broker_order_id": order.broker_order_id, "filled_quantity": "0",
+                    "metadata": {**identity["metadata"], "nfq2_recovery_generation": identity["dispatch"]["generation"],
+                                 "nfq2_recovery_hold_id": str(before.row_id)},
+                    "reason": "nfq2_exact_terminal_zero_readback"}))
+        return after
+
+    async def _recover_nfq2_uncertain(self, key, before):
+        busy = self.__dict__.setdefault("_eh_price_hold_inflight", set())
+        if key in busy or not self._nfq2_same(self._nfq2_holds.get(key), before):
+            return
+        busy.add(key)
+        try:
+            identity = await self._run_db(lambda session: self._nfq2_recovery_order(session, before), commit=False)
+            if identity is None:
+                return
+            readback = None
+            if not identity["local_no_wire"]:
+                reader = getattr(self.broker_adapter, "read_atr_resting_buy_after_cancel", None)
+                if reader is None:
+                    return
+                request = OrderRequest(client_order_id=identity["client_order_id"],
+                    broker_account_name=identity["broker_account_name"], strategy_code=identity["strategy_code"],
+                    symbol=identity["symbol"], side="buy", intent_type="cancel", quantity=Decimal(identity["quantity"]),
+                    reason="nfq2_read_only_recovery", order_type=identity["order_type"],
+                    time_in_force=identity["time_in_force"], metadata={**identity["metadata"],
+                        "broker_order_id": identity["broker_order_id"], "resting_entry_cancel": "true",
+                        "atr_reprice_identity": "webull_client_order_id", "nfq2_recovery_read_only": "true"})
+                readback = await asyncio.wait_for(reader(request), timeout=2.0)
+                if (not isinstance(readback, AtrBuyReadback)
+                        or readback.broker_order_id and identity["broker_order_id"]
+                        and readback.broker_order_id != identity["broker_order_id"]):
+                    return
+            if not self._nfq2_same(self._nfq2_holds.get(key), before):
+                return
+            after = await self._run_db(lambda session: self._nfq2_commit_recovery(session, before, identity, readback))
+            current = self._nfq2_holds.get(key)
+            if after is not None and self._nfq2_same(current, before):
+                current.phase, current.token, current.dispatch = after.phase, after.token, after.dispatch
+                if after.phase == "retired":
+                    self._nfq2_holds.pop(key, None)
+        except Exception:
+            self.logger.exception("[OMS-NFQ2] recovery_unproven; exact owner remains blocking")
+        finally:
+            busy.discard(key)
+
     def _claim_nfq2_retry(self, event):
         md = event.payload.metadata
         token = md.get("nfq2_retry_token")
@@ -347,7 +550,10 @@ class EhFreshPriceMixin:
         hold = self._nfq2_holds.get(self._nfq2_key(event))
         if (hold is None or hold.phase != "queued" or hold.token != token
                 or str(hold.row_id) != md.get("nfq2_hold_id")
-                or hold.event.payload.metadata.get("fanout_segment_id") != md.get("fanout_segment_id")):
+                or hold.event.payload.metadata.get("fanout_segment_id") != md.get("fanout_segment_id")
+                or any(getattr(event.payload, key) != getattr(hold.event.payload, key) for key in
+                       ("strategy_code", "broker_account_name", "symbol", "side", "intent_type", "quantity"))
+                or md.get("nfq2_generation", "") != hold.event.payload.metadata.get("nfq2_generation", "")):
             return False
         with self.session_factory() as session:
             reason = self._nfq2_reason(session, hold)
@@ -360,14 +566,19 @@ class EhFreshPriceMixin:
                     self._nfq2_retire(session, hold, reason, outcome=outcome)
                 session.commit()
                 return False
-            hold.phase = "dispatching"
+            before = self._nfq2_copy(hold)
+            after = self._nfq2_copy(hold, phase="dispatching")
             predecessor = hold.event.payload.metadata.get("fanout_attempt_id", "")
             event.payload.metadata["fanout_predecessor_attempt_id"] = predecessor
             event.payload.metadata["fanout_attempt_id"] = self._build_client_order_id(event)
-            hold.event.payload.metadata["fanout_attempt_id"] = event.payload.metadata["fanout_attempt_id"]
-            self._nfq2_save(session, hold)
+            after.event.payload.metadata["fanout_attempt_id"] = event.payload.metadata["fanout_attempt_id"]
+            after.dispatch = {"event_id": str(event.event_id), "client_order_id": self._build_client_order_id(event),
+                              "generation": token, "hold_id": str(hold.row_id)}
+            if not self._nfq2_transition(session, before, after):
+                return False
             self._nfq2_feedback(session, event, "queued", "retry_claimed")
             session.commit()
+            hold.phase, hold.event, hold.dispatch = after.phase, after.event, after.dispatch
         # Held pricing is trusted only after the serial CAS, never from an incoming metadata claim.
         return True
 
@@ -388,10 +599,46 @@ class EhFreshPriceMixin:
             if completed:
                 coid = self._build_client_order_id(event)
                 order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == coid))
-                origin = "client" if order is not None and local_rpg_abort_proof(session, order) else "broker"
-                outcome = broker_outcome(order.status, origin) if order is not None else "rejected_client_abort"
-                self._nfq2_retire(session, hold, "pipeline_completed", outcome=outcome)
-            else:
-                hold.phase, hold.token = "uncertain", ""
-                self._nfq2_save(session, hold)
+                refusals = session.scalars(select(TradeIntent).where(
+                    TradeIntent.payload["event_id"].as_string() == str(event.event_id))).all()
+                prewire = [row for row in refusals if row.status == "rejected"
+                    and (row.payload or {}).get("refusal_origin") == "client_abort"
+                    and (row.payload or {}).get("refusal_code") == PREFIX + "legacy_identity_unproven"
+                    and (row.payload or {}).get("metadata", {}).get("nfq2_retry_token") == hold.token
+                    and (row.payload or {}).get("metadata", {}).get("nfq2_hold_id") == str(hold.row_id)
+                    and self._nfq2_intent_matches(session, row, event)
+                    and all((row.payload or {}).get("metadata", {}).get(key) == event.payload.metadata.get(key)
+                            for key in ("fanout_slot_id", "fanout_segment_id", "nfq2_generation"))
+                    and session.scalar(select(BrokerOrder.id).where(BrokerOrder.intent_id == row.id).limit(1)) is None]
+                if order is None and len(prewire) == 1:
+                    self._nfq2_finish_transition(session, hold, "retired", reason="legacy_identity_unproven")
+                    session.commit()
+                    return
+                identity = self._nfq2_recovery_order(session, hold, allow_fills=True)
+                wire = session.scalar(select(BrokerOrderEvent.id).where(
+                    BrokerOrderEvent.order_id == order.id, BrokerOrderEvent.event_source == "broker",
+                    BrokerOrderEvent.event_type.in_({"accepted", "filled", "partially_filled"}),
+                    BrokerOrderEvent.payload["client_order_id"].as_string() == coid,
+                    BrokerOrderEvent.payload["broker_order_id"].as_string() == order.broker_order_id,
+                ).limit(1)) if order is not None and order.broker_order_id else None
+                if identity is not None and (identity["local_no_wire"] or wire is not None
+                                              or replacement_has_fills(session, order)):
+                    origin = "client" if identity["local_no_wire"] else "broker"
+                    outcome = broker_outcome(order.status, origin)
+                    if outcome in {"filled", "partially_filled", "submitted", "working", "rejected_client_abort"}:
+                        self._nfq2_finish_transition(session, hold, "retired", reason="pipeline_completed", outcome=outcome)
+                        session.commit()
+                        return
+            if hold.phase == "dispatching":
+                self._nfq2_finish_transition(session, hold, "uncertain")
             session.commit()
+
+    def _nfq2_finish_transition(self, session, hold, phase, *, reason=None, outcome="rejected_client_abort"):
+        after = self._nfq2_copy(hold, phase=phase, token="")
+        if not self._nfq2_transition(session, hold, after, reason=reason, outcome=outcome):
+            # A failed durable CAS is not permission to overwrite another generation.
+            hold.phase, hold.token = "uncertain", ""
+            return
+        hold.phase, hold.token = after.phase, after.token
+        if phase == "retired":
+            self._nfq2_holds.pop(self._nfq2_key(hold.event), None)

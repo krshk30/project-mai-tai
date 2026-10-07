@@ -1,0 +1,19 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_exact_durable_identity_mismatch_blocks_without_read[dispatch_generation] _
+tests/unit/test_nfq2_recovery_legacy.py:166: in test_exact_durable_identity_mismatch_blocks_without_read
+    assert held.phase == "uncertain" and not adapter.calls
+E   AssertionError: assert ('uncertain' == 'uncertain'
+E     
+E       uncertain and not [OrderRequest(client_order_id='schwab_1m_v2-AMOD-open-aaf1e1677ef7', broker_account_name='paper:schwab_1m_v2', strateg...identity': 'webull_client_order_id', 'nfq2_recovery_read_only': 'true'}, order_type='stop_limit', time_in_force='day')])
+E    +  where [OrderRequest(client_order_id='schwab_1m_v2-AMOD-open-aaf1e1677ef7', broker_account_name='paper:schwab_1m_v2', strateg...identity': 'webull_client_order_id', 'nfq2_recovery_read_only': 'true'}, order_type='stop_limit', time_in_force='day')] = <test_nfq2_recovery_legacy.ReadOnlyBroker object at 0x10c4a3fb0>.calls
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:42:52,364 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:42:52,368 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[dispatch_generation]
+1 failed in 0.27s
+RESIDUAL_MUTATION R2 pytest_rc=1 RED

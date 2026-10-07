@@ -1,0 +1,38 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_nfq2_periodic_proof_runs_off_loop_and_is_not_tick_rate_driven ______
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10cbce870>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d5112b0>
+
+    @pytest.mark.asyncio
+    async def test_nfq2_periodic_proof_runs_off_loop_and_is_not_tick_rate_driven(service, monkeypatch):
+        hold(service, biya())
+        loop_thread = get_ident()
+        threads = []
+        reason = service._nfq2_reason
+    
+        def measured(session, active):
+            threads.append(get_ident())
+            return reason(session, active)
+    
+        monkeypatch.setattr(service, "_nfq2_reason", measured)
+        await service._evaluate_nfq2_holds()
+        for _ in range(1000):
+            await service._evaluate_nfq2_holds("OTHER")
+            await service._evaluate_nfq2_holds()
+>       assert threads == [threads[0]] and threads[0] != loop_thread
+E       assert ([6111784960, ...11784960, ...] == [6111784960]
+E         
+E         Left contains 1000 more items, first extra item: 6111784960
+E         Use -v to get more diff)
+
+tests/unit/test_nfq2_tick_path.py:80: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:44:57,343 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_tick_path.py::test_nfq2_periodic_proof_runs_off_loop_and_is_not_tick_rate_driven
+1 failed in 0.80s
+MUTATION N16 pytest_rc=1 RED

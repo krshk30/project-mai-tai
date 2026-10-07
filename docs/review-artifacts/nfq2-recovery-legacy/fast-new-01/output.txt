@@ -1,0 +1,559 @@
+FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF....................F                [100%]
+=================================== FAILURES ===================================
+_ test_recorded_terminal_zero_exact_binding_retires_without_resend[schwab-False-False] _
+tests/unit/test_nfq2_recovery_legacy.py:96: in test_recorded_terminal_zero_exact_binding_retires_without_resend
+    held, dispatched, oid, adapter = await uncertain(service, broker, client_only=client_only, legacy=legacy)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:32,915 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:32,920 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_recorded_terminal_zero_exact_binding_retires_without_resend[webull-False-False] _
+tests/unit/test_nfq2_recovery_legacy.py:96: in test_recorded_terminal_zero_exact_binding_retires_without_resend
+    held, dispatched, oid, adapter = await uncertain(service, broker, client_only=client_only, legacy=legacy)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:32,975 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:32,979 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_recorded_terminal_zero_exact_binding_retires_without_resend[webull-True-False] _
+tests/unit/test_nfq2_recovery_legacy.py:96: in test_recorded_terminal_zero_exact_binding_retires_without_resend
+    held, dispatched, oid, adapter = await uncertain(service, broker, client_only=client_only, legacy=legacy)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,016 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,021 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_recorded_terminal_zero_exact_binding_retires_without_resend[schwab-False-True] _
+tests/unit/test_nfq2_recovery_legacy.py:96: in test_recorded_terminal_zero_exact_binding_retires_without_resend
+    held, dispatched, oid, adapter = await uncertain(service, broker, client_only=client_only, legacy=legacy)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,079 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,082 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_recorded_terminal_zero_exact_binding_retires_without_resend[webull-False-True] _
+tests/unit/test_nfq2_recovery_legacy.py:96: in test_recorded_terminal_zero_exact_binding_retires_without_resend
+    held, dispatched, oid, adapter = await uncertain(service, broker, client_only=client_only, legacy=legacy)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,112 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,115 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+______ test_exact_durable_identity_mismatch_blocks_without_read[account] _______
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,146 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,149 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+______ test_exact_durable_identity_mismatch_blocks_without_read[strategy] ______
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,178 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,182 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_______ test_exact_durable_identity_mismatch_blocks_without_read[symbol] _______
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,214 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,218 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+________ test_exact_durable_identity_mismatch_blocks_without_read[side] ________
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,251 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,254 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+______ test_exact_durable_identity_mismatch_blocks_without_read[quantity] ______
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,284 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,289 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+________ test_exact_durable_identity_mismatch_blocks_without_read[slot] ________
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,318 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,321 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+______ test_exact_durable_identity_mismatch_blocks_without_read[segment] _______
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,351 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,354 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_______ test_exact_durable_identity_mismatch_blocks_without_read[client] _______
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,386 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,389 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_______ test_exact_durable_identity_mismatch_blocks_without_read[event] ________
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,421 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,425 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_____ test_exact_durable_identity_mismatch_blocks_without_read[generation] _____
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,455 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,459 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+________ test_exact_durable_identity_mismatch_blocks_without_read[hold] ________
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,489 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,492 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+__ test_exact_durable_identity_mismatch_blocks_without_read[intent_quantity] ___
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,522 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,525 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+___ test_exact_durable_identity_mismatch_blocks_without_read[intent_account] ___
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,556 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,559 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_ test_exact_durable_identity_mismatch_blocks_without_read[dispatch_generation] _
+tests/unit/test_nfq2_recovery_legacy.py:122: in test_exact_durable_identity_mismatch_blocks_without_read
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,588 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,591 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_______ test_unproven_or_filled_body_never_releases[missing_fill-schwab] _______
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,620 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,625 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_______ test_unproven_or_filled_body_never_releases[missing_fill-webull] _______
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,654 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,658 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_________ test_unproven_or_filled_body_never_releases[unknown-schwab] __________
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,689 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,694 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_________ test_unproven_or_filled_body_never_releases[unknown-webull] __________
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,764 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,768 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_________ test_unproven_or_filled_body_never_releases[working-schwab] __________
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,799 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,803 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_________ test_unproven_or_filled_body_never_releases[working-webull] __________
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,836 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,839 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+___________ test_unproven_or_filled_body_never_releases[ack-schwab] ____________
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,870 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,873 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+___________ test_unproven_or_filled_body_never_releases[ack-webull] ____________
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,907 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,912 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_________ test_unproven_or_filled_body_never_releases[wrong_id-schwab] _________
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,944 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,948 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_________ test_unproven_or_filled_body_never_releases[wrong_id-webull] _________
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:33,983 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:33,988 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+______ test_unproven_or_filled_body_never_releases[positive_fill-schwab] _______
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:34,024 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:34,028 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+______ test_unproven_or_filled_body_never_releases[positive_fill-webull] _______
+tests/unit/test_nfq2_recovery_legacy.py:159: in test_unproven_or_filled_body_never_releases
+    held, _, _, adapter = await uncertain(service, broker)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:34,060 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:34,063 INFO [oms-risk] [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AIXI account=paper:orb slot=d71c3637-d255-5aa0-8a2c-36e63e9be44c outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+________ test_readback_positive_fill_is_sticky_across_zero_and_restart _________
+tests/unit/test_nfq2_recovery_legacy.py:182: in test_readback_positive_fill_is_sticky_across_zero_and_restart
+    held, _, _, adapter = await uncertain(service)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:34,096 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:34,102 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+____________ test_post_read_durable_races_never_release[generation] ____________
+tests/unit/test_nfq2_recovery_legacy.py:198: in test_post_read_durable_races_never_release
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:34,133 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:34,137 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_____________ test_post_read_durable_races_never_release[quantity] _____________
+tests/unit/test_nfq2_recovery_legacy.py:198: in test_post_read_durable_races_never_release
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:34,167 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:34,170 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+___________ test_post_read_durable_races_never_release[fill_report] ____________
+tests/unit/test_nfq2_recovery_legacy.py:198: in test_post_read_durable_races_never_release
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:34,203 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:34,206 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+______ test_post_read_durable_races_never_release[malformed_fill_report] _______
+tests/unit/test_nfq2_recovery_legacy.py:198: in test_post_read_durable_races_never_release
+    held, _, oid, adapter = await uncertain(service)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:34,238 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:34,241 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+_______ test_cancel_ack_without_explicit_zero_does_not_finish_or_recover _______
+tests/unit/test_nfq2_recovery_legacy.py:320: in test_cancel_ack_without_explicit_zero_does_not_finish_or_recover
+    held, event, oid, adapter = await uncertain(service)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:65: in uncertain
+    account = intent.broker_account
+              ^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TradeIntent' object has no attribute 'broker_account'. Did you mean: 'broker_account_id'?
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:39:34,735 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:39:34,740 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_recorded_terminal_zero_exact_binding_retires_without_resend[schwab-False-False]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_recorded_terminal_zero_exact_binding_retires_without_resend[webull-False-False]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_recorded_terminal_zero_exact_binding_retires_without_resend[webull-True-False]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_recorded_terminal_zero_exact_binding_retires_without_resend[schwab-False-True]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_recorded_terminal_zero_exact_binding_retires_without_resend[webull-False-True]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[account]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[strategy]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[symbol]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[side]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[quantity]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[slot]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[segment]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[client]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[event]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[generation]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[hold]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[intent_quantity]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[intent_account]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_exact_durable_identity_mismatch_blocks_without_read[dispatch_generation]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[missing_fill-schwab]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[missing_fill-webull]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[unknown-schwab]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[unknown-webull]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[working-schwab]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[working-webull]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[ack-schwab]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[ack-webull]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[wrong_id-schwab]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[wrong_id-webull]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[positive_fill-schwab]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_unproven_or_filled_body_never_releases[positive_fill-webull]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_readback_positive_fill_is_sticky_across_zero_and_restart
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_post_read_durable_races_never_release[generation]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_post_read_durable_races_never_release[quantity]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_post_read_durable_races_never_release[fill_report]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_post_read_durable_races_never_release[malformed_fill_report]
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_cancel_ack_without_explicit_zero_does_not_finish_or_recover
+37 failed, 20 passed in 2.61s

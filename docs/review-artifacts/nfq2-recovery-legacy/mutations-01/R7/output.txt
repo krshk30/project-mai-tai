@@ -1,0 +1,47 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_recovery_busy_fence_sends_one_read_and_never_queues ___________
+tests/unit/test_nfq2_recovery_legacy.py:95: in recover
+    await service._recover_nfq2_uncertain(service._nfq2_key(held.event), service._nfq2_copy(held))
+<nfq2-residual-mutation-R7>:23: in _recover_nfq2_uncertain
+    ???
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+tests/unit/test_nfq2_recovery_legacy.py:361: in blocked
+    await release.wait()
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/unit/test_nfq2_recovery_legacy.py:367: in test_recovery_busy_fence_sends_one_read_and_never_queues
+    await asyncio.wait_for(recover(service, held), timeout=0.1)
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:42:57,104 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:42:57,108 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_recovery_busy_fence_sends_one_read_and_never_queues
+1 failed in 0.39s
+RESIDUAL_MUTATION R7 pytest_rc=1 RED
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/logging/__init__.py", line 1163, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 1859, in call_exception_handler
+    self.default_exception_handler(context)
+  File "/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 1833, in default_exception_handler
+    logger.error('\n'.join(log_lines), exc_info=exc_info)
+Message: "Task was destroyed but it is pending!\ntask: <Task pending name='Task-2' coro=<recover() running at /private/tmp/codex-nfq2-on-slotclear1-linear-20261007/tests/unit/test_nfq2_recovery_legacy.py:95> wait_for=<Future pending cb=[Task.task_wakeup()]>>"
+Arguments: ()

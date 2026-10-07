@@ -1,0 +1,49 @@
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+______ test_biya_ten_second_price_is_fresh_and_never_gets_held_band[9999] ______
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10d04c170>
+age = 9999
+
+    @pytest.mark.parametrize("age", [0, 9999, 10000])
+    def test_biya_ten_second_price_is_fresh_and_never_gets_held_band(service, age):
+        quote(service, "2.56", age)
+        event = biya(reactive=True)
+        with service.session_factory() as session:
+            intent = type("Intent", (), {"status": "created", "payload": {}, "id": UUID(int=1)})()
+>           assert not service._nfq2_pre_submit(session, event, intent)
+E           AssertionError: assert not True
+E            +  where True = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10c66fbf0>, TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch...slot': 'resting', 'fanout_attempt_id': 'schwab_1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM'})), <test_nfq2_eh_fresh_price.Intent object at 0x10d1b33b0>)
+E            +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10d04c170>._nfq2_pre_submit
+
+tests/unit/test_nfq2_eh_fresh_price.py:180: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:44:29,479 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=2.56 cache_age_ms=9999.0 source=ask timestamp=2026-10-07 12:19:50.440000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=2.56 cache_age_ms=9999.0 source=ask timestamp=2026-10-07 12:19:50.440000+00:00
+_____ test_biya_ten_second_price_is_fresh_and_never_gets_held_band[10000] ______
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10d1eae40>
+age = 10000
+
+    @pytest.mark.parametrize("age", [0, 9999, 10000])
+    def test_biya_ten_second_price_is_fresh_and_never_gets_held_band(service, age):
+        quote(service, "2.56", age)
+        event = biya(reactive=True)
+        with service.session_factory() as session:
+            intent = type("Intent", (), {"status": "created", "payload": {}, "id": UUID(int=1)})()
+>           assert not service._nfq2_pre_submit(session, event, intent)
+E           AssertionError: assert not True
+E            +  where True = _nfq2_pre_submit(<sqlalchemy.orm.session.Session object at 0x10d1ea5d0>, TradeIntentEvent(event_id=UUID('4497c490-b501-413b-9552-c0e51c0a1b3f'), event_type='trade_intent', source_service='sch...slot': 'resting', 'fanout_attempt_id': 'schwab_1m_v2-BIYA-open-5cbff1fa89d8', 'order_type': 'limit', 'session': 'AM'})), <test_nfq2_eh_fresh_price.Intent object at 0x10d1eb620>)
+E            +    where _nfq2_pre_submit = <project_mai_tai.oms.service.OmsRiskService object at 0x10d1eae40>._nfq2_pre_submit
+
+tests/unit/test_nfq2_eh_fresh_price.py:180: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:44:29,531 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=2.56 cache_age_ms=10000.0 source=ask timestamp=2026-10-07 12:19:50.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=2.56 cache_age_ms=10000.0 source=ask timestamp=2026-10-07 12:19:50.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_ten_second_price_is_fresh_and_never_gets_held_band[9999]
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_ten_second_price_is_fresh_and_never_gets_held_band[10000]
+2 failed, 1 passed in 0.32s
+MUTATION N1 pytest_rc=1 RED

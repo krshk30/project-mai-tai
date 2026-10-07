@@ -1,0 +1,24 @@
+{
+  "cwd": "/tmp/codex-nfq2-on-slotclear1-linear-20261007",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "-m",
+    "pytest",
+    "tests/unit/test_nfq2_recovery_legacy.py",
+    "-q",
+    "--tb=short"
+  ],
+  "head": "c6004bd59f06fd856b1a8bb5a1ff6d96cbe094dc",
+  "tree": "90a37f8b3e5f0de83b7c86886b968f9ca1017570",
+  "status_before": "M src/project_mai_tai/oms/eh_fresh_price.py\n?? docs/review-artifacts/nfq2-recovery-legacy/\n?? tests/unit/test_nfq2_recovery_legacy.py",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T20:39:43.159827+00:00",
+  "end_utc": "2026-10-07T20:39:46.220966+00:00",
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 90.0,
+  "output_sha256": "e526025ef7f63c077841022dd13c3d8ffb25c08ff639e5c3ad5bb7f0c8f4e336",
+  "failed_names": []
+}

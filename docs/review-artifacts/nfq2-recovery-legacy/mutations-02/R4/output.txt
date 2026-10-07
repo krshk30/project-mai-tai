@@ -1,0 +1,21 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_post_read_durable_races_never_release[generation] ____________
+tests/unit/test_nfq2_recovery_legacy.py:235: in test_post_read_durable_races_never_release
+    assert held.phase == "uncertain"
+E   AssertionError: assert 'retired' == 'uncertain'
+E     
+E     - uncertain
+E     + retired
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 16:43:27,839 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 16:43:27,844 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 16:43:27,854 INFO [oms-risk] [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=rejected_client_abort reason=dispatch_proven_clear ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+INFO     oms-risk:eh_fresh_price.py:130 [OMS-NFQ2] symbol=AMOD account=paper:schwab_1m_v2 slot=21d8b5db-ec1d-5e59-aecb-1996451474a9 outcome=rejected_client_abort reason=dispatch_proven_clear ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_recovery_legacy.py::test_post_read_durable_races_never_release[generation]
+1 failed in 0.29s
+RESIDUAL_MUTATION R4 pytest_rc=1 RED
