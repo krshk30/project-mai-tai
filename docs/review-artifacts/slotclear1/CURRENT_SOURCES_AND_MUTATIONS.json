@@ -1,0 +1,310 @@
+{
+  "baseline": "994f08aee2c35b3809b3c3384e0d8628807dcfb7",
+  "frozen_candidate": "95cfbae86c737b522051f6ff57c5b9e285cf55ef",
+  "frozen_tree": "e085678096f55ef7634c0cc170d065eb56a43769",
+  "runtime_equals_d9ac": true,
+  "sources": [
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/ops/health/expected_flags.json",
+      "sha256": "3a04d287c90ffee9ab79d9aaa344278fea02c27f97e55c940118a7b77f391cde"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/src/project_mai_tai/oms/service.py",
+      "sha256": "01526dd693330ea7c7a46ad585b256d4b95c30a251206920aa2ed8a747336ada"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/src/project_mai_tai/services/schwab_1m_v2_bot.py",
+      "sha256": "5981527c464f23285b6b2cf6dc309a6f95911c7f99816e8cb1a602ab72fe5b2b"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/src/project_mai_tai/settings.py",
+      "sha256": "8c93038d4ac69a33cf21abc5039d06cafd1bd73f6a705d16b774623ca81154c9"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/src/project_mai_tai/strategy_core/schwab_1m_v2.py",
+      "sha256": "ac7cbecc199aeaa70fb09fa6e4ae6567fe87c6de0d2f5c1ba94a95b6842c8aa2"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/tests/unit/test_all_on_pm.py",
+      "sha256": "1da68e10986b954fcfac1e8946d97cb772664212b0fc7e2b86195e3f3f621ceb"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/tests/unit/test_expected_flags_check.py",
+      "sha256": "2ca25c631717ff3cca4cb7749fa93cec9d26831c750e069945d564766f53cd84"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/tests/unit/test_keeprest1.py",
+      "sha256": "08afcb717f0f6c5e8f4fe97857ac25a0d01a99807b31b34964df04aed42d1682"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/tests/unit/test_mirrorhold1_retained_hold.py",
+      "sha256": "7f3854d4a5ff0dcd8c5a569013bd81c273f0e8617a6f9eda9ec6c9bf65f17e33"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/tests/unit/test_pmprint1_tonight_flags.py",
+      "sha256": "75ddd3338a30c6b82af80f41274ac067b908f15d75ebd11b93c09c624fccf4be"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/tests/unit/test_slotclear1_fresh_flip.py",
+      "sha256": "a2ccac573751a1dbdeeb0d6b542630f1e1db86feba6066c37e87b34fed21b0cb"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/tests/unit/test_slotclear1_fresh_sell.py",
+      "sha256": "f73530d6d18a7416b006f7add2857fb0550a755498f7a944189bca5099c0a1db"
+    },
+    {
+      "path": "/Users/velkris/Projects/project-mai-tai-slotclear1-side/tests/unit/test_v2_rule7_block_instrumented.py",
+      "sha256": "75c6b20941bc9987186ae3c7d6504cc195830ae706619f6cadce6af4fb53ea4f"
+    }
+  ],
+  "mutations": [
+    {
+      "control": "S1",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_recorded_bar_with_later_watch_boundary_cannot_become_a_fresh_buy"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "f50205ca233f1824af50b4d1c881b9b75e235df6fee58c92259b2779dd2b666f",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_mutations.py",
+        "S1"
+      ]
+    },
+    {
+      "control": "S2",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_flip.py::test_seed_cap_is_not_permission_to_release_real_or_unknown_ownership[unknown]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "0f1d721fb5174e114e796553d32224149aeab95e4aefc98061f1d6cd2a2cd785",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_mutations.py",
+        "S2"
+      ]
+    },
+    {
+      "control": "S3",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_flip.py::test_seed_cap_is_not_permission_to_release_real_or_unknown_ownership[closed]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "b78003e71724fa69531eb803aabe71aa47e744d3a5f8f4f0b447edc30834f28a",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_mutations.py",
+        "S3"
+      ]
+    },
+    {
+      "control": "S4",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_fresh_exception_never_chases_above_half_percent"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "a57cdc8a36bcfd84a84cd5205019cbe64999bf5e5078c9a6737867c87c810080",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_mutations.py",
+        "S4"
+      ]
+    },
+    {
+      "control": "S5",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[db-seed]",
+        "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[replay]",
+        "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[rest-warmup]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "36df13297f5fb6598c7972b96011eb45f8a56b1e0309d2ef42ad39c1b1eaa1e4",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_mutations.py",
+        "S5"
+      ]
+    },
+    {
+      "control": "S6",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_flip.py::test_fresh_buy_permission_is_revoked_on_scanner_removal"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "d11b090d788f67ee93c6b8548e0d2c66749a5b5ca175b46a0faacb369a8be438",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_mutations.py",
+        "S6"
+      ]
+    },
+    {
+      "control": "S7",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_flip.py::test_recorded_ftft_stale_sell_stays_capped_with_slotclear_flag_on"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "b1662dbb3a1338105698c385f1f0989a45fce2aa0324c82b9e0d5e5b4309cacd",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_mutations.py",
+        "S7"
+      ]
+    },
+    {
+      "control": "F1",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "6b1f4e12bacd828a618f85bf37521637b7f502893bee702c34e447db79526e3c",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F1"
+      ]
+    },
+    {
+      "control": "F2",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[cold_boot]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "c7cdb1478ee194488cbddf44cb98a387cfa750962ea9b3ea5f768b56e1144fb2",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F2"
+      ]
+    },
+    {
+      "control": "F3",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[replay_handler]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "2846d6bd1c072b3ab59181e3d590d4eb9f8b66c50d4dfbafdf8431a29407c443",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F3"
+      ]
+    },
+    {
+      "control": "F4",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[stale_book]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "16ce48732968b08321345dcf480fc3fe11e6d49d7b5e5c8e26976d76686a5931",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F4"
+      ]
+    },
+    {
+      "control": "F5",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[held_qty]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "d4daacd1671d381274c8b5a52c0ec591e4eec22f005e1bbf411178003dd573d7",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F5"
+      ]
+    },
+    {
+      "control": "F6",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "ecaa8c349d997aef406854bddbe0a3a5770f49939297b80ff6b3d2a00d8b65b6",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F6"
+      ]
+    },
+    {
+      "control": "F7",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "174b661955bafff276f1c8d477fd46602877f1565f181f64224ef5a99b0874b7",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F7"
+      ]
+    },
+    {
+      "control": "F8",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_delayed_duplicate_recorded_sell_cannot_retire_the_new_first_rest_owner[300000]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "0dafba2e51e775944bcfa90601cdccfd6c63997de9a2ed4a52c96d7bc8e32b4a",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F8"
+      ]
+    },
+    {
+      "control": "F9",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_keeprest_sell_cancels_existing_order_without_granting_another_slot"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "516d1f7c583d86aecdfe13bdecafac636133dc563fc2554e73b5d6b1794b8e3c",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F9"
+      ]
+    },
+    {
+      "control": "F10",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[gap]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "677587f49e2924b797da2f6d53552f6acb2f09b24dc80680e043d63b9dfffe50",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F10"
+      ]
+    },
+    {
+      "control": "F11",
+      "actual_failed_names": [
+        "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]"
+      ],
+      "head": "d9ac712a64af9187e106ae0f30139affa387e4e8",
+      "raw_sha256": "041b5b7d45e5fe2f894f746a0c3bea89d5fd3eea53ba300d3251162da4ce7665",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_sell_mutations.py",
+        "F11"
+      ]
+    },
+    {
+      "control": "T1",
+      "actual_failed_names": [
+        "docs/review-artifacts/slotclear1/test_both_paths.py::test_present_durable_sxtc_tickets_veto_entry_after_recorded_sell_even_handoff_off"
+      ],
+      "head": "95cfbae86c737b522051f6ff57c5b9e285cf55ef",
+      "raw_sha256": "20644d1c2fa354f7ed3866afd9aabd956aaea7506a5b556a12370efcf73dce78",
+      "command": [
+        "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+        "docs/review-artifacts/slotclear1/check_ticket_veto_mutation.py"
+      ]
+    }
+  ]
+}

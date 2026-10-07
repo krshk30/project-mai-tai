@@ -1,0 +1,15 @@
+independent-review-pin	Require complete independent review coverage	﻿2026-10-07T19:16:38.1122715Z ##[group]Run python scripts/review_pin_gate.py verify \
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1123484Z ^[[36;1mpython scripts/review_pin_gate.py verify \^[[0m
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1123833Z ^[[36;1m  --repo . \^[[0m
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1124090Z ^[[36;1m  --ledger review-pin-ledger \^[[0m
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1124386Z ^[[36;1m  --pr "$PR_NUMBER" \^[[0m
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1124642Z ^[[36;1m  --base "$BASE_SHA" \^[[0m
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1124897Z ^[[36;1m  --head "$HEAD_SHA"^[[0m
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1189264Z shell: /usr/bin/bash -e {0}
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1189529Z env:
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1189719Z   PR_NUMBER: 1113
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1189978Z   BASE_SHA: 994f08aee2c35b3809b3c3384e0d8628807dcfb7
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1190317Z   HEAD_SHA: 95cfbae86c737b522051f6ff57c5b9e285cf55ef
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1190607Z ##[endgroup]
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1851787Z ERROR: REFUSED: PR #1113 head 95cfbae86 has no committed review pin
+independent-review-pin	Require complete independent review coverage	2026-10-07T19:16:38.1937500Z ##[error]Process completed with exit code 1.

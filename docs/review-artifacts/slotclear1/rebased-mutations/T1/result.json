@@ -1,0 +1,22 @@
+{
+  "cwd": "/Users/velkris/Projects/project-mai-tai-slotclear1-side",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "docs/review-artifacts/slotclear1/check_ticket_veto_mutation.py"
+  ],
+  "head": "95cfbae86c737b522051f6ff57c5b9e285cf55ef",
+  "tree": "e085678096f55ef7634c0cc170d065eb56a43769",
+  "status_before": "?? docs/review-artifacts/slotclear1/rebased-candidate-unit/",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T19:12:17.956260+00:00",
+  "end_utc": "2026-10-07T19:12:18.789626+00:00",
+  "returncode": 1,
+  "timed_out": false,
+  "timeout_seconds": 900.0,
+  "output_sha256": "20644d1c2fa354f7ed3866afd9aabd956aaea7506a5b556a12370efcf73dce78",
+  "failed_names": [
+    "docs/review-artifacts/slotclear1/test_both_paths.py::test_present_durable_sxtc_tickets_veto_entry_after_recorded_sell_even_handoff_off"
+  ]
+}

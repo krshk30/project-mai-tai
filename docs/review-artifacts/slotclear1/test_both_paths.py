@@ -75,3 +75,19 @@ def test_present_durable_sxtc_tickets_veto_entry_after_recorded_sell_even_handof
     assert not state.resting_active and not state.webull_resting_active
     print("PRESENT_TICKET_CONTROL: 19 recorded probes; SLOT released; PRIMARY/MIRROR veto; "
           "0 open drafts; durable payloads unchanged; handoff OFF; not historical clearance")
+
+
+def test_recorded_lpcn_fresh_buy_isolated_from_present_sxtc_dki_tickets():
+    strategy, state, clock, _, _ = lpcn()
+    strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = True
+    receipt = json.loads(Path(__file__).with_name("RPG_TICKETS_PRESENT_2026-10-07.json").read_text())
+    tickets = {row["id"]: deepcopy(row["payload"]) for row in receipt["rows"]}
+    assert len(tickets) == 7
+    strategy._rpg_handoffs = deepcopy(tickets)
+    buy(strategy, state)
+    draft = strategy.on_quote("LPCN", crossing(clock))
+    assert draft is not None and draft.metadata["cw_entry_slot"] == "first"
+    assert len(strategy.drain_webull_fanout_intents()) == 1
+    assert strategy.on_quote("LPCN", crossing(clock)) is None
+    assert strategy.drain_webull_fanout_intents() == []
+    assert strategy._rpg_handoffs == tickets

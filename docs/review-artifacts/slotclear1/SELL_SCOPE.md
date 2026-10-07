@@ -1,5 +1,11 @@
 # Fresh SELL source follow-up scope
 
+Historical pre-rebase freeze below. Current-main follow-up and ticket boundaries
+supersede its baseline/supplemental counts: see CURRENT_MAIN_FOLLOWUP.md and
+RECORDED_INPUT_BOUNDARIES.md. Hypothetical empty-ticket replay drafts never prove
+actual both-leg placement. Present restored SXTC tickets veto both legs even
+handoff OFF; no forced ownership release is permitted.
+
 Sole source writer: `codex/slotclear1-fresh-flip-side`, original head
 `d68d25e0bf8cca33d6c22da39fa550b5977b5da3`. No rebase, integration or production write.
 PR #1113 reported base `1a70da19176d2cad486e8518e1c9030f1cabb968` at claim;
