@@ -7452,3 +7452,9 @@ release3a55a2ee and all32 bytes verified; original STOP remains intact.
 OMS626190 active/start21:53:03ET/NRestarts0, live:orb syncok1/failed0.
 Freshness gates now run with their actual writer active. Attended sequence
 continues v2/strategy/control/proofs/preopen daily timer; no COMPLETE claim.
+
+2026-10-06 21:54 ET codex-2 C122: actual four scoped services active/NRestarts0:
+OMS626190/21:53:03, v2626439/21:53:49, strategy626773/21:54:13,
+control626835/21:54:15ET. Fresh strict-flat rc0 twice beforev2. No fallback.
+Control immediatepage readURLError after1second; existingbounded60s reread.
+Post-start/cumulative/catalog/preopen/timer proofs pending, not COMPLETE.
