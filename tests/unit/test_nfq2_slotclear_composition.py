@@ -7,9 +7,15 @@ from sqlalchemy import select
 
 from project_mai_tai.db.models import TradeIntent
 
-from tests.unit.test_nfq2_eh_fresh_price import biya, hold, quote, retry, service  # noqa: F401
+from tests.unit.test_nfq2_eh_fresh_price import biya, hold, quote, retry
+from tests.unit.test_nfq2_eh_fresh_price import service as recorded_service
 from tests.unit.test_slotclear1_fresh_flip import buy, crossing, lpcn
 from tests.unit.test_slotclear1_fresh_sell import observe, recorded_probes, seeded
+
+
+@pytest.fixture
+def service(monkeypatch):
+    return recorded_service.__wrapped__(monkeypatch)
 
 
 @pytest.mark.parametrize("fanout", [False, True])
