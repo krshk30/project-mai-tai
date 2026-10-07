@@ -7650,3 +7650,18 @@ full-unit interrupted on assessment stop, no suite-pair/readiness claim.
 RETRYLEFT publication stopped per standing rule pending corrected acceptance.
 NFQ2/SLOTCLEAR sole integration writer remains released separately; no stale
 RPG rows or parked patches touched. Staged application/approval994/f2 unchanged.
+
+2026-10-07 16:13 ET - C133, one-writer NFQ2 onto SLOTCLEAR integration published.
+NFQ2 #1112 is now c6004bd59f06fd856b1a8bb5a1ff6d96cbe094dc with the SLOT
+branch as its explicit dependency; SLOT #1113 remains9951b473. The initially
+merge-shaped internal proof is not published history: the actual PR range is
+linear, with no merge above9951 and one Codex marker on each commit. Own Git
+checks confirm src/tests/ops equal frozen5d77 exactly. Fresh SLOT admission
+keeps0.5%; a proven durable NFQ held retry keeps1%; no identity gate lost.
+Joint21 and restored-ticket2 pass;45/45 assertion mutations RED. Enabled-drift
+active-hold gate:14,400 events/60.000410s, maxstall29.0855ms, zero tick SQL,
+24 periodic off-loop transactions/60s. SQLite/fake-broker scope is explicit,
+not whole-OMS or production certification. SLOT's two Validate are green;
+NFQ's two fresh runs are underway. Complete integration suite still running;
+broader NFQ recovery/restart edges remain disclosed, no readiness claim.
+No stale RPG rows, parked source, production state or staged job changed.
