@@ -1,5 +1,10 @@
 # [codex] Removed-wait follow-up assessment, 2026-10-07
 
+**BLOCKED / STOP SOURCE WORK.** Subsequent own review disproved the safety of
+the blanket prior-episode cancellation guard. Do not mark ready, pin, merge,
+install or include this PR in an install batch. The request-retirement criteria
+below are a conditional design agreement, not approval of this candidate.
+
 Base: `f9c9bd332392e2c905fc39b954421c88970844d7`, tree
 `0fa89d5d40473e29e1039cd6a80200b36945d696` (merged #1107).
 Branch: `codex/removed-wait-session-expiry`. No edits to the pinned original
@@ -7,7 +12,25 @@ branch, shared handoff, production, or other lanes.
 
 ## Verdict and boundaries
 
-AGREE: prior-session request bookkeeping can end independently of ownership,
+DISAGREE with current guard: a positively identified prior-session working
+BUY must retain canonical cancellation. `OLD_WORKING_RED.py` reproduces a
+known exact OLOX-episode order in local SQLite using the retained identity and
+quantity, with explicitly CONTROLLED accepted status (the real retained row
+was cancelled). The existing OMS selector finds that exact old order; the real
+removed-wait store returns `opening_order_not_terminal`. With the date guard,
+restore/poll queues no cancellation. Guard-off counterfactual retains one.
+Request and UNKNOWN ownership stay intact in both cases, which is insufficient
+to satisfy the no-physical-order-abandonment requirement. No other canonical
+cancellation is issued by this removal path. This is a new review-only RED
+control, not evidence that historical OLOX actually remained working.
+
+Receipt: `/tmp/removed-wait-followup-old-working-red.{xml,log}`: 1 FAIL / 1 PASS,
+zero errors, 0.89 seconds. No production access. Remaining blockers: this
+cancellation-path regression and the missing actual removal request/token.
+Source implementation stops pending safe exact-target cancellation design and
+the required historical receipt; green targeted/hosted tests cannot waive it.
+
+Conditional AGREE: prior-session request bookkeeping can end independently of ownership,
 but only with coherent prior-session request/episode timestamps and either a
 positive matching current-session episode identity or a fresh canonical
 `terminal_unfilled_removed_wait` verdict. Persistence must succeed first.
