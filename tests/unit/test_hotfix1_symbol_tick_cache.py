@@ -1,7 +1,7 @@
 """Recorded prices/events; DB delay, SDK and concurrency are controlled offline."""
 import asyncio
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -16,11 +16,12 @@ from project_mai_tai.db.models import DashboardSnapshot
 from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload, TradeTickEvent, TradeTickPayload, TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.oms.mirror_retained_hold import row_id
-from tests.unit.test_mirrorhold1_retained_hold import lane, event_for, quote, state, queued
+from tests.unit.test_mirrorhold1_retained_hold import lane as _lane, event_for, quote, state, queued
 from tests.unit.test_oms_direct_cancel_dead_target_bound import _service, _seed_target, _DirectCancelAdapter
 
 ROOT = Path(__file__).resolve().parents[2] / "docs/review-artifacts/hotfix1"
 RECORDED = json.loads((ROOT / "recorded-cases.json").read_text())
+lane = _lane
 
 
 def recorded_event(symbol="SXTC", account="live:orb"):
