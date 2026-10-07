@@ -1,0 +1,33 @@
+{
+  "closed_v2_episodes_by_account": {
+    "live:schwab_1m_v2": 68,
+    "live:orb": 89
+  },
+  "v2_sell_fill_rows": 156,
+  "linked_manual_sell_rows": 1,
+  "inferred_waiting_pairs_by_closed_account": {
+    "live:orb": 1,
+    "live:schwab_1m_v2": 1
+  },
+  "inferred_waiting_distinct_closes": 2,
+  "inferred_with_last_broker_accepted": 0,
+  "inferred_terminal_within_120s": 0,
+  "inferred_terminal_over_120s": 2,
+  "inferred_no_terminal": 0,
+  "unmatched_sells": [],
+  "open_lots": [
+    {
+      "account": "live:schwab_1m_v2",
+      "symbol": "NXL",
+      "entry_order_id": "2291bf62-a00c-47e2-a424-79cc77c88a62",
+      "remaining": "2.00000000"
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "symbol": "MI",
+      "entry_order_id": "f7ad3f3f-4e57-4124-a510-ab51b5da8e5c",
+      "remaining": "180.00000000"
+    }
+  ],
+  "actual_broker_waiting_at_exact_close_count": "UNMEASURED: transition events do not continuously attest broker status; pre-submit software rests not exported"
+}
