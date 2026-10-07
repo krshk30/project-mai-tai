@@ -7408,3 +7408,13 @@ fresh gate admission running, no COMPLETE or new identity claim yet.
 Original Install1 INCOMPLETE/collision records unchanged; derived human VERIFIED
 receipt explicitly labels unavailable v2 command receipt. No migration, ledger,
 rollback, paper restart or PINHASH1 build. Timer not installed yet.
+
+2026-10-06 21:12 ET codex-2 C117: attended attempt stopped21:10:11 before
+checkout/env/service writes, archive40,673,280 exceeded literal40,000,000.
+Positive current identity/env checksum and clean4805 retained; page adapterrc0.
+Mechanics-only64MiB bound,79 testsPASS with measured-size prepare and overbound
+refusal. Published planece0eaf4/new release3a55a2ee;32artifactremoteverifyPASS.
+Fresh exclusive job-archive64 attempt began21:11:37; originalSTOP/INCOMPLETE
+preserved, recorded in deployments-20261006.md. No admission change, source
+patch, different APP, trading action, migration, rollback or recovery; no service
+stopped yet. Active supervision continues; no COMPLETE/timer claim.
