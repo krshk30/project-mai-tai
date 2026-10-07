@@ -1,12 +1,12 @@
 """NFQ2: account-scoped EH price waits; only the serial intent lane submits."""
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from time import monotonic
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, stream_name
@@ -56,9 +56,40 @@ class EhFreshPriceMixin:
         if row is None:
             row = DashboardSnapshot(id=hold.row_id, snapshot_type=SNAPSHOT_TYPE)
             session.add(row)
-        row.payload = {"event": hold.event.model_dump(mode="json"), "intent_id": str(hold.intent_id),
-                       "phase": hold.phase, "token": hold.token}
+        row.payload = self._nfq2_payload(hold)
         session.flush()
+
+    @staticmethod
+    def _nfq2_payload(hold):
+        return {"event": hold.event.model_dump(mode="json"), "intent_id": str(hold.intent_id),
+                "phase": hold.phase, "token": hold.token}
+
+    @staticmethod
+    def _nfq2_copy(hold, *, phase=None, token=None):
+        return EhHold(hold.event.model_copy(deep=True), hold.row_id, hold.intent_id,
+                      hold.phase if phase is None else phase, hold.token if token is None else token)
+
+    @staticmethod
+    def _nfq2_same(current, expected):
+        return bool(current is not None and current.row_id == expected.row_id
+                    and current.intent_id == expected.intent_id
+                    and current.event.event_id == expected.event.event_id
+                    and current.phase == expected.phase and current.token == expected.token)
+
+    def _nfq2_transition(self, session, before, after, *, reason=None, outcome="rejected_client_abort"):
+        # Atomic durable CAS: an off-loop write must never resurrect a cancelled/replaced hold.
+        result = session.execute(update(DashboardSnapshot).where(
+            DashboardSnapshot.id == before.row_id,
+            DashboardSnapshot.payload["phase"].as_string() == before.phase,
+            DashboardSnapshot.payload["token"].as_string() == before.token,
+            DashboardSnapshot.payload["intent_id"].as_string() == str(before.intent_id),
+            DashboardSnapshot.payload["event"]["event_id"].as_string() == str(before.event.event_id),
+        ).values(payload=self._nfq2_payload(after)), execution_options={"synchronize_session": False})
+        if result.rowcount != 1:
+            return False
+        if reason:
+            self._nfq2_retirement_feedback(session, after, reason, outcome=outcome)
+        return True
 
     def _nfq2_feedback(self, session, event, outcome, reason):
         append_outcome(session, metadata={**event.payload.metadata, "nfq2_feedback": "true"},
@@ -75,12 +106,15 @@ class EhFreshPriceMixin:
     def _nfq2_retire(self, session, hold, reason, *, outcome="rejected_client_abort"):
         hold.phase, hold.token = "retired", ""
         self._nfq2_save(session, hold)
+        self._nfq2_retirement_feedback(session, hold, reason, outcome=outcome)
+        self._nfq2_holds.pop(self._nfq2_key(hold.event), None)
+
+    def _nfq2_retirement_feedback(self, session, hold, reason, *, outcome):
         intent = session.get(TradeIntent, hold.intent_id)
         if intent is not None and intent.status == "held" and outcome == "rejected_client_abort":
             self.store.mark_intent_refused(intent, origin="client_abort", code=PREFIX + reason)
         elif intent is not None and intent.status == "held":
             intent.status = "superseded"
-        self._nfq2_holds.pop(self._nfq2_key(hold.event), None)
         self._nfq2_feedback(session, hold.event, outcome, reason)
 
     def _nfq2_reason(self, session, hold):
@@ -208,61 +242,102 @@ class EhFreshPriceMixin:
     async def _evaluate_nfq2_holds(self, symbol=None):
         if not self._nfq2_holds:
             return
-        before = deepcopy(self._nfq2_holds)
-        queued = []
-        try:
-            with self.session_factory() as session:
-                for hold in list(self._nfq2_holds.values()):
-                    if symbol is not None and hold.event.payload.symbol != symbol.upper():
-                        continue
-                    reason = self._nfq2_reason(session, hold)
-                    if reason == "dispatch_uncertain":
-                        hold.phase, hold.token = "uncertain", ""
-                        self._nfq2_save(session, hold)
-                        continue
-                    if reason:
-                        outcome = "filled" if reason == "own_slot_filled" else "working" if reason == "existing_buy" else "rejected_client_abort"
-                        self._nfq2_retire(session, hold, reason, outcome=outcome)
-                        continue
-                    if symbol is None or hold.phase != "held":
-                        continue
-                    reading = self._nfq2_reading(symbol)
-                    if not reading.fresh:
-                        continue
-                    try:
-                        trigger = Decimal(str(hold.event.payload.metadata.get("resting_level")
-                                              or hold.event.payload.metadata["entry_price"]))
-                        if not trigger.is_finite() or trigger <= 0:
-                            raise ValueError("invalid trigger")
-                    except (KeyError, ValueError, InvalidOperation):
-                        self._nfq2_retire(session, hold, "invalid_trigger")
-                        continue
-                    if reading.price > trigger * Decimal("1.01"):
-                        self._nfq2_retire(session, hold, "ask_past_held_cap")
-                        continue
-                    retry = TradeIntentEvent(source_service="oms-risk", produced_at=self._nfq_now(),
-                                             payload=hold.event.payload.model_copy(deep=True))
-                    hold.phase, hold.token = "queued", str(uuid4())
-                    retry.payload.metadata.update(nfq2_retry_token=hold.token, nfq2_hold_id=str(hold.row_id))
-                    self._nfq2_save(session, hold)
-                    queued.append((hold, retry))
-                session.commit()
-        except Exception:
-            self.__dict__["_eh_price_holds"] = before
-            self.logger.exception("[OMS-NFQ2] transaction_failed; no enqueue")
+        if symbol is None:
+            await self._sweep_nfq2_holds()
             return
-        for hold, retry in queued:
+        symbol = symbol.upper()
+        # Reject unrelated/stale ticks entirely in memory, before copying anything or opening a session.
+        matches = [(key, hold) for key, hold in self._nfq2_holds.items()
+                   if hold.event.payload.symbol == symbol and hold.phase == "held"]
+        if not matches:
+            return
+        reading = self._nfq2_reading(symbol)
+        if not reading.fresh:
+            return
+        busy = self.__dict__.setdefault("_eh_price_hold_inflight", set())
+        for key, hold in matches:
+            if key in busy or self._nfq2_holds.get(key) is not hold or hold.phase != "held":
+                continue
+            reason = None
             try:
-                await self.redis.xadd(stream_name(self.settings.redis_stream_prefix, "strategy-intents"),
-                                     {"data": retry.model_dump_json()},
-                                     maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)
+                trigger = Decimal(str(hold.event.payload.metadata.get("resting_level")
+                                      or hold.event.payload.metadata["entry_price"]))
+                if not trigger.is_finite() or trigger <= 0:
+                    raise ValueError("invalid trigger")
+                if reading.price > trigger * Decimal("1.01"):
+                    reason = "ask_past_held_cap"
+            except (KeyError, ValueError, InvalidOperation):
+                reason = "invalid_trigger"
+            before = self._nfq2_copy(hold)
+            after = self._nfq2_copy(hold, phase="retired" if reason else "queued",
+                                    token="" if reason else str(uuid4()))
+            busy.add(key)
+            try:
+                changed = await self._run_db(lambda session: self._nfq2_transition(
+                    session, before, after, reason=reason))
+                current = self._nfq2_holds.get(key)
+                if not self._nfq2_same(current, before):
+                    continue
+                if not changed:
+                    current.phase, current.token = "uncertain", ""
+                    self.logger.warning("[OMS-NFQ2] durable_cas_mismatch account=%s slot=%s", *key)
+                    continue
+                current.phase, current.token = after.phase, after.token
+                if reason:
+                    self._nfq2_holds.pop(key, None)
+                    continue
+                retry = TradeIntentEvent(source_service="oms-risk", produced_at=self._nfq_now(),
+                                         payload=current.event.payload.model_copy(deep=True))
+                retry.payload.metadata.update(nfq2_retry_token=current.token, nfq2_hold_id=str(current.row_id))
+                try:
+                    await self.redis.xadd(stream_name(self.settings.redis_stream_prefix, "strategy-intents"),
+                                         {"data": retry.model_dump_json()},
+                                         maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)
+                except Exception:
+                    uncertain = self._nfq2_copy(after, phase="uncertain", token="")
+                    await self._run_db(lambda session: self._nfq2_transition(session, after, uncertain))
+                    if self._nfq2_same(self._nfq2_holds.get(key), after):
+                        current.phase, current.token = "uncertain", ""
+                    self.logger.exception("[OMS-NFQ2] enqueue_uncertain; token invalidated")
             except Exception:
-                # A lost stream acknowledgement cannot leave an admissible serial copy.
-                hold.phase, hold.token = "uncertain", ""
-                with self.session_factory() as session:
-                    self._nfq2_save(session, hold)
-                    session.commit()
-                self.logger.exception("[OMS-NFQ2] enqueue_uncertain; token invalidated")
+                self.logger.exception("[OMS-NFQ2] transaction_failed; no new enqueue")
+            finally:
+                busy.discard(key)
+
+    async def _sweep_nfq2_holds(self):
+        now = monotonic()
+        cadence = max(1.0, float(self.settings.oms_broker_sync_interval_seconds))
+        if now - self.__dict__.get("_eh_price_hold_last_sweep", float("-inf")) < cadence:
+            return
+        self.__dict__["_eh_price_hold_last_sweep"] = now
+        busy = self.__dict__.setdefault("_eh_price_hold_inflight", set())
+        snapshots = [(key, self._nfq2_copy(hold)) for key, hold in self._nfq2_holds.items() if key not in busy]
+        if not snapshots:
+            return
+        try:
+            verdicts = await self._run_db(lambda session: [
+                (key, before, self._nfq2_reason(session, before)) for key, before in snapshots], commit=False)
+            for key, before, reason in verdicts:
+                if (not reason or key in busy or not self._nfq2_same(self._nfq2_holds.get(key), before)
+                        or reason == "dispatch_uncertain" and before.phase == "uncertain"):
+                    continue
+                after = self._nfq2_copy(before, phase="uncertain" if reason == "dispatch_uncertain" else "retired",
+                                        token="")
+                outcome = "filled" if reason == "own_slot_filled" else "working" if reason == "existing_buy" else "rejected_client_abort"
+                busy.add(key)
+                try:
+                    changed = await self._run_db(lambda session: self._nfq2_transition(
+                        session, before, after, reason=None if after.phase == "uncertain" else reason,
+                        outcome=outcome))
+                    current = self._nfq2_holds.get(key)
+                    if changed and self._nfq2_same(current, before):
+                        current.phase, current.token = after.phase, after.token
+                        if after.phase == "retired":
+                            self._nfq2_holds.pop(key, None)
+                finally:
+                    busy.discard(key)
+        except Exception:
+            self.logger.exception("[OMS-NFQ2] periodic_proof_failed; holds remain blocking")
 
     def _claim_nfq2_retry(self, event):
         md = event.payload.metadata
