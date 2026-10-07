@@ -1,0 +1,9 @@
+{
+  "pr_number": 1108,
+  "range_base": "f80a9c4af5e79beaa214e99f448bfe408c596df1",
+  "range_head": "aed1a358c0da4043ce248550c2b1d02cecdc76ff",
+  "reviewed_at": "2026-10-07T00:54:23Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "INTEGRATION of four pinned PRs (operator 10-06 20:4x: land in one batch): #1104 KEEPREST1 @ 030df3d2, #1099 T43 @ f4e2d4ed, #1105 CLEARWAIT1 @ 6c1846a4, #1101 WEBULL429 @ e1db2d14, rebased together onto main f80a9c4a. Verified by me: the changed SOURCE lines of the integration patch are set-identical to the union of the four pinned patches (1887 lines) and the ops catalog changes identical (16 lines); test files differ only by rebase adaptations to the already-merged #1102 (catalog counts 151/143/130 -> 152/144/131, the SCKT clock lines already fixed in base, and three assertion lines in tests touched by both #1102 and the rebased PRs) \u2014 no runtime change. Focused tests of the four PRs on the integration head: 1514 pass. Each PR's own review and mutations stand (RESERVE1-class gates untouched here). Full suite comparison against f80a9c4a attached in the handoff when complete."
+}
