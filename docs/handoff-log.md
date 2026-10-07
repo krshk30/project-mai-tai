@@ -7425,3 +7425,9 @@ only. v2/OMS/strategy still on old active identities at direct21:18 read;
 the attended runner refreshes flat/order/103ticket gates before firststop.
 No migration, ledger write, rollback, other service action or timer yet.
 Source/environment applied is not COMPLETE; release3a55a2ee/planece0eaf4.
+
+2026-10-06 21:21 ET codex-2 C119: first scoped stopv2 at21:20:58 returnedrc0,
+systemd inactive/PID0/Resultsuccess, phase1 recorded. OMS611906/strategy612007
+active unchanged. Literal attended sequence continues with existing refresh
+before each step; no added gate, no CancelledError expectation, no recovery.
+No COMPLETE/continuity claim until actual final proofs. No scheduled bars after20.
