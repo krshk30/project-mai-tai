@@ -1,0 +1,1326 @@
+{
+  "agent": "OpenAI Codex",
+  "recorded_at_utc": "2026-10-07T10:37:10.078663+00:00",
+  "scope": "Oct7 LINESRC1 only; no rebase or production actions",
+  "predecessor_sha": "a2a41012be2b9b007e0f0084f4a1bd295f79e376",
+  "branch": "codex/linesrc1-anchored-session-poll",
+  "worktree": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai",
+  "source_assessment": "AGREE",
+  "poll_window": "07:00 <= ET < 16:00; latest closed candle timestamp >=07:00; first eligible close at07:01;04:00 anchor unchanged",
+  "measurement": {
+    "evidence_kind": "Human-reported measurement, not a retained raw provider response",
+    "measured_at_et": "2026-10-07 06:21 ET (minute precision; seconds not supplied)",
+    "anchor_et": "2026-10-07T04:00:00-04:00",
+    "raw_price_bars": "None supplied; no OHLC or volume values invented",
+    "responses": [
+      {
+        "symbol": "BIYA",
+        "empty": true,
+        "candle_count": 0
+      },
+      {
+        "symbol": "MI",
+        "empty": true,
+        "candle_count": 0
+      },
+      {
+        "symbol": "MTEN",
+        "empty": true,
+        "candle_count": 0
+      },
+      {
+        "symbol": "SXTC",
+        "empty": true,
+        "candle_count": 0
+      }
+    ]
+  },
+  "focused_baseline": {
+    "xml": {
+      "path": "/tmp/linesrc1-oct7-base-focused.xml",
+      "sha256": "2d142a11860b275c83272518a44c43b4a20ebe8a5ada997a36f25cdc772d871c"
+    },
+    "log": {
+      "path": "/tmp/linesrc1-oct7-base-focused.log",
+      "sha256": "808643473d6ce8f431b2344477badb987f25f836f460ead14b9950e91542d854"
+    },
+    "suites": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "149",
+        "time": "6.172",
+        "timestamp": "2026-10-07T06:31:03.052902-04:00",
+        "hostname": "Shirleys-MacBook-Pro-2.local"
+      }
+    ],
+    "test_names": [
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[00:00:00-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[00:00:00-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[00:00:00-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[00:00:00-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:54:59.999-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:54:59.999-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:54:59.999-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:54:59.999-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:55:00-True-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:55:00-True-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:55:00-True-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:55:00-True-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[09:30:00-True-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[09:30:00-True-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[09:30:00-True-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[09:30:00-True-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[15:59:59.999-True-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[15:59:59.999-True-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[15:59:59.999-True-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[15:59:59.999-True-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[16:00:00-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[16:00:00-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[16:00:00-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[16:00:00-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[20:00:00-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[20:00:00-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[20:00:00-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[20:00:00-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[23:59:59-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[23:59:59-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[23:59:59-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[23:59:59-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_window_service_requests_exact_anchor_and_previous_closed_minute[06:55:00-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_window_service_requests_exact_anchor_and_previous_closed_minute[06:55:00-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_window_service_requests_exact_anchor_and_previous_closed_minute[15:59:59-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_window_service_requests_exact_anchor_and_previous_closed_minute[15:59:59-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_provider_does_not_read_or_validate[06:54:59]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_provider_does_not_read_or_validate[16:00:00]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_provider_does_not_read_or_validate[20:00:00]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_service_is_quiet_without_epoch_change[06:54:59]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_service_is_quiet_without_epoch_change[16:00:00]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_service_is_quiet_without_epoch_change[20:00:00]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_client_also_fences_an_outside_session_context",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_recorded_missing_current_returns_bars_without_coverage_proof",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_initial_missing_current_cannot_publish_partial_line_or_emit",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_session_invalid_source_is_not_disguised_as_no_new_bar[duplicate]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_session_invalid_source_is_not_disguised_as_no_new_bar[foreign]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_session_invalid_source_is_not_disguised_as_no_new_bar[malformed]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_session_invalid_source_is_not_disguised_as_no_new_bar[truncated]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_missing_current_retains_epoch_but_blocks_entry_even_after_old_rebuild",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_warning_only_on_symbol_state_transition_and_no_traceback",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_warning_state_is_independent_for_each_symbol",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_changing_error_text_does_not_repeat_warning_or_skip_invalidation",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_duplicate_error_invalidates_previously_admitted_coverage",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_old_epoch_response_cannot_set_or_clear_current_source_wait",
+      "tests.unit.test_line_chart_restoration::test_recorded_reto_late_111019_bars_are_required_before_admission",
+      "tests.unit.test_line_chart_restoration::test_recorded_jagx_readd_34_minute_hole_blocks_until_122012_backfill",
+      "tests.unit.test_line_chart_restoration::test_source_window_and_current_closed_bar_must_be_proven[database_read-True-0-0]",
+      "tests.unit.test_line_chart_restoration::test_source_window_and_current_closed_bar_must_be_proven[schwab_rest_full_session-False-0-0]",
+      "tests.unit.test_line_chart_restoration::test_source_window_and_current_closed_bar_must_be_proven[schwab_rest_full_session-True-60000-0]",
+      "tests.unit.test_line_chart_restoration::test_source_window_and_current_closed_bar_must_be_proven[schwab_rest_full_session-True-0--60000]",
+      "tests.unit.test_line_chart_restoration::test_recorded_reto_session_history_is_not_truncated_to_250_bars",
+      "tests.unit.test_line_chart_restoration::test_readd_epoch_refuses_an_earlier_episode_worker_result",
+      "tests.unit.test_line_chart_restoration::test_worker_is_off_callback_and_a_late_revision_invalidates_its_result",
+      "tests.unit.test_line_chart_restoration::test_provider_chart_objects_cannot_mutate_frozen_worker_input",
+      "tests.unit.test_line_chart_restoration::test_recorded_ids_without_matching_source_values_cannot_admit_a_line",
+      "tests.unit.test_line_chart_restoration::test_recorded_reto_full_history_worker_replay_has_no_1117_sell",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[symbol]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[empty]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[malformed]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[duplicate]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[current]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[truncated]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_uses_exact_0400_anchor_without_cursor_or_250_bar_limit",
+      "tests.unit.test_line_chart_restoration_integration::test_service_reto_publishes_correct_math_and_confirmation_without_false_sell_or_rest[11:18]",
+      "tests.unit.test_line_chart_restoration_integration::test_service_reto_publishes_correct_math_and_confirmation_without_false_sell_or_rest[11:21]",
+      "tests.unit.test_line_chart_restoration_integration::test_actual_service_rest_skip_still_records_late_history_and_admits_only_after_backfill[RETO-2026-10-05T15:10:18+00:00-2026-10-05T15:09:00+00:00-16]",
+      "tests.unit.test_line_chart_restoration_integration::test_actual_service_rest_skip_still_records_late_history_and_admits_only_after_backfill[JAGX-2026-10-05T15:52:15+00:00-2026-10-05T15:51:00+00:00-33]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[epoch]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[revision]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[current]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[coverage]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[session]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[gap_reset]",
+      "tests.unit.test_line_chart_restoration_integration::test_readd_keeps_consumed_slots_but_requires_a_new_provider_epoch",
+      "tests.unit.test_line_chart_restoration_integration::test_restart_never_inherits_admission_from_the_previous_process",
+      "tests.unit.test_line_chart_restoration_integration::test_real_provider_service_full_read_certifies_first_available_session_bar",
+      "tests.unit.test_line_chart_restoration_integration::test_later_1127_recorded_line_has_a_distinct_cutoff_from_1118_and_1121",
+      "tests.unit.test_line_chart_restoration_integration::test_sixteen_symbol_source_and_rebuild_cycles_do_not_wait_for_persistence",
+      "tests.unit.test_line_chart_restoration_integration::test_real_late_rest_callback_wakes_worker_and_publishes_without_replaying_history",
+      "tests.unit.test_line_chart_restoration_integration::test_unchanged_adjacent_recorded_sell_is_delivered_once_and_boot_hold_survives",
+      "tests.unit.test_line_chart_restoration_integration::test_revision_of_current_recorded_bar_repairs_math_without_replaying_exit",
+      "tests.unit.test_line_chart_restoration_integration::test_gap_hold_cannot_admit_an_unrepaired_interior_hole_after_ten_clean_bars",
+      "tests.unit.test_line_chart_restoration_integration::test_anchored_source_current_callbacks_advance_gap_hold_without_double_counting",
+      "tests.unit.test_line_chart_restoration_integration::test_rpg_authorization_refuses_replacement_without_current_line",
+      "tests.unit.test_line_chart_restoration_integration::test_direct_drains_reject_stale_opens_and_deliver_cancellations",
+      "tests.unit.test_line_chart_restoration_integration::test_incomplete_line_blocks_both_quote_crosses_reclaim_rest_and_reprice",
+      "tests.unit.test_line_chart_restoration_integration::test_confirmation_corrects_only_pending_targets_and_does_not_repeat_issued_exit",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[CLRO-1790613720000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[DXST-1790700300000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[TGE-1790783640000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[TGE-1790786880000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[TGE-1790793360000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[TGE-1790796420000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[NXL-1790869320000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[NXL-1790876760000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[AIXI-1790953500000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[AMOD-1790954520000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[AMOD-1790958360000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[AIXI-1790968620000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[AMOD-1790970180000]",
+      "tests.unit.test_line_chart_restoration_integration::test_recorded_jagx_1006_provider_response_is_not_full_session_coverage",
+      "tests.unit.test_line_chart_restoration_integration::test_recorded_jagx_1006_conditional_series_is_not_claimed_as_chart_parity",
+      "tests.unit.test_line_chart_restoration_integration::test_recorded_reto_stored_backfill_is_read_off_callback_without_rewriting_source_proof",
+      "tests.unit.test_line_chart_restoration_integration::test_stored_reto_additions_cannot_rewrite_an_incomplete_provider_manifest",
+      "tests.unit.test_line_chart_restoration_integration::test_stored_session_reader_keeps_255_recorded_rows_and_exact_anchor_bounds",
+      "tests.unit.test_line_chart_restoration_integration::test_recorded_reto_complete_history_supersedes_reset_cutoff_but_not_the_wait",
+      "tests.unit.test_line_chart_restoration_integration::test_recorded_reto_historical_sell_at_initial_publication_is_not_emitted_late",
+      "tests.unit.test_line_chart_restoration_integration::test_reto_late_prefix_repair_with_adjacent_current_bar_cannot_emit_a_replayed_flip",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[11]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[12]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[13]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[14]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[15]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[16]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[17]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[18]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[19]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[20]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[21]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[22]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[23]",
+      "tests.unit.test_line_restore_r6_spanning::test_complete_provider_read_not_candle_count_authorizes_r6",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_jagx_withheld_traded_candle_cannot_be_spanned_as_unfillable",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_eleven_arrivals_do_not_release_ten_clean_live_bar_hold",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_jagx_sparse_session_requires_ten_consecutive_live_closes",
+      "tests.unit.test_line_restore_r6_spanning::test_math_deadline_fails_closed_without_admitting_a_late_worker",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_feeds_real_service_and_never_infers_coverage_from_bar_count",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_recorded_reto_service_publication_matches_known_trail",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_missing_coverage_blocks_real_direct_drain_for_both_legs_but_not_close",
+      "tests.unit.test_line_restore_acceptance_factory::test_all_eight_on_real_factory_requires_provider_proof_preserves_protective_sell[False]",
+      "tests.unit.test_line_restore_acceptance_factory::test_all_eight_on_real_factory_requires_provider_proof_preserves_protective_sell[True]",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_recording_emitters_capture_permitted_buys_not_missing_emitter_false_pass",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_retains_real_confirmation_evaluation_and_one_shot_publication",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_readd_replaces_epoch_without_replaying_old_permission",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_clock_restores_module_bindings_and_uses_recorded_event_time",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_refuses_lookahead_and_foreign_symbol",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_refuses_dark_or_unknown_acceptance_settings[overrides0]",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_refuses_dark_or_unknown_acceptance_settings[overrides1]"
+    ]
+  },
+  "focused_final": {
+    "xml": {
+      "path": "/tmp/linesrc1-oct7-final-focused.xml",
+      "sha256": "f0a803456e215a37e93a6582ac65949b5b9e66ae2386f503f82063d700350d41"
+    },
+    "log": {
+      "path": "/tmp/linesrc1-oct7-final-focused.log",
+      "sha256": "e02e6ebdfa9fdb814d35a2dbce797015d08422684b330dd0ac5427ffa0524b8a"
+    },
+    "suites": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "199",
+        "time": "6.565",
+        "timestamp": "2026-10-07T06:36:41.013969-04:00",
+        "hostname": "Shirleys-MacBook-Pro-2.local"
+      }
+    ],
+    "test_names": [
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[00:00:00-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[00:00:00-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[00:00:00-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[00:00:00-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:54:59.999-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:54:59.999-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:54:59.999-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:54:59.999-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:55:00-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:55:00-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:55:00-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:55:00-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:59:59.999-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:59:59.999-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:59:59.999-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[06:59:59.999-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[07:00:00-True-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[07:00:00-True-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[07:00:00-True-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[07:00:00-True-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[09:30:00-True-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[09:30:00-True-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[09:30:00-True-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[09:30:00-True-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[15:59:59.999-True-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[15:59:59.999-True-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[15:59:59.999-True-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[15:59:59.999-True-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[16:00:00-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[16:00:00-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[16:00:00-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[16:00:00-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[20:00:00-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[20:00:00-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[20:00:00-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[20:00:00-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[23:59:59-False-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[23:59:59-False-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[23:59:59-False-2026-03-08]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_exact_et_session_boundaries_and_dst[23:59:59-False-2026-11-01]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_window_service_requests_exact_anchor_and_previous_closed_minute[07:01:00-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_window_service_requests_exact_anchor_and_previous_closed_minute[07:01:00-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_window_service_requests_exact_anchor_and_previous_closed_minute[15:59:59-2026-01-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_window_service_requests_exact_anchor_and_previous_closed_minute[15:59:59-2026-07-06]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_provider_does_not_read_or_validate[06:54:59]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_provider_does_not_read_or_validate[06:55:00]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_provider_does_not_read_or_validate[07:00:59]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_provider_does_not_read_or_validate[16:00:00]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_provider_does_not_read_or_validate[20:00:00]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_service_is_quiet_without_epoch_change[06:54:59]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_service_is_quiet_without_epoch_change[06:55:00]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_service_is_quiet_without_epoch_change[07:00:59]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_service_is_quiet_without_epoch_change[16:00:00]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_outside_session_service_is_quiet_without_epoch_change[20:00:00]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_client_also_fences_an_outside_session_context",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_recorded_missing_current_returns_bars_without_coverage_proof",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_initial_missing_current_cannot_publish_partial_line_or_emit",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_session_invalid_source_is_not_disguised_as_no_new_bar[duplicate]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_session_invalid_source_is_not_disguised_as_no_new_bar[foreign]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_session_invalid_source_is_not_disguised_as_no_new_bar[malformed]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_in_session_invalid_source_is_not_disguised_as_no_new_bar[truncated]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_missing_current_retains_epoch_but_blocks_entry_even_after_old_rebuild",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_warning_only_on_symbol_state_transition_and_no_traceback",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_warning_state_is_independent_for_each_symbol",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_changing_error_text_does_not_repeat_warning_or_skip_invalidation",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_duplicate_error_invalidates_previously_admitted_coverage",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_old_epoch_response_cannot_set_or_clear_current_source_wait",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:21:00-BIYA]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:21:00-MI]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:21:00-MTEN]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:21:00-SXTC]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:55:00-BIYA]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:55:00-MI]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:55:00-MTEN]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:55:00-SXTC]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:59:59-BIYA]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:59:59-MI]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:59:59-MTEN]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[06:59:59-SXTC]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[07:00:59-BIYA]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[07:00:59-MI]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[07:00:59-MTEN]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_names_do_not_poll_before_first_0700_close[07:00:59-SXTC]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session[True-BIYA]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session[True-MI]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session[True-MTEN]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session[True-SXTC]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session[False-BIYA]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session[False-MI]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session[False-MTEN]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session[False-SXTC]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_empty_session_waits_without_epoch_failure_or_warning_flood[BIYA]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_empty_session_waits_without_epoch_failure_or_warning_flood[MI]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_empty_session_waits_without_epoch_failure_or_warning_flood[MTEN]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_oct7_empty_session_waits_without_epoch_failure_or_warning_flood[SXTC]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_empty_is_not_a_bypass_for_foreign_or_malformed_source[foreign]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_empty_is_not_a_bypass_for_foreign_or_malformed_source[truncated]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_empty_is_not_a_bypass_for_foreign_or_malformed_source[unknown_empty]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_empty_is_not_a_bypass_for_foreign_or_malformed_source[nonlist]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_empty_is_not_a_bypass_for_foreign_or_malformed_source[contradiction]",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_client_fences_context_before_first_0700_closed_candle",
+      "tests.unit.test_linesrc1_anchored_session_poll::test_valid_empty_response_retains_prior_recorded_coverage_but_cannot_release_wait",
+      "tests.unit.test_line_chart_restoration::test_recorded_reto_late_111019_bars_are_required_before_admission",
+      "tests.unit.test_line_chart_restoration::test_recorded_jagx_readd_34_minute_hole_blocks_until_122012_backfill",
+      "tests.unit.test_line_chart_restoration::test_source_window_and_current_closed_bar_must_be_proven[database_read-True-0-0]",
+      "tests.unit.test_line_chart_restoration::test_source_window_and_current_closed_bar_must_be_proven[schwab_rest_full_session-False-0-0]",
+      "tests.unit.test_line_chart_restoration::test_source_window_and_current_closed_bar_must_be_proven[schwab_rest_full_session-True-60000-0]",
+      "tests.unit.test_line_chart_restoration::test_source_window_and_current_closed_bar_must_be_proven[schwab_rest_full_session-True-0--60000]",
+      "tests.unit.test_line_chart_restoration::test_recorded_reto_session_history_is_not_truncated_to_250_bars",
+      "tests.unit.test_line_chart_restoration::test_readd_epoch_refuses_an_earlier_episode_worker_result",
+      "tests.unit.test_line_chart_restoration::test_worker_is_off_callback_and_a_late_revision_invalidates_its_result",
+      "tests.unit.test_line_chart_restoration::test_provider_chart_objects_cannot_mutate_frozen_worker_input",
+      "tests.unit.test_line_chart_restoration::test_recorded_ids_without_matching_source_values_cannot_admit_a_line",
+      "tests.unit.test_line_chart_restoration::test_recorded_reto_full_history_worker_replay_has_no_1117_sell",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[symbol]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[empty]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[malformed]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[duplicate]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[current]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_refuses_partial_or_malformed_anchored_response[truncated]",
+      "tests.unit.test_line_chart_restoration_integration::test_provider_uses_exact_0400_anchor_without_cursor_or_250_bar_limit",
+      "tests.unit.test_line_chart_restoration_integration::test_service_reto_publishes_correct_math_and_confirmation_without_false_sell_or_rest[11:18]",
+      "tests.unit.test_line_chart_restoration_integration::test_service_reto_publishes_correct_math_and_confirmation_without_false_sell_or_rest[11:21]",
+      "tests.unit.test_line_chart_restoration_integration::test_actual_service_rest_skip_still_records_late_history_and_admits_only_after_backfill[RETO-2026-10-05T15:10:18+00:00-2026-10-05T15:09:00+00:00-16]",
+      "tests.unit.test_line_chart_restoration_integration::test_actual_service_rest_skip_still_records_late_history_and_admits_only_after_backfill[JAGX-2026-10-05T15:52:15+00:00-2026-10-05T15:51:00+00:00-33]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[epoch]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[revision]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[current]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[coverage]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[session]",
+      "tests.unit.test_line_chart_restoration_integration::test_inflight_worker_cannot_publish_after_any_identity_or_coverage_change[gap_reset]",
+      "tests.unit.test_line_chart_restoration_integration::test_readd_keeps_consumed_slots_but_requires_a_new_provider_epoch",
+      "tests.unit.test_line_chart_restoration_integration::test_restart_never_inherits_admission_from_the_previous_process",
+      "tests.unit.test_line_chart_restoration_integration::test_real_provider_service_full_read_certifies_first_available_session_bar",
+      "tests.unit.test_line_chart_restoration_integration::test_later_1127_recorded_line_has_a_distinct_cutoff_from_1118_and_1121",
+      "tests.unit.test_line_chart_restoration_integration::test_sixteen_symbol_source_and_rebuild_cycles_do_not_wait_for_persistence",
+      "tests.unit.test_line_chart_restoration_integration::test_real_late_rest_callback_wakes_worker_and_publishes_without_replaying_history",
+      "tests.unit.test_line_chart_restoration_integration::test_unchanged_adjacent_recorded_sell_is_delivered_once_and_boot_hold_survives",
+      "tests.unit.test_line_chart_restoration_integration::test_revision_of_current_recorded_bar_repairs_math_without_replaying_exit",
+      "tests.unit.test_line_chart_restoration_integration::test_gap_hold_cannot_admit_an_unrepaired_interior_hole_after_ten_clean_bars",
+      "tests.unit.test_line_chart_restoration_integration::test_anchored_source_current_callbacks_advance_gap_hold_without_double_counting",
+      "tests.unit.test_line_chart_restoration_integration::test_rpg_authorization_refuses_replacement_without_current_line",
+      "tests.unit.test_line_chart_restoration_integration::test_direct_drains_reject_stale_opens_and_deliver_cancellations",
+      "tests.unit.test_line_chart_restoration_integration::test_incomplete_line_blocks_both_quote_crosses_reclaim_rest_and_reprice",
+      "tests.unit.test_line_chart_restoration_integration::test_confirmation_corrects_only_pending_targets_and_does_not_repeat_issued_exit",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[CLRO-1790613720000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[DXST-1790700300000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[TGE-1790783640000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[TGE-1790786880000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[TGE-1790793360000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[TGE-1790796420000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[NXL-1790869320000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[NXL-1790876760000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[AIXI-1790953500000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[AMOD-1790954520000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[AMOD-1790958360000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[AIXI-1790968620000]",
+      "tests.unit.test_line_chart_restoration_integration::test_thirteen_recorded_entry_math_controls[AMOD-1790970180000]",
+      "tests.unit.test_line_chart_restoration_integration::test_recorded_jagx_1006_provider_response_is_not_full_session_coverage",
+      "tests.unit.test_line_chart_restoration_integration::test_recorded_jagx_1006_conditional_series_is_not_claimed_as_chart_parity",
+      "tests.unit.test_line_chart_restoration_integration::test_recorded_reto_stored_backfill_is_read_off_callback_without_rewriting_source_proof",
+      "tests.unit.test_line_chart_restoration_integration::test_stored_reto_additions_cannot_rewrite_an_incomplete_provider_manifest",
+      "tests.unit.test_line_chart_restoration_integration::test_stored_session_reader_keeps_255_recorded_rows_and_exact_anchor_bounds",
+      "tests.unit.test_line_chart_restoration_integration::test_recorded_reto_complete_history_supersedes_reset_cutoff_but_not_the_wait",
+      "tests.unit.test_line_chart_restoration_integration::test_recorded_reto_historical_sell_at_initial_publication_is_not_emitted_late",
+      "tests.unit.test_line_chart_restoration_integration::test_reto_late_prefix_repair_with_adjacent_current_bar_cannot_emit_a_replayed_flip",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[11]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[12]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[13]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[14]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[15]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[16]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[17]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[18]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[19]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[20]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[21]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[22]",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_authorized_spanning_matches_oracle_state_and_trail[23]",
+      "tests.unit.test_line_restore_r6_spanning::test_complete_provider_read_not_candle_count_authorizes_r6",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_jagx_withheld_traded_candle_cannot_be_spanned_as_unfillable",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_pmi_eleven_arrivals_do_not_release_ten_clean_live_bar_hold",
+      "tests.unit.test_line_restore_r6_spanning::test_recorded_jagx_sparse_session_requires_ten_consecutive_live_closes",
+      "tests.unit.test_line_restore_r6_spanning::test_math_deadline_fails_closed_without_admitting_a_late_worker",
+      "tests.unit.test_line_restore_r6_assessment::test_recorded_pmi_clamp_can_change_colour_not_only_trail[2026-10-02T20:45:00+00:00-short-5.852338786738176-long-5.7027]",
+      "tests.unit.test_line_restore_r6_assessment::test_recorded_pmi_clamp_can_change_colour_not_only_trail[2026-10-02T21:15:00+00:00-long-5.727122541190053-short-5.8432]",
+      "tests.unit.test_line_restore_r6_assessment::test_recorded_pmi_plus10_is_not_ten_contiguous_live_bars",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_feeds_real_service_and_never_infers_coverage_from_bar_count",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_recorded_reto_service_publication_matches_known_trail",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_missing_coverage_blocks_real_direct_drain_for_both_legs_but_not_close",
+      "tests.unit.test_line_restore_acceptance_factory::test_all_eight_on_real_factory_requires_provider_proof_preserves_protective_sell[False]",
+      "tests.unit.test_line_restore_acceptance_factory::test_all_eight_on_real_factory_requires_provider_proof_preserves_protective_sell[True]",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_recording_emitters_capture_permitted_buys_not_missing_emitter_false_pass",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_retains_real_confirmation_evaluation_and_one_shot_publication",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_readd_replaces_epoch_without_replaying_old_permission",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_clock_restores_module_bindings_and_uses_recorded_event_time",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_refuses_lookahead_and_foreign_symbol",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_refuses_dark_or_unknown_acceptance_settings[overrides0]",
+      "tests.unit.test_line_restore_acceptance_factory::test_factory_refuses_dark_or_unknown_acceptance_settings[overrides1]"
+    ]
+  },
+  "mutation_summary": {
+    "controls": 27,
+    "semantic_kills": 27,
+    "harness_errors": 0,
+    "non_assertion_errors": 0,
+    "failed_call_exceptions": {
+      "AssertionError": 57,
+      "Failed": 12
+    },
+    "aggregate": {
+      "path": "/tmp/linesrc1-oct7-final-mutations.json",
+      "sha256": "2c995be8bf78153e687aaedad5dd56c0d2a9c36816a9833c49c15069288d3cd0"
+    },
+    "log": {
+      "path": "/tmp/linesrc1-oct7-final-mutations.log",
+      "sha256": "ac35df2eb31a9edb281e7e763a120d5429cd3e7eff2058faf513fca0dae724cb"
+    },
+    "per_control": [
+      {
+        "name": "utc_not_et",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/utc_not_et-baseline.json",
+              "sha256": "60602c7c395c4bc9d8814a3136581dea2c061de8b8597cb4bffb1e5a134460d5"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/utc_not_et-baseline.log",
+              "sha256": "03a88f87593a3f3cc6c3a6a89e93fd5bc47330a9711ffd1289a1fd5e7b73d056"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/utc_not_et-mutant.json",
+              "sha256": "5c23e987e9b2c1b509abeb53b1a899173955822e627d9a87d4c25a1c708cf8fa"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/utc_not_et-mutant.log",
+              "sha256": "cc4336962ee1a71e638d8c62e46a4e23eee20a231dee2d2e810eb2a886f4ce74"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "open_early",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/open_early-baseline.json",
+              "sha256": "60602c7c395c4bc9d8814a3136581dea2c061de8b8597cb4bffb1e5a134460d5"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/open_early-baseline.log",
+              "sha256": "9155ada8f28602cb398daa4551b68ce8c1b92c04aa357c838db6bf110786bc29"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/open_early-mutant.json",
+              "sha256": "1cb83a8095479412d5fcecc4674ad286ccedd91bb4712124e22479b87b48d9b5"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/open_early-mutant.log",
+              "sha256": "0c96ed29263630458cd3aa95b8fa5bf166936b6352dc5ff9b582cd24eed293e0"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "close_inclusive",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/close_inclusive-baseline.json",
+              "sha256": "60602c7c395c4bc9d8814a3136581dea2c061de8b8597cb4bffb1e5a134460d5"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/close_inclusive-baseline.log",
+              "sha256": "512559f34c1e7b347ad5e3f42a7616fdf8e4ea12d0104d16fbe1d95d89f9a5f0"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/close_inclusive-mutant.json",
+              "sha256": "f533ca64d11161ac3b29a178caa9a106749dcf5a9e86ecba30f0e8ceec0de0cb"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/close_inclusive-mutant.log",
+              "sha256": "8f53f07c8d582cbc7b742ee0f27d5c24bafb01d10e70d5d9fbb2722ce50c3fea"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "service_window",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/service_window-baseline.json",
+              "sha256": "3f7bf8c306694eca89c4329ba710851d69e5b86b018e67fee347114e3fbabc98"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/service_window-baseline.log",
+              "sha256": "dd16cbdbb2cff39a7ff41edae14420833d1d368adba1f7523723a58e363ea28d"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/service_window-mutant.json",
+              "sha256": "0d488115ca3b2e83e83b8997f6d6c848fe04dffe7d7266368e6659c116de6d73"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/service_window-mutant.log",
+              "sha256": "5e94e781eea2e4a141049ec81499ec54f038763dfe415f0553b0131c13f24df2"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          }
+        }
+      },
+      {
+        "name": "client_window",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/client_window-baseline.json",
+              "sha256": "4bd73c67997c28ead52a14ef36d61bbc1b7fc28b871ae818cce47e1f20e0206b"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/client_window-baseline.log",
+              "sha256": "59b9466559aeabf218a54ec041fd83cd357cf9bf1d80a17c47aab62ed0c205bf"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/client_window-mutant.json",
+              "sha256": "03b703fa942b33d9b914d2ef0c46046f1e5ff5e08cadda33c38814780a4b655d"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/client_window-mutant.log",
+              "sha256": "ec26844735b9763f2e9a5a6910238db5a1824b86eb7845b6d0328d1f2587245e"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "provider_window",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/provider_window-baseline.json",
+              "sha256": "d94f43eef3a8ac32f230d448de17152a64f62d172b67dc7fc94e1a97c5e96f96"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/provider_window-baseline.log",
+              "sha256": "d9e7f0060f94f8cf8cd79289b21e226ea7368472d94b0aa47ba098b76482b4d5"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/provider_window-mutant.json",
+              "sha256": "8c6a3f4fec7bb72966323f0b7062ee8355a659c28a491c09d80b6cba88840e62"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/provider_window-mutant.log",
+              "sha256": "f1f308d3eca80fc661be02a87d7ca290cc372fc7bc84f66c4e7dbedf911f3413"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "missing_current_proof",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/missing_current_proof-baseline.json",
+              "sha256": "2a167288a250f2876cbb28bbed846e0c2aa0bc500ed079dec231564e1dc79956"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/missing_current_proof-baseline.log",
+              "sha256": "f6b6e232e0345fa742cf57cbc60c8884709a6f029bd43161ca6e812c9175f2a8"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/missing_current_proof-mutant.json",
+              "sha256": "0f928de5d629d2378cccc79e624011f766c6fd506a7c1f67e2bc03205d174c74"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/missing_current_proof-mutant.log",
+              "sha256": "77c8cb70b3b6e3d511b761d2550aadde70dbc9004e4957ce65b8601daf00d368"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "missing_wait",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/missing_wait-baseline.json",
+              "sha256": "3326655a146b67f15d1f9a91cb228e8211d3b97fe40a5fb2080983ee8b1a0ba3"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/missing_wait-baseline.log",
+              "sha256": "976ea3fe6dfa65b827ec05fc16bf49cec94d3fda3b2d6ad4719708e74a38b32d"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/missing_wait-mutant.json",
+              "sha256": "aefbeb16db71ef2a69cf15f877dba78b5e1e259d6915fc008652c33aeaa2c3f1"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/missing_wait-mutant.log",
+              "sha256": "20846e05f7900fac3977b165af8bc6f3810b5c9d25e4cb8bb1e1e93e16b89600"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          }
+        }
+      },
+      {
+        "name": "buy_fence",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/buy_fence-baseline.json",
+              "sha256": "3326655a146b67f15d1f9a91cb228e8211d3b97fe40a5fb2080983ee8b1a0ba3"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/buy_fence-baseline.log",
+              "sha256": "976ea3fe6dfa65b827ec05fc16bf49cec94d3fda3b2d6ad4719708e74a38b32d"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/buy_fence-mutant.json",
+              "sha256": "a15596f4a18fcea8b352e54e58ff3b988561863b18a296863dd30a0267124723"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/buy_fence-mutant.log",
+              "sha256": "9221420c90064050729d882ee23f1574a72d12aed5a507b71704529e35e45c1d"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          }
+        }
+      },
+      {
+        "name": "no_new_bar_dispatch",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/no_new_bar_dispatch-baseline.json",
+              "sha256": "4394cef23720515aada1f0c8b0ca32b04b9dd8f0abd9f2484cd34ae2b8b661f2"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/no_new_bar_dispatch-baseline.log",
+              "sha256": "b4eb7be9000651a3e89c6a77e8b346d05d1d706d620aa6f8193e574a39b3ced1"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/no_new_bar_dispatch-mutant.json",
+              "sha256": "98ccbdb43ef6e75c1994f69e2a2ab47de0ea81eab7b3a2c913a82f5060519c8d"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/no_new_bar_dispatch-mutant.log",
+              "sha256": "e33e0517c6988d202f7570c46083af5ce09b1cf5e06469d95772e6e3c9c37b55"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "error_invalidation",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/error_invalidation-baseline.json",
+              "sha256": "e0b93f999ad6052bf42d5431404a264a4541349e5a29330dc24e801a4390f717"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/error_invalidation-baseline.log",
+              "sha256": "036bb9390fb408c39eb19a61d865bc4044aa29eeea8139e62a988a5a83930a4d"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/error_invalidation-mutant.json",
+              "sha256": "093414bec6f2adbf86d3646eb444974a920dcf5644151caab098deb175a24aab"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/error_invalidation-mutant.log",
+              "sha256": "218bdef1ca909f808b747581690afb760ac6916d38967256cb425c26aee02a3f"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "warning_dedup",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/warning_dedup-baseline.json",
+              "sha256": "4394cef23720515aada1f0c8b0ca32b04b9dd8f0abd9f2484cd34ae2b8b661f2"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/warning_dedup-baseline.log",
+              "sha256": "b4eb7be9000651a3e89c6a77e8b346d05d1d706d620aa6f8193e574a39b3ced1"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/warning_dedup-mutant.json",
+              "sha256": "849cc5195032a78c33c7e3ad522dd82f4f50a07305932a4270ea8e0ffe65fe0a"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/warning_dedup-mutant.log",
+              "sha256": "63d4dc50eb20dae0d9196909e15be8a8daec294c69d8f5ee169754979e99b3e2"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "dynamic_error_flood",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/dynamic_error_flood-baseline.json",
+              "sha256": "0783e0ef404e3446957d5f6f9b76248acc1ce1d16f87269c276fcab287981f4f"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/dynamic_error_flood-baseline.log",
+              "sha256": "b4eb7be9000651a3e89c6a77e8b346d05d1d706d620aa6f8193e574a39b3ced1"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/dynamic_error_flood-mutant.json",
+              "sha256": "6b0076194978eb468fdc4f99b4d9898180b030572aed6b35a0d0c1be4f6320f4"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/dynamic_error_flood-mutant.log",
+              "sha256": "f382cce8756d5ab884d107423720eca6fd3cf6f4916f1fbf90ebd939f162a0dc"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "traceback_reenabled",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/traceback_reenabled-baseline.json",
+              "sha256": "4394cef23720515aada1f0c8b0ca32b04b9dd8f0abd9f2484cd34ae2b8b661f2"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/traceback_reenabled-baseline.log",
+              "sha256": "59b9466559aeabf218a54ec041fd83cd357cf9bf1d80a17c47aab62ed0c205bf"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/traceback_reenabled-mutant.json",
+              "sha256": "d8b0929fcf4b7a6984eae01cbe9866660fbf42cdbafcd0306f1ae853f8a6a5d2"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/traceback_reenabled-mutant.log",
+              "sha256": "00d257910fa803793b98a3c65de8594769f0cdfe373c27f0260e8ddce34440d1"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "duplicate_validation",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/duplicate_validation-baseline.json",
+              "sha256": "dbc7c933c2e21372456430f48fa59ca45efef1915d384a3df3475954c453f965"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/duplicate_validation-baseline.log",
+              "sha256": "036bb9390fb408c39eb19a61d865bc4044aa29eeea8139e62a988a5a83930a4d"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/duplicate_validation-mutant.json",
+              "sha256": "51e3e8d7915009db5e1811173912cafc16cb43f6217ae387cd2c1f9381b3493f"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/duplicate_validation-mutant.log",
+              "sha256": "97c5f214dc2bd683d83ab92bc2fc79668f72bdb5a4a10b430bac7138b6e6503b"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "foreign_validation",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/foreign_validation-baseline.json",
+              "sha256": "eb8f7e92eb6eae4f9b775aa4d999928b5b31e3b578885b1aff988fd69eaca39b"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/foreign_validation-baseline.log",
+              "sha256": "b4eb7be9000651a3e89c6a77e8b346d05d1d706d620aa6f8193e574a39b3ced1"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/foreign_validation-mutant.json",
+              "sha256": "807d7626dcc74be597ef90df3de74d964464d068e4f95cf6f75e78fad9761391"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/foreign_validation-mutant.log",
+              "sha256": "46aa6fa9a897c74c04526f80929814512d999ede3e0c995d2906c418c6ec33e1"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "epoch_fence",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/epoch_fence-baseline.json",
+              "sha256": "daa56a2da5a52cf579914e08c776e52d3273044a2e809bf2748c2b50369ad908"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/epoch_fence-baseline.log",
+              "sha256": "3be6ffcaecf85b5bd3eef3693ab214b0e7c9eb4e36d117fcf1825652de5eb298"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/epoch_fence-mutant.json",
+              "sha256": "1b4b0079d84820af6c0a64a042c6f86111bc926851b51276a48d972091bf6cf0"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/epoch_fence-mutant.log",
+              "sha256": "83b32ef30c771784c3662e21853a045d24a2bcf20510e47e74020d58b1756459"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          }
+        }
+      },
+      {
+        "name": "recovery_stays_blocked",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/recovery_stays_blocked-baseline.json",
+              "sha256": "3326655a146b67f15d1f9a91cb228e8211d3b97fe40a5fb2080983ee8b1a0ba3"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/recovery_stays_blocked-baseline.log",
+              "sha256": "09229b326b028651d725fa47cd1bae9fd8e0145ff8779bdb84ae2762c00ab737"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/recovery_stays_blocked-mutant.json",
+              "sha256": "8f256442686a490b23bdb1f80d8641452d64f82ca669f42f29e1fc7282822dfd"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/recovery_stays_blocked-mutant.log",
+              "sha256": "28ae0659308da883d0e3b6b77e3f24024e22ae714bd5457a0990f5ca41fedb24"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          }
+        }
+      },
+      {
+        "name": "traded_hole_waived",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/traded_hole_waived-baseline.json",
+              "sha256": "757f533739a7dd22162b348d2fff118f28e5b2c3cd6723bf2edc5d95c04ba451"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/traded_hole_waived-baseline.log",
+              "sha256": "4c1d70bc70c2221300b17f315e1384e26ab66137234ed663e4093b48bfadd9ca"
+            },
+            "source_sha256": "ee6adf94f571fb07ce2e4a7dcf2ed9c623e2ff9727b3c158e264a32ce2f6f91f"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/traded_hole_waived-mutant.json",
+              "sha256": "7ff4bf6a3acecdc7602e60e4e9304d8ab72ceab64ae855094484a457f077655d"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/traded_hole_waived-mutant.log",
+              "sha256": "0eed8683707c944437b272ae28c53b9cf612043827a5308ed751ff27c312b705"
+            },
+            "source_sha256": "ee6adf94f571fb07ce2e4a7dcf2ed9c623e2ff9727b3c158e264a32ce2f6f91f"
+          }
+        }
+      },
+      {
+        "name": "r6_clean_live_waived",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/r6_clean_live_waived-baseline.json",
+              "sha256": "a89528d636bf0ce6555659704c7aa0be31b8e2fb928394cef8bca839c3cc7ea3"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/r6_clean_live_waived-baseline.log",
+              "sha256": "3605abb09038ce24e90d81df8f7c0d87bb6f647a5e016bf461d8a8fcb408f6e9"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/r6_clean_live_waived-mutant.json",
+              "sha256": "4340403659cecac379330138a1eaae20cec5799f82e20289c1e1f9f937b3d3ec"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/r6_clean_live_waived-mutant.log",
+              "sha256": "a401ef33e4cba8fea9c7b3e26a69e860f47318ad2b7887a6ee66147ba63fe91f"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          }
+        }
+      },
+      {
+        "name": "service_first_close",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/service_first_close-baseline.json",
+              "sha256": "24451466aec6528f3d7561b9fc5018077a1efe2189deb096350466b0b92ce43a"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/service_first_close-baseline.log",
+              "sha256": "7d79dbdd92b95508ac801051a21ce47663454c0efdc85fcc1838d3be594f9392"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/service_first_close-mutant.json",
+              "sha256": "9b20205860ffaf651fc8ea08909b7263518d5bc650eab81b9654e9500564e97e"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/service_first_close-mutant.log",
+              "sha256": "3c2bb97cf8689afc3f946dcfe2217f01df947939747dec291bc9cf3fb7b470c1"
+            },
+            "source_sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+          }
+        }
+      },
+      {
+        "name": "client_first_close",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/client_first_close-baseline.json",
+              "sha256": "eb627f7777e5018ccdfb01bbae2567f7a1be8bf38c92df49d16557019e9e6156"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/client_first_close-baseline.log",
+              "sha256": "b4eb7be9000651a3e89c6a77e8b346d05d1d706d620aa6f8193e574a39b3ced1"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/client_first_close-mutant.json",
+              "sha256": "d0ce03a725e001b4c5d6a55b96f6f7dee2d9928c7419e06bc4f772ba59698516"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/client_first_close-mutant.log",
+              "sha256": "323b96d783b55468f4a8e07306a99359a4895686aad49e9fb8ac0bfb181d0d35"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "provider_first_close",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/provider_first_close-baseline.json",
+              "sha256": "d94f43eef3a8ac32f230d448de17152a64f62d172b67dc7fc94e1a97c5e96f96"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/provider_first_close-baseline.log",
+              "sha256": "f75f441e390e1d57a5128bcabdc4c5a7679e65ea222d2596e4c952b20c6db153"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/provider_first_close-mutant.json",
+              "sha256": "0f1baa362ad8a32188f009a3874ae2957bd6e8169676bc5bd91f96b245aeda67"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/provider_first_close-mutant.log",
+              "sha256": "eca5ad7dcf085bfe67d515e87bff7bba4a07960862d2772f9a08a1b0d17b05ef"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "empty_becomes_exception",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_becomes_exception-baseline.json",
+              "sha256": "e5af1aa5a0c05a694397442e76b667989d12dae1bc558bef3c0372231e855c51"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_becomes_exception-baseline.log",
+              "sha256": "6380fc32fe89eea9e50bacec431e3811f0db002943299df19da449870657b814"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_becomes_exception-mutant.json",
+              "sha256": "e7a6fd333c1dbab63efc656e0c0935b72d7df0b8cb2594f44c9c4eb8ccd11353"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_becomes_exception-mutant.log",
+              "sha256": "fd5ff23576b581fcaf182337aff8b5e7e7500a559e2d7ec8f291be0c3ae0dbc1"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "empty_manufactures_proof",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_manufactures_proof-baseline.json",
+              "sha256": "e5af1aa5a0c05a694397442e76b667989d12dae1bc558bef3c0372231e855c51"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_manufactures_proof-baseline.log",
+              "sha256": "118039d1b180bf00c6a4bcc955814c36df624d9c3de352c75ac5d83fe572f47d"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_manufactures_proof-mutant.json",
+              "sha256": "61bb180b1cb9577260657b5024139ec9c773ff55a20a02a5c7098a414c52be0a"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_manufactures_proof-mutant.log",
+              "sha256": "f3279bf41fdd6acad305c9f6523be1befe34b4dd1555ea23d5dfbc78b4822bb4"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "empty_bypasses_identity",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_bypasses_identity-baseline.json",
+              "sha256": "1abe54e98ae0e1d1a8a646783868b91fae2b1add571b4185df03d2cf88a9e180"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_bypasses_identity-baseline.log",
+              "sha256": "59b9466559aeabf218a54ec041fd83cd357cf9bf1d80a17c47aab62ed0c205bf"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_bypasses_identity-mutant.json",
+              "sha256": "e1820b832bbe395c8fa40920a983efd5635377efa5e54e292457920d62d03c3c"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_bypasses_identity-mutant.log",
+              "sha256": "0fba56904c465e4365e0f24cb0fc2f44b9ba3cdbc0dd49a4dd1a69a94c32f726"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      },
+      {
+        "name": "empty_contradiction_waived",
+        "killed": true,
+        "runs": {
+          "baseline": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_contradiction_waived-baseline.json",
+              "sha256": "a75b95dccd4982e30a6d3acbe52fa07d42d761b5088717747b821fd2e8a25c56"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_contradiction_waived-baseline.log",
+              "sha256": "f6b6e232e0345fa742cf57cbc60c8884709a6f029bd43161ca6e812c9175f2a8"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          },
+          "mutant": {
+            "receipt": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_contradiction_waived-mutant.json",
+              "sha256": "0ac522b7c8e194181c2c7835c322de0f2737539e2b2b733d1595017f3f1e0dd7"
+            },
+            "log": {
+              "path": "/tmp/linesrc1-oct7-final-mutations/empty_contradiction_waived-mutant.log",
+              "sha256": "f5ea1d85c75234622a5456934d192e71b96fe22704281fdff77f0578535ebb26"
+            },
+            "source_sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+          }
+        }
+      }
+    ]
+  },
+  "acceptance_123": {
+    "count": 123,
+    "byte_identical": true,
+    "base": {
+      "path": "/tmp/linesrc1-oct7-base-123-acceptance.json",
+      "sha256": "b3104ee6525171e5ae427f4a8c806b2925e8586166244b68d2aa0851122a7f81"
+    },
+    "head": {
+      "path": "/tmp/linesrc1-oct7-head-123-acceptance.json",
+      "sha256": "b3104ee6525171e5ae427f4a8c806b2925e8586166244b68d2aa0851122a7f81"
+    },
+    "first": {
+      "HELD": 33,
+      "MATCH": 90
+    },
+    "plus10": {
+      "MATCH": 98,
+      "n/a": 25
+    },
+    "entry_allowed_while_incomplete": 0,
+    "buy_before_complete": 0
+  },
+  "protected_files": [
+    {
+      "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/scripts/line_restore_acceptance.py",
+      "sha256": "5ca1547bba7f74919b2f4d2d419d7bebf28cbf01f4d6284007d27d25294d138b"
+    },
+    {
+      "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/tests/line_restore_acceptance_factory.py",
+      "sha256": "907b6fc955f57e1ddff9396134a54c7131fcb6b6cc208231b73dbe28c5a4a486"
+    },
+    {
+      "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/src/project_mai_tai/strategy_core/session_line_restore.py",
+      "sha256": "ee6adf94f571fb07ce2e4a7dcf2ed9c623e2ff9727b3c158e264a32ce2f6f91f"
+    },
+    {
+      "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/src/project_mai_tai/settings.py",
+      "sha256": "c71d80c7a465187554203b3f268e4237d5dd2bf76cd4487d840225410a41f85d"
+    },
+    {
+      "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/tests/unit/test_line_chart_restoration_integration.py",
+      "sha256": "757d45ae891bb123c9da0be3195db855bb3ea0397258f9167e04549bf4866ba9"
+    }
+  ],
+  "actual_source_import_probe": {
+    "method": "fresh same-environment import after tests; not retrospective pytest tracing",
+    "files": {
+      "project_mai_tai.market_data.schwab_v2_rest_client": {
+        "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/src/project_mai_tai/market_data/schwab_v2_rest_client.py",
+        "sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+      },
+      "project_mai_tai.services.schwab_1m_v2_bot": {
+        "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/src/project_mai_tai/services/schwab_1m_v2_bot.py",
+        "sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+      },
+      "project_mai_tai.strategy_core.session_line_restore": {
+        "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/src/project_mai_tai/strategy_core/session_line_restore.py",
+        "sha256": "ee6adf94f571fb07ce2e4a7dcf2ed9c623e2ff9727b3c158e264a32ce2f6f91f"
+      }
+    }
+  },
+  "candidate_files": [
+    {
+      "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/src/project_mai_tai/market_data/schwab_v2_rest_client.py",
+      "sha256": "45bf12c624feed74b9774945566678eab0f313511625529d676d61ccee9a15a2"
+    },
+    {
+      "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/src/project_mai_tai/services/schwab_1m_v2_bot.py",
+      "sha256": "8c5117e8d10453c3fd7cfe93df20494d5328f95642b6c6435a37d9dc3ee792bb"
+    },
+    {
+      "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/tests/unit/test_linesrc1_anchored_session_poll.py",
+      "sha256": "7d4cb53762844d9266d0659a933b48553b6c21ce6f90c9d141bfc43769bfdff0"
+    },
+    {
+      "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/tests/fixtures/linesrc1_oct7_empty_history_measurement.json",
+      "sha256": "61d51ca2ce1433eee59771ae4f840864311835ee2536e5e7139b1c97b3b23cc0"
+    },
+    {
+      "path": "/Users/velkris/.codex/worktrees/linesrc1-anchored-session-poll/project-mai-tai/docs/review-artifacts/linesrc1/MUTATIONS.py",
+      "sha256": "d8f848cf9c397e24b64b407cea10f79ce31a34f16187a714242e58da9e437322"
+    }
+  ],
+  "retained_preliminary_artifacts": [
+    {
+      "path": "/tmp/linesrc1-oct7-pre-final-focused.xml",
+      "sha256": "69a58903ec458b6ecb6b7304c0c2809d2c4d7add51552fd39b796b51dd97baef"
+    },
+    {
+      "path": "/tmp/linesrc1-oct7-pre-final-focused.log",
+      "sha256": "88c96406146b4b4704cf68a29114ccc8399a12fc998ad9250ef8e2ecc8fd2520"
+    },
+    {
+      "path": "/tmp/linesrc1-oct7-pre-final-mutations.json",
+      "sha256": "4ef10b2a4348154cd42f441717cb4526f061e85d34c5a38eec95e6309d77bf80"
+    },
+    {
+      "path": "/tmp/linesrc1-oct7-pre-final-mutations.log",
+      "sha256": "7aa3b19dffc90dec9732b1ae3b54a95cb3647e7f79a41ba62460d54740984668"
+    }
+  ],
+  "environment": {
+    "python": "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "PYTHONPATH": "src:.",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PATH_override": false,
+    "pytest_cache": false
+  },
+  "remaining_coverage": [
+    "Four-name raw price bars/provider envelopes not supplied",
+    "Actual in-session provider recovery and deployed behavior UNMEASURED",
+    "Current-head local full-unit pair not run; old a2 receipt not substituted",
+    "Current-head hosted Validate pending after push",
+    "Parent-coordinated rebase/review/pin/install are separate gates"
+  ],
+  "production_broker_db_service_redis_or_shared_handoff_actions": false
+}

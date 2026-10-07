@@ -4806,9 +4806,11 @@ class SchwabV2BotService:
         now_ms = self.strategy._now_ms()
         if not anchored_session_poll_open(now_ms):
             return None
+        current = now_ms // 60_000 * 60_000 - 60_000
+        if not anchored_session_poll_open(current):
+            return None
         self._sync_line_epochs()
         ledger = self._line_sessions.get(symbol)
-        current = now_ms // 60_000 * 60_000 - 60_000
         if ledger is None or not ledger.anchor_ms <= current < ledger.anchor_ms + 16 * 3_600_000:
             return None
         return ledger.epoch, ledger.anchor_ms, current

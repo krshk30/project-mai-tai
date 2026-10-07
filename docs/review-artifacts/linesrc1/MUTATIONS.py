@@ -21,7 +21,7 @@ TEST = "tests/unit/test_linesrc1_anchored_session_poll.py::"
 CASES = {
     "utc_not_et": (CLIENT, '.astimezone(ZoneInfo("America/New_York"))', '.astimezone(UTC)',
                    TEST + "test_exact_et_session_boundaries_and_dst"),
-    "open_early": (CLIENT, "return 6 * 60 + 55 <=", "return 6 * 60 + 54 <=",
+    "open_early": (CLIENT, "return 7 * 60 <=", "return 6 * 60 + 55 <=",
                    TEST + "test_exact_et_session_boundaries_and_dst"),
     "close_inclusive": (CLIENT, "eastern.minute < 16 * 60", "eastern.minute <= 16 * 60",
                         TEST + "test_exact_et_session_boundaries_and_dst"),
@@ -79,6 +79,30 @@ CASES = {
         "                        for offset in range(2 * self.strategy._atr_period))",
         "            clean = True",
         "tests/unit/test_line_restore_r6_spanning.py::test_recorded_pmi_eleven_arrivals_do_not_release_ten_clean_live_bar_hold"),
+    "service_first_close": (BOT,
+        "        if not anchored_session_poll_open(current):\n            return None\n", "",
+        TEST + "test_oct7_measured_empty_names_do_not_poll_before_first_0700_close"),
+    "client_first_close": (CLIENT,
+        "                    if not anchored_session_poll_open(current):\n                        return\n", "",
+        TEST + "test_client_fences_context_before_first_0700_closed_candle"),
+    "provider_first_close": (CLIENT,
+        "        if not anchored_session_poll_open(current_bar_ms):\n            return [], None\n", "",
+        TEST + "test_outside_session_provider_does_not_read_or_validate"),
+    "empty_becomes_exception": (CLIENT,
+        "        if not candles:\n            # A valid empty response has no bars or completeness proof yet.\n            return [], None\n",
+        "        if not candles:\n            raise ValueError(\"session response completeness unproven\")\n",
+        TEST + "test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session"),
+    "empty_manufactures_proof": (CLIENT,
+        "        if not candles:\n            # A valid empty response has no bars or completeness proof yet.\n            return [], None\n",
+        "        if not candles:\n            return [], object()\n",
+        TEST + "test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session"),
+    "empty_bypasses_identity": (CLIENT,
+        '        candles = payload.get("candles")\n        if (str(payload.get("symbol", "")).upper() != symbol.upper()\n',
+        '        candles = payload.get("candles")\n        if payload.get("empty") is True and candles == []:\n            return [], None\n        if (str(payload.get("symbol", "")).upper() != symbol.upper()\n',
+        TEST + "test_empty_is_not_a_bypass_for_foreign_or_malformed_source[foreign]"),
+    "empty_contradiction_waived": (CLIENT,
+        '        if payload.get("empty") is True:\n            raise ValueError("nonempty session response marked empty")\n', "",
+        TEST + "test_empty_is_not_a_bypass_for_foreign_or_malformed_source[contradiction]"),
 }
 
 
@@ -139,7 +163,7 @@ def main():
     args = parser.parse_args()
     if args.child:
         return child(*args.child, args.receipt)
-    output = Path("/tmp/linesrc1-semantic-controls")
+    output = args.output.with_suffix("")
     output.mkdir(exist_ok=True)
     env = {**os.environ, "PYTHONPATH": "src:.", "PYTHONDONTWRITEBYTECODE": "1"}
     results = []

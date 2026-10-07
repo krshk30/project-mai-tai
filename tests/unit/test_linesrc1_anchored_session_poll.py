@@ -1,7 +1,9 @@
 """[codex] Recorded prices with controlled source/clock states; no production I/O."""
 from copy import deepcopy
 from datetime import UTC, datetime
+import json
 import logging
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
@@ -15,10 +17,15 @@ from tests.unit.test_line_chart_restoration_integration import (
     _bars, _bot, _ingest, _ms, _payload, _proof,
 )
 
+EMPTY_MEASUREMENT = json.loads((Path(__file__).parents[1] / "fixtures" /
+                               "linesrc1_oct7_empty_history_measurement.json").read_text())
+EMPTY_RESPONSES = EMPTY_MEASUREMENT["responses"]
+
 
 @pytest.mark.parametrize("day", ["2026-01-06", "2026-07-06", "2026-03-08", "2026-11-01"])
 @pytest.mark.parametrize("clock,expected", [
-    ("00:00:00", False), ("06:54:59.999", False), ("06:55:00", True),
+    ("00:00:00", False), ("06:54:59.999", False), ("06:55:00", False),
+    ("06:59:59.999", False), ("07:00:00", True),
     ("09:30:00", True), ("15:59:59.999", True), ("16:00:00", False),
     ("20:00:00", False), ("23:59:59", False),
 ])
@@ -39,7 +46,7 @@ def _client(bot=None):
 
 
 @pytest.mark.parametrize("day", ["2026-01-06", "2026-07-06"])
-@pytest.mark.parametrize("clock", ["06:55:00", "15:59:59"])
+@pytest.mark.parametrize("clock", ["07:01:00", "15:59:59"])
 def test_in_window_service_requests_exact_anchor_and_previous_closed_minute(day, clock):
     local = datetime.fromisoformat(f"{day}T{clock}").replace(tzinfo=ZoneInfo("America/New_York"))
     now = int(local.timestamp() * 1000)
@@ -50,7 +57,7 @@ def test_in_window_service_requests_exact_anchor_and_previous_closed_minute(day,
     assert current == now // 60_000 * 60_000 - 60_000
 
 
-@pytest.mark.parametrize("clock", ["06:54:59", "16:00:00", "20:00:00"])
+@pytest.mark.parametrize("clock", ["06:54:59", "06:55:00", "07:00:59", "16:00:00", "20:00:00"])
 def test_outside_session_provider_does_not_read_or_validate(clock):
     now = _ms(f"2026-10-05T{clock}-04:00")
     client = _client()
@@ -62,7 +69,7 @@ def test_outside_session_provider_does_not_read_or_validate(clock):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("clock", ["06:54:59", "16:00:00", "20:00:00"])
+@pytest.mark.parametrize("clock", ["06:54:59", "06:55:00", "07:00:59", "16:00:00", "20:00:00"])
 async def test_outside_session_service_is_quiet_without_epoch_change(monkeypatch, caplog, clock):
     now = _ms(f"2026-10-05T{clock}-04:00")
     bot = _bot("RETO", now - 61_000)
@@ -281,3 +288,134 @@ def test_old_epoch_response_cannot_set_or_clear_current_source_wait():
     assert bot._line_source_waiting["RETO"] == current.epoch
     assert not bot._accept_line_source("RETO", old_epoch, bars, _proof(ledger, bars))
     assert bot._line_source_waiting["RETO"] == current.epoch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("row", EMPTY_RESPONSES, ids=lambda row: row["symbol"])
+@pytest.mark.parametrize("clock", ["06:21:00", "06:55:00", "06:59:59", "07:00:59"])
+async def test_oct7_measured_empty_names_do_not_poll_before_first_0700_close(monkeypatch, caplog, row, clock):
+    # Only the 06:21 shape/count is measured; other clocks are boundary controls.
+    assert row["empty"] is True and row["candle_count"] == 0
+    now = _ms(f"2026-10-07T{clock}-04:00")
+    bot = _bot(row["symbol"], now - 61_000)
+    before = (bot._line_epoch, dict(bot._line_sessions))
+    bot._sync_line_epochs = Mock(side_effect=AssertionError("premature epoch sync"))
+    client = _client(bot)
+    client._authorized_get = Mock(side_effect=AssertionError("premature provider GET"))
+    monkeypatch.setattr("project_mai_tai.market_data.schwab_v2_rest_client.sleep_or_stop", AsyncMock())
+    with caplog.at_level(logging.INFO):
+        await client._anchored_bar_loop_pass([row["symbol"]], 5)
+    assert (bot._line_epoch, bot._line_sessions) == before
+    client._authorized_get.assert_not_called()
+    client._on_session_failure.assert_not_called()
+    client._on_chart_bar.assert_not_awaited()
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("row", EMPTY_RESPONSES, ids=lambda row: row["symbol"])
+@pytest.mark.parametrize("empty", [True, False])
+def test_oct7_measured_empty_shape_has_no_bars_or_proof_in_controlled_session(row, empty):
+    from urllib.parse import parse_qs, urlparse
+
+    # No recorded prices are available for these names. Only the measured
+    # empty/count shape is replayed at a controlled in-session clock.
+    symbol = row["symbol"]
+    anchor = _ms(EMPTY_MEASUREMENT["anchor_et"])
+    current = _ms("2026-10-07T07:00:00-04:00")
+    client = _client(_bot(symbol, current))
+    client._authorized_get = Mock(return_value={"symbol": symbol, "empty": empty, "candles": []})
+    try:
+        bars, proof = client.fetch_session_history(symbol, anchor, current)
+    except ValueError as exc:
+        pytest.fail(f"valid empty history is no bars yet, not an epoch failure: {exc}")
+    assert bars == [] and proof is None
+    query = parse_qs(urlparse(client._authorized_get.call_args.args[0]).query)
+    assert query["startDate"] == [str(anchor)]
+    assert query["endDate"] == [str(current + 59_999)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("row", EMPTY_RESPONSES, ids=lambda row: row["symbol"])
+async def test_oct7_empty_session_waits_without_epoch_failure_or_warning_flood(monkeypatch, caplog, row):
+    symbol = row["symbol"]
+    bot = _bot(symbol, _ms("2026-10-07T07:00:00-04:00"))
+    ledger = bot._line_sessions[symbol]
+    client = _client(bot)
+    client._authorized_get = Mock(return_value={"symbol": symbol, "empty": True, "candles": []})
+    monkeypatch.setattr("project_mai_tai.market_data.schwab_v2_rest_client.sleep_or_stop", AsyncMock())
+    with caplog.at_level(logging.WARNING):
+        await client._anchored_bar_loop_pass([symbol], 5)
+        await client._anchored_bar_loop_pass([symbol], 5)
+    assert ledger._coverage is None and ledger.revision == 0 and not ledger._bars
+    assert bot._line_source_waiting[symbol] == ledger.epoch
+    assert not bot.strategy.line_buy_ready(symbol) and not bot._line_published
+    assert not bot.strategy.drain_pending_intents()
+    client._on_session_failure.assert_not_called()
+    client._on_chart_bar.assert_not_awaited()
+    records = [r for r in caplog.records if "[V2-LINE-SOURCE-STATE]" in r.message]
+    assert len(records) == 1 and "state=waiting" in records[0].message
+    assert records[0].levelno == logging.WARNING and records[0].exc_info is None
+
+
+@pytest.mark.parametrize("damage", ["foreign", "truncated", "unknown_empty", "nonlist", "contradiction"])
+def test_empty_is_not_a_bypass_for_foreign_or_malformed_source(damage):
+    current = _ms("2026-10-07T07:00:00-04:00")
+    anchor = _ms(EMPTY_MEASUREMENT["anchor_et"])
+    client = _client(_bot("BIYA", current))
+    payload = {"symbol": "BIYA", "empty": True, "candles": []}
+    if damage == "foreign":
+        payload["symbol"] = "MI"
+    elif damage == "truncated":
+        payload["truncated"] = True
+    elif damage == "unknown_empty":
+        payload.pop("empty")
+    elif damage == "nonlist":
+        payload["candles"] = None
+    else:
+        bars = _bars("RETO")
+        payload = _payload("RETO", bars)
+        payload["empty"] = True
+        anchor = _ms("2026-10-05T04:00:00-04:00")
+        current = bars[-1].timestamp_ms
+    client._authorized_get = Mock(return_value=payload)
+    with pytest.raises(ValueError):
+        client.fetch_session_history(payload["symbol"] if damage == "contradiction" else "BIYA",
+                                     anchor, current)
+
+
+@pytest.mark.asyncio
+async def test_client_fences_context_before_first_0700_closed_candle(monkeypatch, caplog):
+    client = _client()
+    client._session_request = lambda symbol: (7, _ms(EMPTY_MEASUREMENT["anchor_et"]),
+                                              _ms("2026-10-07T06:59:00-04:00"))
+    client.fetch_session_history = Mock(side_effect=AssertionError("premature fetch"))
+    client._on_session_history = Mock()
+    monkeypatch.setattr("project_mai_tai.market_data.schwab_v2_rest_client.sleep_or_stop", AsyncMock())
+    with caplog.at_level(logging.INFO):
+        await client._anchored_bar_loop_pass(["BIYA"], 5)
+    client.fetch_session_history.assert_not_called()
+    client._on_session_history.assert_not_called()
+    client._on_session_failure.assert_not_called()
+    assert not caplog.records
+
+
+@pytest.mark.asyncio
+async def test_valid_empty_response_retains_prior_recorded_coverage_but_cannot_release_wait(monkeypatch):
+    bars = _bars("RETO")
+    bot = _bot("RETO", bars[-1].timestamp_ms)
+    ledger = _ingest(bot, bars)
+    ledger.attest(_proof(ledger, bars))
+    assert await bot._rebuild_session_line("RETO", ledger)
+    assert bot.strategy.line_buy_ready("RETO")
+    before = (ledger.epoch, ledger.revision, ledger._coverage)
+    client = _client(bot)
+    client._authorized_get = Mock(return_value={"symbol": "RETO", "empty": True, "candles": []})
+    monkeypatch.setattr("project_mai_tai.market_data.schwab_v2_rest_client.sleep_or_stop", AsyncMock())
+    await client._anchored_bar_loop_pass(["RETO"], 5)
+    assert (ledger.epoch, ledger.revision, ledger._coverage) == before
+    assert not bot.strategy.line_buy_ready("RETO")
+    await bot._rebuild_session_line("RETO", ledger)
+    assert not bot.strategy.line_buy_ready("RETO")
+    assert not bot.strategy.drain_pending_intents()
+    client._on_session_failure.assert_not_called()
+    client._on_chart_bar.assert_not_awaited()
