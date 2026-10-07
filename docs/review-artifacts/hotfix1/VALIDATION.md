@@ -91,3 +91,14 @@ The first development run was 62 failed / 7,086 passed. Its six new failures
 were fixed without weakening the original cancellation assertions. Focused and
 full runs still emit pending confirmation-recovery/protection task warnings;
 this patch does not claim to fix those separate task lifecycles.
+
+## Parent integration proof
+
+Parent-reported additional proof, not this PR's own source/test receipt:
+disposable `/tmp/hotfix-rpgnowire-composition-20261007` combines HOTFIX1
+964ed0ca with RPGNOWIRE1 e52e238b + 74ad6c70. Result: 85 passed, 1 benchmark
+deselected; XML `/tmp/hotfix-rpgnowire-parent-composition-20261007.xml`.
+Its temporary `tests/unit/test_hotfix_rpgnowire_composition.py` checks committed
+queued SXTC cache -> RPG release preparation -> cache eviction -> no BUY from a
+stale serial copy, plus both lanes' controls and RPG/NFQ/L5/L7 composition.
+That temporary test is not added to this PR; the parent owns the combined tree.

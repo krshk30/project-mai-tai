@@ -52,6 +52,11 @@ revision/retirement, symbol isolation, deduplication, blocked-gate work budget,
 last-tick wakeup, shutdown token fencing, hold logs, broker-sync refresh and
 stale working-order revalidation. See `VALIDATION.md` and `mutation-*.txt`.
 
+Parent-reported combined HOTFIX1/RPGNOWIRE1 proof: **85 passed / 1 benchmark
+deselected**, `/tmp/hotfix-rpgnowire-parent-composition-20261007.xml`.
+The parent's disposable test verifies queued SXTC cache -> RPG release ->
+eviction -> stale serial copy cannot BUY. It is separate from this PR's tests.
+
 Key worker receipts:
 `test_last_tick_new_committed_generation_is_not_lost_while_worker_busy`,
 `test_shutdown_drains_db_and_invalidates_reserved_token`,
