@@ -710,6 +710,26 @@ def test_classifier_refusal_writes_official_failure_report_and_keeps_each_rerun(
         assert receipt["accepted_open_count"]==0 and len(receipt["unclassified"])==1
 
 
+def test_official_unknown_before_output_writes_dated_unknown_not_missing_report(monkeypatch,tmp_path):
+    spec=importlib.util.spec_from_file_location("test_unknown_official",REPO/"ops/health/v2_restart_evidence.py")
+    official=importlib.util.module_from_spec(spec)
+    sys.modules[spec.name]=official; spec.loader.exec_module(official)
+    report=tmp_path/"report.md"
+    def main(argv):
+        print("Final call: UNKNOWN; evidence unreadable: untimestamped traceback",file=sys.stderr)
+        return 2
+    official.main=main
+    loader=SimpleNamespace(exec_module=lambda _:None)
+    monkeypatch.setattr(restart_report.importlib.util,"spec_from_file_location",lambda *a:SimpleNamespace(name=spec.name,loader=loader))
+    monkeypatch.setattr(restart_report.importlib.util,"module_from_spec",lambda _:official)
+    assert restart_report.main(["report","--output",str(report)])==2
+    raw=report.read_text()
+    assert "Generated: " in raw and "Final call: UNKNOWN;" in raw and "untimestamped traceback" in raw
+    assert "Final call: PASS;" not in raw
+    sidecar=json.loads(next(tmp_path.glob("report.md.*.linesrc.json")).read_bytes())
+    assert sidecar["collector_stderr"]=="Final call: UNKNOWN; evidence unreadable: untimestamped traceback\n"
+
+
 def test_catalog_duplicate_identity_blocks():
     row=dict(name="controlled",owning_service="oms")
     with pytest.raises(p.Stop,match="duplicated"): catalog_policy.identities([row,row])

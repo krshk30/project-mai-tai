@@ -97,10 +97,18 @@ def main(argv=None):
         return original(filtered, since=since, service=service)
 
     module.parse_log_files = reviewed
-    capture = io.StringIO()
-    with contextlib.redirect_stdout(capture):
+    capture, errors = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(capture), contextlib.redirect_stderr(errors):
         rc = module.main(args)
     raw = capture.getvalue()
+    if not raw and rc == 2:
+        # The official collector can return UNKNOWN before writing a report. Keep its
+        # actual reason and publish a dated UNKNOWN, never a synthetic success.
+        raw = ("# V2 Restart Evidence\n\nGenerated: " + module.format_moment(datetime.now(timezone.utc))
+            + "\nOverall: UNKNOWN (collector could not establish scope)\n"
+            + "Final call: UNKNOWN; official collector returned unreadable evidence\n\nUnknowns:\n- "
+            + errors.getvalue().strip().replace("\n", "\n- ") + "\n")
+        output.write_text(raw)
     need(len(raw.encode()) <= 3_000_000 and output.is_file(), "official report missing/overflow")
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     official = output.with_name(output.name + "." + run_id + ".official-unaccepted-scope.txt")
@@ -126,7 +134,8 @@ def main(argv=None):
     output.write_text(rendered)
     exclusive(output.with_name(output.name + "." + run_id + ".linesrc.json"), canonical(dict(
         accepted_open_count=len(receipts), classification="ACCEPTED_OPEN_LINESRC1" if receipts else "NONE",
-        receipts=receipts, unclassified=unclassified, official_unaccepted_scope_sha256=digest(raw.encode()))))
+        receipts=receipts, unclassified=unclassified, collector_stderr=errors.getvalue(),
+        official_unaccepted_scope_sha256=digest(raw.encode()))))
     print(rendered, end="")
     return rc
 
