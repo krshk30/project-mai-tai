@@ -310,7 +310,7 @@ def test_exact_rc2_retry_three_by60_raw_commands_retained(monkeypatch,codes,read
 
 def test_native_clock_pending_before_claim_no_override(monkeypatch,tmp_path):
     fx=runner.Real(tmp_path,{},tmp_path)
-    fx.flat=Mock(); fx.reader=Mock()
+    fx.flat=Mock(); fx.reader=Mock(); fx.armed=Mock()
     fx.command=Mock(return_value=subprocess.CompletedProcess([],1,b"  [BLOCK] it is before 18:00 ET.\n",b""))
     with pytest.raises(p.Pending): fx.v2_gate()
     assert fx.flat.call_args_list[0].args==("oms",) and fx.flat.call_args_list[1].args==("strategy",)
@@ -338,8 +338,8 @@ def test_no_bulk_snapshot_or_service_writes_in_units():
     service=(HERE/"project-mai-tai-linesrc1-20261007.service").read_text()
     timer=(HERE/"project-mai-tai-linesrc1-20261007.timer").read_text()
     assert "ConditionPathExists=!" in service and "write-started.json" in service and "Restart=no" in service
-    assert "ConditionPathExists=/home/trader/after-hours/2026-10-07/linesrc1-f9c9bd33/job/approval.json" in service
-    assert "approval.pending.json" in (HERE/"make_release.py").read_text()
+    assert "ConditionPathExists=/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job/approval.json" in service
+    assert "approval.pending.json" not in (HERE/"make_release.py").read_text()
     assert "SuccessExitStatus=75" in service and "Requires=" not in service
     assert "2026-10-07 16..23:" in timer and "Persistent=false" in timer
     assert "project-mai-tai-preopen.timer" not in timer
@@ -456,14 +456,14 @@ def test_abort_notification_errors_leave_actual_STOP_no_service_action(monkeypat
     assert "systemctl" not in fx.command.call_args.args[0]
 
 
-def test_local_package_exact_bytes_approval_absent_then_tamper_refused(monkeypatch,tmp_path):
+def test_local_package_exact_bytes_standing_GO_present_and_tamper_refused(monkeypatch,tmp_path):
     plan="a"*40
     baseline=dict(fleet_before=fleet(),environment_sha256="b"*64,
                   authorization_provenance="CONTROLLED local assembly; not an actual production baseline")
     def git(*args):
         if args[0]=="rev-parse": return (p.TREE+"\n").encode()
         if args[0]=="merge-base": return b""
-        if args[0]=="diff": return (make_release.REL+"runner.py\n").encode()
+        if args[0]=="diff": return b"" if "src" in args else (make_release.REL+"runner.py\n").encode()
         assert args[0]=="show"
         sha,path=args[1].split(":",1)
         return (HERE/path.removeprefix(make_release.REL)).read_bytes() if sha==plan else (ROOT/path).read_bytes()
@@ -471,7 +471,7 @@ def test_local_package_exact_bytes_approval_absent_then_tamper_refused(monkeypat
     target=tmp_path/"package"
     result=make_release.assemble(plan,baseline,target)
     assert result["production_run"] is False and result["catalog_counts"]["total"]==157
-    assert (target/"approval.pending.json").exists() and not (target/"approval.json").exists()
+    assert (target/"approval.json").exists() and not (target/"approval.pending.json").exists()
     release=json.loads((target/"release.json").read_bytes())
     assert release["environment_sha256"]==baseline["environment_sha256"]
     assert all(p.digest((target/name).read_bytes())==sha for name,sha in release["artifacts"].items())
@@ -515,10 +515,10 @@ def test_published_manifest_admission_refuses_each_tamper(monkeypatch,tmp_path,d
 
 def test_readme_closeout_only_installer_timer_not_daily_and_not_zero_marker():
     text=(HERE/"README.md").read_text()
-    assert "After COMPLETE or STOP, parent disables/stops only" in text
+    assert "After COMPLETE or STOP the runner disables/stops only its installer timer" in text
     assert "Existing daily preopen timer remains enabled and unchanged" in text
     assert "zero such markers is NOT promised" in text
-    assert "approval.json ABSENT" in text
+    assert "Parent stages exact approval.json NOW" in text and "UNATTENDED" in text
 
 
 @pytest.mark.parametrize("wire_rc,readback_bad", [(0,False),(1,False),(0,True)])

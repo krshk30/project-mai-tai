@@ -1,14 +1,15 @@
 # Codex LINESRC1 Oct7 Executable Install Plan
 
-LOCAL runner candidate only. Parent alone stages, reviews exact package bytes,
-activates the named one-shot/timer, attends production and records installation.
+LOCAL runner candidate only. Parent alone stages and reviews exact package bytes.
+Latest Oct7 operator/reviewer ruling authorizes UNATTENDED named-timer execution
+under literal standing GO; the earlier attendance-latch ruling is superseded.
 No application source change, OMS restart, merge, service action or broker request
 was performed to develop this package. Runtime measurements remain UNMEASURED.
 
 ## Exact Scope
 
-APP `f9c9bd332392e2c905fc39b954421c88970844d7`;
-TREE `0fa89d5d40473e29e1039cd6a80200b36945d696`;
+APP `1a70da19176d2cad486e8518e1c9030f1cabb968`;
+TREE `666be962a8968cd436d6e50cfb6d09d33d6693d7`;
 BOX `5b8b4f642bbc3c312be436d0e92adbc22d9e9f95`.
 Only the three v2 source paths in `release_policy.SOURCES` differ under src/ops.
 The running v2 baseline is PID917354, Wed2026-10-07 11:14:07 UTC, NRestarts0.
@@ -17,12 +18,15 @@ becomes literal `true`; duplicate/case aliases, missing and already-true refuse.
 All other EnvironmentFile bytes remain identical. Explicit already-live keys
 and full 157-check Boolean/numeric catalog are verified independently.
 
-Stop v2 cleanly -> start v2 once. No other service actions, pip/dependency
+Stop v2 cleanly -> start v2 once. No other APPLICATION service actions, pip/dependency
 installation, migrations, token refresh, trading writes, clearing Redis/ledger,
 rollback, reset-failed or automatic recovery. A failed stop NEVER starts v2.
 Global deploy flock and existing daily run flock cover the whole attempt.
 The exclusive write/abort seal prevents any second deployment after claim,
-COMPLETE or ABORT; only an unclaimed clock/window PENDING can be retried.
+COMPLETE or ABORT; only typed unclaimed PENDING can be retried.
+The runner disables/stops ONLY its own dated installer timer on COMPLETE/ABORT;
+that authorized root installer-unit housekeeping is separate from application
+scope. It never stops its own running service or the daily preopen timer.
 
 First stop must be Oct7 strictly after16 and before midnight ET. The unmodified
 native v2 gate also must pass: it normally refuses before18. That is read-only
@@ -31,14 +35,33 @@ published state (60s) is read on both sides of the native gate. General prefligh
 for OMS and strategy remains before first stop; after v2 is stopped only direct
 strict flatness is requested, not an invented inactive-service health failure.
 After a clean stop the clock does not abort the single approved start path.
+Before18 the inexpensive clock receipt explicitly says native/general/broker
+gates were NOT RUN, not PASS. Fresh recognized holdings, working orders, open
+book rows, ticket phases or armed state may wait read-only before claim (rc75).
+Generic rc1, unrelated defects and exhausted unknowns cannot become PENDING;
+the same measured work after claim aborts rather than authorizing a restart.
 
-Fresh actual direct holdings=0, working orders=0, open managed/virtual rows=0,
-inflight intents=0 remain mandatory. No operator-holding waiver. The byte-exact
-reviewed strict helper retains existing MI/NXL historical reconciliation policy;
-its Oct6 IPDN allowance cannot authorize a nonflat Oct7 install. Full all-date
+Fresh complete BOT holdings=0, working orders=0, open managed/virtual rows=0,
+inflight intents=0 remain mandatory. Direct broker holdings are operator-only
+only with ZERO bot orders AND ZERO bot fills for exact account+symbol in the
+current04:00ET session, plus fresh complete broker/SQL/stored-position proof.
+All order statuses count, including rejected/local-aborted orders and null
+submitted timestamps (intent creation or order update still counts). Any fill
+counts even a completed/net-zero round trip. No symbol-list or net-zero inference.
+No reconciler finding is required to exist for operator classification. If one
+exists, only the exact matching info position finding may be projected out of the
+in-memory general-gate inputs; unrelated findings and unowned bot SELL remain
+blocking. Raw holdings/findings and proof are retained, never labeled broker-flat.
+MI/NXL historical allowance remains unchanged and separate. The unmodified native
+gate still excludes ONLY CYN/TE: it can BLOCK another proven operator holding.
+That literal native refusal is reported and stops this installer, never bypassed.
+Full all-date
 HandoffJournal inventory is bounded1024rows/4MB; count is informational,
 requested/price_wait/submitting must be0, immutable bindings stay unchanged.
 No per-old-order terminal-detail population, bulk history or snapshot-batches.
+An aborted order/intent remains blocking unless the shared canonical exact
+client-abort/no-wire/audit/event-id/zero-Fill proof validates it. The reader is
+bounded and does not release the separately owned old ticket.
 Read-only rc2 retries three total times, 60s between, stdout/stderr retained.
 rc1 never becomes success. Redis proof is bounded owner metadata: five owners,
 migration marker, stream types and unchanged eviction counter; no owner clearing.
@@ -62,48 +85,52 @@ Parent supplies a LOCAL JSON metadata file with exactly these fields:
 }
 ```
 
-Do not use an08:13 active-paper fleet as the after-close baseline. Capture the
-actual full fleet AFTER the normal09:40 paper/guard transition. Do not predict
-future identities or loosen adoption of a changed owner. Assembly has no effects
+The exact12:53:02Z morning fleet may bind a staged-NOW package. Core11 identities
+remain byte-for-byte exact. Only paper and daily-guard can transition from those
+saved active PIDs to clean inactive after scheduled09:40ET, preserving original
+invocation/start/monotonic/configuration and NRestarts0. Positive scheduled-close
+audit proof is required; no predicted future PID or arbitrary later adoption.
+The exact audit path is
+`/home/trader/after-hours/2026-10-07/option-a-daily/run-20261007T074001494845Z/option-a-guard.jsonl`.
+Only its bounded262144-byte tail is read at admission; the mutable whole file
+is not baseline-hashed. The literal action/reason and systemctl_rc=0 are required.
+Systemd stop timestamps have one-second displayed precision: audit time must be
+at/after paper stop and strictly before guard exit second+1s, disclosed in proof.
+After first admission the observed inactive states stay exact through install.
+No paper/guard actions are performed. Assembly has no effects
 beyond a newly created LOCAL package. Environment secrets are NOT exported.
 The supplied env hash must still match at actual first admission; any drift blocks.
 
 ```sh
 python -B docs/review-artifacts/linesrc1-install-20261007/job/make_release.py \
-  --plan FULL_COMMITTED_PLAN_SHA --baseline actual-after-close-metadata.json \
+  --plan FULL_COMMITTED_PLAN_SHA --baseline actual-morning-metadata.json \
   --package NEW_LOCAL_DIRECTORY
 ```
 
 This binds executable artifacts to exact committed bytes, APP/TREE/BOX, original
 recorded morning hashes, actual full fleet and same-user authority provenance.
-It emits release.json, release.sha256 and literal standing-GO approval.pending.json.
+It emits release.json, release.sha256 and literal standing-GO approval.json.
 Parent publishes the release hash and alone stages the immutable root package at
-`/home/trader/after-hours/2026-10-07/linesrc1-f9c9bd33/job` (root-owned; no group or
+`/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job` (root-owned; no group or
 other writes). Only after exact review, parent may stage/verify these distinct units:
 `project-mai-tai-linesrc1-20261007.service` and `.timer`. They do not install or
 duplicate the existing `project-mai-tai-preopen.timer` (nextOct8 06:20ET/10:20UTC).
-The parent stages approval.pending.json but leaves approval.json ABSENT. Both
-service conditions require actual approval.json and no write-started.json.
-Only while actively attending after close, after verifying every staged hash
-and the gates, may the parent install those exact pending bytes as approval.json
-and invoke the one-shot. Same-human standing GO needs no new approval roundtrip;
-this file is an attendance latch, not an unattended18:00 first-write permission.
+Parent stages exact approval.json NOW under latest same-human standing GO.
+Both service conditions require that published approval and no write-started.json.
+No human attendance is required. Approval does NOT bypass the date/window,
+fresh bot-flat, native gate, zero-armed, identity or any other admission proof.
 The dated timer permits a read-only pending check once per minute during16..23;
 there is no fixed first-stop time, Restart=no, and a seal stops subsequent runs.
-Parent prefers activation after the authorized window opens, never this agent.
-If a read-only PENDING attempt ends attendance, parent removes approval.json;
-the timer must never retain permission to begin a later unattended write.
-After COMPLETE or STOP, parent disables/stops only
-`project-mai-tai-linesrc1-20261007.timer`. Do not leave the finished every-minute
-installer timer active. These approved root installer-unit actions are separate
-from the application scope of one v2 restart. The runner never stops its own
-service/timer. Existing daily preopen timer remains enabled and unchanged.
+Parent stages/activates the dated units, never this local agent. No application
+write occurs before the dated window and an actually green unmodified nativegate.
+After COMPLETE or STOP the runner disables/stops only its installer timer, not
+its own service. Existing daily preopen timer remains enabled and unchanged.
 
-Direct attended invocation of the staged package:
+Direct diagnostic invocation of the staged package (named unit normally runs it):
 
 ```sh
 sudo /home/trader/project-mai-tai/.venv/bin/python -B \
-  /home/trader/after-hours/2026-10-07/linesrc1-f9c9bd33/job/runner.py RELEASE_SHA256
+  /home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job/runner.py RELEASE_SHA256
 ```
 
 ## Proof And Existing Morning Repin
@@ -161,9 +188,12 @@ They contain no EnvironmentFile secrets, no positive new install or fill evidenc
 Tests use these exact gate/ack/runtime/numeric bytes plus controlled process,
 clock, SQL and service responses. Tests are mechanics proof, not production proof.
 
-Future acceptance must distinguish literal rebuild-cycle logs from full-history
-authority requests. Parent reports the exact merged streamer test produced
+Known acceptance limitation, not a rewritten criterion: the latest reviewer asks
+for zero literal LINE-REBUILD-CYCLE markers without re-add. That literal criterion
+FAILS the parent-reported exact merged streamer test, which produced
 one source GET and nine live-only suffix updates (ten LINE-REBUILD-CYCLE markers,
 nine live_append=1) without re-add. Therefore zero such markers is NOT promised.
-The runner preserves pinned source and leaves that reviewer clarification open;
-it does not substitute a marker count for provider-fetch or line-coverage proof.
+The separate provider-fetch count is diagnostic only, not a replacement acceptance
+rule. Reviewer disposition remains pending; latest installation approval is
+unchanged. The runner preserves pinned source and reports the literal markers
+truthfully, without source patches or a fabricated acceptance PASS.

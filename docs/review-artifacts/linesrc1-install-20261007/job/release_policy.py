@@ -10,8 +10,9 @@ from zoneinfo import ZoneInfo
 
 from dotenv.parser import parse_stream
 
-APP = "f9c9bd332392e2c905fc39b954421c88970844d7"
-TREE = "0fa89d5d40473e29e1039cd6a80200b36945d696"
+PLAN_BASE = "f9c9bd332392e2c905fc39b954421c88970844d7"
+APP = "1a70da19176d2cad486e8518e1c9030f1cabb968"
+TREE = "666be962a8968cd436d6e50cfb6d09d33d6693d7"
 BOX = "5b8b4f642bbc3c312be436d0e92adbc22d9e9f95"
 DAY = "2026-10-07"
 ET = ZoneInfo("America/New_York")
@@ -31,7 +32,7 @@ SOURCES = tuple("src/project_mai_tai/" + path for path in (
     "market_data/schwab_v2_rest_client.py", "services/schwab_1m_v2_bot.py",
     "strategy_core/session_line_restore.py"))
 GATE_SHA = "40e57465f08c9cd9e34dc5739a3c68585d162ee2a5daa3e6b387b5d9fa24972e"
-SCOPE = "linesrc1-oct7-one-v2-stop-start"
+SCOPE = "linesrc1-oct7-unattended-one-v2-stop-start"
 ACK_STATE = {"MainPID": "765206", "NRestarts": "1", "ActiveState": "active",
              "SubState": "running", "ExecMainStartTimestamp": "Wed 2026-10-07 06:31:14 UTC",
              "InvocationID": "de16f6a3ae8f438a8aae3d294d7db686"}

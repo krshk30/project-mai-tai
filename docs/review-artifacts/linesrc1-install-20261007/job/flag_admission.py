@@ -7,7 +7,7 @@ PAPER_FLAGS = {("momentum_paper_enabled", "momentum-paper"),
                ("market_data_subscription_startup_enabled", "momentum-paper")}
 
 
-def inactive_paper(before, after, now):
+def inactive_paper(before, after, now, scheduled_close=None):
     from release_policy import system_time
     need(before == after, "paper identity/state changed during FLAGGATE")
     need(now >= datetime.combine(datetime.fromisoformat(DAY).date(), time(16), ET),
@@ -16,11 +16,25 @@ def inactive_paper(before, after, now):
          and after["Result"] == "success" and after["NRestarts"] == 0
          and after["ExecMainCode"] == 1 and after["ExecMainStatus"] == 0, "paper not clean expected inactive")
     stopped = system_time(after["InactiveEnterTimestamp"]).astimezone(ET)
+    if scheduled_close is not None:
+        need(scheduled_close["paper"] == after and scheduled_close["no_service_actions"] is True,
+             "paper lifecycle pin differs during FLAGGATE")
+        audit = scheduled_close["close_audit"]
+        from release_policy import moment
+        from paper_lifecycle import audit_in_stop_interval
+        need(isinstance(audit, dict) and audit.get("action") == "stop_paper"
+             and audit.get("reason") == "scheduled_session_close" and type(audit.get("systemctl_rc")) is int
+             and audit["systemctl_rc"] == 0 and moment(audit["at_utc"]) <= now
+             and audit_in_stop_interval(after, scheduled_close["guard"], moment(audit["at_utc"]))
+             and system_time(scheduled_close["guard"]["InactiveEnterTimestamp"]) <= now
+             and stopped.date().isoformat() == DAY and stopped.time().replace(tzinfo=None) >= time(9, 40),
+             "paper stop not exact saved scheduled-close proof")
+        return
     need(stopped.date().isoformat() == DAY and stopped.hour == 9 and stopped.minute == 40
          and 0 <= stopped.second <= 30, "paper stop not dated scheduled09:40")
 
 
-def flag_result(rc, text, catalog, *, paper_before=None, paper_after=None, now=None):
+def flag_result(rc, text, catalog, *, paper_before=None, paper_after=None, now=None, scheduled_close=None):
     final = re.findall(r"^Final call: (PASS|FAIL|UNKNOWN); checked=(\d+)/(\d+) mismatches=(\d+) unknown=(\d+)$", text, re.M)
     from release_policy import catalog_ids as identities
     total = len(identities(catalog))
@@ -42,7 +56,7 @@ def flag_result(rc, text, catalog, *, paper_before=None, paper_after=None, now=N
         need(unknown == PAPER_FLAGS and all(row == "UNKNOWN flag=" + name + " service=momentum-paper reason=momentum-paper is not active"
              for (name, service), row in zip(actual, rows) if row.startswith("UNKNOWN ")), "unexpected paper UNKNOWN reason/identity")
         need(paper_before is not None and paper_after is not None and now is not None, "fresh paper inactivity proof absent")
-        inactive_paper(paper_before, paper_after, now)
+        inactive_paper(paper_before, paper_after, now, scheduled_close)
     return dict(original_rc=rc, original_verdict=final[0][0], checked=int(final[0][1]), total=total,
                 unknown=int(final[0][4]), coverage="expected-dated-inactive-paper" if paper_only else "all-measured",
                 raw_sha256=digest(text.encode()), paper_before=paper_before, paper_after=paper_after)

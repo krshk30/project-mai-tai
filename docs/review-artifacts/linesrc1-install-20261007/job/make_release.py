@@ -13,7 +13,8 @@ REPO = HERE.parents[3]
 REL = "docs/review-artifacts/linesrc1-install-20261007/job/"
 ARTIFACTS = ("runner.py", "release_policy.py", "strict_flat_readonly.py", "armed_readonly.py",
              "redis_checkpoint.py", "ticket_inventory.py", "census_readonly.py", "log_ranges.py",
-             "flag_admission.py", "continuity_readonly.py", "make_release.py", "run.sh", "README.md",
+             "flag_admission.py", "continuity_readonly.py", "operator_flat_policy.py", "paper_lifecycle.py", "abort_reader.py",
+             "make_release.py", "run.sh", "README.md",
              "project-mai-tai-linesrc1-20261007.service", "project-mai-tai-linesrc1-20261007.timer")
 
 
@@ -22,6 +23,8 @@ def git(*args):
 
 
 def assemble(plan, baseline, target):
+    from paper_lifecycle import AUDIT_PATH
+    p.need(AUDIT_PATH, "exact guard JSONL path must be bound; draft assembly refused")
     p.need(re.fullmatch(r"[0-9a-f]{40}", plan), "full committed plan SHA required")
     p.need(set(baseline) == {"fleet_before", "environment_sha256", "authorization_provenance"},
            "parent baseline fields differ; no environment secrets required")
@@ -33,6 +36,9 @@ def assemble(plan, baseline, target):
            "parent actual full fleet fields incomplete")
     p.need(git("rev-parse", p.APP + "^{tree}").decode().strip() == p.TREE, "APP tree binding differs")
     git("merge-base", "--is-ancestor", p.APP, plan)
+    git("merge-base", "--is-ancestor", p.PLAN_BASE, p.APP)
+    p.need(not git("diff", "--name-only", p.PLAN_BASE, p.APP, "--", "src", "ops", "scripts").strip(),
+           "new APP is not the authorized test-only successor")
     paths = git("diff", "--name-only", p.APP, plan).decode().splitlines()
     p.need(paths and all(path.startswith(REL) for path in paths), "plan changes outside isolated job")
     raw = {name: git("show", plan + ":" + REL + name) for name in ARTIFACTS}
@@ -69,10 +75,10 @@ def assemble(plan, baseline, target):
     sha = p.digest(release_raw)
     exclusive(target / "release.json", release_raw)
     exclusive(target / "release.sha256", (sha + "\n").encode())
-    exclusive(target / "approval.pending.json", p.canonical(dict(authority="operator-standing-mechanics-authority",
+    exclusive(target / "approval.json", p.canonical(dict(authority="operator-standing-mechanics-authority",
         decision="APPROVED", application=p.APP, plan_commit=plan, date_et=p.DAY, scope=p.SCOPE, release_sha256=sha)))
     return dict(package=str(target), release_sha256=sha, catalog_counts=counts,
-                production_run=False, after16_fleet_baseline_required=True)
+                production_run=False, baseline_lifecycle="exact core11 plus bound scheduled paper/guard stop")
 
 
 def main():
