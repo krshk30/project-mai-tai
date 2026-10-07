@@ -149,18 +149,23 @@ def main():
     results = []
     for name, command in commands:
         log = receipt_dir / f"{name}.txt"
+        command_start_utc = datetime.now(UTC).isoformat()
         with log.open("x") as output:
             completed = subprocess.run(command, cwd=ROOT, env=env, stdout=output,
                                        stderr=subprocess.STDOUT, check=False)
+        command_end_utc = datetime.now(UTC).isoformat()
         text = log.read_text()
         metrics = [json.loads(line.split("COMBINED-60S-RECEIPT ", 1)[1])
                    for line in text.splitlines() if line.startswith("COMBINED-60S-RECEIPT ")]
         results.append({"name": name, "command": command, "exit": completed.returncode,
+                        "command_start_utc": command_start_utc,
+                        "command_end_utc": command_end_utc,
                         "log": str(log), "sha256": digest(log), "metrics": metrics})
         print(json.dumps(results[-1]), flush=True)
     after = metadata()
     unchanged = before["file_sha256"] == after["file_sha256"] and before["head"] == after["head"]
     result = {"head": before["head"], "tree": before["tree"],
+              "end_utc": after["utc"],
               "files_and_head_unchanged": unchanged, "runs": results}
     (receipt_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     return 0 if unchanged and all(row["exit"] == 0 for row in results) else 1

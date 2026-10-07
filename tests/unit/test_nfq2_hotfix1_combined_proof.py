@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from contextvars import ContextVar
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import json
 from threading import Event, get_ident
@@ -159,10 +159,12 @@ async def test_combined_slow_eligible_persistence_offloop_duplicate_quotes(servi
     first = asyncio.create_task(tagged("eligible", service._handle_quote_tick_event, event))
     try:
         assert await asyncio.to_thread(started.wait, 2)
+        gate_start_utc = datetime.now(UTC).isoformat()
         begin = monotonic()
         await asyncio.gather(*(tagged("duplicate", service._handle_quote_tick_event, event)
                                for _ in range(1000)))
         duplicate_seconds = monotonic() - begin
+        gate_end_utc = datetime.now(UTC).isoformat()
         await asyncio.wait_for(first, 2)
         assert duplicate_seconds < 0.05
         assert transitions and all(thread != meter.loop_thread for thread in transitions)
@@ -172,7 +174,9 @@ async def test_combined_slow_eligible_persistence_offloop_duplicate_quotes(servi
         assert all(row[1] != meter.loop_thread for row in meter.sessions + meter.statements)
         assert Counter(row[2] for row in meter.transactions) == {"eligible": 1}
         print("COMBINED-SLOW", json.dumps({"duplicate_events": 1000,
-              "duplicate_seconds": duplicate_seconds, "retry_messages": 1, **meter.counts()}))
+              "duplicate_seconds": duplicate_seconds, "gate_start_utc": gate_start_utc,
+              "gate_end_utc": gate_end_utc, "gate_limit_ms": 50,
+              "retry_messages": 1, **meter.counts()}))
     finally:
         await first
         meter.close()
@@ -270,6 +274,7 @@ async def test_combined_240_events_per_second_60_seconds_active_hold(service, mo
     stale, irrelevant = tick(stale=True), tick("OTHER")
     stalls, handler_times, periodic_times = [], [], []
     counts = Counter()
+    events_per_second = Counter()
     phase_violations = 0
     periodic_end = asyncio.Event()
 
@@ -286,6 +291,7 @@ async def test_combined_240_events_per_second_60_seconds_active_hold(service, mo
         return price_check(candidate, quote)
 
     monkeypatch.setattr(service, "_cached_quote_drift", counted_price_check)
+    gate_start_utc = datetime.now(UTC).isoformat()
     start = loop.time()
     end = start + 60
 
@@ -318,6 +324,7 @@ async def test_combined_240_events_per_second_60_seconds_active_hold(service, mo
             before = loop.time()
             await tagged(label, handler, event)
             handler_times.append(loop.time() - before)
+            events_per_second[int(before - start)] += 1
             counts[label] += 1
             phase_violations += int(len(service._nfq2_holds) != 1 or active.phase != "held")
             due = start + sum(counts.values()) / 240
@@ -326,9 +333,13 @@ async def test_combined_240_events_per_second_60_seconds_active_hold(service, mo
         error = exc
     finally:
         elapsed = loop.time() - start
+        gate_end_utc = datetime.now(UTC).isoformat()
         periodic_end.set()
         await asyncio.gather(watcher, sweeper)
-        receipt = {"seconds": elapsed, "events": sum(counts.values()),
+        receipt = {"seconds": elapsed, "gate_start_utc": gate_start_utc,
+            "gate_end_utc": gate_end_utc, "gate_limit_ms": 50,
+            "events_per_second": [events_per_second[second] for second in range(60)],
+            "events": sum(counts.values()),
             "events_by_lane": dict(counts), "rate": sum(counts.values()) / elapsed,
             "max_loop_stall_ms": max(stalls, default=0) * 1000,
             "max_handler_ms": max(handler_times, default=0) * 1000,
