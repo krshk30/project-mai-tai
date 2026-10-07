@@ -1,7 +1,12 @@
 # LINESRC1 October7 Amendment
 
+> SUPERSEDED: this polling implementation and its metrics are historical only.
+> See `OCT7_EVENT_CARD_STEP0.md` for the new event-driven card; acceptance pending.
+
 [codex] Sole source writer on `codex/linesrc1-anchored-session-poll`, continuing
-`a2a41012be2b9b007e0f0084f4a1bd295f79e376` / PR #1107 without rebase. AGREE on
+`a2a41012be2b9b007e0f0084f4a1bd295f79e376` / PR #1107 at the initial checkpoint.
+Parent subsequently authorized a pure rebase onto 5b8b4f64, documented in
+`OCT7_OWN_READONLY.md`. AGREE on
 the newly measured empty-response remedy. No production/order/DB/token writes,
 service, Redis, merge, review-pin, install or shared-handoff action. After the
 initial source checkpoint, the human separately authorized four bounded
@@ -71,8 +76,10 @@ state suppression and repeated real-error invalidation remain intact.
   First: 90 MATCH / 33 HELD; plus10: 98 MATCH / 25 n/a. No claim that held
   cases were admitted. Existing R6 real traded-hole and ten-clean-live-bar
   requirements remain protected by tests and semantic mutations.
-- Targeted Ruff and whitespace checks pass. Reviewer runner/factory, ledger,
-  settings and ops are byte-unchanged from a2. No flag/age/sizing/retry waiver.
+- Targeted Ruff and whitespace checks pass. At the source checkpoint, reviewer
+  runner/factory, ledger, settings and ops were byte-unchanged from a2. After
+  the authorized rebase, this lane still has no changes to those files relative
+  to the new main baseline. No flag/age/sizing/retry waiver.
 
 Commands use shared venv Python, `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:.`,
 inherited PATH unchanged and `-p no:cacheprovider`. Focused XML/log and the
@@ -84,6 +91,6 @@ Raw pre07 empty metadata is now measured by this lane. No price bars were
 returned. Actual in-session provider recovery, historical fills/execution and
 deployed behavior remain UNMEASURED. No new-head
 local full-unit GREEN or complete hosted CI result is inherited from a2's
-older receipts. Fresh hosted CI, parent-coordinated rebase if needed,
+older receipts. The coordinated rebase is complete. Fresh hosted CI,
 independent review and exact-head pin remain separate gates. Parent alone
 owns morning checks, Redis maintenance and installation decisions.

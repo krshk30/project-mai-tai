@@ -441,3 +441,17 @@ def test_own_oct7_live_receipt_is_bounded_readonly_and_matches_empty_shape(symbo
     assert row["raw_marketdata_response"] == {"symbol": symbol, "empty": True, "candles": []}
     assert row["other_response_field_names"] == []
     assert len(row["raw_body_sha256"]) == 64
+
+
+@pytest.mark.parametrize("clock,closed", [("07:00:00", None), ("07:01:00", "07:00:00")])
+def test_exact_wallclock_first_0700_closed_minute_availability(clock, closed):
+    now = _ms(f"2026-10-07T{clock}-04:00")
+    bot = _bot("BIYA", now - 61_000)
+    request = bot._line_source_request("BIYA")
+    if closed is None:
+        assert request is None
+    else:
+        epoch, anchor, current = request
+        assert epoch == bot._line_sessions["BIYA"].epoch
+        assert anchor == _ms("2026-10-07T04:00:00-04:00")
+        assert current == _ms(f"2026-10-07T{closed}-04:00")

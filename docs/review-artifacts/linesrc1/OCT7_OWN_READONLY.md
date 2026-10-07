@@ -1,7 +1,12 @@
 # LINESRC1 Own October7 Provider Read
 
+> SUPERSEDED IMPLEMENTATION SCOPE: the measurement below remains actual evidence,
+> but polling-source tests/rebase metrics are historical only. The new event card
+> assessment is in `OCT7_EVENT_CARD_STEP0.md`; replacement acceptance is pending.
+
 [codex] Runtime source frozen at `35380b9b76745896b90afd43eca7c0f09011bd12`,
-continuing PR #1107 without rebase or deploy. The subsequent change is only
+continuing PR #1107 at the initial read checkpoint without rebase or deploy.
+The subsequent own-read change is only
 tests/fixtures/evidence. Independently read client token/auth code: existing
 REST client `_read_access_token` reads the store and `_authorized_get` uses
 GET without refresh. The own memory-only helper reads the configured token
@@ -58,9 +63,14 @@ envelope, with explicitly controlled 07:01 clocks. Counterfactual empty=false
 remains labeled as such. Added
 `test_own_oct7_live_receipt_is_bounded_readonly_and_matches_empty_shape`
 checks each name's actual before07 bounded receipt. No raw-price inputs.
-Current focused and all27 semantic-mutation receipts are published in
-`OCT7_OWN_READONLY_RECEIPT.json`; original 199/27 source-checkpoint receipts
-remain preserved, not substituted for these final fixture controls.
+`test_exact_wallclock_first_0700_closed_minute_availability` directly checks
+07:00:00 -> no request and 07:01:00 -> the closed 07:00 candle. Existing
+07:00:59 and DST/16:00 boundaries remain. This derives from the pre-existing
+latest-closed-minute calculation, not an arbitrary new wall-clock timer.
+The interrupted final receipt was not published. Historical local 205-test
+and 27-mutation runs remain at `/tmp/linesrc1-oct7-review-focused.{xml,log}`
+and `/tmp/linesrc1-oct7-review-mutations.{json,log}`. Original 199/27
+source-checkpoint receipts remain preserved. None certifies the new event card.
 
 The unchanged 123-case acceptance output is byte-identical before/after the
 runtime change. R6 true-hole/clean-live requirements and live error handling
@@ -68,3 +78,15 @@ remain protected. Full current-head unit pair, hosted CI and independent
 review/pin remain separate coverage/release gates. Actual in-session recovery,
 historical execution/fills and deployment remain UNMEASURED. No source
 activation or parent morning-gate/Redis maintenance action by this lane.
+
+## Authorized Rebase
+
+Parent authorized exact origin/main
+`5b8b4f642bbc3c312be436d0e92adbc22d9e9f95` before the final push. Own fetch
+verified that SHA. The three-commit rebase completed without conflicts;
+range-diff reports all three patches equivalent (`=`). No merge commit or
+additional application/source delta. Rebased source checkpoint:
+`5c2cd48ad8cb02ff60db50322be9f42d98d79c09`; original source change `35380b9b`
+maps to `ab609549`. New own-read and exact-time test changes do not alter
+runtime source. Historical focused tests/mutations and the 123-case acceptance
+were rerun against the rebased polling source, before the superseding event card.
