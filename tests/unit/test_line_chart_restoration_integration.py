@@ -270,7 +270,8 @@ async def test_readd_keeps_consumed_slots_but_requires_a_new_provider_epoch():
     new = _ingest(bot, bars)
     assert new.epoch != ledger.epoch
     assert not await bot._rebuild_session_line("RETO", new)
-    new.attest(_proof(new, bars))
+    # A controlled fresh event admission, not inherited archived permission.
+    assert bot._accept_line_source("RETO", new.epoch, bars, _proof(new, bars))
     assert await bot._rebuild_session_line("RETO", new)
 
 
@@ -312,7 +313,8 @@ async def test_real_provider_service_full_read_certifies_first_available_session
     bot.rest_client = client
     bot._persist_bar = lambda *args: None
     monkeypatch.setattr("project_mai_tai.market_data.schwab_v2_rest_client.sleep_or_stop", AsyncMock())
-    await client._bar_loop_pass(15)
+    assert bot._queue_line_source_event("RETO", "reconfirmed_hole")
+    await bot._line_source_events_pass()
     await bot._line_restoration_pass()
     assert provider_threads[0] != threading.get_ident()
     assert len(bot._line_sessions["RETO"]._bars) == len(bars)
@@ -320,7 +322,11 @@ async def test_real_provider_service_full_read_certifies_first_available_session
     assert bot._line_sessions["RETO"]._coverage.prefix_complete
     assert bot.strategy.line_buy_ready("RETO")
     client._authorized_get = lambda url: {"symbol": "RETO", "empty": True, "candles": []}
-    await client._bar_loop_pass(15)
+    # A later empty ordinary fallback cannot create another full-session event.
+    client._fetch_recent_closed_bars = lambda *args: []
+    await client._bar_loop_pass(0)
+    assert not bot._line_source_pending
+    bot.strategy._now_ms = lambda: bars[-1].timestamp_ms + 121_000
     assert not bot.strategy.line_buy_ready("RETO")
 
 
@@ -371,17 +377,23 @@ async def test_sixteen_symbol_source_and_rebuild_cycles_do_not_wait_for_persiste
     client._on_session_history = bot._accept_line_source
     client._on_session_failure = bot._line_source_failure
     client.set_desired_symbols(symbols)
+    client._fetch_recent_closed_bars = lambda symbol, since: [replace(bars[-1], symbol=symbol)]
+    for symbol in symbols:
+        assert bot._queue_line_source_event(symbol, "reconfirmed_hole")
+    bot.rest_client = client
     bot._persist_bar = lambda *args: None
     monkeypatch.setattr("project_mai_tai.market_data.schwab_v2_rest_client.sleep_or_stop", AsyncMock())
     started = time.perf_counter()
-    poll = asyncio.create_task(client._bar_loop_pass(15))
+    poll = asyncio.create_task(client._bar_loop_pass(0))
+    events = asyncio.create_task(bot._line_source_events_pass())
     worker = asyncio.create_task(bot._line_restoration_loop())
     try:
         async with asyncio.timeout(5):
             while not all(bot.strategy.line_buy_ready(symbol) for symbol in symbols):
                 await asyncio.sleep(0.005)
         elapsed = time.perf_counter() - started
-        assert callback_started == symbols and maximum[0] <= 4
+        assert callback_started == {sorted(symbols)[0]} and maximum[0] == 1
+        await events
         assert not release.is_set() and not poll.done()
         assert all(round(bot.strategy.watchlist_state(symbol).atr_trail, 4) == 2.0639 for symbol in symbols)
         print(f"16-symbol controlled source-to-admission: {elapsed:.3f}s; max_fetch_concurrency={maximum[0]}")
@@ -389,6 +401,8 @@ async def test_sixteen_symbol_source_and_rebuild_cycles_do_not_wait_for_persiste
         await poll
     finally:
         release.set()
+        if not events.done():
+            events.cancel()
         worker.cancel()
         with pytest.raises(asyncio.CancelledError):
             await worker

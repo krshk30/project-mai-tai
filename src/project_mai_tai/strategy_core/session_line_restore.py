@@ -74,6 +74,7 @@ class SessionLineSnapshot:
 
 def build_session_line(
     request: RebuildInput, period: int, factor: float, reset_after_ms: int = 0,
+    previous: RebuildResult[SessionLineSnapshot] | None = None,
 ) -> SessionLineSnapshot:
     """Span only the pairs authorized by an immutable full-session admission."""
     from project_mai_tai.settings import Settings
@@ -91,7 +92,23 @@ def build_session_line(
     confirmation = []
     signal = None
     previous_ms = 0
-    for bar in request.bars:
+    bars = request.bars
+    if (previous is not None and previous.request.epoch == request.epoch
+            and previous.snapshot.reset_after_ms == reset_after_ms
+            and previous.request.bars == bars[:len(previous.request.bars)]
+            and len(bars) > len(previous.request.bars)
+            and all(right.timestamp_ms == left.timestamp_ms + 60_000
+                    for left, right in zip(bars[len(previous.request.bars) - 1:],
+                                           bars[len(previous.request.bars):]))):
+        indicator = dict(previous.snapshot.indicator)
+        from collections import deque
+        indicator["atr_hl"] = deque(indicator["atr_hl"], maxlen=period)
+        indicator["atr_tr_seed"] = list(indicator["atr_tr_seed"])
+        engine._restore_atr_indicator_snapshot(state, indicator)
+        confirmation = list(previous.snapshot.confirmation)
+        previous_ms = previous.request.current_bar_ms
+        bars = bars[len(previous.request.bars):]
+    for bar in bars:
         if bar.timestamp_ms <= reset_after_ms:
             continue
         signal = engine._update_atr_state(
@@ -126,6 +143,9 @@ class SessionLineRestoration:
         self.current_bar_ms = 0
         self._bars: dict[int, HistoryBar] = {}
         self._coverage: SessionCoverage | None = None
+        # Callback provenance is separate from the immutable provider receipt.
+        self._closed_live: dict[int, HistoryBar] = {}
+        self._seed_invalidated = False
         self._trade_minutes: set[int] = set()
         self._traded_pairs: set[tuple[int, int]] = set()
         self.incomplete_reason = "coverage_unproven"
@@ -144,15 +164,34 @@ class SessionLineRestoration:
             self.symbol, bar.open, bar.high, bar.low, bar.close, bar.volume, bar.timestamp_ms,
         )
         if self._bars.get(bar.timestamp_ms) != frozen:
+            old = self._bars.get(bar.timestamp_ms)
+            if self._coverage is not None:
+                endpoint = self._coverage.closed_ids[-1] if self._coverage.closed_ids else 0
+                if (bar.timestamp_ms <= endpoint
+                        and (bar.timestamp_ms not in self._coverage.closed_ids or old is not None)):
+                    self._seed_invalidated = True
             self._bars[bar.timestamp_ms] = frozen
             self.revision += 1
             self.incomplete_reason = "history_changed"
         self.current_bar_ms = max(self.current_bar_ms, bar.timestamp_ms)
 
+    def observe_closed_live(self, bar: ChartBar) -> None:
+        """Called only for an actually closed live-source callback, never DB/replay."""
+        revision = self.revision
+        self.observe(bar)
+        if bar.timestamp_ms >= self.anchor_ms:
+            frozen = self._bars[bar.timestamp_ms]
+            if self._closed_live.get(bar.timestamp_ms) != frozen:
+                self._closed_live[bar.timestamp_ms] = frozen
+                if self.revision == revision:
+                    self.revision += 1
+                    self.incomplete_reason = "live_provenance_changed"
+
     def attest(self, proof: SessionCoverage) -> None:
-        if proof != self._coverage:
+        if proof != self._coverage or self._seed_invalidated:
             self.revision += 1
             self._coverage = proof
+            self._seed_invalidated = False
             self.incomplete_reason = "coverage_changed"
 
     def invalidate_coverage(self) -> None:
@@ -182,27 +221,39 @@ class SessionLineRestoration:
 
     def prepare(self) -> RebuildInput | None:
         proof = self._coverage
-        if (proof is None or not proof.complete or proof.source != "schwab_rest_full_session"
+        if (proof is None or not proof.complete
+                or proof.source != "schwab_rest_full_session"
                 or proof.start_ms != self.anchor_ms
-                or proof.end_ms < self.current_bar_ms + 60_000):
+                or not proof.closed_ids or proof.end_ms < proof.closed_ids[-1] + 60_000):
             self.incomplete_reason = "coverage_unproven"
             return None
         ids = proof.closed_ids
         if (not ids or ids != tuple(sorted(set(ids)))
-                or ids[0] < self.anchor_ms or ids[-1] != self.current_bar_ms):
+                or ids[0] < self.anchor_ms or ids[-1] > self.current_bar_ms):
             self.incomplete_reason = "coverage_ids_unproven"
             return None
         if ids[0] != self.anchor_ms and not proof.prefix_complete:
             self.incomplete_reason = "session_prefix_unproven"
             return None
-        if set(ids) != set(self._bars):
+        endpoint = ids[-1]
+        if set(ids) != {ts for ts in self._bars if ts <= endpoint}:
             self.incomplete_reason = "history_missing_or_conflicting"
             return None
-        bars = tuple(self._bars[ts] for ts in ids)
-        if proof.bars_sha256 != history_fingerprint(bars):
+        prefix = tuple(self._bars[ts] for ts in ids)
+        if proof.bars_sha256 != history_fingerprint(prefix):
             self.incomplete_reason = "source_values_unproven"
             return None
-        pairs = self.gap_pairs()
+        if self._seed_invalidated:
+            self.incomplete_reason = "seed_invalidated"
+            return None
+        tail_ids = tuple(range(endpoint + 60_000, self.current_bar_ms + 1, 60_000))
+        if ({ts for ts in self._bars if ts > endpoint} != set(tail_ids)
+                or any(self._closed_live.get(ts) != self._bars.get(ts) for ts in tail_ids)):
+            self.incomplete_reason = "live_tail_unproven"
+            return None
+        bars = prefix + tuple(self._bars[ts] for ts in tail_ids)
+        # R6 spanning is restricted to gaps inside the provider-covered prefix.
+        pairs = tuple((left, right) for left, right in zip(ids, ids[1:]) if right - left > 90_000)
         # R6 is a complete-provider sparse series, not permission to span a
         # known outage. Positive tape evidence requires the missing bars.
         if any(pair in self._traded_pairs or any(left + 60_000 <= minute < right

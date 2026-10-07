@@ -187,9 +187,6 @@ class SchwabV2RestClient:
         if not symbols:
             await asyncio.sleep(interval)
             return
-        if self._session_request is not None:
-            await self._anchored_bar_loop_pass(symbols, interval)
-            return
         cycle = itertools.cycle(symbols)
         for _ in range(len(symbols)):
             if self._stop_event.is_set():

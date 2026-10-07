@@ -33,8 +33,9 @@ Checkpoint local HEAD: 5c2cd48ad8cb02ff60db50322be9f42d98d79c09, verified base
    04:00-anchored fetch. Confirmed membership or a real confirmation identity,
    not snapshot publication time or updated quote prices, identifies an event.
    A no-hole re-add with still-valid same-session evidence makes no GET.
-2. Names already listed before the first 07:00 candle receive one startup event
-   after that candle is actually observed closed. Earliest 07:01 ET. No timer
+2. Initially listed names receive one startup event after their first actual
+   eligible candle at or after 07:00 is observed closed (including quiet names
+   with a first 07:02/07:10 candle). Earliest 07:01 ET. No timer
    creates history requests, and wall-clock 07:00 alone is not a receipt.
 3. Coalesce by symbol/session/event identity. One in-flight request per symbol;
    callbacks only enqueue. Bound network work off-callback, and fence late
@@ -52,10 +53,12 @@ Checkpoint local HEAD: 5c2cd48ad8cb02ff60db50322be9f42d98d79c09, verified base
    snapshot on a contiguous live append. Preserve exact current/revision/reset
    and stale-draft fences. Re-add/correction/full-history repair is not a new
    signal and must not replay historical flips or consumed ownership.
-7. A newly detected stored-history conflict immediately revokes readiness. One
-   coalesced correction re-attestation is bounded to its event/episode; repeated
-   failed or empty callbacks cannot replenish it. Continued unknown/conflicting
-   history stays held pending a new qualifying event.
+7. Parent narrowed the proposed correction mechanism: a newly detected conflict
+   immediately revokes readiness but NEVER authorizes a new GET. A DB fill of
+   already provider-listed IDs with values matching the immutable hash may
+   repair locally. New prefix IDs or changed values remain held until the next
+   qualifying re-confirmed-hole event. Failed/empty callbacks cannot replenish
+   a spent event, nor can a correction create an extra event.
 8. Inactive same-session evidence may be retained solely to judge no-hole
    re-add; it does not subscribe, feed, manage or enable an off-list symbol.
    Session changes and new membership generations fence stale work.
@@ -74,7 +77,7 @@ Checkpoint local HEAD: 5c2cd48ad8cb02ff60db50322be9f42d98d79c09, verified base
 - Replay each actual BIYA/MI/MTEN/SXTC empty envelope: no exception, no retry
   from later callbacks, no false-ready publication, no fabricated candles.
 - Late DB addition/correction, live correction/gap, stale response and epoch
-  rollover: revoke/fence; bounded explicit re-attestation only. R6 positive tape
+  rollover: revoke/fence; re-attest only on a qualifying scanner event. R6 positive tape
   holes and ten-clean-live-bar requirement remain fail closed.
 - Ordinary incremental fallback, source waiting, quote/confirmation exits,
   flag OFF, seed paths, ownership/retry budget and final draft fences.
@@ -96,3 +99,8 @@ CI certify only the superseded polling scope. The unchanged 123-case result
 is a preservation baseline, not acceptance of the unbuilt replacement. Source
 and production changes remain separate; this lane performs no production,
 handoff, activation, merge, pin or install writes.
+
+Implementation checkpoint: see EVENT_BUILD.md for the replacement's exact
+source hashes, review RED/GREEN controls, preservation results and remaining
+full-head/CI gates. This Step0 retains its original assessment timing; its
+PENDING language is not a current test-count receipt.
