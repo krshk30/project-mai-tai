@@ -7765,3 +7765,17 @@ setup, unit step starts21:06:26UTC. No source/workflow change or check bypass.
 NFQ8ea8 both Validate PASS; new typed opportunity-wide localhold cancellation
 delta remains solely with NFQ writer and needs fresh final-source receipts.
 No new-head readiness or production action; SLOT and paired APP994 unchanged.
+
+2026-10-07 17:14 ET codex-2: NFQ sole writer publishes50264417 after preserved
+untouched8ea8 canonicalRECLAIM typedbarrier4assertionRED; actual BIYA RESTING
+not historicincident. Exact producer/barrier control, not invented prints.
+Typed same-opportunity cancel retires only durable no-order/no-dispatch local
+held/queued via locked reread/CAS; uncertain/wired/generation guards preserved.
+528focusedPASS,45named safetymutationsRED plus six tickcontrolsRED; original
+single-phase-guard Q3 survivor retained as dominated by durablephaseguard,
+dual-boundaryQ3RED disclosed. Fresh finalsource21:10:55.150388-21:11:55.150788UTC
+activehold benchmark14400events/60.000230s/239.999ev/s,maxloop20.433ms,
+maxhandler17.758ms,zeroSQL/transactions/sessions on ticks and zeroonloopSQL,
+24offloopperiodictx84SQL. New full and both CI still pending; prior8ea8 results
+not used to certify sourcea16b9d755450d22e75181b859be537a3116670232dd715629b3c2cc5673c68f9.
+SLOT9951/today's stagedAPP994/ORB untouched; no readiness/pin/merge/deploy.
