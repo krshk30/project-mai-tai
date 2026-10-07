@@ -1,0 +1,9 @@
+{
+  "pr_number": 1107,
+  "range_base": "5b8b4f642bbc3c312be436d0e92adbc22d9e9f95",
+  "range_head": "010b211950167777eb028cae46f61beabbdc2b17",
+  "reviewed_at": "2026-10-07T12:06:21Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "LINESRC1: anchored 5-s poller removed; one-shot session repair events (first_0700_closed / reconfirmed_hole); anchored_session_poll_open fences 07:00-15:59 ET; a valid EMPTY Schwab payload returns no-bars-yet instead of raising; readiness advances from validated live bars so the 10-07 07:13 fleet block (ingest gated behind _line_snapshot_current, 0 probes by 07:13 vs 492 the day before, switched off 07:14) cannot recur. Verified by me: diff read in full; 197 focused tests pass; full unit suite on the clean head has the SAME failed-name set as base 5b8b4f64 (pre-existing); mutations on the focused set all detected: poll outside the window 60 RED, ingest gated behind the snapshot 27 RED, valid-empty raises 17 RED, _queue_line_source_event returns False 5 RED plus one test that hangs without a timeout (test_recorded_empty_event_is_once_waiting_without_callback_retry[BIYA], noted to codex). Install after the close with LINE_CHART_RESTORATION back ON (env currently false since 07:14); replay acceptance = 10-07 07:00-07:13 fixtures."
+}
