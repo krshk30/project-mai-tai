@@ -1,0 +1,19 @@
+# [codex] Parent stages this exact named one-shot only after review.
+[Unit]
+Description=Attended Oct7 LINESRC1 one-v2 install
+ConditionPathExists=/home/trader/after-hours/2026-10-07/linesrc1-f9c9bd33/job/approval.json
+ConditionPathExists=!/home/trader/after-hours/2026-10-07/linesrc1-f9c9bd33/job/write-started.json
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/home/trader/after-hours/2026-10-07/linesrc1-f9c9bd33/job
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/trader/after-hours/2026-10-07/linesrc1-f9c9bd33/job/run.sh
+SuccessExitStatus=75
+TimeoutStartSec=5400
+Restart=no
+KillMode=control-group
+
+# No trading-service dependency, activation, or existing daily timer install.

@@ -1,0 +1,16 @@
+{
+  "application": "5b8b4f642bbc3c312be436d0e92adbc22d9e9f95",
+  "decision": "ACKNOWLEDGED_REDIS_UPGRADE_RESTART",
+  "redis_package": "7.0.15-1ubuntu0.24.04.5",
+  "redis_restart_utc": "2026-10-07T06:31:08+00:00",
+  "source": "operator/reviewer morning acknowledgement 2026-10-07 06:21ET; journal Redis stop/start06:31:08UTC, ORB crash06:31:09/restart06:31:14; unattended-upgrades.log",
+  "state": {
+    "ActiveState": "active",
+    "ExecMainStartTimestamp": "Wed 2026-10-07 06:31:14 UTC",
+    "InvocationID": "de16f6a3ae8f438a8aae3d294d7db686",
+    "MainPID": "765206",
+    "NRestarts": "1",
+    "SubState": "running"
+  },
+  "unit": "project-mai-tai-orb-schwab.service"
+}

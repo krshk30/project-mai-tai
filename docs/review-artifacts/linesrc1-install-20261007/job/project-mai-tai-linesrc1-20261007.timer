@@ -1,0 +1,12 @@
+# [codex] Rechecks only unclaimed pending reads; claim/abort fences all later runs.
+[Unit]
+Description=Oct7 bounded-window LINESRC1 pending admission
+
+[Timer]
+OnCalendar=2026-10-07 16..23:00..59:00 America/New_York
+AccuracySec=1s
+Persistent=false
+Unit=project-mai-tai-linesrc1-20261007.service
+
+[Install]
+WantedBy=timers.target
