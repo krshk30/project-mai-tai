@@ -63,8 +63,6 @@ _HEARTBEAT_SECONDS = 15
 _MAX_SUBSCRIBED_SYMBOLS = 16
 _SUBSCRIPTION_DEBOUNCE_SECONDS = 1
 _SNAPSHOT_STALE_SECONDS = 15
-_PATH_FLUSH_SECONDS = 0.25
-_PATH_FLUSH_ROWS = 500
 
 
 def detector_health_status(detections: int) -> str:
@@ -180,8 +178,6 @@ class MomentumPaperService:
         self._complete_sessions = 0
         self._session_closed = False
         self._feed_gap_started_ms: int | None = None
-        self._path_buffer: list[MomentumTapeRecord] = []
-        self._last_path_flush_at = self._clock()
 
     async def run(self) -> None:
         if not bool(getattr(self.settings, "momentum_paper_enabled", False)):
@@ -231,7 +227,6 @@ class MomentumPaperService:
         if self._engine is None:
             return
         await self._persist(self._engine.advance_clock(self._now_ms()))
-        await self._flush_path_buffer_if_due()
         if (
             self._last_snapshot_at is not None
             and (now - self._last_snapshot_at).total_seconds() > _SNAPSHOT_STALE_SECONDS
@@ -510,39 +505,14 @@ class MomentumPaperService:
         self._condition_feed_verified = False
         if self._gateway_owner_claimed or self._subscribed_symbols:
             await self._sync_gateway_subscriptions(force=True, desired_override=set())
-        await self._flush_path_buffer(force=True)
 
     async def _persist(self, records: Iterable[MomentumTapeRecord]) -> None:
-        rows = tuple(records)
+        # RETAIN1: calculation prints stay in the engine; only transitions are durable.
+        rows = tuple(row for row in records if row.event_type != "PATH_PRINT")
         if not rows:
             return
-        path_rows = [row for row in rows if row.event_type == "PATH_PRINT"]
-        durable_transitions = [row for row in rows if row.event_type != "PATH_PRINT"]
-        self._path_buffer.extend(path_rows)
-        if not durable_transitions:
-            await self._flush_path_buffer_if_due()
-            return
         assert self.store is not None
-        batch = [*self._path_buffer, *durable_transitions]
-        self._path_buffer.clear()
-        await asyncio.to_thread(self.store.append_many, batch)
-        self._last_path_flush_at = self._clock()
-
-    async def _flush_path_buffer_if_due(self) -> None:
-        if not self._path_buffer:
-            return
-        age = (self._clock() - self._last_path_flush_at).total_seconds()
-        if len(self._path_buffer) >= _PATH_FLUSH_ROWS or age >= _PATH_FLUSH_SECONDS:
-            await self._flush_path_buffer(force=True)
-
-    async def _flush_path_buffer(self, *, force: bool) -> None:
-        if not self._path_buffer or not force:
-            return
-        assert self.store is not None
-        batch = list(self._path_buffer)
-        self._path_buffer.clear()
-        await asyncio.to_thread(self.store.append_many, batch)
-        self._last_path_flush_at = self._clock()
+        await asyncio.to_thread(self.store.append_many, rows)
 
     async def _publish_state(self) -> None:
         if self._engine is None:

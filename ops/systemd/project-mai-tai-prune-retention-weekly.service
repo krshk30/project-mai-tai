@@ -1,0 +1,12 @@
+[Unit]
+Description=RETAIN1 weekly ticks, diagnostics, scanner history and bars
+After=network-online.target project-mai-tai-prune-capture.service project-mai-tai-prune-ticks.service
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+ExecStart=/home/trader/project-mai-tai/.venv/bin/python scripts/prune_market_ticks.py --go --tables market_trade_ticks,market_quote_ticks,reconciliation_findings,reconciliation_runs,scanner_cycle_history,scanner_confirmed_events,strategy_bar_history --keep-days market_trade_ticks=7 --keep-days market_quote_ticks=7 --keep-days reconciliation_findings=7 --keep-days reconciliation_runs=7 --keep-days scanner_cycle_history=7 --keep-days scanner_confirmed_events=7 --keep-days strategy_bar_history=45 --batch 10000 --max-rows 25000000 --max-seconds 3600
+TimeoutStartSec=2h
+Nice=10

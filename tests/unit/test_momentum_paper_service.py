@@ -453,7 +453,7 @@ async def test_restart_marks_an_interrupted_forward_path_unanswerable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_path_rows_batch_but_a_state_transition_forces_them_durable() -> None:
+async def test_retain1_path_print_is_not_written_but_state_transition_is_durable() -> None:
     class RecordingStore:
         def __init__(self) -> None:
             self.batches: list[list[MomentumTapeRecord]] = []
@@ -486,8 +486,33 @@ async def test_path_rows_batch_but_a_state_transition_forces_them_durable() -> N
 
     await service._persist([fill])
     assert [[row.event_type for row in batch] for batch in store.batches] == [
-        ["PATH_PRINT", "FILLED"]
+        ["FILLED"]
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", [
+    "DETECTED", "FILLED", "EXITED", "FINAL", "NO_FILL", "UNANSWERABLE",
+    "SESSION_READY", "SESSION_CLOSED", "FEED_GAP",
+])
+async def test_retain1_mixed_path_batch_preserves_every_state_event(event_type) -> None:
+    class RecordingStore:
+        def __init__(self):
+            self.rows = []
+
+        def append_many(self, records):
+            self.rows.extend(records)
+
+    store = RecordingStore()
+    service = MomentumPaperService(Settings(momentum_paper_enabled=True), store=store)
+    base = dict(logical_id="momentum_30s:ABCD:1", strategy_code="momentum_30s",
+                session_date=date(2026, 9, 16), symbol="ABCD",
+                observed_at=datetime(2026, 9, 16, 8, 12, tzinfo=UTC), payload={})
+    path = MomentumTapeRecord(event_key="path", event_type="PATH_PRINT", **base)
+    transition = MomentumTapeRecord(event_key="transition", event_type=event_type, **base)
+    await service._persist([path, transition, path])
+    await service._persist([path] * 1000)
+    assert store.rows == [transition]
 
 
 @pytest.mark.asyncio
