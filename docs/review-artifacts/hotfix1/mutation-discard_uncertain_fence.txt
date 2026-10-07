@@ -1,0 +1,17 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_flag_off_uncertain_wire_is_serial_fence_not_restored_opportunity _____
+tests/unit/test_hotfix1_symbol_tick_cache.py:437: in test_flag_off_uncertain_wire_is_serial_fence_not_restored_opportunity
+    assert fresh._mirrorhold_fenced_owner_ids == {key}
+E   AssertionError: assert set() == {UUID('136db5...434c21434ae')}
+E     
+E     Extra items in the right set:
+E     UUID('136db58b-4394-5999-a255-8434c21434ae')
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:28:53,192 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+=========================== short test summary info ============================
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_flag_off_uncertain_wire_is_serial_fence_not_restored_opportunity
+1 failed, 36 deselected in 0.23s

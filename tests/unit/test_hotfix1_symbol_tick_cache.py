@@ -77,9 +77,11 @@ def test_cache_publication_is_commit_only_and_rollback_does_not_leak(lane):
     with factory() as session:
         service._mirrorhold_upsert(session, event, no_wire=True)
         assert key not in service._mirrorhold_cache().get("IPDN", {})
+        assert key not in service._mirrorhold_owner_ids()
         session.rollback()
         session.commit()
     assert key not in service._mirrorhold_cache().get("IPDN", {})
+    assert key not in service._mirrorhold_owner_ids()
     with factory() as session:
         row = service._mirrorhold_upsert(session, event, no_wire=True)
         session.commit()
@@ -345,6 +347,8 @@ def test_each_committed_owner_phase_refreshes_cache_without_orm_objects(lane, ph
         assert cached["revision"] == 1
     else:
         assert cached is None
+    assert (row_id(event) in service._mirrorhold_durable_owner_ids) == (phase in {"held", "queued"})
+    assert (row_id(event) in service._mirrorhold_fenced_owner_ids) == (phase == "uncertain")
 
 
 def test_startup_restores_held_symbol_index(lane):
@@ -356,8 +360,90 @@ def test_startup_restores_held_symbol_index(lane):
     assert restored._mirrorhold_cache()["SXTC"][row_id(event)]["phase"] == "held"
 
 
+@pytest.mark.parametrize("phase", ["held", "queued", "retired", "filled", "accepted", "capped", "prepared"])
+def test_recorded_sxtc_startup_restores_only_held_queued_opportunities(lane, monkeypatch, phase):
+    from tests.unit.test_mirrorhold1_retained_hold import _integrated_service
+    service, _, factory, _ = lane
+    event = recorded_event()
+    key = retain(lane, event)
+    with factory() as session:
+        row = session.get(DashboardSnapshot, key)
+        service._mirrorhold_write(session, row, {**row.payload, "phase": phase, "token": "controlled-old-token"})
+        session.commit()
+    service.settings = service.settings.model_copy(update={"oms_v2_webull_mirror_retained_hold_enabled": False})
+    fresh, _ = _integrated_service(factory, enabled=True, nfq_enabled=True)
+    fresh.settings = service.settings
+    projected = []
+    original = fresh._mirrorhold_project
+    def record_projection(data):
+        projected.append(data["phase"])
+        original(data)
+    monkeypatch.setattr(fresh, "_mirrorhold_project", record_projection)
+    fresh._restore_mirrorhold()
+    active = phase in {"held", "queued"}
+    assert fresh._mirrorhold_durable_owner_ids == ({key} if active else set())
+    assert fresh._mirrorhold_fenced_owner_ids == set()
+    assert projected == (["held"] if active else [])
+    assert bool(fresh._mirrorhold_cache().get("SXTC")) == active
+    assert fresh._mirrorhold_enabled() == active
+    with factory() as session:
+        data = session.get(DashboardSnapshot, key).payload
+        assert data["phase"] == ("held" if phase == "queued" else phase)
+        if phase == "queued":
+            assert data["token"] == ""
+
+
 @pytest.mark.asyncio
-async def test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions(lane, monkeypatch):
+@pytest.mark.parametrize("phase", ["held", "queued", "retired", "uncertain"])
+async def test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work(lane, monkeypatch, phase):
+    service, _, factory, _ = lane
+    event = recorded_event()
+    key = retain(lane, event)
+    with factory() as session:
+        row = session.get(DashboardSnapshot, key)
+        service._mirrorhold_write(session, row, {**row.payload, "phase": phase,
+            "dispatch_unresolved": phase == "uncertain"})
+        session.commit()
+    service.settings = service.settings.model_copy(update={"oms_v2_webull_mirror_retained_hold_enabled": False})
+    # Deliberately retain pre-switch memory, as well as committed rows. Neither
+    # durable ownership nor a stale symbol index may override OFF.
+    quote(lane, event, "3.23")
+    monkeypatch.setattr(service, "session_factory", lambda: pytest.fail("OFF tick opened database"))
+    monkeypatch.setattr(service, "_mirrorhold_cache", lambda: pytest.fail("OFF tick read retained cache"))
+    monkeypatch.setattr(service, "_mirrorhold_evaluate", lambda *args: pytest.fail("OFF tick evaluated retained owners"))
+    original = service._mirrorhold_schedule
+    original("SXTC")  # The direct entry point must enforce OFF too.
+    monkeypatch.setattr(service, "_mirrorhold_schedule", lambda *args: pytest.fail("OFF tick admitted retained worker"))
+    for _ in range(200):
+        service._schedule_webull_mirror_tick("SXTC")
+        await service._evaluate_nfq_holds("SXTC")
+    assert not service.__dict__.get("_symbol_tick_work")
+    assert not queued(lane)
+
+
+def test_flag_off_uncertain_wire_is_serial_fence_not_restored_opportunity(lane):
+    from tests.unit.test_mirrorhold1_retained_hold import restart
+    service, _, factory, _ = lane
+    event = recorded_event()
+    key = retain(lane, event)
+    with factory() as session:
+        row = session.get(DashboardSnapshot, key)
+        service._mirrorhold_write(session, row, {**row.payload, "phase": "dispatching",
+            "dispatch_unresolved": True, "local_no_wire": False})
+        session.commit()
+    service.settings = service.settings.model_copy(update={"oms_v2_webull_mirror_retained_hold_enabled": False})
+    fresh = restart(lane)[0]
+    assert fresh._mirrorhold_durable_owner_ids == set()
+    assert fresh._mirrorhold_fenced_owner_ids == {key}
+    assert not fresh._mirrorhold_cache()
+    with factory() as session:
+        assert session.get(DashboardSnapshot, key).payload["phase"] == "uncertain"
+    assert fresh._mirrorhold_scope(event)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False], ids=["retained-on", "retained-off-existing-row"])
+async def test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions(lane, monkeypatch, enabled):
     """Offline replay. Broker exits mocked; real SQLite transactions instrumented.
 
     A held/in-band but authoritative-blocked owner is stressed too. Its first
@@ -367,6 +453,14 @@ async def test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactio
     service, _, factory, clock = lane
     event = recorded_event()
     retain(lane, event)
+    service.settings = service.settings.model_copy(update={"oms_v2_webull_mirror_retained_hold_enabled": enabled})
+    retained_admissions = 0
+    original_schedule = service._mirrorhold_schedule
+    def count_retained_schedule(symbol):
+        nonlocal retained_admissions
+        retained_admissions += 1
+        return original_schedule(symbol)
+    monkeypatch.setattr(service, "_mirrorhold_schedule", count_retained_schedule)
     original_prepare = service._mirrorhold_prepare_queue
     def slow_prepare(*args):
         time.sleep(0.2)  # Controlled realistic DB delay, not measured production latency.
@@ -429,6 +523,7 @@ async def test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactio
         await watch
         sql_event.remove(engine, "begin", begin)
     receipt = {"scope": "offline real recorded quote/trade prices; controlled in-band gate and 200ms DB delay; exits mocked",
+        "retained_enabled": enabled, "retained_tick_admissions": retained_admissions,
         "seconds": elapsed, "events": count, "events_per_second": count / elapsed,
         "max_loop_stall_ms": max(stalls) * 1000, "database_transactions": len(transactions),
         "transactions_after_first_second": sum(t >= start + 1 for t in transactions),
@@ -436,7 +531,8 @@ async def test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactio
     print("HOTFIX1_BENCHMARK=" + json.dumps(receipt, sort_keys=True))
     assert elapsed >= 60 and count / elapsed >= 200
     assert max(stalls) < 0.05
-    assert len(transactions) == 1
+    assert len(transactions) == (1 if enabled else 0)
+    assert (retained_admissions > 0) if enabled else (retained_admissions == 0)
     assert not any(t >= start + 1 for t in transactions)
     assert exit_count == count
     assert not queued(lane)

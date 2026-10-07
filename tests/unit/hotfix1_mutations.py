@@ -9,8 +9,8 @@ from project_mai_tai.oms.mirror_retained_hold import MirrorRetainedHoldMixin
 
 MUTATIONS = {
     "tick_sql": (MirrorRetainedHoldMixin, "_mirrorhold_schedule",
-        'if not self._mirrorhold_enabled():',
-        'self._mirrorhold_prepare_queue(symbol, None)\n    if not self._mirrorhold_enabled():'),
+        'if not self._mirrorhold_new_enabled():',
+        'self._mirrorhold_prepare_queue(symbol, None)\n    if not self._mirrorhold_new_enabled():'),
     "publish_before_commit": (MirrorRetainedHoldMixin, "_mirrorhold_cache_after_commit",
         'session.info[pending_key][key] = deepcopy(data)',
         'session.info[pending_key][key] = deepcopy(data)\n    publish(session)'),
@@ -38,6 +38,21 @@ MUTATIONS = {
         'candidates = await self._run_db(\n        lambda session: self._collect_drift_cancel_candidates(\n            session, symbol, quote, tolerance_dollars\n        ),\n        commit=False,\n    )',
         'candidates = list(self._drift_working_by_symbol.get(symbol, ()))'),
     "dirty_wakeup": (OmsRiskService, "_schedule_symbol_tick_work", 'if key in dirty:', 'if False:'),
+    "restore_all_phases": (MirrorRetainedHoldMixin, "_restore_mirrorhold",
+        'DashboardSnapshot.payload["phase"].as_string().in_(["held", "queued"])', 'True'),
+    "off_outer_owner_bypass": (OmsRiskService, "_schedule_webull_mirror_tick",
+        'if self._mirrorhold_new_enabled():', 'if self._mirrorhold_enabled():'),
+    "off_inner_owner_bypass": (MirrorRetainedHoldMixin, "_mirrorhold_schedule",
+        'if not self._mirrorhold_new_enabled():', 'if not self._mirrorhold_enabled():'),
+    "terminal_owner_leak": (MirrorRetainedHoldMixin, "_mirrorhold_cache_after_commit",
+        'owners.discard(owner)', 'pass'),
+    "discard_uncertain_fence": (MirrorRetainedHoldMixin, "_restore_mirrorhold",
+        'self._mirrorhold_fenced_owner_ids = {row.id for row in fences}',
+        'self._mirrorhold_fenced_owner_ids = set()\n        fences = []'),
+    "off_nfq_retained_scan": (MirrorRetainedHoldMixin, "_evaluate_nfq_holds",
+        'if symbol is None:', 'if True:'),
+    "terminal_projection_leak": (MirrorRetainedHoldMixin, "_mirrorhold_cache_after_commit",
+        'projections.pop(slot, None)', 'pass'),
 }
 
 

@@ -76,5 +76,47 @@
     "test_selector": "last_tick_new_committed",
     "exit": 1,
     "verdict": "RED"
+  },
+  {
+    "mutation": "restore_all_phases",
+    "test_selector": "startup_restores_only_held_queued",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "off_outer_owner_bypass",
+    "test_selector": "flag_off_recorded_sxtc_rows",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "off_inner_owner_bypass",
+    "test_selector": "flag_off_recorded_sxtc_rows",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "terminal_owner_leak",
+    "test_selector": "each_committed_owner_phase",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "discard_uncertain_fence",
+    "test_selector": "uncertain_wire_is_serial_fence",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "off_nfq_retained_scan",
+    "test_selector": "flag_off_recorded_sxtc_rows",
+    "exit": 1,
+    "verdict": "RED"
+  },
+  {
+    "mutation": "terminal_projection_leak",
+    "test_selector": "flag_off_recorded_sxtc_rows",
+    "exit": 1,
+    "verdict": "RED"
   }
 ]

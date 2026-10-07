@@ -74,12 +74,31 @@ class MirrorRetainedHoldMixin:
                         if revisions.get(owner, -1) > snapshot["revision"]:
                             continue
                         revisions[owner] = snapshot["revision"]
+                        owners = self.__dict__.setdefault("_mirrorhold_durable_owner_ids", set())
+                        fences = self.__dict__.setdefault("_mirrorhold_fenced_owner_ids", set())
+                        if snapshot["phase"] in {"held", "queued"}:
+                            owners.add(owner)
+                        else:
+                            owners.discard(owner)
+                        if snapshot["phase"] in FENCED_PHASES or snapshot.get("dispatch_unresolved"):
+                            fences.add(owner)
+                        else:
+                            fences.discard(owner)
                         symbol = snapshot["identity"][2].upper()
                         bucket = self._mirrorhold_cache().setdefault(symbol, {})
                         if snapshot["phase"] in {"held", "queued"}:
                             bucket[owner] = snapshot
                         else:
                             bucket.pop(owner, None)
+                            # A terminal owner must not become a legacy deferred
+                            # actor when OFF removes it from retained admission.
+                            event = TradeIntentEvent.model_validate(snapshot["event"])
+                            slot = event.payload.metadata["fanout_slot_id"]
+                            projections = self.__dict__.get("_webull_mirror_deferred_by_slot", {})
+                            existing = projections.get(slot)
+                            if (existing is not None and row_id(existing.event) == owner
+                                    and existing.event.produced_at <= event.produced_at):
+                                projections.pop(slot, None)
                         if not bucket:
                             self._mirrorhold_cache().pop(symbol, None)
             def rollback(_session):
@@ -92,9 +111,9 @@ class MirrorRetainedHoldMixin:
         return bool(getattr(self.settings, "oms_v2_webull_mirror_retained_hold_enabled", False))
 
     def _mirrorhold_owner_ids(self):
-        # Startup restores durable owners before consuming intents. OFF must not
-        # add a database scan to each legacy quote path.
-        return self.__dict__.get("_mirrorhold_durable_owner_ids", set())
+        # Uncertain wires remain serial admission fences, never tick eligibility.
+        return (self.__dict__.get("_mirrorhold_durable_owner_ids", set())
+                | self.__dict__.get("_mirrorhold_fenced_owner_ids", set()))
 
     def _mirrorhold_enabled(self):
         return self._mirrorhold_new_enabled() or bool(self._mirrorhold_owner_ids())
@@ -207,7 +226,6 @@ class MirrorRetainedHoldMixin:
             session.add(row)
             session.flush()
             self._mirrorhold_cache_after_commit(session, row.id, row.payload)
-            self.__dict__.setdefault("_mirrorhold_durable_owner_ids", set()).add(row.id)
             return row
         data = row.payload
         if data["phase"] in FENCED_PHASES or data["phase"] in {"retired", "filled", "capped"}:
@@ -562,7 +580,7 @@ class MirrorRetainedHoldMixin:
                 and Decimal(data["event"]["payload"]["quantity"]) == event.payload.quantity)
 
     def _mirrorhold_schedule(self, symbol):
-        if not self._mirrorhold_enabled():
+        if not self._mirrorhold_new_enabled():
             return
         if symbol is not None:
             symbol = symbol.upper()
@@ -717,16 +735,14 @@ class MirrorRetainedHoldMixin:
                 if projection is not None and projection.event.payload.broker_account_name == event.payload.broker_account_name:
                     self._nfq_price_holds.pop(event.payload.metadata["fanout_slot_id"], None)
             rows = session.scalars(select(DashboardSnapshot).where(
-                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE)).all()
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                DashboardSnapshot.payload["phase"].as_string().in_(["held", "queued"]))).all()
             self._mirrorhold_durable_owner_ids = {row.id for row in rows}
             for row in rows:
                 data = row.payload
                 if data["phase"] == "queued":
                     data = self._mirrorhold_write(session, row, {**data, "phase": "held", "token": "",
                         "reason": "restart_queue_invalidated"})
-                elif data["phase"] == "dispatching":
-                    data = self._mirrorhold_write(session, row, {**data, "phase": "uncertain",
-                        "reason": "restart_dispatch_uncertain"})
                 if data["phase"] == "held":
                     event = TradeIntentEvent.model_validate(data["event"])
                     reason = self._mirrorhold_gate(session, event)
@@ -734,6 +750,20 @@ class MirrorRetainedHoldMixin:
                         data = self._mirrorhold_write(session, row, {**data, "phase": "retired", "token": "",
                             "reason": reason})
                 self._mirrorhold_project(data)
+                self._mirrorhold_cache_after_commit(session, row.id, data)
+            # OFF must not discard proof of an uncertain wire. Restore these
+            # only as serial fences; they never enter the held/tick index.
+            fences = session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                (DashboardSnapshot.payload["phase"].as_string().in_(FENCED_PHASES)
+                 | DashboardSnapshot.payload["dispatch_unresolved"].as_boolean().is_(True)),
+            )).all()
+            self._mirrorhold_fenced_owner_ids = {row.id for row in fences}
+            for row in fences:
+                data = row.payload
+                if data["phase"] == "dispatching":
+                    data = self._mirrorhold_write(session, row, {**data, "phase": "uncertain",
+                        "reason": "restart_dispatch_uncertain"})
                 self._mirrorhold_cache_after_commit(session, row.id, data)
             session.commit()
 
@@ -761,9 +791,9 @@ class MirrorRetainedHoldMixin:
         return None
 
     async def _evaluate_nfq_holds(self, symbol=None):
-        if self._mirrorhold_enabled():
-            if symbol is None:
+        if symbol is None:
+            if self._mirrorhold_enabled():
                 await self._mirrorhold_evaluate()
-            if self._mirrorhold_new_enabled():
-                return
+        if self._mirrorhold_new_enabled():
+            return
         await super()._evaluate_nfq_holds(symbol)

@@ -1,0 +1,39 @@
+..FFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_each_committed_owner_phase_refreshes_cache_without_orm_objects[retired] _
+tests/unit/test_hotfix1_symbol_tick_cache.py:350: in test_each_committed_owner_phase_refreshes_cache_without_orm_objects
+    assert (row_id(event) in service._mirrorhold_durable_owner_ids) == (phase in {"held", "queued"})
+E   AssertionError: assert (UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') in {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b')}) == ('retired' in {'held', 'queued'})
+E    +  where UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') = row_id(TradeIntentEvent(event_id=UUID('4cec4f15-962b-4c6a-a42c-5ec0313fe664'), event_type='trade_intent', source_service='sch...tion': '338d16b7-37bf-47f3-9194-da3f6b201503', 'webull_mirror_generation_id': '91dcb1df-308c-4180-a5c1-0f4a2dd7f6fd'})))
+E    +  and   {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b')} = <project_mai_tai.oms.service.OmsRiskService object at 0x10c091d90>._mirrorhold_durable_owner_ids
+_ test_each_committed_owner_phase_refreshes_cache_without_orm_objects[filled] __
+tests/unit/test_hotfix1_symbol_tick_cache.py:350: in test_each_committed_owner_phase_refreshes_cache_without_orm_objects
+    assert (row_id(event) in service._mirrorhold_durable_owner_ids) == (phase in {"held", "queued"})
+E   AssertionError: assert (UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') in {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b')}) == ('filled' in {'held', 'queued'})
+E    +  where UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') = row_id(TradeIntentEvent(event_id=UUID('cad0e5a6-3928-427a-af91-9b211b7240fe'), event_type='trade_intent', source_service='sch...tion': 'dc9b0952-096c-4324-99ed-0d17b3752c4c', 'webull_mirror_generation_id': '8652059c-eefc-42d6-94a1-468679b63b57'})))
+E    +  and   {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b')} = <project_mai_tai.oms.service.OmsRiskService object at 0x10bd9b7a0>._mirrorhold_durable_owner_ids
+_ test_each_committed_owner_phase_refreshes_cache_without_orm_objects[accepted] _
+tests/unit/test_hotfix1_symbol_tick_cache.py:350: in test_each_committed_owner_phase_refreshes_cache_without_orm_objects
+    assert (row_id(event) in service._mirrorhold_durable_owner_ids) == (phase in {"held", "queued"})
+E   AssertionError: assert (UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') in {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b')}) == ('accepted' in {'held', 'queued'})
+E    +  where UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') = row_id(TradeIntentEvent(event_id=UUID('66cd9814-06d9-405a-afac-84c3f769f6db'), event_type='trade_intent', source_service='sch...tion': 'e32bc255-1fce-4494-8914-2f87d7061dac', 'webull_mirror_generation_id': '6130c1dd-df73-48e6-b36d-514b3460aa8c'})))
+E    +  and   {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b')} = <project_mai_tai.oms.service.OmsRiskService object at 0x10c0f9250>._mirrorhold_durable_owner_ids
+_ test_each_committed_owner_phase_refreshes_cache_without_orm_objects[uncertain] _
+tests/unit/test_hotfix1_symbol_tick_cache.py:350: in test_each_committed_owner_phase_refreshes_cache_without_orm_objects
+    assert (row_id(event) in service._mirrorhold_durable_owner_ids) == (phase in {"held", "queued"})
+E   AssertionError: assert (UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') in {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b')}) == ('uncertain' in {'held', 'queued'})
+E    +  where UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') = row_id(TradeIntentEvent(event_id=UUID('73d9412e-e5ca-4388-aa6a-5f71796a1f6c'), event_type='trade_intent', source_service='sch...tion': '518c347b-fb71-4d6e-8766-70949d2eccbd', 'webull_mirror_generation_id': '98909156-c877-4e9b-9273-c99b080b1967'})))
+E    +  and   {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b')} = <project_mai_tai.oms.service.OmsRiskService object at 0x10c165850>._mirrorhold_durable_owner_ids
+_ test_each_committed_owner_phase_refreshes_cache_without_orm_objects[capped] __
+tests/unit/test_hotfix1_symbol_tick_cache.py:350: in test_each_committed_owner_phase_refreshes_cache_without_orm_objects
+    assert (row_id(event) in service._mirrorhold_durable_owner_ids) == (phase in {"held", "queued"})
+E   AssertionError: assert (UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') in {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b')}) == ('capped' in {'held', 'queued'})
+E    +  where UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b') = row_id(TradeIntentEvent(event_id=UUID('1ab1b890-63f9-4afe-a2b3-4e3a141131eb'), event_type='trade_intent', source_service='sch...tion': '718a044b-0fe6-4f12-869d-d0d09aabdb4b', 'webull_mirror_generation_id': '00b7b78b-bea5-4706-aeec-61740bd4d983'})))
+E    +  and   {UUID('99a48593-ea0b-5db0-8ed6-7189d28c246b')} = <project_mai_tai.oms.service.OmsRiskService object at 0x10c167920>._mirrorhold_durable_owner_ids
+=========================== short test summary info ============================
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_each_committed_owner_phase_refreshes_cache_without_orm_objects[retired]
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_each_committed_owner_phase_refreshes_cache_without_orm_objects[filled]
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_each_committed_owner_phase_refreshes_cache_without_orm_objects[accepted]
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_each_committed_owner_phase_refreshes_cache_without_orm_objects[uncertain]
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_each_committed_owner_phase_refreshes_cache_without_orm_objects[capped]
+5 failed, 2 passed, 30 deselected in 0.70s

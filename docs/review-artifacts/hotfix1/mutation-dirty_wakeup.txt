@@ -1,16 +1,16 @@
 F                                                                        [100%]
 =================================== FAILURES ===================================
 ____ test_last_tick_new_committed_generation_is_not_lost_while_worker_busy _____
-tests/unit/test_hotfix1_symbol_tick_cache.py:313: in test_last_tick_new_committed_generation_is_not_lost_while_worker_busy
+tests/unit/test_hotfix1_symbol_tick_cache.py:315: in test_last_tick_new_committed_generation_is_not_lost_while_worker_busy
     assert calls == ["SXTC", "SXTC"]
 E   AssertionError: assert ['SXTC'] == ['SXTC', 'SXTC']
 E     
 E     Right contains one more item: 'SXTC'
 E     Use -v to get more diff
 ----------------------------- Captured stdout call -----------------------------
-2026-10-07 11:02:44,620 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+2026-10-07 11:28:45,261 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
 ------------------------------ Captured log call -------------------------------
 INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
 =========================== short test summary info ============================
 FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_last_tick_new_committed_generation_is_not_lost_while_worker_busy
-1 failed, 23 deselected in 0.83s
+1 failed, 36 deselected in 0.83s

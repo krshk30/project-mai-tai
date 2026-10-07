@@ -1,0 +1,46 @@
+FF.F                                                                     [100%]
+=================================== FAILURES ===================================
+____ test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work[held] _____
+tests/unit/test_hotfix1_symbol_tick_cache.py:418: in test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work
+    service._schedule_webull_mirror_tick("SXTC")
+<HOTFIX1 off_outer_owner_bypass>:4: in _schedule_webull_mirror_tick
+    ???
+tests/unit/test_hotfix1_symbol_tick_cache.py:416: in <lambda>
+    monkeypatch.setattr(service, "_mirrorhold_schedule", lambda *args: pytest.fail("OFF tick admitted retained worker"))
+                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: OFF tick admitted retained worker
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:28:48,854 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+___ test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work[queued] ____
+tests/unit/test_hotfix1_symbol_tick_cache.py:418: in test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work
+    service._schedule_webull_mirror_tick("SXTC")
+<HOTFIX1 off_outer_owner_bypass>:4: in _schedule_webull_mirror_tick
+    ???
+tests/unit/test_hotfix1_symbol_tick_cache.py:416: in <lambda>
+    monkeypatch.setattr(service, "_mirrorhold_schedule", lambda *args: pytest.fail("OFF tick admitted retained worker"))
+                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: OFF tick admitted retained worker
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:28:48,967 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+__ test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work[uncertain] __
+tests/unit/test_hotfix1_symbol_tick_cache.py:418: in test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work
+    service._schedule_webull_mirror_tick("SXTC")
+<HOTFIX1 off_outer_owner_bypass>:4: in _schedule_webull_mirror_tick
+    ???
+tests/unit/test_hotfix1_symbol_tick_cache.py:416: in <lambda>
+    monkeypatch.setattr(service, "_mirrorhold_schedule", lambda *args: pytest.fail("OFF tick admitted retained worker"))
+                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: OFF tick admitted retained worker
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 11:28:49,150 INFO [oms-risk] [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:mirror_fresh_price.py:118 [OMS-NFQ1] sym=SXTC segment=1791380522895 slot_id=01ae4d88-a200-5102-94ed-e8d4ebf55a59 attempt=schwab_1m_v2-SXTC-open-5a5c116269bf decision=held reason=no_fresh_quote cache_age_ms=unknown cache_source=none cache_timestamp=missing cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=unknown wire_source=none
+=========================== short test summary info ============================
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work[held]
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work[queued]
+FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_flag_off_recorded_sxtc_rows_never_admit_retained_tick_work[uncertain]
+3 failed, 1 passed, 33 deselected in 0.50s

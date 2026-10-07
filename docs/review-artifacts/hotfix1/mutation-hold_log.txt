@@ -4,7 +4,7 @@ _____________ test_recorded_sxtc_hold_restores_nfq_age_source_log ______________
 tests/unit/test_hotfix1_symbol_tick_cache.py:67: in test_recorded_sxtc_hold_restores_nfq_age_source_log
     assert "[OMS-NFQ1] sym=SXTC" in caplog.text
 E   AssertionError: assert '[OMS-NFQ1] sym=SXTC' in ''
-E    +  where '' = <_pytest.logging.LogCaptureFixture object at 0x10d1d6510>.text
+E    +  where '' = <_pytest.logging.LogCaptureFixture object at 0x10939d6a0>.text
 =========================== short test summary info ============================
 FAILED tests/unit/test_hotfix1_symbol_tick_cache.py::test_recorded_sxtc_hold_restores_nfq_age_source_log
-1 failed, 23 deselected in 0.22s
+1 failed, 36 deselected in 0.22s
