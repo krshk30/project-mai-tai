@@ -116,3 +116,17 @@ Final two-merge-plus-reviewed-batch APP/TREE, parent source-combination receipt,
 helper hashes and complete reviewed Install1 chain are not supplied here.
 Therefore this candidate is NOT production-ready and must fail closed.
 Future daily live delivery and next-session trading behavior are UNMEASURED.
+## Oct6 attended continuation
+
+Direct operator continuation: start OMS before evaluating its own book freshness,
+then v2, strategy, control; a failed start alone authorizes the 4805ddc8 fallback.
+Original STOP and receipts remain immutable history. The phase-seven continuation
+performs no further service actions. Application remains 5b8b4f64.
+
+After20 no scheduled bars arrive. The new-process log proof may instead record
+HELD_EXPECTED_NO_SCHEDULED_BARS, requiring a same-day after20 start, a fresh
+literal BOOT-RESTORE with evaluated=confirmed=pending>0, warmed=0, timeout=0,
+distinct complete pending names and a BOOT-HOLD HELD without release. This is not
+restoration PASS: restoration and release remain UNMEASURED until the next
+scheduled bars (Wed07:00 read). Other process, error, account, Redis, no-buy,
+catalog and timer proofs are unchanged. Local runner tests:92PASS.

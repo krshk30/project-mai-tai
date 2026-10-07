@@ -114,7 +114,7 @@ def grade_logs(found, started, owners=CHANGED):
     if not any("[V2-BOOT-HOLD]" in line for line in v2):
         raise Unknown("new-PID BOOT-HOLD unobserved")
     if not any("[V2-LINE-RESTORE]" in line and "entry_allowed=" in line for line in v2):
-        raise Unknown("Restoration per-symbol admission evidence missing")
+        receipts['schwab-1m-v2']['restoration'] = overnight_hold(v2, started['schwab-1m-v2'], datetime.now(timezone.utc))
     sync = [re.search(r"live:orb: ok=(\d+) failed=(\d+) consecutive_now=(\d+)", line)
             for line in receipts["oms"]["lines"] if "[BROKER-SYNC-CENSUS]" in line]
     if not sync:
@@ -123,6 +123,32 @@ def grade_logs(found, started, owners=CHANGED):
     if not any(int(match[1]) > 0 for match in sync):
         raise Unknown("new OMS Webull sync ok0")
     return receipts
+
+
+def overnight_hold(lines, state, now):
+    """No scheduled bars after20: report a proven hold, never restoration PASS."""
+    from release_policy import DAY
+    start = system_time(state['ExecMainStartTimestamp']).astimezone(ET)
+    local = now.astimezone(ET)
+    if start.date().isoformat() != DAY or local.date().isoformat() != DAY or start.hour < 20 or local.hour < 20:
+        raise Unknown('Restoration per-symbol admission evidence missing')
+    holds = [line for line in lines if '[V2-BOOT-HOLD] HELD' in line]
+    restores = [line for line in lines if '[V2-BOOT-RESTORE]' in line]
+    if not holds or not restores or any('[V2-BOOT-HOLD] RELEASED' in line for line in lines):
+        raise Unknown('overnight hold not proven')
+    value = restores[-1]
+    stamp = re.match(r'^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3})', value)
+    if not stamp or not 0 <= (now - datetime.strptime(stamp[1], '%Y-%m-%d %H:%M:%S,%f').replace(tzinfo=timezone.utc)).total_seconds() <= 120:
+        raise Unknown('overnight hold reading stale')
+    match = re.search(r'restoration_complete=0 evaluated=(\d+) confirmed=(\d+) rest_warmed=0 timeout_released=0 warmup_pending=(\d+) warmup_pending_symbols=([^ ]+) reason=rest_warmup_incomplete;', value)
+    if not match or not (int(match[1]) == int(match[2]) == int(match[3]) > 0):
+        raise Unknown('overnight pending population incomplete')
+    names = match[4].split(',')
+    if len(names) != int(match[3]) or len(set(names)) != len(names):
+        raise Unknown('overnight pending symbols incomplete')
+    return dict(verdict='HELD_EXPECTED_NO_SCHEDULED_BARS', population=int(match[3]), symbols=names,
+                restoration='UNMEASURED until next scheduled bars', entry_allowed=False,
+                source_line=value, next_read='2026-10-07 07:00 ET boot-hold/restoration and scanner verification')
 
 
 def control_logs(found, state):

@@ -7,13 +7,15 @@ import re
 import sys
 from datetime import datetime, timezone
 
-JOB = Path('/home/trader/after-hours/2026-10-06/install2-5b8b4f64/job-archive64')
-RELEASE = '3a55a2ee8be35f32e7b7148b76d36520280d802d5904585e875f492919a63ba0'
+ORIGINAL_JOB = Path('/home/trader/after-hours/2026-10-06/install2-5b8b4f64/job-archive64')
+JOB = Path('/home/trader/after-hours/2026-10-06/install2-5b8b4f64/job-overnight-proof')
 
 
-def resume(fx):
+def resume(fx, completed_before=3):
     # OMS owns book freshness: do not require its stopped writer to refresh itself.
     for completed, name in ((4, 'oms'), (5, 'schwab-1m-v2'), (6, 'strategy')):
+        if completed <= completed_before:
+            continue
         if completed > 4:
             fx.flat()
             fx.redis()
@@ -26,8 +28,9 @@ def resume(fx):
             raise
         if name == 'oms':
             fx.flat()
-    fx.action('restart', 'control')
-    fx.checkpoint(7)
+    if completed_before < 7:
+        fx.action('restart', 'control')
+        fx.checkpoint(7)
     from post_proof import collect
     from release_policy import canonical
     owners = ('oms', 'schwab-1m-v2', 'strategy')
@@ -44,11 +47,12 @@ def main():
     from daily import exclusive
     from release_policy import canonical, need, states
     need(os.geteuid() == 0 and 'TZ' not in os.environ, 'root native UTC required')
-    release = verify(JOB, RELEASE, datetime.now(timezone.utc))
-    attempt = JOB / 'attempt-install2-oct6-attended'
+    need(len(sys.argv) == 2, 'published continuation release hash required')
+    release = verify(JOB, sys.argv[1], datetime.now(timezone.utc))
+    attempt = ORIGINAL_JOB / 'attempt-install2-oct6-attended'
     with Path('/run/lock/project-mai-tai-deploy.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        exclusive(attempt / 'CONTINUATION-oms-first.json', canonical(dict(
+        exclusive(attempt / 'CONTINUATION-closeout-held.json', canonical(dict(
             authority='operator direct message: start OMS, wait healthy, v2, strategy, control; freshness after OMS up',
             original_stop=json.loads((attempt / 'STOP.json').read_bytes()),
             continuation_sha256=__import__('hashlib').sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -69,7 +73,24 @@ def main():
         fx.source_advanced = True
         fx.old_helpers = release['binding']['old_helper_hashes']
         fx.source(release['approved_sha'], verify_objects=False)
-        states(fx.before, fx.fleet(), 3)
+        completed = 7 if (attempt / 'phase-7.json').exists() else 3
+        states(fx.before, fx.fleet(), completed)
+        if completed == 7:
+            fx.last = json.loads((attempt / 'phase-7.json').read_bytes())
+            fx.started = {name: fx.last[name] for name in ('oms', 'schwab-1m-v2', 'strategy', 'control')}
+            for name in ('oms', 'schwab-1m-v2', 'strategy', 'control'):
+                paths = sorted(attempt.glob('*-' + name + '-start-returned.json'), key=lambda p: int(p.name.split('-')[0]))
+                fx.start_returned[name] = datetime.fromisoformat(json.loads(paths[-1].read_bytes())['post_return_utc'])
+            paths = sorted(attempt.glob('*-control-startup.json'), key=lambda p: int(p.name.split('-')[0]))
+            recorded = json.loads(paths[-1].read_bytes())['ranges']
+            need(len(recorded) == 1, 'control source range ambiguous')
+            span = recorded[0]
+            path = Path(span['path'])
+            from post_proof import read_range
+            need(read_range(path, span['offset'], span['end'])[1]['sha256'] == span['sha256'], 'control recorded log source changed')
+            stat = path.stat()
+            fx.log_base['control'] = dict(path=str(path), inode=stat.st_ino, device=stat.st_dev, offset=span['offset'])
+            fx.control_page()
         fx.redis()
         def recover_start_failure(name):
             from attended import REPO
@@ -86,13 +107,13 @@ def main():
             fx.receipt('FALLBACK-actual.json', canonical(dict(actual=fx.fleet(), sha=BOX)))
         fx.recover_start_failure = recover_start_failure
         try:
-            resume(fx)
+            resume(fx, completed)
         except BaseException as exc:
             actual = fx.fleet()
-            exclusive(attempt / 'CONTINUATION_STOP.json', canonical(dict(
+            exclusive(attempt / 'CONTINUATION_CLOSEOUT_STOP.json', canonical(dict(
                 actual=actual, error_type=type(exc).__name__, reason=str(exc), at_utc=fx.now().isoformat())))
             fx.command(['/home/trader/project-mai-tai/ops/health/preopen_alert.sh', 'ERROR',
-                        'Oct6 install2 continuation stopped', attempt / 'CONTINUATION_STOP.json'], check=False)
+                        'Oct6 install2 continuation stopped', attempt / 'CONTINUATION_CLOSEOUT_STOP.json'], check=False)
             raise
 
 
