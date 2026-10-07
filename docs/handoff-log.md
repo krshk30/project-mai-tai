@@ -7810,3 +7810,15 @@ No source/assertion/50ms threshold change. Originalextra64.971ms timingfail
 and PRCI139segfault retained; causes unmeasured, no causal fix claim.
 PushCIgreen/PRattempt2 stilltesting; NFQdraftuntilactualCIclean. RETRYready;
 SLOT9951/today's stagedAPP994/ORB untouched.
+
+2026-10-07 17:42 ET codex-2: NFQ2 PR1112 READY for independent exact-head
+review at50264417343a321dce5f8852a46aaaaa06d66402; base9951unchanged.
+Both Validategreen:push37687543246 12m45s,PR37687551177 attempt2 14m28s.
+528focusedPASS/45named safetymutationsRED/six tickcontrolsRED; full7357/56
+vs currentmain7114/56, exact56failednames identical, pairhash044f4115798827a551ed72d61033c7304fc34b0fc4eb201ae0f84b5caf45a9c5.
+Freshactivehold240ev/s/60s maxloop20.433ms,zero tickSQL; precise terminal-zero
+recovery, legacy failclosed and localtypedbarrier controls published. Earlier
+64.971ms timing failure and CI139native crash retained, no root-cause/fix
+claim or safetythreshold change. Source remains exactly502.
+No pin/merge/deploy; RETRY1118cda ready, SLOT9951tomorrow, tonight's exact
+pairedAPP994 package/approval and ORB unchanged; no staleRPG/ledger action.
