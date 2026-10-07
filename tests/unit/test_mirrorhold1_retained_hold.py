@@ -572,7 +572,7 @@ async def test_rpg_nonces_after_many_free_waits_do_not_spend_actual_wire_budget(
     h = await runtime(monkeypatch, "webull", strategy_overrides=overrides)
     if all_on:
         h.service.settings = h.service.settings.model_copy(update=overrides)
-        assert len(overrides) == 10
+        assert len(overrides) == 11
         assert all(getattr(h.strategy.settings, key) is True and getattr(h.service.settings, key) is True
                    for key in overrides)
     h.service.settings.oms_v2_webull_mirror_retained_hold_enabled = True

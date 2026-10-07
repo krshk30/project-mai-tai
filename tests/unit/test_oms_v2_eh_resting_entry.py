@@ -304,7 +304,7 @@ async def test_premarket_webull_uses_its_own_band_not_the_oms_default(eh):
 
 @pytest.mark.asyncio
 async def test_premarket_webull_keeps_reactive_route_when_resting_flag_is_off(eh):
-    service = _oms(**{_FLAG: False}, oms_v2_eh_entry_enabled=True)
+    service = _oms(**{_FLAG: False}, oms_v2_eh_entry_enabled=True, oms_v2_eh_entry_max_cross_pct=1.0)
     _set_quote(service, "CLRO", ask=5.56, bid=5.55)
     events = await service.process_trade_intent(
         _v2_open(_eh_webull_fanout_meta(level="5.5284"), symbol="CLRO")
@@ -317,7 +317,7 @@ async def test_premarket_webull_keeps_reactive_route_when_resting_flag_is_off(eh
 
 @pytest.mark.asyncio
 async def test_postmarket_webull_fanout_keeps_reactive_pricing(pm):
-    service = _oms(**{_FLAG: True}, oms_v2_eh_entry_enabled=True)
+    service = _oms(**{_FLAG: True}, oms_v2_eh_entry_enabled=True, oms_v2_eh_entry_max_cross_pct=1.0)
     _set_quote(service, "CLRO", ask=5.56, bid=5.55)
     events = await service.process_trade_intent(
         _v2_open(_eh_webull_fanout_meta(level="5.5284"), symbol="CLRO")
