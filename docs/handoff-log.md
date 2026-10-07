@@ -7597,3 +7597,23 @@ NFQ+SLOT scratch cherry-pick hit6conflicts (service, strategy, foursharedtests);
 aborted and clean. OriginalNFQ source/proof trees remain untouched. Joint
 integration, actual current-main pair and CI still gate pin-readiness.
 #1115/RPGSTALE remain PARKED; no production/pin/merge/activation.
+
+### [codex] 2026-10-07 15:30 ET - C130 final SLOTCLEAR draft receipt
+
+Published #1113 final draft9951b473f8203590f48c667770c07e1f9c3096b6. Parent
+independently verifies GitHub head, clean empty95cf..995 src/ops/scripts/tests
+diff and CURRENT_MAIN_PAIR.json: main9947114PASS56FAIL; standard candidate
+7183PASS56FAIL; added/removed failed names both empty. Candidate standard suite
+19:21:11.755-19:28:54.053UTC; source frozen95cf, final later receipt-only head.
+Initial timing-launcher run7181PASS58FAIL retained: two extra handoff failures
+caused by unguarded launcher multiprocessing re-entry. Corrected launcher
+supplement7PASS; standard full candidate uses exact main command with no timing
+launcher/plugin/tee capture. No source/threshold waiver. Original failure stays.
+FreshBUY+SELL69PASS,451focused,12supplemental,19mutationsRED. Latest995 Validate
+both still running; independent pin check fails on this unpinned draft. No green
+CI/pin/readiness claim. Common56 failures are baseline, not new SLOT failures.
+Remaining joint NFQ integration6conflicts and absent historical ticket proof
+are disclosed, not force-cleared. PresentSXTC payload control remains zeroopen
+with slots released; DKI nofreshflip stayscapped. Default-OFF switches unchanged.
+This draft is NOT the staged application: evening job stays exact994/f2ed/C128.
+#1115/RPGSTALE remain parked. No production/merge/pin/activation in SLOT lane.
