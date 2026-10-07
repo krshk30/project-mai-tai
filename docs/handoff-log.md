@@ -7267,3 +7267,21 @@ e1db2d14b69a2523be12f9baca265bba5022e137. Only docs commit trailers changed;
 all descendant patches equal, whole trees unchanged,13/13 markers PASS.
 Exact leases used, worktrees clean. Fresh CI/reviewer exact-head pins pending;
 no main merge, production change or Install2 claim.
+
+2026-10-06 20:12:34 ET codex-2 C106: reviewer verified Install1 and released
+Install2 six PRs plus preopen daily timer; LINESRC errors explicitly remain
+known open noise, not proof of zero errors. Existing incomplete/error receipt
+unchanged; journal appends REVIEWER_VERIFIED disposition. No restart of paper.
+Independent committed pins verified for all six. #1106 first could not merge:
+both Validate failures are inherited SCKT wall-clock test. Operator selected
+#1102 first to inherit reviewed fix. #1102 exact72983395 merged after hosted
+pin plus both Validate SUCCESS; main52659779 whole9dd97ad8 tree exactly pinned.
+#1106 clean rebase0ca05fc8 published; no hand conflicts, unified-zero additions/
+deletions/files identical; range-diff only inherited MRO context changes.
+Focused RESERVE1/ROUNDUP1/PA1 composition496PASS5.31s. Fresh CI running and
+exact-head re-pin requested at PRcomment6027906196; no self-pin or bypass.
+Fresh read-only strict-flat OMS rc0 at20:12:34, direct brokers flat, working/
+managed/virtual/inflight empty; exact MI/NXL and closed-session v2 admission
+only. Parent owns main and production, released isolated LINESRC1 source lane
+and Install2 runner assembly run independently. No Install2 source activation,
+service action or timer installation yet; do not call a local draft staged.
