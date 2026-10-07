@@ -45,9 +45,9 @@ logger = logging.getLogger(__name__)
 
 
 def anchored_session_poll_open(now_ms: int) -> bool:
-    """LINESRC1: only the anchored source lane polls from 06:55 through 15:59 ET."""
+    """LINESRC1: only the anchored source lane polls from 07:00 through 15:59 ET."""
     eastern = datetime.fromtimestamp(now_ms / 1000, UTC).astimezone(ZoneInfo("America/New_York"))
-    return 6 * 60 + 55 <= eastern.hour * 60 + eastern.minute < 16 * 60
+    return 7 * 60 <= eastern.hour * 60 + eastern.minute < 16 * 60
 
 
 ChartBarCallback = Callable[[str, "ChartBar"], Awaitable[None]]
@@ -244,6 +244,8 @@ class SchwabV2RestClient:
                         return
                     epoch, anchor, current = context
                     if not anchored_session_poll_open(current + 60_000):
+                        return
+                    if not anchored_session_poll_open(current):
                         return
                     requests += 1
                     bars, proof = await asyncio.to_thread(
@@ -443,6 +445,8 @@ class SchwabV2RestClient:
 
         if not anchored_session_poll_open(current_bar_ms + 60_000):
             return [], None
+        if not anchored_session_poll_open(current_bar_ms):
+            return [], None
         end_ms = current_bar_ms + 60_000
         if not anchor_ms <= current_bar_ms < anchor_ms + 16 * 3_600_000:
             raise ValueError("invalid restoration session window")
@@ -456,10 +460,15 @@ class SchwabV2RestClient:
         )
         candles = payload.get("candles")
         if (str(payload.get("symbol", "")).upper() != symbol.upper()
-                or payload.get("empty") is not False or not isinstance(candles, list)
-                or not 0 < len(candles) <= 960
+                or (payload.get("empty") is not False and payload.get("empty") is not True)
+                or not isinstance(candles, list) or len(candles) > 960
                 or any(payload.get(key) for key in ("next", "nextToken", "nextPage", "truncated"))):
             raise ValueError("session response completeness unproven")
+        if not candles:
+            # A valid empty response has no bars or completeness proof yet.
+            return [], None
+        if payload.get("empty") is True:
+            raise ValueError("nonempty session response marked empty")
         validator = SessionLineRestoration(symbol, anchor_ms, 0)
         bars = []
         ids = set()

@@ -1,5 +1,9 @@
 # LINESRC1 Candidate Evidence
 
+The October7 amendment supersedes the 06:55 opening and empty-response rule
+below. See `OCT7_0700_EMPTY.md` for current boundaries and new receipts. The
+remaining report is the preserved a2a41012 checkpoint, not current-head proof.
+
 [codex] Source-only candidate on `codex/linesrc1-anchored-session-poll`.
 Local comparison base: `4805ddc81184c76b4d5cef5c483c809edb666fe6`.
 Main was independently observed at `52659779bcf4b6e28a2896e6eef3002488a6d2c9`
