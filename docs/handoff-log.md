@@ -7633,3 +7633,20 @@ Halley owns NFQ2-onto-SLOTCLEAR integration; parent does not edit either source
 branch. Original heads remain preserved until joint evidence is verified.
 No stale atr_reprice_handoff write, RPG parked patches unchanged. Staged paired
 install staysAPP994/f2/C128; RETRYLEFT is not implicitly an install candidate.
+
+### [codex] 2026-10-07 16:03 ET - C132 RETRYLEFT assessment stop
+
+Historical read-only sidecar exposed an APUS acceptance contradiction. Parent
+independently checked the two exact broker order/fill ids at20:03:19.511UTC:
+Webull bought1@5.11 at19:54:58.742UTC Sep24, primary sold2@5.3486 at20:26:30.
+The alleged209-minute second fill is updated_at23:55:10.146963, not execution.
+APUS was both-filled, so cancelling a waiting sibling after that close is not
+a valid positive acceptance case. Assessment-only240bfee0 pushed; no source
+patch committed or published, no PR created. NCPL cause AGREE, APUS replay
+DISAGREE, actual-broker-live27 count UNMEASURED. Bounded extracted lots157 and
+2 lifecycle-inferred waiting cases have explicit scope/retention caveats.
+Before stop local32new/261combined controls and10assertion mutationsRED;
+full-unit interrupted on assessment stop, no suite-pair/readiness claim.
+RETRYLEFT publication stopped per standing rule pending corrected acceptance.
+NFQ2/SLOTCLEAR sole integration writer remains released separately; no stale
+RPG rows or parked patches touched. Staged application/approval994/f2 unchanged.
