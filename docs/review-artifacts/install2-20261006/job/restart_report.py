@@ -99,7 +99,11 @@ def main(argv=None):
     official = output.with_name(output.name + ".official-unaccepted-scope.txt")
     from daily import exclusive
     exclusive(official, raw.encode())
-    rendered = render(raw, receipts)
+    rendered = render(raw, [row for row in receipts if row['classification'] == 'ACCEPTED_OPEN_LINESRC1'])
+    fallback = [row for row in receipts if row['classification'] == 'EXPECTED_BY_DESIGN_SEEDED_BOOT_FALLBACK']
+    if fallback:
+        rendered += '\nExpected seeded boot fallback (not fresh-bar restoration):\n' + '\n'.join(
+            '- ' + row['at_utc'] + ' ' + row['reason'] + ' raw_sha256=' + row['raw_sha256'] for row in fallback) + '\n'
     if held_path is not None:
         rendered = render_held(rendered, json.loads(held_path.read_bytes()), datetime.now(timezone.utc))
         rc = 0

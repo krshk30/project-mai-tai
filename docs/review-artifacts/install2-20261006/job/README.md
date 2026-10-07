@@ -129,10 +129,18 @@ literal BOOT-RESTORE with evaluated=confirmed=pending>0, warmed=0, timeout=0,
 distinct complete pending names and a BOOT-HOLD HELD without release. This is not
 restoration PASS: restoration and release remain UNMEASURED until the next
 scheduled bars (Wed07:00 read). Other process, error, account, Redis, no-buy,
-catalog and timer proofs are unchanged. Local runner tests:95PASS.
+catalog and timer proofs are unchanged. Local runner tests:105PASS.
 The raw official collector report is retained. Only its exact two absent
 warmup/release failures may be labelled ACCEPTED_HELD_OFFSESSION when the
 independent fresh literal hold and N/A_OFF_SESSION bar result are present;
 any other failure or unknown still blocks. Control is declared in the actual
 restart set, with its original identity and action receipt. No check is called
 PASS on pending evidence. The daily gate itself is not run early or waived.
+
+At22:00:12ET the installed369s seeded fallback ran (elapsed373.1), with all7
+DB-confirmed names capped/entry slots consumed and reconstructed_uncapped=0;
+BOOT-HOLD then released literally. This existing ERROR-level event is matched
+by its complete message, bound, after20 timestamp and exact positive population;
+another error still refuses. The official collector already validates this
+bounded fallback. It is not fresh-bar restoration; next-session line/scanner
+proof remains UNMEASURED. No change to application, switches or the fallback.

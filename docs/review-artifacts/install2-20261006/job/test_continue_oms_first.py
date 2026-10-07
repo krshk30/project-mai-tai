@@ -10,11 +10,34 @@ from post_proof import overnight_hold
 from release_policy import Unknown
 from release_policy import Stop
 from restart_report import render_held
+from linesrc_disposition import boot_fallback, grade
 
 RECORDED_RESTORE = '2026-10-07 01:55:57,523 WARNING project_mai_tai.services.schwab_1m_v2_bot | [V2-BOOT-RESTORE] restoration_complete=0 evaluated=7 confirmed=7 rest_warmed=0 timeout_released=0 warmup_pending=7 warmup_pending_symbols=APUS,BIYA,IPDN,MOBX,MTEN,OLOX,SMXT reason=rest_warmup_incomplete; waiting for a fresh REST or streamer bar within 300s'
 RECORDED_HOLD = '2026-10-07 01:55:54,253 WARNING project_mai_tai.services.schwab_1m_v2_bot | [V2-BOOT-HOLD] HELD restoration_complete=0'
 RECORDED_STATE = {'ExecMainStartTimestamp': 'Wed 2026-10-07 01:53:49 UTC'}
 RECORDED_NOW = datetime(2026, 10, 7, 1, 56, tzinfo=timezone.utc)
+RECORDED_FALLBACK = '2026-10-07 02:00:12,771 ERROR project_mai_tai.services.schwab_1m_v2_bot | [V2-BOOT-REST-WARMUP-TIMEOUT] outcome=warmup_gate_released reason=fresh_source_not_observed_within_bound elapsed_seconds=373.1 bound_seconds=369 evaluated=7 confirmed=7 released=7 symbols=APUS,BIYA,IPDN,MOBX,MTEN,OLOX,SMXT; DB seed was confirmed; reconstructed arms were capped with their entry slots consumed (untradeable until a fresh SELL flip) \u2014 the boot hold then releases on the same dangerous==0 read, it does NOT remain active'
+
+
+def test_recorded_bounded_seeded_fallback_is_expected_not_zero_error():
+    result = grade('schwab-1m-v2', [RECORDED_FALLBACK])
+    assert result['classification'] == 'EXPECTED_BY_DESIGN_SEEDED_BOOT_FALLBACK'
+    assert result['accepted_open_count'] == 0 and result['expected_boot_fallback_count'] == 1
+    assert boot_fallback(RECORDED_FALLBACK)['population'] == 7
+
+
+@pytest.mark.parametrize('old,new', [('bound_seconds=369', 'bound_seconds=370'),
+    ('confirmed=7', 'confirmed=6'), ('released=7', 'released=6'), ('APUS,BIYA', 'APUS,APUS'),
+    ('373.1', '368.1'), ('02:00:12,771', '22:00:12,771'), ('DB seed was confirmed', 'DB seed was unproven'),
+    ('entry slots consumed', 'entry slots released')])
+def test_recorded_fallback_changed_shape_is_not_admitted(old, new):
+    with pytest.raises(Stop):
+        grade('schwab-1m-v2', [RECORDED_FALLBACK.replace(old, new)])
+
+
+def test_expected_fallback_does_not_hide_another_error():
+    with pytest.raises(Stop):
+        grade('schwab-1m-v2', [RECORDED_FALLBACK, '2026-10-07 02:00:13,000 ERROR other failure'])
 
 OFFICIAL_HELD = '''Overall: REAL FAILURE (2 failed checks / 0 unknown checks / 9 reported checks)
 Final call: REAL FAILURE; no post-restart restoration_complete=1 line

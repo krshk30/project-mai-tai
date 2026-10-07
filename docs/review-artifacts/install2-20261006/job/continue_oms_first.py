@@ -8,7 +8,7 @@ import sys
 from datetime import datetime, timezone
 
 ORIGINAL_JOB = Path('/home/trader/after-hours/2026-10-06/install2-5b8b4f64/job-archive64')
-JOB = Path('/home/trader/after-hours/2026-10-06/install2-5b8b4f64/job-final-held-proof')
+JOB = Path('/home/trader/after-hours/2026-10-06/install2-5b8b4f64/job-seeded-fallback-proof')
 
 
 def resume(fx, completed_before=3):
@@ -52,7 +52,7 @@ def main():
     attempt = ORIGINAL_JOB / 'attempt-install2-oct6-attended'
     with Path('/run/lock/project-mai-tai-deploy.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        exclusive(attempt / 'CONTINUATION-final-held-proof.json', canonical(dict(
+        exclusive(attempt / ('CONTINUATION-' + sys.argv[1][:12] + '.json'), canonical(dict(
             authority='operator direct message: start OMS, wait healthy, v2, strategy, control; freshness after OMS up',
             original_stop=json.loads((attempt / 'STOP.json').read_bytes()),
             continuation_sha256=__import__('hashlib').sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -110,10 +110,11 @@ def main():
             resume(fx, completed)
         except BaseException as exc:
             actual = fx.fleet()
-            exclusive(attempt / 'CONTINUATION_FINAL_STOP.json', canonical(dict(
+            stop_file = attempt / ('CONTINUATION_STOP-' + sys.argv[1][:12] + '.json')
+            exclusive(stop_file, canonical(dict(
                 actual=actual, error_type=type(exc).__name__, reason=str(exc), at_utc=fx.now().isoformat())))
             fx.command(['/home/trader/project-mai-tai/ops/health/preopen_alert.sh', 'ERROR',
-                        'Oct6 install2 continuation stopped', attempt / 'CONTINUATION_FINAL_STOP.json'], check=False)
+                        'Oct6 install2 continuation stopped', stop_file], check=False)
             raise
 
 

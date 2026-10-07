@@ -114,7 +114,14 @@ def grade_logs(found, started, owners=CHANGED):
     if not any("[V2-BOOT-HOLD]" in line for line in v2):
         raise Unknown("new-PID BOOT-HOLD unobserved")
     if not any("[V2-LINE-RESTORE]" in line and "entry_allowed=" in line for line in v2):
-        receipts['schwab-1m-v2']['restoration'] = overnight_hold(v2, started['schwab-1m-v2'], datetime.now(timezone.utc))
+        if any('[V2-BOOT-HOLD] released' in line and 'restoration_complete=1 reconstructed_uncapped=0' in line for line in v2):
+            from linesrc_disposition import boot_fallback
+            markers = [line for line in v2 if '[V2-BOOT-REST-WARMUP-TIMEOUT]' in line]
+            need(len(markers) == 1, 'seeded fallback marker ambiguous')
+            receipts['schwab-1m-v2']['seeded_boot_fallback'] = boot_fallback(markers[0])
+            receipts['schwab-1m-v2']['line_restoration'] = 'UNMEASURED until scheduled bars; entry slots consumed'
+        else:
+            receipts['schwab-1m-v2']['restoration'] = overnight_hold(v2, started['schwab-1m-v2'], datetime.now(timezone.utc))
     sync = [re.search(r"live:orb: ok=(\d+) failed=(\d+) consecutive_now=(\d+)", line)
             for line in receipts["oms"]["lines"] if "[BROKER-SYNC-CENSUS]" in line]
     if not sync:
