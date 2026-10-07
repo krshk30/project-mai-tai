@@ -7358,3 +7358,17 @@ binding, release approval, staging, service action or daily timer installation.
 Full application pair/CI and exact-set proof still pending, separate from runner
 mechanics. Original incomplete Install1 receipt stays truthful; builder requires
 derived human VERIFIED provenance rather than a fabricated COMPLETE baseline.
+
+2026-10-06 20:48 ET codex-2 C113: frozen #1108 aed1a358 full-unit pair
+complete, baseline56FAIL/6581PASS293.44s vshead56FAIL/6931PASS330.15s,
+zeroerrors/skips and identical56 failed names. Own XML comparison no additions/
+removals; sole proof lane attested91/93 imported modules byte-identical to own
+pinned checkouts, both clean. Raw paired receipt1324a9e5... in/tmp, not a green
+local full suite. Both hostedValidate green, full receipt posted PRcomment
+6028385878 and plan51fefc68. Independent batch pin absent; exact-set external
+composition running, old legacy33/8 result still disclosed. Parent reviewed
+actual Install1 journal instead of asserting invented stop/startOMS: six actual
+commands plus v2 start positively identity/human VERIFIED proven, its missing
+command receipt labelled UNAVAILABLE. Original incomplete/collision receipts
+unchanged,77 runner mechanicsPASS9.95s. No Install2 service action, staging or
+daily timer installation.
