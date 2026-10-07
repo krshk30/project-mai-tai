@@ -1,0 +1,9 @@
+{
+  "pr_number": 1114,
+  "range_base": "1a70da19176d2cad486e8518e1c9030f1cabb968",
+  "range_head": "5525739a529e8e580cc71835703c63c1cfd22c98",
+  "reviewed_at": "2026-10-07T16:31:14Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "HOTFIX1: the per-tick path no longer runs DB work on the OMS event loop. Quote/trade ticks call _schedule_webull_mirror_tick -> in-memory symbol cache -> off-loop (to_thread) evaluate; drift cancels read a cached working-order set refreshed via _run_db; retained-hold owner restore loads held/queued only (uncertain wires are serial-only fences). Verified by me: diff read in full; source patch identical from 2eb55e37 through 5525739a (last two heads docs-only); focused 242 pass; full unit suite failed-name set identical to base 1a70da19 (48 names); tick-rate test present (240 events/s x 60 s, <50 ms stall gate); mutations all RED: codex 12 (tick_sql 10, publish_before_commit 11, rollback_publish 1, stale_revision 1, symbol_isolation 1, worker_dedup 2, revision_budget 2, off_inner_owner_bypass 4, terminal_owner_leak 6, discard_uncertain_fence 1, off_nfq_retained_scan 7, terminal_projection_leak 1) + mine M1 synchronous per-tick DB evaluate 3 RED, M2 owner restore without the phase filter 5 RED. Known: one 158.86 ms stall in codex's full run on this Mac while my three parallel suites ran; not reproduced in later runs; the gate measures the test host. Install with MAI_TAI_OMS_V2_WEBULL_MIRROR_RETAINED_HOLD_ENABLED back to true after the close in the next batch; first scan after install reads DB tx/s, reader offset vs stream head, sync-pass duration."
+}
