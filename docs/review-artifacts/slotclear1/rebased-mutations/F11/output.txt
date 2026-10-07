@@ -1,0 +1,25 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True] _
+
+retry = True, partial = True
+
+    @pytest.mark.parametrize("retry", [True, False])
+    @pytest.mark.parametrize("partial", [True, False])
+    def test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once(retry, partial):
+        strategy, state, clock, _, _, _ = seeded(retry=retry, partial=partial)
+        for index, probe in enumerate(list(recorded_probes("SXTC"))[:4]):
+            observe(strategy, state, clock, probe)
+            primary = strategy.drain_pending_intents()
+            mirror = strategy.drain_webull_direct_intents()
+            if index < 3:
+                assert not primary and not mirror
+>               assert not state.cw_resting_taken and not state.cw_reclaim_taken
+E               AssertionError: assert (not True)
+E                +  where True = SymbolState(symbol='SXTC', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791397500000, open=6.36, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').cw_resting_taken
+
+tests/unit/test_slotclear1_fresh_sell.py:99: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]
+1 failed in 0.07s
+MUTATION F11 pytest_rc=1 RED

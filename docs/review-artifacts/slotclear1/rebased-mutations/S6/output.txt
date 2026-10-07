@@ -1,0 +1,23 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_fresh_buy_permission_is_revoked_on_scanner_removal ____________
+
+    def test_fresh_buy_permission_is_revoked_on_scanner_removal():
+        strategy, state, clock, _, _ = lpcn()
+        buy(strategy, state)
+        assert state.slotclear_fresh_buy_bar_ms
+        strategy._remove_waiting_buy(state, reason="watchlist-removed")
+>       assert state.slotclear_fresh_buy_bar_ms == 0
+E       AssertionError: assert 1791376740000 == 0
+E        +  where 1791376740000 = SymbolState(symbol='LPCN', line_restore_reset_after_ms=0, bars=deque([OHLCVBar(timestamp_ms=1791376740000, open=2.83, ...t_mirror_cross_slot_id='', fanout_zero_hold_started_ms=0, webull_resting_active=False, webull_resting_generation_id='').slotclear_fresh_buy_bar_ms
+
+tests/unit/test_slotclear1_fresh_flip.py:217: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    project_mai_tai.strategy_core.schwab_1m_v2:<slotclear1-mutation-S6>:38 [V2-REMOVED-WAIT] LPCN verdict=UNKNOWN reason=request_write_failed
+Traceback (most recent call last):
+  File "<slotclear1-mutation-S6>", line 35, in _remove_waiting_buy
+RuntimeError: removal store unavailable
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_flip.py::test_fresh_buy_permission_is_revoked_on_scanner_removal
+1 failed in 0.07s
+MUTATION S6 pytest_rc=1 RED
