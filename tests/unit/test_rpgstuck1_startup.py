@@ -264,7 +264,8 @@ async def test_real_startup_all_eight_and_all_five_deferred_intents_recover_only
         "ba108172-04f6-5659-892b-a0fc10d22b15": "schwab_1m_v2-RETO-open-41cf913d0c96",
     }
     for token, client in local_clients.items():
-        assert jobs[token]["phase"] == "clear"
+        assert jobs[token]["phase"] == "refused"
+        assert jobs[token]["release_reason"] == "old_local_no_wire_return_to_strategy"
         assert jobs[token]["local_no_wire"] and old_buy_proven_clear(jobs[token])
         assert jobs[token]["old"]["client_order_id"] == client
         assert jobs[token]["reads"] == 0
@@ -276,7 +277,8 @@ async def test_real_startup_all_eight_and_all_five_deferred_intents_recover_only
     await feedback(h)
     await feedback(h)
     for token in local_clients:
-        assert HandoffJournal(h.factory).read(UUID(token))["phase"] == "expired"
+        assert HandoffJournal(h.factory).read(UUID(token))["phase"] == "refused"
+        assert HandoffJournal(h.factory).read(UUID(token))["release_reason"] == "old_local_no_wire_return_to_strategy"
     for symbol in ("APUS", "VEEA", "RETO"):
         # This older five-row audit subset omits bd6's exact final e299 attempt.
         # Its reason string cannot waive replacement ownership; other local
@@ -525,12 +527,15 @@ async def test_tonight_off_existing_clear_local_jobs_resume_without_legacy_dupli
     h = await startup_harness(monkeypatch, with_deferred=True)
     await real_bot_startup(monkeypatch, h)
     await real_oms_startup(monkeypatch, h)
-    tokens = {token for token, job in HandoffJournal(h.factory).jobs() if job["phase"] == "clear"}
+    tokens = {token for token, job in HandoffJournal(h.factory).jobs()
+              if job.get("release_reason") == "old_local_no_wire_return_to_strategy"}
     assert len(tokens) == 3 and not h.service.settings.strategy_schwab_1m_v2_atr_reprice_handoff_enabled
     for symbol in ("APUS", "VEEA", "RETO"):
         state = h.strategy.watchlist_state(symbol)
         assert h.strategy._rpg_entry_owned(state, account="live:orb")
-        assert h.service._rpg_open_refusal(tokenless_open(symbol, "live:orb")) == "rpg_old_buy_still_owned"
+        # Bot feedback has not run yet; OMS has already committed exact proof.
+        assert h.service._rpg_open_refusal(tokenless_open(symbol, "live:orb")) == (
+            "rpg_old_buy_still_owned" if symbol == "APUS" else None)
         h.strategy._cw_v2_resting_track(state, None)
         h.service._latest_quotes_by_symbol[symbol] = {"ask": Decimal("3.06"), "received_at": h.clock[0]}
     assert not h.strategy.drain_webull_direct_intents()
@@ -546,17 +551,22 @@ async def test_tonight_off_existing_clear_local_jobs_resume_without_legacy_dupli
     await feedback(h)
     for token in tokens:
         job = HandoffJournal(h.factory).read(token)
-        assert job["phase"] == "placed" and job["authorization"]["verdict"] == "ready"
-    assert len(h.adapter.opens) == 3
-    assert {request.symbol for request in h.adapter.opens} == {"APUS", "VEEA", "RETO"}
-    assert all(request.broker_account_name == "live:orb" and request.metadata["rpg_handoff_token"] in
-               {str(token) for token in tokens} for request in h.adapter.opens)
+        assert job["phase"] == "refused" and job["release_reason"] == "old_local_no_wire_return_to_strategy"
+    assert not h.adapter.opens
+    for symbol in ("VEEA", "RETO"):
+        state = h.strategy.watchlist_state(symbol)
+        assert not h.strategy._rpg_entry_owned(state, account="live:orb")
+        h.strategy._queue_resting_place(state, state.atr_trail, slot="first")
+    mirrors = h.strategy.drain_webull_direct_intents()
+    assert {draft.symbol for draft in mirrors} == {"VEEA", "RETO"}
+    assert all("rpg_handoff_token" not in draft.metadata for draft in mirrors)
+    h.strategy.drain_pending_intents()
     for _ in range(3):
         await feedback(h)
         for symbol in ("APUS", "VEEA", "RETO"):
             h.strategy._cw_v2_resting_track(h.strategy.watchlist_state(symbol), None)
         assert not h.strategy.drain_pending_intents() and not h.strategy.drain_webull_direct_intents()
-    assert len(h.adapter.opens) == 3 and not h.adapter.cancels
+    assert not h.adapter.opens and not h.adapter.cancels
     assert {token for token, _ in HandoffJournal(h.factory).jobs()} == {
         UUID(row["id"]) for row in RECORDED["tickets"]}
 
@@ -605,7 +615,7 @@ async def test_tonight_all_eight_outside_window_startup_expires_only_proven_tick
         if originally_clear or proof_available:
             assert old_buy_proven_clear(job) and job["phase"] in {"refused", "expired"}
             if not originally_clear and job["old"]["broker_account_name"] == "live:orb":
-                assert job["phase"] == "expired" and job["reason"] == "window_closed"
+                assert job["phase"] == "refused" and job["release_reason"] == "old_local_no_wire_return_to_strategy"
         else:
             assert job["phase"] == "held_unknown" and not old_buy_proven_clear(job)
     assert not h.adapter.opens and not h.adapter.cancels and len(h.adapter.reads) == 1

@@ -12,12 +12,13 @@ import hashlib
 import json
 from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, TradeIntent, Strategy
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.oms.atr_reprice_handoff import (
     AtrRepriceHandoff, HandoffJournal, ReplacementDecision, SNAPSHOT_TYPE, _request,
     _request_dict, MAX_READS, READ_INTERVAL_SECONDS, READ_TIMEOUT_SECONDS,
@@ -37,13 +38,23 @@ class AtrRepriceRuntimeMixin:
     def _rpg_matches_local_open(opening, event):
         md = event.payload.metadata
         previous = opening.payload.metadata
+        slot = md.get("fanout_slot_id")
+        if not slot and previous.get("fanout_slot_id"):
+            try:
+                slot = fanout_slot_id(strategy_code="schwab_1m_v2", symbol=event.payload.symbol,
+                    segment_id=int(md["fanout_segment_id"]),
+                    slot="resting" if md["cw_entry_slot"] == "first" else "reclaim")
+            except (KeyError, TypeError, ValueError):
+                return False
         return (opening.payload.symbol == event.payload.symbol
                 and opening.payload.broker_account_name == event.payload.broker_account_name
+                and event.payload.strategy_code == "schwab_1m_v2"
                 and opening.payload.strategy_code == "schwab_1m_v2"
                 and opening.payload.intent_type == "open"
                 and opening.payload.side == "buy"
+                and previous.get("fanout_slot_id") == slot
                 and all(previous.get(key) == md.get(key) for key in
-                        ("fanout_slot_id", "fanout_segment_id", "cw_entry_slot"))
+                        ("fanout_segment_id", "cw_entry_slot"))
                 and all(not md.get(key) or previous.get(key) == md[key] for key in
                         ("rpg_resting_generation", "webull_mirror_generation_id")))
 
@@ -60,15 +71,44 @@ class AtrRepriceRuntimeMixin:
         local_clients = set()
         for row in rows:
             payload = row.payload or {}
+            previous = payload.get("metadata", {})
+            if (payload.get("broker_order_id") or previous.get("broker_order_id")
+                    or previous.get("webull_wire_submitted_at_utc")
+                    or ("webull_local_no_wire" in previous and previous["webull_local_no_wire"] != "true")):
+                return None
+            for values in (payload, previous):
+                for key in ("filled_quantity", "cumulative_filled_quantity"):
+                    if key in values:
+                        try:
+                            filled = Decimal(str(values[key]))
+                        except InvalidOperation:
+                            return None
+                        if not filled.is_finite() or filled != 0:
+                            return None
             opening = TradeIntentEvent(event_id=UUID(payload["event_id"]),
                 source_service=payload["source_service"], payload=TradeIntentPayload(
                     strategy_code="schwab_1m_v2", broker_account_name=event.payload.broker_account_name,
                     symbol=row.symbol, side=row.side, intent_type=row.intent_type,
                     quantity=row.quantity, reason=row.reason, metadata=payload["metadata"]))
-            if not self._rpg_matches_local_open(opening, event):
+            if (not self._rpg_matches_local_open(opening, event)
+                    or opening.payload.quantity != event.payload.quantity):
                 return None
+            if session.scalar(select(BrokerOrder.id).where(
+                    BrokerOrder.broker_account_id == row.broker_account_id,
+                    BrokerOrder.client_order_id == self._build_client_order_id(opening)).limit(1)) is not None:
+                return None
+            generation = opening.payload.metadata["rpg_resting_generation"]
+            if session.scalar(select(Fill.id).where(
+                    Fill.broker_account_id == row.broker_account_id, Fill.symbol == row.symbol,
+                    or_(Fill.payload["rpg_resting_generation"].as_string() == generation,
+                        Fill.payload["metadata"]["rpg_resting_generation"].as_string() == generation),
+            ).limit(1)) is not None:
+                return None
+            no_wire_codes = {"webull_mirror_precheck_deferred", "webull_mirror_no_fresh_quote_held"}
+            if event.payload.broker_account_name == self.settings.strategy_schwab_1m_v2_account_name:
+                no_wire_codes = {"schwab_ineligible_cached"}
             if (row.status != "rejected" or payload.get("refusal_origin") != "skipped_before_submit"
-                    or payload.get("refusal_code") != "webull_mirror_precheck_deferred"):
+                    or payload.get("refusal_code") not in no_wire_codes):
                 md = opening.payload.metadata
                 client = self._build_client_order_id(opening)
                 if (row.status == "rejected" and payload.get("refusal_origin") == "client_abort"
@@ -167,7 +207,8 @@ class AtrRepriceRuntimeMixin:
             client_identity = self.settings.provider_for_account(event.payload.broker_account_name) == "webull"
             if target is None or (not target.broker_order_id and not client_identity) or len(candidates) > 1:
                 wire_candidates = [order for order in all_orders if
-                    (order.payload or {}).get("rpg_resting_generation") == md.get("rpg_resting_generation")]
+                    (order.payload or {}).get("rpg_resting_generation") == md.get("rpg_resting_generation")
+                    or (opening is not None and order.client_order_id == self._build_client_order_id(opening))]
                 opening = (opening or self._rpg_persisted_local_open(session, event, wire_candidates)) if not wire_candidates else None
                 local = opening is not None
                 if local and hold is None:
@@ -190,6 +231,8 @@ class AtrRepriceRuntimeMixin:
                 session.commit()
                 self.logger.warning("[OMS-RPG1] symbol=%s reason=%s", event.payload.symbol,
                                     local_reason if local else "exact_old_order_unproven")
+                if local:
+                    await asyncio.to_thread(self._rpg_release_unwired, token, journal.read(token))
                 return []
             old_md = {**dict(target.payload or {}), **md,
                       "broker_order_id": target.broker_order_id or "",
@@ -218,6 +261,9 @@ class AtrRepriceRuntimeMixin:
     async def _rpg_advance(self, token, *, proof_edge=None):
         journal = self._rpg_journal()
         job = journal.read(token)
+        released = await asyncio.to_thread(self._rpg_release_unwired, token, job)
+        if released is not None:
+            return released
         if replacement_needs_reconciliation(job) and job["phase"] not in {"submitting", "submit_unknown"}:
             job = journal.reconcile_feedback(token, job)
             if (replacement_needs_reconciliation(job) and not replacement_terminal_zero(job)
@@ -247,6 +293,9 @@ class AtrRepriceRuntimeMixin:
                     metadata={**opening.payload.metadata, **old.metadata})
                 job = journal.change(token, job["revision"], phase="clear", local_no_wire=True,
                     old=_request_dict(recovered), reason="persisted_distance_proven_no_wire") or journal.read(token)
+                released = await asyncio.to_thread(self._rpg_release_unwired, token, job)
+                if released is not None:
+                    return released
         if job["phase"] in {"submitting", "submit_unknown"}:
             job = await self._rpg_reconcile_dispatch(token, job)
         if job["phase"] == "price_wait":
@@ -297,6 +346,125 @@ class AtrRepriceRuntimeMixin:
             self._rpg_retry_dirty = True
             self._rpg_retry_signal().set()
         return job
+
+    def _rpg_release_unwired(self, token, job):
+        """Transfer only positively proven, never-dispatched generations to v2.
+
+        Old-order proof does not prove a saved replacement. Lock the journal and
+        invalidate its exact queued owner in the same transaction before feedback.
+        """
+        if (job["phase"] not in {"clear", "held_unknown", "price_wait"}
+                or job.get("no_rebuy") or job.get("replacement_filled")):
+            return None
+        with self.session_factory() as session:
+            row = session.scalar(select(DashboardSnapshot).where(
+                DashboardSnapshot.id == token, DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+            ).with_for_update())
+            if row is None or row.payload["revision"] != job["revision"]:
+                return None
+
+            def proof(request):
+                old = _request(request)
+                event = TradeIntentEvent(source_service="schwab-1m-v2", payload=TradeIntentPayload(
+                    strategy_code=old.strategy_code, broker_account_name=old.broker_account_name,
+                    symbol=old.symbol, side=old.side, intent_type="cancel", quantity=old.quantity,
+                    reason=old.reason, metadata=old.metadata))
+                # Read the entire generation, not the assessment's historical window.
+                candidates = list(session.scalars(select(BrokerOrder).join(BrokerAccount).where(
+                    BrokerAccount.name == old.broker_account_name,
+                    BrokerOrder.payload["rpg_resting_generation"].as_string() ==
+                        old.metadata.get("rpg_resting_generation"))))
+                opening = self._rpg_persisted_local_open(session, event, candidates)
+                if opening is None or opening.payload.quantity != old.quantity:
+                    return None
+                clients = {old.client_order_id, self._build_client_order_id(opening)}
+                if session.scalar(select(BrokerOrder.id).join(BrokerAccount).where(
+                        BrokerAccount.name == old.broker_account_name,
+                        BrokerOrder.client_order_id.in_(clients)).limit(1)) is not None:
+                    return None
+                if session.scalar(select(Fill.id).where(
+                        Fill.symbol == old.symbol,
+                        or_(Fill.payload["rpg_resting_generation"].as_string() == old.metadata.get("rpg_resting_generation"),
+                            Fill.payload["metadata"]["rpg_resting_generation"].as_string() == old.metadata.get("rpg_resting_generation")),
+                        Fill.broker_account_id.in_(select(BrokerAccount.id).where(BrokerAccount.name == old.broker_account_name)),
+                ).limit(1)) is not None:
+                    return None
+                intent = session.scalar(select(TradeIntent).join(BrokerAccount).join(Strategy).where(
+                    TradeIntent.payload["event_id"].as_string() == str(opening.event_id),
+                    BrokerAccount.name == old.broker_account_name, Strategy.code == "schwab_1m_v2"))
+                return (opening, intent) if intent is not None else None
+
+            proven_old = proof(job["old"])
+            if proven_old is None:
+                return None
+            opening, intent = proven_old
+            replacement = job.get("replacement")
+            terminal_report = None
+            owner_event = opening
+            if replacement:
+                proven_replacement = proof(replacement)
+                if proven_replacement is None:
+                    return None
+                owner_event, replacement_intent = proven_replacement
+                if self._build_client_order_id(owner_event) != replacement["client_order_id"]:
+                    return None
+                if any(replacement.get(key) != job["old"].get(key) for key in (
+                        "broker_account_name", "strategy_code", "symbol", "side")):
+                    return None
+                terminal_report = {
+                    **{key: replacement[key] for key in (
+                        "client_order_id", "broker_account_name", "strategy_code", "symbol", "side", "quantity")},
+                    "intent_id": str(replacement_intent.id), "source": "client_audit", "status": "rejected",
+                    "refusal_code": replacement_intent.payload["refusal_code"], "filled_quantity": "0",
+                    "metadata": {key: replacement["metadata"][key] for key in (
+                        "rpg_resting_generation", "fanout_segment_id", "cw_entry_slot")},
+                    "reported_at": self._rpg_now().timestamp(),
+                }
+            if (owner_event.payload.metadata.get("fanout_segment_id") != str(job["segment_id"])
+                    or owner_event.payload.metadata.get("cw_entry_slot") != job["slot"]):
+                return None
+            slot = owner_event.payload.metadata.get("fanout_slot_id")
+            hold = self.__dict__.get("_nfq_price_holds", {}).get(slot)
+            if hold is not None and (not self._rpg_matches_local_open(hold.event, owner_event)
+                    or hold.phase not in {"held", "queued"}):
+                return None
+            deferred = self.__dict__.get("_webull_mirror_deferred_by_slot", {}).get(slot)
+            if deferred is not None and (not deferred.local_no_wire
+                    or not self._rpg_matches_local_open(deferred.event, owner_event)):
+                return None
+            retained = self._mirrorhold_read(session, owner_event) if slot and hasattr(self, "_mirrorhold_read") else None
+            if retained is not None:
+                data = retained.payload
+                held_event = TradeIntentEvent.model_validate(data["event"])
+                if (not self._rpg_matches_local_open(held_event, owner_event)
+                        or self._build_client_order_id(held_event) != self._build_client_order_id(owner_event)
+                        or data.get("dispatch_unresolved") or data.get("wire_clients")
+                        or data.get("wire_submissions", 0) != 0
+                        or not data.get("local_no_wire")
+                        or data["phase"] not in {"held", "queued", "prepared", "retired"}):
+                    return None
+                if data["phase"] != "retired":
+                    # No tick may dispatch the old payload. A fresh ordinary v2
+                    # intent can promote this prepared owner through existing upsert.
+                    data = self._mirrorhold_write(session, retained, {**data, "phase": "prepared", "token": "",
+                        "reason": "rpg_no_wire_return_to_strategy"})
+                    self._mirrorhold_project(data)
+            if hold is not None:
+                self._nfq_retire(session, hold, "v2_replaced_slot_or_attempt")
+            if deferred is not None:
+                self._forget_webull_mirror_deferred(slot, reason="rpg_no_wire_return_to_strategy")
+            old = replace(_request(job["old"]), client_order_id=self._build_client_order_id(opening))
+            result = {**job, "old": _request_dict(old), "local_no_wire": True,
+                "phase": "refused", "reason": "replacement_refused", "release_reason": "old_local_no_wire_return_to_strategy",
+                "completed_at": self._rpg_now().timestamp(), "revision": job["revision"] + 1,
+                "old_no_wire_intent_id": str(intent.id)}
+            if terminal_report is not None:
+                result["replacement_terminal_report"] = terminal_report
+            row.payload = result
+            session.commit()
+        self.logger.info("[OMS-RPGSTUCK1-HANDOFF] token=%s account=%s symbol=%s reason=%s saved_buy_sent=0",
+            token, old.broker_account_name, old.symbol, result["release_reason"])
+        return result
 
     def _rpg_rejected_old_probe_eligible(self, job):
         if (job["phase"] != "held_unknown" or job.get("reason") != "readback_budget_exhausted"

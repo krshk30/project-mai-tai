@@ -302,12 +302,17 @@ async def test_r_t5_actual_veea_persisted_precheck_proof_recovers_after_restart(
         assert recovered["phase"] == "held_unknown" and not recovered["local_no_wire"]
         assert not h.adapter.cancels and not h.adapter.reads and not h.adapter.opens
         return
-    assert recovered["phase"] == "clear" and recovered["local_no_wire"]
+    assert recovered["phase"] == "refused" and recovered["local_no_wire"]
+    assert recovered["release_reason"] == "old_local_no_wire_return_to_strategy"
     assert recovered["old"]["client_order_id"] == "schwab_1m_v2-VEEA-open-2d004a27acd7"
     assert not h.adapter.cancels and not h.adapter.reads
     await feedback(h)
-    assert HandoffJournal(h.factory).read(token)["phase"] == "placed"
-    assert h.adapter.opens[-1].broker_account_name == "live:orb"
+    assert HandoffJournal(h.factory).read(token)["phase"] == "refused"
+    assert not h.adapter.opens  # No saved replacement; normal v2 owns the next draft.
+    assert not h.strategy._rpg_entry_owned(h.state, account="live:orb")
+    h.strategy._queue_resting_place(h.state, h.state.atr_trail, slot="first")
+    mirror, = h.strategy.drain_webull_direct_intents()
+    assert "rpg_handoff_token" not in mirror.metadata
 
 
 @pytest.mark.asyncio
