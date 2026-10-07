@@ -26,7 +26,7 @@ NOW = datetime(2026, 10, 7, 23, 30, tzinfo=timezone.utc)
 
 def env():
     return ("UNCHANGED=abc\n" + "\n".join(key + "=true" for key in p.LIVE_KEYS)
-            + "\n" + p.FLAG + "=false\n").encode()
+            + "\n" + p.FLAG + "=false\n" + p.RETAINED_FLAG + "=false\n").encode()
 
 
 def fleet():
@@ -338,7 +338,7 @@ def test_no_bulk_snapshot_or_service_writes_in_units():
     service=(HERE/"project-mai-tai-linesrc1-20261007.service").read_text()
     timer=(HERE/"project-mai-tai-linesrc1-20261007.timer").read_text()
     assert "ConditionPathExists=!" in service and "write-started.json" in service and "Restart=no" in service
-    assert "ConditionPathExists=/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job/approval.json" in service
+    assert "ConditionPathExists=/home/trader/after-hours/2026-10-07/linesrc1-1a70da19/job-rollback-1002/approval.json" in service
     assert "approval.pending.json" not in (HERE/"make_release.py").read_text()
     assert "SuccessExitStatus=75" in service and "Requires=" not in service
     assert "2026-10-07 16..23:" in timer and "Persistent=false" in timer
@@ -378,12 +378,12 @@ def test_proof_calls_direct_official_collector_before_ack_repin(monkeypatch,tmp_
 
 def test_actual_closeout_bundle_and_imported_daily_ack_contract(monkeypatch,tmp_path):
     dailyroot=tmp_path/"daily"; dailyroot.mkdir()
-    before=json.loads((FIX/"preopen-daily/runtime.json").read_bytes())
+    before=json.loads((HERE/"rollback-runtime.json").read_bytes())
     for name,sha in before["artifacts"].items():
         raw=(FIX/"preopen-daily"/name).read_bytes()
         assert p.digest(raw)==sha
         (dailyroot/name).write_bytes(raw)
-    (dailyroot/"runtime.json").write_bytes((FIX/"preopen-daily/runtime.json").read_bytes())
+    (dailyroot/"runtime.json").write_bytes((HERE/"rollback-runtime.json").read_bytes())
     gate=tmp_path/"preopen.sh"; gate.write_bytes((FIX/"preopen.sh").read_bytes()); gate.chmod(0o700)
     job=tmp_path/"job"; job.mkdir(); (job/"release.json").write_bytes(b'{"controlled_release":true}\n')
     attempt=tmp_path/"attempt"; attempt.mkdir()
@@ -391,6 +391,8 @@ def test_actual_closeout_bundle_and_imported_daily_ack_contract(monkeypatch,tmp_
         (attempt/name).write_bytes(b'{"controlled_not_production":true}\n')
     fx=runner.Real(job,{},attempt); fx.started=new_v2(); fx.record=attempt/"v2-only-install-record.json"
     current=fleet(); current[p.V2]=fx.started
+    current["oms"]=deepcopy(p.rollback_baseline()["fleet_before"]["oms"])
+    fx.before=deepcopy(current)
     fx.fleet=lambda: current; fx.baseline=Mock(); fx.command=Mock()
     fx.replace=lambda path,raw: path.write_bytes(raw)
     monkeypatch.setattr(runner,"DAILY",dailyroot); monkeypatch.setattr(runner,"GATE",gate)
@@ -458,8 +460,7 @@ def test_abort_notification_errors_leave_actual_STOP_no_service_action(monkeypat
 
 def test_local_package_exact_bytes_standing_GO_present_and_tamper_refused(monkeypatch,tmp_path):
     plan="a"*40
-    baseline=dict(fleet_before=fleet(),environment_sha256="b"*64,
-                  authorization_provenance="CONTROLLED local assembly; not an actual production baseline")
+    baseline=p.rollback_baseline()
     def git(*args):
         if args[0]=="rev-parse": return (p.TREE+"\n").encode()
         if args[0]=="merge-base": return b""
@@ -487,7 +488,10 @@ def test_published_manifest_admission_refuses_each_tamper(monkeypatch,tmp_path,d
     for name,value in raw.items():
         (target/name).write_bytes(value); (target/name).chmod(0o600)
     release=dict(application=p.APP,tree=p.TREE,box=p.BOX,date_et=p.DAY,scope=p.SCOPE,
-                 plan_commit="a"*40,artifacts={name:p.digest(value) for name,value in raw.items()})
+                 plan_commit="a"*40,artifacts={name:p.digest(value) for name,value in raw.items()},
+                 catalog_hashes=dict(flags=p.digest(raw["rollback-expected_flags.json"])),
+                 baseline_hashes={str(runner.DAILY/"runtime.json"):p.digest(raw["rollback-runtime.json"])},
+                 **p.rollback_baseline())
     if damage=="scope": release["application"]=p.BOX
     if damage=="inventory": del release["artifacts"]["strict_flat_readonly.py"]
     release_raw=p.canonical(release); expected=p.digest(release_raw)
@@ -533,6 +537,9 @@ def test_prepare_git_success_notice_requires_exact_readback_before_env(monkeypat
         (dailyroot/name).write_bytes((FIX/"preopen-daily"/name).read_bytes())
     monkeypatch.setattr(runner,"GATE",gate); monkeypatch.setattr(runner,"ENV",envfile)
     monkeypatch.setattr(runner,"DAILY",dailyroot); monkeypatch.setattr(runner,"LOG",logfile)
+    helpers=tmp_path/"helpers"; helpers.mkdir()
+    (helpers/"expected_flags.json").write_bytes((HERE/"rollback-expected_flags.json").read_bytes())
+    monkeypatch.setattr(runner,"HELPERS",helpers)
     fx=runner.Real(job,{},attempt)
     fx.gates=Mock(); fx.baseline=Mock(); fx.flat=Mock()
     fx.env_before=env(); fx.env_after=p.env_candidate(env())

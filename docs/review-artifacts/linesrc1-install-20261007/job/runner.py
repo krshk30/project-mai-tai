@@ -95,6 +95,11 @@ def verify(job, expected):
                     scope=p.SCOPE, release_sha256=expected)
     p.need(json.loads((job / "approval.json").read_bytes()) == decision, "exact same-user GO missing")
     p.need(re.fullmatch(r"[0-9a-f]{40}", value["plan_commit"]), "plan commit unbound")
+    p.require_rollback_baseline(value)
+    flags = (job / "rollback-expected_flags.json").read_bytes()
+    p.need(value["catalog_hashes"]["flags"] == p.digest(flags)
+           and value["baseline_hashes"][str(DAILY / "runtime.json")] == p.digest((job / "rollback-runtime.json").read_bytes()),
+           "release did not bind installed OFF catalog/runtime overlay")
     return value
 
 
@@ -232,6 +237,13 @@ class Real:
         found = p.process_values(raw, value)
         self.receipt("process-flags.json", p.canonical(dict(pid=state["MainPID"], sha256=p.digest(raw), values=found)))
 
+    def retained_proc(self, state):
+        with Path(f"/proc/{state['MainPID']}/environ").open("rb") as stream:
+            raw = stream.read(262145)
+        p.retained_off(raw)
+        self.receipt("rollback-retained-OFF.json", p.canonical(dict(pid=state["MainPID"], sha256=p.digest(raw),
+            retained_hold="false", origin="prior authorized MIRRORHOLD rollback; not LINESRC restart")))
+
     def v2_gate(self):
         self.flat("oms")
         self.flat("strategy")
@@ -289,6 +301,7 @@ class Real:
         for key, value in p.ACK_STATE.items():
             p.need(str(self.before["orb-schwab"][key]) == value, "acknowledged ORB identity differs")
         self.proc(old, "false")
+        self.retained_proc(self.before["oms"])
         self.catalog()
         self.flat()
         self.census()
@@ -310,7 +323,7 @@ class Real:
         self.gates(0)
         self.baseline()
         self.since = self.now()
-        for label, file in [("env", ENV), ("preopen", GATE), *[("daily-" + name, DAILY / name)
+        for label, file in [("env", ENV), ("preopen", GATE), ("flags", HELPERS / "expected_flags.json"), *[("daily-" + name, DAILY / name)
                 for name in ("runtime.json", "binding.json", "upgrade_ack.py", "upgrade-ack.json")]]:
             exclusive(self.attempt / (label + ".before"), file.read_bytes())
         archive = self.command(["git", "-C", REPO, "archive", p.BOX], limit=64_000_000).stdout
@@ -347,6 +360,7 @@ class Real:
     def gates(self, phase):
         current = self.fleet()
         p.states(self.before, current, phase)
+        self.retained_proc(current["oms"])
         if self.started is not None:
             p.need(current[p.V2] == self.started, "new v2 process moved")
         self.source(p.APP if getattr(self, "advanced", False) else p.BOX)
@@ -429,7 +443,7 @@ class Real:
         args = [PY, "-B", REPO / "ops/health/v2_restart_evidence.py", "report", "--snapshot", self.attempt / "before-restart.json",
                 "--install-record", self.record, "--restarted", p.V2, "--no-schema-change",
                 "--expected-alembic-head", "20261005_0022", "--output", output]
-        for key, value in {**{key: "true" for key in p.LIVE_KEYS}, p.FLAG: "true"}.items():
+        for key, value in {**{key: "true" for key in p.LIVE_KEYS}, p.FLAG: "true", p.RETAINED_FLAG: "false"}.items():
             args += ["--expect-flag", p.V2 + ":" + key + "=" + value]
         result = self.command(args, check=False, timeout=240)
         raw = output.read_text() if output.exists() else result.stdout.decode()
@@ -462,7 +476,9 @@ class Real:
         state = self.fleet()[p.V2]
         p.need(state == self.started, "v2 pin changed before closeout")
         before = GATE.read_bytes()
-        after = p.gate_candidate(before, state, self.attempt / "before-restart.json", self.record)
+        p.need(self.fleet()["oms"] == self.before["oms"], "authorized untouched OMS drift before repin")
+        after = p.gate_candidate(before, state, self.attempt / "before-restart.json", self.record,
+                                 untouched_oms=self.before["oms"])
         candidate = self.attempt / "preopen.candidate.sh"
         exclusive(candidate, after, 0o700)
         self.command(["bash", "-n", candidate])

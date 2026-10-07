@@ -99,3 +99,42 @@ runtime evidence are still UNMEASURED. Shell controls substitute ONLY external
 executables and verify genuine bootstrap seals/own-timer cleanup, while rc75
 remains unclaimed with no cleanup or application action. No semantic mutation
 count, live gate PASS or future restoration PASS is claimed by this receipt.
+
+## Authorized MIRRORHOLD Rollback Recut
+
+The 196-test revision above remains historical. Latest rollback recut candidate:
+**221 passed in 2.22s**, zero failures/errors; bash syntax and diff whitespace PASS.
+XML: /tmp/linesrc1-install-rollback-1002-candidate.xml.
+SHA256: 16f9ce562f3856d116583272161014ac3a6019541b046bd37f010e9025049a96.
+The same command adds job/test_rollback.py to the four test files above.
+
+Recorded14:11:54Z rollback metadata is byte-identical to parent's
+/tmp/linesrc1-oct7-rollback-actual-baseline.json, now rollback-baseline.json:
+SHA25672d5dc135dac66100817663699af3a85d8b160fbc005ef1ceeae8ff9416880e5.
+OMS1043365/14:02:34UTC/NRestarts0 is a PRIOR human-authorized restart, never
+a LINESRC action. APP1a70da19, TREE666be962 and BOX5b8b4f64 stay unchanged.
+
+Source/catalog overlay controls prove only the retained-hold OMS expected value
+changes true->false. The exact runtime overlay changes only that evidence-input
+hash, not artifact bindings, original evidence or denominator147+10=157. Source
+metadata's old ON reason/ruling is retained as history; it is not new authority.
+Old installed expected=true fails the recut admission; arbitrary other entries,
+owner/population changes, env reactivation, stale identities or generic new
+baseline adoption refuse. OMS false is independently process-proved, new v2
+false is process/collector-proved. No production proof is inferred from fixtures.
+
+The unmodified official collector report is called using its existing controlled
+IO fixture: generated v2-only flag expectations pass, while deliberately adding
+oms:retained=false raises its real non-restarted-service EvidenceUnknown. Neither
+runner nor next morning gate sends an OMS expectation to this v2-only collector.
+The morning OMS PID/start are refreshed independently to the exact rollback
+identity. Paper/guard already inactive still retain the positive scheduled-close
+audit; the test audit timing is CONTROLLED, not a claimed observed JSONL record.
+
+New root job is the immutable sibling job-rollback-1002, not an amendment of
+release43811903... or its approval. Same named service/timer and calendar; original
+timer bytes remain unchanged. Parent staging is responsible for verified old-unit
+backup/unclaimed checks, installer-only timer pause, exact metadata overlays
+under the daily lock, sibling package/unit installation and timer activation.
+Those staging actions and Linux verification remain UNMEASURED in this lane.
+No production request/action, trading source edit or parked #1110 work occurred.
