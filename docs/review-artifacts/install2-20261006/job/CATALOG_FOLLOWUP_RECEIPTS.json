@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "writer": "Codex",
+  "recorded_at_utc": "2026-10-07T00:36:12Z",
+  "parent_runner_commit": "065a3fab3bf62a16fb79c9a419f9e9c8bf80dbfa",
+  "scope": "Read-only local assembled catalog assessment and controlled runner tests; not live coverage or final source acceptance",
+  "batch_head_observed": "ecee77903c95018330154441755fa8b958dc556e",
+  "source_hashes": {
+    "flags": "2f80d2d86601aed63416d0acc902bedf41215796ea16388bd51fde10fd4c6be1",
+    "numeric": "934fd2cc177cd7dc900ebc1b85543ae08e3857364cd0a60f99f2d5a5cb2c2084"
+  },
+  "measured_catalog": {
+    "unique_boolean_names": 134,
+    "boolean_identities": 147,
+    "source_numeric_identities": 8,
+    "source_total": 155,
+    "isolated_numeric_identities": 10,
+    "isolated_total": 157,
+    "added_identities": [
+      [
+        "strategy_schwab_1m_v2_retry_one_max_retries",
+        "oms"
+      ],
+      [
+        "strategy_schwab_1m_v2_retry_one_max_retries",
+        "schwab-1m-v2"
+      ]
+    ]
+  },
+  "controlled_closeout": {
+    "catalog": "actual source identities",
+    "report_and_paper_state": "CONTROLLED, not production observation",
+    "checked": 155,
+    "total": 157,
+    "unknown": 2,
+    "original_rc": 2,
+    "original_verdict": "UNKNOWN",
+    "hardcoded_runtime_denominator": false
+  },
+  "change": "Narrow daily verdict-pattern repair: retain ACCEPTED_OPEN_LINESRC1 without relabeling PASS; FAIL/UNKNOWN, ambiguous finals and stale reports still block.",
+  "runs": [
+    {
+      "command": "python -m pytest docs/review-artifacts/install2-20261006/job/test_install2.py -q --tb=short --show-capture=no",
+      "rc": 0,
+      "passed": 72,
+      "failed": 0,
+      "seconds": 9.7
+    },
+    {
+      "command": "python -m compileall -q docs/review-artifacts/install2-20261006/job",
+      "rc": 0
+    }
+  ],
+  "resolved_test_fixture_failure": "First new regression used its own test day as a holiday; corrected holiday fixture before final 72/72 run. No application-source change.",
+  "mutations": {
+    "scope": "runner-only, not application combination acceptance",
+    "killed": 4,
+    "total": 4,
+    "receipts": [
+      {
+        "name": "start-order",
+        "control_rc": 0,
+        "mutant_rc": 1,
+        "killed": true,
+        "stdout": "F                                                                        [100%]\n=================================== FAILURES ===================================\n____________________ test_literal_install2_daily_cumulative ____________________\ndocs/review-artifacts/install2-20261006/job/test_install2.py:247: in test_literal_install2_daily_cumulative\n    assert p.PHASES==EXPECTED_PHASES\nE   AssertionError: assert (('stop', 'sc...-1m-v2'), ...) == (('stop', 'sc...rategy'), ...)\nE     \nE     At index 4 diff: ('start', 'strategy') != ('start', 'schwab-1m-v2')\nE     Use -v to get more diff\n=========================== short test summary info ============================\nFAILED docs/review-artifacts/install2-20261006/job/test_install2.py::test_literal_install2_daily_cumulative\n1 failed, 71 deselected in 0.07s\n",
+        "stderr": ""
+      },
+      {
+        "name": "after16",
+        "control_rc": 0,
+        "mutant_rc": 1,
+        "killed": true,
+        "stdout": "F.......                                                                 [100%]\n=================================== FAILURES ===================================\n_____________________ test_linesrc_near_miss_blocks[clock] _____________________\ndocs/review-artifacts/install2-20261006/job/test_install2.py:316: in test_linesrc_near_miss_blocks\n    with pytest.raises(p.Stop): linesrc.grade(service,lines)\n         ^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'release_policy.Stop'>\n=========================== short test summary info ============================\nFAILED docs/review-artifacts/install2-20261006/job/test_install2.py::test_linesrc_near_miss_blocks[clock]\n1 failed, 7 passed, 64 deselected in 0.07s\n",
+        "stderr": ""
+      },
+      {
+        "name": "duplicate-catalog",
+        "control_rc": 0,
+        "mutant_rc": 1,
+        "killed": true,
+        "stdout": "F                                                                        [100%]\n=================================== FAILURES ===================================\n____________________ test_catalog_duplicate_identity_blocks ____________________\ndocs/review-artifacts/install2-20261006/job/test_install2.py:595: in test_catalog_duplicate_identity_blocks\n    with pytest.raises(p.Stop,match=\"duplicated\"): catalog_policy.identities([row,row])\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'release_policy.Stop'>\n=========================== short test summary info ============================\nFAILED docs/review-artifacts/install2-20261006/job/test_install2.py::test_catalog_duplicate_identity_blocks\n1 failed, 71 deselected in 0.07s\n",
+        "stderr": ""
+      },
+      {
+        "name": "clean-exit",
+        "control_rc": 0,
+        "mutant_rc": 1,
+        "killed": true,
+        "stdout": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_______________ test_zero_result_nonzero_exit_is_not_clean_stop ________________\ndocs/review-artifacts/install2-20261006/job/test_install2.py:607: in test_zero_result_nonzero_exit_is_not_clean_stop\n    with pytest.raises(p.Stop,match=\"not clean\"): attended.Sequence(fx).run()\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'release_policy.Stop'>\n=========================== short test summary info ============================\nFAILED docs/review-artifacts/install2-20261006/job/test_install2.py::test_zero_result_nonzero_exit_is_not_clean_stop\n1 failed, 71 deselected in 0.73s\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "changed_tested_artifact_sha256": {
+    "daily.py": "0d586894739cba0cafd136be28a38d3cf2331a1155c590a62cacae67e9b1c892",
+    "test_install2.py": "1d0c41294730f95d32b747aca216c1a7ffb46b0557b68dce3399f581658702f7"
+  },
+  "historical_receipt": "TEST_RECEIPTS.json describes runner commit 065a3fab; unchanged artifact hashes remain there.",
+  "not_claimed": [
+    "APP/TREE bound",
+    "batch merged",
+    "production catalog coverage",
+    "final source combination acceptance",
+    "daily root installed",
+    "production action"
+  ]
+}

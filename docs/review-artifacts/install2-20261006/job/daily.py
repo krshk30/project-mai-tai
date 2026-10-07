@@ -60,7 +60,7 @@ def outcome(rc, raw, before, after, mtime):
         stamp = report_stamp(raw, after)
         need(before.replace(microsecond=0) <= stamp <= after and before.timestamp() <= mtime <= after.timestamp(),
              "report not generated during invocation")
-        finals = re.findall(r"^Final call: (PASS|FAIL|UNKNOWN|EXPECTED BY DESIGN);", raw, re.M)
+        finals = re.findall(r"^Final call: (PASS|FAIL|UNKNOWN|EXPECTED BY DESIGN|ACCEPTED_OPEN_LINESRC1);", raw, re.M)
         need(len(finals) == 1, "report verdict ambiguous")
         if rc == 0:
             need(finals[0] in {"PASS", "EXPECTED BY DESIGN", "ACCEPTED_OPEN_LINESRC1"}, "zero rc disagrees with report")

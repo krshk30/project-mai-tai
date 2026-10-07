@@ -496,6 +496,18 @@ def test_paper_unknown_denominator_dynamic_not_relabelled_pass():
                                                       paper_before=paper,paper_after=paper,now=NOW)
 
 
+@pytest.mark.parametrize("verdict,expected",[("ACCEPTED_OPEN_LINESRC1",0),("FAIL",2),("UNKNOWN",2),
+    ("ACCEPTED_OPEN_LINESRC1; counted\nFinal call: FAIL",2)])
+def test_daily_exact_accepted_open_not_pass_or_failure_waiver(verdict,expected):
+    now=datetime(2026,10,7,10,20,tzinfo=timezone.utc)
+    raw="Generated: 2026-10-07 06:20:00 EDT (2026-10-07 10:20:00 UTC)\nFinal call: "+verdict+"; measured\n"
+    assert daily.outcome(0,raw,now,now,now.timestamp())==expected
+    if expected==0:
+        rc,receipt,_=daily.run_checks(now,{datetime(2026,1,1).date()},lambda:(0,"CONTROLLED",now),lambda date:(raw,now.timestamp()))
+        assert rc==0 and receipt["verdict"]=="ACCEPTED_OPEN_LINESRC1"
+        assert daily.outcome(0,raw.replace("2026-10-07","2026-10-06"),now,now,now.timestamp())==2
+
+
 def test_existing_daily_root_blocks_no_overwrite(monkeypatch,tmp_path):
     fx,_,_=setup(monkeypatch,tmp_path)
     (tmp_path/"daily").mkdir()
