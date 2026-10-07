@@ -7735,3 +7735,10 @@ unknown/fill blocking; explicit unbound legacy refusal and exact local drain.
 full/current-main pair and freshCI pending. Priorc600/5d77 performance/full
 numbers not used as certification of this changedruntime. Source solewriter
 unchanged; no SLOT amendment, source merge or production/ORB action.
+
+2026-10-07 16:50 ET codex-2: independently read NFQ8ea8 final-source hot-path
+receipt:14400events60.001543s,239.9938/s, maxloop16.1874ms/maxhandler10.6465ms,
+tickSQL/sessions/tx0,24offloopperiodictx84SQL in60s, oneactivehold plusdrift.
+Actualgate20:47:23.516561-20:48:23.518256UTC, rawbenchmarkhashd3d4b241e716c0e5797b66abc4a0e57f8c3aa941d128d085efa8f51650671def.
+SQLite/faketransport, notliveperformance. Full/current-main pair and CIpending;
+no readiness/merge/deploy. PinnedSLOT and stagedjob/ORB untouched.
