@@ -7458,3 +7458,12 @@ OMS626190/21:53:03, v2626439/21:53:49, strategy626773/21:54:13,
 control626835/21:54:15ET. Fresh strict-flat rc0 twice beforev2. No fallback.
 Control immediatepage readURLError after1second; existingbounded60s reread.
 Post-start/cumulative/catalog/preopen/timer proofs pending, not COMPLETE.
+
+2026-10-06 21:58 ET codex-2 C123: ORBpage LIVE/SCHWAB passed21:55:19;
+strategy120prefill21:55:55. Original live-bar restoration predicate timedout
+21:58:24 with allfourservicesup. Exact fresh seven-name BOOT-HOLD/RESTORE
+recorded as HELD_EXPECTED_NO_SCHEDULED_BARS, not restoration PASS; no barsafter20.
+Mechanics7c3da379 runner92PASS, finalreleasefcfaf016e205ed548b4bfb1553e018d159f131ad7af0f47194351928b02a540c,
+continuation2ef71cf5995ba129965a9020c8288adbea2e631a014f2e3747c80d7dc7fddf20.
+Phase7 closeout has no serviceaction; app5b8b/flags/policyunchanged. Original
+STOPs retained. Final proofs/timer running; Wedrelease/scannerUNMEASURED.
