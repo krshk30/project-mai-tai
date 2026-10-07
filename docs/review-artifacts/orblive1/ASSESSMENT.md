@@ -1,4 +1,18 @@
-# ORBLIVE1: one live ORB dashboard
+# ORBLIVE1: one live ORB dashboard (draft)
+
+## Latest Disposition
+
+2026-10-07 operator/reviewer correction: ORBPAPEROFF1 is withdrawn. Keep
+`project-mai-tai-orb` enabled and running; no further service action tonight,
+and no change to the parent's paired job. Reviewer reports restoring it as
+PID 1322003. The stop receipt below is historical, not current state.
+
+The executable entry point is restored in this draft. The simulation's
+modelled-fill/writer removal INSIDE the running service remains unfinished;
+this PR is NOT ready to pin/install. Dashboard attribution work is isolated
+and tested, but must not be presented as complete ORBLIVE1. Tomorrow's
+reviewed code change must preserve levels/decisions/listening while removing
+simulation writes without duplicating the independent live producer.
 
 ## Step 0
 
@@ -45,8 +59,9 @@ stop the separate simulation, keep ORB Schwab live. Executed only
 
 The empty historical owner field is retained for compatibility; it owns no
 symbols. Historical `orb_paper_events` data and legacy types remain intact.
-The retired executable refuses before constructing its simulation writer.
-The inherited aggregation helpers used by the live producer are unchanged.
+The executable remains running under the latest disposition. The inherited
+aggregation helpers used by the live producer are unchanged; removing the
+simulation writer from the running service remains a draft blocker.
 
 ## Verification And Deployment Boundary
 

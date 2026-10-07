@@ -265,12 +265,15 @@ def test_orblive1_registration_is_live_and_simulation_never_registered() -> None
     ), "the paper label must never become a configured BROKER account"
 
 
-def test_orblive1_simulation_entrypoint_refuses_before_constructing_writer(monkeypatch) -> None:
+def test_orblive1_service_entrypoint_remains_running(monkeypatch) -> None:
     from project_mai_tai.services import orb_app
 
-    def retired_constructor(*args, **kwargs):
-        raise AssertionError("simulation writer was constructed")
+    started = []
 
-    monkeypatch.setattr(orb_app, "OrbService", retired_constructor)
-    with pytest.raises(RuntimeError, match="ORB simulation retired"):
-        asyncio.run(orb_app.main())
+    class Service:
+        async def run(self):
+            started.append(True)
+
+    monkeypatch.setattr(orb_app, "OrbService", Service)
+    asyncio.run(orb_app.main())
+    assert started == [True]
