@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from project_mai_tai.db.session import build_engine
 from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal
 from project_mai_tai.settings import Settings
-from ticket_inventory import require_idle
+from ticket_inventory import inventory
 
 MAX_ROWS = 1024
 MAX_BYTES = 4_000_000
@@ -26,7 +26,7 @@ def capture(connection, since=None):
     if len(rows) != total or len(json.dumps(rows, default=str).encode()) > MAX_BYTES:
         raise ValueError("journal count/byte bound differs")
     result = dict(at_utc=datetime.now(timezone.utc).isoformat(), rows=rows,
-                  inventory=require_idle(rows), row_count_informational=total,
+                  inventory=inventory(rows), row_count_informational=total,
                   clears_unknown_ownership=False)
     if since:
         queries = {
@@ -43,6 +43,8 @@ def capture(connection, since=None):
         if any(activity.values()):
             raise ValueError("startup buy activity present")
         result["activity"] = activity
+    result.update(rc=1 if result["inventory"]["in_flight"] else 0,
+                  waiting_kind="KNOWN_TICKET_PHASES" if result["inventory"]["in_flight"] else None)
     return result
 
 
@@ -58,7 +60,7 @@ def main():
         with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
             result = capture(connection, sys.argv[1] if len(sys.argv) == 2 else None)
         print(json.dumps(result, sort_keys=True, default=str))
-        return 0
+        return result["rc"]
     except ValueError as exc:
         print("BLOCK ticket census: " + str(exc), file=sys.stderr)
         return 1

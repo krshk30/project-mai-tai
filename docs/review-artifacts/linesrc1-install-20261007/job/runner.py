@@ -136,10 +136,10 @@ class Real:
             p.need(result.returncode == 0 and not result.stderr.strip(), "command failed/unreadable: " + args[0])
         return result
 
-    def reader(self, name, *args):
+    def reader(self, name, *args, allow_wait=False):
         for count in range(3):
             result = self.command(["nice", "-n", "19", PY, "-B", self.job / name, *args], check=False, timeout=210)
-            if result.returncode == 0:
+            if result.returncode == 0 or (result.returncode == 1 and allow_wait):
                 p.need(not result.stderr.strip(), "read-only success stderr unreadable")
                 return result.stdout
             p.need(result.returncode == 2 and count < 2, "read-only blocker/exhausted UNKNOWN: " + name)
@@ -191,17 +191,28 @@ class Real:
 
     def flat(self, service=None):
         args = ["--service", service] if service else []
-        raw = self.reader("strict_flat_readonly.py", *args)
+        raw = self.reader("strict_flat_readonly.py", *args, allow_wait=not self.claimed)
         start = 0 if raw.startswith(b"{") else raw.find(b"\n{") + 1
         result = json.loads(raw[start:])
+        if result.get("rc") == 1:
+            p.need(not self.claimed and result.get("waiting_kind") == "FRESH_KNOWN_BOT_WORK"
+                   and result.get("blockers") and result.get("remaining_general_failures") == [],
+                   "flat refusal is not a typed fresh known-work wait")
+            raise p.Pending("fresh known bot work remains; no writes: " + ",".join(result["blockers"]))
         p.need(result["rc"] == 0 and not result["blockers"] and not any(result[key] for key in
-               ("broker_holdings", "working_orders", "managed_rows", "virtual_rows", "inflight_intents", "account_rows")),
-               "requires fresh actual flat/zero orders/open rows/inflight; no holding waiver")
+               ("bot_broker_holdings", "working_orders", "managed_rows", "virtual_rows", "inflight_intents", "bot_account_rows")),
+               "requires fresh complete BOT flat/zero work; only exact zero-session-record operator holdings")
         return result
 
     def census(self):
         args = [] if self.since is None else [self.since.isoformat()]
-        value = json.loads(self.reader("census_readonly.py", *args))
+        value = json.loads(self.reader("census_readonly.py", *args, allow_wait=not self.claimed))
+        if value.get("rc") == 1:
+            from ticket_inventory import inventory
+            p.need(not self.claimed and value.get("waiting_kind") == "KNOWN_TICKET_PHASES"
+                   and inventory(value["rows"])["in_flight"] and value["clears_unknown_ownership"] is False,
+                   "ticket refusal is not a complete known-phase wait")
+            raise p.Pending("requested/price_wait/submitting tickets still active; no writes")
         if hasattr(self, "tickets"):
             stable_bindings(self.tickets, value["rows"])
         else:
@@ -225,7 +236,7 @@ class Real:
         self.flat("oms")
         self.flat("strategy")
         self.flat()
-        self.reader("armed_readonly.py")
+        self.armed()
         result = self.command([REPO / "ops/preflight/preflight_v2_restart.sh"], check=False, timeout=60)
         if not self.claimed and result.returncode == 1 and not result.stderr.strip():
             # A literal clock-only refusal is pending, never an implicit override.
@@ -236,12 +247,26 @@ class Real:
                and b"===> GO. Zero armed segments AND flat. Safe to restart v2." in result.stdout
                and b"[OVERRIDE]" not in result.stdout and b"[BLOCK]" not in result.stdout,
                "unmodified v2 restart gate not green")
-        self.reader("armed_readonly.py")
+        self.armed()
         self.flat()
-        self.reader("armed_readonly.py")
+        self.armed()
+
+    def armed(self):
+        value = json.loads(self.reader("armed_readonly.py", allow_wait=not self.claimed))
+        if value.get("rc") == 1:
+            p.need(not self.claimed and value.get("waiting_kind") == "FRESH_ARMED"
+                   and value["armed_count"] > 0 and value["completeness"] == "explicit-field-present",
+                   "armed refusal not typed fresh published state")
+            raise p.Pending("fresh published armed segments remain; no writes")
+        p.need(value["rc"] == 0 and value["armed_count"] == 0, "zero armed proof absent")
 
     def initial(self):
         p.first_stop_window(self.now())
+        if self.now().astimezone(p.ET).hour < 18:
+            self.receipt("clock-only-pending.json", p.canonical(dict(native_gate_executed=False,
+                native_gate_passed=False, other_gates="UNMEASURED", app_writes=False,
+                reason="unchanged native clock gate before18; efficient read-only wait, not GO")))
+            raise p.Pending("known native clock before18; native/general gates not yet run; no writes")
         self.baseline()
         self.source(p.BOX)
         self.command(["git", "-C", REPO, "merge-base", "--is-ancestor", p.BOX, p.APP])
@@ -254,7 +279,9 @@ class Real:
         p.need(p.digest(self.env_before) == self.release["environment_sha256"], "approved env baseline differs")
         self.env_after = p.env_candidate(self.env_before)
         self.before = self.fleet()
-        p.need(self.before == self.release["fleet_before"], "reviewed baseline identities drift")
+        from paper_lifecycle import admit as admit_paper_lifecycle
+        self.lifecycle = admit_paper_lifecycle(self.release["fleet_before"], self.before, self.now(), self.paper_close_receipt())
+        self.receipt("scheduled-paper-lifecycle.json", p.canonical(self.lifecycle))
         old = self.before[p.V2]
         p.need(old["MainPID"] == 917354 and old["ExecMainStartTimestamp"] == "Wed 2026-10-07 11:14:07 UTC"
                and old["NRestarts"] == 0 and old["ActiveState"] == "active" and old["SubState"] == "running"
@@ -271,6 +298,13 @@ class Real:
     def claim(self):
         exclusive(self.job / "write-started.json", p.canonical(dict(attempt=str(self.attempt), at_utc=self.now().isoformat())))
         self.claimed = True
+
+    def paper_close_receipt(self):
+        from paper_lifecycle import AUDIT_PATH, read_close
+        p.need(AUDIT_PATH, "exact guard JSONL path not yet bound")
+        record, evidence = read_close(AUDIT_PATH, self.release["fleet_before"], self.before, self.now())
+        self.receipt("scheduled-guard-close-raw.json", p.canonical(evidence))
+        return record
 
     def prepare(self):
         self.gates(0)
@@ -355,7 +389,7 @@ class Real:
         rows += json.loads((HELPERS / "expected_numeric.json").read_bytes())["settings"]
         p.need(not result.stderr.strip(), "flaggate unreadable stderr")
         proof = flag_result(result.returncode, result.stdout.decode(), rows, paper_before=before,
-                            paper_after=self.fleet()["momentum-paper"], now=self.now())
+                            paper_after=self.fleet()["momentum-paper"], now=self.now(), scheduled_close=self.lifecycle)
         self.receipt("flaggate.json", p.canonical(proof))
         return proof
 
@@ -473,6 +507,7 @@ class Real:
             actual=self.fleet(), actions=[["stop", p.V2], ["start", p.V2]], next07="UNMEASURED",
             held=self.hold, continuity=self.continuity,
             raw_journal_sha256=p.digest((self.attempt / "runner-journal.jsonl").read_bytes())))
+        self.retire_timer()
         exclusive(self.attempt / "COMPLETE.json", raw)
         self.deployment_note("COMPLETE_HELD_AFTER16", self.attempt / "COMPLETE.json")
 
@@ -498,7 +533,8 @@ class Real:
                                claimed=self.claimed, recovery_authorized=False, at_utc=self.now().isoformat()))
         target = self.attempt / "STOP.json"
         exclusive(target, raw)
-        for name, notify in (("deployment-note", lambda: self.deployment_note("STOP", target)),
+        for name, notify in (("installer-timer-closeout", self.retire_timer),
+            ("deployment-note", lambda: self.deployment_note("STOP", target)),
             ("alert", lambda: self.command([REPO / "ops/health/preopen_alert.sh", "ERROR",
                  "Oct7 LINESRC1 STOP " + raw.decode(), target], check=False, timeout=35))):
             try:
@@ -509,6 +545,15 @@ class Real:
             except Exception as exc:
                 self.receipt(name + "-unreadable.json", p.canonical(dict(error_type=type(exc).__name__,
                              delivered=False, recovery_authorized=False)))
+
+    def retire_timer(self):
+        unit = "project-mai-tai-linesrc1-20261007.timer"
+        result = self.command(["systemctl", "disable", "--now", unit], check=False)
+        p.need(result.returncode == 0, "installer timer disable failed")
+        result = self.command(["systemctl", "show", unit, "--property=ActiveState", "--property=UnitFileState"])
+        pairs = [line.split("=", 1) for line in result.stdout.decode().splitlines()]
+        p.need(len(pairs) == 2 and dict(pairs) == {"ActiveState": "inactive", "UnitFileState": "disabled"},
+               "installer timer retirement unmeasured")
 
 
 def main():

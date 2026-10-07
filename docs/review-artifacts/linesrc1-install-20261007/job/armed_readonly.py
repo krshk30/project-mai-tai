@@ -54,9 +54,14 @@ def proof(reply, now):
          and payload.get("account_name") == "live:schwab_1m_v2", "published-state account/strategy mismatch")
     need("cw_armed_segments" in payload and type(payload["cw_armed_segments"]) is list,
          "armed field absent/malformed; cannot assume zero")
-    need(payload["cw_armed_segments"] == [], "armed segments block restart")
+    armed = payload["cw_armed_segments"]
+    need(len(armed) <= 128 and all(isinstance(row, dict) and isinstance(row.get("symbol"), str)
+         and re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,15}", row["symbol"]) for row in armed)
+         and len({row["symbol"] for row in armed}) == len(armed), "armed symbols malformed/duplicate")
     return dict(entry_id=entry, raw_sha256=digest(raw.encode()), event=event,
-                verified_at_utc=now.isoformat(), age_s=age, armed_count=0, completeness="explicit-field-present")
+                verified_at_utc=now.isoformat(), age_s=age, armed_count=len(armed),
+                rc=1 if armed else 0, waiting_kind="FRESH_ARMED" if armed else None,
+                completeness="explicit-field-present")
 
 
 def collect(client, key, now=None):
@@ -94,7 +99,12 @@ def main():
     finally:
         client.close()
     print(canonical(result).decode(), end="")
+    return result["rc"]
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print("UNKNOWN armed-state: " + type(exc).__name__, file=__import__("sys").stderr)
+        raise SystemExit(2)

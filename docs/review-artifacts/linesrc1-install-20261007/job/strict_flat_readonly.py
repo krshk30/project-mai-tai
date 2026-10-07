@@ -1,4 +1,4 @@
-"""Standing MI/NXL, dated IPDN residual and exact off-hours v2 admission.
+"""Standing MI/NXL plus fresh zero-session-record operator-only holding admission.
 
 No token/DB/Redis write. Exit 0 may include the explicitly audited residual,
 not broker flatness; 1: measured blocker; 2: unreadable/unknown. Run as root
@@ -16,11 +16,13 @@ from zoneinfo import ZoneInfo
 from urllib.request import urlopen
 
 from sqlalchemy import event, text
+from sqlalchemy.orm import Session
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.session import build_engine
 from project_mai_tai.settings import Settings
 from project_mai_tai.deploy_preflight import evaluate_live_deploy_preflight, parse_datetime
+from operator_flat_policy import prove as prove_operator_holdings
 
 ACCOUNTS = ("live:schwab_1m_v2", "live:orb")
 MAX_BODY_BYTES = 1_000_000
@@ -188,7 +190,10 @@ def standing_allowance(result, overview, run, findings, heartbeat, now):
     for key in ("managed_rows", "virtual_rows", "working_orders", "inflight_intents"):
         if result[key]:
             raise ValueError("standing allowance void: " + key)
-    residual = ipdn_residual(result, findings, now)
+    operators = prove_operator_holdings(result, findings, now)
+    operator_keys = {(row["account"], row["symbol"]) for row in operators}
+    residual = None if operators else ipdn_residual(result, findings, now)
+    result["operator_only_holdings"] = operators
     for account in ACCOUNTS:
         fresh(result["direct_read_started_at"][account], now, account + " direct read")
     stamps = result["account_stamps"]
@@ -216,6 +221,8 @@ def standing_allowance(result, overview, run, findings, heartbeat, now):
     for finding in findings:
         symbol = finding["symbol"]
         payload = finding["payload"]
+        if (payload.get("account_name"), symbol) in operator_keys:
+            continue
         if symbol == "IPDN" and residual is not None:
             continue
         if (symbol not in ALLOWANCES or symbol in symbols
@@ -230,7 +237,7 @@ def standing_allowance(result, overview, run, findings, heartbeat, now):
         symbols.add(symbol)
     count = len(findings)
     critical_count = len(symbols)
-    info_count = int(residual is not None)
+    info_count = sum(row["matching_finding_present"] for row in operators) + int(residual is not None)
     summary = run["summary"]
     if (summary.get("total_findings") != count or summary.get("critical_findings") != critical_count
             or summary.get("warning_findings") != 0 or summary.get("info_findings") != info_count):
@@ -243,7 +250,7 @@ def standing_allowance(result, overview, run, findings, heartbeat, now):
                 *(str(row["payload"][key]) for key in identity_keys),
                 *(str(row["payload"][key]) for key in (
                     "direction", "ownership", "our_quantity", "quantity_delta", "fill_delta")
-                  if row["symbol"] == "IPDN"))
+                  if row["symbol"] == "IPDN" or (row["payload"].get("account_name"), row["symbol"]) in operator_keys))
     if sorted(map(identity, cached_findings)) != sorted(map(identity, findings)):
         raise ValueError("cached/full SQL finding identities differ")
     overview_findings = overview["reconciliation"]["findings"]
@@ -277,13 +284,18 @@ def standing_allowance(result, overview, run, findings, heartbeat, now):
     audit = ["[STANDING-ALLOWANCE] fingerprint=position-quantity:" + ACCOUNTS[0]
              + ":" + symbol + " balance=" + str(ALLOWANCES[symbol])
              + " account_quantity=0 virtual_quantity=0 managed_quantity=0"
-             + (" symbol_broker_flat=fresh" if residual is not None else " broker_flat=fresh")
+             + (" symbol_broker_flat=fresh" if residual is not None or operators else " broker_flat=fresh")
              + " sql_checked_at=" + checked.isoformat()
              + " overview_checked_at=" + overview_checked.isoformat() for symbol in sorted(symbols)]
     if result["net_bot_fills"]:
         audit.append("[STANDING-ALLOWANCE] current_session_net_fill account=" + ACCOUNTS[0]
                      + " symbol=MI balance=180"
-                     + (" symbol_broker_flat=fresh" if residual is not None else " broker_flat=fresh"))
+                     + (" symbol_broker_flat=fresh" if residual is not None or operators else " broker_flat=fresh"))
+    for proof in operators:
+        audit.append("[OPERATOR-ONLY] " + json.dumps(proof, sort_keys=True)
+                     + " direct_and_db=fresh_complete broker_flat=false bot_flat=true admission=in_memory_only")
+    if operators and quantity(overview["counts"].get("open_account_positions")) != len(operators):
+        raise ValueError("operator overview position count differs from complete holdings")
     if residual is not None:
         if quantity(overview["counts"].get("open_account_positions")) != 1:
             raise ValueError("IPDN overview position count not exact one")
@@ -301,7 +313,7 @@ def standing_allowance(result, overview, run, findings, heartbeat, now):
     adjusted = copy.deepcopy(overview)
     adjusted["reconciliation"]["latest_run"]["summary"]["total_findings"] = 0
     adjusted["reconciliation"]["latest_run"]["summary"]["critical_findings"] = 0
-    if residual is not None:
+    if residual is not None or operators:
         adjusted["reconciliation"]["latest_run"]["summary"]["info_findings"] = 0
         adjusted["counts"]["open_account_positions"] = 0
     if count:
@@ -310,6 +322,87 @@ def standing_allowance(result, overview, run, findings, heartbeat, now):
                 row["effective_status"] = "healthy"
     audit.extend(admit_v2_offhours(adjusted, overview, now))
     return adjusted, audit
+
+
+def known_work_wait(result, overview, run, findings, heartbeat, now, service_target):
+    """A typed fresh refusal only. Projections here NEVER authorize a write."""
+    active = [key for key in ("managed_rows", "virtual_rows", "working_orders", "inflight_intents") if result[key]]
+    counts = {}
+    for row in result["session_order_counts"] + result["fill_balances"]:
+        key = row["account"], row["symbol"]
+        total = quantity(row["total"])
+        if key[0] not in ACCOUNTS or total <= 0 or total != total.to_integral_value():
+            raise ValueError("waiting census foreign/unreadable")
+        counts[key] = counts.get(key, Decimal(0)) + total
+    direct, stored = {}, {}
+    for row in result["broker_holdings"]:
+        key = tuple(row[:2])
+        if key in direct or key[0] not in ACCOUNTS:
+            raise ValueError("waiting holding foreign/duplicate")
+        direct[key] = quantity(row[2]) - (quantity(row[3]) if len(row) == 4 else Decimal(0))
+    for row in result["account_rows"]:
+        key = row["account"], row["symbol"]
+        if key in stored or key not in direct or quantity(row["quantity"]) != direct[key]:
+            raise ValueError("waiting stored/direct holding mismatch")
+        for field in ("updated_at", "source_updated_at"):
+            fresh(row.get(field), now, "waiting position " + field)
+        stored[key] = quantity(row["quantity"])
+    if direct != stored:
+        raise ValueError("waiting complete direct/SQL positions differ")
+    own = {}
+    for label in ("managed_rows", "virtual_rows"):
+        book = {}
+        for row in result[label]:
+            key = row["account"], row["symbol"]
+            book[key] = book.get(key, Decimal(0)) + quantity(row["quantity"])
+        for key, value in book.items():
+            own[key] = max(own.get(key, Decimal(0)), value)
+    net = {(row["account"], row["symbol"]): quantity(row["net"]) for row in result["fill_balances"]}
+    bot = {key for key, value in direct.items() if value > 0 and max(own.get(key, Decimal(0)), net.get(key, Decimal(0))) == value}
+    recorded_holds = {key for key in direct if counts.get(key, Decimal(0)) > 0}
+    if bot or recorded_holds:
+        active.append("bot_positions")
+    if not active:
+        return None
+    if any(value < 0 for value in own.values()) or any(value < 0 for value in net.values()):
+        raise ValueError("unowned SELL/negative bot book cannot be a wait exemption")
+    allowed = {"new", "pending", "submitted", "accepted", "working", "open", "queued", "submitting", "partially_filled"}
+    if any(str(row["status"]).lower() not in allowed for label in ("working_orders", "inflight_intents") for row in result[label]):
+        raise ValueError("unknown/unproven order/intent state not a typed wait")
+    for field in ("as_of_et", "sql_snapshot_at_utc", "proof_completed_at_utc"):
+        fresh(result[field], now, "waiting " + field)
+    if result.get("session_order_census_complete") is not True or result.get("session_fill_census_complete") is not True:
+        raise ValueError("waiting session census incomplete")
+    from operator_flat_policy import session_start
+    if (parse_datetime(str(result.get("fill_session_start_et"))) != session_start(now)
+            or result.get("schwab_identity_bound") is not True or result.get("webull_identity_bound") is not True):
+        raise ValueError("waiting session/account identity unproven")
+    if quantity(overview["counts"]["open_account_positions"]) != len(stored):
+        raise ValueError("waiting overview/SQL position population conflict")
+    projected = copy.deepcopy(result)
+    for label in ("managed_rows", "virtual_rows", "working_orders", "inflight_intents"):
+        projected[label] = []
+    projected["broker_holdings"] = [row for row in result["broker_holdings"] if tuple(row[:2]) not in bot]
+    projected["account_rows"] = [row for row in result["account_rows"] if (row["account"], row["symbol"]) not in bot]
+    projected["net_bot_fills"] = [row for row in result["net_bot_fills"] if (row["account"], row["symbol"]) not in bot]
+    # A recorded-but-net-zero holding is NOT operator-only. For this WAIT-only
+    # projection validate its exact position finding without publishing any zero
+    # record exemption. Original nonzero counts/holdings remain in the rc1 receipt.
+    mixed_zero = {key for key in recorded_holds - bot if net.get(key, Decimal(0)) == 0}
+    projected["session_order_counts"] = [row for row in projected["session_order_counts"]
+                                         if (row["account"], row["symbol"]) not in mixed_zero]
+    projected["fill_balances"] = [row for row in projected["fill_balances"]
+                                  if (row["account"], row["symbol"]) not in mixed_zero]
+    published = copy.deepcopy(overview)
+    published["counts"].update(pending_intents=0, open_virtual_positions=0, open_account_positions=len(projected["account_rows"]))
+    if result["inflight_intents"]:
+        published["recent_intents"] = []
+    adjusted, audit = standing_allowance(projected, published, run, findings, heartbeat, now)
+    remaining = evaluate_live_deploy_preflight(adjusted, service_target=service_target, now=now) if service_target else []
+    if remaining:
+        raise ValueError("known-work wait has unrelated general-preflight defects: " + ";".join(remaining))
+    return dict(rc=1,waiting_kind="FRESH_KNOWN_BOT_WORK",blockers=active,remaining_general_failures=[],
+                projection_is_wait_only_never_GO=True,audit=audit)
 
 
 def schwab_account_number(mapping, account_hash):
@@ -440,8 +533,9 @@ async def collect(service_target=None):
         "account_rows": "SELECT a.name account,p.symbol,p.quantity,p.updated_at,p.source_updated_at FROM account_positions p JOIN broker_accounts a ON a.id=p.broker_account_id WHERE a.name IN (:schwab,:webull) AND p.quantity<>0 ORDER BY 1,2 LIMIT 65",
         "account_stamps": "SELECT a.name account,max(p.updated_at) updated_at FROM broker_accounts a LEFT JOIN account_positions p ON p.broker_account_id=a.id WHERE a.name IN (:schwab,:webull) GROUP BY a.name ORDER BY a.name LIMIT 3",
         "fill_balances": "SELECT a.name account,f.symbol,sum(CASE WHEN upper(f.side)='BUY' THEN f.quantity WHEN upper(f.side)='SELL' THEN -f.quantity END) net,count(*) total,count(CASE WHEN upper(f.side) IN ('BUY','SELL') THEN 1 END) known,sum(CASE WHEN upper(f.side)='BUY' THEN f.quantity ELSE 0 END) buy_quantity,sum(CASE WHEN upper(f.side)='SELL' THEN f.quantity ELSE 0 END) sell_quantity FROM fills f JOIN broker_accounts a ON a.id=f.broker_account_id WHERE a.name IN (:schwab,:webull) AND f.filled_at>=:start GROUP BY 1,2 ORDER BY 1,2 LIMIT 65",
-        "working_orders": "SELECT a.name account,b.symbol,b.status,b.client_order_id,b.broker_order_id FROM broker_orders b JOIN broker_accounts a ON a.id=b.broker_account_id WHERE a.name IN (:schwab,:webull) AND (b.status IS NULL OR lower(b.status) NOT IN ('cancelled','canceled','filled','rejected','expired','replaced')) ORDER BY b.submitted_at LIMIT 65",
-        "inflight_intents": "SELECT a.name account,t.symbol,t.status FROM trade_intents t JOIN broker_accounts a ON a.id=t.broker_account_id WHERE a.name IN (:schwab,:webull) AND lower(t.status) IN ('pending','submitted','accepted') ORDER BY t.created_at LIMIT 65",
+        "session_order_counts": "SELECT a.name account,b.symbol,count(*) total FROM broker_orders b JOIN broker_accounts a ON a.id=b.broker_account_id LEFT JOIN trade_intents i ON i.id=b.intent_id WHERE a.name IN (:schwab,:webull) AND (b.submitted_at>=:start OR i.created_at>=:start OR b.updated_at>=:start OR (b.submitted_at IS NULL AND i.created_at IS NULL AND b.updated_at IS NULL)) GROUP BY 1,2 ORDER BY 1,2 LIMIT 65",
+        "working_orders": "SELECT b.id,a.name account,b.symbol,b.status,b.client_order_id,b.broker_order_id FROM broker_orders b JOIN broker_accounts a ON a.id=b.broker_account_id WHERE a.name IN (:schwab,:webull) AND (b.status IS NULL OR lower(b.status) NOT IN ('cancelled','canceled','filled','rejected','expired','replaced')) ORDER BY b.submitted_at LIMIT 65",
+        "inflight_intents": "SELECT t.id,a.name account,t.symbol,t.status FROM trade_intents t JOIN broker_accounts a ON a.id=t.broker_account_id WHERE a.name IN (:schwab,:webull) AND (t.status IS NULL OR lower(t.status) NOT IN ('completed','rejected','cancelled','canceled','filled','expired')) ORDER BY t.created_at LIMIT 65",
     }
     # One bounded overview plus a repeatable-read SQL snapshot; no Redis access.
     with urlopen("http://127.0.0.1:8100/api/overview", timeout=20) as response:
@@ -452,7 +546,7 @@ async def collect(service_target=None):
     result = {"as_of_et": now.isoformat(), "fill_session_start_et": start.isoformat(),
               "broker_holdings": holdings, "schwab_response_bytes": size,
               "schwab_mapping_response_bytes": mapping_size, "schwab_identity_bound": True,
-              "webull_response_bytes": sizes, "manual_exceptions": [],
+              "webull_response_bytes": sizes, "webull_identity_bound": True, "manual_exceptions": [],
               "direct_read_started_at": direct_started, "overview_bytes": len(raw)}
     try:
         with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
@@ -468,6 +562,12 @@ async def collect(service_target=None):
                 if len(data) > 64:
                     raise ValueError("flat query exceeds 64-row proof bound")
                 result[label] = data
+            result["session_order_census_complete"] = True
+            result["session_fill_census_complete"] = True
+            from abort_reader import filter_rows
+            with Session(bind=connection, autoflush=False) as session:
+                result["working_orders"], result["inflight_intents"], result["proven_local_aborts"] = filter_rows(
+                    session, result["working_orders"], result["inflight_intents"])
             runs = [dict(row) for row in connection.execute(text(
                 "SELECT id,status,completed_at,summary FROM reconciliation_runs ORDER BY started_at DESC LIMIT 6")).mappings()]
             if not runs:
@@ -506,21 +606,33 @@ async def collect(service_target=None):
                                if quantity(row["net"]) != 0]
     checked_now = datetime.now(timezone.utc)
     result["proof_completed_at_utc"] = checked_now.isoformat()
+    for label in ("as_of_et", "sql_snapshot_at_utc", "proof_completed_at_utc"):
+        fresh(result[label], checked_now, label)
+    for account_name in ACCOUNTS:
+        fresh(result["direct_read_started_at"][account_name], checked_now, account_name + " direct read")
     original_failures = (evaluate_live_deploy_preflight(overview, service_target=service_target,
                          now=checked_now) if service_target else [])
     result["original_general_failures"] = original_failures
     result["allowance_findings"] = findings
     result["allowance_run"] = run
     result["allowance_heartbeat"] = heartbeat
+    waiting = known_work_wait(result, overview, run, findings, heartbeat, checked_now, service_target)
+    if waiting is not None:
+        result.update(waiting)
+        print(json.dumps(result, indent=2, default=str))
+        return 1
     adjusted, audit = standing_allowance(result, overview, run, findings, heartbeat, checked_now)
-    residual = ipdn_residual(result, findings, checked_now)
+    residual = None if result["operator_only_holdings"] else ipdn_residual(result, findings, checked_now)
     result["dated_operator_residual"] = residual
     for line in audit:
         print(line)
     result["allowance_audit"] = audit
-    blocked = [key for key in ("broker_holdings", "managed_rows", "virtual_rows",
-                               "account_rows", "working_orders", "inflight_intents")
-               if result[key] and not (residual is not None and key in {"broker_holdings", "account_rows"})]
+    operator_keys = {(row["account"], row["symbol"]) for row in result["operator_only_holdings"]}
+    result["bot_broker_holdings"] = [row for row in result["broker_holdings"] if tuple(row[:2]) not in operator_keys]
+    result["bot_account_rows"] = [row for row in result["account_rows"] if (row["account"], row["symbol"]) not in operator_keys]
+    blocked = [key for key in ("bot_broker_holdings", "managed_rows", "virtual_rows",
+                               "bot_account_rows", "working_orders", "inflight_intents")
+               if result[key] and not (residual is not None and key in {"bot_broker_holdings", "bot_account_rows"})]
     warnings = []
     remaining = (evaluate_live_deploy_preflight(adjusted, service_target=service_target,
                  now=checked_now, warnings=warnings) if service_target else [])
