@@ -1,0 +1,5 @@
+BEGIN
+SET
+{"id":3362236,"provider":"schwab","service":"LEVELONE_EQUITIES","symbol":"SXTC","event_ts":"2026-10-07T13:47:00.097+00:00","received_at":"2026-10-07T13:47:00.868413+00:00","cumulative_volume":48278862,"raw":{"1": 2.42, "3": 2.4299, "4": 100, "8": 48278862, "9": 5000, "35": 1791380820004, "key": "SXTC"},"raw_hash":"3926c1e40bd8f5a6f4486ebe8d4eb363e1520700","bid_price":2.420000,"ask_price":null,"last_price":2.429900,"bid_size":100,"ask_size":null,"last_size":5000}
+{"id":3362239,"provider":"schwab","service":"LEVELONE_EQUITIES","symbol":"SXTC","event_ts":"2026-10-07T13:47:02.123+00:00","received_at":"2026-10-07T13:47:02.901396+00:00","cumulative_volume":48280337,"raw":{"1": 2.41, "2": 2.42, "4": 300, "5": 400, "8": 48280337, "key": "SXTC"},"raw_hash":"ed5a7cc11eb2b3d9b1f44c51392bc5b63252fde6","bid_price":2.410000,"ask_price":2.420000,"last_price":null,"bid_size":300,"ask_size":400,"last_size":null}
+COMMIT
