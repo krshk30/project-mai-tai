@@ -84,3 +84,11 @@ sessions need separate controls. Indicator/seed mathematics remain untouched.
 No source change, population acceptance, mutation pass or full-suite pair is
 claimed. Independent assessment found a producer-policy boundary that needs
 resolution before building the requested BUY behavior.
+
+## Subsequent Scope Resolution
+
+The October 7 reply authorizes the narrow reactive first-entry exception after
+re-add/restart only, with a genuine fresh BUY, a 0.5% cap and ownership guards
+unchanged. The stale pre-watch flip still cannot trade. The build record states
+the later MTEN/JAGX pulls and separates price proxies from real decision-cache
+or hypothetical fill evidence.

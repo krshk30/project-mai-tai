@@ -14812,6 +14812,9 @@ class OmsRiskService(MirrorRetainedHoldMixin, AtrRepriceRuntimeMixin, MirrorFres
                 reason_detail=f"no fresh ask within {max_age_ms}ms for {symbol}",
             )
         max_cross_pct = float(getattr(self.settings, "oms_v2_eh_entry_max_cross_pct", 1.0))
+        if (md.get("slotclear_first") == "true"
+                and not getattr(self, "_nfq2_held_dispatch", lambda event: False)(event)):
+            max_cross_pct = 0.5
         cap = signal_px * (1.0 + max_cross_pct / 100.0)
         if ask > cap:
             # The live ask has run past the signal by more than the cap -> the market moved away from the

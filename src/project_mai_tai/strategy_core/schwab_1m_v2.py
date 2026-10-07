@@ -30,7 +30,7 @@ import math
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from typing import Callable, Deque, Iterable, Literal, Mapping
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -266,6 +266,7 @@ class SymbolState:
     cw_resting_taken: bool = False              # the resting slot for THIS cross is used
     cw_reclaim_taken: bool = False              # the reclaim slot for THIS cross is used
     cw_seed_cap_watch_start_ms: int = 0         # nonzero only when the cap, not an entry, took both slots
+    slotclear_fresh_buy_bar_ms: int = 0
     cw_resting_suppressed_segment_id: int = 0   # SLOT2 marker dedupe; policy remains cw_resting_taken
     cw_resting_suppressed_bars: int = 0         # eligible bars suppressed by the consumed slot
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
@@ -1259,6 +1260,7 @@ class SchwabV2Strategy:
                         request.symbol, request.opportunity_id, proof.reason)
 
     def _remove_waiting_buy(self, state: SymbolState, *, reason: str) -> bool:
+        state.slotclear_fresh_buy_bar_ms = 0
         symbol = state.symbol.upper()
         self._removed_scanner_symbols.add(symbol)
         had_wait = bool(state.cw_armed or state.resting_active or state.webull_resting_active
@@ -1320,6 +1322,7 @@ class SchwabV2Strategy:
 
     @staticmethod
     def _clear_flip_owner_memory(state: SymbolState) -> None:
+        state.slotclear_fresh_buy_bar_ms = 0
         state.flip_owner_phase = "idle"
         state.flip_owner_opportunity_id = 0
         state.flip_owner_retry_segment_id = 0
@@ -1567,7 +1570,8 @@ class SchwabV2Strategy:
         if (
             state.retry_one_watch_start_ms <= 0
             or segment_id <= 0
-            or segment_id < state.retry_one_watch_start_ms
+            or (segment_id < state.retry_one_watch_start_ms
+                and not self._slotclear_live_close_after_watch(state, state.retry_one_watch_start_ms))
             or segment_id <= state.retry_one_segment_id
             or segment_id != int(state.atr_short_flip_bar_ts or 0)
         ):
@@ -2313,6 +2317,7 @@ class SchwabV2Strategy:
         state.cw_resting_taken = False
         state.cw_reclaim_taken = False
         state.cw_seed_cap_watch_start_ms = 0
+        state.slotclear_fresh_buy_bar_ms = 0
         state.cw_resting_suppressed_segment_id = 0
         state.cw_resting_suppressed_bars = 0
 
@@ -2344,7 +2349,8 @@ class SchwabV2Strategy:
             sell_bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
             if (
                 state.cw_seed_cap_watch_start_ms > 0
-                and sell_bar_ms > state.cw_seed_cap_watch_start_ms
+                and (sell_bar_ms > state.cw_seed_cap_watch_start_ms
+                     or self._slotclear_live_close_after_watch(state, state.cw_seed_cap_watch_start_ms))
             ):
                 self._clear_cw_slot_claims(state)
             else:
@@ -3936,6 +3942,7 @@ class SchwabV2Strategy:
             owner_boundary_is_current = self._fanout_identity_bar_is_live(state)
 
         self._finish_first_rest_quote_wait(state, action="gave_up", reason="session_reset")
+        state.slotclear_fresh_buy_bar_ms = 0
         self._reset_atr_indicator_state(state, anchor)
         state.line_restore_reset_after_ms = 0
         state.atr_fired_in_short_seg = False
@@ -4657,6 +4664,7 @@ class SchwabV2Strategy:
                     gap_ms / 60000.0,
                 )
                 return
+            self._slotclear_fresh_buy(state, atr_signal)
             state.cw_armed = True
             state.cw_bars_waited = 0
             state.cw_trigger = float(state.bars[-1].high)   # flip bar starts the 3-bar trigger
@@ -4699,6 +4707,7 @@ class SchwabV2Strategy:
             )
             return
         if flip == "SELL":
+            state.slotclear_fresh_buy_bar_ms = 0
             if self._cw_armed_segment_safety_enabled and state.cw_armed:
                 logger.info("[V2-CW-DISARM] %s reason=flip", state.symbol)
             if state.resting_buy_frozen and state.resting_active and not state.resting_flip_ms:
@@ -4819,6 +4828,57 @@ class SchwabV2Strategy:
             return True
         return float(state.bars[-1].volume) > float(self._atr_vol_floor)
 
+    def _slotclear_live_close_after_watch(self, state: SymbolState, watch_ms: int) -> bool:
+        if not getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_flip_enabled", False):
+            return False
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        return bool(watch_ms > 0 and bar_ms > 0 and self._bar_observation_phase == "live"
+                    and bar_ms + 60000 > max(watch_ms, self._boot_ms)
+                    and 60000 <= self._now_ms() - bar_ms <= self._resting_max_bar_age_ms)
+
+    def _slotclear_fresh_buy(self, state: SymbolState, signal: dict) -> None:
+        watch_ms = state.cw_seed_cap_watch_start_ms
+        if (not self._flip_owned_first_entry_enabled
+                or not self._slotclear_live_close_after_watch(state, watch_ms)
+                or signal.get("observation_phase", "live") != "live"
+                or not self.line_buy_ready(state.symbol) or self._entries_held
+                or self.gap_hold_active(state.symbol) or not self._flip_owner_restore_readable
+                or not self._flip_owner_evidence_fresh(state)
+                or state.flip_owner_phase != "idle" or state.flip_owner_opportunity_id
+                or state.fanout_segment_id or state.flip_owner_first_rest_placed
+                or state.flip_owner_fill_accounts or state.flip_owner_position_ids
+                or state.flip_owner_open_positions or state.position_qty
+                or state.resting_active or state.webull_resting_active or state.cw_v2_emit_claimed
+                or state.fanout_webull_claimed or state.fanout_claim_outcome == "filled"
+                or not (state.cw_resting_taken and state.cw_reclaim_taken)
+                or self._removed_wait_gate_closed(state.symbol)):
+            return
+        try:
+            level = float(signal.get("flip_level") or 0)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(level) or level <= 0:
+            return
+        if self._retry_one_enabled:
+            segment = int(state.atr_short_flip_bar_ts or 0)
+            if (not state.retry_one_budget_readable or segment <= 0
+                    or state.retry_one_segment_id not in {0, segment}
+                    or state.retry_one_closes_in_segment != 0 or self._retry_one_budget_persist is None):
+                return
+            # Reconstruct an unused budget only; never reset a recorded close or another segment.
+            if state.retry_one_segment_id == 0:
+                try:
+                    self._retry_one_budget_persist(state.symbol, segment, 0)
+                except Exception:
+                    state.retry_one_budget_readable = False
+                    logger.exception("[V2-SLOTCLEAR1] %s budget_persist_failed entry_allowed=0", state.symbol)
+                    return
+                state.retry_one_segment_id = segment
+        self._clear_cw_slot_claims(state)
+        state.slotclear_fresh_buy_bar_ms = int(state.bars[-1].timestamp_ms)
+        logger.info("[V2-SLOTCLEAR1] %s watch_start=%d flip_close=%d action=fresh_first_reactive",
+                    state.symbol, watch_ms, state.slotclear_fresh_buy_bar_ms + 60000)
+
     def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         if not self.line_buy_ready(state.symbol):
             return None
@@ -4827,11 +4887,14 @@ class SchwabV2Strategy:
         and the per-flip entry cap (`_cw_v2_max_entries_per_flip`: 1 when reclaim is off — the
         default — else the shipped 2). Cooldown is intentionally NOT gated (reclaim has no
         cooldown). No-op unless the sub-flag is on. Returns a market-buy open draft or None."""
-        if self._rpg_entry_owned(state, slot="reclaim"):
+        fresh_first = bool(state.slotclear_fresh_buy_bar_ms and getattr(
+            self.settings, "strategy_schwab_1m_v2_slotclear_fresh_flip_enabled", False))
+        slot = "first" if fresh_first else "reclaim"
+        if self._rpg_entry_owned(state, slot=slot):
             return None
         if not self._cw_v2_enabled:
             return None
-        if self._flip_owned_first_entry_enabled:
+        if self._flip_owned_first_entry_enabled and not fresh_first:
             # RECLAIM1 strict mode has one producer: the first ATR-trail rest. The reactive
             # segment-high path is not a fallback when that order misses.
             return None
@@ -4860,7 +4923,7 @@ class SchwabV2Strategy:
         # Track the forming bar's intrabar low (rule 7). Seeded to 0.0 at each new bar.
         state.cw_bar_low_so_far = px if state.cw_bar_low_so_far <= 0.0 else min(state.cw_bar_low_so_far, px)
 
-        if not (state.cw_armed and state.cw_bars_waited >= 2):
+        if not (state.cw_armed and (fresh_first or state.cw_bars_waited >= 2)):
             return None
         # ⭐⭐ REACTIVE IS THE RECLAIM SLOT, AND ONLY THAT (operator 2026-08-03).
         # The cap is COMPOSITION -- exactly one resting and one reclaim per cross -- so a scalar
@@ -4871,7 +4934,7 @@ class SchwabV2Strategy:
         # operator did not ask for.
         if (
             state.position_qty != 0
-            or state.cw_reclaim_taken
+            or (state.cw_resting_taken if fresh_first else state.cw_reclaim_taken)
             or state.cw_v2_emit_claimed
         ):
             return None
@@ -4918,9 +4981,9 @@ class SchwabV2Strategy:
         # RESTING (first) slot. This is what "reactive may not substitute into the forfeit resting
         # slot" means mechanically: on a cross whose resting never filled, reactive can still fire
         # once, but only over the harder reclaim bar -- it can never stand in as the first entry.
-        trig = state.cw_segment_high
+        trig = self._resting_trigger_for_line(state.cw_flip_level) if fresh_first else state.cw_segment_high
         fl = state.cw_flip_level
-        if trig <= 0.0 or px <= trig:
+        if trig <= 0.0 or (px < trig if fresh_first else px <= trig):
             return None  # rule 6: intrabar break of the entry-appropriate trigger
         if fl <= 0.0 or px <= fl or state.cw_bar_low_so_far <= fl:
             # ⛔⭐⭐ INSTRUMENT THE NEGATIVE (2026-08-10). This was a bare `return None` — the fourth
@@ -4977,21 +5040,49 @@ class SchwabV2Strategy:
         if sized is None:
             return None
         quantity, sizing_metadata = sized
+        first_metadata: dict[str, str] = {}
+        if fresh_first:
+            ask, _, proof = self._resting_ask_evidence(quote)
+            cap = trig * 1.005
+            if (proof != "fresh_quote" or ask is None or not math.isfinite(ask)
+                    or ask < trig or ask > cap
+                    or not self._resting_in_window() or self._entry_window_closed_for_session()
+                    or not self._strict_first_rest_admitted(state, slot="first")):
+                return None
+            if self._ensure_flip_owner_opportunity(state) <= 0:
+                return None
+            state.flip_owner_retry_segment_id = state.retry_one_segment_id
+            state.flip_owner_retry_closes_at_place = state.retry_one_closes_in_segment
+            state.flip_owner_first_rest_placed = True
+            state.flip_owner_phase = "awaiting_fill"
+            state.flip_owner_flip_bar_ts = state.slotclear_fresh_buy_bar_ms
+            state.flip_owner_provisional_started_ms = self._now_ms()
+            if not self._persist_flip_owner(state, active=True, reason="slotclear_fresh_first_reactive"):
+                return None
+            tick = Decimal("0.01") if cap >= 1 else Decimal("0.0001")
+            first_metadata = {"slotclear_first": "true", "order_type": "limit",
+                              "limit_price": str(Decimal(str(cap)).quantize(tick, rounding=ROUND_DOWN)),
+                              "entry_price": f"{trig:.4f}", "reference_price": f"{trig:.4f}",
+                              "resting_band_pct": "0.5"}
         state.cw_v2_emit_claimed = True
         state.cw_v2_emit_ms = now_ms
         state.cw_seed_cap_watch_start_ms = 0
         state.cw_entries_this_flip += 1     # retained for labelling (cw_entry_n); NOT the cap
-        state.cw_reclaim_taken = True       # the reactive path owns the reclaim slot for this cross
+        if fresh_first:
+            state.cw_resting_taken = True
+            state.slotclear_fresh_buy_bar_ms = 0
+        else:
+            state.cw_reclaim_taken = True       # the reactive path owns the reclaim slot for this cross
         state.last_entry_price = px
         logger.info(
             "[V2-CW] %s v2 INTRABAR ENTER px=%.4f trig=%.4f flip_level=%.4f low_sf=%.4f n=%d",
             state.symbol, px, trig, fl, state.cw_bar_low_so_far, state.cw_entries_this_flip,
         )
         shared_fanout_identity: dict[str, str] = {}
-        if self._dual_broker_fanout_enabled:
+        if self._dual_broker_fanout_enabled or fresh_first:
             shared_fanout_identity = self._fanout_identity_metadata(
                 state,
-                source="reactive",
+                source="eh_resting" if fresh_first else "reactive",
             )
         # Dual-broker fan-out: co-queue the parallel Webull MARKET leg at the same reactive cross
         # (once, on the same claim that produced this primary). No-op unless fan-out is on.
@@ -5049,19 +5140,20 @@ class SchwabV2Strategy:
                         "count (its own marker is deliberately not repeated here)",
                         state.symbol, state.cw_entries_this_flip, px,
                     )
-                    self._queue_webull_fanout_draft(state,
-                        self._build_webull_fanout_draft(
+                    mirror = self._build_webull_fanout_draft(
                             state,
-                            entry_px=px,
+                            entry_px=trig if fresh_first else px,
                             sizing_quote=quote,
                             session_is_eh=self._cw_is_extended_hours(now_ms),
                             source="reactive",
                             # ALREADY incremented just above -- the counter reflects THIS entry.
                             entry_n=state.cw_entries_this_flip,
-                            entry_slot="reclaim",
+                            entry_slot=slot,
                             shared_identity=shared_fanout_identity,
                         )
-                    )
+                    if mirror is not None:
+                        mirror.metadata.update(first_metadata)
+                    self._queue_webull_fanout_draft(state, mirror)
             else:
                 # ⛔⭐⭐ EVERY LINE HERE IS ONE §82 DUPLICATE THAT DID NOT HAPPEN.
                 # NON-ZERO IS GOOD NEWS — the same polarity as the seed-gap REFUSAL count, and the
@@ -5123,13 +5215,14 @@ class SchwabV2Strategy:
                 "cw_entry_n": str(state.cw_entries_this_flip),
                 # Economic composition slot, not execution style. A reclaim may itself be a
                 # resting STOP_LIMIT, so `resting_entry=true` cannot distinguish the #644 slots.
-                "cw_entry_slot": "reclaim",
+                "cw_entry_slot": slot,
                 "cw_arm_bar_ts": str(int(state.cw_arm_bar_ts or 0)),
                 "bar_low_so_far": f"{state.cw_bar_low_so_far:.4f}",
                 **shared_fanout_identity,
                 "source": "schwab_1m_v2",
                 "strategy_version": STRATEGY_VERSION,
                 **sizing_metadata,
+                **first_metadata,
             },
         )
 
