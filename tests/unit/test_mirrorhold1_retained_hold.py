@@ -622,7 +622,11 @@ async def test_rpg_nonces_after_many_free_waits_do_not_spend_actual_wire_budget(
 
 
 @pytest.mark.asyncio
-async def test_pre_wire_callback_refusal_keeps_free_hold_and_can_retry(lane, monkeypatch):
+@pytest.mark.parametrize("refusal,proven", [
+    ("rpg_old_buy_still_owned", True),
+    ("CONTROLLED authorization changed after reservation", False),
+])
+async def test_pre_wire_callback_refusal_keeps_free_hold_and_can_retry(lane, monkeypatch, refusal, proven):
     service, client, factory, clock = lane
     event = event_for(lane)
     quote(lane, event, "5.1")
@@ -632,7 +636,9 @@ async def test_pre_wire_callback_refusal_keeps_free_hold_and_can_retry(lane, mon
         if session is not None:
             order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == service._build_client_order_id(event)))
             if order is not None and order.status == "pending":
-                return "CONTROLLED authorization changed after reservation"
+                # T43's ordinary-entry abort proof accepts this real refusal,
+                # not an invented code without a hand-off ticket.
+                return refusal
         return original(event, session=session)
 
     monkeypatch.setattr(service, "_rpg_open_refusal", after_pending)
@@ -643,13 +649,13 @@ async def test_pre_wire_callback_refusal_keeps_free_hold_and_can_retry(lane, mon
     assert not state(lane, event)["dispatch_unresolved"]
     with factory() as session:
         order = session.scalar(select(BrokerOrder))
-        assert service._mirrorhold_clear_order(session, order)
+        assert service._mirrorhold_clear_order(session, order) is proven
     monkeypatch.setattr(service, "_rpg_open_refusal", original)
     clock[0] += timedelta(seconds=1)
     next_event = event_for(lane, stop="5.3")
     quote(lane, next_event, "5.1")
     await service.process_trade_intent(next_event)
-    assert client.calls["place"] == 1
+    assert client.calls.get("place", 0) == int(proven)
 
 
 @pytest.mark.asyncio
