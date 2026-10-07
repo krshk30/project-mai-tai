@@ -1,0 +1,45 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_biya_restart_with_own_filled_slot_retires_hold_without_rebuy _______
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x109a7bc50>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b1ba40>
+
+    @pytest.mark.asyncio
+    async def test_biya_restart_with_own_filled_slot_retires_hold_without_rebuy(service, monkeypatch):
+        event = biya()
+        hold(service, event)
+        quote(service)
+        await service._evaluate_nfq2_holds("BIYA")
+        queued = retry(service)
+        monkeypatch.setattr(service, "_market_is_fillable", lambda *args: True)
+        await service.process_trade_intent(queued)
+        service.__dict__["_eh_price_holds"] = {}
+        service._restore_nfq2_holds()
+>       assert not service._nfq2_holds
+E       AssertionError: assert not {('paper:schwab_1m_v2', 'd585906e-7867-515b-9524-a1ea3a6b5a2b'): EhHold(event=TradeIntentEvent(event_id=UUID('4497c490...19-cb63-4151-82b2-d88a6e6b9841'), intent_id=UUID('5c5343fa-dd74-4050-9d61-75bccb3c083f'), phase='uncertain', token='')}
+E        +  where {('paper:schwab_1m_v2', 'd585906e-7867-515b-9524-a1ea3a6b5a2b'): EhHold(event=TradeIntentEvent(event_id=UUID('4497c490...19-cb63-4151-82b2-d88a6e6b9841'), intent_id=UUID('5c5343fa-dd74-4050-9d61-75bccb3c083f'), phase='uncertain', token='')} = <project_mai_tai.oms.service.OmsRiskService object at 0x109a7bc50>._nfq2_holds
+
+tests/unit/test_nfq2_eh_fresh_price.py:265: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-07 14:44:24,398 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+2026-10-07 14:44:24,402 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+2026-10-07 14:44:24,405 INFO [oms-risk] [OMS-V2-EH-RESTING] symbol=BIYA session=AM ask=2.5400 level=2.5400 cap=2.5654 limit=2.54
+2026-10-07 14:44:24,415 INFO [oms-risk] [OMS-BROKER-SYNC-PASS] id=1 phase=start accounts=paper:schwab_1m_v2
+2026-10-07 14:44:24,417 INFO [oms-risk] [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -
+2026-10-07 14:44:24,417 INFO [oms-risk] [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 2 attempted since boot (⛔ read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only — the fill and the position update are no longer gated on it.
+2026-10-07 14:44:24,417 INFO [oms-risk] [BROKER-SYNC-CENSUS] no account was read this window — UNMEASURED, not clean.
+2026-10-07 14:44:24,420 INFO [oms-risk] [OMS-BROKER-SYNC-PASS] id=1 phase=end outcome=ok duration_ms=4.782 exceeds_note_age=False
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=queued reason=retry_claimed ask=2.54 cache_age_ms=0.0 source=ask timestamp=2026-10-07 12:20:00.439000+00:00
+INFO     oms-risk:service.py:15241 [OMS-V2-EH-RESTING] symbol=BIYA session=AM ask=2.5400 level=2.5400 cap=2.5654 limit=2.54
+INFO     oms-risk:service.py:10240 [OMS-BROKER-SYNC-PASS] id=1 phase=start accounts=paper:schwab_1m_v2
+INFO     oms-risk:service.py:16636 [OMS-P0A-CENSUS] window=300s submitted=0 evaluated=0 held=0 declined: -
+INFO     oms-risk:service.py:16527 [OMS-ORDER-EVENT-CENSUS] audit rows: 0 dropped of 2 attempted since boot (⛔ read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs the audit row only — the fill and the position update are no longer gated on it.
+INFO     oms-risk:service.py:16563 [BROKER-SYNC-CENSUS] no account was read this window — UNMEASURED, not clean.
+INFO     oms-risk:service.py:10256 [OMS-BROKER-SYNC-PASS] id=1 phase=end outcome=ok duration_ms=4.782 exceeds_note_age=False
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_eh_fresh_price.py::test_biya_restart_with_own_filled_slot_retires_hold_without_rebuy
+1 failed in 0.28s
+MUTATION N9 pytest_rc=1 RED

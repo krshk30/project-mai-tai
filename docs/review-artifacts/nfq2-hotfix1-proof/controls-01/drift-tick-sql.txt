@@ -1,0 +1,119 @@
+2026-10-07 14:43:23,842 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+F2026-10-07 14:43:23,965 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+FF
+=================================== FAILURES ===================================
+__________ test_combined_memory_admission_zero_sql[irrelevant-active] __________
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10c76bc80>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10dc47110>
+case = 'irrelevant-active'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", ["irrelevant-active", "stale-active", "no-hold"])
+    async def test_combined_memory_admission_zero_sql(service, monkeypatch, case):
+        await configured(service)
+        active = hold(service, biya()) if case != "no-hold" else None
+        reading = service._nfq2_reading
+        reads = []
+    
+        def counted(symbol):
+            reads.append(symbol)
+            return reading(symbol)
+    
+        def forbidden(*args, **kwargs):
+            pytest.fail("ineligible full-handler tick copied or queried hold ownership")
+    
+        monkeypatch.setattr(service, "_nfq2_reading", counted)
+        monkeypatch.setattr(service, "_nfq2_copy", forbidden)
+        monkeypatch.setattr(service, "_nfq2_reason", forbidden)
+        meter = Meter(service, monkeypatch)
+        try:
+            event = tick("OTHER") if case == "irrelevant-active" else tick(stale=active is not None)
+            for _ in range(1000):
+                await tagged("tick", service._handle_quote_tick_event, event)
+>           assert not meter.sessions, meter.counts()
+E           AssertionError: {'on_loop_sql': 1000, 'sessions': {'tick': 1000}, 'statements': {'tick': 1000}, 'transactions': {'tick': 1000}}
+E           assert not [(82831.908173291, 8158052224, 'tick'), (82831.908541875, 8158052224, 'tick'), (82831.908665083, 8158052224, 'tick'), (82831.908761625, 8158052224, 'tick'), (82831.908846583, 8158052224, 'tick'), (82831.908928208, 8158052224, 'tick'), ...]
+E            +  where [(82831.908173291, 8158052224, 'tick'), (82831.908541875, 8158052224, 'tick'), (82831.908665083, 8158052224, 'tick'), (82831.908761625, 8158052224, 'tick'), (82831.908846583, 8158052224, 'tick'), (82831.908928208, 8158052224, 'tick'), ...] = <test_nfq2_hotfix1_combined_proof.Meter object at 0x10d9ed6a0>.sessions
+
+tests/unit/test_nfq2_hotfix1_combined_proof.py:130: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+____________ test_combined_memory_admission_zero_sql[stale-active] _____________
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10db086e0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10de5ea80>
+case = 'stale-active'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", ["irrelevant-active", "stale-active", "no-hold"])
+    async def test_combined_memory_admission_zero_sql(service, monkeypatch, case):
+        await configured(service)
+        active = hold(service, biya()) if case != "no-hold" else None
+        reading = service._nfq2_reading
+        reads = []
+    
+        def counted(symbol):
+            reads.append(symbol)
+            return reading(symbol)
+    
+        def forbidden(*args, **kwargs):
+            pytest.fail("ineligible full-handler tick copied or queried hold ownership")
+    
+        monkeypatch.setattr(service, "_nfq2_reading", counted)
+        monkeypatch.setattr(service, "_nfq2_copy", forbidden)
+        monkeypatch.setattr(service, "_nfq2_reason", forbidden)
+        meter = Meter(service, monkeypatch)
+        try:
+            event = tick("OTHER") if case == "irrelevant-active" else tick(stale=active is not None)
+            for _ in range(1000):
+                await tagged("tick", service._handle_quote_tick_event, event)
+>           assert not meter.sessions, meter.counts()
+E           AssertionError: {'on_loop_sql': 1000, 'sessions': {'tick': 1000}, 'statements': {'tick': 1000}, 'transactions': {'tick': 1000}}
+E           assert not [(82832.031071875, 8158052224, 'tick'), (82832.031290625, 8158052224, 'tick'), (82832.031398833, 8158052224, 'tick'), (82832.031484083, 8158052224, 'tick'), (82832.031566916, 8158052224, 'tick'), (82832.031643166, 8158052224, 'tick'), ...]
+E            +  where [(82832.031071875, 8158052224, 'tick'), (82832.031290625, 8158052224, 'tick'), (82832.031398833, 8158052224, 'tick'), (82832.031484083, 8158052224, 'tick'), (82832.031566916, 8158052224, 'tick'), (82832.031643166, 8158052224, 'tick'), ...] = <test_nfq2_hotfix1_combined_proof.Meter object at 0x10de5f320>.sessions
+
+tests/unit/test_nfq2_hotfix1_combined_proof.py:130: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+_______________ test_combined_memory_admission_zero_sql[no-hold] _______________
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x10dad39e0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10de5e540>
+case = 'no-hold'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", ["irrelevant-active", "stale-active", "no-hold"])
+    async def test_combined_memory_admission_zero_sql(service, monkeypatch, case):
+        await configured(service)
+        active = hold(service, biya()) if case != "no-hold" else None
+        reading = service._nfq2_reading
+        reads = []
+    
+        def counted(symbol):
+            reads.append(symbol)
+            return reading(symbol)
+    
+        def forbidden(*args, **kwargs):
+            pytest.fail("ineligible full-handler tick copied or queried hold ownership")
+    
+        monkeypatch.setattr(service, "_nfq2_reading", counted)
+        monkeypatch.setattr(service, "_nfq2_copy", forbidden)
+        monkeypatch.setattr(service, "_nfq2_reason", forbidden)
+        meter = Meter(service, monkeypatch)
+        try:
+            event = tick("OTHER") if case == "irrelevant-active" else tick(stale=active is not None)
+            for _ in range(1000):
+                await tagged("tick", service._handle_quote_tick_event, event)
+>           assert not meter.sessions, meter.counts()
+E           AssertionError: {'on_loop_sql': 1000, 'sessions': {'tick': 1000}, 'statements': {'tick': 1000}, 'transactions': {'tick': 1000}}
+E           assert not [(82832.129865, 8158052224, 'tick'), (82832.130224333, 8158052224, 'tick'), (82832.130347208, 8158052224, 'tick'), (82832.13044325, 8158052224, 'tick'), (82832.130522708, 8158052224, 'tick'), (82832.130596166, 8158052224, 'tick'), ...]
+E            +  where [(82832.129865, 8158052224, 'tick'), (82832.130224333, 8158052224, 'tick'), (82832.130347208, 8158052224, 'tick'), (82832.13044325, 8158052224, 'tick'), (82832.130522708, 8158052224, 'tick'), (82832.130596166, 8158052224, 'tick'), ...] = <test_nfq2_hotfix1_combined_proof.Meter object at 0x10df97fe0>.sessions
+
+tests/unit/test_nfq2_hotfix1_combined_proof.py:130: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_hotfix1_combined_proof.py::test_combined_memory_admission_zero_sql[irrelevant-active]
+FAILED tests/unit/test_nfq2_hotfix1_combined_proof.py::test_combined_memory_admission_zero_sql[stale-active]
+FAILED tests/unit/test_nfq2_hotfix1_combined_proof.py::test_combined_memory_admission_zero_sql[no-hold]
+3 failed in 0.38s
+MUTATION drift-tick-sql pytest_rc=1 RED
