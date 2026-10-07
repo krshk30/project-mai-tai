@@ -1,0 +1,9 @@
+{
+  "pr_number": 1106,
+  "range_base": "52659779bcf4b6e28a2896e6eef3002488a6d2c9",
+  "range_head": "0ca05fc8d910e04ec78106b47349f2ba776c493a",
+  "reviewed_at": "2026-10-07T00:20:17Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "RESERVE1 re-pin after rebase onto main 52659779 (patch byte-identical to the reviewed 34b6bb5b, verified by diff; focused test_reserve1 44 pass on the rebased head). Content as previously pinned: every software SELL on a Schwab row with a native bracket runs exact-entry release -> broker confirm -> close, no fail-open on the send; covers CW flip, confirmation exit, CW hard stop and the ArmedHardStop sender for v2 and ORB-Schwab rows; oversold retry only after proving the original close was rejected and no child sold the lot; note-state and sync-pass logs. Mutations RED 13/3/4/7; full suite identical failed names."
+}
