@@ -1,0 +1,9 @@
+{
+  "pr_number": 1120,
+  "range_base": "a6f295e96a025fc61b539d8b955cc6e457612b1c",
+  "range_head": "53f9eaa9d87163113504b30ceba4120ffa2ccf31",
+  "reviewed_at": "2026-10-07T22:10:57Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "BATCH LANDING 2026-10-07 (operator 10-06: pinned PRs land in one batch; 10-07: deploy tonight, switches on). Range = main a6f295e9 (after SLOTCLEAR1 #1113) .. batch head: 16 codex-2 commits cherry-picked linearly, no conflicts, no reviewer commits: MOMPAGE1 #1117 @ 42feaeaf (1 commit, pinned on its own head), RETAIN1 #1119 @ b67dcc3f (2, pinned), RETRYLEFT1 #1118 @ cda4849c (3, pinned), NFQ2 #1112 @ 50264417 (10; its PR head tree 4f224148 is reproduced exactly at the batch head). Each source PR was reviewed independently by claude-1 on its own head (focused tests, my own mutations in separate worktrees, full unit suite failed-name set identical to base 994f08ae for #1119, #1118 and #1112; #1117 reviewed earlier today). On this batch head: focused suites of all four pass together and the full unit suite's failed-name set is identical to base 994f08ae (ALL-ON combination tree). Flags for job 2: LINE_CHART_RESTORATION=true, WEBULL_MIRROR_RETAINED_HOLD=true, ATR_REPRICE_HANDOFF=false (operator 13:45), OMS_V2_EH_FRESH_PRICE_ENABLED=true (new; read by OMS and v2). Residuals carried: RETRYLEFT1 both-filled-and-flat guard untested; NFQ2 stale-reading release guard untested (pre-submit re-holds, churn only); repo flag catalog still says atr_reprice_handoff true (box copy false) \u2014 docs fix tomorrow. Not verified: real broker cancel latency (RETRYLEFT1), live DELETE timing (RETAIN1, measured at the first purge after job 2)."
+}
