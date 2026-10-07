@@ -817,6 +817,9 @@ class SchwabV2BotService:
     async def _removed_wait_poll(self) -> None:
         if not getattr(self.strategy, "_removed_wait_enabled", False):
             return
+        if self._removed_wait_emits_inflight():
+            return
+        self.strategy.expire_removed_wait_requests()
         requests = tuple(self.strategy._removed_wait_requests.values())
         if not requests:
             return

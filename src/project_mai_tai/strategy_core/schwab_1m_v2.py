@@ -1143,8 +1143,69 @@ class SchwabV2Strategy:
         self._removed_scanner_symbols.update(restored)
         for symbol, request in restored.items():
             state = self.watchlist_state(symbol)
-            if not self._removed_wait_has_owner(state):
+            if not self._expire_removed_wait_request(request) and not self._removed_wait_has_owner(state):
                 self._queue_removed_wait_barriers(state, request)
+
+    def _drop_removed_wait_barriers(self, request: RemovedWait) -> None:
+        for name in ("_pending_intents", "_pending_webull_direct_intents", "_pending_webull_fanout_intents"):
+            setattr(self, name, [draft for draft in getattr(self, name)
+                if not (draft.symbol == request.symbol and draft.side == "buy"
+                        and draft.intent_type == "cancel"
+                        and draft.metadata.get("clearwait_removal_token") == request.token
+                        and draft.metadata.get("clearwait_opportunity_id") == str(request.opportunity_id))])
+
+    def _removed_wait_is_prior_session(self, request: RemovedWait) -> bool:
+        return bool(request.opportunity_id > 0 and request.requested_at_ms >= request.opportunity_id
+                    and session_start_ts_ms(request.opportunity_id) == session_start_ts_ms(request.requested_at_ms)
+                    and session_start_ts_ms(request.requested_at_ms) < session_start_ts_ms(self._now_ms()))
+
+    def _removed_wait_episode_is_prior(self, request: RemovedWait) -> bool:
+        return bool(request.opportunity_id > 0
+                    and session_start_ts_ms(request.opportunity_id) < session_start_ts_ms(self._now_ms()))
+
+    def _expire_removed_wait_request(
+        self, request: RemovedWait, proof: RemovedWaitProof | None = None,
+    ) -> bool:
+        if (not self._removed_wait_enabled or not self._removed_wait_restore_readable
+                or not self._flip_owner_restore_readable
+                or self._removed_wait_requests.get(request.symbol) != request
+                or not self._removed_wait_is_prior_session(request)):
+            return False
+        state = self._symbol_states.get(request.symbol)
+        now = self._now_ms()
+        current = int(state.flip_owner_opportunity_id or 0) if state is not None else 0
+        superseded = bool(state is not None and self._flip_owned_first_entry_enabled
+                          and current == state.fanout_segment_id and current != request.opportunity_id
+                          and session_start_ts_ms(now) <= current <= now)
+        terminal = bool(proof is not None and proof.request == request and proof.clear
+                        and proof.reason == "terminal_unfilled_removed_wait"
+                        and 0 <= now - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS
+                        and (state is None or not (self._removed_wait_has_owner(state) or state.position_qty)))
+        if not superseded and not terminal:
+            return False
+        try:
+            if self._removed_wait_persist is None:
+                raise RuntimeError("removal store unavailable")
+            self._removed_wait_persist(request, False)
+        except Exception:  # noqa: BLE001
+            logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=obsolete_request_write_failed", request.symbol)
+            return False
+        # Only the request ends. Never retire an opportunity or mutate filled/unknown ownership.
+        self._removed_wait_requests.pop(request.symbol, None)
+        self._removed_wait_block_reason.pop(request.symbol, None)
+        self._drop_removed_wait_barriers(request)
+        logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=EXPIRED_REQUEST reason=%s",
+                    request.symbol, request.opportunity_id,
+                    "superseded_episode" if superseded else "prior_terminal_unfilled")
+        return True
+
+    def expire_removed_wait_requests(self) -> None:
+        if not self._removed_wait_enabled:
+            return
+        for request in tuple(self._removed_wait_requests.values()):
+            if self._removed_wait_episode_is_prior(request):
+                self._drop_removed_wait_barriers(request)
+                self._expire_removed_wait_request(request)
 
     def scanner_readded(self, symbol: str) -> None:
         self._removed_scanner_symbols.discard(symbol)
@@ -1209,6 +1270,8 @@ class SchwabV2Strategy:
         for proof in proofs:
             request = proof.request
             state = self._symbol_states.get(request.symbol)
+            if self._expire_removed_wait_request(request, proof):
+                continue
             if (self._removed_wait_enabled and proof.reason == "own_fill_stays_owned"
                     and not proof.clear and self._removed_wait_requests.get(request.symbol) == request
                     and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
@@ -1299,6 +1362,8 @@ class SchwabV2Strategy:
         return released
 
     def _queue_removed_wait_barriers(self, state: SymbolState, request: RemovedWait) -> None:
+        if self._removed_wait_episode_is_prior(request):
+            return
         symbol = state.symbol
         md = {"clearwait_removal_token": request.token,
               "clearwait_opportunity_id": str(request.opportunity_id),
@@ -4064,6 +4129,7 @@ class SchwabV2Strategy:
         again. The strategy cannot see broker state, so it must not guess.
         """
         anchor = session_start_ts_ms(now_ms)
+        self.expire_removed_wait_requests()
         rolled: list[str] = []
         for symbol, state in self._symbol_states.items():
             if not (0 < state.atr_session_anchor_ms < anchor):
