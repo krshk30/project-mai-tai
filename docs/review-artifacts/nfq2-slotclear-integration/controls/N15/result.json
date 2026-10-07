@@ -1,0 +1,23 @@
+{
+  "cwd": "/private/tmp/codex-nfq2-on-slotclear1-integration-20261007",
+  "command": [
+    "/Users/velkris/Projects/project-mai-tai/.venv/bin/python",
+    "docs/review-artifacts/nfq2/check_mutations.py",
+    "N15"
+  ],
+  "head": "5d77d48f213203d23ee2ef6d8ac354655ecc0e83",
+  "tree": "32b92dc004a761b5b198c5f966e11a18afc1b95d",
+  "status_before": "?? docs/review-artifacts/nfq2-slotclear-integration/controls/\n?? docs/review-artifacts/nfq2-slotclear-integration/joint-final/",
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "pythonpath": "src:.",
+  "start_utc": "2026-10-07T19:52:39.437262+00:00",
+  "end_utc": "2026-10-07T19:52:40.372982+00:00",
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 60.0,
+  "output_sha256": "48de820f422dcb67620dc51b5004609ebf4593cce6da8da59aa577daedd2dde7",
+  "failed_names": [
+    "tests/unit/test_nfq2_tick_path.py::test_nfq2_worker_cas_refuses_retired_generation_without_feedback"
+  ]
+}

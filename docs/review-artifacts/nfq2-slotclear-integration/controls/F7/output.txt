@@ -1,0 +1,23 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True] _
+
+retry = True, partial = True
+
+    @pytest.mark.parametrize("retry", [True, False])
+    @pytest.mark.parametrize("partial", [True, False])
+    def test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once(retry, partial):
+        strategy, state, clock, _, _, _ = seeded(retry=retry, partial=partial)
+        for index, probe in enumerate(list(recorded_probes("SXTC"))[:4]):
+            observe(strategy, state, clock, probe)
+            primary = strategy.drain_pending_intents()
+            mirror = strategy.drain_webull_direct_intents()
+            if index < 3:
+>               assert not primary and not mirror
+E               AssertionError: assert (not [TradeIntentDraft(symbol='SXTC', side='buy', intent_type='open', quantity=Decimal('81'), reason='schwab_1m_v2 ATR Flip...600', 'entry_size_price_basis': 'stop_limit_wire_limit', 'entry_size_price': '7.4250', 'entry_computed_shares': '81'})])
+
+tests/unit/test_slotclear1_fresh_sell.py:98: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]
+1 failed in 0.07s
+MUTATION F7 pytest_rc=1 RED

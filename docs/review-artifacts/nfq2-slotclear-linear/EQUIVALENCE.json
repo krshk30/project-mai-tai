@@ -1,0 +1,30 @@
+{
+  "utc": "2026-10-07T20:08:36.985715+00:00",
+  "head": "2b4e861b71d089d209660fcad6e1a5be194dddd4",
+  "tree": "87b9b210a463a787ee0599cce47c2d51d34fdfaf",
+  "base": "9951b473f8203590f48c667770c07e1f9c3096b6",
+  "proof_head": "5d77d48f213203d23ee2ef6d8ac354655ecc0e83",
+  "subtrees": {
+    "src": {
+      "proof": "94113959b944bfac19a1fe9bcb29c35d9c39efd5",
+      "linear": "94113959b944bfac19a1fe9bcb29c35d9c39efd5"
+    },
+    "tests": {
+      "proof": "f2aea6a8476103848bf46d8752c2e3d9876865e4",
+      "linear": "f2aea6a8476103848bf46d8752c2e3d9876865e4"
+    },
+    "ops": {
+      "proof": "f68688adbbcb9d89781a36d42eea59d26734971c",
+      "linear": "f68688adbbcb9d89781a36d42eea59d26734971c"
+    }
+  },
+  "byte_identical": true,
+  "merges_above_base": [],
+  "source_path": "/private/tmp/codex-nfq2-on-slotclear1-linear-20261007/src",
+  "nfq_marker_mapping": {
+    "0239726f": "81670de1",
+    "16c435b0": "a8519b5d",
+    "0318ef84": "6a6f5005"
+  },
+  "scope_diff": "ops/health/expected_flags.json                    |   8 +\n src/project_mai_tai/fanout_outcome_consumer.py    |   3 +-\n src/project_mai_tai/oms/eh_fresh_price.py         | 397 +++++++++++++++++++\n src/project_mai_tai/oms/service.py                |  35 +-\n src/project_mai_tai/settings.py                   |   6 +-\n src/project_mai_tai/strategy_core/schwab_1m_v2.py |  61 ++-\n tests/unit/test_all_on_pm.py                      |   9 +-\n tests/unit/test_expected_flags_check.py           |   2 +-\n tests/unit/test_keeprest1.py                      |   6 +-\n tests/unit/test_mirrorhold1_retained_hold.py      |   2 +-\n tests/unit/test_nfq2_eh_fresh_price.py            | 446 ++++++++++++++++++++++\n tests/unit/test_nfq2_hotfix1_combined_proof.py    | 385 +++++++++++++++++++\n tests/unit/test_nfq2_slotclear_composition.py     |  86 +++++\n tests/unit/test_nfq2_tick_path.py                 | 241 ++++++++++++\n tests/unit/test_oms_v2_eh_reactive_entry.py       |   9 +-\n tests/unit/test_oms_v2_eh_resting_entry.py        |   4 +-\n tests/unit/test_pmprint1_tonight_flags.py         |   2 +-\n tests/unit/test_webull_mirror_eh.py               |   2 +-\n 18 files changed, 1676 insertions(+), 28 deletions(-)"
+}

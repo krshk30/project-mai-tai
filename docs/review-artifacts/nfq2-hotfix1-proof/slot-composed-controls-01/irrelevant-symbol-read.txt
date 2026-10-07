@@ -1,0 +1,45 @@
+2026-10-07 15:54:38,093 INFO [oms-risk] [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+F
+=================================== FAILURES ===================================
+__________ test_combined_memory_admission_zero_sql[irrelevant-active] __________
+
+service = <project_mai_tai.oms.service.OmsRiskService object at 0x1099e2300>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1099e1220>
+case = 'irrelevant-active'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", ["irrelevant-active", "stale-active", "no-hold"])
+    async def test_combined_memory_admission_zero_sql(service, monkeypatch, case):
+        await configured(service)
+        active = hold(service, biya()) if case != "no-hold" else None
+        reading = service._nfq2_reading
+        reads = []
+    
+        def counted(symbol):
+            reads.append(symbol)
+            return reading(symbol)
+    
+        def forbidden(*args, **kwargs):
+            pytest.fail("ineligible full-handler tick copied or queried hold ownership")
+    
+        monkeypatch.setattr(service, "_nfq2_reading", counted)
+        monkeypatch.setattr(service, "_nfq2_copy", forbidden)
+        monkeypatch.setattr(service, "_nfq2_reason", forbidden)
+        meter = Meter(service, monkeypatch)
+        try:
+            event = tick("OTHER") if case == "irrelevant-active" else tick(stale=active is not None)
+            for _ in range(1000):
+                await tagged("tick", service._handle_quote_tick_event, event)
+            assert not meter.sessions, meter.counts()
+            assert not meter.transactions and not meter.statements, meter.counts()
+>           assert len(reads) == (1000 if case == "stale-active" else 0)
+E           AssertionError: assert 1000 == 0
+E            +  where 1000 = len(['OTHER', 'OTHER', 'OTHER', 'OTHER', 'OTHER', 'OTHER', ...])
+
+tests/unit/test_nfq2_hotfix1_combined_proof.py:137: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     oms-risk:eh_fresh_price.py:100 [OMS-NFQ2] symbol=BIYA account=paper:schwab_1m_v2 slot=d585906e-7867-515b-9524-a1ea3a6b5a2b outcome=held_no_fresh_quote reason=held ask=None cache_age_ms=None source=none timestamp=None
+=========================== short test summary info ============================
+FAILED tests/unit/test_nfq2_hotfix1_combined_proof.py::test_combined_memory_admission_zero_sql[irrelevant-active]
+1 failed in 0.12s
+MUTATION irrelevant-symbol-read pytest_rc=1 RED

@@ -1,0 +1,290 @@
+[
+  {
+    "name": "S1",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_recorded_bar_with_later_watch_boundary_cannot_become_a_fresh_buy"
+    ]
+  },
+  {
+    "name": "S2",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_flip.py::test_seed_cap_is_not_permission_to_release_real_or_unknown_ownership[unknown]"
+    ]
+  },
+  {
+    "name": "S3",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_flip.py::test_seed_cap_is_not_permission_to_release_real_or_unknown_ownership[closed]"
+    ]
+  },
+  {
+    "name": "S4",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_fresh_exception_never_chases_above_half_percent"
+    ]
+  },
+  {
+    "name": "S5",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[db-seed]",
+      "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[replay]",
+      "tests/unit/test_slotclear1_fresh_flip.py::test_lpcn_historical_delivery_never_turns_seed_flip_into_a_live_first_entry[rest-warmup]"
+    ]
+  },
+  {
+    "name": "S6",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_flip.py::test_fresh_buy_permission_is_revoked_on_scanner_removal"
+    ]
+  },
+  {
+    "name": "S7",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_flip.py::test_recorded_ftft_stale_sell_stays_capped_with_slotclear_flag_on"
+    ]
+  },
+  {
+    "name": "F1",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]"
+    ]
+  },
+  {
+    "name": "F2",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[cold_boot]"
+    ]
+  },
+  {
+    "name": "F3",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_sell_requires_live_completed_bar_after_watch_and_boot[replay_handler]"
+    ]
+  },
+  {
+    "name": "F4",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[stale_book]"
+    ]
+  },
+  {
+    "name": "F5",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[held_qty]"
+    ]
+  },
+  {
+    "name": "F6",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]"
+    ]
+  },
+  {
+    "name": "F7",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]"
+    ]
+  },
+  {
+    "name": "F8",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_delayed_duplicate_recorded_sell_cannot_retire_the_new_first_rest_owner[300000]"
+    ]
+  },
+  {
+    "name": "F9",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_keeprest_sell_cancels_existing_order_without_granting_another_slot"
+    ]
+  },
+  {
+    "name": "F10",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_fresh_sell_never_releases_held_working_unknown_or_unready_claims[gap]"
+    ]
+  },
+  {
+    "name": "F11",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_slotclear1_fresh_sell.py::test_recorded_sxtc_sell_releases_reconstruction_then_first_rest_at_age_three_once[True-True]"
+    ]
+  },
+  {
+    "name": "T1",
+    "red": true,
+    "failed_names": [
+      "docs/review-artifacts/slotclear1/test_both_paths.py::test_present_durable_sxtc_tickets_veto_entry_after_recorded_sell_even_handoff_off"
+    ]
+  },
+  {
+    "name": "N1",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_ten_second_price_is_fresh_and_never_gets_held_band[10000]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_ten_second_price_is_fresh_and_never_gets_held_band[9999]"
+    ]
+  },
+  {
+    "name": "N2",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_stale_serial_token_cannot_claim_a_requeued_hold"
+    ]
+  },
+  {
+    "name": "N3",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_real_intent_and_serial_consumer_submit_once_after_hold[False-False]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_real_intent_and_serial_consumer_submit_once_after_hold[False-True]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_real_intent_and_serial_consumer_submit_once_after_hold[True-False]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_real_intent_and_serial_consumer_submit_once_after_hold[True-True]"
+    ]
+  },
+  {
+    "name": "N4",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_fresh_order_outside_half_percent_is_refused_not_given_held_cap[False]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_fresh_order_outside_half_percent_is_refused_not_given_held_cap[True]"
+    ]
+  },
+  {
+    "name": "N5",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_cancel_after_enqueue_invalidates_the_serial_copy"
+    ]
+  },
+  {
+    "name": "N6",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-False]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-True]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-False]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-True]"
+    ]
+  },
+  {
+    "name": "N7",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-False]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[False-True]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-False]",
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_both_paths_and_accounts_hold_then_serially_recheck_one_percent[True-True]"
+    ]
+  },
+  {
+    "name": "N8",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_uncertain_dispatch_is_not_released_by_window_or_new_open"
+    ]
+  },
+  {
+    "name": "N9",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_restart_with_own_filled_slot_retires_hold_without_rebuy"
+    ]
+  },
+  {
+    "name": "N10",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_serial_rehold_moves_v2_attempt_then_giveup_releases_exact_webull_latch"
+    ]
+  },
+  {
+    "name": "N11",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_eh_fresh_price.py::test_biya_eh_hold_does_not_migrate_into_unpriced_regular_hours"
+    ]
+  },
+  {
+    "name": "N12",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_tick_path.py::test_nfq2_unrelated_or_stale_tick_never_opens_session_or_copies_hold_map[OTHER]"
+    ]
+  },
+  {
+    "name": "N13",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_tick_path.py::test_nfq2_unrelated_or_stale_tick_never_opens_session_or_copies_hold_map[BIYA]"
+    ]
+  },
+  {
+    "name": "N14",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_tick_path.py::test_nfq2_slow_save_does_not_stall_loop_and_concurrent_quotes_queue_once"
+    ]
+  },
+  {
+    "name": "N15",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_tick_path.py::test_nfq2_worker_cas_refuses_retired_generation_without_feedback"
+    ]
+  },
+  {
+    "name": "N16",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_tick_path.py::test_nfq2_periodic_proof_runs_off_loop_and_is_not_tick_rate_driven"
+    ]
+  },
+  {
+    "name": "N17",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_tick_path.py::test_nfq2_quote_transition_persists_on_worker_without_tick_ownership_queries"
+    ]
+  },
+  {
+    "name": "C1",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_slotclear_composition.py::test_joint_slotclear_fresh_reactive_never_borrows_held_cap[False]",
+      "tests/unit/test_nfq2_slotclear_composition.py::test_joint_slotclear_fresh_reactive_never_borrows_held_cap[True]"
+    ]
+  },
+  {
+    "name": "C2",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_slotclear_composition.py::test_joint_slotclear_real_nfq_dispatch_retains_held_cap_and_single_claim[False]",
+      "tests/unit/test_nfq2_slotclear_composition.py::test_joint_slotclear_real_nfq_dispatch_retains_held_cap_and_single_claim[True]"
+    ]
+  },
+  {
+    "name": "C3",
+    "red": true,
+    "failed_names": [
+      "tests/unit/test_nfq2_slotclear_composition.py::test_joint_fresh_buy_identity_and_dedup_with_nfq_enabled[False-False]"
+    ]
+  }
+]
