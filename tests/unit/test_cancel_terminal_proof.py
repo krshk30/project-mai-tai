@@ -91,6 +91,10 @@ def test_every_request_account_must_prove():
         evaluate_request_cancel_terminal([RECEIPT], {}, account_ids=bindings, now_ms=NOW)
     with pytest.raises(ValueError, match="accounts_unknown"):
         evaluate_request_cancel_terminal([], {}, account_ids={}, now_ms=NOW)
+    duplicate = replace(RECEIPT, scope=replace(SCOPE, account_id="foreign", event_id="another"))
+    with pytest.raises(ValueError, match="accounts_unknown"):
+        evaluate_request_cancel_terminal([duplicate, RECEIPT], {},
+                                          account_ids={"webull": "actual-account"}, now_ms=NOW)
 
 
 def test_aixi_same_day_terminal_receipt_never_expires_by_request_age():
