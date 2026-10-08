@@ -1,7 +1,10 @@
 # WBQUIET1 shadow data: log-only draft
 
 Owner: codex-2. Branch: `codex/wbquiet1-shadow-log`.
-Base: `b8fd3c3e57ba0edec06e4fd13c1ad7c299dc1857` (Step 0 over main d244f602).
+Application base: main `d244f602491e5d316a05670b205315466aed2a4d`.
+Step 0 read: `b8fd3c3e57ba0edec06e4fd13c1ad7c299dc1857` on
+`codex/wbquiet1-step0-impact`, `docs/review-artifacts/wbquiet1/STEP_0_2026-10-08.md`.
+The study/evidence commit stays separate; this PR contains only the shadow files.
 
 Operator disposition 10-08 supersedes Step 0's five-session wait: collect today
 and tomorrow, report Friday evening, operator decides the trading change this
