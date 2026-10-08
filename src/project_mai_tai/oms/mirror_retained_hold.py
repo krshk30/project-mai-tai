@@ -5,11 +5,13 @@ import asyncio
 import hashlib
 import json
 from copy import deepcopy
+from datetime import UTC, datetime
 from threading import RLock
 from decimal import Decimal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from sqlalchemy import event as sqlalchemy_event, select, update
+from sqlalchemy import String, and_, cast, event as sqlalchemy_event, func, not_, or_, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
@@ -343,7 +345,66 @@ class MirrorRetainedHoldMixin:
                 uncertain = True
         return list(dict.fromkeys(clients)), uncertain
 
-    def _mirrorhold_gate(self, session, event, *, ignore_client=""):
+    def _mirrorhold_segment_readable(self, metadata):
+        segment = metadata.get("fanout_segment_id") if isinstance(metadata, dict) else None
+        return (type(segment) in {str, int} and str(segment).isascii()
+                and str(segment).isdigit() and bool(str(segment).lstrip("0")))
+
+    def _mirrorhold_timestamp_readable(self, session, timestamp):
+        return (isinstance(timestamp, datetime) and
+                (timestamp.utcoffset() is not None or session.get_bind().dialect.name == "sqlite"))
+
+    def _mirrorhold_session_orders(self, session, account, event):
+        anchor = current_session_anchor(self._nfq_now())
+        segment = BrokerOrder.payload["fanout_segment_id"].as_string()
+        if session.get_bind().dialect.name == "postgresql":
+            payload = cast(BrokerOrder.payload, JSONB)
+            object_type = func.jsonb_typeof(payload)
+            segment_type = func.jsonb_typeof(payload["fanout_segment_id"])
+            valid_types = {"string", "number"}
+
+            def has_key(key):
+                return payload.has_key(key)
+        else:
+            object_type = func.json_type(BrokerOrder.payload)
+            segment_type = func.json_type(BrokerOrder.payload, "$.fanout_segment_id")
+            valid_types = {"text", "integer"}
+
+            def has_key(key):
+                return func.json_type(BrokerOrder.payload, "$." + key).is_not(None)
+        segment_key = has_key("fanout_segment_id")
+        unknown_identity = or_(
+            object_type.is_(None), object_type != "object",
+            and_(segment_key, or_(segment.is_(None), segment_type.not_in(valid_types),
+                                 not_(cast(segment, String).regexp_match(r"^[0-9]+$")),
+                                 cast(segment, String).regexp_match(r"^0+$"))),
+            and_(not_(segment_key), or_(has_key("fanout_slot_id"), has_key("mirrorhold_id"))),
+        )
+        # PostgreSQL compares typed instants; SQLite tests store UTC naive.
+        # Keep working and ambiguous rows without inferring expiry from DAY/GTC.
+        return session.scalars(select(BrokerOrder).where(
+            BrokerOrder.broker_account_id == account.id, BrokerOrder.symbol == event.payload.symbol,
+            BrokerOrder.side == "buy",
+            or_(BrokerOrder.submitted_at >= anchor, BrokerOrder.submitted_at.is_(None),
+                cast(segment, String) == identity(event)[3], BrokerOrder.status.is_(None),
+                BrokerOrder.status.not_in({"filled", "rejected", "cancelled", "canceled", "expired"}),
+                unknown_identity),
+        )).all()
+
+    def _mirrorhold_unrelated_legacy_fill(self, session, order, event):
+        md = order.payload
+        if (order.status != "filled" or not isinstance(md, dict)
+                or any(k in md for k in ("fanout_segment_id", "fanout_slot_id", "mirrorhold_id"))
+                or not self._mirrorhold_timestamp_readable(session, order.submitted_at)):
+            return False
+        timestamp = order.submitted_at
+        if timestamp.utcoffset() is None:  # SQLite's UTC storage only; validated above.
+            timestamp = timestamp.replace(tzinfo=UTC)
+        segment_started = datetime.fromtimestamp(int(identity(event)[3]) / 1000, UTC)
+        return (timestamp < segment_started and bool(session.scalar(
+            select(Fill.id).where(Fill.order_id == order.id, Fill.filled_at < segment_started).limit(1))))
+
+    def _mirrorhold_gate(self, session, event, *, ignore_client="", session_bound=False, scan_receipt=None):
         if not self._nfq_window_open(event):
             return "resting_window_ended"
         latest = session.scalar(select(DashboardSnapshot).where(
@@ -362,11 +423,36 @@ class MirrorRetainedHoldMixin:
             return None
         # Only this account can settle this leg; sibling rejection/acceptance/fill
         # is not mirror retirement evidence. Other live buys still block dispatch.
-        orders = session.scalars(select(BrokerOrder).where(
-            BrokerOrder.broker_account_id == account.id, BrokerOrder.symbol == event.payload.symbol,
-            BrokerOrder.side == "buy",
-        )).all()
+        if session_bound:
+            orders = self._mirrorhold_session_orders(session, account, event)
+            if scan_receipt is not None:
+                scan_receipt["orders_considered"] = len(orders)
+            # Exact slot/segment fill proof wins over unrelated ambiguity.
+            for order in orders:
+                md = order.payload
+                if (self._mirrorhold_segment_readable(md)
+                        and str(md["fanout_segment_id"]) == identity(event)[3]
+                        and md.get("fanout_slot_id") == identity(event)[4]
+                        and (order.status in {"filled", "partially_filled"} or session.scalar(
+                            select(Fill.id).where(Fill.order_id == order.id).limit(1)))):
+                    return "mirror_filled"
+        else:
+            orders = session.scalars(select(BrokerOrder).where(
+                BrokerOrder.broker_account_id == account.id, BrokerOrder.symbol == event.payload.symbol,
+                BrokerOrder.side == "buy",
+            )).all()
         for order in orders:
+            if session_bound:
+                if not self._mirrorhold_timestamp_readable(session, order.submitted_at):
+                    return "dispatch_uncertain"
+                if not self._mirrorhold_segment_readable(order.payload):
+                    if self._mirrorhold_unrelated_legacy_fill(session, order, event):
+                        continue
+                    return "dispatch_uncertain"
+                if (str(order.payload["fanout_segment_id"]) == identity(event)[3]
+                        and (not isinstance(order.payload.get("fanout_slot_id"), str)
+                             or not order.payload["fanout_slot_id"].strip())):
+                    return "dispatch_uncertain"
             md = order.payload or {}
             same_slot = (md.get("fanout_slot_id") == identity(event)[4]
                          and str(md.get("fanout_segment_id")) == identity(event)[3])
@@ -433,32 +519,44 @@ class MirrorRetainedHoldMixin:
     def _mirrorhold_dispatch(self, session, event):
         if not self._mirrorhold_scope(event):
             return None
+        scan_receipt = {"orders_considered": 0}
+
+        def refuse(reason):
+            self.logger.warning("[OMS-MIRRORHOLD1] account=%s symbol=%s phase=refused reason=%s orders_considered=%s",
+                                event.payload.broker_account_name, event.payload.symbol, reason,
+                                scan_receipt["orders_considered"])
+            return reason
+
         if self.__dict__.get("_symbol_tick_work_closing", False):
-            return "mirrorhold_shutdown"
+            return refuse("mirrorhold_shutdown")
         row = self._mirrorhold_read(session, event)
         if row is None:
-            return "mirrorhold_owner_missing"
+            return refuse("mirrorhold_owner_missing")
         data, md = row.payload, event.payload.metadata
         if data["phase"] not in {"held", "queued"}:
-            return "mirrorhold_owner_" + data["phase"]
+            return refuse("mirrorhold_owner_" + data["phase"])
         if data["wire_submissions"] >= MAX_WIRE_SUBMISSIONS:
             self._mirrorhold_write(session, row, {**data, "phase": "capped", "token": "",
                                                    "reason": "actual_submission_cap"})
-            return "mirrorhold_actual_submission_cap"
+            return refuse("mirrorhold_actual_submission_cap")
         if (data["price_generation"] != price_generation(event)
                 or Decimal(data["event"]["payload"]["quantity"]) != event.payload.quantity
                 or (md.get("mirrorhold_token") and (data["phase"] != "queued"
                     or data["token"] != md["mirrorhold_token"]))):
-            return "mirrorhold_stale_generation_or_quantity"
+            return refuse("mirrorhold_stale_generation_or_quantity")
         client = self._build_client_order_id(event)
         if client in data["wire_clients"]:
-            return "mirrorhold_duplicate_client"
-        reason = self._mirrorhold_gate(session, event)
+            return refuse("mirrorhold_duplicate_client")
+        reason = self._mirrorhold_gate(session, event, session_bound=True, scan_receipt=scan_receipt)
         if reason:
-            return "mirrorhold_" + reason
+            if reason == "mirror_filled":
+                data = self._mirrorhold_write(session, row, {**data, "phase": "retired", "token": "",
+                    "reason": reason})
+                self._mirrorhold_project(data)
+            return refuse("mirrorhold_" + reason)
         reading = self._mirror_reading(event.payload.symbol)
         if not reading.fresh or reading.price < Decimal(md["stop_price"]) * Decimal("0.92"):
-            return "mirrorhold_fresh_in_band_required"
+            return refuse("mirrorhold_fresh_in_band_required")
         md["mirrorhold_id"] = str(row.id)
         md["mirrorhold_dispatch_generation"] = data["price_generation"]
         data = self._mirrorhold_write(session, row, {**data, "phase": "dispatching",
