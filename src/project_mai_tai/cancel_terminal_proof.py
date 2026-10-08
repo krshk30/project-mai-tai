@@ -58,6 +58,7 @@ class CancelTerminalEvidence:
     target_client_order_id: str = ""
     target_symbol: str = ""
     target_account_id: str = ""
+    target_filled_quantity: str = ""
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,8 @@ def evaluate_cancel_terminal(
             return result("broker_target_time_unknown")
         if evidence.target_status not in TERMINAL:
             return result("broker_target_not_terminal")
+        if evidence.target_filled_quantity != "0":
+            return result("broker_target_fills_unknown_or_present")
     else:
         if expected.status != "rejected" or not (
             expected.refusal_code == "cancel_target_not_found"
