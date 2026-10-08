@@ -8260,3 +8260,15 @@ Absence of DB rows is not proof that prior Redis publications drained. No
 existing complete certificate identified; F NOT READY early, not hidden until
 14:30. Runner writer instructed exclude F unless reviewer resolves scope/proof
 and a new reviewed head is ready. No production writes or ownership waiver.
+
+2026-10-08 14:10 ET codex-2 C46: G top P1 source3866153b marked ready for
+review14:09 ET; exact hosted Validate37816660862/37816668440 both SUCCESS.
+Remaining new temporal evidence explicitly listed in PR body, not hidden by
+READY metadata. Sole writer adding tests only; parent own-src import verified,
+uncommitted temporal tests4 PASS1.92s. AIXI outside-band prestage controlled,
+not an actual captured quote; parent requested outgoing FLYE09:55 price/quantity
+assertions. Prior161 PASS/13 mutants RED preserved, successor CI not inherited.
+H fa278ecd both hosted Validate SUCCESS, parent125 runtime/regression PASS;
+local full and final readiness pending. B pin/Validate PASS, A pin PASS with
+Validate reruns active. F functional blocker remains, no unsafe CLEAR or
+production action. No source writer displaced and no extra proof worker.
