@@ -54,11 +54,12 @@ def _webull_response(leaf, request, *, endpoint: str, owner: str):
     return client.get_response(request)
 
 
-def _webull_book(leaf: WebullBrokerAdapter, receipt: CancelReceipt) -> CompleteWorkingBook:
+def _webull_book(
+    leaf: WebullBrokerAdapter, account_name: str, account_id: str,
+) -> CompleteWorkingBook:
     # This SDK request is /trade/orders/list-open, never list-today or target cache.
     from webull.trade.request.get_open_orders_request import OpenOrdersListRequest
 
-    scope = receipt.scope
     started = now_ms()
     orders: list[BookOrder] = []
     seen: set[str] = set()
@@ -70,16 +71,16 @@ def _webull_book(leaf: WebullBrokerAdapter, receipt: CancelReceipt) -> CompleteW
             "/trade/orders/list-open", "v2", "GET",
         ):
             raise ValueError("open_book_sdk_contract_unmeasured")
-        request.set_account_id(scope.account_id)
+        request.set_account_id(account_id)
         request.set_page_size(100)
         if cursor:
             request.set_last_client_order_id(cursor)
-        response = _webull_response(leaf, request, endpoint="list-open", owner=scope.account_id)
+        response = _webull_response(leaf, request, endpoint="list-open", owner=account_id)
         body = leaf._body(response)
         if (leaf._response_status(response) != 200 or not isinstance(body, dict)
                 or body.get("error_code")):
             raise ValueError("open_book_unreadable")
-        if body.get("account_id", scope.account_id) != scope.account_id:
+        if body.get("account_id", account_id) != account_id:
             raise ValueError("open_book_account_mismatch")
         flags = [body[k] for k in ("has_next", "hasNext") if k in body]
         if not flags or any(type(flag) is not bool or flag != flags[0] for flag in flags):
@@ -88,7 +89,7 @@ def _webull_book(leaf: WebullBrokerAdapter, receipt: CancelReceipt) -> CompleteW
         if not isinstance(rows, list) or len(rows) > 100:
             raise ValueError("open_book_rows_unknown")
         for row in rows:
-            if not isinstance(row, dict) or row.get("account_id", scope.account_id) != scope.account_id:
+            if not isinstance(row, dict) or row.get("account_id", account_id) != account_id:
                 raise ValueError("open_book_row_account_unknown")
             coid, symbol = row.get("client_order_id"), row.get("symbol")
             status = _status(row.get("order_status", row.get("status", "")))
@@ -100,9 +101,11 @@ def _webull_book(leaf: WebullBrokerAdapter, receipt: CancelReceipt) -> CompleteW
             if status in TERMINAL and not _zero(row.get("filled_qty")):
                 raise ValueError("open_book_terminal_fills_unknown_or_present")
             seen.add(coid)
-            orders.append(BookOrder(coid, symbol, status))
+            side = row.get("side", "unknown")
+            side = side.lower() if isinstance(side, str) else "unknown"
+            orders.append(BookOrder(coid, symbol, status, side))
         if not flags[0]:
-            return CompleteWorkingBook(scope.account_name, scope.account_id, started, now_ms(),
+            return CompleteWorkingBook(account_name, account_id, started, now_ms(),
                                        True, "all_working", tuple(orders), "broker")
         if not rows:
             raise ValueError("open_book_empty_next_page")
@@ -111,6 +114,26 @@ def _webull_book(leaf: WebullBrokerAdapter, receipt: CancelReceipt) -> CompleteW
             raise ValueError("open_book_cursor_did_not_advance")
         cursors.add(cursor)
     raise ValueError("open_book_page_limit")
+
+
+async def acquire_complete_working_book(adapter, account_name: str) -> CompleteWorkingBook | None:
+    """One uncached account acquisition; absence is not a no-dispatch/cancel proof.
+
+    No client identity is invented for a never-dispatched request. Unsupported
+    account-book capabilities, including Schwab's capped listing, remain UNKNOWN.
+    """
+    try:
+        leaf, account_id = broker_binding(adapter, account_name)
+        if isinstance(leaf, WebullBrokerAdapter):
+            return await asyncio.to_thread(_webull_book, leaf, account_name, account_id)
+    except Exception:
+        pass
+    return None
+
+
+async def acquire_request_working_books(adapter, account_names) -> dict[str, CompleteWorkingBook | None]:
+    """Explicit per-request acquisition only; unsupported accounts stay present as UNKNOWN."""
+    return {name: await acquire_complete_working_book(adapter, name) for name in account_names}
 
 
 def _webull_target(leaf: WebullBrokerAdapter, receipt: CancelReceipt, broker_order_id: str):
@@ -158,7 +181,8 @@ async def acquire_broker_cancel_evidence(
         # A known working/fill read is a contradiction and cannot fall back to absence.
         if not status:
             try:
-                book = await asyncio.to_thread(_webull_book, leaf, receipt)
+                book = await asyncio.to_thread(_webull_book, leaf,
+                                               receipt.scope.account_name, receipt.scope.account_id)
                 evidence = replace(evidence, book=book, source="broker")
             except Exception:
                 if not status:
