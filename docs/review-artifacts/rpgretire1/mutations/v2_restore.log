@@ -1,7 +1,7 @@
-.....................................F..F...F                            [100%]2026-10-08 08:13:50,516 ERROR [asyncio] Task was destroyed but it is pending!
-task: <Task pending name='Task-90' coro=<real_bot_startup.<locals>.idle() running at /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/rpgretire1-v2_restore-40pov8c2/tests/unit/test_rpgstuck1_startup.py:145> wait_for=<Future pending cb=[Task.task_wakeup()]>>
-2026-10-08 08:13:50,516 ERROR [asyncio] Task was destroyed but it is pending!
-task: <Task pending name='Task-91' coro=<real_bot_startup.<locals>.idle() running at /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/rpgretire1-v2_restore-40pov8c2/tests/unit/test_rpgstuck1_startup.py:145> wait_for=<Future pending cb=[Task.task_wakeup()]>>
+.....................................F..F...F                            [100%]2026-10-08 08:25:13,519 ERROR [asyncio] Task was destroyed but it is pending!
+task: <Task pending name='Task-90' coro=<real_bot_startup.<locals>.idle() running at /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/rpgretire1-v2_restore-zbyeo607/tests/unit/test_rpgstuck1_startup.py:145> wait_for=<Future pending cb=[Task.task_wakeup()]>>
+2026-10-08 08:25:13,519 ERROR [asyncio] Task was destroyed but it is pending!
+task: <Task pending name='Task-91' coro=<real_bot_startup.<locals>.idle() running at /private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/rpgretire1-v2_restore-zbyeo607/tests/unit/test_rpgstuck1_startup.py:145> wait_for=<Future pending cb=[Task.task_wakeup()]>>
 
 =================================== FAILURES ===================================
 ___ test_flag_off_restore_and_cached_ownership_do_not_read_or_project[True] ____
@@ -20,11 +20,11 @@ tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:49,298 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:49,298 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:49,298 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:49,298 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:49,298 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:25:12,495 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:25:12,495 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:25:12,495 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:25:12,496 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:25:12,496 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 ____________ test_missing_flag_defaults_off_without_journal_access _____________
 tests/unit/test_rpgretire1_flag_off.py:126: in test_missing_flag_defaults_off_without_journal_access
     await h.bot._rpg_handoff_pass()
@@ -41,11 +41,11 @@ tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:49,714 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:49,714 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:49,714 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:49,714 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:49,714 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:25:12,862 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:25:12,862 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:25:12,862 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:25:12,862 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:25:12,862 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_recorded_tickets_real_startup_off_leaves_journal_and_ownership_dormant __
 tests/unit/test_rpgretire1_flag_off.py:181: in test_recorded_tickets_real_startup_off_leaves_journal_and_ownership_dormant
     await real_bot_startup(monkeypatch, h)
@@ -69,17 +69,17 @@ tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:50,296 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:50,296 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:50,296 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:50,296 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:50,296 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
-2026-10-08 08:13:50,326 INFO [project_mai_tai.services.schwab_1m_v2_bot] schwab_1m_v2 bot starting pid=16208 (enabled=True)
-2026-10-08 08:13:50,378 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-IDENTITY-RESTORE] restored=0 could_not_tell=0
-2026-10-08 08:13:50,380 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-OUTCOME-RESTORE] evaluated=0 applied=0 could_not_tell=0
-2026-10-08 08:13:50,381 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT] dual-broker fan-out ENABLED — Webull leg -> account live:orb
+2026-10-08 08:25:13,309 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:25:13,309 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:25:13,309 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:25:13,309 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:25:13,309 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:25:13,337 INFO [project_mai_tai.services.schwab_1m_v2_bot] schwab_1m_v2 bot starting pid=34438 (enabled=True)
+2026-10-08 08:25:13,383 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-IDENTITY-RESTORE] restored=0 could_not_tell=0
+2026-10-08 08:25:13,387 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-OUTCOME-RESTORE] evaluated=0 applied=0 could_not_tell=0
+2026-10-08 08:25:13,387 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT] dual-broker fan-out ENABLED — Webull leg -> account live:orb
 =========================== short test summary info ============================
 FAILED tests/unit/test_rpgretire1_flag_off.py::test_flag_off_restore_and_cached_ownership_do_not_read_or_project[True]
 FAILED tests/unit/test_rpgretire1_flag_off.py::test_missing_flag_defaults_off_without_journal_access
 FAILED tests/unit/test_rpgretire1_flag_off.py::test_recorded_tickets_real_startup_off_leaves_journal_and_ownership_dormant
-3 failed, 42 passed in 7.13s
+3 failed, 42 passed in 6.05s

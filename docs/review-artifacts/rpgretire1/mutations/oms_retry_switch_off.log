@@ -3,24 +3,24 @@
 __________ test_running_retry_loop_stops_before_scan_after_switch_off __________
 tests/unit/test_rpgretire1_flag_off.py:166: in test_running_retry_loop_stops_before_scan_after_switch_off
     await h.service._run_rpg_retry_loop(asyncio.Event())
-src/project_mai_tai/oms/atr_reprice_runtime.py:783: in _run_rpg_retry_loop
+src/project_mai_tai/oms/atr_reprice_runtime.py:784: in _run_rpg_retry_loop
     await self._rpg_retry_pause(stop_event, delay if delay is not None else (1.0 if active else None))
 tests/unit/test_rpgretire1_flag_off.py:159: in pause
     assert h.service._rpg_enabled(), "flag OFF retry loop kept running"
 E   AssertionError: flag OFF retry loop kept running
 E   assert False
 E    +  where False = _rpg_enabled()
-E    +    where _rpg_enabled = <project_mai_tai.oms.service.OmsRiskService object at 0x10d6a7440>._rpg_enabled
-E    +      where <project_mai_tai.oms.service.OmsRiskService object at 0x10d6a7440> = namespace(service=<project_mai_tai.oms.service.OmsRiskService object at 0x10d6a7440>, strategy=<project_mai_tai.strate...e': 'schwab_1m_v2', 'strategy_version': 'v1.32', 'broker_order_id': '1008159036414', 'resting_entry_cancel': 'true'}))).service
+E    +    where _rpg_enabled = <project_mai_tai.oms.service.OmsRiskService object at 0x10aeff4a0>._rpg_enabled
+E    +      where <project_mai_tai.oms.service.OmsRiskService object at 0x10aeff4a0> = namespace(service=<project_mai_tai.oms.service.OmsRiskService object at 0x10aeff4a0>, strategy=<project_mai_tai.strate...e': 'schwab_1m_v2', 'strategy_version': 'v1.32', 'broker_order_id': '1008159036414', 'resting_entry_cancel': 'true'}))).service
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:34,230 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:34,230 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:34,230 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:34,230 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:34,230 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
-2026-10-08 08:13:34,239 ERROR [oms-risk] [OMS-RPG1] retry wakeup failed; durable ownership retained
+2026-10-08 08:24:59,355 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:59,355 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:59,355 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:59,355 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:59,355 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:59,361 ERROR [oms-risk] [OMS-RPG1] retry wakeup failed; durable ownership retained
 Traceback (most recent call last):
-  File "/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/rpgretire1-oms_retry_switch_off-bgg2cttf/src/project_mai_tai/oms/atr_reprice_runtime.py", line 755, in _run_rpg_retry_loop
+  File "/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/rpgretire1-oms_retry_switch_off-f_v5ieve/src/project_mai_tai/oms/atr_reprice_runtime.py", line 756, in _run_rpg_retry_loop
     jobs = dict(await asyncio.to_thread(self._rpg_retry_jobs, include_unknown=startup))
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/threads.py", line 25, in to_thread
@@ -29,13 +29,13 @@ Traceback (most recent call last):
   File "/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
     result = self.fn(*self.args, **self.kwargs)
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/rpgretire1-oms_retry_switch_off-bgg2cttf/tests/unit/test_rpgretire1_flag_off.py", line 154, in scan
+  File "/private/var/folders/lb/11jbgwl53gx442wdg_wrv6p40000gp/T/rpgretire1-oms_retry_switch_off-f_v5ieve/tests/unit/test_rpgretire1_flag_off.py", line 154, in scan
     assert h.service._rpg_enabled(), "flag OFF retry loop scanned tickets"
 AssertionError: flag OFF retry loop scanned tickets
 assert False
  +  where False = _rpg_enabled()
- +    where _rpg_enabled = <project_mai_tai.oms.service.OmsRiskService object at 0x10d6a7440>._rpg_enabled
- +      where <project_mai_tai.oms.service.OmsRiskService object at 0x10d6a7440> = namespace(service=<project_mai_tai.oms.service.OmsRiskService object at 0x10d6a7440>, strategy=<project_mai_tai.strate...e': 'schwab_1m_v2', 'strategy_version': 'v1.32', 'broker_order_id': '1008159036414', 'resting_entry_cancel': 'true'}))).service
+ +    where _rpg_enabled = <project_mai_tai.oms.service.OmsRiskService object at 0x10aeff4a0>._rpg_enabled
+ +      where <project_mai_tai.oms.service.OmsRiskService object at 0x10aeff4a0> = namespace(service=<project_mai_tai.oms.service.OmsRiskService object at 0x10aeff4a0>, strategy=<project_mai_tai.strate...e': 'schwab_1m_v2', 'strategy_version': 'v1.32', 'broker_order_id': '1008159036414', 'resting_entry_cancel': 'true'}))).service
 =========================== short test summary info ============================
 FAILED tests/unit/test_rpgretire1_flag_off.py::test_running_retry_loop_stops_before_scan_after_switch_off
-1 failed, 44 passed in 7.35s
+1 failed, 44 passed in 6.14s

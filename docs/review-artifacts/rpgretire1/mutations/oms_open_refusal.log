@@ -10,21 +10,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:54,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:54,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:54,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:54,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:54,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:23,839 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:23,839 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:23,839 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:23,839 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:23,839 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[prepared-False-webull] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -35,21 +35,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:55,242 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:55,243 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:55,243 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:55,243 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:55,243 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:24,221 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:24,221 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:24,221 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:24,221 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:24,221 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[waiting-False-schwab] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -60,21 +60,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:55,841 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:55,841 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:55,841 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:55,841 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:55,841 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:24,814 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:24,814 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:24,814 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:24,814 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:24,814 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[waiting-False-webull] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -85,21 +85,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:56,213 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:56,213 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:56,213 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:56,213 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:56,213 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:25,150 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:25,150 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:25,150 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:25,150 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:25,150 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[fills_waiting-False-schwab] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -110,21 +110,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:56,875 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:56,875 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:56,875 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:56,875 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:56,875 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:25,713 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:25,713 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:25,713 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:25,713 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:25,713 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[fills_waiting-False-webull] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -135,21 +135,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:57,232 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:57,233 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:57,233 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:57,233 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:57,233 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:26,025 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:26,025 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:26,025 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:26,025 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:26,025 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[held_unknown-False-schwab] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -160,21 +160,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:57,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:57,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:57,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:57,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:57,851 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:26,588 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:26,588 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:26,588 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:26,588 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:26,588 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[held_unknown-False-webull] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -185,21 +185,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:58,195 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:58,195 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:58,196 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:58,196 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:58,196 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:26,902 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:26,902 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:26,902 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:26,902 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:26,902 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[clear-False-schwab] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -210,21 +210,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:58,865 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:58,866 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:58,866 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:58,866 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:58,866 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:27,492 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:27,492 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:27,492 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:27,492 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:27,492 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[clear-False-webull] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -235,21 +235,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:59,214 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:59,214 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:59,214 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:59,214 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:59,214 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:27,794 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:27,795 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:27,795 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:27,795 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:27,795 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[submitting-False-schwab] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -260,21 +260,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:12:59,878 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:12:59,878 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:12:59,878 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:12:59,879 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:12:59,879 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:28,339 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:28,339 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:28,339 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:28,339 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:28,339 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[submitting-False-webull] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -285,21 +285,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:00,247 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:00,247 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:00,247 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:00,247 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:00,247 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:28,657 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:28,657 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:28,657 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:28,657 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:28,657 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[submit_unknown-False-schwab] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -310,21 +310,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:00,917 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:00,917 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:00,917 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:00,917 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:00,917 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:29,200 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:29,200 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:29,200 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:29,200 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:29,200 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[submit_unknown-False-webull] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -335,21 +335,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:01,244 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:01,244 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:01,244 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:01,244 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:01,244 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:29,510 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:29,510 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:29,510 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:29,510 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:29,510 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[price_wait-False-schwab] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -360,21 +360,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:01,913 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:01,913 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:01,913 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:01,913 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:01,913 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:30,106 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:30,106 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:30,106 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:30,106 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:30,106 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[price_wait-False-webull] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -385,21 +385,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:02,248 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:02,248 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:02,248 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:02,248 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:02,248 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:30,418 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:30,418 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:30,418 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:30,418 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:30,418 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[placed-False-schwab] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -410,21 +410,21 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:02,889 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:02,889 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:02,889 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:02,889 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:02,889 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:30,988 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:30,988 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:30,988 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:30,988 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:30,988 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 _ test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[placed-False-webull] _
 tests/unit/test_rpgretire1_flag_off.py:51: in test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses
     result = await h.service.process_trade_intent(opening)
@@ -435,53 +435,53 @@ src/project_mai_tai/oms/service.py:523: in refreshed
 src/project_mai_tai/oms/service.py:1702: in process_trade_intent
     rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:635: in _rpg_fresh_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:636: in _rpg_fresh_open_refusal
     refusal = self._rpg_open_refusal(event, session=session)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:03,276 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:03,276 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:03,276 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:03,276 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:03,276 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:31,296 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:31,296 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AIXI source=rth_resting_mirror slot=resting slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:31,296 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AIXI slot_id=0310ce57-4030-5d2d-befc-9f6554e48f06 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:31,296 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AIXI source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:31,296 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AIXI slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 ________ test_flag_off_oms_restore_ticks_evidence_and_token_do_not_read ________
 tests/unit/test_rpgretire1_flag_off.py:106: in test_flag_off_oms_restore_ticks_evidence_and_token_do_not_read
     assert h.service._rpg_open_refusal(opening) is None
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:590: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:591: in _rpg_open_refusal
     job = self._rpg_journal().read(UUID(token), session=session)
           ^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:04,309 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:04,309 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:04,309 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:04,309 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:04,309 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:32,184 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:32,184 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:32,184 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:32,184 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:32,184 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 ____________ test_missing_flag_defaults_off_without_journal_access _____________
 tests/unit/test_rpgretire1_flag_off.py:125: in test_missing_flag_defaults_off_without_journal_access
     assert h.service._rpg_open_refusal(h.opening) is None
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-src/project_mai_tai/oms/atr_reprice_runtime.py:621: in _rpg_open_refusal
+src/project_mai_tai/oms/atr_reprice_runtime.py:622: in _rpg_open_refusal
     for _, job in self._rpg_journal().jobs(session=session):
                   ^^^^^^^^^^^^^^^^^^^
 tests/unit/test_rpgretire1_flag_off.py:15: in unreadable
     pytest.fail("flag OFF consulted RPG journal/cache")
 E   Failed: flag OFF consulted RPG journal/cache
 ----------------------------- Captured stdout call -----------------------------
-2026-10-08 08:13:04,428 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
-2026-10-08 08:13:04,428 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
-2026-10-08 08:13:04,428 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
-2026-10-08 08:13:04,428 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
-2026-10-08 08:13:04,428 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:24:32,291 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:24:32,291 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:24:32,291 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:24:32,291 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:24:32,291 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
 =========================== short test summary info ============================
 FAILED tests/unit/test_rpgretire1_flag_off.py::test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[prepared-False-schwab]
 FAILED tests/unit/test_rpgretire1_flag_off.py::test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[prepared-False-webull]
@@ -503,4 +503,4 @@ FAILED tests/unit/test_rpgretire1_flag_off.py::test_live_looking_ticket_flag_off
 FAILED tests/unit/test_rpgretire1_flag_off.py::test_live_looking_ticket_flag_off_open_proceeds_and_on_refuses[placed-False-webull]
 FAILED tests/unit/test_rpgretire1_flag_off.py::test_flag_off_oms_restore_ticks_evidence_and_token_do_not_read
 FAILED tests/unit/test_rpgretire1_flag_off.py::test_missing_flag_defaults_off_without_journal_access
-20 failed, 25 passed in 11.47s
+20 failed, 25 passed in 10.12s
