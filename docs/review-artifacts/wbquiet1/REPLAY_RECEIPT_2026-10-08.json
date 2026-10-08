@@ -1,0 +1,1943 @@
+{
+  "as_of_utc": "2026-10-08T10:28:42.425075+00:00",
+  "biya": [
+    {
+      "at": "2026-10-07T18:59:02.807000+00:00",
+      "line": "2026-10-07 18:59:02,807 INFO [oms-risk] [OMS-NFQ1] sym=BIYA segment=1791395941957 slot_id=7e316470-9c59-502f-a3f8-c2c3ec7714f4 attempt=schwab_1m_v2-BIYA-open-0e40052d917c decision=sent reason=accepted cache_age_ms=3201.076 cache_source=ask cache_timestamp=2026-10-07T18:58:59.605986+00:00 cache_clock=producer_timestamp oms_consumption_age=unknown wire_age_ms=3035 wire_source=ask",
+      "line_number": 29008,
+      "path": "/var/log/project-mai-tai/oms.log-20261008",
+      "service": "oms"
+    },
+    {
+      "at": "2026-10-07T19:12:09.756000+00:00",
+      "line": "2026-10-07 19:12:09,756 WARNING [oms-risk] [OMS-CANCEL-RESUBMIT] BIYA live:orb coid=schwab_1m_v2-BIYA-open-0e40052d917c still reads UNREADABLE after 3 reads \u2014 re-sending the cancel (round 1 of 1)",
+      "line_number": 29408,
+      "path": "/var/log/project-mai-tai/oms.log-20261008",
+      "service": "oms"
+    },
+    {
+      "at": "2026-10-07T19:12:15.930000+00:00",
+      "line": "2026-10-07 19:12:15,930 WARNING [oms-risk] [OMS-CANCEL-UNCONFIRMED] BIYA live:orb coid=schwab_1m_v2-BIYA-open-0e40052d917c broker_id=None last_status=UNREADABLE reads_failed=6 dead_target_bound=0 \u2014 THE CANCEL WAS NOT CONFIRMED. The order may still be WORKING and unowned at the broker. This is the FRTT 2026-08-11 shape (136 min live). Check it by hand.",
+      "line_number": 29454,
+      "path": "/var/log/project-mai-tai/oms.log-20261008",
+      "service": "oms"
+    }
+  ],
+  "days": {
+    "2026-10-02": {
+      "actual_saved_calls": "UNMEASURED: no per-read state/due-time trace",
+      "cancel_417_count": 2,
+      "cancel_receipts": [
+        {
+          "at": "2026-10-02T16:00:09.963000+00:00",
+          "coid": "schwab_1m_v2-AIXI-protect-326f4d59f711T",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 21960,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "request_id": "afd8b358-5293-478f-8db5-d9c84583560b",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-02T16:00:10.357000+00:00",
+          "coid": "schwab_1m_v2-AIXI-protect-326f4d59f711S",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 22002,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "request_id": "bac016f3-cc76-4234-9b8d-76d2db0e58a9",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        }
+      ],
+      "census_live_orb_zero": [],
+      "census_windows": 287,
+      "counter_first_minute": "2026-10-02T04:00+00:00",
+      "counter_last_minute": "2026-10-03T03:59+00:00",
+      "counterfactual_changed_decisions": "UNMEASURED: no historical positions snapshots",
+      "decision_lines_searched": 85,
+      "decision_minutes_searched": 47,
+      "endpoints": {
+        "/account/positions": {
+          "failure": 0,
+          "minutes": 1440,
+          "success": 5744,
+          "total": 5744
+        },
+        "/openapi/instrument/stock/list": {
+          "failure": 0,
+          "minutes": 3,
+          "success": 3,
+          "total": 3
+        },
+        "/openapi/trade/order/place": {
+          "failure": 0,
+          "minutes": 8,
+          "success": 8,
+          "total": 8
+        },
+        "/trade/order/cancel": {
+          "failure": 2,
+          "minutes": 42,
+          "success": 50,
+          "total": 52
+        },
+        "/trade/order/detail": {
+          "failure": 406,
+          "minutes": 272,
+          "success": 1531,
+          "total": 1937
+        },
+        "/trade/order/place": {
+          "failure": 0,
+          "minutes": 49,
+          "success": 51,
+          "total": 51
+        },
+        "/trade/orders/list-today": {
+          "failure": 0,
+          "minutes": 159,
+          "success": 280,
+          "total": 280
+        }
+      },
+      "exit_child_cancel_failures": 2,
+      "missing_credentials": {
+        "live:polygon_30s": 5742,
+        "live:webull_30s": 5742,
+        "paper:polygon_30s": 5742,
+        "paper:schwab_1m_v2": 5742
+      },
+      "naive_cumulative_sums": {
+        "/account/positions": {
+          "failure": 0,
+          "total": 5744
+        },
+        "/openapi/instrument/stock/list": {
+          "failure": 0,
+          "total": 3
+        },
+        "/openapi/trade/order/place": {
+          "failure": 0,
+          "total": 8
+        },
+        "/trade/order/cancel": {
+          "failure": 5,
+          "total": 59
+        },
+        "/trade/order/detail": {
+          "failure": 1249,
+          "total": 4227
+        },
+        "/trade/order/place": {
+          "failure": 0,
+          "total": 51
+        },
+        "/trade/orders/list-today": {
+          "failure": 0,
+          "total": 280
+        }
+      },
+      "search_receipts": [
+        {
+          "at": "2026-10-02T12:32:40.540000+00:00",
+          "line": 13221,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 12:32:40,540 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-4355c5cbba77 entry_order_id=1008145795326 entry_qty=2.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T12:37:40.678000+00:00",
+          "line": 13315,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 12:37:40,678 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-4355c5cbba77 entry_order_id=1008145795326 entry_qty=2.00000000 managed_row_age=301s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T12:42:41.336000+00:00",
+          "line": 13406,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 12:42:41,336 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-4355c5cbba77 entry_order_id=1008145795326 entry_qty=2.00000000 managed_row_age=602s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:05:59.532000+00:00",
+          "line": 16024,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:05:59,532 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:06:44.179000+00:00",
+          "line": 16046,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:06:44,179 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=45s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:11:45.274000+00:00",
+          "line": 16325,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:11:45,274 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=346s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:16:46.113000+00:00",
+          "line": 16551,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:16:46,113 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=647s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:21:46.951000+00:00",
+          "line": 17023,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:21:46,951 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=947s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:22:32.631000+00:00",
+          "line": 17086,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:22:32,631 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-72e3785b2f61 entry_order_id=1008153001735 entry_qty=2.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:22:33.010000+00:00",
+          "line": 17129,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:22:33,010 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-0320969a2df9 entry_order_id=QDGC71LQ9B4PAM526AHS5QD6N9 entry_qty=1.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:27:03.810000+00:00",
+          "line": 17883,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:27:03,810 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=1264s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:27:32.988000+00:00",
+          "line": 17892,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:27:32,988 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-72e3785b2f61 entry_order_id=1008153001735 entry_qty=2.00000000 managed_row_age=301s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:27:33.174000+00:00",
+          "line": 17893,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:27:33,174 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-0320969a2df9 entry_order_id=QDGC71LQ9B4PAM526AHS5QD6N9 entry_qty=1.00000000 managed_row_age=302s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:32:33.831000+00:00",
+          "line": 18733,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:32:33,831 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-72e3785b2f61 entry_order_id=1008153001735 entry_qty=2.00000000 managed_row_age=602s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:32:34.056000+00:00",
+          "line": 18734,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:32:34,056 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-0320969a2df9 entry_order_id=QDGC71LQ9B4PAM526AHS5QD6N9 entry_qty=1.00000000 managed_row_age=602s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:32:34.337000+00:00",
+          "line": 18817,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:32:34,337 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=1595s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:37:49.863000+00:00",
+          "line": 19577,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:37:49,863 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-72e3785b2f61 entry_order_id=1008153001735 entry_qty=2.00000000 managed_row_age=918s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:37:50.113000+00:00",
+          "line": 19578,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:37:50,113 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-0320969a2df9 entry_order_id=QDGC71LQ9B4PAM526AHS5QD6N9 entry_qty=1.00000000 managed_row_age=918s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:37:50.338000+00:00",
+          "line": 19661,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:37:50,338 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=1911s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:43:21.231000+00:00",
+          "line": 20429,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:43:21,231 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-72e3785b2f61 entry_order_id=1008153001735 entry_qty=2.00000000 managed_row_age=1249s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:43:21.459000+00:00",
+          "line": 20430,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:43:21,459 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-0320969a2df9 entry_order_id=QDGC71LQ9B4PAM526AHS5QD6N9 entry_qty=1.00000000 managed_row_age=1250s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:43:21.721000+00:00",
+          "line": 20513,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:43:21,721 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=2242s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:44:06.867000+00:00",
+          "line": 20715,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:44:06,867 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:orb:AMOD=1.00000000"
+        },
+        {
+          "at": "2026-10-02T15:48:36.238000+00:00",
+          "line": 20890,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:48:36,238 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=2557s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:53:37.563000+00:00",
+          "line": 21362,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:53:37,563 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=2858s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T15:58:53.327000+00:00",
+          "line": 21722,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 15:58:53,327 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-326f4d59f711 entry_order_id=5AIS060I4F074RTJJM6SVV249A entry_qty=1.00000000 managed_row_age=3174s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:12:27.880000+00:00",
+          "line": 23880,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:12:27,880 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-9c7d95abab66 entry_order_id=1008155111318 entry_qty=2.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:12:28.098000+00:00",
+          "line": 23964,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:12:28,098 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-dd6cebcd33fc entry_order_id=3FHGB6DVPRB12U9NPKAR4U5M7B entry_qty=1.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:17:57.824000+00:00",
+          "line": 24576,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:17:57,824 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-9c7d95abab66 entry_order_id=1008155111318 entry_qty=2.00000000 managed_row_age=331s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:17:58.075000+00:00",
+          "line": 24577,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:17:58,075 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-dd6cebcd33fc entry_order_id=3FHGB6DVPRB12U9NPKAR4U5M7B entry_qty=1.00000000 managed_row_age=332s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:26:16.019000+00:00",
+          "line": 25358,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:26:16,019 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-73b1edbee6d7 entry_order_id=1008155913248 entry_qty=2.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:26:16.328000+00:00",
+          "line": 25400,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:26:16,328 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-1db94387940a entry_order_id=VEHUBPVQCGK44PMCQBOENBVORB entry_qty=1.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:31:31.095000+00:00",
+          "line": 25809,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:31:31,095 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-73b1edbee6d7 entry_order_id=1008155913248 entry_qty=2.00000000 managed_row_age=316s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:31:31.422000+00:00",
+          "line": 25851,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:31:31,422 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-1db94387940a entry_order_id=VEHUBPVQCGK44PMCQBOENBVORB entry_qty=1.00000000 managed_row_age=317s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:33:16.240000+00:00",
+          "line": 25974,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:33:16,240 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-539e7a0056ba entry_order_id=1008156395059 entry_qty=2.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:33:17.312000+00:00",
+          "line": 26016,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:33:17,312 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-48ff71514709 entry_order_id=T7IA3HASJ1N9D2L4O51H739QEA entry_qty=1.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:36:31.825000+00:00",
+          "line": 26485,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:36:31,825 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:36:32.070000+00:00",
+          "line": 26527,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:36:32,070 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:37:02.378000+00:00",
+          "line": 26538,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:37:02,378 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-73b1edbee6d7 entry_order_id=1008155913248 entry_qty=2.00000000 managed_row_age=648s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:37:02.961000+00:00",
+          "line": 26626,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:37:02,961 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-1db94387940a entry_order_id=VEHUBPVQCGK44PMCQBOENBVORB entry_qty=1.00000000 managed_row_age=649s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:41:32.455000+00:00",
+          "line": 27292,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:41:32,455 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=301s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:41:32.955000+00:00",
+          "line": 27293,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:41:32,955 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=302s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:42:03.436000+00:00",
+          "line": 27384,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:42:03,436 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-73b1edbee6d7 entry_order_id=1008155913248 entry_qty=2.00000000 managed_row_age=949s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:42:04.023000+00:00",
+          "line": 27470,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:42:04,023 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-1db94387940a entry_order_id=VEHUBPVQCGK44PMCQBOENBVORB entry_qty=1.00000000 managed_row_age=950s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:46:33.272000+00:00",
+          "line": 28139,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:46:33,272 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=602s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:46:34.009000+00:00",
+          "line": 28140,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:46:34,009 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=603s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:47:04.134000+00:00",
+          "line": 28231,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:47:04,134 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-73b1edbee6d7 entry_order_id=1008155913248 entry_qty=2.00000000 managed_row_age=1249s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:47:04.769000+00:00",
+          "line": 28317,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:47:04,769 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-1db94387940a entry_order_id=VEHUBPVQCGK44PMCQBOENBVORB entry_qty=1.00000000 managed_row_age=1250s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:51:49.694000+00:00",
+          "line": 28985,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:51:49,694 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=919s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:51:50.442000+00:00",
+          "line": 28986,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:51:50,442 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=919s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:52:20.184000+00:00",
+          "line": 29080,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:52:20,184 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-73b1edbee6d7 entry_order_id=1008155913248 entry_qty=2.00000000 managed_row_age=1565s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:52:20.668000+00:00",
+          "line": 29163,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:52:20,668 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-1db94387940a entry_order_id=VEHUBPVQCGK44PMCQBOENBVORB entry_qty=1.00000000 managed_row_age=1566s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:56:50.521000+00:00",
+          "line": 29829,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:56:50,521 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=1220s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:56:51.120000+00:00",
+          "line": 29830,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:56:51,120 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=1220s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:57:21.432000+00:00",
+          "line": 29924,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:57:21,432 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-73b1edbee6d7 entry_order_id=1008155913248 entry_qty=2.00000000 managed_row_age=1867s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T16:57:21.875000+00:00",
+          "line": 30007,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 16:57:21,875 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-1db94387940a entry_order_id=VEHUBPVQCGK44PMCQBOENBVORB entry_qty=1.00000000 managed_row_age=1867s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:02:07.127000+00:00",
+          "line": 30758,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:02:07,127 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=1536s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:02:07.798000+00:00",
+          "line": 30762,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:02:07,798 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=1537s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:02:38.069000+00:00",
+          "line": 30853,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:02:38,069 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-73b1edbee6d7 entry_order_id=1008155913248 entry_qty=2.00000000 managed_row_age=2183s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:02:38.619000+00:00",
+          "line": 30936,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:02:38,619 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-1db94387940a entry_order_id=VEHUBPVQCGK44PMCQBOENBVORB entry_qty=1.00000000 managed_row_age=2184s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:07:08.328000+00:00",
+          "line": 31621,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:07:08,328 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=1837s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:07:08.667000+00:00",
+          "line": 31663,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:07:08,667 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=1838s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:12:24.208000+00:00",
+          "line": 31893,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:12:24,208 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=2153s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:12:24.548000+00:00",
+          "line": 31935,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:12:24,548 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=2153s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:17:40.305000+00:00",
+          "line": 32331,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:17:40,305 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=2469s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:17:40.599000+00:00",
+          "line": 32373,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:17:40,599 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=2470s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:22:41.065000+00:00",
+          "line": 32727,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:22:41,065 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=2770s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:22:41.324000+00:00",
+          "line": 32769,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:22:41,324 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=2770s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:27:42.127000+00:00",
+          "line": 33196,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:27:42,127 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=3071s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:27:42.436000+00:00",
+          "line": 33238,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:27:42,436 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=3071s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:32:44.027000+00:00",
+          "line": 33624,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:32:44,027 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=3373s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:32:44.308000+00:00",
+          "line": 33666,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:32:44,308 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=3373s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:38:13.865000+00:00",
+          "line": 34072,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:38:13,865 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=3703s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:38:14.178000+00:00",
+          "line": 34114,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:38:14,178 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=3703s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:43:45.222000+00:00",
+          "line": 34759,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:43:45,222 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=4034s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:43:45.516000+00:00",
+          "line": 34842,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:43:45,516 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=4034s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:48:45.666000+00:00",
+          "line": 35411,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:48:45,666 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=4335s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:48:45.886000+00:00",
+          "line": 35412,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:48:45,886 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=4335s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:54:02.056000+00:00",
+          "line": 35951,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:54:02,056 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-open-e6e1acb7ec62 entry_order_id=1008156806264 entry_qty=2.00000000 managed_row_age=4651s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T17:54:02.501000+00:00",
+          "line": 35993,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 17:54:02,501 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb CYCU reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-CYCU-protect-eb987199460f entry_order_id=1MI4JTMTGP4FBUNR9870J9SNV9 entry_qty=1.00000000 managed_row_age=4651s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T19:17:30.679000+00:00",
+          "line": 37810,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 19:17:30,679 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=7FIMASGG5DNE2B480TL2S64CEB entry_qty=1.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T19:18:04.622000+00:00",
+          "line": 37877,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 19:18:04,622 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-eb012a2062d0 entry_order_id=7FIMASGG5DNE2B480TL2S64CEB entry_qty=1.00000000 managed_row_age=34s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T19:43:52.721000+00:00",
+          "line": 38643,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 19:43:52,721 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-open-b0c37801356d entry_order_id=1008161960255 entry_qty=2.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T19:43:53.011000+00:00",
+          "line": 38685,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 19:43:53,011 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AMOD reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AMOD-protect-bc5fc01fba2c entry_order_id=LNI25QOKNF28ECJSSO8K9GONFA entry_qty=1.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-02T19:46:23.825000+00:00",
+          "line": 38754,
+          "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+          "text": "2026-10-02 19:46:23,825 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 2 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=2 min_age_seconds=24.119: live:orb:AMOD=1.00000000, live:schwab_1m_v2:AMOD=2.00000000"
+        }
+      ],
+      "structured_lines": 26762
+    },
+    "2026-10-06": {
+      "actual_saved_calls": "UNMEASURED: no per-read state/due-time trace",
+      "cancel_417_count": 5,
+      "cancel_receipts": [
+        {
+          "at": "2026-10-06T12:03:08.927000+00:00",
+          "coid": "schwab_1m_v2-OLOX-open-543a6be1e3e3",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 12745,
+          "matching_order_rows": 1,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "request_id": "1544d4c3-1a3f-4e11-8f6f-eccf3b70707f",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-06T14:29:12.098000+00:00",
+          "coid": "schwab_1m_v2-OLOX-protect-218ea76aa67fT",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 16350,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "request_id": "e04399f9-941e-4e12-9c19-3c4ed615165d",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-06T14:29:12.221000+00:00",
+          "coid": "schwab_1m_v2-OLOX-protect-218ea76aa67fS",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 16394,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "request_id": "bf173db5-52c1-45c7-84ac-8be452e6dd05",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-06T18:22:51.074000+00:00",
+          "coid": "schwab_1m_v2-MOBX-protect-6e27df0ba931T",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 30223,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "request_id": "d373622a-15aa-4272-ad8e-3c32b7fcd647",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-06T18:22:51.234000+00:00",
+          "coid": "schwab_1m_v2-MOBX-protect-6e27df0ba931S",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 30265,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "request_id": "cb606b0d-fbd7-4e64-b30e-f4dd66de1f2b",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        }
+      ],
+      "census_live_orb_zero": [],
+      "census_windows": 283,
+      "counter_first_minute": "2026-10-06T04:00+00:00",
+      "counter_last_minute": "2026-10-07T03:59+00:00",
+      "counterfactual_changed_decisions": "UNMEASURED: no historical positions snapshots",
+      "decision_lines_searched": 121,
+      "decision_minutes_searched": 90,
+      "endpoints": {
+        "/account/positions": {
+          "failure": 0,
+          "minutes": 1412,
+          "success": 5631,
+          "total": 5631
+        },
+        "/openapi/instrument/stock/list": {
+          "failure": 0,
+          "minutes": 6,
+          "success": 6,
+          "total": 6
+        },
+        "/openapi/trade/order/place": {
+          "failure": 0,
+          "minutes": 10,
+          "success": 10,
+          "total": 10
+        },
+        "/trade/order/cancel": {
+          "failure": 5,
+          "minutes": 51,
+          "success": 60,
+          "total": 65
+        },
+        "/trade/order/detail": {
+          "failure": 306,
+          "minutes": 338,
+          "success": 1768,
+          "total": 2074
+        },
+        "/trade/order/place": {
+          "failure": 3,
+          "minutes": 65,
+          "success": 65,
+          "total": 68
+        },
+        "/trade/orders/list-today": {
+          "failure": 0,
+          "minutes": 146,
+          "success": 229,
+          "total": 229
+        }
+      },
+      "exit_child_cancel_failures": 4,
+      "missing_credentials": {
+        "live:polygon_30s": 5639,
+        "live:webull_30s": 5639,
+        "paper:polygon_30s": 5639,
+        "paper:schwab_1m_v2": 5639
+      },
+      "naive_cumulative_sums": {
+        "/account/positions": {
+          "failure": 0,
+          "total": 5631
+        },
+        "/openapi/instrument/stock/list": {
+          "failure": 0,
+          "total": 6
+        },
+        "/openapi/trade/order/place": {
+          "failure": 0,
+          "total": 10
+        },
+        "/trade/order/cancel": {
+          "failure": 12,
+          "total": 75
+        },
+        "/trade/order/detail": {
+          "failure": 855,
+          "total": 3633
+        },
+        "/trade/order/place": {
+          "failure": 6,
+          "total": 71
+        },
+        "/trade/orders/list-today": {
+          "failure": 0,
+          "total": 229
+        }
+      },
+      "search_receipts": [
+        {
+          "at": "2026-10-06T12:03:11.887000+00:00",
+          "line": 12765,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:03:11,887 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-open-6eb0b3b3f2df entry_order_id=1008181681274 entry_qty=405.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:08:11.935000+00:00",
+          "line": 12860,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:08:11,935 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-open-6eb0b3b3f2df entry_order_id=1008181681274 entry_qty=405.00000000 managed_row_age=301s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:13:27.629000+00:00",
+          "line": 12954,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:13:27,629 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-open-6eb0b3b3f2df entry_order_id=1008181681274 entry_qty=405.00000000 managed_row_age=617s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:18:43.276000+00:00",
+          "line": 13048,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:18:43,276 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-open-6eb0b3b3f2df entry_order_id=1008181681274 entry_qty=405.00000000 managed_row_age=932s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:23:23.366000+00:00",
+          "line": 13139,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:23:23,366 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:23:23.418000+00:00",
+          "line": 13141,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:23:23,418 INFO [oms-risk] [VIRTUAL-CLEAR-DEFERRED] deferred=1 of unbacked_positive=1 clear_allowed=0 min_age_seconds=24.119: live:orb:AIXI=91.00000000 age=0.154s"
+        },
+        {
+          "at": "2026-10-06T12:24:14.253000+00:00",
+          "line": 13156,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:24:14,253 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-open-6eb0b3b3f2df entry_order_id=1008181681274 entry_qty=405.00000000 managed_row_age=1263s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:28:44.867000+00:00",
+          "line": 13245,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:28:44,867 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=322s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:29:15.075000+00:00",
+          "line": 13254,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:29:15,075 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-open-6eb0b3b3f2df entry_order_id=1008181681274 entry_qty=405.00000000 managed_row_age=1564s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:33:45.923000+00:00",
+          "line": 13336,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:33:45,923 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=623s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:34:15.944000+00:00",
+          "line": 13346,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:34:15,944 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-open-6eb0b3b3f2df entry_order_id=1008181681274 entry_qty=405.00000000 managed_row_age=1865s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:39:01.202000+00:00",
+          "line": 13439,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:39:01,202 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=938s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:44:16.978000+00:00",
+          "line": 13533,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:44:16,978 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=1254s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:49:47.785000+00:00",
+          "line": 13631,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:49:47,785 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=1585s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T12:54:48.397000+00:00",
+          "line": 13720,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 12:54:48,397 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=1885s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T13:00:05.535000+00:00",
+          "line": 13816,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 13:00:05,535 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=2202s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T13:05:20.981000+00:00",
+          "line": 13914,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 13:05:20,981 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=2518s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T13:10:21.923000+00:00",
+          "line": 14003,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 13:10:21,923 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=2819s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T13:15:22.662000+00:00",
+          "line": 14092,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 13:15:22,662 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=3119s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T13:20:38.488000+00:00",
+          "line": 14185,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 13:20:38,488 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=3435s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T13:25:39.199000+00:00",
+          "line": 14274,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 13:25:39,199 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=KGGA0FN9Q3C8ADJ5HS8UCIVS38 entry_qty=91.00000000 managed_row_age=3736s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T13:32:17.151000+00:00",
+          "line": 14444,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 13:32:17,151 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=missing_exit_pair_base entry_coid=- entry_order_id=85J09O96O2J79SNGR5OTQO3KNB entry_qty=96.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T13:33:02.592000+00:00",
+          "line": 14466,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 13:33:02,592 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIXI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIXI-protect-8ca00b56f645 entry_order_id=85J09O96O2J79SNGR5OTQO3KNB entry_qty=96.00000000 managed_row_age=46s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T14:27:27.852000+00:00",
+          "line": 16246,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 14:27:27,852 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=missing_exit_pair_base entry_coid=- entry_order_id=SSICA3CEJLQ727PBO061F4LHC8 entry_qty=205.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T14:28:13.048000+00:00",
+          "line": 16294,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 14:28:13,048 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-218ea76aa67f entry_order_id=SSICA3CEJLQ727PBO061F4LHC8 entry_qty=205.00000000 managed_row_age=46s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T14:29:13.401000+00:00",
+          "line": 16412,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 14:29:13,401 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:orb:OLOX=205.00000000"
+        },
+        {
+          "at": "2026-10-06T15:01:50.391000+00:00",
+          "line": 17122,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 15:01:50,391 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-1415bff3247a entry_order_id=1008188297231 entry_qty=127.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T15:06:20.244000+00:00",
+          "line": 17223,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 15:06:20,244 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:schwab_1m_v2:IPDN=127.00000000"
+        },
+        {
+          "at": "2026-10-06T15:29:56.495000+00:00",
+          "line": 18289,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 15:29:56,495 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=missing_exit_pair_base entry_coid=- entry_order_id=KUJS6JU6N1GACILA7KAFTAD45B entry_qty=195.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T15:30:41.750000+00:00",
+          "line": 18314,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 15:30:41,750 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-c1934c7bf481 entry_order_id=KUJS6JU6N1GACILA7KAFTAD45B entry_qty=195.00000000 managed_row_age=45s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T15:35:57.789000+00:00",
+          "line": 18418,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 15:35:57,789 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-c1934c7bf481 entry_order_id=KUJS6JU6N1GACILA7KAFTAD45B entry_qty=195.00000000 managed_row_age=361s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T15:40:58.937000+00:00",
+          "line": 18512,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 15:40:58,937 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-c1934c7bf481 entry_order_id=KUJS6JU6N1GACILA7KAFTAD45B entry_qty=195.00000000 managed_row_age=663s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T15:46:15.902000+00:00",
+          "line": 18791,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 15:46:15,902 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-c1934c7bf481 entry_order_id=KUJS6JU6N1GACILA7KAFTAD45B entry_qty=195.00000000 managed_row_age=980s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T15:51:46.834000+00:00",
+          "line": 19269,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 15:51:46,834 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-c1934c7bf481 entry_order_id=KUJS6JU6N1GACILA7KAFTAD45B entry_qty=195.00000000 managed_row_age=1310s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T15:56:47.752000+00:00",
+          "line": 19658,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 15:56:47,752 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-c1934c7bf481 entry_order_id=KUJS6JU6N1GACILA7KAFTAD45B entry_qty=195.00000000 managed_row_age=1611s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:02:03.493000+00:00",
+          "line": 19758,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:02:03,493 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-c1934c7bf481 entry_order_id=KUJS6JU6N1GACILA7KAFTAD45B entry_qty=195.00000000 managed_row_age=1927s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:14:53.362000+00:00",
+          "line": 20089,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:14:53,362 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-16f6a191f145 entry_order_id=1008191210264 entry_qty=131.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:18:08.008000+00:00",
+          "line": 20217,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:18:08,008 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=missing_exit_pair_base entry_coid=- entry_order_id=BTGM2B03ANVI165IDQHOD2LQU9 entry_qty=192.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:18:53.160000+00:00",
+          "line": 20274,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:18:53,160 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-fbf894e2d75c entry_order_id=BTGM2B03ANVI165IDQHOD2LQU9 entry_qty=192.00000000 managed_row_age=46s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:42:14.607000+00:00",
+          "line": 20957,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:42:14,607 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:42:15.148000+00:00",
+          "line": 20999,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:42:15,148 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:47:14.843000+00:00",
+          "line": 21392,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:47:14,843 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=302s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:47:15.302000+00:00",
+          "line": 21434,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:47:15,302 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=302s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:52:46.168000+00:00",
+          "line": 21883,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:52:46,168 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=634s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:52:46.583000+00:00",
+          "line": 21925,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:52:46,583 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=634s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:58:02.127000+00:00",
+          "line": 22318,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:58:02,127 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=950s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T16:58:02.717000+00:00",
+          "line": 22360,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 16:58:02,717 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=950s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:03:03.669000+00:00",
+          "line": 22762,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:03:03,669 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=1251s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:03:04.090000+00:00",
+          "line": 22804,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:03:04,090 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=1251s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:08:34.142000+00:00",
+          "line": 23242,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:08:34,142 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=1582s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:08:34.533000+00:00",
+          "line": 23284,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:08:34,533 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=1582s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:13:50.590000+00:00",
+          "line": 23781,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:13:50,590 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=1898s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:13:50.970000+00:00",
+          "line": 23823,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:13:50,970 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=1898s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:18:51.977000+00:00",
+          "line": 24211,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:18:51,977 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=2199s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:18:52.437000+00:00",
+          "line": 24253,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:18:52,437 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=2199s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:24:08.495000+00:00",
+          "line": 24731,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:24:08,495 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=2516s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:24:08.986000+00:00",
+          "line": 24773,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:24:08,986 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=2516s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:27:24.941000+00:00",
+          "line": 25090,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:27:24,941 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-0d727181a900 entry_order_id=AJH6HRV523LCDNS6OPRPFMVUD9 entry_qty=203.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:29:39.437000+00:00",
+          "line": 25136,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:29:39,437 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=2847s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:29:39.712000+00:00",
+          "line": 25137,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:29:39,712 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=2847s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:32:55.897000+00:00",
+          "line": 25366,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:32:55,897 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-0d727181a900 entry_order_id=AJH6HRV523LCDNS6OPRPFMVUD9 entry_qty=203.00000000 managed_row_age=333s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:34:40.076000+00:00",
+          "line": 25565,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:34:40,076 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=3147s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:34:40.325000+00:00",
+          "line": 25566,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:34:40,325 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=3147s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:38:27.150000+00:00",
+          "line": 26216,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:38:27,150 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-0d727181a900 entry_order_id=AJH6HRV523LCDNS6OPRPFMVUD9 entry_qty=203.00000000 managed_row_age=664s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:39:42.415000+00:00",
+          "line": 26322,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:39:42,415 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=3450s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:39:42.693000+00:00",
+          "line": 26323,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:39:42,693 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=3450s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:43:43.256000+00:00",
+          "line": 27060,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:43:43,256 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-0d727181a900 entry_order_id=AJH6HRV523LCDNS6OPRPFMVUD9 entry_qty=203.00000000 managed_row_age=980s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:44:42.878000+00:00",
+          "line": 27162,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:44:42,878 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=3750s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:44:43.161000+00:00",
+          "line": 27163,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:44:43,161 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=3750s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:48:44.523000+00:00",
+          "line": 27899,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:48:44,523 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-0d727181a900 entry_order_id=AJH6HRV523LCDNS6OPRPFMVUD9 entry_qty=203.00000000 managed_row_age=1282s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:49:58.982000+00:00",
+          "line": 28005,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:49:58,982 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=4066s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:49:59.339000+00:00",
+          "line": 28006,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:49:59,339 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=4066s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:53:45.537000+00:00",
+          "line": 28656,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:53:45,537 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-protect-0d727181a900 entry_order_id=AJH6HRV523LCDNS6OPRPFMVUD9 entry_qty=203.00000000 managed_row_age=1583s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:55:00.318000+00:00",
+          "line": 28732,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:55:00,318 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=4368s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T17:55:00.609000+00:00",
+          "line": 28738,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 17:55:00,609 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=4368s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:00:17.328000+00:00",
+          "line": 28923,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:00:17,328 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-e241b65d3727 entry_order_id=1008191994240 entry_qty=132.00000000 managed_row_age=4685s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:00:18.124000+00:00",
+          "line": 28965,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:00:18,124 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8095bd2ee26a entry_order_id=K4HK8ES24IG70FL0GM71VRT9U8 entry_qty=66.00000000 managed_row_age=4685s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:12:21.277000+00:00",
+          "line": 29650,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:12:21,277 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb OLOX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-OLOX-open-bea59839c42f entry_order_id=ESI87BU44GJN4K0FJB50OGI5A9 entry_qty=203.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:12:21.344000+00:00",
+          "line": 29652,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:12:21,344 INFO [oms-risk] [VIRTUAL-CLEAR-DEFERRED] deferred=1 of unbacked_positive=1 clear_allowed=0 min_age_seconds=24.119: live:orb:OLOX=203.00000000 age=0.710s"
+        },
+        {
+          "at": "2026-10-06T18:21:23.223000+00:00",
+          "line": 30062,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:21:23,223 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 MOBX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-MOBX-open-38239ebe631c entry_order_id=1008195341837 entry_qty=526.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:21:23.695000+00:00",
+          "line": 30104,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:21:23,695 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb MOBX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-MOBX-protect-6e27df0ba931 entry_order_id=NEJGQSK3F28QATNIGOOO6MPD88 entry_qty=263.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:22:52.901000+00:00",
+          "line": 30287,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:22:52,901 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 2 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=2 min_age_seconds=24.119: live:orb:MOBX=263.00000000, live:schwab_1m_v2:MOBX=526.00000000"
+        },
+        {
+          "at": "2026-10-06T18:32:25.710000+00:00",
+          "line": 30800,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:32:25,710 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-738318df291a entry_order_id=1008196163129 entry_qty=135.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:32:26.064000+00:00",
+          "line": 30842,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:32:26,064 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8e8341eed25b entry_order_id=C3HQH3B5MAAH9DNQ7E93E140CA entry_qty=68.00000000 managed_row_age=3s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:37:40.766000+00:00",
+          "line": 31299,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:37:40,766 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-open-738318df291a entry_order_id=1008196163129 entry_qty=135.00000000 managed_row_age=317s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:37:41.102000+00:00",
+          "line": 31341,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:37:41,102 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8e8341eed25b entry_order_id=C3HQH3B5MAAH9DNQ7E93E140CA entry_qty=68.00000000 managed_row_age=318s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:38:11.798000+00:00",
+          "line": 31402,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:38:11,798 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:schwab_1m_v2:IPDN=135.00000000"
+        },
+        {
+          "at": "2026-10-06T18:43:10.792000+00:00",
+          "line": 31827,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:43:10,792 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8e8341eed25b entry_order_id=C3HQH3B5MAAH9DNQ7E93E140CA entry_qty=68.00000000 managed_row_age=648s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:48:12.591000+00:00",
+          "line": 32370,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:48:12,591 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8e8341eed25b entry_order_id=C3HQH3B5MAAH9DNQ7E93E140CA entry_qty=68.00000000 managed_row_age=949s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:49:59.292000+00:00",
+          "line": 32497,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:49:59,292 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:50:00.184000+00:00",
+          "line": 32584,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:50:00,184 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-protect-daba7a606902 entry_order_id=GBHSRR29VALTAFD1E3JRCOKAJA entry_qty=39.00000000 managed_row_age=3s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:53:14.700000+00:00",
+          "line": 32996,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:53:14,700 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8e8341eed25b entry_order_id=C3HQH3B5MAAH9DNQ7E93E140CA entry_qty=68.00000000 managed_row_age=1251s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:54:59.699000+00:00",
+          "line": 33274,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:54:59,699 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=303s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:55:00.462000+00:00",
+          "line": 33360,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:55:00,462 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-protect-daba7a606902 entry_order_id=GBHSRR29VALTAFD1E3JRCOKAJA entry_qty=39.00000000 managed_row_age=303s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T18:58:30.465000+00:00",
+          "line": 33846,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 18:58:30,465 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8e8341eed25b entry_order_id=C3HQH3B5MAAH9DNQ7E93E140CA entry_qty=68.00000000 managed_row_age=1567s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:00:01.916000+00:00",
+          "line": 34039,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:00:01,916 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 MOBX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-MOBX-open-b985974f44f8 entry_order_id=1008196842877 entry_qty=504.00000000 managed_row_age=2s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:00:03.019000+00:00",
+          "line": 34041,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:00:03,019 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=606s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:00:06.437000+00:00",
+          "line": 34091,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:00:06,437 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-protect-daba7a606902 entry_order_id=GBHSRR29VALTAFD1E3JRCOKAJA entry_qty=39.00000000 managed_row_age=609s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:03:32.208000+00:00",
+          "line": 34641,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:03:32,208 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb IPDN reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-IPDN-protect-8e8341eed25b entry_order_id=C3HQH3B5MAAH9DNQ7E93E140CA entry_qty=68.00000000 managed_row_age=1869s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:05:32.548000+00:00",
+          "line": 35009,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:05:32,548 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 MOBX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-MOBX-open-b985974f44f8 entry_order_id=1008196842877 entry_qty=504.00000000 managed_row_age=333s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:05:33.096000+00:00",
+          "line": 35010,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:05:33,096 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=936s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:05:34.053000+00:00",
+          "line": 35093,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:05:34,053 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-protect-daba7a606902 entry_order_id=GBHSRR29VALTAFD1E3JRCOKAJA entry_qty=39.00000000 managed_row_age=937s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:06:04.996000+00:00",
+          "line": 35154,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:06:04,996 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:orb:IPDN=68.00000000"
+        },
+        {
+          "at": "2026-10-06T19:10:48.744000+00:00",
+          "line": 35260,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:10:48,744 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 MOBX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-MOBX-open-b985974f44f8 entry_order_id=1008196842877 entry_qty=504.00000000 managed_row_age=649s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:10:49.237000+00:00",
+          "line": 35261,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:10:49,237 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=1252s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:15:49.428000+00:00",
+          "line": 35371,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:15:49,428 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 MOBX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-MOBX-open-b985974f44f8 entry_order_id=1008196842877 entry_qty=504.00000000 managed_row_age=950s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:15:49.906000+00:00",
+          "line": 35372,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:15:49,906 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=1553s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:20:50.834000+00:00",
+          "line": 35488,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:20:50,834 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 MOBX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-MOBX-open-b985974f44f8 entry_order_id=1008196842877 entry_qty=504.00000000 managed_row_age=1251s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:20:51.338000+00:00",
+          "line": 35489,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:20:51,338 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=1854s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:25:52.101000+00:00",
+          "line": 35599,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:25:52,101 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 MOBX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-MOBX-open-b985974f44f8 entry_order_id=1008196842877 entry_qty=504.00000000 managed_row_age=1553s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:25:52.536000+00:00",
+          "line": 35600,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:25:52,536 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=2156s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:30:53.965000+00:00",
+          "line": 35773,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:30:53,965 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 MOBX reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-MOBX-open-b985974f44f8 entry_order_id=1008196842877 entry_qty=504.00000000 managed_row_age=1855s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:30:54.542000+00:00",
+          "line": 35774,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:30:54,542 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=2458s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:34:55.342000+00:00",
+          "line": 35926,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:34:55,342 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:schwab_1m_v2:MOBX=504.00000000"
+        },
+        {
+          "at": "2026-10-06T19:36:09.561000+00:00",
+          "line": 35947,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:36:09,561 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=2773s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:41:26.569000+00:00",
+          "line": 36071,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:41:26,569 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=3090s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:46:27.354000+00:00",
+          "line": 36178,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:46:27,354 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=3390s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:51:28.050000+00:00",
+          "line": 36267,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:51:28,050 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=3691s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:56:29.438000+00:00",
+          "line": 36356,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:56:29,438 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 APUS reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-APUS-open-0a774155d5e5 entry_order_id=1008196163482 entry_qty=78.00000000 managed_row_age=3993s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-06T19:59:45.623000+00:00",
+          "line": 36426,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 19:59:45,623 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:schwab_1m_v2:APUS=78.00000000"
+        },
+        {
+          "at": "2026-10-06T23:15:52.180000+00:00",
+          "line": 39929,
+          "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+          "text": "2026-10-06 23:15:52,180 WARNING [oms-risk] [BROKER-SYNC-UNREADABLE] acct=live:schwab_1m_v2 consecutive=1 \u2014 positions read FAILED (Schwab positions read for live:schwab_1m_v2 returned 599: Remote end closed connection without response -> UNKNOWN). This account is EXCLUDED from the sync: nothing is zeroed and no virtual position is cleared for it this cycle. An empty list from a failed call is not a flat account."
+        }
+      ],
+      "structured_lines": 27304
+    },
+    "2026-10-07": {
+      "actual_saved_calls": "UNMEASURED: no per-read state/due-time trace",
+      "cancel_417_count": 10,
+      "cancel_receipts": [
+        {
+          "at": "2026-10-07T15:59:19.937000+00:00",
+          "coid": "schwab_1m_v2-BIYA-protect-2e8826475d34T",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 23444,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "request_id": "9ceb6060-00ed-47f4-a6e0-784644e28e2b",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-07T15:59:20.099000+00:00",
+          "coid": "schwab_1m_v2-BIYA-protect-2e8826475d34S",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 23486,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "request_id": "7ac31c9a-2ccf-47eb-92a3-6bb67148ffbd",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-07T17:21:50.462000+00:00",
+          "coid": "schwab_1m_v2-PFAI-protect-075e09dafa71T",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 26020,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "request_id": "8a9c6660-8913-448c-a5cf-fa853192df1d",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-07T17:21:50.572000+00:00",
+          "coid": "schwab_1m_v2-PFAI-protect-075e09dafa71S",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 26062,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "request_id": "b2058e8b-e911-4373-9d04-7ee769220bcd",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-07T18:37:09.246000+00:00",
+          "coid": "schwab_1m_v2-BIYA-open-50ce0563e95f",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 28271,
+          "matching_order_rows": 1,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "request_id": "5da017c5-be13-4940-97fa-9791803647d4",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-07T18:51:08.807000+00:00",
+          "coid": "schwab_1m_v2-BIYA-open-9e62e1b9e11d",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 28714,
+          "matching_order_rows": 1,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "request_id": "63166a2a-1153-4658-99c9-c08bd2d89d23",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-07T18:55:09.674000+00:00",
+          "coid": "schwab_1m_v2-BIYA-open-174bbc066d1c",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 28879,
+          "matching_order_rows": 1,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "request_id": "978c8bb7-07bc-4056-ba88-5fd60a8084ed",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-07T19:12:09.888000+00:00",
+          "coid": "schwab_1m_v2-BIYA-open-0e40052d917c",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 29443,
+          "matching_order_rows": 1,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "request_id": "15de7208-37cc-4224-8240-50ed030309db",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-07T19:22:47.416000+00:00",
+          "coid": "schwab_1m_v2-BIYA-protect-aee3e1178babT",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 29795,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "request_id": "b211196a-7ee4-4350-8e4e-40202961d9ff",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        },
+        {
+          "at": "2026-10-07T19:22:47.540000+00:00",
+          "coid": "schwab_1m_v2-BIYA-protect-aee3e1178babS",
+          "day_list_status_at_failure": "UNMEASURED: response body not retained",
+          "line_number": 29837,
+          "matching_order_rows": 0,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "request_id": "411bdebe-5fb1-4774-8176-6c96b1eca5da",
+          "terminal_detail_proofs_before": [],
+          "terminal_events_before": []
+        }
+      ],
+      "census_live_orb_zero": [],
+      "census_windows": 287,
+      "counter_first_minute": "2026-10-07T04:00+00:00",
+      "counter_last_minute": "2026-10-08T03:59+00:00",
+      "counterfactual_changed_decisions": "UNMEASURED: no historical positions snapshots",
+      "decision_lines_searched": 18,
+      "decision_minutes_searched": 18,
+      "endpoints": {
+        "/account/positions": {
+          "failure": 0,
+          "minutes": 1440,
+          "success": 5717,
+          "total": 5717
+        },
+        "/openapi/instrument/stock/list": {
+          "failure": 0,
+          "minutes": 5,
+          "success": 5,
+          "total": 5
+        },
+        "/openapi/trade/order/place": {
+          "failure": 0,
+          "minutes": 4,
+          "success": 4,
+          "total": 4
+        },
+        "/trade/order/cancel": {
+          "failure": 10,
+          "minutes": 17,
+          "success": 15,
+          "total": 25
+        },
+        "/trade/order/detail": {
+          "failure": 0,
+          "minutes": 23,
+          "success": 28,
+          "total": 28
+        },
+        "/trade/order/place": {
+          "failure": 0,
+          "minutes": 21,
+          "success": 21,
+          "total": 21
+        },
+        "/trade/orders/list-today": {
+          "failure": 0,
+          "minutes": 160,
+          "success": 552,
+          "total": 552
+        }
+      },
+      "exit_child_cancel_failures": 6,
+      "missing_credentials": {
+        "live:polygon_30s": 5729,
+        "live:webull_30s": 5729,
+        "paper:polygon_30s": 5729,
+        "paper:schwab_1m_v2": 5729
+      },
+      "naive_cumulative_sums": {
+        "/account/positions": {
+          "failure": 0,
+          "total": 5717
+        },
+        "/openapi/instrument/stock/list": {
+          "failure": 0,
+          "total": 5
+        },
+        "/openapi/trade/order/place": {
+          "failure": 0,
+          "total": 4
+        },
+        "/trade/order/cancel": {
+          "failure": 23,
+          "total": 42
+        },
+        "/trade/order/detail": {
+          "failure": 0,
+          "total": 28
+        },
+        "/trade/order/place": {
+          "failure": 0,
+          "total": 21
+        },
+        "/trade/orders/list-today": {
+          "failure": 0,
+          "total": 552
+        }
+      },
+      "search_receipts": [
+        {
+          "at": "2026-10-08T01:32:02.489000+00:00",
+          "line": 2347,
+          "path": "/var/log/project-mai-tai/oms.log",
+          "text": "2026-10-08 01:32:02,489 WARNING [oms-risk] [BROKER-SYNC-UNREADABLE] acct=live:schwab_1m_v2 consecutive=1 \u2014 positions read FAILED (Schwab positions read for live:schwab_1m_v2 returned 503: {'fault': {'faultstring': 'The Service is temporarily unavailable', 'detail': {'errorcode': 'messaging.adaptors.http.flow.ServiceUnavailable', 'reason': 'TARGET_CONNECT_CONNECTION_REFUSED'}}} -> UNKNOWN). This account is EXCLUDED from the sync: nothing is zeroed and no virtual position is cleared for it this cycle. An empty list from a failed call is not a flat account."
+        },
+        {
+          "at": "2026-10-07T11:53:18.322000+00:00",
+          "line": 16893,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 11:53:18,322 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb SXTC reason=missing_exit_pair_base entry_coid=- entry_order_id=PMGC3RCR2ID21FHO8S3020LHP8 entry_qty=147.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T11:58:25.888000+00:00",
+          "line": 17033,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 11:58:25,888 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb SXTC reason=missing_exit_pair_base entry_coid=- entry_order_id=PMGC3RCR2ID21FHO8S3020LHP8 entry_qty=147.00000000 managed_row_age=308s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T12:03:28.234000+00:00",
+          "line": 17162,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 12:03:28,234 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb SXTC reason=missing_exit_pair_base entry_coid=- entry_order_id=PMGC3RCR2ID21FHO8S3020LHP8 entry_qty=147.00000000 managed_row_age=610s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T12:08:30.021000+00:00",
+          "line": 17294,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 12:08:30,021 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb SXTC reason=missing_exit_pair_base entry_coid=- entry_order_id=PMGC3RCR2ID21FHO8S3020LHP8 entry_qty=147.00000000 managed_row_age=912s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T12:13:46.874000+00:00",
+          "line": 17434,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 12:13:46,874 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb SXTC reason=missing_exit_pair_base entry_coid=- entry_order_id=PMGC3RCR2ID21FHO8S3020LHP8 entry_qty=147.00000000 managed_row_age=1229s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T15:17:42.922000+00:00",
+          "line": 22195,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 15:17:42,922 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb BIYA reason=missing_exit_pair_base entry_coid=- entry_order_id=RFGE9PCLF9U04QOO2H2EE9TCAB entry_qty=142.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T15:18:27.842000+00:00",
+          "line": 22222,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 15:18:27,842 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb BIYA reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-BIYA-protect-584eb3a0479a entry_order_id=RFGE9PCLF9U04QOO2H2EE9TCAB entry_qty=142.00000000 managed_row_age=45s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T15:58:48.023000+00:00",
+          "line": 23384,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 15:58:48,023 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb BIYA reason=missing_exit_pair_base entry_coid=- entry_order_id=PGJUEG652UOEA8JMQ488Q7JPO9 entry_qty=138.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T15:59:33.071000+00:00",
+          "line": 23505,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 15:59:33,071 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:orb:BIYA=138.00000000"
+        },
+        {
+          "at": "2026-10-07T17:17:30.100000+00:00",
+          "line": 25857,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 17:17:30,100 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb PFAI reason=missing_exit_pair_base entry_coid=- entry_order_id=52GURUU3B6LK6VPR4GJ29FNOFA entry_qty=73.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T17:18:14.829000+00:00",
+          "line": 25886,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 17:18:14,829 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb PFAI reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-PFAI-protect-075e09dafa71 entry_order_id=52GURUU3B6LK6VPR4GJ29FNOFA entry_qty=73.00000000 managed_row_age=45s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T17:22:00.818000+00:00",
+          "line": 26085,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 17:22:00,818 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:orb:PFAI=73.00000000"
+        },
+        {
+          "at": "2026-10-07T19:08:17.438000+00:00",
+          "line": 29286,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 19:08:17,438 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:schwab_1m_v2 NCPL reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-NCPL-open-5c3fb79c946b entry_order_id=1008214211174 entry_qty=364.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T19:12:15.930000+00:00",
+          "line": 29454,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 19:12:15,930 WARNING [oms-risk] [OMS-CANCEL-UNCONFIRMED] BIYA live:orb coid=schwab_1m_v2-BIYA-open-0e40052d917c broker_id=None last_status=UNREADABLE reads_failed=6 dead_target_bound=0 \u2014 THE CANCEL WAS NOT CONFIRMED. The order may still be WORKING and unowned at the broker. This is the FRTT 2026-08-11 shape (136 min live). Check it by hand."
+        },
+        {
+          "at": "2026-10-07T19:16:47.540000+00:00",
+          "line": 29590,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 19:16:47,540 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb BIYA reason=missing_exit_pair_base entry_coid=- entry_order_id=78JSNPI1SBU79LOOKKRT55NULA entry_qty=133.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T19:17:32.540000+00:00",
+          "line": 29617,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 19:17:32,540 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb BIYA reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-BIYA-protect-aee3e1178bab entry_order_id=78JSNPI1SBU79LOOKKRT55NULA entry_qty=133.00000000 managed_row_age=45s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 \u2014 polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect."
+        },
+        {
+          "at": "2026-10-07T19:22:48.878000+00:00",
+          "line": 29856,
+          "path": "/var/log/project-mai-tai/oms.log-20261008",
+          "text": "2026-10-07 19:22:48,878 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:orb:BIYA=133.00000000"
+        }
+      ],
+      "structured_lines": 36849
+    }
+  },
+  "flat_capacity_model": {
+    "baseline_15_seconds": 5760,
+    "maximum_saved": 4704,
+    "model": "not a replay; continuously flat account, ideal timers, 24h",
+    "proposed_60_day_300_night": 1056
+  },
+  "population": {
+    "fills": 66,
+    "managed": 33,
+    "order_events": 363,
+    "orders": 696
+  },
+  "queries": {
+    "events": "SELECT coalesce(json_agg(t),'[]'::json) FROM (\n SELECT e.order_id,e.event_type,e.event_at,e.event_source,e.payload\n FROM broker_order_events e JOIN broker_orders o ON o.id=e.order_id\n JOIN broker_accounts a ON a.id=o.broker_account_id\n WHERE a.provider='webull' AND e.event_at>='2026-10-02T00:00:00Z'\n AND e.event_at<'2026-10-08T04:00:00Z' ORDER BY e.event_at LIMIT 25000) t",
+    "fills": "SELECT coalesce(json_agg(t),'[]'::json) FROM (\n SELECT f.order_id,f.symbol,f.side,f.quantity,f.price,f.filled_at,a.name AS account\n FROM fills f JOIN broker_accounts a ON a.id=f.broker_account_id\n WHERE a.provider='webull' AND f.filled_at>='2026-10-01T00:00:00Z'\n AND f.filled_at<'2026-10-08T04:00:00Z' ORDER BY f.filled_at LIMIT 10000) t",
+    "managed": "SELECT coalesce(json_agg(t),'[]'::json) FROM (\n SELECT id,broker_account_name,symbol,status,entry_time,created_at,updated_at,current_quantity\n FROM oms_managed_positions WHERE broker_account_name='live:orb'\n AND entry_time>='2026-10-01T00:00:00Z' AND entry_time<'2026-10-08T04:00:00Z'\n ORDER BY entry_time LIMIT 2000) t",
+    "orders": "SELECT coalesce(json_agg(t),'[]'::json) FROM (\n SELECT o.id,o.client_order_id,o.broker_order_id,o.symbol,o.side,o.order_type,o.quantity,\n o.status,o.submitted_at,o.updated_at,a.name AS account,s.code AS strategy\n FROM broker_orders o JOIN broker_accounts a ON a.id=o.broker_account_id\n LEFT JOIN strategies s ON s.id=o.strategy_id\n WHERE a.provider='webull' AND o.submitted_at>='2026-09-20T00:00:00Z'\n AND o.submitted_at<'2026-10-08T04:00:00Z' ORDER BY o.submitted_at LIMIT 10000) t",
+    "terminal_proofs": "SELECT coalesce(json_agg(t),'[]'::json) FROM (\n SELECT id,payload->>'client_order_id' AS client_order_id,\n payload->>'acquired_at' AS acquired_at,payload->>'source' AS source,\n payload->'execution' AS execution FROM dashboard_snapshots\n WHERE snapshot_type='webull_terminal_read_proof'\n AND payload->>'acquired_at'>='2026-10-02'\n AND payload->>'acquired_at'<'2026-10-08T04:00:00'\n ORDER BY payload->>'acquired_at' LIMIT 2000) t"
+  },
+  "raw_pull_path": "/tmp/wbquiet1-own-pull-20261008.json",
+  "raw_pull_sha256": "3ad13e220056badaf8a1ce67ff27c4ac703d9bef841ed2f29a8eaef1cea4bdf8",
+  "source_files": [
+    {
+      "path": "/var/log/project-mai-tai/oms.log",
+      "retained_lines": 6081,
+      "uncompressed_sha256": "317b2f74e8af9aa482623ded70333143e9c09907ed5eb033879d31b0f76ae4f0"
+    },
+    {
+      "path": "/var/log/project-mai-tai/oms.log-20261002.gz",
+      "retained_lines": 0,
+      "uncompressed_sha256": "dc6641edbd7d4f041aa8a11b0450d87816490377ebb7f2741015106f17a757b7"
+    },
+    {
+      "path": "/var/log/project-mai-tai/oms.log-20261003.gz",
+      "retained_lines": 22603,
+      "uncompressed_sha256": "732e14adf2be10d5ad66444281356d27cdd3af673acf4e8a3e5f27611e769862"
+    },
+    {
+      "path": "/var/log/project-mai-tai/oms.log-20261004.gz",
+      "retained_lines": 4160,
+      "uncompressed_sha256": "a9fb105879f936f160fae526ae88e17fcbd023821d1c191b577b956986b62319"
+    },
+    {
+      "path": "/var/log/project-mai-tai/oms.log-20261006.gz",
+      "retained_lines": 0,
+      "uncompressed_sha256": "ecdba3bf6d74e506d488311e8f92174e147dae07eb1157aa2086729ccf6eda29"
+    },
+    {
+      "path": "/var/log/project-mai-tai/oms.log-20261007.gz",
+      "retained_lines": 22581,
+      "uncompressed_sha256": "a05d2ec9943a605cdb0bea16b8ea8d409bdda12a6153fb06f8597ef2281f8165"
+    },
+    {
+      "path": "/var/log/project-mai-tai/oms.log-20261008",
+      "retained_lines": 35492,
+      "uncompressed_sha256": "db8f758f6fba6289ab6948a0ec8feae3b1190c4ec5ea65274f69a72b36825b27"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "retained_lines": 0,
+      "uncompressed_sha256": "e6e4d47d2c15417c9f5c1a276f34335c43b65c070b3fb0f919a6da0a01742bb7"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz",
+      "retained_lines": 0,
+      "uncompressed_sha256": "2448bba5545cb46b702fedc4c875bfe85ef2d7ce8dc70ad55becb51dee6f8c3c"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261003.gz",
+      "retained_lines": 0,
+      "uncompressed_sha256": "3a4fd45aac9c90f98b1d1e7bbec20ca0b8d7d5da9740a5449ae2a567b1f77a61"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261004.gz",
+      "retained_lines": 0,
+      "uncompressed_sha256": "3d66ecbee72caf5a0ed94e07c2349d237a4e969b07ca73e1a9aeea01255ba688"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006.gz",
+      "retained_lines": 0,
+      "uncompressed_sha256": "e96201546e6a7e94ca51647163ff094e9bf8e41f7a7d72277dcdc6cf62e0ef6b"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261007.gz",
+      "retained_lines": 0,
+      "uncompressed_sha256": "558ec9d47a1d350e422b1d6c4a58d0f61f709376d7c62590a35f29de7cf7c728"
+    },
+    {
+      "path": "/var/log/project-mai-tai/schwab-1m-v2.log-20261008",
+      "retained_lines": 0,
+      "uncompressed_sha256": "be71296f40a2667900b11ff93f5b332be070324e8b2d9ef9bb539888f21a11af"
+    }
+  ]
+}
