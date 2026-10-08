@@ -111,6 +111,25 @@ def test_retained_flag_hash_is_not_allowed_to_hide_changes(good):
     assert proof.evaluate(*good, SHA)["verdict"] == "FAIL"
 
 
+@pytest.mark.parametrize("key", sorted(proof.SLOT_FLAGS))
+def test_old_oms_missing_slot_env_reloads_authorized_true_without_false_drift(good, key):
+    good[0]["process_flags"]["oms"]["values"][key] = []
+    result = proof.evaluate(*good, SHA)
+    assert result["verdict"] == "PASS"
+    assert "authorized_slot_env_loaded:oms:" + key in result["observations"]
+
+
+@pytest.mark.parametrize("role", ["oms", "schwab-1m-v2"])
+@pytest.mark.parametrize("key", sorted(proof.SLOT_FLAGS))
+@pytest.mark.parametrize("values", [[], ["false"], ["true", "true"]])
+def test_authorized_slot_env_must_be_true_on_each_new_process(good, role, key, values):
+    good[0]["process_flags"][role]["values"][key] = []
+    good[1]["process_flags"][role]["values"][key] = values
+    result = proof.evaluate(*good, SHA)
+    assert "required_flag:" + role + ":" + key in result["failures"]
+    assert proof.receipt_exit_code({"assessment": result}) == 1
+
+
 @pytest.mark.parametrize("field,value", [("NRestarts", 1), ("MainPID", 0), ("ActiveState", "failed"), ("SubState", "dead")])
 def test_new_process_identity_requires_active_zero_restarts(good, field, value):
     good[1]["services"]["oms"][field] = value

@@ -34,6 +34,7 @@ GAP = PREFIX + "GAP_LINE_CARRY_ENABLED"
 LINE = PREFIX + "LINE_CHART_RESTORATION_ENABLED"
 HANDOFF = PREFIX + "ATR_REPRICE_HANDOFF_ENABLED"
 FALSE_FLIP = PREFIX + "FALSE_FLIP_ENABLED"
+SLOT_FLAGS = {PREFIX + "SLOTCLEAR_FRESH_FLIP_ENABLED", PREFIX + "SLOTCLEAR_FRESH_SELL_ENABLED"}
 FLAG_KEYS = {PREFIX + name + "_ENABLED" for name in (
     "PM_PRINT_ASK_CONFIRM", "PM_FLIP_WAIT", "PM_REST_REPRICE", "ATR_REPRICE_HANDOFF",
     "LINE_CHART_RESTORATION", "GAP_LINE_CARRY", "RESTING_BUY_ROUND_UP", "GAP_HOLD",
@@ -579,10 +580,15 @@ def evaluate(before, after, approved_sha, line_enabled=True):
         if not old or not new:
             unknown.append("proc_flags:" + role)
             continue
-        for key, expected in {LINE: str(line_enabled).lower(), HANDOFF: "false", FALSE_FLIP: "true", **({GAP: "true"} if role == "schwab-1m-v2" else {})}.items():
+        for key, expected in {LINE: str(line_enabled).lower(), HANDOFF: "false", FALSE_FLIP: "true",
+                              **{key: "true" for key in SLOT_FLAGS},
+                              **({GAP: "true"} if role == "schwab-1m-v2" else {})}.items():
             if new.get(key) != [expected]:
                 failures.append("required_flag:" + role + ":" + key)
-        for key in FLAG_KEYS - {GAP, LINE, HANDOFF, FALSE_FLIP}:
+        for key in SLOT_FLAGS:
+            if not old.get(key) and new.get(key) == ["true"]:
+                observations.append("authorized_slot_env_loaded:" + role + ":" + key)
+        for key in FLAG_KEYS - {GAP, LINE, HANDOFF, FALSE_FLIP} - SLOT_FLAGS:
             if old.get(key) != new.get(key):
                 failures.append("retained_flag_changed:" + role + ":" + key)
     if "redis" in before and "redis" in after:
