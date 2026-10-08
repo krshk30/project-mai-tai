@@ -13,7 +13,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/trader/project-mai-tai/src \
   /home/trader/project-mai-tai/.venv/bin/python proof_readonly.py \
   baseline --output attempt/proof-before.json
 
-# The runner waits at least 600 seconds after the latest of the five new starts.
+# The runner waits at least 600 seconds after the latest of the four new starts.
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/trader/project-mai-tai/src \
   /home/trader/project-mai-tai/.venv/bin/python proof_readonly.py \
   after --baseline attempt/proof-before.json --approved-sha "$APPROVED_SHA" \
@@ -44,7 +44,8 @@ The helper does not retry, wait, restart, authorize recovery, or call a broker.
 Required postinstall process values are literal:
 
 - GAP_LINE_CARRY=true on v2.
-- LINE_CHART_RESTORATION=true on OMS and v2 unless the parent binds an explicit veto.
+- LINE_CHART_RESTORATION=true on OMS and v2 under the latest explicit GO.
+- FALSE_FLIP=true on OMS and v2.
 - ATR_REPRICE_HANDOFF=false on OMS and v2.
 - All other explicitly whitelisted live process flags retain their baseline values.
 
@@ -56,7 +57,7 @@ their stop interval. Without it, the transition is not claimed unchanged.
 
 ## Measurement Bounds And Limits
 
-- Thirteen service identities, five log cursors, five whitelisted process environments (262 KiB each).
+- Thirteen service identities, four restarted log cursors and process environments (262 KiB each).
 - Redis: exact five-owner population plus marker/checkpoint; pre-bound hash 100 KiB, paper cap 16;
   isolated state read one event per request, at most 80 requests, 262 KiB per event, watchlist <=128.
 - Log inventory <=256 entries; only files modified since cursor or matching its inode are considered;

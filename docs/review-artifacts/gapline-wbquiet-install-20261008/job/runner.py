@@ -20,8 +20,12 @@ PYTHON = REPO / '.venv/bin/python'
 GAP = 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_GAP_LINE_CARRY_ENABLED'
 LINE = 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED'
 HANDOFF = 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_REPRICE_HANDOFF_ENABLED'
-UNITS = ('oms', 'schwab-1m-v2', 'strategy', 'orb-schwab', 'control')
-SCOPE = 'oct8-p1-only-reviewed-five-services'
+FALSE_FLIP = 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_FALSE_FLIP_ENABLED'
+RETAINED = ('MAI_TAI_OMS_V2_WEBULL_MIRROR_RETAINED_HOLD_ENABLED',
+            'MAI_TAI_STRATEGY_SCHWAB_1M_V2_SLOTCLEAR_FRESH_FLIP_ENABLED',
+            'MAI_TAI_STRATEGY_SCHWAB_1M_V2_SLOTCLEAR_FRESH_SELL_ENABLED')
+UNITS = ('oms', 'schwab-1m-v2', 'strategy', 'control')
+SCOPE = 'oct8-p1-bagh-migration0023-four-services'
 DAY = '2026-10-08'
 
 
@@ -56,22 +60,27 @@ def env_candidate(raw, line_enabled=True):
         match = re.match(r'^\s*(?:export\s+)?([A-Za-z_][A-Za-z_0-9]*)\s*=(.*)', line)
         if match:
             bindings.setdefault(match[1].upper(), []).append((index, match[1], match[2].strip()))
-    for key in (GAP, LINE, HANDOFF):
+    for key in (GAP, LINE, HANDOFF, FALSE_FLIP, *RETAINED):
         rows = bindings.get(key, [])
         need(len(rows) <= 1 and all(row[1] == key for row in rows), 'duplicate/aliased env key ' + key)
     for key in (LINE, HANDOFF):
         rows = bindings.get(key, [])
         need(len(rows) == 1 and rows[0][2] in ('false', 'true'), key + ' must remain explicit/readable')
     need(bindings[HANDOFF][0][2] == 'false', HANDOFF + ' must remain false')
-    rows = bindings.get(GAP, [])
+    for key in RETAINED:
+        need(len(bindings.get(key, [])) == 1 and bindings[key][0][2] == 'true', 'retained ON flag differs ' + key)
     lines = text.splitlines(keepends=True)
     lines[bindings[LINE][0][0]] = LINE + '=' + str(line_enabled).lower() + '\n'
-    if rows:
-        need(rows[0][2] in ('false', 'true'), 'unreadable GAP env value')
-        lines[rows[0][0]] = GAP + '=true\n'
-        return ''.join(lines).encode()
-    text = ''.join(lines)
-    return (text + ('' if text.endswith('\n') else '\n') + GAP + '=true\n').encode()
+    for key in (GAP, FALSE_FLIP):
+        rows = bindings.get(key, [])
+        if rows:
+            need(rows[0][2] in ('false', 'true'), 'unreadable activation env value ' + key)
+            lines[rows[0][0]] = key + '=true\n'
+        else:
+            if lines and not lines[-1].endswith('\n'):
+                lines[-1] += '\n'
+            lines.append(key + '=true\n')
+    return ''.join(lines).encode()
 
 
 def catalog_candidate(raw, approved, line_enabled=True):
@@ -82,19 +91,27 @@ def catalog_candidate(raw, approved, line_enabled=True):
     gap = [row for row in approved['flags'] if row['name'] == gap_name]
     need(len(gap) == 1 and gap[0]['expected'] is True
          and gap[0]['owning_service'] == 'schwab-1m-v2', 'approved GAP catalog row unreadable')
-    # The reviewed ORBLIVE inventory removes seven retired Settings fields;
-    # appending a GAP row to the old catalog would retain invalid owners/fields.
-    current = json.loads(canonical(approved))
-    names = [row['name'] for row in current['flags']]
-    need(len(names) == len(set(names)), 'duplicate approved catalog rows')
+    false_flip = [row for row in approved['flags'] if row['name'] == 'strategy_schwab_1m_v2_false_flip_enabled']
+    need(len(false_flip) == 1 and false_flip[0]['expected'] is True
+         and false_flip[0]['owning_service'] == 'schwab-1m-v2'
+         and 'oms' in false_flip[0].get('also_check_services', []), 'approved FALSE_FLIP catalog row unreadable')
+    approved_names = [row['name'] for row in approved['flags']]
+    need(len(approved_names) == len(set(approved_names)), 'duplicate approved catalog rows')
+    # Retain actual box inventory/rulings. Only these two reviewed activations
+    # may be added/replaced; retired-process policy is not this installation.
+    for addition in (gap[0], false_flip[0]):
+        existing = [row for row in current['flags'] if row['name'] == addition['name']]
+        if existing:
+            current['flags'][current['flags'].index(existing[0])] = addition
+        else:
+            current['flags'].append(addition)
     for row in current['flags']:
         if row['name'] == 'strategy_schwab_1m_v2_line_chart_restoration_enabled':
             row['expected'] = line_enabled
             row['ruling'] = ('Operator 2026-10-08: LINESRC2 reviewed and merged; LINE ON at after-close install'
                              if line_enabled else 'Operator pre-close veto: LINE stays OFF; no activation inferred')
         if row['name'] == 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled':
-            row['expected'] = False
-            row['ruling'] = 'Operator 2026-10-07 13:45: RPG1 OFF; retained Oct8'
+            need(row['expected'] is False, 'box RPG expectation must already remain false')
     need(any(row['name'] == 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled'
              and row['expected'] is False for row in current['flags']), 'box RPG catalog must remain false')
     return canonical(current)
@@ -111,7 +128,7 @@ def verify_package(job):
     for key in ('approved_sha', 'plan_commit', 'box_sha'):
         need(re.fullmatch('[0-9a-f]{40}', release[key]) is not None, 'incomplete SHA ' + key)
     need(release['date_et'] == DAY and release['scope'] == SCOPE, 'foreign release scope/date')
-    need(type(release['line_enabled']) is bool, 'LINE disposition not explicitly bound')
+    need(release['line_enabled'] is True, 'current operator GO requires LINE ON')
     need(re.fullmatch(r'codex/install-2026-10-08-[0-9a-f]{12}', release['release_branch']) is not None,
          'release must use the immutable exact-main-head branch')
     for name, expected in release['artifacts'].items():
@@ -119,15 +136,16 @@ def verify_package(job):
         path = job / name
         need(path.is_file() and not path.is_symlink() and digest(path.read_bytes()) == expected,
              'staged artifact hash differs: ' + name)
-    need({'runner.py', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'retire_orb.py',
+    need({'runner.py', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'retire_orb.py', 'migration0023.py',
+          'approved-migrations.tar', 'health_view.py',
           'official_v2_restart_evidence.py', 'candidate-review.json', 'completed-retirement.json', 'run.sh'}
          <= set(release['artifacts']), 'incomplete runtime artifact set')
     candidate = json.loads((job / 'candidate-review.json').read_bytes())
     need(candidate['approved_sha'] == release['approved_sha'] and candidate['line_enabled'] == release['line_enabled']
          and candidate['landed_prs'] == release['landed_reviews'], 'candidate review binding differs')
     need(set(candidate['candidate_prs']) == set(candidate['landed_prs'])
-         and {'1126', '1127'} <= set(candidate['candidate_prs'])
-         and set(candidate['candidate_prs']) <= {'1126', '1127', '1130', '1133', '1134'},
+         and {'1126', '1127', '1130', '1134', '1135'} <= set(candidate['candidate_prs'])
+         and set(candidate['candidate_prs']) <= {'1126', '1127', '1130', '1134', '1135', '1136'},
          'candidate outside reviewed P1-only install capability')
     need(json.loads((job / 'completed-retirement.json').read_bytes()) == candidate['completed_retirement'],
          'completed retirement receipt binding differs')
@@ -196,6 +214,16 @@ class Run:
             rc, _, _ = self.command([str(PYTHON), str(self.job / 'gate_readonly.py')], timeout=180)
             return rc
         return retry_read(read, record=lambda attempt, rc: self.note(read_attempt=attempt, rc=rc))
+
+    def native_rehearsal(self):
+        for name in ('oms', 'v2'):
+            self.stage = 'native-readonly-' + name
+            command = ['bash', str(REPO / 'ops/preflight' / ('preflight_' + name + '_restart.sh'))]
+            rc = retry_read(lambda number: self.command(command, timeout=180)[0],
+                            record=lambda attempt, code: self.note(read_attempt=attempt, rc=code))
+            if rc == 1:
+                raise WaitWork('native read-only fence refused ' + name + '; preserve exact output, no clock override')
+            need(rc == 0, 'native read-only fence unreadable ' + name)
 
     def backup_write(self, path, raw):
         before = path.read_bytes()
@@ -267,6 +295,7 @@ class Run:
         blob = self.checked(['sudo', '-u', 'trader', 'git', '-C', str(REPO), 'show',
                              self.release['approved_sha'] + ':ops/health/expected_flags.json'])
         catalog = catalog_candidate(CATALOG.read_bytes(), json.loads(blob.read_bytes()), self.release['line_enabled'])
+        self.native_rehearsal()
         rc = self.gate('final-before-first-write')
         if rc == 1:
             raise WaitWork('measured work appeared before first write')
@@ -280,14 +309,21 @@ class Run:
         self.stage = 'env-and-catalog'
         self.backup_write(ENV, env)
         self.backup_write(CATALOG, catalog)
-        for target in ('oms', 'schwab-1m-v2', 'orb-schwab', 'control'):
+        need(self.gate('before-migration0023') == 0, 'fresh trading gate blocked before migration')
+        self.stage = 'migration0023'
+        self.checked([str(PYTHON), str(self.job / 'migration0023.py'),
+                      '--job', str(self.job), '--attempt', str(self.attempt)], timeout=600)
+        for target in ('oms', 'schwab-1m-v2', 'control'):
             need(self.gate('before-deploy-' + target) == 0, 'fresh trading gate blocked before ' + target)
             self.stage = 'deploy-' + target
-            self.checked(['sudo', '-u', 'trader', 'env',
-                          'MAI_TAI_EXPECTED_SHA=' + self.release['approved_sha'],
-                          'MAI_TAI_RUN_MIGRATIONS=0', 'MAI_TAI_ALLOW_LIVE_RESTART=0',
-                          'bash', str(REPO / 'ops/systemd/deploy_service.sh'), str(REPO),
-                          self.release['release_branch'], target], timeout=1800)
+            from health_view import health_view
+            with health_view(lambda event: self.note(**event)) as health_url:
+                self.checked(['sudo', '-u', 'trader', 'env',
+                              'MAI_TAI_EXPECTED_SHA=' + self.release['approved_sha'],
+                              'MAI_TAI_RUN_MIGRATIONS=0', 'MAI_TAI_ALLOW_LIVE_RESTART=0',
+                              'APP_HEALTH_URL=' + health_url,
+                              'bash', str(REPO / 'ops/systemd/deploy_service.sh'), str(REPO),
+                              self.release['release_branch'], target], timeout=1800)
             self.note(deploy_finished=target, identities=self.identities())
         # Parent reports retirement completed manually. Preserve its actual
         # receipt; this P1-only installer must not publish another replace.

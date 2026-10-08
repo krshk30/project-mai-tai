@@ -19,12 +19,13 @@ import uuid
 DAILY = "/home/trader/preopen-daily"
 GATE = "/home/trader/preopen.sh"
 REPO = "/home/trader/project-mai-tai"
-RESTARTED = {"oms", "strategy", "schwab-1m-v2", "orb-schwab", "control"}
+RESTARTED = {"oms", "strategy", "schwab-1m-v2", "control"}
 DEFAULT_SERVICES = {"control", "market-capture", "market-data", "oms", "reconciler",
                     "schwab-1m-v2", "strategy", "tv-alerts"}
 PREFIX = "MAI_TAI_STRATEGY_SCHWAB_1M_V2_"
 OVERRIDES = {PREFIX + "LINE_CHART_RESTORATION_ENABLED": "true",
-             PREFIX + "ATR_REPRICE_HANDOFF_ENABLED": "false"}
+             PREFIX + "ATR_REPRICE_HANDOFF_ENABLED": "false",
+             PREFIX + "FALSE_FLIP_ENABLED": "true"}
 GAP = PREFIX + "GAP_LINE_CARRY_ENABLED"
 REFRESHABLE = {REPO + "/ops/health/v2_restart_evidence.py",
                REPO + "/src/project_mai_tai/strategy_core/time_utils.py",
@@ -110,7 +111,7 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog, l
     result = replace_assignment(result, "SNAPSHOT", snapshot)
     result = replace_assignment(result, "INSTALL_RECORD", record)
     for name, label in (("oms", "OMS_"), ("strategy", "STRATEGY_"), ("schwab-1m-v2", ""),
-                        ("orb-schwab", "ORB_SCHWAB_"), ("control", "CONTROL_")):
+                        ("control", "CONTROL_")):
         result = replace_assignment(result, "EXPECTED_" + label + "PID", states[name]["MainPID"])
         result = replace_assignment(result, "EXPECTED_" + label + "START", states[name]["ExecMainStartTimestamp"])
     result = re.sub(r'^(ORB_UNIT|EXPECTED_ORB_PID|EXPECTED_ORB_START)=.*\n', '', result, flags=re.M)
@@ -120,7 +121,8 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog, l
         'else\n  fail "orb-schwab upgrade acknowledgement mismatch"\nfi\n')
     ordinary = 'check_identity orb-schwab "$ORB_SCHWAB_UNIT" "$EXPECTED_ORB_SCHWAB_PID" "$EXPECTED_ORB_SCHWAB_START"\n'
     need(result.count(acknowledgement) == 1 or result.count(ordinary) == 1, 'orb-schwab admission template ambiguous')
-    result = result.replace(acknowledgement, ordinary)
+    # orb-schwab is untouched in the current four-service install. Its exact
+    # acknowledged upgrade identity must stay pinned; never adopt a new PID.
     overrides = {**OVERRIDES, PREFIX + 'LINE_CHART_RESTORATION_ENABLED': str(line_enabled).lower()}
     original = re.findall(r"^  --expect-flag '([^']+)' \\\n", text, re.M)
     need(original and len(original) == len(set(original)), "expect-flag population ambiguous")
@@ -221,14 +223,13 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
     ack = json.loads(read(DAILY + "/upgrade-ack.json"))
     need(ack["application"] == old_app and ack["decision"] == "ACKNOWLEDGED_REDIS_UPGRADE_RESTART",
          "historical upgrade acknowledgement binding differs")
-    need(ack['state']['MainPID'] != observations['states']['orb-schwab']['MainPID'],
-         'old upgrade acknowledgement cannot substitute for authorized new identity')
+    need(all(observations['upgrade_state'].get(key) == value for key, value in ack['state'].items()),
+         'untouched orb-schwab upgrade identity changed')
     ack['historical_receipt'] = json.loads(read(DAILY + '/upgrade-ack.json'))
     ack["application"] = app
-    ack['active_for_current_install'] = False
-    ack['superseded_by_current_restart'] = dict(state=observations['states']['orb-schwab'],
-        snapshot=snapshot, install_record=record, source_journal=journal,
-        reason='authorized orb-schwab restart; new NRestarts0 identity pinned normally')
+    ack['active_for_current_install'] = True
+    ack['preserved_untouched_identity'] = dict(snapshot=snapshot, install_record=record,
+        source_journal=journal, reason='orb-schwab not restarted; exact historical acknowledgement preserved')
     flags = json.loads(read("/home/trader/restart_evidence/expected_flags.json"))["flags"]
     overrides = {**OVERRIDES, PREFIX + 'LINE_CHART_RESTORATION_ENABLED': str(line_enabled).lower()}
     for key, expected in {**overrides, GAP: "true"}.items():

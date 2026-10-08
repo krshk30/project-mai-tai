@@ -8,17 +8,18 @@ import subprocess
 import sys
 
 PREFIX = 'docs/review-artifacts/gapline-wbquiet-install-20261008/job/'
-REQUIRED_PRS = {'1126', '1127'}
-P1_PRS = REQUIRED_PRS | {'1130', '1133', '1134', '1135'}
+REQUIRED_PRS = {'1126', '1127', '1130', '1134', '1135'}
+P1_PRS = REQUIRED_PRS | {'1136'}
 BASELINE_ROLES = {'oms', 'schwab-1m-v2', 'strategy', 'orb-schwab', 'control', 'orb',
                   'market-capture', 'market-data', 'reconciler', 'momentum-paper',
                   'option-a-daily-guard', 'redis', 'postgresql'}
-SCOPE = 'oct8-p1-only-reviewed-five-services'
+SCOPE = 'oct8-p1-bagh-migration0023-four-services'
 SOURCES = ('ops/systemd/deploy_service.sh', 'ops/bootstrap/08_install_runtime.sh',
-           'ops/preflight/preflight_oms_restart.sh', 'ops/health/expected_flags.json',
+           'ops/preflight/preflight_oms_restart.sh', 'ops/preflight/preflight_v2_restart.sh', 'ops/health/expected_flags.json',
            'ops/health/expected_flags_check.py', 'ops/health/v2_restart_evidence.py',
            'src/project_mai_tai/services/orb_app.py', 'src/project_mai_tai/runtime_registry.py',
-           'ops/systemd/project-mai-tai.target')
+           'ops/systemd/project-mai-tai.target', 'alembic.ini', 'sql/migrations/env.py',
+           'sql/migrations/versions/20261008_0023_entry_classification.py')
 
 
 def git(*arguments):
@@ -48,17 +49,15 @@ def verify_pin(pr, row, ledger):
 
 
 def validate_reviews(review, approved, ledger):
-    if review.get('approved_sha') != approved or type(review.get('line_enabled')) is not bool:
+    if review.get('approved_sha') != approved or review.get('line_enabled') is not True:
         raise ValueError('candidate review must bind exact application and LINE disposition')
     rows = review.get('landed_prs', {})
     if not REQUIRED_PRS <= rows.keys():
-        raise ValueError('reviewed GAP and LINESRC2 landings required')
+        raise ValueError('reviewed GAP and B/A/G/H landings required')
     if not set(rows) <= P1_PRS:
         raise ValueError('non-P1 candidate addition refused')
     if set(review.get('candidate_prs', [])) != set(rows):
         raise ValueError('explicit final P1 candidate set differs from reviewed landings')
-    if '1135' in rows:
-        raise ValueError('H requires an exact reviewed migration/install contract; 0023 is not authorized here')
     if approved not in {row.get('landing') for row in rows.values()}:
         raise ValueError('final application must be an exact reviewed landing, never moving main')
     pins = {}
@@ -117,11 +116,12 @@ def release(plan, approved, box, review, ledger=None):
         if '/' in name or name.startswith('test_') or not name.endswith(('.py', '.sh', '.service', '.timer')):
             continue
         blobs[name] = git('show', plan + ':' + path)
-    required = {'runner.py', 'run.sh', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'retire_orb.py'}
+    required = {'runner.py', 'run.sh', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'retire_orb.py', 'migration0023.py', 'health_view.py'}
     if not required <= blobs.keys():
         raise ValueError('incomplete committed runner artifacts: ' + ','.join(sorted(required - blobs.keys())))
     blobs['candidate-review.json'] = canonical(review)
     blobs['completed-retirement.json'] = canonical(retirement)
+    blobs['approved-migrations.tar'] = git('archive', '--format=tar', approved, 'alembic.ini', 'sql/migrations')
     blobs['official_v2_restart_evidence.py'] = git('show', approved + ':ops/health/v2_restart_evidence.py')
     result = dict(schema_version=1, date_et='2026-10-08', scope=SCOPE,
                   plan_commit=plan, approved_sha=approved, box_sha=box,

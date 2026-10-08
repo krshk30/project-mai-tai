@@ -1,203 +1,124 @@
-# October 8: reviewed P1-only install mechanics
+# October 8: exact reviewed B/A/G/H P1 install
 
-## Authority, Exact Candidate, and Current State
+## Authority and Candidate
+Lane C owns only this plan/job directory. Parent owns landings and handoff.
+Latest operator GO covers B1127, A1130, G1134, H1135 on main1e15 plus merged
+GAP1126; F1133 is EXCLUDED. I1136 may join only if independently pinned,
+reviewed and explicitly in the final set before execution. No non-P1/data lanes.
+B landed 4ec93308aab379894b69de0b84622d6ce3a7c756; A/G/H rebased landings and
+the final APP are NOT yet supplied. That B SHA is NOT a substitute final APP.
+No staging, deployment, env/schema/service write or approval hash is claimed.
 
-Lane C is the sole writer of this directory. This is an isolated tested
-mechanics package, NOT a staged job, install approval receipt, or COMPLETE.
-No box write, timer staging, deployment, order, DB/Redis mutation, pin or merge
-is permitted before the close. Parent owns shared handoff reporting.
-
-Operator standing GO covers reviewed work after the close when the real
-trading gates pass. Latest scope supersedes the earlier expanded candidate:
-ONLY independently pinned fixes broken TODAY: A #1130, B #1127, F #1133,
-G #1134, H #1135, plus merged GAPLINE #1126. A/F/G/H are NOT assumed ready,
-pinned or landed. Final APP must be the exact final reviewed landing. Never
-substitute a moving main, a draft, or an old morning flatness receipt.
-
-- GAPLINE #1126: reviewed head 00bd0c64325ec25c11642d913c4a0ae2b35aad0f;
-  landing 1ed10831508e9a251aa3440a973f49c8bb2c18c9.
-- Current main 1e15adb03c3758e647d333828bbe3090e24e832e is historical
-  integration context, not an approved candidate. Already-landed WB content
-  is not reverted, but no WBQUIET hooks, studies or data additions are in
-  this install. Non-P1 #1131/#1132/#1128/#1115/#1110/#1103 are excluded.
-- LINESRC2 #1127: final pin/merge required; A/F/G/H only as individually
-  reviewed final landings in the parent's explicit candidate set.
-- Item #6 / paper ORB retirement is MANUALLY COMPLETED per parent. Preserve
-  its actual receipt and fresh read-only state; do not disable/publish again.
-- H proposes additive migration 0023 and new setting. It is unreviewed and
-  not ready. This runner disables migrations and cannot include H until an
-  exact reviewed migration/install contract is explicitly incorporated.
-  Packaging with #1135 therefore refuses rather than guessing or applying it.
-
-`make_release.py` requires full SHAs, explicit candidate-review JSON, the
-committed review-pins ledger, exact landing trees/diffs, actual independent
-pin verification, and review/Validate provenance. Required landings are
-#1126 and #1127; `candidate_prs` must equal the explicit P1 `landed_prs` set.
-Each source provenance is that named PR only, never a future data expansion.
-The final APP must itself
-be a named reviewed landing. Missing/changed content refuses release generation.
-It embeds the final APP's official restart collector as a hashed artifact,
-not the old box collector whose default population still includes paper ORB.
-Every job blob is read from the plan COMMIT, not dirty working files.
-The review receipt also requires `box_baseline`: exact box SHA, actual
-capture timestamp, authorization source, and all thirteen identities from
-`proof_readonly.py baseline`. Release refuses missing fleet/start fields;
-runner compares those actual baseline identities and refuses drift rather
-than adopting a later arbitrary process. Re-read before the final write.
+Release generation binds full APP/plan/box SHAs, the exact explicit candidate
+set, per-PR reviewed base/head/landing trees and binary diffs, committed pin
+verification and Validate receipts. Required PRs:1126/1127/1130/1134/1135.
+Only optional1136 is allowed; F and future WB data additions refuse packaging.
+Every artifact is from committed blobs, never dirty files or moving main.
+Exact clean box baseline identities need an actual fresh acknowledged read.
+No arbitrary PID adoption, archived snapshot/ledger mutation or recovery.
 
 ## Literal Sequence
+First write is after16:00 ET October8, flat; held work waits for its close.
+Native clock gate remains >=18:00 with NO invented override or threshold.
+A clock refusal is recorded literally. After the first write, clock
+advancement alone never aborts. Real holding/order/unreadability/start or
+migration errors remain fail closed.
 
-First remote staging/write is October 8 AFTER 16:00 ET. Held bot positions
-wait for their close, never for a fixed wake-up time. Native repository gates
-remain unchanged. No clock override, migration, ledger write, snapshot
-unarchival, trading-code edit, rollback or automatic recovery is included.
-After the first application write, clock advancement alone does not abort.
+1. Verify all manifest/approval/artifact bytes, exclusive attempt/nonblocking
+   deployment lock, exact clean box checkout, fetched immutable candidate
+   ref, source hashes and all actual baseline identities.
+2. Before any application write run the read-only helper AND both unmodified
+   native OMS/v2 fences. OMS rehearsal is before strategy can be stopped;
+   repo OMS deployment still runs that fence after stopping strategy.
+   Preserve stdout/stderr/rc/hash for every call. Retry only unreadable rc2,
+   three attempts 60s apart; measured blockers never retry as unreadability.
+   Read-only snapshots/Redis/log offsets/DB counters and identities remain
+   bounded. Re-read trading conditions and identities immediately before write.
+3. Back up env and catalog, hashes/atomic writes. Change only LINE=false->true,
+   add/activate GAP_LINE_CARRY=true and FALSE_FLIP=true. Retain MIRROR=true,
+   SLOTCLEAR fresh-flip/fresh-sell=true and RPG=false; all other bytes unchanged.
+   Catalog starts from actual BOX rows: add only reviewed GAP/FALSE rows,
+   expected=true; LINE expected=true. Preserve unrelated owners/rulings,
+   process population and existing RPG=false. No wholesale repo replacement.
+4. Fresh trading gate; run only reviewed additive migration
+   sql/migrations/versions/20261008_0023_entry_classification.py,
+   revision20261008_0023 from20261005_0022: nullable JSON entry_classification
+   on oms_managed_positions. It is NOT upgrade head. Extract exact hash-bound
+   APP migration archive into an exclusive attempt directory (no checkout or
+   service action); execute Alembic upgrade20261008_0023, record actual revision.
+   Existing0023 is read/proven, not re-applied. Unexpected revision/error stops.
+   No other schema/ledger/archived-row action or automatic downgrade.
+5. Fresh gate before each repo deployment, in order OMS -> v2 -> control:
+   OMS script stops/starts strategy itself. No orb-schwab restart, no extra
+   strategy restart, no paper retirement write. Literal command for each:
 
-1. Generate package from the committed plan and exact final APP; publish an
-   immutable release ref pointing to that APP. `stage.py --check-only` is
-   local only. Real staging verifies every byte and refuses before close or
-   on another date BEFORE making any remote directory/unit write. It installs
-   only the named dated one-shot/timer, never directly starts the installer.
-2. Runner verifies manifest, approval, candidate-review binding and every
-   artifact; takes the nonblocking deployment lock and an exclusive attempt.
-   Source check requires clean exact box SHA, exact immutable fetched APP,
-   reviewed source hashes and the baseline deploy-script hash. No force reset.
-3. Capture actual whole-fleet identities, process flags, log offsets, bounded
-   Redis owners/marker/evictions/memory, PostgreSQL counters, and the official
-   snapshot using the staged FINAL-APP collector. Its default fleet excludes
-   retired paper ORB. Do not adopt an old ORB PID into that fleet.
-4. Fresh trading gate immediately before first write; claim the attempt.
-   Back up env and box catalog with hashes. Change ONLY GAP_LINE_CARRY=true
-   and LINE_CHART_RESTORATION=true; RPG handoff remains false. An operator
-   LINE veto requires an explicitly false, regenerated manifest; no implicit
-   waiver. Preserve all other env bytes, RETRY_ONE=true/MAX_RETRIES=0, and
-   archived snapshots. Box catalog becomes the reviewed complete inventory,
-   with GAP/LINE expectations true and RPG false. Removed paper ORB Settings
-   and ownership rows are not retained by appending to the stale inventory.
-5. Fresh gate; deploy OMS using the repo's literal command below. The repo
-   stops strategy, runs native OMS preflight, restarts OMS, then starts
-   strategy. No extra strategy restart is added. Bootstrap may refresh units
-   and derive orb-paper.env; its before/after hashes are recorded. Schema
-   migration is explicitly disabled.
-
-   ```sh
    sudo -u trader env MAI_TAI_EXPECTED_SHA="$APP" MAI_TAI_RUN_MIGRATIONS=0 \
      MAI_TAI_ALLOW_LIVE_RESTART=0 bash /home/trader/project-mai-tai/ops/systemd/deploy_service.sh \
      /home/trader/project-mai-tai "$IMMUTABLE_RELEASE_BRANCH" oms
-   ```
 
-6. Fresh gate before EACH remaining target, same literal command with
-   `schwab-1m-v2`, then `orb-schwab`, then `control`. Preserve each native
-   identity/health check. No permission-mode, exact CancelledError signature,
-   control-page ownership, or arbitrary log-signature self-stop is added.
-   A clean systemd stop is proof. A genuine failed start remains a stop.
-7. Copy the hash-bound `completed-retirement.json` supplied from the actual
-   manual completion into the attempt. It retains the original request-ID
-   proof and owner-preservation evidence. No second publish, disable, or
-   retirement write occurs. Fresh post-read still requires inactive/disabled
-   paper ORB and empty owner, with the existing bounded owner checks.
-8. Require five actual new active/NRestarts0 PIDs/starts; exact checkout,
-   requested flags and preserved live settings. Compare untouched services;
-   paper ORB has its separate positive retirement proof, not an unchanged
-   identity claim. Fresh trading read, then ten-minute observation for each
-   new process; read live AND rotated files and new-PID journals. Record
-   errors/tracebacks, sync ms/DB tx/s, scanner
-   status, actual bar-hole minutes and Redis before/after. Incomplete telemetry
-   and after-hours coverage remain UNKNOWN, never manufactured PASS.
-9. Run real boolean and numeric expected_flags_check on live /proc. Require
-   ZERO mismatches; only by-design inactive momentum-paper UNKNOWN may remain.
-   No legacy ORB mismatch waiver or paper restart to get green. Actual reviewed
-   inventory determines denominator; counts are reported, never guessed.
-10. Seal actual action journal and whole-fleet install record bound to the
-    official pre-snapshot. Restarted group EXACTLY OMS/v2/strategy/orb-schwab/
-    control; retired paper ORB is separately bound in retirement receipt.
-    Re-pin daily preopen SHA, all five PIDs/starts, SNAPSHOT/INSTALL_RECORD,
-    actual expected flags for that group, and runtime dependency hashes.
-    Remove ONLY paper ORB identity declarations/check, preserve untouched
-    identities and dynamic date/report/paper shape. Old orb-schwab Redis
-    upgrade ACK is preserved as history and retired as CURRENT admission;
-    new authorized active/NRestarts0 identity is pinned normally. Root mode,
-    adapter hash, official wrapper and all required evidence remain bound.
-    Backups and atomic writes, runtime last; no fake daily PASS. `bash -n`
-    only, no early run of tomorrow's gate. Existing daily timer is unchanged.
-11. COMPLETE only after measured post-checks and re-pin receipts. Seal once;
-    no second installer. ABORT pages actual stage/rc/states/log paths and starts
-    nothing. No partial deploy retry or unreviewed recovery. Parent posts C-row.
+   Repeat with schwab-1m-v2, then control. Source reads prove that the supplied
+   branch's origin ref equals EXPECTED_SHA; never substitute origin/main.
+   Bootstrap refreshes runtime per target but migrations stay0 after explicit0023.
+   Preserve native post-health SLA: OMS/v2/control60s, strategy240s. A runner-
+   local loopback health view forwards each actual 8100/health response,
+   with ONLY fresh exact-shape v2 off-hours dryness admitted in memory.
+   Every admission logs original status/timestamp/details; stale, unreadable,
+   unhealthy-loop, exception, disconnected, disabled, incomplete-warmup,
+   wrong-session or pre-session-end stall remains blocking. Other services
+   are unchanged. No native gate/source edits, new thresholds or new gates.
+6. Require four new active/NRestarts0 identities (OMS/v2/strategy/control);
+   orb-schwab and other untouched identities stay unchanged. Manual paper ORB
+   retirement is already complete: consume its actual hash-bound historical
+   receipt, never disable/publish again. Ten minutes after all starts collect
+   new-PID journals plus timestamped live/rotated logs, actual /proc on OMS/v2,
+   boolean/numeric audit, DB tx/s, OMS sync-ms, per-name v2 observations,
+   scanner/warm/prefill/alert counts and OMS-FALSE-FLIP events. Missing workload
+   is UNMEASURED, not invented PASS. Tracebacks/ERRORs are counted and reported.
+   Redis five-owner/marker/evictions/memory and actual bar-hole proof retained.
+7. Audit requires zero real mismatches; inactive momentum-paper UNKNOWN stays
+   truthful. No paper start or process-check retirement for green. Seal actual
+   snapshot/install record for ONLY OMS/v2/strategy/control restarted.
+8. Re-pin daily preopen SHA, four PIDs/starts, snapshot/install-record/current
+   catalog flags and all dependency hashes, backups/atomic writes/runtime last.
+   Date/paper shape/root adapter remain unchanged. orb-schwab's old upgrade ACK
+   remains CURRENT only if its exact untouched state matches; rebind APP while
+   preserving historical receipt, never adopt a replacement identity.
+   No orb-schwab expect-flag argument in the restarted group. No fake daily
+   PASS or early tomorrow gate. COMPLETE only after actual receipts.
+9. ABORT records exact stage/rc/unit states/logs, pages, starts nothing.
+   Rollback/recovery/downgrade is NOT pre-authorized.
 
-## Trading Gates and Retry Policy
+## Real Read-Only Receipt, Not Approval
+October8 15:10:14.992278->15:10:24.766323 ET-equivalent UTC19:10:
+gate_readonly.py rc1; fresh bound broker/SQL reads, unknown[], managed/virtual
+rows[], in-flight[]. Schwab FLYE1000, working order1008231547198;
+Webull flat/zero working. FLYE has22 Schwab session orders and8 fills, so no
+operator-only classifier admission is inferred. Native OMS15:10:12 rc1:
+FLYE1000, managed0, account stamps9/10s. Native v2 rc1: AIXI armed, FLYE1000,
+before18 clock block. NO writes, overrides, cancels or retry of measured work.
+This is a real blocking read, NOT after-close approval or a final candidate pass.
+Repeat the same full read-only commands at the actual after-close gate time.
 
-| Gate | Requirement | Failure handling |
-| --- | --- | --- |
-| Both brokers | Fresh direct complete account-bound positions, flat BOT positions | Holding waits before write; measured blocker stops after write |
-| Operator holdings | ZERO session bot orders AND fills, not net-zero round trip | No generic waiver of bot holdings or unowned SELL |
-| Working orders | Complete fresh Schwab and Webull/list-today responses | Any working/unknown order blocks |
-| Managed/virtual book | Zero open managed and nonzero virtual rows | Never waive |
-| Intent/census | No in-flight/unconfirmed dispatch; positive terminal local-abort proof | No age clearing, DB edit or archived-row change |
-| Native repository gates | Executed unchanged by deploy_service | Preserve exact refusing output |
-| Starts/proc/Redis | New active PIDs/NRestarts0, requested switches, no new eviction | Stop/page; no recovery |
+Actual read-only box catalog preview:137 rows ->139, added GAP/FALSE only,
+changed LINE only, removed0. RPG and all unrelated row objects unchanged.
+The preview uses reviewed H catalog bytes only as addition templates, NOT
+as final APP selection or proof of live activation.
 
-Every gate receipt preserves stdout AND stderr, rc and hashes. ONLY unreadable
-rc2 retries: at most three attempts 60 seconds apart. Measured rc1 never
-retries inside a service step. Before first write measured work waits for a
-later timer tick; an exhausted unreadable source stops. No new broad allowance.
-MI180/NXL2 decided discrepancies remain unchanged; no ledger write.
+## Packaging and Remaining Work
+Stable historical path:
+docs/review-artifacts/gapline-wbquiet-install-20261008/job/runner.py.
+Unit/path names retaining wbquiet do not authorize WB studies or source edits.
+Standalone runtime: application venv Python/redis/SQLAlchemy/Alembic/Settings,
+systemctl/journalctl/git/bash. All helpers, official APP snapshot collector,
+completed-retirement receipt and approved-migrations.tar are hash-bound.
+No unconditional permission-mode/log-signature/control-page self-stops.
 
-## Packaging and Evidence Contract
+Await parent exact final merged APP and optional I decision; fresh acknowledged
+baseline and complete retirement receipt. Only then generate actual manifest,
+read-only rehearsal at real time, stage once afterclose and execute if green.
+No source writer outside this owned directory; no production action so far.
+Tomorrow scanner rule9b and first organic FALSEFLIP workload stay UNMEASURED.
 
-Standalone Python helpers require final APP installed dependencies (shared
-project venv: redis/SQLAlchemy/Settings), native systemctl/journalctl/git/bash,
-and approved repository source. Runner strips inherited MAI_TAI overrides and
-TZ; ET is explicit only in window calculations. The helper imports are all
-included in manifest (including retire_orb.py). Official snapshot collector
-comes from exact APP. Immutable dated package:
-`/home/trader/after-hours/2026-10-08/gapline-wbquiet/job`.
-
-```sh
-python job/make_release.py --plan PLAN_SHA --approved-sha APP --box-sha BOX \
-  --review-receipt candidate-review.json --review-ledger REVIEW_PINS_WORKTREE \
-  --output-directory EXCLUSIVE_LOCAL_OUTPUT
-python job/stage.py --plan PLAN_SHA --approved-sha APP --box-sha BOX \
-  --review-receipt candidate-review.json --review-ledger REVIEW_PINS_WORKTREE --check-only
-```
-
-No valid candidate-review receipt is fabricated while #1127 is unmerged.
-It must also include the actual `completed_retirement` evidence; a claimed
-manual completion without that receipt is not fabricated as PASS. Historical
-path/unit names containing `wbquiet` stay stable for mechanics compatibility,
-not as scope authorization. Release scope is `oct8-p1-only-reviewed-five-services`.
-The named dated timer is `project-mai-tai-gapline-wbquiet-20261008.timer`;
-October8 minute checks 16..23 ET, Persistent=false. Neither committed units
-nor a check-only package is evidence of a box timer being installed.
-
-Final receipt: plan/manifest/approval/artifact hashes, actual start/end times,
-five new identities/proc flags, untouched identities, retirement request/hash,
-all gates/raw receipts, flags/numeric outcome, ten-minute logs/journals and
-file paths, Redis/DB/scanner/bar continuity, preopen diff/backups/hash/runtime
-bindings, and COMPLETE or exact ABORT. Tomorrow scanner/live outcomes remain
-UNMEASURED until observed.
-
-## Read-Only Baseline and Honest Limits
-
-October8 09:14:49 ET bounded read via `ssh mai-tai-vps sudo`: clean box
-`d244f602491e5d316a05670b205315466aed2a4d`. Actual states:
-
-| Unit | PID | Start UTC | NRestarts |
-| --- | --- | --- | --- |
-| oms | 1408231 | Oct7 22:12:50 | 0 |
-| v2 | 1941193 | Oct8 12:58:11 | 0 |
-| strategy | 1408242 | Oct7 22:12:50 | 0 |
-| orb-schwab | 765206 | Oct7 06:31:14 | 1 (historical upgrade ACK) |
-| control | 1464286 | Oct7 23:43:00 | 0 |
-| paper ORB | 1322003 | Oct7 20:14:37 | 0 |
-
-All active at that read. Earlier v2 PID1895743 and morning assumptions are
-obsolete. Parent must bind the authorized 08:58:11 restart acknowledgement
-and re-read actual after-close baseline; this observation is NOT an install
-approval, flat proof, or permission to adopt arbitrary changed identities.
-
-Prior08:38 clear gate and08:17 AIXI holding receipt remain historical morning
-evidence only. Latest local mechanics results and mutation receipt accompany
-the final package commit. Parent's retained exact-main full-unit baseline is
-1e15adb0: 48 failed /7674 passed /55 skipped, failed-name hash
-e0b9fc7478ff484d88d9882194d3525632c0d2d43353d515b28f63a28464e9a9.
-No duplicate baseline is run and no global parity claimed without comparison.
+Rollback description only: FALSE_FLIP=false requires OMS AND v2 reload;
+LINE/GAP rollback requires v2 reload. Retained flags are not changed. Any
+rollback is a later separately authorized action, not part of this GO.

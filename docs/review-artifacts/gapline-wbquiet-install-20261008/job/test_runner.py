@@ -36,14 +36,16 @@ def test_rc_two_only_bounded_read_retries_preserve_every_attempt(results, expect
 
 def environment():
     return (runner.LINE + '=false\n' + runner.HANDOFF + '=false\n'
-            '# Retained settings\nOTHER=true\n').encode()
+            + ''.join(key + '=true\n' for key in runner.RETAINED)
+            + '# Retained settings\nOTHER=true\n').encode()
 
 
 def test_env_add_changes_only_gap_line_and_retains_rpg_false():
     before = environment()
-    assert runner.env_candidate(before) == before.replace((runner.LINE + '=false').encode(), (runner.LINE + '=true').encode()) + (runner.GAP + '=true\n').encode()
+    additions = (runner.GAP + '=true\n' + runner.FALSE_FLIP + '=true\n').encode()
+    assert runner.env_candidate(before) == before.replace((runner.LINE + '=false').encode(), (runner.LINE + '=true').encode()) + additions
     assert runner.env_candidate(runner.env_candidate(before)) == runner.env_candidate(before)
-    assert runner.env_candidate(before, False) == before + (runner.GAP + '=true\n').encode()
+    assert runner.env_candidate(before, False) == before + additions
 
 
 @pytest.mark.parametrize('extra', [
@@ -73,17 +75,20 @@ def catalogs():
         *original['flags'][:2],
         {'name': 'strategy_schwab_1m_v2_gap_line_carry_enabled', 'expected': True,
          'owning_service': 'schwab-1m-v2', 'ruling': 'Approved carry card'},
+        {'name': 'strategy_schwab_1m_v2_false_flip_enabled', 'expected': True,
+         'owning_service': 'schwab-1m-v2', 'also_check_services': ['oms']},
     ]}
     return original, approved
 
 
-def test_catalog_reviewed_inventory_replaces_retired_fields_and_line_on():
+def test_catalog_only_two_additions_line_on_and_preserves_box_inventory_rulings():
     original, approved = catalogs()
     result = json.loads(runner.catalog_candidate(runner.canonical(original), approved))
     assert result['flags'][0]['expected'] is True
     assert result['flags'][1]['expected'] is False
-    assert result['flags'][2] == approved['flags'][2]
-    assert not any(row['name'] == 'orb_paper_enabled' for row in result['flags'])
+    assert result['flags'][2] == original['flags'][2]
+    assert result['flags'][3:] == approved['flags'][2:]
+    assert len(result['flags']) == len(original['flags']) + 2
     assert runner.catalog_candidate(runner.canonical(result), approved) == runner.canonical(result)
 
 
@@ -101,10 +106,12 @@ def test_catalog_duplicates_and_rpg_on_refuse():
 def test_approval_and_all_artifact_bytes_bound(tmp_path):
     from test_retire_orb import receipt
     names = ('runner.py', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'run.sh',
-             'retire_orb.py', 'official_v2_restart_evidence.py', 'candidate-review.json', 'completed-retirement.json')
+             'retire_orb.py', 'official_v2_restart_evidence.py', 'candidate-review.json', 'completed-retirement.json',
+             'migration0023.py', 'approved-migrations.tar', 'health_view.py')
     artifacts = {}
-    candidate = dict(approved_sha='a' * 40, line_enabled=True, landed_prs={'1126': {}, '1127': {}},
-                     candidate_prs=['1126', '1127'], completed_retirement=receipt())
+    prs = ['1126', '1127', '1130', '1134', '1135']
+    candidate = dict(approved_sha='a' * 40, line_enabled=True, landed_prs={pr: {} for pr in prs},
+                     candidate_prs=prs, completed_retirement=receipt())
     for name in names:
         raw = runner.canonical(candidate) if name == 'candidate-review.json' else (
             runner.canonical(receipt()) if name == 'completed-retirement.json' else name.encode())
@@ -135,6 +142,30 @@ def test_command_captures_both_streams_and_rc(tmp_path):
     assert run.events[-1]['stderr_sha256'] == runner.digest(stderr.read_bytes())
 
 
+@pytest.mark.parametrize('codes,expected', [([2, 0, 0], 'PASS'), ([1], 'WAIT'), ([2, 2, 2], 'UNKNOWN')])
+def test_native_oms_v2_readonly_rehearsal_preserves_rc_and_no_override(tmp_path, monkeypatch, codes, expected):
+    run = runner.Run(tmp_path, {}, tmp_path)
+    calls, notes = [], []
+    def command(args, **kwargs):
+        calls.append(args)
+        return codes[len(calls) - 1], None, None
+    run.command = command
+    run.note = lambda **event: notes.append(event)
+    original = runner.retry_read
+    monkeypatch.setattr(runner, 'retry_read', lambda call, **kwargs: original(call, sleep=lambda seconds: None, **kwargs))
+    if expected == 'WAIT':
+        with pytest.raises(runner.WaitWork, match='no clock override'):
+            run.native_rehearsal()
+    elif expected == 'UNKNOWN':
+        with pytest.raises(RuntimeError, match='unreadable'):
+            run.native_rehearsal()
+    else:
+        run.native_rehearsal()
+    assert len(calls) == len(codes)
+    assert all(args[0] == 'bash' and 'preflight_' in args[1] and len(args) == 2 for args in calls)
+    assert [row['rc'] for row in notes] == codes
+
+
 def test_own_timer_date_and_no_installer_start_in_stager():
     job = Path(__file__).parent
     timer = (job / 'project-mai-tai-gapline-wbquiet-20261008.timer').read_text()
@@ -151,7 +182,8 @@ def test_runner_no_clock_check_after_first_write_exact_restarts_retirement_no_mi
     body = source.split("self.backup_write(ENV, env)", 1)[1].split('def main()', 1)[0]
     assert 'window(' not in body
     assert 'MAI_TAI_RUN_MIGRATIONS=0' in body
-    assert "for target in ('oms', 'schwab-1m-v2', 'orb-schwab', 'control')" in body
+    assert "for target in ('oms', 'schwab-1m-v2', 'control')" in body
+    assert 'before-migration0023' in body
     assert "['systemctl', 'disable', '--now', 'project-mai-tai-orb.service']" not in body
     assert "'publish'" not in body
     assert 'CancelledError' not in source

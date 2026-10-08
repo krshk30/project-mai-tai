@@ -15,7 +15,7 @@ from test_retire_orb import receipt
 
 def review():
     return dict(approved_sha='a' * 40, line_enabled=True,
-        candidate_prs=['1126', '1127'], completed_retirement=receipt(),
+        candidate_prs=['1126', '1127', '1130', '1134', '1135'], completed_retirement=receipt(),
         box_baseline=dict(sha='c' * 40, captured_at_utc='2026-10-08T20:00:00+00:00',
             authorization_source='isolated authorized baseline fixture',
             services={role: dict(MainPID=100, NRestarts=0, ActiveState='active', SubState='running',
@@ -25,12 +25,12 @@ def review():
         reviewed_head='e' * 40, landing=landing * 40, pin_verdict='PASS', validate_verdict='PASS',
         pin_receipt='committed independent-review-pin receipt', validate_receipts=['hosted validate run'],
         source_prs=[pr])
-        for pr, landing in [('1126', 'f'), ('1127', 'a')]})
+        for pr, landing in [('1126', 'f'), ('1127', 'a'), ('1130', '2'), ('1134', '3'), ('1135', '4')]})
 
 
 def fixture_release(monkeypatch):
     names = ('runner.py', 'run.sh', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py',
-             'retire_orb.py', 'project-mai-tai-gapline-wbquiet-20261008.service',
+             'retire_orb.py', 'migration0023.py', 'health_view.py', 'project-mai-tai-gapline-wbquiet-20261008.service',
              'project-mai-tai-gapline-wbquiet-20261008.timer')
     blobs = {make_release.PREFIX + name: name.encode() for name in names}
     def git(*arguments):
@@ -48,11 +48,13 @@ def fixture_release(monkeypatch):
             return b''
         if arguments[0] == 'diff':
             return b'reviewed changed lines including both WB and ORB\n'
+        if arguments[0] == 'archive':
+            return b'isolated approved migration archive fixture'
         raise AssertionError(arguments)
     monkeypatch.setattr(make_release, 'git', git)
     monkeypatch.setattr(make_release, 'verify_pin', lambda pr, row, ledger: dict(ledger_commit='9' * 40,
         stdout_sha256='0' * 64, stderr_sha256=make_release.digest(b'')))
-    return (*names, 'candidate-review.json', 'completed-retirement.json', 'official_v2_restart_evidence.py'), blobs
+    return (*names, 'candidate-review.json', 'completed-retirement.json', 'approved-migrations.tar', 'official_v2_restart_evidence.py'), blobs
 
 
 def test_release_from_committed_blobs_binds_plan_app_baseline_and_each_byte(monkeypatch):
@@ -173,7 +175,7 @@ def test_staging_clock_refuses_before_any_remote_directory_or_unit_write(tmp_pat
     assert not job.exists() and not list(units.iterdir())
 
 
-@pytest.mark.parametrize('pr', ['1126', '1127'])
+@pytest.mark.parametrize('pr', ['1126', '1127', '1130', '1134', '1135'])
 def test_release_requires_every_reviewed_landing_not_original_cherrypick_ancestry(monkeypatch, pr):
     fixture_release(monkeypatch)
     value = review()
@@ -215,7 +217,7 @@ def test_release_rejects_future_wb_data_source_provenance(monkeypatch):
         make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
 
 
-@pytest.mark.parametrize('pr', ['1131', '1132', '1128', '1115', '1110', '1103', '1124', '1129'])
+@pytest.mark.parametrize('pr', ['1131', '1132', '1128', '1115', '1110', '1103', '1124', '1129', '1133'])
 def test_release_refuses_non_p1_candidate_even_with_claimed_review(monkeypatch, pr):
     fixture_release(monkeypatch)
     value = review()
@@ -225,12 +227,11 @@ def test_release_refuses_non_p1_candidate_even_with_claimed_review(monkeypatch, 
         make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
 
 
-def test_h_migration_dependency_is_not_implicitly_applied(monkeypatch):
+def test_h_requires_its_own_reviewed_landing(monkeypatch):
     fixture_release(monkeypatch)
     value = review()
-    value['landed_prs']['1135'] = dict(value['landed_prs']['1127'], source_prs=['1135'])
-    value['candidate_prs'].append('1135')
-    with pytest.raises(ValueError, match='exact reviewed migration/install contract'):
+    del value['landed_prs']['1135']
+    with pytest.raises(ValueError, match='landings required'):
         make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
 
 

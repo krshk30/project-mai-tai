@@ -74,6 +74,16 @@ def test_complete_evidence_passes_without_granting_admission(good):
     assert "no trading admission" in result["scope"]
 
 
+def test_v2_worker_prefill_and_scanner_observations_are_not_fake_acceptance():
+    summary = proof.summarize_logs(records(logged('[V2-ATR-PROBE] symbol=FLYE state=short')
+        + logged('[OMS-FALSE-FLIP] reason=classification_unreadable')
+        + logged('scanner added FLYE prefill warm alert')))
+    assert summary['v2_by_symbol'] == {'FLYE': {'V2-ATR-PROBE': 1}}
+    assert summary['observed_event_counts']['OMS-FALSE-FLIP'] == 1
+    assert summary['keyword_line_counts'] == dict(prefill=1, warm=1, scanner=1, alert=1)
+    assert summary['worker_or_scanner_acceptance'].startswith('UNMEASURED')
+
+
 @pytest.mark.parametrize("role,key,values", [
     ("schwab-1m-v2", proof.GAP, ["false"]), ("schwab-1m-v2", proof.GAP, []),
     ("oms", proof.LINE, ["false"]), ("schwab-1m-v2", proof.LINE, ["false"]),

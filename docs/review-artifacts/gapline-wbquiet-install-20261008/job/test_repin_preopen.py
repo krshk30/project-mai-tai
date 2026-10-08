@@ -52,6 +52,8 @@ def case(tmp_path):
         if owner in envs:
             envs[owner][key] = m.OVERRIDES.get(key, value)
     envs["schwab-1m-v2"][m.GAP] = "true"
+    for owner in ('oms', 'schwab-1m-v2'):
+        envs[owner].update(m.OVERRIDES)
     envs["oms"]["MAI_TAI_OMS_V2_EH_FRESH_PRICE_ENABLED"] = "true"
     ack = json.loads(m.location(root, m.DAILY + "/upgrade-ack.json").read_bytes())
     obs = dict(head=APP, tree=TREE, clean=True, states=states, environments=envs, upgrade_state=ack["state"])
@@ -107,7 +109,7 @@ def test_current_box_template_repin_group_and_process_keys(case):
     changes = build(case)
     gate = changes[m.GATE].decode()
     assert set(re.findall(r"--restarted ([\w-]+)", gate)) == m.RESTARTED
-    assert "orb-schwab:" in gate and 'EXPECTED_CONTROL_PID=' in gate
+    assert "orb-schwab:" not in gate and 'EXPECTED_CONTROL_PID=' in gate
     assert 'EXPECTED_ORB_PID=' not in gate and 'check_identity orb ' not in gate
     assert f"EXPECTED_SHA={APP}" in gate
     assert f"SNAPSHOT={SNAPSHOT}" in gate and f"INSTALL_RECORD={RECORD}" in gate
@@ -133,8 +135,8 @@ def test_refresh_all_application_bindings_preserve_history_and_ack(case):
     ack = json.loads(changes[m.DAILY + "/upgrade-ack.json"])
     assert ack['historical_receipt'] == old_ack
     assert ack['state'] == old_ack['state']
-    assert ack['application'] == APP and ack['active_for_current_install'] is False
-    assert ack['superseded_by_current_restart']['state'] == case[1]['states']['orb-schwab']
+    assert ack['application'] == APP and ack['active_for_current_install'] is True
+    assert 'preserved_untouched_identity' in ack
     assert f'APP = "{APP}"' in changes[m.DAILY + "/upgrade_ack.py"].decode()
     assert 'APP = BINDING.get("approved_sha",' in m.location(root, m.DAILY + "/release_policy.py").read_text()
     runtime = json.loads(changes[m.DAILY + "/runtime.json"])
@@ -144,7 +146,7 @@ def test_refresh_all_application_bindings_preserve_history_and_ack(case):
         assert digest == m.digest(changes.get(path, m.location(root, path).read_bytes()))
     assert runtime["evidence_inputs"][historical] == m.digest(m.location(root, historical).read_bytes())
     assert {SNAPSHOT, RECORD, JOURNAL} <= runtime["evidence_inputs"].keys()
-    assert runtime["catalog_counts"] == dict(boolean=6, numeric=1, total=7)
+    assert runtime["catalog_counts"] == dict(boolean=8, numeric=1, total=9)
 
 
 def test_repin_flag_arguments_remain_parseable_on_next_install(case):
@@ -217,8 +219,8 @@ def test_daily_artifact_drift_not_rehashed_to_green(case):
 
 
 def test_upgrade_ack_never_adopts_another_restart(case):
-    case[1]['states']['orb-schwab']['NRestarts'] = '1'
-    with pytest.raises(m.Refusal, match="NRestarts0"):
+    case[1]['upgrade_state'] = {**case[1]['upgrade_state'], 'MainPID': '999999'}
+    with pytest.raises(m.Refusal, match="untouched orb-schwab"):
         build(case)
 
 
@@ -402,16 +404,16 @@ def test_omitting_runtime_evidence_dependency_never_rehashes_to_green(case, name
         build(case)
 
 
-def test_new_orb_schwab_control_identities_and_ack_history_not_adopted(case):
+def test_control_repin_preserves_untouched_orb_schwab_ack_identity(case):
     changes = build(case)
     gate = changes[m.GATE].decode()
-    for name, label in [('orb-schwab', 'ORB_SCHWAB_'), ('control', 'CONTROL_')]:
+    for name, label in [('control', 'CONTROL_')]:
         assert 'EXPECTED_' + label + 'PID=' + case[1]['states'][name]['MainPID'] in gate
-    assert 'upgrade_ack.py; then' not in gate
-    assert 'check_identity orb-schwab ' in gate
+    assert 'upgrade_ack.py; then' in gate
+    assert 'upgrade_ack.py' in gate
     wrapper = changes[m.DAILY + '/restart_report.py'].decode()
     assert "get('active_for_current_install', True)" in wrapper
-    assert json.loads(changes[m.DAILY + '/upgrade-ack.json'])['active_for_current_install'] is False
+    assert json.loads(changes[m.DAILY + '/upgrade-ack.json'])['active_for_current_install'] is True
 
 
 def test_old_collector_or_retired_orb_population_not_adopted(case):

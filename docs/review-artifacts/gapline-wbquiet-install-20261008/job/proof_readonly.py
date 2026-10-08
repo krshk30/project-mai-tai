@@ -26,17 +26,18 @@ LOG_DIR = Path("/var/log/project-mai-tai")
 SERVICES = ("oms", "schwab-1m-v2", "strategy", "control", "market-capture",
             "market-data", "orb", "orb-schwab", "reconciler", "momentum-paper",
             "option-a-daily-guard", "redis", "postgresql")
-RESTARTED = {"oms", "schwab-1m-v2", "strategy", "orb-schwab", "control"}
+RESTARTED = {"oms", "schwab-1m-v2", "strategy", "control"}
 OWNERS = {"strategy-engine", "schwab-1m-v2", "orb", "orb-schwab", "momentum-paper"}
 OWNER_FIELDS = OWNERS | {"_migration_complete", "_last_applied_id"}
 PREFIX = "MAI_TAI_STRATEGY_SCHWAB_1M_V2_"
 GAP = PREFIX + "GAP_LINE_CARRY_ENABLED"
 LINE = PREFIX + "LINE_CHART_RESTORATION_ENABLED"
 HANDOFF = PREFIX + "ATR_REPRICE_HANDOFF_ENABLED"
+FALSE_FLIP = PREFIX + "FALSE_FLIP_ENABLED"
 FLAG_KEYS = {PREFIX + name + "_ENABLED" for name in (
     "PM_PRINT_ASK_CONFIRM", "PM_FLIP_WAIT", "PM_REST_REPRICE", "ATR_REPRICE_HANDOFF",
     "LINE_CHART_RESTORATION", "GAP_LINE_CARRY", "RESTING_BUY_ROUND_UP", "GAP_HOLD",
-    "RETRY_ONE", "KEEP_REST_AFTER_BUY", "REMOVED_WAIT_CLEAR", "SLOTCLEAR_FRESH_FLIP", "SLOTCLEAR_FRESH_SELL",
+    "RETRY_ONE", "KEEP_REST_AFTER_BUY", "REMOVED_WAIT_CLEAR", "SLOTCLEAR_FRESH_FLIP", "SLOTCLEAR_FRESH_SELL", "FALSE_FLIP",
 )} | {"MAI_TAI_OMS_V2_WEBULL_MIRROR_RETAINED_HOLD_ENABLED",
      "MAI_TAI_OMS_V2_EH_FRESH_PRICE_ENABLED", "MAI_TAI_MARKET_DATA_SUBSCRIPTION_STARTUP_ENABLED",
      "MAI_TAI_OMS_V2_WEBULL_MIRROR_FRESH_PRICE_ENABLED"}
@@ -266,8 +267,17 @@ def log_records(ranges, start, end):
 
 def summarize_logs(records):
     errors, starts, ends = [], {}, {}
+    event_counts, by_symbol, keyword_counts = {}, {}, {key: 0 for key in ('prefill', 'warm', 'scanner', 'alert')}
     for record in records:
         line = record["line"]
+        for key in keyword_counts:
+            keyword_counts[key] += int(key in line.lower())
+        for marker in re.findall(r'\[(V2-[A-Z0-9-]+|OMS-FALSE-FLIP|MARKET-DATA-SUBSCRIPTION-[A-Z0-9-]+)\]', line):
+            event_counts[marker] = event_counts.get(marker, 0) + 1
+            symbol = re.search(r'\b(?:symbol|sym|ticker)=([A-Z][A-Z0-9.-]{0,15})\b', line)
+            if symbol:
+                counts = by_symbol.setdefault(symbol[1], {})
+                counts[marker] = counts.get(marker, 0) + 1
         if re.search(r"\bERROR\b|Traceback \(most recent call last\)", line):
             # Do not serialize raw error payloads: they can contain broker request data.
             errors.append({key: record[key] for key in ("path", "range_line", "at_utc")})
@@ -285,6 +295,9 @@ def summarize_logs(records):
     duplicate = sorted({key for group in (starts, ends) for key, rows in group.items() if len(rows) > 1}, key=int)
     durations = sorted(ends[key][0]["duration_ms"] for key in complete if ends[key][0]["duration_ms"] is not None)
     return {"errors": errors, "traceback_or_error_count": len(errors),
+            "observed_event_counts": event_counts, "v2_by_symbol": by_symbol,
+            "keyword_line_counts": keyword_counts,
+            "worker_or_scanner_acceptance": "UNMEASURED; textual observations, not workload/reader certification",
             "sync_start_ids": sorted(starts, key=int), "sync_end_ids": sorted(ends, key=int),
             "complete_sync_ids": complete, "duplicate_pass_ids": duplicate,
             "edge_incomplete_ids": sorted(set(starts) ^ set(ends), key=int),
@@ -574,10 +587,10 @@ def evaluate(before, after, approved_sha, line_enabled=True):
         if not old or not new:
             unknown.append("proc_flags:" + role)
             continue
-        for key, expected in {LINE: str(line_enabled).lower(), HANDOFF: "false", **({GAP: "true"} if role == "schwab-1m-v2" else {})}.items():
+        for key, expected in {LINE: str(line_enabled).lower(), HANDOFF: "false", FALSE_FLIP: "true", **({GAP: "true"} if role == "schwab-1m-v2" else {})}.items():
             if new.get(key) != [expected]:
                 failures.append("required_flag:" + role + ":" + key)
-        for key in FLAG_KEYS - {GAP, LINE, HANDOFF}:
+        for key in FLAG_KEYS - {GAP, LINE, HANDOFF, FALSE_FLIP}:
             if old.get(key) != new.get(key):
                 failures.append("retained_flag_changed:" + role + ":" + key)
     if "redis" in before and "redis" in after:

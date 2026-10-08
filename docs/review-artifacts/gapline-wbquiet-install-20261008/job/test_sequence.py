@@ -1,10 +1,12 @@
 """Literal runner rehearsals in private files; systemd/brokers never invoked."""
 import json
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
 
 import runner
+import health_view
 from test_retire_orb import receipt
 from test_runner import catalogs, environment
 
@@ -26,6 +28,7 @@ def rehearsal(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, 'CATALOG', catalog)
     monkeypatch.setattr(runner.time, 'sleep', lambda seconds: None)
     monkeypatch.setattr(runner, 'window', lambda now: 'READY')
+    monkeypatch.setattr(health_view, 'health_view', lambda report: nullcontext('http://127.0.0.1:12345/health'))
     release = dict(approved_sha='a' * 40, box_sha='b' * 40, plan_commit='c' * 40, line_enabled=True,
                    release_branch='codex/install-2026-10-08-' + 'a' * 12, source_hashes={},
                    baseline_deploy_sha256=runner.digest(deploy.read_bytes()))
@@ -44,6 +47,9 @@ def rehearsal(tmp_path, monkeypatch):
             self.stage = label
             self.reads.append(label)
             return 1 if label == self.block_at else 0
+
+        def native_rehearsal(self):
+            self.reads.append('native-oms-v2-readonly')
 
         def identities(self):
             self.identity_reads += 1
@@ -85,10 +91,11 @@ def test_literal_deploy_sequence_fresh_gate_before_each_restart_retirement_and_f
     run, env, catalog = rehearsal
     run.install()
     deploys = [call for call in run.calls if 'MAI_TAI_RUN_MIGRATIONS=0' in call]
-    assert [call[-1] for call in deploys] == ['oms', 'schwab-1m-v2', 'orb-schwab', 'control']
+    assert [call[-1] for call in deploys] == ['oms', 'schwab-1m-v2', 'control']
     assert all('MAI_TAI_EXPECTED_SHA=' + 'a' * 40 in call for call in deploys)
-    assert run.reads == ['final-before-first-write', 'before-deploy-oms', 'before-deploy-schwab-1m-v2',
-                        'before-deploy-orb-schwab', 'before-deploy-control',
+    assert all('APP_HEALTH_URL=http://127.0.0.1:12345/health' in call for call in deploys)
+    assert run.reads == ['native-oms-v2-readonly', 'final-before-first-write', 'before-migration0023',
+                        'before-deploy-oms', 'before-deploy-schwab-1m-v2', 'before-deploy-control',
                         'post-install-trading-read']
     assert not any('disable' in call or 'publish' in call for call in run.calls)
     assert json.loads((run.attempt / 'orb-retirement.json').read_bytes()) == receipt()
@@ -102,10 +109,11 @@ def test_literal_deploy_sequence_fresh_gate_before_each_restart_retirement_and_f
     assert '--retirement' in repin
     assert (run.job / 'COMPLETE.json').is_file()
     assert runner.LINE + '=true' in env.read_text() and runner.HANDOFF + '=false' in env.read_text()
-    assert not any(row['name'] == 'orb_paper_enabled' for row in json.loads(catalog.read_bytes())['flags'])
+    assert any(row['name'] == 'orb_paper_enabled' for row in json.loads(catalog.read_bytes())['flags'])
+    assert next(i for i, call in enumerate(run.calls) if any(str(arg).endswith('migration0023.py') for arg in call)) < run.calls.index(deploys[0])
 
 
-@pytest.mark.parametrize('target', ['oms', 'schwab-1m-v2', 'orb-schwab', 'control'])
+@pytest.mark.parametrize('target', ['oms', 'schwab-1m-v2', 'control'])
 def test_measured_work_stops_before_target_never_skips_gate_or_recovers(rehearsal, target):
     run, _, _ = rehearsal
     run.block_at = 'before-deploy-' + target
@@ -133,3 +141,17 @@ def test_changed_baseline_identity_refuses_before_env_catalog_or_deploy(rehearsa
         run.install()
     assert env.read_bytes() == old_env and catalog.read_bytes() == old_catalog
     assert not (run.job / 'write-started.json').exists()
+
+
+def test_migration_error_stops_before_any_deploy_or_start(rehearsal):
+    run, _, _ = rehearsal
+    checked = run.checked
+    def fail(command, **kwargs):
+        if any(str(arg).endswith('migration0023.py') for arg in command):
+            raise RuntimeError('recorded migration failure')
+        return checked(command, **kwargs)
+    run.checked = fail
+    with pytest.raises(RuntimeError, match='migration failure'):
+        run.install()
+    assert not any('MAI_TAI_RUN_MIGRATIONS=0' in call or 'restart' in call or 'start' in call for call in run.calls)
+    assert not (run.job / 'COMPLETE.json').exists()
