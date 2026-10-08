@@ -128,13 +128,17 @@ def recorded_setup(lane, symbol, *, recorded=None, intent_id=None):
 
 
 def test_recorded_scope_is_complete_and_day_only():
-    assert RECORDED["complete"] is True
-    assert len(RECORDED["orders"]) == 135
-    assert len(RECORDED["intents"]) == 25
-    assert len(RECORDED["audits"]) == 237
-    assert RECORDED["prior_working_or_null"] == []
+    raw = RECORDED["raw_capture"]
+    assert raw["complete"] is True
+    assert raw["limits"]["orders"]["returned"] == 135
+    assert raw["limits"]["intents"]["returned"] == 25
+    assert raw["limits"]["audits"]["returned"] == 237
+    assert raw["prior_working_or_null"] == []
+    assert RECORDED["replay_projection"]["counts"] == {
+        "intents": 2, "orders": 86, "historical_intents": 86, "audits": 135, "fills": 11}
+    assert all(len(RECORDED[key]) == count for key, count in RECORDED["replay_projection"]["counts"].items())
     assert {r["time_in_force"] for r in RECORDED["orders"]} == {"day"}
-    assert all(not v["truncated"] for v in RECORDED["limits"].values())
+    assert all(not v["truncated"] for v in raw["limits"].values())
 
 
 @pytest.mark.asyncio

@@ -153,7 +153,9 @@ def test_queue_restore_unknowns_and_prior_working_stay_conservative(lane, condit
 @pytest.mark.asyncio
 @pytest.mark.parametrize('legacy', [False, True])
 async def test_recorded_flye_four_accepted_reprices_do_not_cap_next(lane, legacy):
-    assert D28['complete'] is True
+    assert D28['raw_capture']['complete'] is True
+    assert D28['replay_projection']['counts'] == {
+        'intents': 1, 'orders': 43, 'historical_intents': 43, 'audits': 52, 'fills': 1}
     assert len(D28['orders']) == 43 and len(D28['audits']) == 52 and len(D28['fills']) == 1
     assert all(row['strategy'] is not None for row in D28['historical_intents'])
     reprices = [o for o in D28['orders'] if o['submitted_at'] >= '2026-10-08T15:15:00Z']
