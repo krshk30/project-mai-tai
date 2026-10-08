@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -37,6 +38,15 @@ def validate_owners(rows):
         need(isinstance(symbols, list) and len(symbols) <= 1000
              and all(isinstance(symbol, str) for symbol in symbols)
              and len(symbols) == len(set(symbols)), 'malformed owner symbols')
+    redis_id(rows['_last_applied_id'])
+
+
+def redis_id(value):
+    need(isinstance(value, str) and re.fullmatch(r'[0-9]{1,20}-[0-9]{1,20}', value) is not None,
+         'malformed Redis cursor/request id')
+    parts = tuple(map(int, value.split('-')))
+    need(all(part <= 2**64 - 1 for part in parts), 'malformed Redis id overflow')
+    return parts
 
 
 def validate_receipt(receipt):
@@ -51,7 +61,8 @@ def validate_receipt(receipt):
     state = receipt['after']['state']
     need(state['MainPID'] == '0' and state['ActiveState'] == 'inactive'
          and state['UnitFileState'] == 'disabled', 'paper ORB not inactive/disabled')
-    need(receipt.get('request_id') and after['_last_applied_id'] != before['_last_applied_id'],
+    need(redis_id(after['_last_applied_id']) >= redis_id(receipt.get('request_id'))
+         and redis_id(receipt['request_id']) > redis_id(before['_last_applied_id']),
          'replace application cursor unproven')
 
 
@@ -112,7 +123,7 @@ async def publish(client, settings, before, *, now=None, authorization=None):
         # Other owner changes are a real conflict, not a reason to re-publish.
         need(all(before['owners'][name] == after['owners'][name]
                  for name in FIELDS - {'orb', '_last_applied_id'}), 'another owner changed during retirement')
-        if json.loads(after['owners']['orb']) == [] and after['owners']['_last_applied_id'] != before['owners']['_last_applied_id']:
+        if json.loads(after['owners']['orb']) == [] and redis_id(after['owners']['_last_applied_id']) >= redis_id(proxy.ids[0]):
             validate_receipt(receipt)
             return receipt
         need(time.monotonic() < deadline, 'empty replacement not observed within 60 seconds')
@@ -126,6 +137,11 @@ async def run(args):
     settings = Settings(_env_file='/etc/project-mai-tai/project-mai-tai.env')
     client = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=5, socket_connect_timeout=5)
     try:
+        if args.mode == 'publish':
+            # A timeout after XADD is uncertain. Never silently resend on a
+            # rerun with the same output; the runner will seal ABORT.
+            with args.output.with_suffix(args.output.suffix + '.publish-started').open('xb') as marker:
+                marker.write(canonical(dict(before=str(args.before), authorization=str(args.authorization))))
         result = (await asyncio.wait_for(capture(client, settings), timeout=30) if args.mode == 'before'
                   else await publish(client, settings, json.loads(args.before.read_bytes()),
                                      authorization=json.loads(args.authorization.read_bytes())))
@@ -146,6 +162,7 @@ def main():
     args = parser.parse_args()
     need(args.mode == 'before' or (args.before is not None and args.authorization is not None),
          'publish needs exclusive before receipt and first-write authorization')
+    need(not args.output.exists() and not args.output.is_symlink(), 'exclusive retirement output already exists')
     asyncio.run(run(args))
 
 

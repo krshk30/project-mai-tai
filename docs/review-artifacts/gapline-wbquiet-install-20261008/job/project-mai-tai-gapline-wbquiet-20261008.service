@@ -1,5 +1,5 @@
 [Unit]
-Description=Reviewed GAPLINE1 and WBQUIET1 after-close install, Oct 8 only
+Description=Reviewed Oct8 five-service install and paper ORB retirement
 After=network-online.target
 Wants=network-online.target
 
@@ -13,4 +13,3 @@ WorkingDirectory=/home/trader/after-hours/2026-10-08/gapline-wbquiet/job
 ExecStart=/bin/bash /home/trader/after-hours/2026-10-08/gapline-wbquiet/job/run.sh
 TimeoutStartSec=3600
 Restart=no
-

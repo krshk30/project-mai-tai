@@ -29,6 +29,8 @@ def rehearsal(tmp_path, monkeypatch):
     release = dict(approved_sha='a' * 40, box_sha='b' * 40, plan_commit='c' * 40, line_enabled=True,
                    release_branch='codex/install-2026-10-08-' + 'a' * 12, source_hashes={},
                    baseline_deploy_sha256=runner.digest(deploy.read_bytes()))
+    release['baseline_identities'] = {name: dict(MainPID=100 + i, NRestarts=0, ActiveState='active', SubState='running',
+        InvocationID='old-' + name, ExecMainStartTimestampMonotonic=100) for i, name in enumerate(runner.UNITS)}
     (job / 'release.json').write_bytes(runner.canonical(release))
     class Rehearsal(runner.Run):
         def __init__(self):
@@ -44,7 +46,8 @@ def rehearsal(tmp_path, monkeypatch):
 
         def identities(self):
             self.identity_reads += 1
-            return {name: dict(MainPID=str(i + (100 if self.identity_reads == 1 else 200)),
+            deployed = any('MAI_TAI_RUN_MIGRATIONS=0' in call for call in self.calls)
+            return {name: dict(MainPID=str(i + (200 if deployed else 100)),
                      NRestarts='0', ActiveState='active', SubState='running')
                     for i, name in enumerate(runner.UNITS)}
 
@@ -59,6 +62,8 @@ def rehearsal(tmp_path, monkeypatch):
             elif 'snapshot' in command:
                 Path(command[-1]).write_bytes(runner.canonical(dict(schema_version=3,
                     captured_at_utc='2026-10-08T21:00:00+00:00', services={name: {} for name in runner.UNITS})))
+            elif any(str(arg).endswith('proof_readonly.py') for arg in command) and 'baseline' in command:
+                Path(command[-1]).write_bytes(runner.canonical(dict(services=release['baseline_identities'])))
             elif any(str(arg).endswith('proof_readonly.py') for arg in command) and 'after' in command:
                 Path(command[-1]).write_bytes(runner.canonical(dict(assessment={'verdict': 'PASS', 'scope': 'fixture only'})))
             elif any(str(arg).endswith('retire_orb.py') for arg in command):
@@ -107,3 +112,22 @@ def test_measured_work_stops_before_target_never_skips_gate_or_recovers(rehearsa
     assert not any(call[-1] == target and 'MAI_TAI_RUN_MIGRATIONS=0' in call for call in run.calls)
     assert not (run.job / 'COMPLETE.json').exists()
     assert not any('disable' in call for call in run.calls)
+
+
+def test_changed_baseline_identity_refuses_before_env_catalog_or_deploy(rehearsal):
+    run, env, catalog = rehearsal
+    original = run.checked
+    def drift(command, **kwargs):
+        output = original(command, **kwargs)
+        if 'baseline' in command:
+            path = Path(command[-1])
+            value = json.loads(path.read_bytes())
+            value['services']['oms']['MainPID'] += 1
+            path.write_bytes(runner.canonical(value))
+        return output
+    run.checked = drift
+    old_env, old_catalog = env.read_bytes(), catalog.read_bytes()
+    with pytest.raises(RuntimeError, match='baseline identity changed'):
+        run.install()
+    assert env.read_bytes() == old_env and catalog.read_bytes() == old_catalog
+    assert not (run.job / 'write-started.json').exists()

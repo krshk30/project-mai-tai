@@ -13,7 +13,13 @@ import stage
 
 
 def review():
-    return dict(approved_sha='a' * 40, line_enabled=True, landed_prs={pr: dict(base='d' * 40,
+    return dict(approved_sha='a' * 40, line_enabled=True,
+        box_baseline=dict(sha='c' * 40, captured_at_utc='2026-10-08T20:00:00+00:00',
+            authorization_source='isolated authorized baseline fixture',
+            services={role: dict(MainPID=100, NRestarts=0, ActiveState='active', SubState='running',
+                                InvocationID='test-' + role, ExecMainStartTimestampMonotonic=100)
+                      for role in make_release.BASELINE_ROLES}),
+        landed_prs={pr: dict(base='d' * 40,
         reviewed_head='e' * 40, landing=landing * 40, pin_verdict='PASS', validate_verdict='PASS',
         pin_receipt='committed independent-review-pin receipt', validate_receipts=['hosted validate run'],
         source_prs=['1124', '1125'] if pr == '1129' else [pr])
@@ -197,3 +203,27 @@ def test_release_cannot_claim_pass_when_committed_pin_verification_refuses(monke
     monkeypatch.setattr(make_release, 'verify_pin', refuse)
     with pytest.raises(subprocess.CalledProcessError):
         make_release.release('b' * 40, 'a' * 40, 'c' * 40, review())
+
+
+def test_release_rejects_union_without_wb_source_provenance(monkeypatch):
+    fixture_release(monkeypatch)
+    value = review()
+    value['landed_prs']['1129']['source_prs'] = ['1125']
+    with pytest.raises(ValueError, match='WB and ORBLIVE'):
+        make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
+
+
+@pytest.mark.parametrize('defect', ['missing', 'other_box', 'missing_role', 'missing_start'])
+def test_release_never_adopts_unacknowledged_or_incomplete_box_baseline(monkeypatch, defect):
+    fixture_release(monkeypatch)
+    value = review()
+    if defect == 'missing':
+        del value['box_baseline']
+    elif defect == 'other_box':
+        value['box_baseline']['sha'] = '9' * 40
+    elif defect == 'missing_role':
+        del value['box_baseline']['services']['orb-schwab']
+    else:
+        del value['box_baseline']['services']['orb-schwab']['ExecMainStartTimestampMonotonic']
+    with pytest.raises(ValueError, match='baseline'):
+        make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)

@@ -234,9 +234,20 @@ class Run:
         self.stage = 'baseline-proof'
         self.checked([str(PYTHON), str(self.job / 'proof_readonly.py'), 'baseline',
                       '--output', str(self.attempt / 'proof-before.json')])
+        captured = json.loads((self.attempt / 'proof-before.json').read_bytes())
+        need(set(captured.get('services', {})) == set(self.release['baseline_identities']),
+             'baseline fleet unreadable; no arbitrary identity adoption')
+        for role, expected in self.release['baseline_identities'].items():
+            need(all(captured['services'][role].get(key) == expected[key] for key in
+                 ('MainPID', 'NRestarts', 'ActiveState', 'SubState', 'InvocationID', 'ExecMainStartTimestampMonotonic')),
+                 'baseline identity changed: ' + role)
         self.checked([str(PYTHON), str(self.job / 'official_v2_restart_evidence.py'), 'snapshot',
                       '--output', str(self.attempt / 'before-restart.json')])
         identities = self.identities()
+        for role, current in identities.items():
+            need(all(current[key] == str(captured['services'][role][key]) for key in
+                     ('MainPID', 'NRestarts', 'ActiveState', 'SubState')),
+                 'identity changed after baseline snapshot: ' + role)
         env = env_candidate(ENV.read_bytes(), self.release['line_enabled'])
         orb_env = Path('/etc/project-mai-tai/orb-paper.env')
         orb_backup = self.attempt / 'orb-paper.env.before'
@@ -252,6 +263,7 @@ class Run:
         if rc == 1:
             raise WaitWork('measured work appeared before first write')
         need(rc == 0, 'trading gate UNKNOWN immediately before write')
+        need(self.identities() == identities, 'restart identity changed during final gate; no adoption')
         need(window(datetime.now(timezone.utc)) == 'READY', 'first write outside Oct8 after-close window')
         claim = self.job / 'write-started.json'
         with claim.open('xb') as stream:

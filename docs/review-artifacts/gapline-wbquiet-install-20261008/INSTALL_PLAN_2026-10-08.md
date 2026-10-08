@@ -30,6 +30,11 @@ be a named reviewed landing. Missing/changed content refuses release generation.
 It embeds the final APP's official restart collector as a hashed artifact,
 not the old box collector whose default population still includes paper ORB.
 Every job blob is read from the plan COMMIT, not dirty working files.
+The review receipt also requires `box_baseline`: exact box SHA, actual
+capture timestamp, authorization source, and all thirteen identities from
+`proof_readonly.py baseline`. Release refuses missing fleet/start fields;
+runner compares those actual baseline identities and refuses drift rather
+than adopting a later arbitrary process. Re-read before the final write.
 
 ## Literal Sequence
 
@@ -82,8 +87,11 @@ After the first application write, clock advancement alone does not abort.
    EXACTLY ONE normal COLDSTART empty `consumer_name=orb, mode=replace`
    using final APP `OrbService._sync_gateway_subscription([])`. No raw HDEL,
    DEL, hardcoded symbols, second producer, or restart of another unit.
-   Require paper ORB disabled/inactive/PID0, empty owner tombstone, applied
-   cursor, and byte-identical other four owners and migration marker.
+   Require paper ORB disabled/inactive/PID0, empty owner tombstone, valid
+   Redis applied cursor >= OUR request ID, and byte-identical other four
+   owners and migration marker. An unrelated older cursor advance does not
+   prove our event, even if ORB was already empty. A publish-started receipt
+   forbids a resend following a timeout; no implicit recovery.
    Socket/read/XADD waits are bounded; failure never re-publishes implicitly.
 8. Require five actual new active/NRestarts0 PIDs/starts; exact checkout,
    requested flags and preserved live settings. Compare untouched services;

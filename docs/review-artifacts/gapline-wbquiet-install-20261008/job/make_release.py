@@ -9,6 +9,9 @@ import sys
 
 PREFIX = 'docs/review-artifacts/gapline-wbquiet-install-20261008/job/'
 REQUIRED_PRS = {'1126', '1129', '1127'}
+BASELINE_ROLES = {'oms', 'schwab-1m-v2', 'strategy', 'orb-schwab', 'control', 'orb',
+                  'market-capture', 'market-data', 'reconciler', 'momentum-paper',
+                  'option-a-daily-guard', 'redis', 'postgresql'}
 SCOPE = 'gapline1-wbquiet1-linesrc2-orblive1-retirement-five-services'
 SOURCES = ('ops/systemd/deploy_service.sh', 'ops/bootstrap/08_install_runtime.sh',
            'ops/preflight/preflight_oms_restart.sh', 'ops/health/expected_flags.json',
@@ -85,6 +88,14 @@ def release(plan, approved, box, review, ledger=None):
         if git('rev-parse', value + '^{commit}').decode().strip() != value:
             raise ValueError('commit identity differs')
     pins = validate_reviews(review, approved, ledger)
+    baseline = review.get('box_baseline', {})
+    if baseline.get('sha') != box or not baseline.get('authorization_source') or not baseline.get('captured_at_utc'):
+        raise ValueError('actual acknowledged box baseline receipt required')
+    if set(baseline.get('services', {})) != BASELINE_ROLES:
+        raise ValueError('whole baseline fleet identities required')
+    for role, state in baseline['services'].items():
+        if not {'MainPID', 'NRestarts', 'ActiveState', 'SubState', 'InvocationID', 'ExecMainStartTimestampMonotonic'} <= state.keys():
+            raise ValueError('incomplete baseline identity ' + role)
     git('merge-base', '--is-ancestor', box, approved)
     blobs = {}
     names = git('ls-tree', '-r', '--name-only', plan, '--', PREFIX).decode().splitlines()
@@ -102,6 +113,7 @@ def release(plan, approved, box, review, ledger=None):
                   plan_commit=plan, approved_sha=approved, box_sha=box,
                   release_branch='codex/install-2026-10-08-' + approved[:12],
                   line_enabled=review['line_enabled'], landed_reviews=review['landed_prs'], verified_pins=pins,
+                  baseline_identities=baseline['services'], baseline_receipt=baseline,
                   baseline_deploy_sha256=digest(git('show', box + ':ops/systemd/deploy_service.sh')),
                   artifacts={name: digest(raw) for name, raw in sorted(blobs.items())},
                   source_hashes={name: digest(git('show', approved + ':' + name)) for name in SOURCES})
@@ -122,11 +134,13 @@ def main():
     parser.add_argument('--review-ledger', type=Path, required=True)
     parser.add_argument('--output-directory', type=Path, required=True)
     args = parser.parse_args()
-    raw, approval, _ = release(args.plan, args.approved_sha, args.box_sha,
+    raw, approval, blobs = release(args.plan, args.approved_sha, args.box_sha,
                                json.loads(args.review_receipt.read_bytes()), args.review_ledger)
     args.output_directory.mkdir(parents=True, exist_ok=False)
     (args.output_directory / 'release.json').write_bytes(raw)
     (args.output_directory / 'approval.json').write_bytes(approval)
+    for name, value in blobs.items():
+        (args.output_directory / name).write_bytes(value)
     print(json.dumps(dict(plan_commit=args.plan, approved_sha=args.approved_sha,
                          manifest_sha256=digest(raw), approval_sha256=digest(approval)), sort_keys=True))
 
