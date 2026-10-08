@@ -8058,3 +8058,16 @@ age, unknown identity fail-closed, warning for every refusal. No tick-path
 SQL/HTTP, precheck/hold/resubmit/cache or production change. User79/214 is
 not yet independently measured. LaneF safety follow-up continues separately;
 A-E remain frozen, C plan remains unstaged.
+
+2026-10-08 10:15 ET codex-2 C31: F source frozen/pushed3f8120c7 on
+draft1133. Parent independent235 focused PASS3.86s, clean/head unchanged;
+six F1 mutants assertion RED/zero errors, writer's two rollover mutants make
+eight total. Cancellation publication is receipt-fenced; missing intent DB
+rows after xadd never clear. Independent10:07:53ET boot raw DKI includes
+six terminal cancels and old identity bytes: current saved request clears
+only with exact receipts for both accounts; zero/one blocked, historical
+identity/owner/budget values unchanged. New causal DKI clears before cancel
+publication; AIXI and SBFM use their original receipts, archive denominator
+remains17transitions/three retirements/four zero-ID UNKNOWN. Full and hosted
+checks pending on this exact head, not ready/pinned/installed. G independent
+read/replay continues, A-E unchanged, no production writes.
