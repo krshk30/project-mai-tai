@@ -214,6 +214,12 @@ class SessionLineRestoration:
             self.revision += 1
             self.incomplete_reason = "trade_evidence_changed"
 
+    def has_unrecovered_traded_gap(self, pairs=None) -> bool:
+        return any(pair in self._traded_pairs or any(left + 60_000 <= minute < right
+                   for minute in self._trade_minutes)
+                   for pair in (self.gap_pairs() if pairs is None else pairs)
+                   for left, right in (pair,))
+
     def gap_pairs(self) -> tuple[tuple[int, int], ...]:
         ids = sorted(self._bars)
         return tuple((left, right) for left, right in zip(ids, ids[1:])
@@ -256,8 +262,7 @@ class SessionLineRestoration:
         pairs = tuple((left, right) for left, right in zip(ids, ids[1:]) if right - left > 90_000)
         # R6 is a complete-provider sparse series, not permission to span a
         # known outage. Positive tape evidence requires the missing bars.
-        if any(pair in self._traded_pairs or any(left + 60_000 <= minute < right
-               for minute in self._trade_minutes) for pair in pairs for left, right in (pair,)):
+        if self.has_unrecovered_traded_gap(pairs):
             self.incomplete_reason = "traded_gap_unrecovered"
             return None
         return RebuildInput(

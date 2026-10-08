@@ -4657,7 +4657,8 @@ class SchwabV2BotService:
             return
         self._wake_line_after_ingest(symbol)
         normalized = symbol.upper()
-        fallback = self.strategy.watchlist_state(normalized).line_live_fallback
+        fallback = bool(getattr(self, "_line_restoration_enabled", False) and getattr(
+            self.strategy._symbol_states.get(normalized), "line_live_fallback", False))
         if observation_phase == "live" and getattr(self, "_line_restoration_enabled", False) and not fallback:
             normalized = symbol.upper()
             self._confirmation_last_live_bar_ms[normalized] = max(
@@ -5044,7 +5045,9 @@ class SchwabV2BotService:
     def _line_buy_ready(self, symbol: str) -> bool:
         state = self.strategy._symbol_states.get(symbol)
         if state is not None and state.line_live_fallback:
+            ledger = self._line_sessions.get(symbol)
             return bool(symbol in self._watchlist and state.bars
+                        and ledger is not None and not ledger.has_unrecovered_traded_gap()
                         and state.bars[-1].timestamp_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000
                         and session_start_ts_ms(state.bars[-1].timestamp_ms)
                         == session_start_ts_ms(self.strategy._now_ms())
