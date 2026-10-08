@@ -1199,6 +1199,7 @@ class SchwabV2Strategy:
         self._removed_wait_persist = persist
         self._removed_wait_restore_readable = readable
         self._removed_wait_requests = dict(restored)
+        terminal_proofs = tuple(terminal_proofs)
         self._closed_owner_terminal_receipts = {}
         for proof in terminal_proofs:
             request = proof.request
