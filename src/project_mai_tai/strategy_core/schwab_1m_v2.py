@@ -1194,15 +1194,20 @@ class SchwabV2Strategy:
         self, persist: RemovalPersist | None, *, restored: Mapping[str, RemovedWait],
         readable: bool,
         dispatch_persist: Callable[[dict], None] | None = None,
+        terminal_proofs: Iterable[RemovedWaitProof] = (),
     ) -> None:
         self._removed_wait_persist = persist
         self._removed_wait_restore_readable = readable
         self._removed_wait_requests = dict(restored)
         self._removed_wait_dispatch_persist = dispatch_persist
+        self._removed_wait_terminal_proofs = tuple(terminal_proofs)
         self._removed_scanner_symbols.update(
             symbol for symbol, request in restored.items() if request.purpose == "scanner_removal")
         for symbol, request in restored.items():
             state = self.watchlist_state(symbol)
+            if any(p.clear and p.reason == "unbound_symbol_terminal" and p.request == request
+                   for p in self._removed_wait_terminal_proofs):
+                continue
             if request.purpose in {"retry_exhausted", "false_flip_restore"} or not self._removed_wait_has_owner(state):
                 self._queue_removed_wait_barriers(state, request)
 

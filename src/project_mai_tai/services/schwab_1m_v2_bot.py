@@ -827,9 +827,9 @@ class SchwabV2BotService:
             def restore_and_retire():
                 restored = store.restore()
                 proofs = store.retire_prior_sessions(tuple(restored.values()), accounts)
-                return store.restore(), proofs
+                return store.restore(), proofs, store.restore_terminal_proofs()
 
-            restored, proofs = await asyncio.to_thread(restore_and_retire)
+            restored, proofs, terminal_proofs = await asyncio.to_thread(restore_and_retire)
             now_ms = self.strategy._now_ms()
             for proof in proofs:
                 if proof.clear:
@@ -842,7 +842,7 @@ class SchwabV2BotService:
             self.strategy.configure_removed_wait(None, restored={}, readable=False)
         else:
             self.strategy.configure_removed_wait(store.record, restored=restored, readable=True,
-                                                 dispatch_persist=store.record_dispatch)
+                dispatch_persist=store.record_dispatch, terminal_proofs=terminal_proofs)
         self._removed_wait_store = store
         self._removed_wait_roll_anchor = current_session_anchor()
 
