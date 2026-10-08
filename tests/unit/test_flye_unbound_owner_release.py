@@ -254,3 +254,79 @@ async def test_actual_service_boot_delivers_closed_owner_witness_before_watch(db
     assert store.restore_terminal_proofs() == (proof,), "boot/completion must not refresh broker book time"
     assert restored.position_qty == restored.position_qty_held == 1000
     assert bool(store.restore()) is (active and fault != "none")
+
+
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("fault", ["none", "schwab_buy", "webull_buy", "open_owned", "unknown_book",
+                                  "same_segment", "operator_sell"])
+def test_controlled_unbound_store_flye_sell_rest_buy_chronology(db, pm, fault):
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    from project_mai_tai.cancel_terminal_proof import BookOrder, CompleteWorkingBook
+    from project_mai_tai.db.models import AccountPosition, BrokerOrder, OmsManagedPosition
+    from tests.unit.test_clearwait1_session_rollover import seed
+    from tests.unit.test_flye_bound_owner_target_close import PRIMARY, confirm_controlled_next_entry
+
+    strategy, state, record, clock, _, controlled = setup(pm=pm)
+    request = controlled.request
+    store, sessions, ids, strategy_id = db
+    seed(db, request, receipts=False)
+    with sessions() as session:
+        for account, row in record.position_ids.items():
+            entry = BrokerOrder(strategy_id=strategy_id, broker_account_id=ids[account], symbol="FLYE",
+                side="buy", order_type="limit", time_in_force="day", quantity=280, status="filled",
+                client_order_id="controlled-owned-entry", payload={"fanout_segment_id": str(request.opportunity_id)})
+            session.add(entry)
+            session.flush()
+            session.add(OmsManagedPosition(id=UUID(row), strategy_code="schwab_1m_v2",
+                broker_account_name=account, symbol="FLYE", entry_order_id=entry.id, entry_price=2.22,
+                original_quantity=280, current_quantity=1 if fault == "open_owned" else 0,
+                status="open" if fault == "open_owned" else "closed"))
+        if fault in {"schwab_buy", "webull_buy", "operator_sell"}:
+            account = WEBULL if fault == "webull_buy" else PRIMARY
+            side = "sell" if fault == "operator_sell" else "buy"
+            session.add(BrokerOrder(strategy_id=strategy_id, broker_account_id=ids[account], symbol="FLYE",
+                side=side, order_type="limit", time_in_force="day", quantity=1000, status="accepted",
+                client_order_id="controlled-working-order"))
+            if fault == "operator_sell":
+                session.add(AccountPosition(broker_account_id=ids[account], symbol="FLYE", quantity=1000))
+        session.commit()
+    # Counterfactual both-account broker shapes/drain; not acquired or historical books.
+    books = {account: CompleteWorkingBook(account, account, clock[0], clock[0], True,
+                                         "all_working", (), "broker") for account in request.account_names}
+    if fault in {"schwab_buy", "webull_buy", "operator_sell"}:
+        books[account] = replace(books[account], orders=(BookOrder("controlled-working-order", "FLYE",
+            "working", side),))
+    if fault == "unknown_book":
+        books[PRIMARY] = None
+    if fault == "same_segment":
+        state.flip_owner_phase = "bound"
+        state.retry_one_segment_id = record.retry_segment_id
+    if fault == "operator_sell":
+        state.position_qty = state.position_qty_held = 1000
+    strategy._removed_wait_persist = store.record
+    proof, = store.retire_unbound((request,), set(request.account_names), books=books,
+        publication_closed={request: True}, now=datetime.fromtimestamp(clock[0] / 1000, UTC))
+    assert proof.clear is (fault in {"none", "same_segment", "operator_sell"})
+    strategy.apply_removed_wait_proofs((proof,))
+    legs = tuple(FlipPositionLeg(account, row, record.position_entry_ms[account], 1)
+                 for account, row in record.position_ids.items()) if fault == "open_owned" else ()
+    book(strategy, record, clock, legs=legs)
+    assert (state.flip_owner_phase == "idle") is (fault in {"none", "operator_sell"})
+    if fault == "operator_sell":
+        assert state.position_qty == state.position_qty_held == 1000
+        strategy._cw_v2_resting_track(state, {"state": "short", "trail": 2.558685})
+        assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
+    elif fault == "none":
+        assert not store.restore()
+        strategy._queue_resting_place(state, 2.558685, slot="first")
+        assert state.resting_active
+        if not pm:
+            assert strategy.drain_pending_intents()[0].intent_type == "open"
+            assert strategy.drain_webull_direct_intents()[0].intent_type == "open"
+        confirm_controlled_next_entry(strategy, state, clock)
+    else:
+        assert store.restore() == {"FLYE": request}
+        assert not strategy._strict_first_rest_admitted(state, slot="first")
+        assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()

@@ -213,14 +213,7 @@ async def test_pg_open_managed_row_in_either_account_blocks_canonical_release(pg
     assert store.restore() == {"FLYE": request}
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("active", [False, True])
-@pytest.mark.parametrize("fault", ["none", "stale", "open", "unknown"])
-async def test_pg_actual_boot_restores_scoped_witness_before_owner_state(pg, active, fault):
-    from tests.unit.test_flye_unbound_owner_release import (
-        test_actual_service_boot_delivers_closed_owner_witness_before_watch as boot_control,
-    )
-
+def controlled_unbound_db(pg):
     with pg() as session:
         strategy = Strategy(code="schwab_1m_v2", name="I controlled boot ordering")
         accounts = {name: BrokerAccount(name=name, provider="webull" if name == WEBULL else "schwab",
@@ -230,5 +223,27 @@ async def test_pg_actual_boot_restores_scoped_witness_before_owner_state(pg, act
         strategy_id = strategy.id
         ids = {name: account.id for name, account in accounts.items()}
         session.commit()
+    return RemovedWaitStore(pg), pg, ids, strategy_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("fault", ["none", "stale", "open", "unknown"])
+async def test_pg_actual_boot_restores_scoped_witness_before_owner_state(pg, active, fault):
+    from tests.unit.test_flye_unbound_owner_release import (
+        test_actual_service_boot_delivers_closed_owner_witness_before_watch as boot_control,
+    )
+
     # Real PG store and service loader; the reused books/drain remain explicit controls.
-    await boot_control((RemovedWaitStore(pg), pg, ids, strategy_id), active, fault)
+    await boot_control(controlled_unbound_db(pg), active, fault)
+
+
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("fault", ["none", "schwab_buy", "webull_buy", "open_owned", "unknown_book",
+                                  "same_segment", "operator_sell"])
+def test_pg_controlled_unbound_flye_sell_rest_buy_chronology(pg, pm, fault):
+    from tests.unit.test_flye_unbound_owner_release import (
+        test_controlled_unbound_store_flye_sell_rest_buy_chronology as chronology_control,
+    )
+
+    chronology_control(controlled_unbound_db(pg), pm, fault)
