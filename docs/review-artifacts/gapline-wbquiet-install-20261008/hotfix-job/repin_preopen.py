@@ -27,6 +27,8 @@ OVERRIDES = {PREFIX + "LINE_CHART_RESTORATION_ENABLED": "true",
              PREFIX + "ATR_REPRICE_HANDOFF_ENABLED": "false",
              PREFIX + "FALSE_FLIP_ENABLED": "true"}
 GAP = PREFIX + "GAP_LINE_CARRY_ENABLED"
+INSTALLED_SCHEMA = '20261008_0023'
+MIGRATION_SOURCE = '21802d9367527a4aec84c01e65db5c42c1b547b5c7577d95ea3e6f42488399a7'
 REFRESHABLE = {REPO + "/ops/health/v2_restart_evidence.py",
                REPO + "/src/project_mai_tai/strategy_core/time_utils.py",
                "/home/trader/restart_evidence/expected_flags.json",
@@ -195,6 +197,17 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
     before = json.loads(read(snapshot))
     actions = json.loads(read(record))
     validate_evidence(before, actions, observations["states"], now)
+    need(observations.get('alembic_revision') == INSTALLED_SCHEMA, 'installed schema unreadable or not 0023')
+    schema_changed = before['alembic_version'] != INSTALLED_SCHEMA
+    if schema_changed:
+        transition = actions.get('schema_transition', {})
+        need(before['alembic_version'] == '20261005_0022'
+             and transition.get('before') == before['alembic_version']
+             and transition.get('after') == INSTALLED_SCHEMA
+             and transition.get('source_runner_log_sha256') == MIGRATION_SOURCE
+             and transition.get('migration_receipt', {}).get('stage') == 'migration0023'
+             and transition['migration_receipt'].get('rc') == 0,
+             'actual authorized migration transition receipt missing')
     inputs = (snapshot, record)
     if retirement is not None:
         from retire_orb import validate_receipt
@@ -240,6 +253,22 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
              and rows[0]["owning_service"] == "schwab-1m-v2", "required catalog row missing/drift: " + key)
     result = {GATE: gate_candidate(read(GATE).decode(), app, snapshot, record,
                                    observations["states"], observations["environments"], flags, line_enabled)}
+    gate = result[GATE].decode()
+    need(len(re.findall(r'^  --expected-alembic-head [\w]+ \\\n', gate, re.M)) == 1,
+         'schema expectation argument ambiguous')
+    gate = re.sub(r'^  --expected-alembic-head [\w]+ \\\n',
+                  lambda _: '  --expected-alembic-head ' + INSTALLED_SCHEMA + ' \\\n', gate, flags=re.M)
+    if schema_changed:
+        need(gate.count('  --no-schema-change \\\n') <= 1, 'schema-change declaration ambiguous')
+        gate = gate.replace('  --no-schema-change \\\n', '')
+    elif '  --no-schema-change \\\n' not in gate:
+        gate = gate.replace('  --install-record "$INSTALL_RECORD" \\\n',
+            '  --install-record "$INSTALL_RECORD" \\\n  --no-schema-change \\\n')
+    column = '  --schema-column oms_managed_positions.entry_classification \\\n'
+    if column not in gate:
+        gate = gate.replace('  --expected-alembic-head ' + INSTALLED_SCHEMA + ' \\\n',
+                            '  --expected-alembic-head ' + INSTALLED_SCHEMA + ' \\\n' + column)
+    result[GATE] = gate.encode()
     binding = dict(approved_sha=app, tree=observations["tree"], historical_binding=old_binding,
                    historical_binding_sha256=digest(read(DAILY + "/binding.json")),
                    current_install=dict(snapshot=snapshot, install_record=record, source_journal=journal,
@@ -341,7 +370,11 @@ def collect():
         need(state(owner) == current, "identity changed during process read")
         states[owner] = current
     raw = run(["systemctl", "show", "project-mai-tai-orb-schwab.service", *["--property=" + name for name in (*FIELDS, "InvocationID")]])
+    from removed_wait_readonly import collect as schema_read
+    schema = schema_read()['revision']
+    need(schema == [INSTALLED_SCHEMA], 'installed schema not exactly 0023')
     return dict(states=states, environments=envs, upgrade_state=dict(line.split("=", 1) for line in raw.splitlines()),
+                alembic_revision=schema[0],
                 head=run(["git", "-C", REPO, "rev-parse", "HEAD"]),
                 tree=run(["git", "-C", REPO, "rev-parse", "HEAD^{tree}"]),
                 clean=not run(["git", "-C", REPO, "status", "--porcelain"]))

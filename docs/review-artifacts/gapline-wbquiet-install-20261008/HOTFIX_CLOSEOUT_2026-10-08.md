@@ -55,32 +55,40 @@ ERRORs. No application action or sealed-artifact change.
 Local receipt /tmp/oct8-pg-hotfix-corrected-readonly-proof.json SHA256
 e9920312f1dc91f70a513b8a1b4dfd555f7197ebc52b87fea7e55c308bad5f15.
 
-## Bookkeeping-only proposal: NOT EXECUTED
+## Separate Bookkeeping Closure
 
-Read-only in-memory preview of the tested combined_record and repin plan passes
-actual installed identity, flag, artifact/dependency, upgrade-ACK and root-mode
-checks. Preview is CHECKS_NOT_RUN, not the daily gate or global installation PASS.
-Receipt /tmp/oct8-pg-hotfix-bookkeeping-preview.json SHA256
-fb40dc2d304b813b3a3b93cd3c4c07f318918fbc0e0143b2d1201b94a474a4c5.
+The first in-memory preview did not verify the stale schema expectation; it is
+superseded, not erased. The schema-aware preview at 21:59:46 UTC verifies actual
+0023 and the original successful migration event from the exact immutable
+runner-log hash. Fresh direct trading reads rc 0: both brokers flat, no working
+orders, managed/virtual rows or in-flight intents. Exact installed PIDs and all
+untouched identities match. Receipt:
+/tmp/oct8-schema-aware-bookkeeping-preview.stdout (raw gate and preview).
+Preview is CHECKS_NOT_RUN, not the daily gate or global installation PASS.
+The old preopen still names 0022 and --no-schema-change; the new helper updates
+0023/schema-column and removes that inaccurate declaration without migrating.
 
-Proposed literal sequence, after the narrow post-ABORT bookkeeping disposition:
-fresh read-only trading gate; combine original snapshot/control restart and actual
-r3 OMS/v2/strategy events with bookkeeping.combined_record; exclusively create
+Parent authorized this narrow closure under standing mechanics authority. Publish
+and separately stage only the closure helper and its dependencies, verify every
+hash, then run bookkeeping_only.py --apply under the existing nonblocking deploy
+and daily locks. It re-reads trading conditions, checks exact installed identities,
+combines the original snapshot/control restart and actual r3 OMS/v2/strategy
+events with bookkeeping.combined_record, and exclusively creates
 /home/trader/restart_evidence/hotfix-bookkeeping-06b5e388/original-snapshot.json,
 install-record.json and sealed-actions.json. Journal retains both actual ABORT
 hashes, original/current failed-proof hashes and FAIL verdict; no COMPLETE.
-Then use the already staged standalone helper:
+The sealed r3 helper is NOT modified or rerun. The separately staged schema-aware
+closure calls the tested repin functions. Literal commands after hash verification:
 
 ```sh
 sudo -n env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/trader/project-mai-tai/src \
   /home/trader/project-mai-tai/.venv/bin/python \
-  /home/trader/after-hours/2026-10-08/falseflip-pg-hotfix-r3/job/repin_preopen.py \
-  --approved-sha 06b5e388affb5f33e4edf80c6e635cf72dbc3f78 \
-  --snapshot /home/trader/restart_evidence/hotfix-bookkeeping-06b5e388/original-snapshot.json \
-  --install-record /home/trader/restart_evidence/hotfix-bookkeeping-06b5e388/install-record.json \
-  --line-enabled true \
-  --receipt /home/trader/restart_evidence/hotfix-bookkeeping-06b5e388/preopen-repin.json
+  /home/trader/after-hours/2026-10-08/preopen-bookkeeping-06b5e388/bookkeeping_only.py --apply
 sudo -n bash -n /home/trader/preopen.sh
+sudo -n env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/trader/project-mai-tai/src \
+  /home/trader/project-mai-tai/.venv/bin/python -c \
+  'import sys; sys.path.insert(0,"/home/trader/preopen-daily"); import daily; print(daily.verify_runtime())'
+sudo -n env PYTHONDONTWRITEBYTECODE=1 bash /home/trader/preopen.sh
 ```
 
 Declared repin writes only: /home/trader/preopen.sh and preopen-daily binding.json,
@@ -89,7 +97,10 @@ backups/hashes. Exact unchanged orb-schwab upgrade acknowledgement, legacy ORB
 identity, dynamic date/paper shape and adapter/root mode preserved. Official
 snapshot/action inputs describe actual four-service changes across both installs;
 this is not a second control restart. Receipt remains REPINNED_CHECKS_NOT_RUN.
-No env, catalog, source, DB/Redis, service, timer, schema or archived-row action.
+The official checks-only run can write its new dated report; it never overwrites
+the sealed install evidence. Its after-hours/paper/legacy errors remain raw FAIL
+or UNKNOWN, not waived. No env, catalog, source, DB/Redis, service, timer, schema
+or archived-row action.
 Any identity/artifact/flag discrepancy refuses rather than adopting a new state.
 
 At this report, preopen.sh SHA256 remains

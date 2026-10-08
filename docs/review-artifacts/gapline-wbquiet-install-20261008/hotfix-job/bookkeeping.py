@@ -34,7 +34,8 @@ def prior_install(bindings):
     return dict(snapshot=json.loads(values['before-restart.json']),
                 service_identities=json.loads(values['service-identities.json']),
                 original_failed_proof=json.loads(values['post-install-proof.json']),
-                original_abort=abort, hashes=bindings, original_verdict='ABORT; never COMPLETE')
+                original_abort=abort, hashes=bindings, original_verdict='ABORT; never COMPLETE',
+                original_events=[json.loads(line) for line in values['runner.log'].decode().splitlines()])
 
 
 def combined_record(prior, hotfix_before, hotfix_after, events):
@@ -56,6 +57,13 @@ def combined_record(prior, hotfix_before, hotfix_after, events):
     record = dict(schema_version=1, snapshot_captured_at_utc=snapshot['captured_at_utc'],
                   service_actions={name: 'restarted' if name in {'oms', 'schwab-1m-v2', 'strategy', 'control'}
                                    else 'deliberately_untouched' for name in snapshot['services']})
+    if snapshot.get('alembic_version') == '20261005_0022':
+        migrations = [event for event in prior.get('original_events', [])
+                      if event.get('stage') == 'migration0023' and event.get('rc') == 0]
+        if len(migrations) != 1 or prior['hashes'].get('runner.log') != ORIGINAL_RUNNER_LOG:
+            raise ValueError('original authorized 0023 migration receipt missing')
+        record['schema_transition'] = dict(before='20261005_0022', after='20261008_0023',
+            source_runner_log_sha256=ORIGINAL_RUNNER_LOG, migration_receipt=migrations[0])
     journal = dict(prior_install_verdict=prior['original_verdict'], prior_receipt_hashes=prior['hashes'],
                    prior_actual_control_restart=old_control, hotfix_events=events,
                    hotfix_restarted_group=['oms', 'schwab-1m-v2', 'strategy'],

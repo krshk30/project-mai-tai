@@ -56,13 +56,16 @@ def case(tmp_path):
         envs[owner].update(m.OVERRIDES)
     envs["oms"]["MAI_TAI_OMS_V2_EH_FRESH_PRICE_ENABLED"] = "true"
     ack = json.loads(m.location(root, m.DAILY + "/upgrade-ack.json").read_bytes())
-    obs = dict(head=APP, tree=TREE, clean=True, states=states, environments=envs, upgrade_state=ack["state"])
+    obs = dict(head=APP, tree=TREE, clean=True, states=states, environments=envs, upgrade_state=ack["state"],
+               alembic_revision=m.INSTALLED_SCHEMA)
     services = {owner: dict(pid=10 + i) for i, owner in enumerate(sorted(m.DEFAULT_SERVICES | {"orb-schwab"}))}
     snapshot = dict(schema_version=3, captured_at_utc="2026-10-08T22:00:00+00:00", services=services,
                     alembic_version="20261005_0022",
                     live_exposure=dict(accounts_found=2, accounts_expected=2, open_managed_rows=0, nonzero_account_position_rows=0),
                     v2_watchlist={})
     record = dict(schema_version=1, snapshot_captured_at_utc=snapshot["captured_at_utc"], source_journal=JOURNAL,
+                  schema_transition=dict(before='20261005_0022', after=m.INSTALLED_SCHEMA,
+                      source_runner_log_sha256=m.MIGRATION_SOURCE, migration_receipt=dict(stage='migration0023', rc=0)),
                   service_actions={owner: "restarted" if owner in m.RESTARTED else "deliberately_untouched" for owner in services})
     put(root, SNAPSHOT, m.canonical(snapshot))
     put(root, RECORD, m.canonical(record))
@@ -102,6 +105,41 @@ def case(tmp_path):
 def build(case):
     root, obs, _ = case
     return m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW)
+
+
+def test_actual_0022_snapshot_0023_install_updates_official_schema_arguments(case):
+    gate = build(case)[m.GATE].decode()
+    assert '--expected-alembic-head 20261008_0023' in gate
+    assert '--expected-alembic-head 20261005_0022' not in gate
+    assert '--no-schema-change' not in gate
+    assert '--schema-column oms_managed_positions.entry_classification' in gate
+
+
+@pytest.mark.parametrize('defect', ['revision', 'source', 'failed_migration', 'missing_transition'])
+def test_schema_repin_never_invents_migration_or_uses_stale_head(case, defect):
+    root, obs, _ = case
+    record = json.loads(m.location(root, RECORD).read_bytes())
+    if defect == 'revision':
+        obs['alembic_revision'] = '20261005_0022'
+    elif defect == 'source':
+        record['schema_transition']['source_runner_log_sha256'] = '0' * 64
+    elif defect == 'failed_migration':
+        record['schema_transition']['migration_receipt']['rc'] = 1
+    else:
+        del record['schema_transition']
+    put(root, RECORD, m.canonical(record))
+    with pytest.raises(m.Refusal, match='schema|migration'):
+        build(case)
+
+
+def test_snapshot_already_0023_retains_no_schema_change_without_reapplying(case):
+    root, _, _ = case
+    before = json.loads(m.location(root, SNAPSHOT).read_bytes())
+    before['alembic_version'] = m.INSTALLED_SCHEMA
+    put(root, SNAPSHOT, m.canonical(before))
+    gate = build(case)[m.GATE].decode()
+    assert gate.count('--no-schema-change') == 1
+    assert '--expected-alembic-head 20261008_0023' in gate
 
 
 def test_current_box_template_repin_group_and_process_keys(case):

@@ -9,6 +9,15 @@ import pytest
 
 HERE = Path(__file__).parent
 CONTROLS = [
+    ('repin_schema_read_removed', 'repin_preopen.py',
+     "need(observations.get('alembic_revision') == INSTALLED_SCHEMA, 'installed schema unreadable or not 0023')",
+     'pass', 'test_repin_preopen.py::test_schema_repin_never_invents_migration_or_uses_stale_head[revision]'),
+    ('repin_migration_hash_removed', 'repin_preopen.py',
+     "and transition.get('source_runner_log_sha256') == MIGRATION_SOURCE", 'and True',
+     'test_repin_preopen.py::test_schema_repin_never_invents_migration_or_uses_stale_head[source]'),
+    ('repin_failed_migration_accepted', 'repin_preopen.py',
+     "and transition['migration_receipt'].get('rc') == 0", 'and True',
+     'test_repin_preopen.py::test_schema_repin_never_invents_migration_or_uses_stale_head[failed_migration]'),
     ('control_restart_added', 'runner.py', "for target in ('oms', 'schwab-1m-v2'):",
      "for target in ('oms', 'schwab-1m-v2', 'control'):",
      'test_hotfix_mechanics.py::test_literal_hotfix_has_no_migration_control_or_environment_write'),
