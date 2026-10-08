@@ -7955,3 +7955,12 @@ workingorders/openmanagedrows, NOT hours/age; unknownsource keepsownership.
 Same-dayreceipt and retrybudgetgate untouched; per-ticklookup remainsmemory.
 Reviewer08:58 v2restart makes old stagingbaselineobsolete; LaneCmustobtain
 freshauthorized identities, never adoptanunexplainednewPID. No boxwrite.
+
+2026-10-08 09:11 ET codex-2 C14 LaneB: #1127 head709e826e pushedon1e15adb0,
+sourceeb461047. Four conflicts plus adjacentdispatchcompositionchangeexplicitly
+capturedin REBASE_2026-10-08.md; reviewer mustcheckboth, notonlyfourmarkers.
+462focusedPASS/55retention-limitedSKIP, 11semanticmutationsRED withbaseline
+greenandzeroharnesserrors. Fullheadpair/CIpending; historical35bar/11probe
+morningdataset cannotcertify60probeacceptance. Noactivationreadinessclaim.
+GAPexplicitreason/token/revisiondedupcoexistswithLINEretry/inflightbudget,
+04anchor/cleanbarwait/lateflipfencesretained. A/C/D/E/Fcontinueisolated.
