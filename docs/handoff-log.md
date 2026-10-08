@@ -7851,3 +7851,15 @@ mutation receipts pending. No merge/pin, production read/write or service action
 Shared handoff base retained: a local attempted origin/main rebase would
 replay old already-landed application commits; that local branch was not
 pushed. This docs-only update is based on the unchanged shared remote.
+
+2026-10-08 07:16 ET codex-2: WBQUIET1 DATA draft PR #1124 at
+ce3b51a3a14e406de52c76cbf74aaa357e0b6f91; 294 focused controls PASS.
+The off-loop bounded observer logs only the hypothetical cadence decision
+on actual periodic sync passes. No HTTP read, cancel, order or cadence
+behaviour change. Reader tags cover sync persistence, virtual clear and
+virtual restore; all other readers remain UNMEASURED. Historical cached
+day-list bodies/position versions were not retained, so exact saved-call,
+decision-minute and terminal-evidence claims are not manufactured.
+Final full-unit pair pending. Five-session wait withdrawn by today's ruling;
+after-close reviewed DATA deployment, Friday denominators, weekend decision.
+No production action performed and neither draft has been marked review-ready.
