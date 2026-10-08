@@ -1,0 +1,446 @@
+{
+  "basis": "eventual stored bars; LINE incomplete admission controlled FALSE; not repair latency or fill replay",
+  "raw_sha256": "fe2cda938daa5768344351ce8ef587f3ba194e7e27a77e1ee329a5573199f9b8",
+  "as_of_utc": "2026-10-08T00:52:03.921721+00:00",
+  "retained_initial_holds": 96,
+  "retained_recovery_holds": 37,
+  "readings": [
+    {
+      "symbol": "CLRO",
+      "hold": "2026-09-28T09:42:46.486000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz:32101",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "short",
+        "trail": 5.516827522580878,
+        "age": 14,
+        "held": false
+      },
+      "oracle_state": "short",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1790604960000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": false,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "EGG",
+      "hold": "2026-09-28T13:39:33.129000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz:40434",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "short",
+        "trail": 4.32633188158939,
+        "age": 21,
+        "held": false
+      },
+      "oracle_state": "short",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1790618460000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": false,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "EGG",
+      "hold": "2026-09-28T14:06:33.026000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz:41267",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "long",
+        "trail": 4.182614340060259,
+        "age": 0,
+        "held": false
+      },
+      "oracle_state": "long",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1790619300000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": false,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "EGG",
+      "hold": "2026-09-28T14:36:57.513000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz:42482",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "short",
+        "trail": 4.464222109392172,
+        "age": 15,
+        "held": false
+      },
+      "oracle_state": "short",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1790621640000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": false,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "TGE",
+      "hold": "2026-09-30T09:39:31.834000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz:27560",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "long",
+        "trail": 1.1651910779129135,
+        "age": 22,
+        "held": false
+      },
+      "oracle_state": "long",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1790783640000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": true,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "MEDS",
+      "hold": "2026-10-01T09:32:42.903000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz:35635",
+      "recorded_resume": false,
+      "carry_at_reading": {
+        "state": "long",
+        "trail": 3.835097291109859,
+        "age": 15,
+        "held": true
+      },
+      "oracle_state": "long",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1790873520000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": true,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "CMCT",
+      "hold": "2026-10-01T15:20:48.643000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz:51770",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "long",
+        "trail": 3.678332245454487,
+        "age": 12,
+        "held": false
+      },
+      "oracle_state": "long",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1790889060000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": true,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "APUS",
+      "hold": "2026-10-05T09:38:44.721000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006.gz:37327",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "short",
+        "trail": 4.974365190420905,
+        "age": 38,
+        "held": false
+      },
+      "oracle_state": "short",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1791209460000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": false,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "JAGX",
+      "hold": "2026-10-05T12:17:29.981000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006.gz:51337",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "long",
+        "trail": 4.740344855874542,
+        "age": 31,
+        "held": true
+      },
+      "oracle_state": "long",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1791224400000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": true,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "APUS",
+      "hold": "2026-10-05T13:42:57.664000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006.gz:63061",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "long",
+        "trail": 4.340388740055172,
+        "age": 0,
+        "held": false
+      },
+      "oracle_state": "long",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1791222660000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": false,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "MI",
+      "hold": "2026-10-05T14:11:58.622000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006.gz:64027",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "short",
+        "trail": 8.250409865300915,
+        "age": 10,
+        "held": false
+      },
+      "oracle_state": "short",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1791228840000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": true,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "IPDN",
+      "hold": "2026-10-06T09:36:55.672000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261007.gz:26142",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "short",
+        "trail": 6.533920686121956,
+        "age": 15,
+        "held": false
+      },
+      "oracle_state": "short",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1791298860000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": true,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "APUS",
+      "hold": "2026-10-07T10:49:15.072000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261008:173868",
+      "recorded_resume": false,
+      "carry_at_reading": {
+        "state": "long",
+        "trail": 8.582537260922125,
+        "age": 15,
+        "held": true
+      },
+      "oracle_state": "long",
+      "same_colour": true,
+      "oracle_first_buy_ms": null,
+      "first_buy_mathematically_visible": null,
+      "bot_saw_original_first_buy": false,
+      "open_drafts": 0
+    },
+    {
+      "symbol": "SXTC",
+      "hold": "2026-10-07T14:54:08.664000-04:00",
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261008:193751",
+      "recorded_resume": true,
+      "carry_at_reading": {
+        "state": "short",
+        "trail": 4.776822011693903,
+        "age": 34,
+        "held": false
+      },
+      "oracle_state": "short",
+      "same_colour": true,
+      "oracle_first_buy_ms": 1791401040000,
+      "first_buy_mathematically_visible": true,
+      "bot_saw_original_first_buy": false,
+      "open_drafts": 0
+    }
+  ],
+  "entry_controls": [
+    {
+      "symbol": "CLRO",
+      "ts": 1790613720000,
+      "recorded_state": "long",
+      "recorded_trail": 4.845062,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 4.845062321867571,
+        "oracle_state": "long",
+        "oracle_trail": 4.8451,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "DXST",
+      "ts": 1790700300000,
+      "recorded_state": "long",
+      "recorded_trail": 2.676015,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 2.676014706392217,
+        "oracle_state": "long",
+        "oracle_trail": 2.676,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "TGE",
+      "ts": 1790783640000,
+      "recorded_state": "long",
+      "recorded_trail": 1.311998,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 1.3119976094115184,
+        "oracle_state": "long",
+        "oracle_trail": 1.312,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "TGE",
+      "ts": 1790786880000,
+      "recorded_state": "long",
+      "recorded_trail": 1.333992,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 1.3339915586303381,
+        "oracle_state": "long",
+        "oracle_trail": 1.334,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "TGE",
+      "ts": 1790793360000,
+      "recorded_state": "long",
+      "recorded_trail": 1.398575,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 1.3985752209836937,
+        "oracle_state": "long",
+        "oracle_trail": 1.3986,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "TGE",
+      "ts": 1790796420000,
+      "recorded_state": "long",
+      "recorded_trail": 1.460924,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 1.4609240772486176,
+        "oracle_state": "long",
+        "oracle_trail": 1.4609,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "NXL",
+      "ts": 1790869320000,
+      "recorded_state": "long",
+      "recorded_trail": 7.178548,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 7.178547731634241,
+        "oracle_state": "long",
+        "oracle_trail": 7.1785,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "NXL",
+      "ts": 1790876760000,
+      "recorded_state": "long",
+      "recorded_trail": 6.870396,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 6.870395650008952,
+        "oracle_state": "long",
+        "oracle_trail": 6.8704,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "AIXI",
+      "ts": 1790953500000,
+      "recorded_state": "short",
+      "recorded_trail": 1.734088,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 1.7340879148074024,
+        "oracle_state": "short",
+        "oracle_trail": 1.7341,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "AMOD",
+      "ts": 1790954520000,
+      "recorded_state": "short",
+      "recorded_trail": 3.500966,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 3.5009657425392704,
+        "oracle_state": "short",
+        "oracle_trail": 3.501,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "AMOD",
+      "ts": 1790958360000,
+      "recorded_state": "long",
+      "recorded_trail": 3.246596,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 3.2465957165182235,
+        "oracle_state": "long",
+        "oracle_trail": 3.2466,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "AIXI",
+      "ts": 1790968620000,
+      "recorded_state": "short",
+      "recorded_trail": 1.832881,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 1.8328805921156472,
+        "oracle_state": "short",
+        "oracle_trail": 1.8329,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "AMOD",
+      "ts": 1790970180000,
+      "recorded_state": "long",
+      "recorded_trail": 3.282339,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 3.282338849056427,
+        "oracle_state": "long",
+        "oracle_trail": 3.2823,
+        "matches": true
+      },
+      "same_colour": true
+    }
+  ],
+  "entry_control_basis": "independent stored-bar math from Step 0; actual order emission UNMEASURED"
+}

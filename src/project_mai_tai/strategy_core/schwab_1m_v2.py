@@ -246,6 +246,9 @@ class SymbolState:
     gap_hold_detected_at_ms: int = 0
     gap_hold_last_live_bar_ms: int = 0
     gap_hold_contiguous_bars: int = 0
+    gap_line_repair_token: int = 0
+    gap_line_left_bar_ms: int = 0
+    gap_line_carry_pending: bool = False
     # Confirmed-window entry (ATR variant "CW"; flag-gated, INERT when
     # strategy_schwab_1m_v2_confirmed_window_enabled is off — never read/written on the
     # A/B path). After a BUY flip we arm and wait 3 bars, tracking the highest high of
@@ -651,6 +654,9 @@ class SchwabV2Strategy:
         self._line_readiness = None
         self._gap_hold_enabled = bool(
             getattr(self.settings, "strategy_schwab_1m_v2_gap_hold_enabled", False)
+        )
+        self._gap_line_carry_enabled = bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_gap_line_carry_enabled", False)
         )
         self._gap_hold_detect_ms = max(
             1,
@@ -3963,17 +3969,25 @@ class SchwabV2Strategy:
         )
 
         state.gap_hold_active = True
-        if getattr(self, "_line_restoration_enabled", False):
+        carry = getattr(self, "_gap_line_carry_enabled", False)
+        if getattr(self, "_line_restoration_enabled", False) and not carry:
             state.line_restore_reset_after_ms = int(detected_at_ms)
         state.gap_hold_detected_at_ms = int(detected_at_ms)
         state.gap_hold_last_live_bar_ms = 0
         state.gap_hold_contiguous_bars = 0
-        self._reset_atr_indicator_state(
-            state, session_start_ts_ms(int(detected_at_ms))
-        )
-        state.atr_fired_in_short_seg = False
+        if carry:
+            state.gap_line_repair_token = int(detected_at_ms)
+            state.gap_line_carry_pending = True
+            state.gap_line_left_bar_ms = (
+                state.atr_prev_bar.timestamp_ms if state.atr_prev_bar is not None else 0
+            )
+        else:
+            self._reset_atr_indicator_state(
+                state, session_start_ts_ms(int(detected_at_ms))
+            )
+            state.atr_fired_in_short_seg = False
         state.atr_hold_pending = None
-        if self._atr_rearm_enabled:
+        if self._atr_rearm_enabled and not carry:
             self._set_atr_guard(state, "UNCLAIMED")
         logger.warning(
             "[V2-GAP-HOLD] %s last_bar_age_s=%.1f last_print_age_s=%.1f "
@@ -3990,14 +4004,20 @@ class SchwabV2Strategy:
         previous = int(state.gap_hold_last_live_bar_ms or 0)
         gap_ms = int(bar.timestamp_ms) - previous if previous else 0
         if previous and gap_ms > self._gap_hold_detect_ms:
-            if getattr(self, "_line_restoration_enabled", False):
+            carry = getattr(self, "_gap_line_carry_enabled", False)
+            if getattr(self, "_line_restoration_enabled", False) and not carry:
                 state.line_restore_reset_after_ms = int(bar.timestamp_ms) - 1
-            self._reset_atr_indicator_state(
-                state, session_start_ts_ms(int(bar.timestamp_ms))
-            )
-            state.atr_fired_in_short_seg = False
+            if carry:
+                state.gap_line_repair_token = int(bar.timestamp_ms)
+                state.gap_line_carry_pending = True
+                state.gap_line_left_bar_ms = previous
+            else:
+                self._reset_atr_indicator_state(
+                    state, session_start_ts_ms(int(bar.timestamp_ms))
+                )
+                state.atr_fired_in_short_seg = False
             state.atr_hold_pending = None
-            if self._atr_rearm_enabled:
+            if self._atr_rearm_enabled and not carry:
                 self._set_atr_guard(state, "UNCLAIMED")
             state.gap_hold_contiguous_bars = 0
             logger.warning(
@@ -7524,12 +7544,22 @@ class SchwabV2Strategy:
             return None
 
         if getattr(self, "_line_restoration_enabled", False) and not restored:
-            # Only the ordered worker publishes ATR mathematics. The callback
-            # still advances normal bar/VWAP and GAPHOLD wait bookkeeping.
+            # The ordered worker alone admits a complete line for entries. While
+            # repairing a gap, retain/advance the carried math without admitting
+            # the missing series, replaying entries or resetting consumed slots.
             anchor = session_start_ts_ms(state.bars[-1].timestamp_ms)
             if (0 < state.atr_session_anchor_ms < anchor
                     and anchor == session_start_ts_ms(self._now_ms())):
                 self._apply_session_anchor_reset(state, anchor)
+            if (getattr(self, "_gap_line_carry_enabled", False)
+                    and state.gap_line_carry_pending
+                    and state.atr_session_anchor_ms == anchor
+                    and state.atr_state in {"long", "short"}
+                    and state.atr_prev_bar is not None
+                    and state.atr_prev_bar.timestamp_ms < state.bars[-1].timestamp_ms):
+                self._update_atr_state(
+                    state, state.bars[-1], state_only=True,
+                )
             if self._gap_hold_enabled and state.gap_hold_active:
                 self._maybe_resume_gap_hold(state)
             return None

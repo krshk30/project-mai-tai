@@ -471,6 +471,7 @@ class Settings(BaseSettings):
     # GAPHOLD: refuse new entries while live prints continue but Schwab's 1-minute
     # bars are stale. Default OFF preserves the deployed strategy behavior.
     strategy_schwab_1m_v2_gap_hold_enabled: bool = False
+    strategy_schwab_1m_v2_gap_line_carry_enabled: bool = False
     # LINE=CHART: anchored, versioned session rebuild. Separate from pause handling.
     strategy_schwab_1m_v2_line_chart_restoration_enabled: bool = False
     strategy_schwab_1m_v2_gap_hold_detect_seconds: float = 90.0  # Seconds past the last bar's CLOSE.

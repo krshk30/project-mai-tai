@@ -38,6 +38,7 @@ ALL_ON = {
     "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": True,
     "oms_v2_webull_mirror_fresh_price_enabled": True,
     "strategy_schwab_1m_v2_gap_hold_enabled": True,
+    "strategy_schwab_1m_v2_gap_line_carry_enabled": True,
     "strategy_schwab_1m_v2_resting_buy_round_up_enabled": True,
     "strategy_schwab_1m_v2_line_chart_restoration_enabled": True,
 }
@@ -85,7 +86,7 @@ def completed_seeded_line(monkeypatch):
 
 
 def assert_all_on(settings):
-    assert len(ALL_ON) == 11
+    assert len(ALL_ON) == 12
     assert all(getattr(settings, key) is True for key in ALL_ON)
 
 
@@ -348,7 +349,7 @@ def test_all_on_rth_conversion_preserves_original_thin_cancel(monkeypatch, caplo
 
 
 def test_all_on_catalog_audit_committed_live_set_requires_both_consumers():
-    assert len(ALL_ON) == 11
+    assert len(ALL_ON) == 12
     root = Path(__file__).parents[2]
     flags = json.loads((root / "ops/health/expected_flags.json").read_text())["flags"]
     numeric = json.loads((root / "ops/health/expected_numeric.json").read_text())["settings"]
@@ -358,7 +359,7 @@ def test_all_on_catalog_audit_committed_live_set_requires_both_consumers():
     mismatches = {key for key, expected in live_set.items()
                   if by_name[key]["expected"] is not expected}
     assert mismatches == set()
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 149
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 150
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["expected"] is True
     assert by_name["strategy_schwab_1m_v2_resting_buy_round_up_enabled"]["expected"] is True
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in numeric) == 8
@@ -425,6 +426,6 @@ def test_all_on_process_catalog_checker_refuses_three_dark_values_without_live_i
 
     rc, lines = audit(entries, environment_reader=controlled_proc)
     assert rc == 1
-    assert lines[-1] == "Final call: REAL FAILURE; checked=157/157 mismatches=6 unknown=0"
+    assert lines[-1] == "Final call: REAL FAILURE; checked=158/158 mismatches=6 unknown=0"
     assert len(readers) == len(set(readers)) == 8
     assert len([line for line in lines if line.startswith("REAL FAILURE")]) == 6

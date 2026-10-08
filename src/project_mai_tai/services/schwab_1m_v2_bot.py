@@ -578,7 +578,7 @@ class SchwabV2BotService:
         self._line_source_event = asyncio.Event()
         self._line_source_pending: dict[str, tuple[int, int, int, int, str]] = {}
         self._line_source_identity: dict[str, int] = {}
-        self._line_source_budget: set[tuple[str, int, int, str]] = set()
+        self._line_source_budget: set[tuple[str, int, int, str, int, int]] = set()
         self._line_scanner_symbols: set[str] = set()
         self._line_membership: dict[str, int] = {}
         self._line_confirmed_identity: dict[str, str] = {}
@@ -4756,6 +4756,14 @@ class SchwabV2BotService:
             return
         try:
             revision = ledger.revision
+            state = self.strategy._symbol_states.get(ledger.symbol)
+            fills_gap = bool(
+                getattr(self.strategy, "_gap_line_carry_enabled", False) and state is not None
+                and state.gap_line_repair_token
+                and session_start_ts_ms(state.gap_line_repair_token) == ledger.anchor_ms
+                and bar.timestamp_ms not in ledger._bars
+                and any(left < bar.timestamp_ms < right for left, right in ledger.gap_pairs())
+            )
             closed_live = bool(source_callback
                                and 60_000 <= self.strategy._now_ms() - bar.timestamp_ms <= 180_000)
             if closed_live:
@@ -4770,6 +4778,13 @@ class SchwabV2BotService:
             else:
                 ledger.observe(bar)
             if ledger.revision != revision:
+                if fills_gap:
+                    # A newly delivered interior candle is bounded by session
+                    # coverage. Duplicates/live tails never trigger another GET.
+                    self._queue_line_source_event(
+                        ledger.symbol, "gap_resume", event_token=state.gap_line_repair_token,
+                        event_revision=ledger.revision,
+                    )
                 if ledger._seed_invalidated:
                     self._line_reconcile_pending.add(ledger.symbol)
                 self._line_dirty.add(ledger.symbol)
@@ -4847,6 +4862,11 @@ class SchwabV2BotService:
         normalized = symbol.upper()
         ledger = self._line_sessions.get(normalized)
         state = self.strategy._symbol_states.get(normalized)
+        if (state is not None and getattr(self.strategy, "_gap_line_carry_enabled", False)
+                and state.gap_hold_active and state.gap_hold_contiguous_bars == 1):
+            self._queue_line_source_event(
+                normalized, "gap_resume", event_token=state.gap_line_repair_token,
+            )
         if (ledger is not None and state is not None and state.bars
                 and state.bars[-1].timestamp_ms == ledger.current_bar_ms
                 and not self._line_snapshot_current(normalized)):
@@ -4855,14 +4875,18 @@ class SchwabV2BotService:
             self._line_dirty.add(normalized)
             self._line_rebuild_event.set()
 
-    def _queue_line_source_event(self, symbol: str, reason: str) -> bool:
-        if not self._line_restoration_enabled or symbol not in self._watchlist:
+    def _queue_line_source_event(
+        self, symbol: str, reason: str, *, event_token: int = 0, event_revision: int = 0,
+    ) -> bool:
+        covered = self._watchlist | (self._exit_coverage if reason == "gap_resume" else set())
+        if not self._line_restoration_enabled or symbol not in covered:
             return False
         context = self._line_source_request(symbol)
         if context is None:
             return False
         epoch, anchor, current = context
-        budget = (symbol, epoch, self._line_membership.get(symbol, 0), reason)
+        budget = (symbol, epoch, self._line_membership.get(symbol, 0), reason,
+                  event_token, event_revision)
         if budget in self._line_source_budget:
             return False
         self._line_source_budget.add(budget)
@@ -4890,29 +4914,42 @@ class SchwabV2BotService:
             if context is None:
                 continue
             epoch, anchor, current, identity, reason = context
-            if not self._line_event_current(symbol, epoch, identity):
+            allow_exit = reason == "gap_resume"
+            if not self._line_event_current(symbol, epoch, identity, allow_exit=allow_exit):
                 continue
             try:
                 bars, proof = await asyncio.to_thread(
                     self.rest_client.fetch_session_history, symbol, anchor, current,
                 )
-                if not self._line_event_current(symbol, epoch, identity):
+                if not self._line_event_current(symbol, epoch, identity, allow_exit=allow_exit):
                     continue
                 accepted = self._accept_line_source(symbol, epoch, bars, proof)
+                if accepted and reason == "gap_resume":
+                    state = self.strategy._symbol_states.get(symbol)
+                    left = state.gap_line_left_bar_ms if state is not None else 0
+                    remaining = [pair for pair in self._line_sessions[symbol].gap_pairs()
+                                 if left and pair[0] >= left]
+                    if remaining:
+                        logger.info(
+                            "[V2-GAP-CARRY] sym=%s hole_min=%d reason=no_bars_to_fill",
+                            symbol, sum((right - left) // 60_000 - 1 for left, right in remaining),
+                        )
                 self.rest_client._set_line_source_state(
                     symbol, ("ready", reason) if accepted else ("waiting", "no_current_bars_yet"),
                 )
             except Exception as exc:
-                if self._line_event_current(symbol, epoch, identity):
+                if self._line_event_current(symbol, epoch, identity, allow_exit=allow_exit):
                     self._line_source_failure(symbol, epoch)
                     self.rest_client._set_line_source_state(symbol, ("error", type(exc).__name__))
 
-    def _line_event_current(self, symbol: str, epoch: int, identity: int) -> bool:
+    def _line_event_current(
+        self, symbol: str, epoch: int, identity: int, *, allow_exit: bool = False,
+    ) -> bool:
         ledger = self._line_sessions.get(symbol)
         return bool(ledger is not None and ledger.epoch == epoch
                     and anchored_session_poll_open(self.strategy._now_ms())
                     and ledger.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
-                    and symbol in self._watchlist
+                    and symbol in self._watchlist | (self._exit_coverage if allow_exit else set())
                     and self._line_source_identity.get(symbol) == identity)
 
     def _line_snapshot_current(self, symbol: str) -> bool:
@@ -5176,6 +5213,8 @@ class SchwabV2BotService:
             current_bar.low, current_bar.close, current_bar.volume,
         )
         self.strategy._restore_atr_indicator_snapshot(state, indicator)
+        if not state.gap_hold_active:
+            state.gap_line_carry_pending = False
         # The hold/cancellation and ten clean-bar wait remain intact. Only
         # complete-session publication replaces the reseeded mathematics.
         state.line_restore_reset_after_ms = 0

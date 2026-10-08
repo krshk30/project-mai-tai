@@ -1,0 +1,236 @@
+[
+  {
+    "symbol": "CLRO",
+    "hold_ms": 1790602966486,
+    "hole_start_ms": 1790602680000,
+    "hole_end_ms": 1790602920000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='CLRO' AND event_ts>=to_timestamp(1790602680000/1000.0) AND event_ts<to_timestamp(1790602920000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='CLRO' AND event_ts>=to_timestamp(1790602680000/1000.0) AND event_ts<to_timestamp(1790602920000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "EGG",
+    "hold_ms": 1790617173129,
+    "hole_start_ms": 1790617080000,
+    "hole_end_ms": 1790617140000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='EGG' AND event_ts>=to_timestamp(1790617080000/1000.0) AND event_ts<to_timestamp(1790617140000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 9,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='EGG' AND event_ts>=to_timestamp(1790617080000/1000.0) AND event_ts<to_timestamp(1790617140000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "EGG",
+    "hold_ms": 1790618793026,
+    "hole_start_ms": 1790618700000,
+    "hole_end_ms": 1790618760000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='EGG' AND event_ts>=to_timestamp(1790618700000/1000.0) AND event_ts<to_timestamp(1790618760000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 8,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='EGG' AND event_ts>=to_timestamp(1790618700000/1000.0) AND event_ts<to_timestamp(1790618760000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "EGG",
+    "hold_ms": 1790620617513,
+    "hole_start_ms": 1790620500000,
+    "hole_end_ms": 1790620560000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='EGG' AND event_ts>=to_timestamp(1790620500000/1000.0) AND event_ts<to_timestamp(1790620560000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 10,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='EGG' AND event_ts>=to_timestamp(1790620500000/1000.0) AND event_ts<to_timestamp(1790620560000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "TGE",
+    "hold_ms": 1790775571834,
+    "hole_start_ms": 1790775060000,
+    "hole_end_ms": 1790775540000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='TGE' AND event_ts>=to_timestamp(1790775060000/1000.0) AND event_ts<to_timestamp(1790775540000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 183,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='TGE' AND event_ts>=to_timestamp(1790775060000/1000.0) AND event_ts<to_timestamp(1790775540000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "MEDS",
+    "hold_ms": 1790861562903,
+    "hole_start_ms": 1790860260000,
+    "hole_end_ms": 1790861520000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 11,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='MEDS' AND event_ts>=to_timestamp(1790860260000/1000.0) AND event_ts<to_timestamp(1790861520000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 45,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='MEDS' AND event_ts>=to_timestamp(1790860260000/1000.0) AND event_ts<to_timestamp(1790861520000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "APUS",
+    "hold_ms": 1791207524721,
+    "hole_start_ms": 1791207240000,
+    "hole_end_ms": 1791207480000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='APUS' AND event_ts>=to_timestamp(1791207240000/1000.0) AND event_ts<to_timestamp(1791207480000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='APUS' AND event_ts>=to_timestamp(1791207240000/1000.0) AND event_ts<to_timestamp(1791207480000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "JAGX",
+    "hold_ms": 1791217049981,
+    "hole_start_ms": 1791215880000,
+    "hole_end_ms": 1791217020000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 3,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='JAGX' AND event_ts>=to_timestamp(1791215880000/1000.0) AND event_ts<to_timestamp(1791217020000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 151,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='JAGX' AND event_ts>=to_timestamp(1791215880000/1000.0) AND event_ts<to_timestamp(1791217020000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "APUS",
+    "hold_ms": 1791222177664,
+    "hole_start_ms": 1791222060000,
+    "hole_end_ms": 1791222120000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='APUS' AND event_ts>=to_timestamp(1791222060000/1000.0) AND event_ts<to_timestamp(1791222120000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 7,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='APUS' AND event_ts>=to_timestamp(1791222060000/1000.0) AND event_ts<to_timestamp(1791222120000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "MI",
+    "hold_ms": 1791223918622,
+    "hole_start_ms": 1791223620000,
+    "hole_end_ms": 1791223860000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='MI' AND event_ts>=to_timestamp(1791223620000/1000.0) AND event_ts<to_timestamp(1791223860000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='MI' AND event_ts>=to_timestamp(1791223620000/1000.0) AND event_ts<to_timestamp(1791223860000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "IPDN",
+    "hold_ms": 1791293815672,
+    "hole_start_ms": 1791293520000,
+    "hole_end_ms": 1791293760000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='IPDN' AND event_ts>=to_timestamp(1791293520000/1000.0) AND event_ts<to_timestamp(1791293760000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='IPDN' AND event_ts>=to_timestamp(1791293520000/1000.0) AND event_ts<to_timestamp(1791293760000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "XHG",
+    "hold_ms": 1791299454091,
+    "hole_start_ms": 1791297660000,
+    "hole_end_ms": 1791299400000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 16,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='XHG' AND event_ts>=to_timestamp(1791297660000/1000.0) AND event_ts<to_timestamp(1791299400000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 956,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='XHG' AND event_ts>=to_timestamp(1791297660000/1000.0) AND event_ts<to_timestamp(1791299400000/1000.0); COMMIT;"
+      }
+    ]
+  },
+  {
+    "symbol": "SXTC",
+    "hold_ms": 1791399248664,
+    "hole_start_ms": 1791399000000,
+    "hole_end_ms": 1791399240000,
+    "sources": [
+      {
+        "table": "market_trade_ticks",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_trade_ticks WHERE symbol='SXTC' AND event_ts>=to_timestamp(1791399000000/1000.0) AND event_ts<to_timestamp(1791399240000/1000.0); COMMIT;"
+      },
+      {
+        "table": "market_capture_trades",
+        "count": 0,
+        "query": "BEGIN READ ONLY; SET LOCAL statement_timeout='10s'; SELECT count(*) FROM market_capture_trades WHERE symbol='SXTC' AND event_ts>=to_timestamp(1791399000000/1000.0) AND event_ts<to_timestamp(1791399240000/1000.0); COMMIT;"
+      }
+    ]
+  }
+]
