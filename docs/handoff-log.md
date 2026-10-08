@@ -8414,3 +8414,16 @@ Services kept active, existing observation/collector only, no extra deployment
 before hotfix review/pin. User archived8removed-wait rows; next authorized v2
 restart must show0restored. FALSE=false fallback authorized only if fix remains
 uninstalled by06:30ET. F/I shared proof remains next evening, not tonight.
+
+2026-10-08 16:36 ET codex-2 C57: initialattempt sealed ABORT20:35:55.236Z,
+ten-minute-observation rc1, all four servicesactive. runner.log hash
+21802d9367527a4aec84c01e65db5c42c1b547b5c7577d95ea3e6f42488399a7.
+Postproof75OMSerror/tracebacklines (not75incidents),4v2ERRORlines from
+historicalFLYE3/AIXI1 confirmation-exit line_unproven, notv2tracebacks.
+Collectoralsoflags authorizedOMS SLOTreload values and controluntimestampedlog;
+no realfault waived, no cleanCOMPLETE, preopencloseout incomplete.
+HotfixPR1137 a02bb42bf107f69bcacc9a681f6fec94ae9cc45a: fourBigIntegercasts,
+133line actualPostgreSQLintegration controls for record/budget/classify/conflict,
+fourint4mutation probes. Existing151corePASS/RuffPASS; bothValidate stillrunning,
+actualPG notyetmeasured. Reviewed/pinnedhead andgreenCI before nextdeploy.
+Sealedoldjob mustnotrerun; serviceskeptup, newhotfixpackage isolated.
