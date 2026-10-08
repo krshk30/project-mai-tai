@@ -217,7 +217,7 @@ def controlled_unbound_db(pg):
     with pg() as session:
         strategy = Strategy(code="schwab_1m_v2", name="I controlled boot ordering")
         accounts = {name: BrokerAccount(name=name, provider="webull" if name == WEBULL else "schwab",
-            environment="test", external_account_id=name) for name in (PRIMARY, WEBULL)}
+            environment="test", external_account_id=None) for name in (PRIMARY, WEBULL)}
         session.add_all([strategy, *accounts.values()])
         session.flush()
         strategy_id = strategy.id
@@ -240,7 +240,7 @@ async def test_pg_actual_boot_restores_scoped_witness_before_owner_state(pg, act
 
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("fault", ["none", "schwab_buy", "webull_buy", "open_owned", "unknown_book",
-                                  "same_segment", "operator_sell"])
+                                  "same_segment", "operator_sell", "missing_config", "retained_id", "provider"])
 def test_pg_controlled_unbound_flye_sell_rest_buy_chronology(pg, pm, fault):
     from tests.unit.test_flye_unbound_owner_release import (
         test_controlled_unbound_store_flye_sell_rest_buy_chronology as chronology_control,
