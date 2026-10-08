@@ -8082,3 +8082,18 @@ Real AIXI earlier same-day fill is included in replay, not minted from status;
 user11 blockers are a subset of47prior AIXI buys. Source and final tests/mutants
 remain with Newton alone; intermediate130PASS receipt not final-ready claim.
 A-E frozen, C unstaged, all production untouched.
+
+2026-10-08 10:46 ET codex-2 C33: F exact3f8120c7 has both Validate
+SUCCESS and no added local full failures, but own controlled real-emitter
+counterexample shows an untagged BUY cancel can publish before OMS persists
+it and escape the exact-token receipt fence. NOT READY; same sole writer
+resumed narrow fix, no age expiry, global proof await or tick SQL. Final
+receipt issuecomment6062098636 retains this blocker and four recorded outcomes.
+G draft1134 published5a8b3208; parent independently134 focusedPASS19.20s,
+five writer assertion mutants RED and real read-only PostgreSQL predicate
+evidence. Exact-slot fill identity preserved, historical same-segment query
+does not authorize different-slot retirement. Hosted Validate x2 green;
+full still running. RTH dispatch acceptance is recorded-bar/real adapter with
+fake SDK; PM scope not certified because unchanged window requires RTH.
+Queue/restore old all-history behavior remains disclosed, not secretly fixed.
+All A-E unchanged; C plan unstaged; no production changes.
