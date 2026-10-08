@@ -66,6 +66,29 @@ consumption and do not assert commit. Unreadable accounts are excluded from
 the existing persistence exactly as before. An unreached account is not evaluated
 and does not advance its nominal clock.
 
+Read-only audit at 07:18 ET confirms this is DRAFT-only reader coverage, not
+fulfillment of the requested downstream-consumption window. The ContextVar is
+reset before the immediate receipt; no following 60-second window is observed.
+Tags describe invocation completion before transaction commit, not a committed
+generation consumed by another task/process. Missing external reader tags must
+not be interpreted as no reader activity.
+
+Untagged paths include OMS settlement, SELL quantity/reservation admission,
+startup protection, stale-held reconciliation, direct-flat and emergency reads,
+fill-accounting changes to AccountPosition, RESERVE1, EOD/exit checks, reconciler,
+control-plane pages/leg quantities, V2 feed/exit coverage, CLEARWAIT1 and strategy
+position propagation. Ops preflight/restart/evidence, phantom/shape/quantity and
+census/health checks also have no per-generation reader tag. ORB/EOD readers
+identified in Step 0 are Schwab-scoped, not consumers of Webull's cadence.
+
+Completing the requested reader study requires a bounded account-generation
+registry for 60 seconds after successful commit, memory-only tags from already
+loaded source metadata, and matching external hooks/offline joins. Ambiguous
+generations and lost observations must remain UNMEASURED. No such extension
+is represented as implemented in this draft. Likewise, B/C need observation
+of already-fetched list evidence at the existing cancel/verification decisions;
+historical missing response bodies cannot be reconstructed by this observer.
+
 `wire_calls_saved=UNMEASURED`, `other_oms_and_external_readers=UNMEASURED` and
 `policy_applied=false` are explicit on every receipt. Historical positions and
 list-today bodies remain absent. This does not claim zero impact, exact saved
@@ -92,6 +115,31 @@ The separate OMS risk-service file passed 103 tests (294 total across these runs
 The 240-event bypass test proves non-periodic calls perform zero observer SQL;
 it is not a live throughput or decision-equivalence receipt. Full-suite and
 production observation are not yet measured.
+
+Final frozen-source suite on `ce3b51a3a14e406de52c76cbf74aaa357e0b6f91`
+completed at 07:21 ET: 47 failed / 7,535 passed in 609.51 seconds. Main
+`d244f602491e5d316a05670b205315466aed2a4d` has 47 failed / 7,491 passed;
+failed-name sets are identical, with no added or missing names. Set hash:
+`17d68105856e998ab629144135fd40b4ec5b3b4a53fe197c069a0cc1f25eb419`.
+Raw `/tmp/wbquiet1-final-unit.log` SHA256
+`9c97db04ac0a36a9a17cc5057d3f0196af145603633081d228e32951bea6bc83`;
+XML `/tmp/wbquiet1-final-unit.xml` SHA256
+`d56ee379058d048cd5d435cf684e4ae72282f2add5d858c715187c5d9e566f2d`.
+Both paired runs use the same Python environment and explicit Homebrew-first
+PATH for subprocess helpers. Earlier worktree system-Python failures are not
+used as a final failed-name comparison; no tests were weakened for that error.
+
+Hosted push Validate passed (run 37766767665). PR run 37766796016 failed only
+the existing NFQ2 duplicate-quote timing control (744 ms versus 50 ms); rerun
+requested without threshold/source edits and pending at this receipt. Local
+final suite has no new timing failure. This does not prove the CI cause or
+claim hosted-green on the documentation follow-up head. Independent pin absent.
+The receipt/coverage follow-up changes docs only; source stays frozen.
+
+A one-time Friday October 9 17:00 ET evidence-report heartbeat is registered
+as `wbquiet1-friday-evidence-report`; it cannot deploy the shadow or alter any
+trading behavior. Missing installation, historical bodies and reader coverage
+remain explicit in that report. This is not a box logging job.
 
 ## After-Close Install Plan (Docs Only)
 
