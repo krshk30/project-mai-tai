@@ -8497,3 +8497,28 @@ to separate F/I consumers: exact broker terminal or fresh complete book<=15s,
 off-loop per request, all accounts required, unreadable/working/fill UNKNOWN.
 F rollover/boot/no-dispatch CLEAR; I freshSELL releases only closed bound owner.
 No source self-pin; later distinct OMS/v2 install needs reviewed exact heads.
+
+2026-10-08 18:07 ET codex-2 C63: separate bookkeeping helper92b4219b,
+receipt commit3b000435. Packagepreopen-bookkeeping-06b5e388 manifest
+cc6c6231937d3d27632d6dd82911a8131eaf56c4537082a786cea622e9c1e937;
+fresh gate22:01:15-23Z rc0, exact authorized4PIDs and untouchedidentities.
+Atomicrepin22:01:25.899260Z backsupsix targets, runtime-last publication;
+preopenSHA33fd632963a1da32bb7b65b348c8f3544304ab61773f1a5af155046986b3bb8c.
+Actual0023 migration receipt from originalrunner bound, no migrationrun.
+Official restart report8PASS/1UNKNOWN warmup query, flags120/120PASS;
+fullpreopenrc1 after07clock/paperinactive/guardinactive retainednotwaived.
+Attempt-scoped precision proof separatelymeasured no missingminutes.
+Originalr3manifest/artifact/seal hashes unchanged; originalFAILneverCOMPLETE.
+No extra service/source/env/catalog/schema/DB/Redis write.
+SharedPR1138 at1e4c82db latestValidatepending; prior42ef hosted37847848827
+SUCCESS independentlyread. Parent49unitcontrolsPASS onsharedc80.
+IntermediateFec43 unitgreen butPGgolden1FAIL103PASS1xfail, controlled receipt
+onupdate timestamp issue; intermediateIa9681FAIL8144PASS55skip, contract
+stillinert untilproducerintegrated. NeitherfinalreadinessnorPGreplayclaimed.
+Parent bounded single Webullv2list-openGET22:03:29.222-.350Z,128ms,
+HTTP200,dictkeys hasNext/orders/pageSize,hasNextfalse,orders0,SDKretryfalse.
+No DB/file/order action. Current empty-book shape measured; neverhistorical
+FLYE book or nonempty live pagination claimed. Exact legacyFLYEtargetcoid
+missing: UNKNOWN pending human ruling on stronger complete empty-symbol
+proof with closedownedrows/exacttoken. DKI genuinelyno-dispatch predicate
+alreadyreleased, separate from a fabricated target ID. F/I20ET remains target.
