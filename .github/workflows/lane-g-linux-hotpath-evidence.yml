@@ -1,0 +1,42 @@
+name: Lane G Isolated Linux Hotpath Evidence
+
+on:
+  push:
+    branches:
+      - codex/mirrorholdg-linux-hotpath-evidence-1008
+
+permissions:
+  contents: read
+
+jobs:
+  paired:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: evidence
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 1e15adb03c3758e647d333828bbe3090e24e832e
+          path: main
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 031be6334c048cfafeec9b826d0cc0ee2c6d1c72
+          path: head
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.15"
+      - name: Install the same test dependency environment
+        run: python -m pip install -e "./main[dev]" pytest==8.4.2
+      - name: Serial unchanged proof, twenty per exact checkout
+        run: python evidence/ops/health/lane_g_linux_hotpath_pair.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lane-g-linux-hotpath-pair
+          path: evidence-output/
+          retention-days: 14
