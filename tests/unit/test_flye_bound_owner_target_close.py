@@ -5,10 +5,14 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar
+from project_mai_tai.fanout_identity import fanout_slot_id
+from project_mai_tai.fanout_outcome_consumer import FanoutOutcome
+from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.v2_flip_entry_ownership import (
     FlipEntryOwnershipRecord, FlipPositionBook, FlipPositionClose, FlipPositionLeg,
 )
@@ -32,6 +36,8 @@ def replay(*, account=PRIMARY, pm=False, phase="bound"):
     )
     strategy._boot_ms = record.retry_segment_id - 60_000
     strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_sell_enabled = True
+    strategy.settings.strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled = pm
+    strategy._eh_resting_enabled = pm
     state.retry_one_watch_start_ms = strategy._boot_ms
     strategy._resting_in_window = lambda now=None: True
     strategy._resting_session_is_eh = lambda now=None: pm
@@ -60,6 +66,70 @@ def settle(strategy, request, clock):
     strategy.apply_removed_wait_proofs([RemovedWaitProof(
         request, clock[0], True, "retry_leftovers_cancelled_owner_kept",
     )])
+
+
+def confirm_controlled_next_entry(strategy, state, clock):
+    """Counterfactual new fills, then the recorded 15:17 BUY bar; not historical trades."""
+    opportunity = state.flip_owner_opportunity_id
+    assert opportunity > FLYE["opportunity_id"]
+    clock[0] = FLYE["next_buy_flip_poll_ms"] - 1_000
+    if not state.resting_is_broker_order:
+        # Controlled EH quote/dispatch, not a retained market print or a live trade.
+        state.bars.append(OHLCVBar(FLYE["next_buy_flip_bar_ms"], 2.3, 2.4, 2.2, 2.3, 1))
+        trigger = strategy._active_resting_trigger(state)
+        quote = Quote("FLYE", trigger, trigger, trigger, clock[0], 1)
+        entry = strategy._eh_resting_cross_check(state, quote)
+        assert entry and entry.intent_type == "open" and entry.metadata["order_type"] == "limit"
+        assert int(entry.metadata["fanout_segment_id"]) == opportunity
+        assert strategy.drain_webull_fanout_intents()[0].intent_type == "open"
+        assert strategy._eh_resting_cross_check(state, quote) is None
+    strategy.update_position("FLYE", 2, held_qty=2)
+    assert strategy.apply_fanout_outcome(FanoutOutcome(
+        uuid4(), datetime.fromtimestamp(clock[0] / 1000, UTC), "FLYE", opportunity,
+        "resting", fanout_slot_id(strategy_code="schwab_1m_v2", symbol="FLYE",
+                                  segment_id=opportunity, slot="resting"),
+        "test-next-entry", "filled", "test-fill-receipt", broker_account_name=WEBULL,
+    )) == "consumed"
+    legs = tuple(FlipPositionLeg(a, "test-next-" + a, clock[0], 1) for a in (PRIMARY, WEBULL))
+    strategy.apply_flip_position_book(FlipPositionBook(clock[0], True, {"FLYE": legs}))
+    clock[0] = FLYE["next_buy_flip_poll_ms"]
+    # Open is unused by this tracker and is not retained by the source probe.
+    state.bars.append(OHLCVBar(FLYE["next_buy_flip_bar_ms"], FLYE["next_buy_flip_close"],
+        FLYE["next_buy_flip_high"], FLYE["next_buy_flip_low"], FLYE["next_buy_flip_close"],
+        FLYE["next_buy_flip_volume"]))
+    state.atr_short_flip_bar_ts = 0
+    strategy.apply_flip_position_book(FlipPositionBook(clock[0], True, {"FLYE": legs}))
+    strategy._cw_v2_track(state, {"flip": "BUY", "state": "long",
+        "flip_level": FLYE["next_buy_flip_level"], "trail": FLYE["next_buy_flip_trail"],
+        "observation_phase": "live"})
+    assert state.flip_owner_phase == "bound"
+    assert state.flip_owner_fill_accounts == {PRIMARY, WEBULL}
+    assert state.flip_owner_opportunity_id == opportunity
+    assert state.retry_one_segment_id == FLYE["fresh_sell_bar_ms"]
+    assert not strategy._strict_first_rest_admitted(state, slot="first")
+    assert not strategy.drain_pending_intents()
+    assert not strategy.drain_webull_direct_intents()
+    assert not strategy.drain_webull_fanout_intents()
+
+
+@pytest.mark.parametrize("pm", [False, True])
+def test_controlled_new_entry_after_1410_rest_binds_at_recorded_1517_buy(pm):
+    strategy, state, record, clock, _ = replay(pm=pm)
+    book(strategy, record, clock)
+    request = strategy._removed_wait_requests["FLYE"]
+    strategy.drain_pending_intents()
+    strategy.drain_webull_direct_intents()
+    clock[0] = FLYE["fresh_sell_poll_ms"]
+    book(strategy, record, clock)
+    sell(strategy, state, clock)
+    settle(strategy, request, clock)
+    book(strategy, record, clock)
+    strategy._queue_resting_place(state, 2.558685, slot="first")
+    assert state.resting_active
+    if not pm:
+        assert strategy.drain_pending_intents()[0].intent_type == "open"
+        assert strategy.drain_webull_direct_intents()[0].intent_type == "open"
+    confirm_controlled_next_entry(strategy, state, clock)
 
 
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL])
