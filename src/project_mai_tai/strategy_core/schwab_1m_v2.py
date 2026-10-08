@@ -1253,17 +1253,42 @@ class SchwabV2Strategy:
         return True
 
     def _removed_wait_gate_closed(self, symbol: str) -> bool:
-        request = getattr(self, "_removed_wait_requests", {}).get(symbol.upper())
-        if request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"}:
-            return True
-        if (getattr(self, "_retry_one_enabled", False)
-                and not getattr(self, "_removed_wait_restore_readable", True)):
-            return True
-        return getattr(self, "_removed_wait_enabled", False) and (
-            not self._removed_wait_restore_readable
-            or symbol.upper() in self._removed_wait_requests
-            or symbol.upper() in self._removed_scanner_symbols
-        )
+        symbol = symbol.upper()
+        request = getattr(self, "_removed_wait_requests", {}).get(symbol)
+        unreadable = not getattr(self, "_removed_wait_restore_readable", True)
+        blocked = bool((request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"})
+            or (getattr(self, "_retry_one_enabled", False) and unreadable)
+            or (getattr(self, "_removed_wait_enabled", False) and (
+                unreadable or request is not None or symbol in self._removed_scanner_symbols)))
+        states = self.__dict__.setdefault("_removed_wait_gate_log_state", {})
+        reason = request.purpose if request and request.purpose in {"retry_exhausted", "false_flip_restore"} else "pending"
+        disposition = (request.token if request else "", reason)
+        if blocked and states.get(symbol) != disposition:
+            states[symbol] = disposition
+            request_ts = request.requested_at_ms if request else 0
+            logger.info("[V2-REMOVED-WAIT-GATE] sym=%s blocked=1 reason=%s request_ts=%d age_s=%.3f",
+                        symbol, reason, request_ts,
+                        max(0, self._now_ms() - request_ts) / 1000 if request_ts else -1)
+        elif not blocked:
+            states.pop(symbol, None)
+        return blocked
+
+    def apply_removed_wait_rollover(self, proofs: Iterable[RemovedWaitProof]) -> None:
+        """Publish only fresh, committed retirements for the still-current token."""
+        from project_mai_tai.v2_removed_wait import prior_session_request
+
+        now_ms = self._now_ms()
+        for proof in proofs:
+            request = proof.request
+            if (not proof.clear or proof.reason != "session_rollover"
+                    or self._removed_wait_requests.get(request.symbol) != request
+                    or not 0 <= now_ms - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS
+                    or not prior_session_request(request, datetime.fromtimestamp(now_ms / 1000, UTC))):
+                continue
+            self._removed_wait_requests.pop(request.symbol, None)
+            self._removed_scanner_symbols.discard(request.symbol)
+            logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=CLEAR reason=session_rollover",
+                        request.symbol, request.opportunity_id)
 
     @staticmethod
     def _removed_wait_has_owner(state: SymbolState) -> bool:
