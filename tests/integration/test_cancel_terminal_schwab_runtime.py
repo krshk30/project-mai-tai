@@ -45,6 +45,8 @@ def adapter(code, rows, calls):
 @pytest.mark.parametrize("rows,statuses,terminal", [
     ([], [], True),
     ([order()], ["working"], False),
+    ([{**order(), "enteredTime": datetime.fromtimestamp((NOW - 120 * 86_400_000) / 1000, UTC).isoformat()}],
+     ["working"], False),
     ([order(status="FILLED", children=[order(oid=2, status="AWAITING_PARENT_ORDER")])],
      ["working"], False),
     ([order(status="FILLED", children=[order(oid=2, status="PARTIAL_FILL")])],
@@ -62,10 +64,10 @@ async def test_unfiltered_slices_walk_terminal_parents(sessions, sdk, rows, stat
     assert broker.broker_binding(leaf, "schwab") == (leaf, "actual-hash")
     query = parse_qs(urlsplit(calls[0][1]).query)
     queries = [parse_qs(urlsplit(path).query) for _, path in calls]
-    assert len(calls) == 53 and all(method == "GET" for method, _ in calls)
+    assert len(calls) == 26 and all(method == "GET" for method, _ in calls)
     assert all("status" not in q and q["maxResults"] == ["3000"] for q in queries)
     assert (datetime.fromisoformat(queries[-1]["toEnteredTime"][0])
-            - datetime.fromisoformat(query["fromEnteredTime"][0])).days == 365
+            - datetime.fromisoformat(query["fromEnteredTime"][0])).days == 181
     assert all(a["toEnteredTime"] == b["fromEnteredTime"] for a, b in zip(queries, queries[1:]))
     assert all((datetime.fromisoformat(q["toEnteredTime"][0])
                 - datetime.fromisoformat(q["fromEnteredTime"][0])).days <= 7 for q in queries)
@@ -98,7 +100,7 @@ async def test_unfiltered_slices_walk_terminal_parents(sessions, sdk, rows, stat
 async def test_unreadable_capped_or_malformed_schwab_book_is_unknown(sessions, sdk, code, rows):
     calls = []
     assert await broker.acquire_complete_working_book(adapter(code, rows, calls), "schwab") is None
-    assert 1 <= len(calls) <= 53
+    assert 1 <= len(calls) <= 26
     with sessions() as session:
         assert session.execute(text("SELECT CAST(:epoch AS bigint)"), {"epoch": NOW}).scalar_one() == NOW
 
