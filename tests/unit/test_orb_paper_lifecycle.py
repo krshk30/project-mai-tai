@@ -13,7 +13,7 @@ from project_mai_tai.orb_paper_lifecycle import (
     OrbPaperPosition,
     compute_paper_atr_trail,
 )
-from project_mai_tai.orb_paper_store import (
+from tests.support.retired_orb_store import (
     ORB_PAPER_ATR_BAR_EVENT_TYPE,
     ORB_PAPER_EVENT_TYPE,
     ORB_PAPER_EXIT_EVENT_TYPE,

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from project_mai_tai.orb_paper_store import (
+from tests.support.retired_orb_store import (
     ORB_PAPER_ENTRY_GATE_EVENT_TYPE,
     ORB_PAPER_EVENT_TYPE,
     ORB_PAPER_ORDER_PLACED_EVENT_TYPE,

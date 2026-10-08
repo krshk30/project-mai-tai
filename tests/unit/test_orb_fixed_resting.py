@@ -5,7 +5,7 @@ import json
 from datetime import timedelta
 from unittest.mock import MagicMock
 
-from project_mai_tai.orb_paper_store import (
+from tests.support.retired_orb_store import (
     ORB_PAPER_EVENT_TYPE,
     ORB_PAPER_LEVEL_FINALIZED_EVENT_TYPE,
     ORB_PAPER_ORDER_ADJUSTED_EVENT_TYPE,

@@ -44,7 +44,7 @@ from project_mai_tai.events import (
     stream_name,
 )
 from project_mai_tai.fanout_outcome_consumer import session_anchor
-from project_mai_tai.orb_paper_store import (
+from tests.support.retired_orb_store import (
     ORB_PAPER_ACCOUNT_NAME,
     ORB_PAPER_ATR_BAR_EVENT_TYPE,
     ORB_PAPER_ENTRY_GATE_EVENT_TYPE,
