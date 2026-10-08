@@ -36,6 +36,7 @@ class BookOrder:
     symbol: str
     status: str
     side: str = "unknown"
+    broker_order_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -230,7 +231,7 @@ def evaluate_unbound_cancel_terminal(
     """
     def result(reason: str, terminal: bool = False) -> UnboundCancelTerminalProof:
         counts = ",".join(sorted(
-            f"{expected.account_providers.get(name, name)}:{len(book.orders) if isinstance(book, CompleteWorkingBook) else '?'}"
+            f"{expected.account_providers.get(name, name)}:{len(book.orders) if isinstance(book, CompleteWorkingBook) and isinstance(book.orders, tuple) else '?'}"
             for name, book in books.items()))
         logging.getLogger(__name__).info(
             "[V2-CANCEL-TERMINAL] sym=%s request=%s bound=0 decision=%s reason=%s books=%s",
@@ -268,10 +269,14 @@ def evaluate_unbound_cancel_terminal(
         seen = set()
         for order in book.orders:
             if (not isinstance(order, BookOrder) or order.side not in {"buy", "sell"}
-                    or not all(_identity(v) for v in (order.client_order_id, order.symbol, order.status))
-                    or order.client_order_id in seen or order.status not in WORKING | TERMINAL | {"filled"}):
+                    or not all(_identity(v) for v in (order.symbol, order.status))
+                    or not (_identity(order.client_order_id) or _identity(order.broker_order_id))
+                    or any((order.client_order_id and order.client_order_id == coid)
+                           or (order.broker_order_id and order.broker_order_id == broker_id)
+                           for coid, broker_id in seen)
+                    or order.status not in WORKING | TERMINAL | {"filled"}):
                 return result("unbound_book_row_or_side_unknown")
-            seen.add(order.client_order_id)
+            seen.add((order.client_order_id, order.broker_order_id))
             if order.symbol == expected.symbol and order.side == "buy" and order.status in WORKING:
                 return result("unbound_symbol_working_buy")
     return result("unbound_symbol_terminal", True)
