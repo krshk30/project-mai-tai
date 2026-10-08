@@ -47,10 +47,11 @@ def test_literal_hotfix_has_no_migration_control_or_environment_write():
 
 def test_distinct_job_unit_path_not_original_sealed_package():
     stage = (HERE / 'stage.py').read_text()
-    service = (HERE / 'project-mai-tai-falseflip-pg-20261008.service').read_text()
-    assert '/2026-10-08/falseflip-pg-hotfix/job' in stage and '/2026-10-08/falseflip-pg-hotfix/job' in service
+    service = (HERE / 'project-mai-tai-falseflip-pg-r2-20261008.service').read_text()
+    assert '/2026-10-08/falseflip-pg-hotfix-r2/job' in stage and '/2026-10-08/falseflip-pg-hotfix-r2/job' in service
+    assert '/2026-10-08/falseflip-pg-hotfix/job' not in stage + service
     assert '/2026-10-08/gapline-wbquiet/job' not in stage + service
-    assert 'project-mai-tai-falseflip-pg-20261008' in stage
+    assert 'project-mai-tai-falseflip-pg-r2-20261008' in stage
     assert not (HERE / 'migration0023.py').exists()
     assert not (HERE / 'retire_orb.py').exists()
 

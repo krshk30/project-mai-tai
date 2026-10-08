@@ -2,8 +2,12 @@
 
 Sole writer Lane C, branch codex/gapline1-wbquiet1-after-close-1008.
 Literal runner: hotfix-job/runner.py. Future unique box job:
-/home/trader/after-hours/2026-10-08/falseflip-pg-hotfix/job.
-Future unit: project-mai-tai-falseflip-pg-20261008.service/.timer.
+/home/trader/after-hours/2026-10-08/falseflip-pg-hotfix-r2/job.
+Future unit: project-mai-tai-falseflip-pg-r2-20261008.service/.timer.
+The first PG hotfix attempt stopped at 21:12:11 UTC, source-precheck rc 128,
+before any application write: its immutable application ref was not published.
+That ABORT and package remain sealed. The exact application ref is now published
+at 06b5e388; retry uses a separate package and unit, not a seal reset.
 Final application: 06b5e388affb5f33e4edf80c6e635cf72dbc3f78, tree
 92a4d4456b401464df364c1c909e96298a4e3ab7, exactly equal to independently
 pinned #1137 head 5d17199caff81e2b9e232ac78091579aa3ff4334. Hosted pin

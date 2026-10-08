@@ -23,7 +23,7 @@ def prepared(monkeypatch):
                           for i, n in enumerate(sorted(make_release.BASELINE_ROLES))}))
     names = ('runner.py', 'run.sh', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'flag_audit.py',
              'catalog_inventory.py', 'bookkeeping.py', 'removed_wait_readonly.py', 'health_view.py',
-             'project-mai-tai-falseflip-pg-20261008.service', 'project-mai-tai-falseflip-pg-20261008.timer')
+             'project-mai-tai-falseflip-pg-r2-20261008.service', 'project-mai-tai-falseflip-pg-r2-20261008.timer')
     calls = []
     def git(*args):
         calls.append(args)
@@ -58,7 +58,7 @@ def test_manifest_only_pg_hotfix_no_migration_archive_and_distinct_plan_payload(
     assert approval['manifest_sha256'] == make_release.digest(raw)
     assert '/hotfix-job/' in make_release.PREFIX
     assert manifest['box_sha'] == runner.BASELINE_SHA
-    assert stage.REMOTE.count('falseflip-pg-hotfix/job') == 1
+    assert stage.REMOTE.count('falseflip-pg-hotfix-r2/job') == 1
 
 
 @pytest.mark.parametrize('defect', ['wrong_base', 'other_pr', 'no_pg', 'no_prior', 'no_pin', 'no_ci', 'foreign_source'])

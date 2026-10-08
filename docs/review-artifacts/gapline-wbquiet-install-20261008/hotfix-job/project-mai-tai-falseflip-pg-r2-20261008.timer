@@ -5,7 +5,7 @@ Description=Oct8 distinct PG hotfix release, never the original ABORT package
 OnCalendar=2026-10-08 16..23:*:00 America/New_York
 Persistent=false
 AccuracySec=1s
-Unit=project-mai-tai-falseflip-pg-20261008.service
+Unit=project-mai-tai-falseflip-pg-r2-20261008.service
 
 [Install]
 WantedBy=timers.target

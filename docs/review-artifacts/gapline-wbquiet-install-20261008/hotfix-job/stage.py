@@ -13,7 +13,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 now = datetime.now(ZoneInfo('America/New_York'))
 assert now.date().isoformat() == '2026-10-08' and now.hour >= 16, 'NO STAGING BEFORE CLOSE / wrong date'
-job = pathlib.Path('/home/trader/after-hours/2026-10-08/falseflip-pg-hotfix/job')
+job = pathlib.Path('/home/trader/after-hours/2026-10-08/falseflip-pg-hotfix-r2/job')
 raw = sys.stdin.buffer.read(4000001)
 assert len(raw) <= 4000000 and os.geteuid() == 0
 files = {}
@@ -41,7 +41,7 @@ for name, value in files.items():
         stream.write(value)
     path.chmod(0o644)
 assert all(h((job / name).read_bytes()) == h(value) for name, value in files.items())
-unit = 'project-mai-tai-falseflip-pg-20261008'
+unit = 'project-mai-tai-falseflip-pg-r2-20261008'
 backups = {}
 for suffix in ('.service', '.timer'):
     path = pathlib.Path('/etc/systemd/system') / (unit + suffix)
