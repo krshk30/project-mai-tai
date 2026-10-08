@@ -15,7 +15,7 @@ from project_mai_tai.broker_adapters.cancel_terminal import (
 from project_mai_tai.cancel_terminal_proof import (
     BookOrder, CancelReceipt, CancelScope, CancelTerminalEvidence, CompleteWorkingBook,
 )
-from project_mai_tai.db.models import BrokerAccount, TradeIntent
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, TradeIntent
 
 JOURNAL_KEY = "cancel_terminal_evidence"
 BINDING_KEY = "cancel_target_binding"
@@ -67,6 +67,10 @@ def receipt_from_intent(intent, account: BrokerAccount) -> CancelReceipt | None:
                 or scope.event_id != payload.get("event_id")
                 or scope.client_order_id != md.get("target_client_order_id")
                 or (md.get("client_order_id") and scope.client_order_id != md["client_order_id"])
+                or binding.get("token") != md.get("clearwait_removal_token", "")
+                or binding.get("generation") != md.get(
+                    "clearwait_opportunity_id", md.get("fanout_segment_id", ""))
+                or binding.get("purpose") != md.get("clearwait_purpose", md.get("reason", intent.reason))
                 or not isinstance(at, datetime)):
             return None
         epoch_ms = int(at.replace(tzinfo=UTC).timestamp() * 1000) if at.tzinfo is None else int(at.timestamp() * 1000)
@@ -125,6 +129,18 @@ def _read_request(session_factory, intent_id) -> _Request | None:
         receipt = receipt_from_intent(intent, account) if account else None
         if receipt is None:
             return None
+        broker_id = intent.payload[BINDING_KEY].get("broker_order_id", "")
+        if account.provider == "schwab" and broker_id:
+            # Schwab detail has no client id. Its broker id must already be bound
+            # to this exact client/account/symbol in the committed order journal.
+            target = session.scalar(select(BrokerOrder).where(
+                BrokerOrder.broker_account_id == account.id,
+                BrokerOrder.client_order_id == receipt.scope.client_order_id,
+                BrokerOrder.broker_order_id == broker_id,
+                BrokerOrder.symbol == receipt.scope.symbol,
+            ))
+            if target is None:
+                return None
         return _Request(intent.id, receipt, dict(intent.payload), intent.updated_at)
 
 

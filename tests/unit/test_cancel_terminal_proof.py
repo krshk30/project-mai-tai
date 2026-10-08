@@ -91,3 +91,22 @@ def test_every_request_account_must_prove():
         evaluate_request_cancel_terminal([RECEIPT], {}, account_ids=bindings, now_ms=NOW)
     with pytest.raises(ValueError, match="accounts_unknown"):
         evaluate_request_cancel_terminal([], {}, account_ids={}, now_ms=NOW)
+
+
+def test_aixi_same_day_terminal_receipt_never_expires_by_request_age():
+    evidence = replace(EVIDENCE, book=None, target_status="cancelled",
+                       target_observed_at_ms=RECEIPT.observed_at_ms,
+                       target_client_order_id=SCOPE.client_order_id,
+                       target_symbol=SCOPE.symbol, target_account_id=SCOPE.account_id,
+                       target_filled_quantity="0")
+    assert evaluate_cancel_terminal(RECEIPT, evidence, now_ms=NOW + 8 * 3_600_000).terminal
+
+
+@pytest.mark.parametrize("field", ["target_filled_quantity", "target_observed_at_ms",
+                                    "target_client_order_id", "target_symbol", "target_account_id"])
+def test_broker_receipt_needs_all_exact_source_fields(field):
+    evidence = replace(EVIDENCE, book=None, target_status="cancelled",
+                       target_observed_at_ms=NOW - 100, target_client_order_id=SCOPE.client_order_id,
+                       target_symbol=SCOPE.symbol, target_account_id=SCOPE.account_id,
+                       target_filled_quantity="0")
+    assert not evaluate(replace(evidence, **{field: "unknown"})).terminal

@@ -228,6 +228,35 @@ async def test_missing_recorded_dki_coid_never_invented(sessions, sdk):
     assert client.calls == []
 
 
+@pytest.mark.parametrize("field,value", [("account_id", "foreign"), ("client_order_id", "foreign")])
+@pytest.mark.asyncio
+async def test_mismatched_broker_detail_cannot_fall_back_to_empty_book(sessions, sdk, field, value):
+    detail = {"account_id": "ACC1", "client_order_id": "exact-coid", "order_id": "broker-id",
+              "items": [{"symbol": "DKI", "order_status": "CANCELLED", "filled_qty": "0"}]}
+    detail[field] = value
+    client = Client(detail=detail)
+    routed = adapter(client)
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert not read(sessions, intent_id)[1].terminal
+    assert [kind for kind, _, _ in client.calls] == ["detail"]
+
+
+@pytest.mark.parametrize("field", ["clearwait_removal_token", "clearwait_purpose", "clearwait_opportunity_id"])
+@pytest.mark.asyncio
+async def test_journal_loader_rejects_changed_request_metadata(sessions, sdk, field):
+    routed = adapter(Client())
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        payload = dict(intent.payload)
+        payload["metadata"] = {**payload["metadata"], field: "foreign"}
+        intent.payload = payload
+        session.flush()
+        assert journal.load_cancel_terminal_evidence(session, [intent]) == {}
+
+
 @pytest.mark.asyncio
 async def test_real_oms_cancel_caller_produces_committed_book(sessions, sdk, monkeypatch):
     # Exercise the real source caller, not a test-only invocation of the producer.
