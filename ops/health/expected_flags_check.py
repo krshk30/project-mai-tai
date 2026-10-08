@@ -23,7 +23,6 @@ SERVICE_UNITS = {
     "market-data": "project-mai-tai-market-data.service",
     "momentum-paper": "project-mai-tai-momentum-paper.service",
     "oms": "project-mai-tai-oms.service",
-    "orb": "project-mai-tai-orb.service",
     "orb-schwab": "project-mai-tai-orb-schwab.service",
     "reconciler": "project-mai-tai-reconciler.service",
     "schwab-1m-v2": "project-mai-tai-schwab-1m-v2.service",
@@ -31,7 +30,7 @@ SERVICE_UNITS = {
 }
 BOOL = TypeAdapter(bool)
 INTEGER = TypeAdapter(int)
-DOTENV_DISABLED_SERVICES = frozenset({"orb", "orb-schwab"})
+DOTENV_DISABLED_SERVICES = frozenset({"orb-schwab"})
 
 
 @dataclass(frozen=True)

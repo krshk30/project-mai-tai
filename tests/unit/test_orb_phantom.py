@@ -15,8 +15,8 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import OrbPaperEvent
 from project_mai_tai.orb_paper_store import OrbPaperDecision, OrbPaperStore
-from project_mai_tai.services.orb_app import OrbService, _PendingPaperEntry, _SymbolState
-from project_mai_tai.settings import Settings
+from tests.support.retired_orb_simulation import OrbService, _PendingPaperEntry, _SymbolState
+from tests.support.retired_orb_settings import RetiredOrbSettings as Settings
 
 AT = datetime(2026, 9, 4, 13, 31, 26, tzinfo=UTC)
 

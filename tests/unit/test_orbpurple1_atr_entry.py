@@ -18,9 +18,9 @@ from project_mai_tai.orb_schwab_atr_entry import (
 from project_mai_tai.orb_schwab_exits import ATR_SOURCE, decode_bar
 from project_mai_tai.orb_schwab_macd import MacdVerdict
 from project_mai_tai.orb_schwab_order_route import build_orb_schwab_open_intent
-from project_mai_tai.services.orb_app import OrbService
+from tests.support.retired_orb_simulation import OrbService
 from project_mai_tai.services.orb_schwab_app import OrbSchwabService
-from project_mai_tai.settings import Settings
+from tests.support.retired_orb_settings import RetiredOrbSettings as Settings
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
 from tests.unit.test_orb_schwab_order_route import OPEN, _service
 
@@ -98,7 +98,7 @@ def test_all_recorded_placement_candidates_replay_through_live_gate(
         assert metadata["orb_target_pct"] == "5" and metadata["orb_stop_pct"] == "8"
         assert emitted[0].payload.quantity == 2
         assert emitted[0].payload.broker_account_name == "live:schwab_1m_v2"
-    assert not service._paper_positions and not service._pending_paper_entries
+    assert not hasattr(service, "_paper_positions") and not hasattr(service, "_pending_paper_entries")
 
 
 def test_filled_entry_population_and_actual_realized_outcomes_are_complete():

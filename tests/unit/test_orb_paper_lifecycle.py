@@ -19,13 +19,13 @@ from project_mai_tai.orb_paper_store import (
     ORB_PAPER_EXIT_EVENT_TYPE,
     OrbPaperDecision,
 )
-from project_mai_tai.services.orb_app import OrbService
+from tests.support.retired_orb_simulation import OrbService
 from project_mai_tai.services.control_plane import (
     _build_bot_position_rows,
     _build_completed_position_rows,
     _durable_paper_decision_symbols,
 )
-from project_mai_tai.settings import Settings
+from tests.support.retired_orb_settings import RetiredOrbSettings as Settings
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
 from project_mai_tai.strategy_core.orb_tick_aggregator import OrbTickAggregator
 from project_mai_tai.strategy_core.schwab_1m_v2 import (

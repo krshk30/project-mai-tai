@@ -83,7 +83,14 @@ class FakeRedis:
         return "config-1"
 
 
-def _orbpage_app(monkeypatch: pytest.MonkeyPatch):
+def _orbpage_service(now, phase=None):
+    return {"service_name": "orb-schwab", "status": "healthy", "observed_at_raw": now,
+            "details": {"mode": "LIVE", "phase": phase or (
+                "session_complete" if now.astimezone(control_plane_module.EASTERN_TZ).hour >= 10
+                else "entry_window"), "universe": "[]", "subscribed": "[]"}}
+
+
+def _orbpage_app(monkeypatch: pytest.MonkeyPatch, *, heartbeat=True):
     now = datetime(2026, 10, 6, 15, 52, tzinfo=UTC)
     monkeypatch.setattr(control_plane_module, "utcnow", lambda: now)
     monkeypatch.setattr(
@@ -119,7 +126,18 @@ def _orbpage_app(monkeypatch: pytest.MonkeyPatch):
         ]
     ]
     paper = IsolatedBotStateEvent(source_service="orb", payload=StrategyBotStatePayload(strategy_code="orb", account_name="paper:orb", interval_secs=60, watchlist=[], positions=[], closed_today=closed, daily_pnl=-2.46))
-    redis = FakeRedis({"test:strategy-state-isolated": [("1", {"data": paper.model_dump_json()})]})
+    class LiveRedis(FakeRedis):
+        async def xrevrange(self, stream, count=None, **kwargs):
+            if heartbeat and stream == "test:heartbeats":
+                current = control_plane_module.utcnow()
+                reported = _orbpage_service(current)
+                event = HeartbeatEvent(source_service="orb-schwab", produced_at=current,
+                                       payload=HeartbeatPayload(service_name="orb-schwab", instance_name="orb-schwab",
+                                                                status="healthy", details=reported["details"]))
+                return [("live-1", {"data": event.model_dump_json()})]
+            return await super().xrevrange(stream, count=count, **kwargs)
+
+    redis = LiveRedis({"test:strategy-state-isolated": [("1", {"data": paper.model_dump_json()})]})
     return build_app(settings=settings, session_factory=factory, redis_client=redis), factory
 
 
@@ -155,7 +173,7 @@ def test_orblive1_retired_simulation_is_absent_despite_stale_heartbeat(monkeypat
 
 
 def test_orblive1_recorded_biya_sxtc_refusals_are_decisions_not_positions_or_pnl(monkeypatch):
-    app, factory = _orbpage_app(monkeypatch)
+    app, factory = _orbpage_app(monkeypatch, heartbeat=False)
     now = datetime(2026, 10, 7, 13, 29, tzinfo=UTC)
     monkeypatch.setattr(control_plane_module, "utcnow", lambda: now)
     monkeypatch.setattr(
@@ -185,7 +203,7 @@ def test_orblive1_recorded_biya_sxtc_refusals_are_decisions_not_positions_or_pnl
             assert live[key] == []
         assert live["daily_pnl"] == 0
         assert live["watched_tickers"] == []  # The old simulation heartbeat is not live evidence.
-        assert live["listening_status"]["state"] == "UNKNOWN"
+        assert live["listening_status"]["state"] == "STOPPED"
         decisions = {item["symbol"]: item for item in live["recent_decisions"]}
         for symbol, _, _, code in recorded:
             assert decisions[symbol]["status"] == "blocked"
@@ -198,15 +216,15 @@ def test_orblive1_recorded_biya_sxtc_refusals_are_decisions_not_positions_or_pnl
 
 
 @pytest.mark.parametrize("decisions", [[], [{"last_bar_at": "2026-10-06 09:25:00 AM ET"}]])
-def test_orbpage_fresh_own_tick_is_activity_without_decisions(monkeypatch: pytest.MonkeyPatch, decisions) -> None:
+def test_orbpage_fresh_heartbeat_is_activity_without_decisions(monkeypatch: pytest.MonkeyPatch, decisions) -> None:
     monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime(2026, 10, 6, 13, 45, tzinfo=UTC))
     bot = {"strategy_code": "orb_schwab", "provider": "schwab", "watchlist": ["JAGX"], "positions": [], "last_tick_at": {"JAGX": "2026-10-06 09:44:58 AM ET"}}
-    data = {"services": [{"service_name": "strategy-engine", "status": "stopped"}], "market_data": {}}
-    assert _build_bot_listening_status(data, bot, decisions)["state"] == "WATCHING"
+    data = {"services": [_orbpage_service(datetime(2026, 10, 6, 13, 45, tzinfo=UTC))], "market_data": {}}
+    assert _build_bot_listening_status(data, bot, decisions)["state"] == "EVALUATING"
     bot["last_tick_at"] = {}
-    assert _build_bot_listening_status(data, bot, decisions)["state"] == "UNKNOWN"
+    assert _build_bot_listening_status(data, bot, decisions)["state"] == "EVALUATING"
     bot["last_tick_at"] = {"JAGX": "2026-10-06 09:44:58 AM ET"}
-    data["services"].append({"service_name": "orb-schwab", "status": "stopped"})
+    data["services"] = []
     assert _build_bot_listening_status(data, bot, decisions)["state"] == "STOPPED"
 
 
@@ -248,13 +266,13 @@ def test_orbpage_open_book_excludes_shared_atr_quantity_and_value(monkeypatch: p
 
 
 def test_orbpage_before_ten_refreshes_without_claiming_unreported_activity(monkeypatch: pytest.MonkeyPatch) -> None:
-    app, _ = _orbpage_app(monkeypatch)
+    app, _ = _orbpage_app(monkeypatch, heartbeat=False)
     monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime(2026, 10, 6, 13, 45, tzinfo=UTC))
     with TestClient(app) as client:
         page = client.get("/bot/orb").text
         assert 'http-equiv="refresh" content="30"' in page
-        assert "<strong>Status:</strong> UNKNOWN" in page
-        assert "ORB-Schwab activity is not reported" in page
+        assert "<strong>Status:</strong> STOPPED" in page
+        assert "ORB-Schwab heartbeat is missing" in page
         assert "<strong>Routing:</strong> LIVE/SCHWAB" in page
 
 
@@ -274,7 +292,7 @@ def _orbpage_managed_row(factory, *, strategy_code="orb_schwab", account_name="l
 
 
 @pytest.mark.parametrize("at,flat_state,held_refresh", [
-    ("2026-10-06T13:59:59+00:00", "UNKNOWN", True),
+    ("2026-10-06T13:59:59+00:00", "EVALUATING", True),
     ("2026-10-06T14:00:00+00:00", "SESSION COMPLETE", True),
     ("2026-10-06T14:00:01+00:00", "SESSION COMPLETE", True),
     ("2026-10-06T19:59:59+00:00", "SESSION COMPLETE", True),
@@ -370,7 +388,7 @@ def test_orbpage_holding_render_does_not_mutate_trading_rows(monkeypatch):
 
 
 @pytest.mark.parametrize("at,flat_state", [
-    ("2026-10-10T13:59:59+00:00", "UNKNOWN"),
+    ("2026-10-10T13:59:59+00:00", "EVALUATING"),
     ("2026-10-10T14:00:00+00:00", "SESSION COMPLETE"),
 ])
 @pytest.mark.parametrize("holding", [False, True])
@@ -378,7 +396,7 @@ def test_orbpage_weekend_display_uses_the_same_time_and_owned_book_rule(monkeypa
     monkeypatch.setattr(control_plane_module, "utcnow", lambda: datetime.fromisoformat(at))
     bot = {"strategy_code": "orb_schwab", "provider": "schwab", "watchlist": [],
            "positions": [{"ticker": "JAGX", "quantity": 2}] if holding else [], "last_tick_at": {}}
-    status = _build_bot_listening_status({"services": [], "market_data": {}}, bot, [])
+    status = _build_bot_listening_status({"services": [_orbpage_service(datetime.fromisoformat(at))], "market_data": {}}, bot, [])
     assert status["state"] == ("IN TRADE" if holding else flat_state)
     assert control_plane_module._orb_session_closed(bot) is (not holding and flat_state == "SESSION COMPLETE")
     assert control_plane_module._orb_display_refresh_paused(bot) is (not holding and flat_state == "SESSION COMPLETE")

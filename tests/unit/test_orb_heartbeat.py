@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 from project_mai_tai.events import HeartbeatEvent, IsolatedBotStateEvent
 from project_mai_tai.orb_paper_lifecycle import OrbPaperPosition
-from project_mai_tai.services.orb_app import OrbService, _SymbolState
+from tests.support.retired_orb_simulation import OrbService, _SymbolState
 from project_mai_tai.strategy_core.orb_intrabar import OpeningRange, OrbBar
 
 
