@@ -194,3 +194,28 @@ async def test_exact_bound_target_fill_is_not_omitted_with_terminal_history(sess
                             NOW - 1000, "rejected", "skipped_before_submit", "")
     evidence = await broker.acquire_broker_cancel_evidence(adapter(200, [target], []), receipt)
     assert not evaluate_cancel_terminal(receipt, evidence, now_ms=NOW).terminal
+
+
+@pytest.mark.parametrize("when", ["before_read", "during_read"])
+@pytest.mark.asyncio
+async def test_journal_provider_mismatch_cannot_publish_evidence(sessions, sdk, when):
+    from project_mai_tai.db.models import BrokerAccount, TradeIntent
+    from project_mai_tai.oms import cancel_terminal as journal
+
+    client = runtime.Client()
+    routed = runtime.adapter(client)
+    intent_id = runtime.seed(sessions, routed)
+    def mismatch():
+        client.on_read = None
+        with sessions() as session:
+            intent = session.get(TradeIntent, intent_id)
+            session.get(BrokerAccount, intent.broker_account_id).provider = "schwab"
+            session.commit()
+    if when == "before_read":
+        mismatch()
+    else:
+        client.on_read = mismatch
+    assert await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id]) == {}
+    assert bool(client.calls) is (when == "during_read")
+    with sessions() as session:
+        assert journal.JOURNAL_KEY not in session.get(TradeIntent, intent_id).payload
