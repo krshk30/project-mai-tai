@@ -8580,3 +8580,17 @@ Parent shared unit57PASS0.66s, not PostgreSQL/live release evidence.
 Required five final replay outcomes retained, including both working BUY denials
 and operator working SELL admission. No evidence documents or fixture>500lines.
 No further production action tonight; Friday reviewed/pinned install after close.
+
+2026-10-08 19:32 ET codex-2 C68: parent exact8830c945 ephemeral readonly
+acquisition on live account23:29:52.934-23:30:03.000Z total10.066s. First
+seven-day slice returnedHTTP599 after10.065s, rowsUNREADABLE, bookNone;
+not zero-row complete proof. No rate-limit headers. Nominal181day fullpass26
+GETs/request,10requests260calls absent sharing; no burst run on broker.
+Isolated10ms async heartbeatmaxstall12.479ms not actual OMS latency evidence.
+SchwabHTTP uses asyncio.to_thread; nevertheless actual OMS serial intent path
+awaits evidence before cancel-event publication/return, risking exit delay.
+Shared writer owns bounded background proof after normal receipt publication,
+coalesced actual-account complete books percycle with15sfresh/postrequest fences.
+F consumes pendingrequestbatch once, not repeated per-request periodicfullreads.
+Public official Schwab GET quota unreadable;120/min not a verified safety claim.
+PRbody needs exactcurrenthead/cost/unknowns; no evidence docs or production edits.
