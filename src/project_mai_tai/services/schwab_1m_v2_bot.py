@@ -1502,6 +1502,8 @@ class SchwabV2BotService:
         )
 
     async def _rpg_handoff_pass(self, *, refresh: bool = True) -> None:
+        if not getattr(self.settings, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False):
+            return
         factory = getattr(self, "session_factory", None)
         if factory is None:
             return

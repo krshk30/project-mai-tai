@@ -5838,7 +5838,9 @@ class SchwabV2Strategy:
                 primary_reason = "sibling_not_selected"
             if webull_account not in recover_accounts:
                 webull_reason = "sibling_not_selected"
-        for job in getattr(self, "_rpg_handoffs", {}).values():
+        jobs = (getattr(self, "_rpg_handoffs", {}) if getattr(
+            settings, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False) else {})
+        for job in jobs.values():
             if (job["old"]["symbol"] != state.symbol or job["phase"] != "placed"
                     or not rpg_buy_owned(job, slot=slot, segment_id=state.fanout_segment_id)):
                 continue
@@ -5853,7 +5855,7 @@ class SchwabV2Strategy:
                 if not generation:
                     generation = next((job.get("replacement", {}).get("metadata", {}).get("rpg_resting_generation")
                         or job["old"].get("metadata", {}).get("rpg_resting_generation")
-                        for job in getattr(self, "_rpg_handoffs", {}).values()
+                        for job in jobs.values()
                         if job["old"]["symbol"] == state.symbol and job["old"].get("broker_account_name") == account
                         and rpg_buy_owned(job, slot=slot, segment_id=state.fanout_segment_id)), None)
                 logger.info("[V2-RESTING-LEG-SKIP] symbol=%s account=%s slot=%s reason=%s generation=%s",
@@ -6351,6 +6353,8 @@ class SchwabV2Strategy:
 
     def _rpg_refused_legs(self, state: SymbolState, *, slot: str) -> set[str]:
         settings = self.settings
+        if not getattr(settings, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False):
+            return set()
         accounts = {
             settings.strategy_schwab_1m_v2_account_name: ("schwab", state.resting_schwab_quantity),
             settings.strategy_schwab_1m_v2_webull_account_name: ("webull", state.resting_webull_quantity),
@@ -6380,6 +6384,9 @@ class SchwabV2Strategy:
 
     def _rpg_entry_owned(self, state: SymbolState, *, account: str | None = None,
                          include_placed: bool = True, slot: str | None = None) -> bool:
+        if not getattr(getattr(self, "settings", None),
+                       "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False):
+            return False
         jobs = getattr(self, "_rpg_handoffs", {})
         if account is not None and not any(job["old"]["symbol"] == state.symbol
                 and (job["old"].get("broker_account_name") == account
@@ -6418,6 +6425,8 @@ class SchwabV2Strategy:
         A decision contains a draft only. OMS must still claim the durable ticket,
         reject stale authorization, and use its ordinary serial/risk/adapter lane.
         """
+        if not getattr(self.settings, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False):
+            return {"at": self._now_ms() / 1000, "verdict": "wait", "reason": "disabled"}
         previous = self._rpg_handoffs.get(token, {})
         if previous.get("revision", -1) > job.get("revision", 0):
             return {"at": self._now_ms() / 1000, "verdict": "wait", "reason": "stale_journal_revision"}

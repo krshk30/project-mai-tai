@@ -37,7 +37,8 @@ async def test_recorded_restart_real_session_gates_ignore_host_after_window(monk
             control.setattr(strategy_module, "datetime", HostClock)
             control.setattr(recorded_fixture, "SchwabV2Strategy", capture_strategy)
             # Preserve all original proven/unproven and both-leg assertions.
-            await recorded_fixture.test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(control, ticket)
+            await recorded_fixture.test_current_rpg_startup_ticket_ownership_obeys_flag(
+                control, ticket, handoff_enabled=True)
             restarted, = restored
             assert restarted._now_ms() == int(expected.timestamp() * 1000)
             assert restarted._resting_in_window()

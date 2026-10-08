@@ -167,32 +167,22 @@ async def test_rpg_flag_off_new_reprice_retains_legacy_cancel_then_next_pass(mon
 @pytest.mark.asyncio
 @pytest.mark.parametrize("broker", ["schwab", "webull"])
 @pytest.mark.parametrize("working", [False, True])
-async def test_switch_off_preserves_inflight_cancel_and_restart_ownership(monkeypatch, broker, working):
+async def test_switch_off_leaves_inflight_journal_dormant(monkeypatch, broker, working):
     h = await runtime(monkeypatch, broker)
     if working:
         h.adapter.override = AtrBuyReadback("working", "CONTROLLED pending cancel", Decimal(0))
-    original = h.service._rpg_begin_cancel
-
-    async def switch_off_before_oms(event):
-        assert event.payload.metadata["atr_reprice"] == "true"
-        h.service.settings.strategy_schwab_1m_v2_atr_reprice_handoff_enabled = False
-        return await original(event)
-
-    monkeypatch.setattr(h.service, "_rpg_begin_cancel", switch_off_before_oms)
-    token, event = await begin(h, broker)
+    token, _ = await begin(h, broker)
+    journal = HandoffJournal(h.factory)
+    before = journal.read(token)
+    h.service.settings.strategy_schwab_1m_v2_atr_reprice_handoff_enabled = False
     h.service.__dict__.pop("_atr_reprice_controller")
     h.strategy._rpg_handoffs.clear()
     h.strategy._rpg_feedback_applied.clear()
     await feedback(h)
     for _ in range(2):
-        await h.service._handle_stream_message({"data": event.model_dump_json()})
+        await h.service._rpg_advance(token)
         await feedback(h)
-    job = HandoffJournal(h.factory).read(token)
+    assert journal.read(token) == before
     assert len(h.adapter.cancels) == 1
-    if working:
-        assert job["phase"] == "waiting" and h.strategy._rpg_entry_owned(h.state)
-        h.strategy._cw_v2_resting_track(h.state, None)
-        assert not h.strategy.drain_pending_intents() and not h.strategy.drain_webull_direct_intents()
-        assert not h.adapter.opens
-    else:
-        assert job["phase"] == "placed" and len(h.adapter.opens) == 1
+    assert not h.strategy._rpg_entry_owned(h.state)
+    assert not h.adapter.opens

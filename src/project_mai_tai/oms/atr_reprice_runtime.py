@@ -33,6 +33,9 @@ ACTIVE_PHASES = {"prepared", "waiting", "fills_waiting", "clear", "held_unknown"
 
 
 class AtrRepriceRuntimeMixin:
+    def _rpg_enabled(self):
+        return bool(getattr(self.settings, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False))
+
     @staticmethod
     def _rpg_matches_local_open(opening, event):
         md = event.payload.metadata
@@ -85,13 +88,15 @@ class AtrRepriceRuntimeMixin:
         return matches[-1] if matches else None
 
     def _rpg_owns_old_order(self, session, order, account):
-        if session is None:
+        if not self._rpg_enabled() or session is None:
             return False
         token = uuid5(NAMESPACE_URL, f"atr-reprice:{account}:{order.client_order_id}")
         row = session.get(DashboardSnapshot, token, populate_existing=True)
         return row is not None and row.snapshot_type == SNAPSHOT_TYPE
 
     def _rpg_external_retry(self, event):
+        if not self._rpg_enabled():
+            return False
         token = event.payload.metadata.get("rpg_handoff_token")
         if (event.payload.intent_type == "open" and token
                 and self.__dict__.get("_rpg_dispatch_token") != token):
@@ -119,6 +124,8 @@ class AtrRepriceRuntimeMixin:
         return controller
 
     async def _rpg_begin_cancel(self, event):
+        if not self._rpg_enabled():
+            return []
         self._rpg_retry_dirty = True
         self._rpg_retry_signal().set()
         md = event.payload.metadata
@@ -216,6 +223,8 @@ class AtrRepriceRuntimeMixin:
         return []
 
     async def _rpg_advance(self, token, *, proof_edge=None):
+        if not self._rpg_enabled():
+            return None
         journal = self._rpg_journal()
         job = journal.read(token)
         if replacement_needs_reconciliation(job) and job["phase"] not in {"submitting", "submit_unknown"}:
@@ -573,7 +582,8 @@ class AtrRepriceRuntimeMixin:
         return True
 
     def _rpg_open_refusal(self, event, *, session=None):
-        if event.payload.strategy_code != "schwab_1m_v2" or event.payload.intent_type != "open":
+        if (not self._rpg_enabled() or event.payload.strategy_code != "schwab_1m_v2"
+                or event.payload.intent_type != "open"):
             return None
         token = event.payload.metadata.get("rpg_handoff_token")
         if token:
@@ -728,10 +738,15 @@ class AtrRepriceRuntimeMixin:
         return stop, limit
 
     async def _run_rpg_retry_loop(self, stop_event):
+        if not self._rpg_enabled():
+            self._rpg_retry_started().set()
+            return
         startup = True
         startup_edge = "startup:" + str(uuid4())
         active = False
         while not stop_event.is_set():
+            if not self._rpg_enabled():
+                return
             signal = self._rpg_retry_signal()
             signal.clear()
             delay = None
@@ -789,6 +804,8 @@ class AtrRepriceRuntimeMixin:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def _rpg_retry_jobs(self, *, include_unknown):
+        if not self._rpg_enabled():
+            return []
         phases = ACTIVE_PHASES if include_unknown else ACTIVE_PHASES - {"held_unknown"}
         with self.session_factory() as session:
             statement = select(DashboardSnapshot).where(DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE)
@@ -811,6 +828,8 @@ class AtrRepriceRuntimeMixin:
             self._rpg_retry_signal().set()
 
     def _rpg_mark_committed_evidence(self, event):
+        if not self._rpg_enabled():
+            return []
         payload = event.payload
         if payload.strategy_code != "schwab_1m_v2" or payload.side != "buy":
             return []

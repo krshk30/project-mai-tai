@@ -134,9 +134,12 @@ async def test_tonight_rpg_off_clean_journal_legacy_cancel_then_next_pass(monkey
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ticket", TICKETS, ids=lambda row: row["id"])
-async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership(monkeypatch, ticket):
+@pytest.mark.parametrize("handoff_enabled", [False, True], ids=["rpg-off", "rpg-on"])
+async def test_current_rpg_startup_ticket_ownership_obeys_flag(monkeypatch, ticket, handoff_enabled):
     h = await runtime(monkeypatch, "schwab", strategy_overrides=TONIGHT)
-    h.bot.settings = h.strategy.settings.model_copy(update=TONIGHT)
+    h.bot.settings = h.strategy.settings.model_copy(update={**TONIGHT,
+        "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": handoff_enabled})
+    h.service.settings = h.bot.settings
     restarted = SchwabV2Strategy(h.bot.settings)
     h.bot.strategy = restarted
     job = deepcopy(ticket["payload"])
@@ -165,19 +168,24 @@ async def test_current_rpg_off_startup_restores_proof_dependent_ticket_ownership
             seed_recorded_intent(h, {**audit, "strategy": "schwab_1m_v2", "symbol": state.symbol,
                                     "side": "buy", "intent_type": "open"})
     assert h.service.settings.oms_v2_webull_mirror_fresh_price_enabled
+    if not handoff_enabled:
+        def unreadable(*args, **kwargs):
+            pytest.fail("flag OFF read a recorded RPG ticket")
+        monkeypatch.setattr(HandoffJournal, "jobs", unreadable)
+        monkeypatch.setattr(HandoffJournal, "read", unreadable)
     await h.bot._rpg_handoff_pass()
-    assert ticket["id"] in restarted._rpg_handoffs
+    assert (ticket["id"] in restarted._rpg_handoffs) is handoff_enabled
     proven = ticket["id"] in {
         "fbfd692d-ec1f-5a39-9e11-1a133abccc96",
         "bd6ac0b9-727c-500b-8581-aabdd95992d4",
         "a007716c-4b50-5759-a354-ddc5b8961154",
     }
     assert old_buy_proven_clear(job) is proven
-    assert restarted._rpg_entry_owned(state) is not proven
+    assert restarted._rpg_entry_owned(state) is (handoff_enabled and not proven)
     restarted._cw_v2_resting_track(state, None)
     primary = restarted.drain_pending_intents()
     mirror = restarted.drain_webull_direct_intents()
-    if proven:
+    if proven or not handoff_enabled:
         assert len(primary) == len(mirror) == 1
         assert primary[0].intent_type == mirror[0].intent_type == "open"
     else:
