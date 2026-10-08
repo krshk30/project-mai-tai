@@ -46,6 +46,10 @@ day's rows. No historical decision/fill is invented to populate an empty section
   NOT a live audit receipt. Fleet runtime/full gets one additional heartbeat verdict.
 - Bootstrap, target and install inventory no longer install/enable the paper unit.
   The standalone deploy selector targets orb-schwab, not the retired paper process.
+  Generic restart/status inventories and the restart collector also exclude the
+  retired paper unit. The legacy readiness script reads the live heartbeat rather
+  than the paper isolated-state stream. Historical restart fixtures no longer
+  require a paper process in the current inventory.
   No strategy or paper broker-account registration is added.
 
 ## After-close sequence (not executed)
@@ -96,12 +100,32 @@ actually observed these are scheduled acceptance criteria, not live PASS evidenc
 
 ## Local evidence
 
-Focused unique tests: 828 passed. Seven offline mutations RED: absent/stale gate,
+Focused unique tests: 969 passed. Seven offline mutations RED: absent/stale gate,
 wrong waiting phase, producer phase boundary, wrong service name, stale-heartbeat
 fallback mask, date labels removed, heartbeat made serial/blocking. These mutate
 only in-memory functions in an isolated test process, never tracked source.
 
-Full-unit exact-base/head pair is running; do not infer its result from historical
-48-failure receipts. The baseline measured here is 47 failed / 7,491 passed.
+Full-unit source-head 44393b28: 48 failed / 7,534 passed (613.53 s), versus exact
+base d244f602: 47 failed / 7,491 passed. Removed failed names: zero. Added name:
+
+`test_hotfix1_symbol_tick_cache.py::test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions[retained-on]`
+
+The added failure was its existing 50 ms loop-stall assertion (312.77 ms). Neither
+OMS source nor that benchmark test is changed in this PR. Its isolated head rerun
+passed at 240 events/s for 60 s with 28.01 ms maximum stall, one database transaction
+and none after the first second. This suggests timing sensitivity, but does NOT
+turn the full-suite failed-name diff into an identical-name receipt. The PR stays
+draft pending review; no performance threshold is weakened. The sequential isolated
+base control also passed at 240 events/s with 25.82 ms maximum stall and one database
+transaction. Both hosted Validate runs passed on source head 44393b28 (push run
+37770431003, PR run 37770438588); a later evidence-only commit requires its own checks.
+
+Raw final-suite receipts: /tmp/orblive1-final-head4.log and .xml; baseline:
+/tmp/orblive1-heartbeat-base-d244f602.log and .xml. Focused receipt:
+/tmp/orblive1-final-focused3.log. Benchmark rerun:
+/tmp/orblive1-existing-benchmark-head.log and .xml. Run offline mutations with
+`PYTHONPATH=src:. .venv/bin/python scripts/orblive1_mutation_controls.py` (use the
+configured shared virtualenv when this isolated worktree has no .venv).
+
 Production receipt, final live audit, tomorrow's phase transitions and retirement
 are UNMEASURED. No production action occurred in this side conversation.
