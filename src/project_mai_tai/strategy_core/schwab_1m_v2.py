@@ -2261,7 +2261,8 @@ class SchwabV2Strategy:
                 int(confirmed_close),
                 int(retry_exit_reason is not None),
             )
-        elif phase == "awaiting_close" and state.flip_owner_position_ids and not any_bound_open:
+        elif (phase == "awaiting_close" and state.flip_owner_position_ids
+              and not open_positions and state.position_qty == 0 and state.position_qty_held == 0):
             self._retire_flip_owner_opportunity(state, reason="bound_flip_position_closed")
 
     def _flip_owner_evidence_fresh(self, state: SymbolState) -> bool:
@@ -2464,6 +2465,10 @@ class SchwabV2Strategy:
                 reason="sell_flip_without_fresh_position_evidence",
             )
             return
+        if state.position_qty or state.position_qty_held:
+            state.flip_owner_phase = "awaiting_close"
+            self._persist_flip_owner(state, active=True, reason="sell_flip_waiting_for_close")
+            return
         if phase == "unknown":
             if state.flip_owner_open_positions:
                 state.flip_owner_phase = "awaiting_close"
@@ -2487,11 +2492,24 @@ class SchwabV2Strategy:
             else:
                 self._retire_flip_owner_opportunity(state, reason="sell_flip_without_fill")
             return
-        open_ids = {leg.managed_row_id for leg in state.flip_owner_open_positions.values()}
-        if any(row_id in open_ids for row_id in state.flip_owner_position_ids.values()):
+        if state.flip_owner_open_positions:
             state.flip_owner_phase = "awaiting_close"
             self._persist_flip_owner(state, active=True, reason="sell_flip_waiting_for_close")
             return
+        request = self._removed_wait_requests.get(state.symbol)
+        if request is not None and request.purpose == "retry_exhausted":
+            if (not self._fanout_identity_bar_is_live(state)
+                    or self._bar_observation_phase != "live"
+                    or not state.bars
+                    or state.atr_short_flip_bar_ts != state.bars[-1].timestamp_ms):
+                return
+            # Keep the SELL boundary while cancellation proof is pending. Otherwise retirement
+            # refuses here and a flat bound owner can never resume after its receipt arrives.
+            state.flip_owner_phase = "awaiting_close"
+            if not self._persist_flip_owner(
+                state, active=True, reason="sell_flip_waiting_for_cancellation"
+            ):
+                return
         self._retire_flip_owner_opportunity(state, reason="sell_flip_flat")
 
     def _persist_fanout_claim_transition(
