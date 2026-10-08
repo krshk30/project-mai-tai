@@ -49,7 +49,8 @@ def test_broker_terminal_target_receipt(status):
     evidence = replace(EVIDENCE, book=None, target_status=status,
                        target_observed_at_ms=NOW - 100,
                        target_client_order_id=SCOPE.client_order_id,
-                       target_symbol=SCOPE.symbol, target_account_id=SCOPE.account_id)
+                       target_symbol=SCOPE.symbol, target_account_id=SCOPE.account_id,
+                       target_filled_quantity="0")
     assert evaluate(evidence).terminal
     assert not evaluate(replace(evidence, source="client")).terminal
     assert not evaluate(replace(evidence, target_account_id="foreign")).terminal

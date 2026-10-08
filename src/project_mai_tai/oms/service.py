@@ -62,6 +62,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms.cancel_terminal import acquire_cancel_terminal_evidence, bind_cancel_target
 from project_mai_tai.oms import wbquiet_shadow
 from project_mai_tai.positions_read_receipt import (
     PositionsReadReceiptWriter,
@@ -1883,6 +1884,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     event=event,
                 )
                 session.commit()
+                if strategy_code == "schwab_1m_v2":
+                    try:
+                        await acquire_cancel_terminal_evidence(
+                            self.session_factory, self.broker_adapter, [intent.id],
+                        )
+                    except Exception:
+                        self.logger.warning("Cancel evidence unavailable for intent %s", intent.id,
+                                            exc_info=True)
                 for order_event in published_events:
                     await self._publish_order_event(order_event)
                 return published_events
@@ -2881,6 +2890,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             symbol=event.payload.symbol,
             metadata=metadata,
         )
+        bind_cancel_target(intent, event, self.broker_adapter, target_order)
         if target_order is None:
             self.store.mark_intent_refused(
                 intent,
