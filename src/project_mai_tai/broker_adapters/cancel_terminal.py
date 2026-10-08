@@ -69,6 +69,10 @@ class _TargetNotFound(ValueError):
     """Only a structured venue ORDER_NOT_FOUND, never malformed/empty detail."""
 
 
+class _TargetEmpty(ValueError):
+    """Measured HTTP200/zero-byte shape; no target receipt is implied."""
+
+
 def _webull_book_row(row: dict, account_id: str) -> BookOrder:
     # Official v2 TradeClient.getOpenedOrders returns Orders<ComboOrder> for US:
     # identity is on the parent and symbol/status/side are in its items.
@@ -189,6 +193,8 @@ def _webull_target(leaf: WebullBrokerAdapter, receipt: CancelReceipt, broker_ord
             raise _TargetNotFound("broker_order_not_found") from exc
         raise
     body = leaf._body(response)
+    if _http_status(response) == 200 and body is None and getattr(response, "content", None) == b"":
+        raise _TargetEmpty("broker_target_empty")
     if (isinstance(body, dict) and body.get("error_code") == "ORDER_NOT_FOUND"
             and _http_status(response) in {200, 404, 417}
             and body.get("account_id", scope.account_id) == scope.account_id
@@ -223,6 +229,12 @@ async def acquire_broker_cancel_evidence(
             status, filled = await asyncio.to_thread(_webull_target, leaf, receipt, broker_order_id)
         except _TargetNotFound:
             pass
+        except _TargetEmpty:
+            if receipt.status != "rejected" or not (
+                receipt.refusal_code == "cancel_target_not_found"
+                or receipt.refusal_origin == "skipped_before_submit"
+            ):
+                return evidence
         except Exception:
             return evidence
         # A known working/fill read is a contradiction and cannot fall back to absence.
