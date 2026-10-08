@@ -158,7 +158,7 @@ async def test_validated_suffix_correction_preserves_seed_and_never_replays_old_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("constructed", ["06:58:00", "07:00:00"])
-async def test_initial_0701_scanner_without_candles_waits_then_first_actual_empty_is_one_fetch(constructed):
+async def test_initial_0701_scanner_without_candles_waits_then_empty_repairs_are_bounded(constructed):
     bot = _bot("RETO", _ms(f"2026-10-05T{constructed}-04:00"))
     now = [_ms("2026-10-05T07:01:00-04:00")]
     bot.strategy._now_ms = lambda: now[0]
@@ -188,5 +188,8 @@ async def test_initial_0701_scanner_without_candles_waits_then_first_actual_empt
             await bot._handle_bar_from_streamer("RETO", bar)
             event.produced_at = datetime.fromtimestamp(now[0] / 1000, UTC)
             bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=25)
-            assert not bot._line_source_pending and not bot._line_buy_ready("RETO")
-    assert bot.rest_client._authorized_get.call_count == 1
+            if bot._line_source_pending:
+                await asyncio.wait_for(bot._line_source_events_pass(), 2)
+            assert bot.rest_client._authorized_get.call_count <= 5
+            assert bot.strategy.watchlist_state("RETO").line_live_fallback
+    assert bot.rest_client._authorized_get.call_count == 5
