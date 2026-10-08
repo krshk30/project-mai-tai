@@ -1,0 +1,9 @@
+{
+  "pr_number": 1134,
+  "range_base": "06336beb2340c6334ff4e6b0d64b23c1c2b96215",
+  "range_head": "27b3244364aa011eb8fd9b7991407f94894a66ac",
+  "reviewed_at": "2026-10-08T19:27:01Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after rebase onto main 06336beb (#1130 merged). Stable patch-id identical to my 15:3x pin @031be633 (424bc875998b), verified independently; review content unchanged: session-bound dispatch/queue/restore scans, cap = PRICE_AGGRESSIVE refusals only, WARN on every refusal; 165 lane + 778 neighbour tests; mutations 4F/13F; Linux timing pair 20/20 vs 20/20; combined trial merge 1,817 passed."
+}

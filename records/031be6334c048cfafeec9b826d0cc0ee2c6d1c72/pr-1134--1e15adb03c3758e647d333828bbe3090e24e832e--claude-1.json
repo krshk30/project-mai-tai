@@ -1,9 +1,0 @@
-{
-  "pr_number": 1134,
-  "range_base": "1e15adb03c3758e647d333828bbe3090e24e832e",
-  "range_head": "031be6334c048cfafeec9b826d0cc0ee2c6d1c72",
-  "reviewed_at": "2026-10-08T19:05:59Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "MIRRORHOLD2 lane G (card approved 10-08 10:1x): dispatch AND held->resubmit queue AND boot restore scan only current-session orders (same-segment fill still retires); every refusal WARN-logged with orders_considered; the 4-send cap now counts only broker PRICE_AGGRESSIVE refusals, legacy rows upgraded once (unproven -> uncertain, conservative). Live cases fixed by replay: AIXI 09:35/10:47/12:37/13:31 dispatch_uncertain on 08-25 orders; FLYE 11:38/12:35 wire cap on normal reprices. Mine: 165/165 lane tests, 778 neighbour tests; mutations cap-back-to-wires 4F, queue unbounded 13F; trial merge main+#1127+#1130+#1134+#1135 clean, combined 1,817 passed / 0 failed. Hot path: tick path uses in-memory budget only; DB reads per intent / off-loop queue / boot. Timing test: one CI failure (912 ms) unexplained; codex Linux pair run 37828102474: 20/20 pass on head and 20/20 on main (~25 ms), zero duplicate SQL / budget-upgrade calls; my Mac 1/5 PR vs 0/5 main. Judged runner noise, not this diff; first post-install scan reads OMS loop numbers. Install with WEBULL_MIRROR_RETAINED_HOLD=true."
-}
