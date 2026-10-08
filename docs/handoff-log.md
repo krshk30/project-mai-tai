@@ -8522,3 +8522,17 @@ FLYE book or nonempty live pagination claimed. Exact legacyFLYEtargetcoid
 missing: UNKNOWN pending human ruling on stronger complete empty-symbol
 proof with closedownedrows/exacttoken. DKI genuinelyno-dispatch predicate
 alreadyreleased, separate from a fabricated target ID. F/I20ET remains target.
+
+2026-10-08 18:12 ET codex-2 C64: human option2 supersedes C63's pending
+unbound ruling. Every account needs a fresh complete working-order book,
+read after the request and within15s; any working BUY on the symbol blocks,
+including operator orders. Working SELL and operator shares do not block this
+cancel proof. DB no in-flight BUY/unanswered cancel, owned rows closed,
+exact token CAS all remain mandatory; install flatness not weakened.
+Shared0bb433eb published and forwarded F/I; parent54unitPASS independently.
+Producer readiness remains unproven: current Schwab capped listing explicitly
+does not establish completeness; Webull target_identity_unknown returns before
+book; QueryBudget counts per endpoint, so strict alone is not aggregate2/2s.
+Shared sole writer handles actual missing-target response and broker capability
+plus burst tests. No invented IDs, historical complete books or replay PASS.
+F/I continue consumers in parallel; no new production action.
