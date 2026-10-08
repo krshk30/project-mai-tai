@@ -99,16 +99,19 @@ def test_catalog_duplicates_and_rpg_on_refuse():
 
 
 def test_approval_and_all_artifact_bytes_bound(tmp_path):
+    from test_retire_orb import receipt
     names = ('runner.py', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'run.sh',
-             'retire_orb.py', 'official_v2_restart_evidence.py', 'candidate-review.json')
+             'retire_orb.py', 'official_v2_restart_evidence.py', 'candidate-review.json', 'completed-retirement.json')
     artifacts = {}
-    candidate = dict(approved_sha='a' * 40, line_enabled=True, landed_prs={})
+    candidate = dict(approved_sha='a' * 40, line_enabled=True, landed_prs={'1126': {}, '1127': {}},
+                     candidate_prs=['1126', '1127'], completed_retirement=receipt())
     for name in names:
-        raw = runner.canonical(candidate) if name == 'candidate-review.json' else name.encode()
+        raw = runner.canonical(candidate) if name == 'candidate-review.json' else (
+            runner.canonical(receipt()) if name == 'completed-retirement.json' else name.encode())
         (tmp_path / name).write_bytes(raw)
         artifacts[name] = hashlib.sha256(raw).hexdigest()
     release = dict(approved_sha='a' * 40, plan_commit='b' * 40, box_sha='c' * 40,
-                   date_et='2026-10-08', scope=runner.SCOPE, line_enabled=True, landed_reviews={},
+                   date_et='2026-10-08', scope=runner.SCOPE, line_enabled=True, landed_reviews=candidate['landed_prs'],
                    release_branch='codex/install-2026-10-08-' + 'a' * 12, artifacts=artifacts)
     raw = runner.canonical(release)
     (tmp_path / 'release.json').write_bytes(raw)
@@ -149,7 +152,8 @@ def test_runner_no_clock_check_after_first_write_exact_restarts_retirement_no_mi
     assert 'window(' not in body
     assert 'MAI_TAI_RUN_MIGRATIONS=0' in body
     assert "for target in ('oms', 'schwab-1m-v2', 'orb-schwab', 'control')" in body
-    assert "['systemctl', 'disable', '--now', 'project-mai-tai-orb.service']" in body
+    assert "['systemctl', 'disable', '--now', 'project-mai-tai-orb.service']" not in body
+    assert "'publish'" not in body
     assert 'CancelledError' not in source
     assert 'chmod(0o775)' not in source
 

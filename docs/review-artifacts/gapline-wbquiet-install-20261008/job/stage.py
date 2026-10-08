@@ -28,8 +28,8 @@ h = lambda value: hashlib.sha256(value).hexdigest()
 assert approval['manifest_sha256'] == h(files['release.json'])
 assert approval['approved_sha'] == manifest['approved_sha'] and approval['decision'] == 'APPROVED'
 assert approval['plan_commit'] == manifest['plan_commit'] and approval['authority'] == 'operator-standing-go'
-assert manifest['date_et'] == '2026-10-08' and manifest['scope'] == 'gapline1-wbquiet1-linesrc2-orblive1-retirement-five-services'
-assert {'runner.py','run.sh','gate_readonly.py','proof_readonly.py','repin_preopen.py','retire_orb.py','official_v2_restart_evidence.py','candidate-review.json'} <= set(manifest['artifacts'])
+assert manifest['date_et'] == '2026-10-08' and manifest['scope'] == 'oct8-p1-only-reviewed-five-services'
+assert {'runner.py','run.sh','gate_readonly.py','proof_readonly.py','repin_preopen.py','retire_orb.py','official_v2_restart_evidence.py','candidate-review.json','completed-retirement.json'} <= set(manifest['artifacts'])
 assert set(files) == set(manifest['artifacts']) | {'release.json', 'approval.json'}
 assert all(h(files[name]) == expected for name, expected in manifest['artifacts'].items())
 job.parent.mkdir(parents=True, exist_ok=True)

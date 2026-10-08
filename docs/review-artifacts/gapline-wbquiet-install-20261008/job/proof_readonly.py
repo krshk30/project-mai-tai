@@ -265,7 +265,7 @@ def log_records(ranges, start, end):
 
 
 def summarize_logs(records):
-    errors, starts, ends, shadows, bad_shadow = [], {}, {}, {}, []
+    errors, starts, ends = [], {}, {}
     for record in records:
         line = record["line"]
         if re.search(r"\bERROR\b|Traceback \(most recent call last\)", line):
@@ -281,31 +281,16 @@ def summarize_logs(records):
                 record["duration_ms"] = float(duration[1]) if duration else None
                 outcome = re.search(r"outcome=(\w+)", tail)
                 record["outcome"] = outcome[1] if outcome else None
-        if "[WBQUIET-SHADOW] " in line:
-            try:
-                payload = json.loads(line.split("[WBQUIET-SHADOW] ", 1)[1])
-                if payload.get("policy_applied") is not False:
-                    raise ValueError("not shadow")
-                pass_id = str(int(payload["pass_id"]))
-                shadows.setdefault(pass_id, []).append({"process_pid": int(payload["process_pid"]),
-                    "dropped_observations": int(payload["dropped_observations"]),
-                    "path": record["path"], "at_utc": record["at_utc"]})
-            except (ValueError, TypeError, KeyError, json.JSONDecodeError):
-                bad_shadow.append({key: record[key] for key in ("path", "range_line", "at_utc")})
     complete = sorted(set(starts) & set(ends), key=int)
-    missing = sorted(set(complete) - set(shadows), key=int)
-    duplicate = sorted({key for group in (starts, ends, shadows) for key, rows in group.items() if len(rows) > 1}, key=int)
+    duplicate = sorted({key for group in (starts, ends) for key, rows in group.items() if len(rows) > 1}, key=int)
     durations = sorted(ends[key][0]["duration_ms"] for key in complete if ends[key][0]["duration_ms"] is not None)
     return {"errors": errors, "traceback_or_error_count": len(errors),
             "sync_start_ids": sorted(starts, key=int), "sync_end_ids": sorted(ends, key=int),
-            "complete_sync_ids": complete, "shadow_ids": sorted(shadows, key=int),
-            "shadow_missing_for_complete_pass": missing, "duplicate_pass_ids": duplicate,
+            "complete_sync_ids": complete, "duplicate_pass_ids": duplicate,
             "edge_incomplete_ids": sorted(set(starts) ^ set(ends), key=int),
-            "malformed_shadow": bad_shadow, "shadows": shadows,
             "sync_outcomes": {key: ends[key][0]["outcome"] for key in complete},
             "sync_duration_ms": {"samples": len(durations), "max": max(durations) if durations else None,
-                "p95": durations[max(0, math.ceil(len(durations) * .95) - 1)] if durations else None},
-            "dropped_observations_max": max((row["dropped_observations"] for rows in shadows.values() for row in rows), default=None)}
+                "p95": durations[max(0, math.ceil(len(durations) * .95) - 1)] if durations else None}}
 
 
 def scanner_receipt(overview, now):
@@ -606,21 +591,16 @@ def evaluate(before, after, approved_sha, line_enabled=True):
         if report["traceback_or_error_count"]:
             failures.append("post_start_traceback_or_error:" + role)
         if role == "oms":
-            if report["duplicate_pass_ids"] or report["malformed_shadow"]:
-                failures.append("shadow_duplicate_or_malformed")
-            if not report["complete_sync_ids"] or report["shadow_missing_for_complete_pass"]:
-                unknown.append("shadow_coverage_incomplete")
+            if report["duplicate_pass_ids"]:
+                failures.append("sync_duplicate")
+            if not report["complete_sync_ids"]:
+                unknown.append("sync_coverage_incomplete")
             if report["sync_duration_ms"]["samples"] != len(report["complete_sync_ids"]):
                 unknown.append("sync_duration_measurement_incomplete")
             if any(value is None for value in report["sync_outcomes"].values()):
                 unknown.append("sync_outcome_measurement_incomplete")
             if any(value == "failed" for value in report["sync_outcomes"].values()):
                 failures.append("new_oms_sync_pass_failed")
-            if report["dropped_observations_max"]:
-                unknown.append("shadow_observations_dropped")
-            if any(row["process_pid"] != after["services"]["oms"]["MainPID"]
-                   for rows in report["shadows"].values() for row in rows):
-                failures.append("shadow_pid_not_new_oms")
     if set(after.get("logs", {})) != RESTARTED:
         unknown.append("post_start_log_population_incomplete")
     for role, receipt in after.get("journals", {}).items():

@@ -10,14 +10,18 @@ import sys
 import tempfile
 
 CASES = [
+    ('non_p1_candidate_admitted', 'make_release.py', 'if not set(rows) <= P1_PRS:', 'if False:',
+     'test_stage.py::test_release_refuses_non_p1_candidate_even_with_claimed_review'),
+    ('h_migration_assumed', 'make_release.py', "if '1135' in rows:", 'if False:',
+     'test_stage.py::test_h_migration_dependency_is_not_implicitly_applied'),
     ('first_write_before_close', 'runner.py', 'local.hour >= 16', 'local.hour >= 0',
      'test_runner.py::test_first_write_date_and_after_close_only'),
     ('retry_measured_blocker', 'runner.py', 'if rc != 2 or attempt == 3:', 'if rc != 1 or attempt == 3:',
      'test_runner.py::test_rc_two_only_bounded_read_retries_preserve_every_attempt'),
     ('rpg_turned_on', 'runner.py', "need(bindings[HANDOFF][0][2] == 'false',", "need(True,",
      'test_runner.py::test_env_cannot_turn_handoff_on'),
-    ('wb_union_not_required', 'make_release.py', "if not {'1124', '1125'} <= set(rows['1129']['source_prs']):",
-     'if False:', 'test_stage.py::test_release_rejects_union_without_wb_source_provenance'),
+    ('future_data_source_admitted', 'make_release.py', "if row['source_prs'] != [pr]:",
+     'if False:', 'test_stage.py::test_release_rejects_future_wb_data_source_provenance'),
     ('changed_union_accepted', 'make_release.py',
      "if git('rev-parse', row['landing'] + '^{tree}') != git('rev-parse', row['reviewed_head'] + '^{tree}'):",
      'if False:', 'test_stage.py::test_release_rejects_changed_union_tree_and_unreviewed_final_head'),

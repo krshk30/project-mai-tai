@@ -1,4 +1,4 @@
-# October 8: GAPLINE / WBQUIET / LINESRC2 / ORBLIVE install mechanics
+# October 8: reviewed P1-only install mechanics
 
 ## Authority, Exact Candidate, and Current State
 
@@ -8,24 +8,33 @@ No box write, timer staging, deployment, order, DB/Redis mutation, pin or merge
 is permitted before the close. Parent owns shared handoff reporting.
 
 Operator standing GO covers reviewed work after the close when the real
-trading gates pass. Final APP must be the exact reviewed main landing AFTER
-LINESRC2 #1127, plus lane A only if independently pinned and merged. Never
+trading gates pass. Latest scope supersedes the earlier expanded candidate:
+ONLY independently pinned fixes broken TODAY: A #1130, B #1127, F #1133,
+G #1134, H #1135, plus merged GAPLINE #1126. A/F/G/H are NOT assumed ready,
+pinned or landed. Final APP must be the exact final reviewed landing. Never
 substitute a moving main, a draft, or an old morning flatness receipt.
 
 - GAPLINE #1126: reviewed head 00bd0c64325ec25c11642d913c4a0ae2b35aad0f;
   landing 1ed10831508e9a251aa3440a973f49c8bb2c18c9.
-- WBQUIET #1124 and ORBLIVE lane 1 #1125 landed as reviewed UNION #1129:
-  head 2e848426d398adbfd1816c087617360d1b8af740, main
-  1e15adb03c3758e647d333828bbe3090e24e832e. Original cherry-picked WB heads
-  are not required ancestors. The union's whole tree and binary diff must
-  equal the pinned union at its landing; both source PRs are required.
-- LINESRC2 #1127: final pin and merge are still required. No final APP or
-  manifest/approval hash is asserted while that landing is unavailable.
+- Current main 1e15adb03c3758e647d333828bbe3090e24e832e is historical
+  integration context, not an approved candidate. Already-landed WB content
+  is not reverted, but no WBQUIET hooks, studies or data additions are in
+  this install. Non-P1 #1131/#1132/#1128/#1115/#1110/#1103 are excluded.
+- LINESRC2 #1127: final pin/merge required; A/F/G/H only as individually
+  reviewed final landings in the parent's explicit candidate set.
+- Item #6 / paper ORB retirement is MANUALLY COMPLETED per parent. Preserve
+  its actual receipt and fresh read-only state; do not disable/publish again.
+- H proposes additive migration 0023 and new setting. It is unreviewed and
+  not ready. This runner disables migrations and cannot include H until an
+  exact reviewed migration/install contract is explicitly incorporated.
+  Packaging with #1135 therefore refuses rather than guessing or applying it.
 
 `make_release.py` requires full SHAs, explicit candidate-review JSON, the
 committed review-pins ledger, exact landing trees/diffs, actual independent
 pin verification, and review/Validate provenance. Required landings are
-#1126, #1129 (containing #1124 AND #1125), and #1127. The final APP must itself
+#1126 and #1127; `candidate_prs` must equal the explicit P1 `landed_prs` set.
+Each source provenance is that named PR only, never a future data expansion.
+The final APP must itself
 be a named reviewed landing. Missing/changed content refuses release generation.
 It embeds the final APP's official restart collector as a hashed artifact,
 not the old box collector whose default population still includes paper ORB.
@@ -82,23 +91,17 @@ After the first application write, clock advancement alone does not abort.
    identity/health check. No permission-mode, exact CancelledError signature,
    control-page ownership, or arbitrary log-signature self-stop is added.
    A clean systemd stop is proof. A genuine failed start remains a stop.
-7. Fresh gate, capture actual five-consumer owner hash/marker and paper ORB
-   identity. `systemctl disable --now project-mai-tai-orb.service`. Publish
-   EXACTLY ONE normal COLDSTART empty `consumer_name=orb, mode=replace`
-   using final APP `OrbService._sync_gateway_subscription([])`. No raw HDEL,
-   DEL, hardcoded symbols, second producer, or restart of another unit.
-   Require paper ORB disabled/inactive/PID0, empty owner tombstone, valid
-   Redis applied cursor >= OUR request ID, and byte-identical other four
-   owners and migration marker. An unrelated older cursor advance does not
-   prove our event, even if ORB was already empty. A publish-started receipt
-   forbids a resend following a timeout; no implicit recovery.
-   Socket/read/XADD waits are bounded; failure never re-publishes implicitly.
+7. Copy the hash-bound `completed-retirement.json` supplied from the actual
+   manual completion into the attempt. It retains the original request-ID
+   proof and owner-preservation evidence. No second publish, disable, or
+   retirement write occurs. Fresh post-read still requires inactive/disabled
+   paper ORB and empty owner, with the existing bounded owner checks.
 8. Require five actual new active/NRestarts0 PIDs/starts; exact checkout,
    requested flags and preserved live settings. Compare untouched services;
    paper ORB has its separate positive retirement proof, not an unchanged
    identity claim. Fresh trading read, then ten-minute observation for each
    new process; read live AND rotated files and new-PID journals. Record
-   errors/tracebacks, WB shadow-per-sync coverage, sync ms/DB tx/s, scanner
+   errors/tracebacks, sync ms/DB tx/s, scanner
    status, actual bar-hole minutes and Redis before/after. Incomplete telemetry
    and after-hours coverage remain UNKNOWN, never manufactured PASS.
 9. Run real boolean and numeric expected_flags_check on live /proc. Require
@@ -158,6 +161,10 @@ python job/stage.py --plan PLAN_SHA --approved-sha APP --box-sha BOX \
 ```
 
 No valid candidate-review receipt is fabricated while #1127 is unmerged.
+It must also include the actual `completed_retirement` evidence; a claimed
+manual completion without that receipt is not fabricated as PASS. Historical
+path/unit names containing `wbquiet` stay stable for mechanics compatibility,
+not as scope authorization. Release scope is `oct8-p1-only-reviewed-five-services`.
 The named dated timer is `project-mai-tai-gapline-wbquiet-20261008.timer`;
 October8 minute checks 16..23 ET, Persistent=false. Neither committed units
 nor a check-only package is evidence of a box timer being installed.

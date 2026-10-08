@@ -155,7 +155,7 @@ def test_partial_bar_and_telemetry_limits_never_gate_bookkeeping(good):
     after["bar_continuity"]["verdict"] = "UNKNOWN"
     after.pop("transaction_rate")
     after["scanner"]["verdict"] = "UNKNOWN"
-    after["logs"]["oms"]["shadow_missing_for_complete_pass"] = ["1"]
+    after["logs"]["oms"]["complete_sync_ids"] = []
     after["assessment"] = proof.evaluate(before, after, SHA)
     assert after["assessment"]["verdict"] == "UNKNOWN"
     assert proof.receipt_exit_code(after) == 0
@@ -190,7 +190,7 @@ def test_log_cursor_normal_append_reads_only_new_bytes(tmp_path):
         out.write(sync_pair())
     ranges = proof.log_ranges(cursor, directory=tmp_path)
     assert "before" not in ranges[0]["text"]
-    assert proof.summarize_logs(records(ranges[0]["text"]))["shadow_missing_for_complete_pass"] == []
+    assert proof.summarize_logs(records(ranges[0]["text"]))["complete_sync_ids"] == ["1"]
 
 
 @pytest.mark.parametrize("compressed", [False, True])
@@ -215,7 +215,7 @@ def test_rotation_spans_exact_old_cursor_and_new_live_path(tmp_path, compressed)
     assert "before" not in ranges[0]["text"]
     report = proof.summarize_logs(proof.log_records(ranges, START, START + timedelta(minutes=10)))
     assert report["complete_sync_ids"] == ["7"]
-    assert report["shadow_missing_for_complete_pass"] == []
+    assert "shadows" not in report
 
 
 def test_old_archive_population_not_materialized(tmp_path):
@@ -241,20 +241,19 @@ def test_cursor_lost_copytruncate_is_unknown(tmp_path):
         proof.log_ranges(cursor, directory=tmp_path)
 
 
-def test_duplicate_shadow_not_deduplicated_into_pass(good):
-    report = proof.summarize_logs(records(sync_pair() + shadow(1)))
+def test_duplicate_sync_not_deduplicated_into_pass(good):
+    report = proof.summarize_logs(records(sync_pair() + logged("[OMS-BROKER-SYNC-PASS] id=1 phase=start", 1)))
     good[1]["logs"]["oms"] = report
     assert report["duplicate_pass_ids"] == ["1"]
     assert proof.evaluate(*good, SHA)["verdict"] == "FAIL"
 
 
-def test_shadow_coverage_and_drop_counts_are_truthful(good):
+def test_p1_receipt_does_not_require_or_certify_future_wb_shadow_data(good):
     report = proof.summarize_logs(records(sync_pair(1) + logged("[OMS-BROKER-SYNC-PASS] id=2 phase=start", 1)
         + logged("[OMS-BROKER-SYNC-PASS] id=2 phase=end outcome=ok duration_ms=17", 4) + shadow(3, dropped=2)))
     good[1]["logs"]["oms"] = report
-    assert report["shadow_missing_for_complete_pass"] == ["2"]
-    assert report["dropped_observations_max"] == 2
-    assert proof.evaluate(*good, SHA)["verdict"] == "UNKNOWN"
+    assert "shadows" not in report and "dropped_observations_max" not in report
+    assert proof.evaluate(*good, SHA)["verdict"] == "PASS"
 
 
 def test_missing_sync_duration_is_unknown_not_fake_measurement(good):

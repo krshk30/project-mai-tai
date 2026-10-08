@@ -1,6 +1,8 @@
 # Oct 8 Read-Only Postinstall Proof
 
-Sole writer: `codex/1008-proof-mechanics`, based on `1ed10831`. Parent runner is not edited.
+Current integration owner: Lane C. Earlier receipts below are historical,
+not fresh install authorization. Latest scope is reviewed P1-only; no
+WBQUIET hook/data observation contract remains in this collector.
 
 ## CLI Contract
 
@@ -11,10 +13,11 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/trader/project-mai-tai/src \
   /home/trader/project-mai-tai/.venv/bin/python proof_readonly.py \
   baseline --output attempt/proof-before.json
 
-# The runner waits at least 600 seconds after the latest of the three new starts.
+# The runner waits at least 600 seconds after the latest of the five new starts.
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/trader/project-mai-tai/src \
   /home/trader/project-mai-tai/.venv/bin/python proof_readonly.py \
   after --baseline attempt/proof-before.json --approved-sha "$APPROVED_SHA" \
+  --line-enabled true --retirement attempt/orb-retirement.json \
   --restart-window attempt/v2-restart-window.json --output attempt/proof-after.json
 ```
 
@@ -30,7 +33,7 @@ an unfiltered process environment/error payload.
 ## Report Versus Gate
 
 The `assessment.verdict` may be PASS, FAIL, or UNKNOWN. It is **not a trading
-admission**. Partial bars/tape, unavailable DB metrics, incomplete shadow
+admission**. Partial bars/tape, unavailable DB metrics, incomplete sync
 coverage, or scanner-validation limits remain explicit in the receipt but
 return rc 0; they do not prevent preopen bookkeeping. rc 1 is a measured
 identity/start failure, unexpected identity/flag change, eviction/memory
@@ -41,7 +44,7 @@ The helper does not retry, wait, restart, authorize recovery, or call a broker.
 Required postinstall process values are literal:
 
 - GAP_LINE_CARRY=true on v2.
-- LINE_CHART_RESTORATION=false on OMS and v2.
+- LINE_CHART_RESTORATION=true on OMS and v2 unless the parent binds an explicit veto.
 - ATR_REPRICE_HANDOFF=false on OMS and v2.
 - All other explicitly whitelisted live process flags retain their baseline values.
 
@@ -53,7 +56,7 @@ their stop interval. Without it, the transition is not claimed unchanged.
 
 ## Measurement Bounds And Limits
 
-- Thirteen service identities, three log cursors, two whitelisted process environments (262 KiB each).
+- Thirteen service identities, five log cursors, five whitelisted process environments (262 KiB each).
 - Redis: exact five-owner population plus marker/checkpoint; pre-bound hash 100 KiB, paper cap 16;
   isolated state read one event per request, at most 80 requests, 262 KiB per event, watchlist <=128.
 - Log inventory <=256 entries; only files modified since cursor or matching its inode are considered;
@@ -63,9 +66,9 @@ their stop interval. Without it, the transition is not claimed unchanged.
   inode, byte offsets and hash. Raw log/error/provider payloads are not serialized.
 - New PID journal records and post-start timestamped file logs are independently counted.
   A journal with zero entries is labelled as such, not treated as proof of file-log silence.
-- Complete OMS sync-pass IDs are compared with exactly one shadow line each. Missing,
-  duplicate, wrong-PID and dropped observations are reported; boundary partial passes
-  are listed separately. Sync duration max/p95 is measured from actual completed passes.
+- Complete OMS sync-pass IDs, duplicates and boundary partial passes are listed.
+  Sync duration max/p95 is measured from actual completed passes. No shadow-log
+  hooks, reader observations or future study coverage are required or certified.
 - SQL is read-only, connection timeout 5 s, statement timeout 5 s, lock timeout 500 ms;
   bar read <=4096 rows around the actual restart. DB transaction rate includes the whole
   database and collector reads, not OMS-only attribution. Stats resets invalidate the rate.

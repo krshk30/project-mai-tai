@@ -10,10 +10,12 @@ import pytest
 
 import make_release
 import stage
+from test_retire_orb import receipt
 
 
 def review():
     return dict(approved_sha='a' * 40, line_enabled=True,
+        candidate_prs=['1126', '1127'], completed_retirement=receipt(),
         box_baseline=dict(sha='c' * 40, captured_at_utc='2026-10-08T20:00:00+00:00',
             authorization_source='isolated authorized baseline fixture',
             services={role: dict(MainPID=100, NRestarts=0, ActiveState='active', SubState='running',
@@ -22,8 +24,8 @@ def review():
         landed_prs={pr: dict(base='d' * 40,
         reviewed_head='e' * 40, landing=landing * 40, pin_verdict='PASS', validate_verdict='PASS',
         pin_receipt='committed independent-review-pin receipt', validate_receipts=['hosted validate run'],
-        source_prs=['1124', '1125'] if pr == '1129' else [pr])
-        for pr, landing in [('1126', 'f'), ('1129', '1'), ('1127', 'a')]})
+        source_prs=[pr])
+        for pr, landing in [('1126', 'f'), ('1127', 'a')]})
 
 
 def fixture_release(monkeypatch):
@@ -50,7 +52,7 @@ def fixture_release(monkeypatch):
     monkeypatch.setattr(make_release, 'git', git)
     monkeypatch.setattr(make_release, 'verify_pin', lambda pr, row, ledger: dict(ledger_commit='9' * 40,
         stdout_sha256='0' * 64, stderr_sha256=make_release.digest(b'')))
-    return (*names, 'candidate-review.json', 'official_v2_restart_evidence.py'), blobs
+    return (*names, 'candidate-review.json', 'completed-retirement.json', 'official_v2_restart_evidence.py'), blobs
 
 
 def test_release_from_committed_blobs_binds_plan_app_baseline_and_each_byte(monkeypatch):
@@ -78,11 +80,11 @@ def test_incomplete_committed_package_or_short_sha_cannot_be_sealed(monkeypatch)
         make_release.release('bbb', 'a' * 40, 'c' * 40, review())
 
 
-def test_release_cannot_seal_gap_only_main_missing_wb_merge(monkeypatch):
+def test_release_cannot_seal_gap_only_main_missing_linesrc_merge(monkeypatch):
     fixture_release(monkeypatch)
     original = make_release.git
     def refuse(*args):
-        if args[:3] == ('merge-base', '--is-ancestor', review()['landed_prs']['1129']['landing']):
+        if args[:3] == ('merge-base', '--is-ancestor', review()['landed_prs']['1127']['landing']):
             raise subprocess.CalledProcessError(1, ['git', *args])
         return original(*args)
     monkeypatch.setattr(make_release, 'git', refuse)
@@ -171,7 +173,7 @@ def test_staging_clock_refuses_before_any_remote_directory_or_unit_write(tmp_pat
     assert not job.exists() and not list(units.iterdir())
 
 
-@pytest.mark.parametrize('pr', ['1126', '1129', '1127'])
+@pytest.mark.parametrize('pr', ['1126', '1127'])
 def test_release_requires_every_reviewed_landing_not_original_cherrypick_ancestry(monkeypatch, pr):
     fixture_release(monkeypatch)
     value = review()
@@ -184,7 +186,7 @@ def test_release_rejects_changed_union_tree_and_unreviewed_final_head(monkeypatc
     fixture_release(monkeypatch)
     original = make_release.git
     def changed(*args):
-        if args == ('rev-parse', '1' * 40 + '^{tree}'):
+        if args == ('rev-parse', 'a' * 40 + '^{tree}'):
             return b'not-the-reviewed-union'
         return original(*args)
     monkeypatch.setattr(make_release, 'git', changed)
@@ -205,11 +207,42 @@ def test_release_cannot_claim_pass_when_committed_pin_verification_refuses(monke
         make_release.release('b' * 40, 'a' * 40, 'c' * 40, review())
 
 
-def test_release_rejects_union_without_wb_source_provenance(monkeypatch):
+def test_release_rejects_future_wb_data_source_provenance(monkeypatch):
     fixture_release(monkeypatch)
     value = review()
-    value['landed_prs']['1129']['source_prs'] = ['1125']
-    with pytest.raises(ValueError, match='WB and ORBLIVE'):
+    value['landed_prs']['1127']['source_prs'] = ['1127', '1124']
+    with pytest.raises(ValueError, match='source provenance expands P1'):
+        make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
+
+
+@pytest.mark.parametrize('pr', ['1131', '1132', '1128', '1115', '1110', '1103', '1124', '1129'])
+def test_release_refuses_non_p1_candidate_even_with_claimed_review(monkeypatch, pr):
+    fixture_release(monkeypatch)
+    value = review()
+    value['landed_prs'][pr] = dict(value['landed_prs']['1127'], source_prs=[pr])
+    value['candidate_prs'].append(pr)
+    with pytest.raises(ValueError, match='non-P1'):
+        make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
+
+
+def test_h_migration_dependency_is_not_implicitly_applied(monkeypatch):
+    fixture_release(monkeypatch)
+    value = review()
+    value['landed_prs']['1135'] = dict(value['landed_prs']['1127'], source_prs=['1135'])
+    value['candidate_prs'].append('1135')
+    with pytest.raises(ValueError, match='exact reviewed migration/install contract'):
+        make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
+
+
+def test_release_requires_explicit_candidate_and_completed_manual_retirement(monkeypatch):
+    fixture_release(monkeypatch)
+    value = review()
+    value['candidate_prs'].append('1133')
+    with pytest.raises(ValueError, match='explicit final P1'):
+        make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
+    value = review()
+    del value['completed_retirement']
+    with pytest.raises(ValueError, match='completed manual ORB'):
         make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
 
 

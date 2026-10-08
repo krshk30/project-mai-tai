@@ -8,11 +8,12 @@ import subprocess
 import sys
 
 PREFIX = 'docs/review-artifacts/gapline-wbquiet-install-20261008/job/'
-REQUIRED_PRS = {'1126', '1129', '1127'}
+REQUIRED_PRS = {'1126', '1127'}
+P1_PRS = REQUIRED_PRS | {'1130', '1133', '1134', '1135'}
 BASELINE_ROLES = {'oms', 'schwab-1m-v2', 'strategy', 'orb-schwab', 'control', 'orb',
                   'market-capture', 'market-data', 'reconciler', 'momentum-paper',
                   'option-a-daily-guard', 'redis', 'postgresql'}
-SCOPE = 'gapline1-wbquiet1-linesrc2-orblive1-retirement-five-services'
+SCOPE = 'oct8-p1-only-reviewed-five-services'
 SOURCES = ('ops/systemd/deploy_service.sh', 'ops/bootstrap/08_install_runtime.sh',
            'ops/preflight/preflight_oms_restart.sh', 'ops/health/expected_flags.json',
            'ops/health/expected_flags_check.py', 'ops/health/v2_restart_evidence.py',
@@ -51,7 +52,13 @@ def validate_reviews(review, approved, ledger):
         raise ValueError('candidate review must bind exact application and LINE disposition')
     rows = review.get('landed_prs', {})
     if not REQUIRED_PRS <= rows.keys():
-        raise ValueError('both reviewed GAP/WB union and LINESRC2 landings required')
+        raise ValueError('reviewed GAP and LINESRC2 landings required')
+    if not set(rows) <= P1_PRS:
+        raise ValueError('non-P1 candidate addition refused')
+    if set(review.get('candidate_prs', [])) != set(rows):
+        raise ValueError('explicit final P1 candidate set differs from reviewed landings')
+    if '1135' in rows:
+        raise ValueError('H requires an exact reviewed migration/install contract; 0023 is not authorized here')
     if approved not in {row.get('landing') for row in rows.values()}:
         raise ValueError('final application must be an exact reviewed landing, never moving main')
     pins = {}
@@ -76,8 +83,9 @@ def validate_reviews(review, approved, ledger):
         if not row.get('pin_receipt') or not row.get('validate_receipts') or not row.get('source_prs'):
             raise ValueError('review/pin/CI provenance missing ' + pr)
         pins[pr] = verify_pin(pr, row, ledger)
-    if not {'1124', '1125'} <= set(rows['1129']['source_prs']):
-        raise ValueError('WB and ORBLIVE union provenance required')
+    for pr, row in rows.items():
+        if row['source_prs'] != [pr]:
+            raise ValueError('source provenance expands P1 scope ' + pr)
     return pins
 
 
@@ -88,6 +96,11 @@ def release(plan, approved, box, review, ledger=None):
         if git('rev-parse', value + '^{commit}').decode().strip() != value:
             raise ValueError('commit identity differs')
     pins = validate_reviews(review, approved, ledger)
+    from retire_orb import validate_receipt
+    retirement = review.get('completed_retirement')
+    if not isinstance(retirement, dict):
+        raise ValueError('completed manual ORB retirement receipt required; no repeat publication')
+    validate_receipt(retirement)
     baseline = review.get('box_baseline', {})
     if baseline.get('sha') != box or not baseline.get('authorization_source') or not baseline.get('captured_at_utc'):
         raise ValueError('actual acknowledged box baseline receipt required')
@@ -108,6 +121,7 @@ def release(plan, approved, box, review, ledger=None):
     if not required <= blobs.keys():
         raise ValueError('incomplete committed runner artifacts: ' + ','.join(sorted(required - blobs.keys())))
     blobs['candidate-review.json'] = canonical(review)
+    blobs['completed-retirement.json'] = canonical(retirement)
     blobs['official_v2_restart_evidence.py'] = git('show', approved + ':ops/health/v2_restart_evidence.py')
     result = dict(schema_version=1, date_et='2026-10-08', scope=SCOPE,
                   plan_commit=plan, approved_sha=approved, box_sha=box,

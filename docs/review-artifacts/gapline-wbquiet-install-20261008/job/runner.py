@@ -21,7 +21,7 @@ GAP = 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_GAP_LINE_CARRY_ENABLED'
 LINE = 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED'
 HANDOFF = 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_REPRICE_HANDOFF_ENABLED'
 UNITS = ('oms', 'schwab-1m-v2', 'strategy', 'orb-schwab', 'control')
-SCOPE = 'gapline1-wbquiet1-linesrc2-orblive1-retirement-five-services'
+SCOPE = 'oct8-p1-only-reviewed-five-services'
 DAY = '2026-10-08'
 
 
@@ -120,11 +120,19 @@ def verify_package(job):
         need(path.is_file() and not path.is_symlink() and digest(path.read_bytes()) == expected,
              'staged artifact hash differs: ' + name)
     need({'runner.py', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'retire_orb.py',
-          'official_v2_restart_evidence.py', 'candidate-review.json', 'run.sh'}
+          'official_v2_restart_evidence.py', 'candidate-review.json', 'completed-retirement.json', 'run.sh'}
          <= set(release['artifacts']), 'incomplete runtime artifact set')
     candidate = json.loads((job / 'candidate-review.json').read_bytes())
     need(candidate['approved_sha'] == release['approved_sha'] and candidate['line_enabled'] == release['line_enabled']
          and candidate['landed_prs'] == release['landed_reviews'], 'candidate review binding differs')
+    need(set(candidate['candidate_prs']) == set(candidate['landed_prs'])
+         and {'1126', '1127'} <= set(candidate['candidate_prs'])
+         and set(candidate['candidate_prs']) <= {'1126', '1127', '1130', '1133', '1134'},
+         'candidate outside reviewed P1-only install capability')
+    need(json.loads((job / 'completed-retirement.json').read_bytes()) == candidate['completed_retirement'],
+         'completed retirement receipt binding differs')
+    from retire_orb import validate_receipt
+    validate_receipt(candidate['completed_retirement'])
     return release
 
 
@@ -281,15 +289,13 @@ class Run:
                           'bash', str(REPO / 'ops/systemd/deploy_service.sh'), str(REPO),
                           self.release['release_branch'], target], timeout=1800)
             self.note(deploy_finished=target, identities=self.identities())
-        need(self.gate('before-orb-retirement') == 0, 'fresh trading gate blocked before ORB retirement')
-        self.stage = 'retire-orb-paper'
-        self.checked([str(PYTHON), str(self.job / 'retire_orb.py'), 'before',
-                      '--output', str(self.attempt / 'orb-retirement-before.json')])
-        self.checked(['systemctl', 'disable', '--now', 'project-mai-tai-orb.service'])
-        self.checked([str(PYTHON), str(self.job / 'retire_orb.py'), 'publish',
-                      '--before', str(self.attempt / 'orb-retirement-before.json'),
-                      '--authorization', str(claim),
-                      '--output', str(self.attempt / 'orb-retirement.json')])
+        # Parent reports retirement completed manually. Preserve its actual
+        # receipt; this P1-only installer must not publish another replace.
+        self.stage = 'completed-retirement-evidence'
+        retirement = (self.job / 'completed-retirement.json').read_bytes()
+        from retire_orb import validate_receipt
+        validate_receipt(json.loads(retirement))
+        save(self.attempt / 'orb-retirement.json', json.loads(retirement))
         self.stage = 'post-install'
         after = self.identities()
         for name, row in after.items():

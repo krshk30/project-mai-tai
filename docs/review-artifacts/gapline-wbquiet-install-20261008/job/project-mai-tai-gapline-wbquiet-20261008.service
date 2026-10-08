@@ -1,5 +1,5 @@
 [Unit]
-Description=Reviewed Oct8 five-service install and paper ORB retirement
+Description=Reviewed Oct8 P1-only five-service install
 After=network-online.target
 Wants=network-online.target
 

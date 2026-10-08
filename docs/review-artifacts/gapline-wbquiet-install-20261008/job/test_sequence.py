@@ -32,6 +32,7 @@ def rehearsal(tmp_path, monkeypatch):
     release['baseline_identities'] = {name: dict(MainPID=100 + i, NRestarts=0, ActiveState='active', SubState='running',
         InvocationID='old-' + name, ExecMainStartTimestampMonotonic=100) for i, name in enumerate(runner.UNITS)}
     (job / 'release.json').write_bytes(runner.canonical(release))
+    (job / 'completed-retirement.json').write_bytes(runner.canonical(receipt()))
     class Rehearsal(runner.Run):
         def __init__(self):
             super().__init__(job, release, attempt)
@@ -87,9 +88,10 @@ def test_literal_deploy_sequence_fresh_gate_before_each_restart_retirement_and_f
     assert [call[-1] for call in deploys] == ['oms', 'schwab-1m-v2', 'orb-schwab', 'control']
     assert all('MAI_TAI_EXPECTED_SHA=' + 'a' * 40 in call for call in deploys)
     assert run.reads == ['final-before-first-write', 'before-deploy-oms', 'before-deploy-schwab-1m-v2',
-                        'before-deploy-orb-schwab', 'before-deploy-control', 'before-orb-retirement',
+                        'before-deploy-orb-schwab', 'before-deploy-control',
                         'post-install-trading-read']
-    assert ['systemctl', 'disable', '--now', 'project-mai-tai-orb.service'] in run.calls
+    assert not any('disable' in call or 'publish' in call for call in run.calls)
+    assert json.loads((run.attempt / 'orb-retirement.json').read_bytes()) == receipt()
     snapshot = next(call for call in run.calls if 'snapshot' in call)
     assert str(snapshot[1]).endswith('/official_v2_restart_evidence.py')
     record = json.loads((run.attempt / 'install-record.json').read_bytes())

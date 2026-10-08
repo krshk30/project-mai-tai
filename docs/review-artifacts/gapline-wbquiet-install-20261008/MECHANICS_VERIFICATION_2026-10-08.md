@@ -3,6 +3,29 @@
 This receipt is isolated local verification, NOT production preparation,
 staging, flatness, review of trading code, or an install COMPLETE.
 
+## Latest P1-Only Scope Supersedes Candidate Expansion
+
+Parent authorized trimming this lane after frozen checkpoint 9b9a207c. Only
+#1126/#1127 and independently reviewed A1130/F1133/G1134/H1135 may be named
+in the eventual explicit candidate. No head/approval/application is guessed.
+Non-P1 and future WBQUIET hook/data additions are refused; prior landed
+application content is not reverted. No shared handoff edits or new proof
+workers. Paper ORB item6 is completed manually: the runner consumes its actual
+hash-bound receipt, never repeats disable/publication. Existing fresh trading
+gates, retries, clock fence, clean stops, five-service bookkeeping remain.
+
+H's nullable migration0023 is conditional and not reviewed/ready. This runner
+still disables migrations; it explicitly cannot package H pending a reviewed
+migration/install contract update. A/F/G flag/service details likewise must
+be matched to the parent's final reviewed set before any staging.
+
+Latest isolated package: 274 PASS (1.83 seconds), Ruff PASS; 18/18 mutations
+RED, `/tmp/oct8-lane-c-p1-only-mutations.json`. New controls refuse non-P1
+landings, WB source expansion, assumed H migration, incomplete candidate set,
+and absent completed-retirement evidence. Literal rehearsal asserts zero
+repeat retirement writes. Earlier measurements below are historical receipts,
+not a new after-close read or final-application suite run.
+
 ## Verified
 
 - Import path: this worktree's absolute `src/project_mai_tai/__init__.py`.
@@ -38,7 +61,7 @@ staging, flatness, review of trading code, or an install COMPLETE.
 | First write before close | ET first-write window |
 | Retry a measured blocker | rc2-only three-attempt policy |
 | Turn RPG handoff ON | Retained false env key |
-| Omit WB from union | Required WB+ORBLIVE source provenance |
+| Future data source admitted | Latest P1-only source provenance |
 | Accept changed union tree | Exact reviewed landing tree/diff |
 | Stage before close | Refusal before remote directory/unit write |
 | Omit runtime artifact | Twelve required daily dependencies |
