@@ -2324,7 +2324,11 @@ class SchwabV2Strategy:
         terminal_unfilled_opportunities: frozenset[int],
     ) -> None:
         open_positions = state.flip_owner_open_positions
-        if self._falseflip_reconcile(state):
+        # A persisted fresh SELL ends the old FALSE budget, not its cancellation barrier.
+        ended_segment = (state.flip_owner_phase == "awaiting_close"
+                         and state.retry_one_budget_readable
+                         and 0 < state.flip_owner_retry_segment_id < state.retry_one_segment_id)
+        if not ended_segment and self._falseflip_reconcile(state):
             return
         phase = state.flip_owner_phase
         if phase == "idle":
@@ -2791,7 +2795,7 @@ class SchwabV2Strategy:
             self._persist_flip_owner(state, active=True, reason="sell_flip_waiting_for_close")
             return
         request = self._removed_wait_requests.get(state.symbol)
-        if request is not None and request.purpose == "retry_exhausted":
+        if request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"}:
             if (not self._fanout_identity_bar_is_live(state)
                     or self._bar_observation_phase != "live"
                     or not state.bars

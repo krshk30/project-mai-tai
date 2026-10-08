@@ -248,3 +248,51 @@ def test_repeated_flat_polls_do_not_write_owner_or_budget():
     for _ in range(100):
         book(strategy, record, clock)
     assert writes == []
+
+
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("receipt_clear", [False, True])
+@pytest.mark.parametrize("book_fault", ["none", "open", "unknown", "held"])
+def test_fresh_sell_ends_prior_false_restore_only_after_its_barrier(pm, receipt_clear, book_fault):
+    from tests.unit.test_falseflip1_runtime import ack, book as false_book, runtime
+
+    # H's recorded FALSE entry facts use explicit controlled owner/receipt mappings.
+    strategy, state, clock, proofs, _ = runtime(pm=pm)
+    false_book(strategy, state, clock, proofs)
+    ack(strategy)
+    prior_budget = strategy._falseflip_budget(state)
+    false_book(strategy, state, clock, proofs)
+    request, = strategy.pending_falseflip_cancel_publications()
+    strategy._removed_wait_persist(request, True)
+    strategy.acknowledge_falseflip_cancel_publication(request)
+    strategy.drain_pending_intents()
+    strategy.drain_webull_direct_intents()
+
+    clock[0] += 60_000
+    state.bars.append(OHLCVBar(clock[0], 2.33, 2.3499, 2.27, 2.285, 149257))
+    state.atr_short_flip_bar_ts = clock[0]
+    false_book(strategy, state, clock, proofs)
+    strategy._cw_v2_track(state, {"flip": "SELL", "observation_phase": "live"})
+    assert state.flip_owner_phase == "awaiting_close"
+    assert state.retry_one_segment_id > prior_budget.segment
+    assert strategy._falseflip_budget(state).episodes == ()
+    assert strategy._falseflip_budget(state).refunded_counts == ()
+    strategy.apply_removed_wait_proofs((RemovedWaitProof(
+        request, clock[0], receipt_clear,
+        "false_flip_leftovers_cancelled_owner_kept" if receipt_clear else "broker_terminal_unproven",
+    ),))
+    legs = (FlipPositionLeg(WEBULL, "working-sibling", clock[0], 1),) if book_fault == "open" else ()
+    if book_fault == "held":
+        state.position_qty_held = 1
+    strategy.apply_flip_position_book(FlipPositionBook(
+        clock[0], book_fault != "unknown", {state.symbol: legs} if legs else {},
+        closes_by_symbol={state.symbol: tuple(FlipPositionClose(
+            p.identity.account, p.identity.managed_row_id, "CW_HARD_STOP") for p in proofs)},
+        entry_classifications={state.symbol: tuple(p.as_payload() for p in proofs)},
+        filled_opportunities={state.symbol: tuple((p.identity.account, p.identity.opportunity_id) for p in proofs)},
+        closed_entry_rows=frozenset((p.identity.account, p.identity.managed_row_id) for p in proofs),
+    ))
+    released = receipt_clear and book_fault == "none"
+    assert (state.flip_owner_phase == "idle") is released
+    assert strategy._strict_first_rest_admitted(state, slot="first") is released
+    assert strategy._falseflip_budgets[(prior_budget.symbol, prior_budget.segment)] == prior_budget
