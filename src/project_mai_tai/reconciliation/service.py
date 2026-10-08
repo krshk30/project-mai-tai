@@ -35,6 +35,7 @@ from project_mai_tai.db.models import (
 )
 from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.events import HeartbeatEvent, HeartbeatPayload, stream_name
+from project_mai_tai.operator_holding_evidence import BotActivity, collect_bot_activity, fresh_at
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
 
@@ -360,15 +361,24 @@ class ReconciliationService:
             )
             managed_strategies[key].add(managed.strategy_code)
 
+        now = utcnow()
+        activity = collect_bot_activity(
+            session, {key: account.name for key, account in account_lookup.items()},
+            now=now, fill_balance_since=self.settings.reconciliation_fill_balance_since,
+        )
+
         findings: list[FindingSpec] = []
         keys = sorted(
-            set(aggregates) | set(account_positions) | set(managed_quantities) | set(fill_balances),
+            set(aggregates) | set(account_positions) | set(managed_quantities)
+            | set(fill_balances) | set(activity),
             key=lambda item: (str(item[0]), item[1]),
         )
         for account_id, symbol in keys:
             account = account_lookup.get(account_id)
             account_name = account.name if account is not None else str(account_id)
-            if (account_name, symbol.upper()) in ignored_pairs:
+            key = (account_id, symbol)
+            evidence = activity.get(key, BotActivity())
+            if (account_name, symbol.upper()) in ignored_pairs and not evidence.unowned_sells:
                 continue
             aggregate = aggregates.get((account_id, symbol))
             account_position = account_positions.get((account_id, symbol))
@@ -389,15 +399,34 @@ class ReconciliationService:
             books_claim_position = our_quantity > tolerance
             fills_claim_position = abs(net_fill_balance) > tolerance
 
+            source_time = account_position.source_updated_at if account_position else None
+            if source_time is not None and source_time.tzinfo is None:
+                source_time = source_time.replace(tzinfo=UTC)
+            ownership_basis = evidence.basis(
+                account_name=account_name, symbol=symbol, quantity=account_quantity,
+                now=now, source_fresh=fresh_at(source_time, now),
+            )
+            if ownership_basis is not None:
+                self.logger.info(
+                    "[OPERATOR-HOLDING] account=%s symbol=%s quantity=%s basis=%s "
+                    "session_orders=%d session_fills=%d source_time=%s",
+                    account_name, symbol, account_quantity, ownership_basis,
+                    evidence.session_orders, evidence.session_fills, source_time,
+                )
+                continue
+
             direction: str | None = None
             severity: str | None = None
             title: str | None = None
-            if broker_has_position and not books_claim_position and not fills_claim_position:
-                direction = "broker_only_manual"
-                severity = "info"
+            if evidence.unowned_sells:
+                direction = "unowned_sell"
+                severity = "critical"
+                title = f"Bot sell has no owned live position for {symbol}"
+            elif broker_has_position and not books_claim_position and not fills_claim_position:
+                direction = "broker_ownership_unproven"
+                severity = "critical"
                 title = (
-                    f"position present at broker with no matching fill balance of ours for {symbol} - "
-                    "not ours, taking no action"
+                    f"Broker position has no proven operator-only classification for {symbol}"
                 )
             elif net_fill_balance < -tolerance:
                 direction = "negative_net_fill_balance"
@@ -452,7 +481,7 @@ class ReconciliationService:
                             self.settings.strategy_schwab_1m_v2_webull_fanout_quantity
                             or self.settings.strategy_schwab_1m_v2_default_quantity
                         )
-                if configured_entry_notional_usd is not None and direction != "broker_only_manual":
+                if configured_entry_notional_usd is not None:
                     title = f"{title} (entry target ${configured_entry_notional_usd} per order)"
                 findings.append(
                     FindingSpec(
@@ -474,11 +503,7 @@ class ReconciliationService:
                             "net_fill_balance": str(net_fill_balance),
                             "fill_delta": str(fill_delta),
                             "direction": direction,
-                            "ownership": (
-                                "manual_not_ours"
-                                if direction == "broker_only_manual"
-                                else "ours_or_conflicting"
-                            ),
+                            "ownership": "ours_or_conflicting",
                             # Context only. Quantity shape never decides ownership: 500 and 1000
                             # are both multiples of the live Schwab size of 2.
                             "configured_entry_quantity": configured_entry_quantity,

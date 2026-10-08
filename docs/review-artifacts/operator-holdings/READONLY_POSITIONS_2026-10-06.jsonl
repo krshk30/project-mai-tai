@@ -1,0 +1,2 @@
+{"asof" : "2026-10-06T19:22:35.239166+00:00", "account" : "live:schwab_1m_v2", "symbol" : "APUS", "qty" : 78.00000000, "updated" : "2026-10-06T19:22:22.093857+00:00", "source_updated" : "2026-10-06T19:22:22.025554+00:00", "orders_today" : 7, "fills_today" : 1, "fills_net" : 78.00000000}
+{"asof" : "2026-10-06T19:22:35.239166+00:00", "account" : "live:schwab_1m_v2", "symbol" : "MOBX", "qty" : 504.00000000, "updated" : "2026-10-06T19:22:22.11063+00:00", "source_updated" : "2026-10-06T19:22:22.02551+00:00", "orders_today" : 5, "fills_today" : 3, "fills_net" : 504.00000000}

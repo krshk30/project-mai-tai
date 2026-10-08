@@ -396,14 +396,9 @@ def test_managed_position_covers_a_false_zero_virtual_row() -> None:
     assert findings == [], f"the OMS tracks this position; it must not page. got {findings}"
 
 
-def test_broker_position_with_zero_fill_balance_is_manual_info_not_a_page() -> None:
+def test_fresh_broker_position_with_zero_session_orders_and_fills_is_not_a_finding() -> None:
     findings = _reconcile_position_findings(virtual_qty=0, managed_qty=0, broker_qty=1)
-    assert len(findings) == 1
-    finding = findings[0]
-    assert finding.severity == "info"
-    assert finding.payload["direction"] == "broker_only_manual"
-    assert finding.payload["ownership"] == "manual_not_ours"
-    assert "not ours, taking no action" in finding.title
+    assert findings == []
 
 
 def test_owned_fill_missing_from_live_books_is_critical() -> None:
@@ -563,13 +558,10 @@ def test_configured_quantity_is_context_only_and_never_claims_a_manual_position(
     findings = _reconcile_position_findings(
         virtual_qty=0, managed_qty=0, broker_qty=500, fill_balance=0
     )
-    assert len(findings) == 1
-    assert findings[0].severity == "info"
-    assert findings[0].payload["configured_entry_quantity"] is None
-    assert findings[0].payload["configured_entry_notional_usd"] == 300
+    assert findings == []
 
 
-def test_manual_position_is_persisted_as_info_without_lowering_confidence() -> None:
+def test_operator_only_position_creates_no_alert_or_preflight_finding() -> None:
     session_factory = build_test_session_factory()
     now = datetime.now(UTC)
     with session_factory() as session:
@@ -598,17 +590,14 @@ def test_manual_position_is_persisted_as_info_without_lowering_confidence() -> N
     assert result["summary"] == {
         "checked_at": result["summary"]["checked_at"],
         "accounts_checked": 1,
-        "total_findings": 1,
+        "total_findings": 0,
         "critical_findings": 0,
         "warning_findings": 0,
-        "info_findings": 1,
+        "info_findings": 0,
         "cutover_confidence": 100,
     }
     with session_factory() as session:
         finding = session.scalar(select(ReconciliationFinding))
         incident = session.scalar(select(SystemIncident))
-        assert finding is not None
-        assert incident is not None
-        assert finding.severity == "info"
-        assert incident.severity == "info"
-        assert incident.payload["symbol"] == "XHLD"
+        assert finding is None
+        assert incident is None
