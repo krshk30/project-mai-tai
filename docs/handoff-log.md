@@ -8291,3 +8291,16 @@ Three required positive temporal flows and inverted four-refusal cap PASS;
 updated PR body verified. New hosted Validate still pending. Prior local
 source-identical full failed-name residual remains NOT parity, unwaived.
 No source change, old CI substitution, pin/merge or production action.
+
+2026-10-08 14:53 ET codex-2 C49: G pin held after hosted combined duplicate
+quote proof0.912431s>0.05; Newton assigned Linux20x exact031/main1e15,
+slow-frame attribution and off-loop fix if caused. Parent static quote call
+chain remains memory schedule with queue to_thread. Separate new synchronous
+RPG price_wait budget SELECT/upgrade/commit flagged to sole writer; not yet
+claimed the cause of this fixture. New I sole writer Parfit assigned independent
+FLYE bound-owner freshSELL cause/sweep/fix, preserving same-segment real retry
+and open/UNKNOWN sibling ownership. H READY14:36 fa278ecd, hostedgreen x2,
+fresh full pair47 same failures/zeroaddedremoved; parent read pair JSON.
+F43eb misses14:30, four actual outcomes unchanged:0/7 old active retired,
+AIXI waits exact receipt, SBFMCLEAR20.173175s, DKIzerooppblocked. No proof
+invented; C runner informed exclude unpinned/blocked lanes. No production action.
