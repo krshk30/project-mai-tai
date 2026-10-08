@@ -1,0 +1,38 @@
+{
+  "approved_sha": "06b5e388affb5f33e4edf80c6e635cf72dbc3f78",
+  "line_enabled": true,
+  "candidate_prs": ["1137"],
+  "landed_prs": {
+    "1137": {
+      "base": "eced4599d05e72adab77551f18df8050a94028e2",
+      "reviewed_head": "5d17199caff81e2b9e232ac78091579aa3ff4334",
+      "landing": "06b5e388affb5f33e4edf80c6e635cf72dbc3f78",
+      "pin_verdict": "PASS",
+      "validate_verdict": "PASS",
+      "source_prs": ["1137"],
+      "pin_receipt": "https://github.com/krshk30/project-mai-tai/actions/runs/37844630959",
+      "validate_receipts": [
+        "https://github.com/krshk30/project-mai-tai/actions/runs/37842097790",
+        "https://github.com/krshk30/project-mai-tai/actions/runs/37842106143"
+      ]
+    }
+  },
+  "postgres_test_receipt": {
+    "source": "Parent exact-head readiness receipt 2026-10-08; #1137 5d17199c",
+    "passed": 8,
+    "positive": 4,
+    "expected_22003_mutations": 4,
+    "unit_passed": 8054,
+    "unit_skipped": 55,
+    "golden_passed": 94,
+    "golden_xfail": 1
+  },
+  "prior_install": {
+    "release.json": "c053e0324221a01b89236da3b0d6396b55099dd9c265acc2a85ffb4f9cd38d21",
+    "ABORT.json": "ff4525fdc0b58f82431d8fbd353041961720d38cd50422b2649b890a82265a0b",
+    "before-restart.json": "d661e252192d3432c126b13133e7b2a9b601d47523e338890cd0f864729c62ae",
+    "service-identities.json": "d8d0c195e51d670b85114056ce319fb27e30a04dc51f171a9f0039b31d978238",
+    "runner.log": "21802d9367527a4aec84c01e65db5c42c1b547b5c7577d95ea3e6f42488399a7",
+    "post-install-proof.json": "874f3b72cc83568993048daf53e11883f2d2ebb81e36fd42d73debc9937701a8"
+  }
+}

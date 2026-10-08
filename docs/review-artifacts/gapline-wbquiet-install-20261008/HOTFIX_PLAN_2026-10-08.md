@@ -1,12 +1,16 @@
-# PG-only hotfix mechanics: prepared, not staged
+# PG-only hotfix mechanics: exact application bound, not yet staged
 
 Sole writer Lane C, branch codex/gapline1-wbquiet1-after-close-1008.
 Literal runner: hotfix-job/runner.py. Future unique box job:
 /home/trader/after-hours/2026-10-08/falseflip-pg-hotfix/job.
 Future unit: project-mai-tai-falseflip-pg-20261008.service/.timer.
-No actual hotfix manifest or approval exists: final reviewed application is not
-yet supplied. H #1137 successor 5d17199caff81e2b9e232ac78091579aa3ff4334
-is not assumed pinned/merged/green by this plan. Source changes belong to H.
+Final application: 06b5e388affb5f33e4edf80c6e635cf72dbc3f78, tree
+92a4d4456b401464df364c1c909e96298a4e3ab7, exactly equal to independently
+pinned #1137 head 5d17199caff81e2b9e232ac78091579aa3ff4334. Hosted pin
+37844630959 PASS; Validate 37842097790 and 37842106143 SUCCESS. Committed
+review-pins ledger c7def42f verifies locally. Real PostgreSQL receipt: eight
+passed (four positive and four 22003 mutation controls). Source changes belong
+to H. Manifest generation binds this exact landing, never a moving main.
 
 ## Original install: applied but FAILED proof
 
