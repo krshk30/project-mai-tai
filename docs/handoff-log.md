@@ -8348,3 +8348,17 @@ onebaselineHOTFIXtimingfailurecleared. Notliteralidenticalfailedset.
 HostedbothNFQduplicate1F/7757P/55S,0.8907/0.9379s; parentreranonce
 unchangedhead,no thresholdwaiver. Iremainconditionalpin+Hcomposition;
 Fexcluded. FinalAPP andactualafterclosegate stillpending.
+
+2026-10-08 15:45 ET codex-2 C53: G27 exact re-pin accepted and latest hosted
+pinPASS. Both initial newValidate runs37831861522/37831856280 failed1F/7902P/55S
+on unchanged RESERVE1 concurrent-exit test, TimeoutError waiting firstadapterread.
+The test and oms/service.py have no diff vs exactbase063. Local alternating
+fresh processes0/10 failures perhead,50-60ms call; causality remainsUNMEASURED.
+Both CI rerun once unchangedhead, no bound/production edit or gate bypass.
+Separate existing evidencebranch a5e41c3c Linux20/20 unchangedtestcomparison
+run37834142179 inprogress; no extra source PR or receipt document.
+Main remains063, Hfa278 frozen awaitingactualGmerge. C adf401c0 runner330PASS,
+35RED; existing native clock-only override testedafter16, noarmedoverride,
+no live execution. I bothreruns failedunchangedNFQ timing0.911596901/0.956834248s;
+notpinned, notincluded. Cafter16 read-only passrequested; nofinalAPP/stagedpackage
+or production write. F remains excluded.
