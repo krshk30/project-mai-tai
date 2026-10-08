@@ -1,0 +1,13 @@
+{
+  "as_of_utc": "2026-10-08T13:16:26.044747+00:00",
+  "read_only": true,
+  "proofs": {
+    "AIXI": {
+      "opportunity_id": 1791462062227,
+      "never_dispatched": false,
+      "flat_accounts": [],
+      "observed_at_ms": 1791465385174,
+      "reason": "dispatch_or_position_unproven"
+    }
+  }
+}

@@ -1,17 +1,23 @@
 """AIXI Oct8 durable soft-rest replay; broker responses are explicit proof controls."""
 import asyncio
 import json
+import math
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from project_mai_tai.db.models import Base, BrokerOrder, DashboardSnapshot, TradeIntent
+from project_mai_tai.db.models import (
+    Base, BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition, TradeIntent, VirtualPosition,
+)
+from project_mai_tai.backtest.atr_oracle import Bar, compute_atr_trail
+from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar
@@ -30,6 +36,8 @@ def boot(*, phase="resting", **changes):
     strategy, clock, identities, owners = _strategy(dual=True, retry_one=True)
     clock[0] = BOOT
     strategy.settings.strategy_schwab_1m_v2_slotclear_fresh_flip_enabled = True
+    strategy.settings.strategy_schwab_1m_v2_resting_buy_round_up_enabled = True
+    strategy._resting_trigger_offset_pct = 0.5
     strategy._boot_ms = BOOT
     record = FlipEntryOwnershipRecord(symbol="AIXI", opportunity_id=OPP, phase=phase,
         flip_bar_ts=0, provisional_started_ms=0, fill_accounts=(), position_ids={},
@@ -46,7 +54,8 @@ def boot(*, phase="resting", **changes):
     return strategy, clock, identities, owners, proof
 
 
-def test_recorded_aixi_ghost_retired_before_seed_cap_live_buy_is_first_not_retry():
+@pytest.mark.parametrize("seed_path", ["math_seed", "historical_callback"])
+def test_recorded_aixi_ghost_retired_before_seed_cap_live_buy_is_first_not_retry(seed_path):
     strategy, clock, identities, owners, proof = boot()
     candidates = strategy.soft_rest_boot_candidates()
     assert candidates == {"AIXI": OPP}
@@ -56,22 +65,53 @@ def test_recorded_aixi_ghost_retired_before_seed_cap_live_buy_is_first_not_retry
     assert "AIXI" not in strategy._restored_fanout_segment_ids
     assert identities[-1][1:3] == (OPP, False)
     assert owners[-1][1] is False
-    state.atr_state = "short"
-    state.atr_short_flip_bar_ts = SEGMENT
+    bars = [OHLCVBar(int(datetime.fromisoformat(r["bar_time"]).timestamp() * 1000),
+        *(float(r[k]) for k in ("open_price", "high_price", "low_price", "close_price")), r["volume"])
+        for r in EVIDENCE["aixi_bars"]]
+    oracle = compute_atr_trail([Bar(b.timestamp_ms, b.open, b.high, b.low, b.close, b.volume) for b in bars])
+    prefix = [b for b in bars if b.timestamp_ms + 60000 <= BOOT]
+    if seed_path == "math_seed":
+        strategy.seed_atr_state("AIXI", prefix)
+    else:
+        for bar in prefix:
+            assert strategy.on_observed_bar("AIXI", bar, observation_phase="replay") is None
+            assert strategy.drain_pending_intents() == strategy.drain_webull_direct_intents() == []
+    assert state.atr_state == "short" and state.atr_short_flip_bar_ts == SEGMENT
+    assert strategy.drain_pending_intents() == strategy.drain_webull_direct_intents() == []
     bot = object.__new__(SchwabV2BotService)
     bot.strategy, bot._watch_start_ms = strategy, {"AIXI": BOOT}
     bot._consume_reconstructed_slots(state, BOOT)
     assert state.cw_seed_cap_watch_start_ms == BOOT
-    row = next(r for r in EVIDENCE["aixi_bars"] if r["bar_time"].startswith("2026-10-08 12:39:"))
-    bar_ms = int(datetime.fromisoformat(row["bar_time"]).timestamp() * 1000)
-    state.bars.append(OHLCVBar(bar_ms, *(float(row[k]) for k in (
-        "open_price", "high_price", "low_price", "close_price")), row["volume"]))
-    clock[0] = bar_ms + 61000
-    _book(strategy, clock, "AIXI")
     strategy._entries_held = False
-    strategy._slotclear_fresh_buy(state, {"flip": "BUY", "flip_level": 2.010536})
+    target = next(r for r in oracle if r["et"] == "08:39")
+    assert target["flip"] == "BUY"
+    previous = oracle[[r["ts"] for r in oracle].index(target["ts"]) - 1]
+    for bar in bars:
+        if bar.timestamp_ms + 60000 <= BOOT or bar.timestamp_ms > target["ts"]:
+            continue
+        clock[0] = bar.timestamp_ms + 61000
+        _book(strategy, clock, "AIXI")
+        assert strategy.on_observed_bar("AIXI", bar, observation_phase="live") is None
+        assert strategy.drain_pending_intents() == strategy.drain_webull_direct_intents() == []
+    assert state.cw_flip_level == pytest.approx(previous["trail"], abs=0.00005)
+    assert state.atr_state == target["state"] == "long"
     assert not state.cw_resting_taken and not state.cw_reclaim_taken
     assert state.retry_one_closes_in_segment == 0
+    # Decision-cache quotes at 08:40 are UNMEASURED. This is an explicit in-band
+    # quote control at the computed trigger, NOT an invented recorded trade.
+    trigger = strategy._resting_trigger_for_line(state.cw_flip_level)
+    confirming_ask = math.ceil(trigger * 100) / 100
+    quote = Quote(symbol="AIXI", last_price=confirming_ask, ask_price=confirming_ask,
+                  bid_price=confirming_ask, quote_time_ms=clock[0])
+    primary = strategy.on_quote("AIXI", quote)
+    assert primary is not None
+    mirrors = strategy.drain_webull_fanout_intents()
+    assert len(mirrors) == 1
+    assert primary.metadata["cw_entry_slot"] == mirrors[0].metadata["cw_entry_slot"] == "first"
+    assert primary.metadata["fanout_slot_id"] == mirrors[0].metadata["fanout_slot_id"]
+    assert primary.quantity == 295 and mirrors[0].quantity == 147
+    assert strategy.on_quote("AIXI", quote) is None
+    assert strategy.drain_webull_fanout_intents() == []
 
 
 @pytest.mark.parametrize("field,value", [
@@ -275,3 +315,44 @@ def test_retirement_write_failure_is_unknown_not_idle():
     strategy.recover_soft_rest_boot(strategy.soft_rest_boot_candidates(), proof)
     assert strategy.watchlist_state("AIXI").flip_owner_phase == "unknown"
     assert strategy._restored_fanout_segment_ids["AIXI"] == OPP
+
+
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("barrier", ["fill", "managed", "virtual"])
+def test_both_account_fill_position_and_protection_evidence_blocks(account, barrier):
+    bot, sessions, sid, aids, _ = sql_bot()
+    with sessions() as session:
+        if barrier == "fill":
+            session.add(Fill(order_id=uuid4(), strategy_id=sid, broker_account_id=aids[account],
+                symbol="AIXI", side="buy", quantity=1, price=2.03,
+                filled_at=datetime.fromtimestamp(OPP / 1000, UTC)))
+        elif barrier == "managed":
+            session.add(OmsManagedPosition(strategy_code="schwab_1m_v2", broker_account_name=account,
+                symbol="AIXI", entry_price=2.03, original_quantity=1, current_quantity=1, status="open"))
+        else:
+            session.add(VirtualPosition(strategy_id=sid, broker_account_id=aids[account],
+                symbol="AIXI", quantity=1))
+        session.commit()
+    proof = bot._soft_rest_boot_proofs({"AIXI": OPP})
+    assert proof["AIXI"]["never_dispatched"] is False
+
+
+@pytest.mark.parametrize("field,value", [("schema_version", 2), ("strategy_code", "orb"),
+    ("kind", "unknown_cancel"), ("attempt_token", "pending-wire"), ("account_name", PRIMARY)])
+def test_dispatch_begin_must_be_exact_positive_protocol(field, value):
+    bot, sessions, *_ = sql_bot()
+    with sessions() as session:
+        session.query(DashboardSnapshot).one().payload = {**BEGIN, field: value}
+        session.commit()
+    assert bot._soft_rest_boot_proofs({"AIXI": OPP})["AIXI"]["never_dispatched"] is False
+
+
+@pytest.mark.parametrize("budget", ["closed", "unreadable"])
+def test_boot_retirement_never_clears_a_closed_or_unknown_retry_budget(budget):
+    strategy, _, _, _, proof = boot()
+    if budget == "closed":
+        strategy._restored_retry_one_budgets["AIXI"] = (SEGMENT, 1)
+    else:
+        strategy._retry_one_budget_restore_readable = False
+    strategy.recover_soft_rest_boot(strategy.soft_rest_boot_candidates(), proof)
+    assert strategy.watchlist_state("AIXI").flip_owner_phase == "resting"
