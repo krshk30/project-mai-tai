@@ -13,12 +13,14 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, event, select, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
 from project_mai_tai.broker_adapters import cancel_terminal as broker
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullAccountConfig, WebullBrokerAdapter
+from project_mai_tai.broker_adapters.webull_order_reads import shared_budget
 from project_mai_tai.cancel_terminal_proof import evaluate_cancel_terminal
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import BrokerAccount, Strategy, TradeIntent
@@ -30,12 +32,20 @@ from project_mai_tai.settings import Settings
 NOW = 1_791_466_919_000
 
 
-@pytest.fixture
-def sessions():
+def _test_database_engine():
     url = os.environ.get("MAI_TAI_DATABASE_URL")
     assert url, "required real PostgreSQL service: MAI_TAI_DATABASE_URL"
-    engine = create_engine(url)
-    assert engine.dialect.name == "postgresql", "cancel evidence requires real PostgreSQL"
+    parsed = make_url(url)
+    assert (parsed.get_backend_name() == "postgresql"
+            and parsed.host in {"localhost", "127.0.0.1"}
+            and parsed.database == "project_mai_tai_test"
+            and not parsed.query), "refusing writes outside the explicit local/CI test database"
+    return create_engine(url)
+
+
+@pytest.fixture
+def sessions():
+    engine = _test_database_engine()
     schema = "cancel_terminal_" + uuid4().hex
     with engine.begin() as conn:
         conn.execute(text(f'CREATE SCHEMA "{schema}"'))
@@ -59,6 +69,15 @@ def sdk(monkeypatch):
         def __init__(self):
             self.values = {}
 
+        def get_action_name(self):
+            return "/trade/orders/list-open" if self.kind == "open" else "/trade/order/detail"
+
+        def get_version(self):
+            return "v2"
+
+        def get_method(self):
+            return "GET"
+
         def __getattr__(self, name):
             if name.startswith("set_"):
                 return lambda value: self.values.__setitem__(name[4:], value)
@@ -76,6 +95,8 @@ def sdk(monkeypatch):
 
 
 class Client:
+    _auto_retry = False
+
     def __init__(self, pages=None, detail=None):
         self.pages = pages or [{"has_next": False, "orders": []}]
         self.detail = detail
@@ -97,6 +118,8 @@ def adapter(client):
     leaf = WebullBrokerAdapter.__new__(WebullBrokerAdapter)
     leaf.accounts_by_name = {"live:orb": WebullAccountConfig(account_id="ACC1")}
     leaf._get_client = lambda: client
+    leaf.host, leaf.app_key = "controlled-broker", uuid4().hex
+    leaf._query_budget = shared_budget(leaf.host, leaf.app_key)
     return RoutingBrokerAdapter(default_provider="webull", provider_by_account={"live:orb": "webull"},
                                 factories_by_provider={"webull": lambda: leaf})
 
@@ -169,6 +192,7 @@ async def test_offloop_real_pg_exact_journal_and_every_page(sessions, sdk):
 
 
 @pytest.mark.parametrize("pages", [
+    [{"data": [], "pagination_key": ""}],
     [{"has_next": True, "orders": []}], [{"orders": []}], [{"has_next": 0, "orders": []}],
     [{"has_next": False, "orders": [{"client_order_id": "exact-coid", "symbol": "DKI",
                                       "order_status": "SUBMITTED"}]}],
@@ -255,6 +279,45 @@ async def test_journal_loader_rejects_changed_request_metadata(sessions, sdk, fi
         intent.payload = payload
         session.flush()
         assert journal.load_cancel_terminal_evidence(session, [intent]) == {}
+
+
+@pytest.mark.asyncio
+async def test_external_account_number_is_not_laundered_into_actual_broker_id(sessions, sdk):
+    routed = adapter(Client())
+    intent_id = seed(sessions, routed)
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        account = session.get(BrokerAccount, intent.broker_account_id)
+        account.external_account_id = "different-account-number"
+        session.flush()
+        assert journal.receipt_from_intent(intent, account) is None
+        session.commit()
+    assert not await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+
+
+@pytest.mark.parametrize("retry", [True, None])
+@pytest.mark.asyncio
+async def test_hidden_sdk_retry_policy_is_unknown_without_http(sessions, sdk, retry):
+    client = Client()
+    client._auto_retry = retry
+    routed = adapter(client)
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert not read(sessions, intent_id)[1].terminal
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_shared_budget_denial_never_returns_partial_book(sessions, sdk):
+    client = Client()
+    routed = adapter(client)
+    leaf = routed._adapter_for_account("live:orb")
+    leaf._query_budget.claim("list-open", "other-account", strict=True)
+    leaf._query_budget.claim("list-open", "other-account", strict=True)
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert not read(sessions, intent_id)[1].terminal
+    assert [kind for kind, _, _ in client.calls] == ["detail"]
 
 
 @pytest.mark.asyncio
