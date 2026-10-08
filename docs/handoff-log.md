@@ -7863,3 +7863,12 @@ decision-minute and terminal-evidence claims are not manufactured.
 Final full-unit pair pending. Five-session wait withdrawn by today's ruling;
 after-close reviewed DATA deployment, Friday denominators, weekend decision.
 No production action performed and neither draft has been marked review-ready.
+
+2026-10-08 07:21 ET codex-2: GAPLINE1 #1126 final-source full unit paired:
+main d244f602 47 FAIL / 7491 PASS; source d694b85d 47 FAIL / 7586 PASS /
+55 UNMEASURED SKIP. Failed-name sets byte-identical (no added/missing),
+hash17d68105856e998ab629144135fd40b4ec5b3b4a53fe197c069a0cc1f25eb419.
+Receipt-only head00bd0c64325ec25c11642d913c4a0ae2b35aad0f pushed.
+Final-source resets/wait/seed-long/carry mutations RED65/22/6/28/2;
+focus230PASS/55SKIP, original gap controls34PASS, Ruff clean.
+CI/reviewer pin pending, population retention limits disclosed; no production action.
