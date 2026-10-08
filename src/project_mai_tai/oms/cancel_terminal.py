@@ -15,6 +15,7 @@ from project_mai_tai.broker_adapters.cancel_terminal import (
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.cancel_terminal_proof import (
     BookOrder, CancelReceipt, CancelScope, CancelTerminalEvidence, CompleteWorkingBook,
+    evaluate_cancel_terminal,
 )
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, TradeIntent
 
@@ -195,10 +196,15 @@ async def acquire_cancel_terminal_evidence(
         if request is None:
             continue
         try:
-            evidence = await acquire_broker_cancel_evidence(
-                adapter, request.receipt,
-                broker_order_id=request.payload[BINDING_KEY].get("broker_order_id", ""),
-            )
+            prior = evidence_from_payload(request.payload)
+            if (prior is not None and prior.target_status and evaluate_cancel_terminal(
+                    request.receipt, prior, now_ms=int(datetime.now(UTC).timestamp() * 1000)).terminal):
+                evidence = prior
+            else:
+                evidence = await acquire_broker_cancel_evidence(
+                    adapter, request.receipt,
+                    broker_order_id=request.payload[BINDING_KEY].get("broker_order_id", ""),
+                )
         except Exception:
             evidence = CancelTerminalEvidence(request.receipt, None)
         if await asyncio.to_thread(_write_evidence, session_factory, request, evidence, adapter):
