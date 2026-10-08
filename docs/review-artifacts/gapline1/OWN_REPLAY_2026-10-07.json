@@ -1,0 +1,680 @@
+{
+  "as_of_utc": "2026-10-08T00:52:03.921721+00:00",
+  "log_files": 31,
+  "primary_holds": 96,
+  "recovery_gap_resets": 37,
+  "primary_short_probe_candidates": 18,
+  "table": [
+    {
+      "symbol": "GCTK",
+      "hold": "2026-09-24T07:00:03.108000-04:00",
+      "resume": "2026-09-24 11:11:01,872 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] GCTK contiguous_bars=10 required_bars=10 trail=4.0104 entry_allowed=1",
+      "evaluated_bar_ms": 1790248200000,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 4.01041,
+        "oracle_state": "long",
+        "oracle_trail": 4.0104,
+        "matches": true
+      },
+      "missing_minutes": 660,
+      "filled_minutes": 0,
+      "first_buy": {
+        "et": "08:09",
+        "ts": 1790251740000,
+        "close": 4.259,
+        "tr": 0.2006,
+        "loss": 0.3579,
+        "trail": 3.9011,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 273539
+      },
+      "bot_saw_first_buy": true,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz:30556"
+    },
+    {
+      "symbol": "NCPL",
+      "hold": "2026-09-24T08:45:26.799000-04:00",
+      "resume": null,
+      "evaluated_bar_ms": 1790253960000,
+      "replay": {
+        "code_state": null,
+        "code_trail": null,
+        "oracle_state": null,
+        "oracle_trail": null,
+        "matches": true
+      },
+      "missing_minutes": 886,
+      "filled_minutes": 1,
+      "first_buy": {
+        "et": "10:02",
+        "ts": 1790258520000,
+        "close": 1.49,
+        "tr": 0.04,
+        "loss": 0.1162,
+        "trail": 1.3738,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 303294
+      },
+      "bot_saw_first_buy": true,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz:32435"
+    },
+    {
+      "symbol": "NCPL",
+      "hold": "2026-09-24T08:59:31.401000-04:00",
+      "resume": null,
+      "evaluated_bar_ms": 1790254800000,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 1.3270000000000002,
+        "oracle_state": "long",
+        "oracle_trail": 1.327,
+        "matches": true
+      },
+      "missing_minutes": 900,
+      "filled_minutes": 15,
+      "first_buy": {
+        "et": "10:02",
+        "ts": 1790258520000,
+        "close": 1.49,
+        "tr": 0.04,
+        "loss": 0.1162,
+        "trail": 1.3738,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 303294
+      },
+      "bot_saw_first_buy": true,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz:33253"
+    },
+    {
+      "symbol": "CLRO",
+      "hold": "2026-09-28T09:42:46.486000-04:00",
+      "resume": "2026-09-28 13:52:02,467 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] CLRO contiguous_bars=10 required_bars=10 trail=4.4955 entry_allowed=1",
+      "evaluated_bar_ms": 1790603460000,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 5.516827522580878,
+        "oracle_state": "short",
+        "oracle_trail": 5.5168,
+        "matches": true
+      },
+      "missing_minutes": 4,
+      "filled_minutes": 0,
+      "first_buy": {
+        "et": "10:16",
+        "ts": 1790604960000,
+        "close": 4.94,
+        "tr": 0.13,
+        "loss": 0.2867,
+        "trail": 4.6533,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 70862
+      },
+      "bot_saw_first_buy": false,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz:32101"
+    },
+    {
+      "symbol": "EGG",
+      "hold": "2026-09-28T13:39:33.129000-04:00",
+      "resume": "2026-09-28 17:53:03,050 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] EGG contiguous_bars=10 required_bars=10 trail=4.1531 entry_allowed=1",
+      "evaluated_bar_ms": 1790617920000,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 4.32633188158939,
+        "oracle_state": "short",
+        "oracle_trail": 4.3263,
+        "matches": true
+      },
+      "missing_minutes": 1,
+      "filled_minutes": 0,
+      "first_buy": {
+        "et": "14:01",
+        "ts": 1790618460000,
+        "close": 4.37,
+        "tr": 0.09,
+        "loss": 0.1208,
+        "trail": 4.2492,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 5065
+      },
+      "bot_saw_first_buy": false,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz:40434"
+    },
+    {
+      "symbol": "EGG",
+      "hold": "2026-09-28T14:06:33.026000-04:00",
+      "resume": "2026-09-28 18:16:02,623 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] EGG contiguous_bars=10 required_bars=10 trail=4.1956 entry_allowed=1",
+      "evaluated_bar_ms": 1790619300000,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 4.181877961843699,
+        "oracle_state": "long",
+        "oracle_trail": 4.1819,
+        "matches": true
+      },
+      "missing_minutes": 1,
+      "filled_minutes": 0,
+      "first_buy": {
+        "et": "14:15",
+        "ts": 1790619300000,
+        "close": 4.39,
+        "tr": 0.17,
+        "loss": 0.2081,
+        "trail": 4.1819,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 8407
+      },
+      "bot_saw_first_buy": false,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz:41267"
+    },
+    {
+      "symbol": "EGG",
+      "hold": "2026-09-28T14:36:57.513000-04:00",
+      "resume": "2026-09-28 18:46:02,121 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] EGG contiguous_bars=10 required_bars=10 trail=4.2636 entry_allowed=1",
+      "evaluated_bar_ms": 1790621100000,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 4.4642544956486345,
+        "oracle_state": "short",
+        "oracle_trail": 4.4643,
+        "matches": true
+      },
+      "missing_minutes": 1,
+      "filled_minutes": 0,
+      "first_buy": {
+        "et": "14:54",
+        "ts": 1790621640000,
+        "close": 4.48,
+        "tr": 0.1,
+        "loss": 0.2713,
+        "trail": 4.2087,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 1315
+      },
+      "bot_saw_first_buy": false,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz:42482"
+    },
+    {
+      "symbol": "TGE",
+      "hold": "2026-09-30T09:39:31.834000-04:00",
+      "resume": "2026-09-30 13:58:01,955 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] TGE contiguous_bars=10 required_bars=10 trail=1.1759 entry_allowed=1",
+      "evaluated_bar_ms": 1790776620000,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 1.1651910779129135,
+        "oracle_state": "long",
+        "oracle_trail": 1.1652,
+        "matches": true
+      },
+      "missing_minutes": 8,
+      "filled_minutes": 8,
+      "first_buy": {
+        "et": "11:54",
+        "ts": 1790783640000,
+        "close": 1.42,
+        "tr": 0.07,
+        "loss": 0.108,
+        "trail": 1.312,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 323271
+      },
+      "bot_saw_first_buy": true,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz:27560"
+    },
+    {
+      "symbol": "MEDS",
+      "hold": "2026-10-01T09:32:42.903000-04:00",
+      "resume": null,
+      "evaluated_bar_ms": 1790861580000,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 3.835097291109859,
+        "oracle_state": "long",
+        "oracle_trail": 3.8351,
+        "matches": true
+      },
+      "missing_minutes": 21,
+      "filled_minutes": 21,
+      "first_buy": {
+        "et": "12:52",
+        "ts": 1790873520000,
+        "close": 3.745,
+        "tr": 0.024,
+        "loss": 0.0806,
+        "trail": 3.6644,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 12309
+      },
+      "bot_saw_first_buy": true,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz:35635"
+    },
+    {
+      "symbol": "CMCT",
+      "hold": "2026-10-01T15:20:48.643000-04:00",
+      "resume": "2026-10-01 19:30:03,977 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] CMCT contiguous_bars=10 required_bars=10 trail=3.7106 entry_allowed=1",
+      "evaluated_bar_ms": 1790882940000,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 3.678332245454487,
+        "oracle_state": "long",
+        "oracle_trail": 3.6783,
+        "matches": true
+      },
+      "missing_minutes": 1160,
+      "filled_minutes": 11,
+      "first_buy": {
+        "et": "17:11",
+        "ts": 1790889060000,
+        "close": 3.99,
+        "tr": 0.045,
+        "loss": 0.0925,
+        "trail": 3.8975,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 1372
+      },
+      "bot_saw_first_buy": true,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261002.gz:51770"
+    },
+    {
+      "symbol": "APUS",
+      "hold": "2026-10-05T09:38:44.721000-04:00",
+      "resume": "2026-10-05 13:48:02,964 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] APUS contiguous_bars=10 required_bars=10 trail=4.0413 entry_allowed=1",
+      "evaluated_bar_ms": 1791208020000,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 4.974365190420905,
+        "oracle_state": "short",
+        "oracle_trail": 4.9744,
+        "matches": true
+      },
+      "missing_minutes": 4,
+      "filled_minutes": 0,
+      "first_buy": {
+        "et": "10:11",
+        "ts": 1791209460000,
+        "close": 5.03,
+        "tr": 0.3051,
+        "loss": 0.5789,
+        "trail": 4.4511,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 252084
+      },
+      "bot_saw_first_buy": false,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006.gz:37327"
+    },
+    {
+      "symbol": "JAGX",
+      "hold": "2026-10-05T12:17:29.981000-04:00",
+      "resume": "2026-10-05 16:24:03,051 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] JAGX contiguous_bars=10 required_bars=10 trail=4.7459 entry_allowed=1",
+      "evaluated_bar_ms": 1791217380000,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 4.740344855874542,
+        "oracle_state": "long",
+        "oracle_trail": 4.7403,
+        "matches": true
+      },
+      "missing_minutes": 19,
+      "filled_minutes": 19,
+      "first_buy": {
+        "et": "14:20",
+        "ts": 1791224400000,
+        "close": 4.8308,
+        "tr": 0.2416,
+        "loss": 0.3107,
+        "trail": 4.5201,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 52732
+      },
+      "bot_saw_first_buy": true,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006.gz:51337"
+    },
+    {
+      "symbol": "APUS",
+      "hold": "2026-10-05T13:42:57.664000-04:00",
+      "resume": "2026-10-05 17:52:02,349 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] APUS contiguous_bars=10 required_bars=10 trail=4.3630 entry_allowed=1",
+      "evaluated_bar_ms": 1791222660000,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 4.340388740055172,
+        "oracle_state": "long",
+        "oracle_trail": 4.3404,
+        "matches": true
+      },
+      "missing_minutes": 1,
+      "filled_minutes": 0,
+      "first_buy": {
+        "et": "13:51",
+        "ts": 1791222660000,
+        "close": 4.4894,
+        "tr": 0.0551,
+        "loss": 0.149,
+        "trail": 4.3404,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 13779
+      },
+      "bot_saw_first_buy": false,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006.gz:63061"
+    },
+    {
+      "symbol": "MI",
+      "hold": "2026-10-05T14:11:58.622000-04:00",
+      "resume": "2026-10-05 18:21:02,909 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] MI contiguous_bars=10 required_bars=10 trail=5.8357 entry_allowed=1",
+      "evaluated_bar_ms": 1791224400000,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 8.255107485780915,
+        "oracle_state": "short",
+        "oracle_trail": 8.2551,
+        "matches": true
+      },
+      "missing_minutes": 4,
+      "filled_minutes": 0,
+      "first_buy": {
+        "et": "15:34",
+        "ts": 1791228840000,
+        "close": 6.72,
+        "tr": 0.4403,
+        "loss": 1.0358,
+        "trail": 5.6842,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 340143
+      },
+      "bot_saw_first_buy": true,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261006.gz:64027"
+    },
+    {
+      "symbol": "IPDN",
+      "hold": "2026-10-06T09:36:55.672000-04:00",
+      "resume": "2026-10-06 13:55:02,603 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] IPDN contiguous_bars=10 required_bars=10 trail=4.4461 entry_allowed=1",
+      "evaluated_bar_ms": 1791294840000,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 6.537275857652446,
+        "oracle_state": "short",
+        "oracle_trail": 6.5373,
+        "matches": true
+      },
+      "missing_minutes": 4,
+      "filled_minutes": 0,
+      "first_buy": {
+        "et": "11:01",
+        "ts": 1791298860000,
+        "close": 4.833,
+        "tr": 0.34,
+        "loss": 0.5146,
+        "trail": 4.3184,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 231820
+      },
+      "bot_saw_first_buy": true,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261007.gz:26142"
+    },
+    {
+      "symbol": "XHG",
+      "hold": "2026-10-06T11:10:54.091000-04:00",
+      "status": "no_post_hold_bars"
+    },
+    {
+      "symbol": "APUS",
+      "hold": "2026-10-07T10:49:15.072000-04:00",
+      "resume": null,
+      "evaluated_bar_ms": 1791384600000,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 8.582537260922125,
+        "oracle_state": "long",
+        "oracle_trail": 8.5825,
+        "matches": true
+      },
+      "missing_minutes": 889,
+      "filled_minutes": 22,
+      "first_buy": null,
+      "bot_saw_first_buy": false,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261008:173868"
+    },
+    {
+      "symbol": "SXTC",
+      "hold": "2026-10-07T14:54:08.664000-04:00",
+      "resume": "2026-10-07 19:04:02,642 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-GAP-RESUME] SXTC contiguous_bars=10 required_bars=10 trail=2.5851 entry_allowed=1",
+      "evaluated_bar_ms": 1791399780000,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 4.786687014793253,
+        "oracle_state": "short",
+        "oracle_trail": 4.7867,
+        "matches": true
+      },
+      "missing_minutes": 4,
+      "filled_minutes": 0,
+      "first_buy": {
+        "et": "15:24",
+        "ts": 1791401040000,
+        "close": 4.569,
+        "tr": 0.49,
+        "loss": 1.227,
+        "trail": 3.342,
+        "state": "long",
+        "flip": "BUY",
+        "state_age": 0,
+        "vol": 562521
+      },
+      "bot_saw_first_buy": false,
+      "hold_source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261008:193751"
+    }
+  ],
+  "entry_controls": [
+    {
+      "symbol": "CLRO",
+      "ts": 1790613720000,
+      "recorded_state": "long",
+      "recorded_trail": 4.845062,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 4.845062321867571,
+        "oracle_state": "long",
+        "oracle_trail": 4.8451,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "DXST",
+      "ts": 1790700300000,
+      "recorded_state": "long",
+      "recorded_trail": 2.676015,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 2.676014706392217,
+        "oracle_state": "long",
+        "oracle_trail": 2.676,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "TGE",
+      "ts": 1790783640000,
+      "recorded_state": "long",
+      "recorded_trail": 1.311998,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 1.3119976094115184,
+        "oracle_state": "long",
+        "oracle_trail": 1.312,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "TGE",
+      "ts": 1790786880000,
+      "recorded_state": "long",
+      "recorded_trail": 1.333992,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 1.3339915586303381,
+        "oracle_state": "long",
+        "oracle_trail": 1.334,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "TGE",
+      "ts": 1790793360000,
+      "recorded_state": "long",
+      "recorded_trail": 1.398575,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 1.3985752209836937,
+        "oracle_state": "long",
+        "oracle_trail": 1.3986,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "TGE",
+      "ts": 1790796420000,
+      "recorded_state": "long",
+      "recorded_trail": 1.460924,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 1.4609240772486176,
+        "oracle_state": "long",
+        "oracle_trail": 1.4609,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "NXL",
+      "ts": 1790869320000,
+      "recorded_state": "long",
+      "recorded_trail": 7.178548,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 7.178547731634241,
+        "oracle_state": "long",
+        "oracle_trail": 7.1785,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "NXL",
+      "ts": 1790876760000,
+      "recorded_state": "long",
+      "recorded_trail": 6.870396,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 6.870395650008952,
+        "oracle_state": "long",
+        "oracle_trail": 6.8704,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "AIXI",
+      "ts": 1790953500000,
+      "recorded_state": "short",
+      "recorded_trail": 1.734088,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 1.7340879148074024,
+        "oracle_state": "short",
+        "oracle_trail": 1.7341,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "AMOD",
+      "ts": 1790954520000,
+      "recorded_state": "short",
+      "recorded_trail": 3.500966,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 3.5009657425392704,
+        "oracle_state": "short",
+        "oracle_trail": 3.501,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "AMOD",
+      "ts": 1790958360000,
+      "recorded_state": "long",
+      "recorded_trail": 3.246596,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 3.2465957165182235,
+        "oracle_state": "long",
+        "oracle_trail": 3.2466,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "AIXI",
+      "ts": 1790968620000,
+      "recorded_state": "short",
+      "recorded_trail": 1.832881,
+      "replay": {
+        "code_state": "short",
+        "code_trail": 1.8328805921156472,
+        "oracle_state": "short",
+        "oracle_trail": 1.8329,
+        "matches": true
+      },
+      "same_colour": true
+    },
+    {
+      "symbol": "AMOD",
+      "ts": 1790970180000,
+      "recorded_state": "long",
+      "recorded_trail": 3.282339,
+      "replay": {
+        "code_state": "long",
+        "code_trail": 3.282338849056427,
+        "oracle_state": "long",
+        "oracle_trail": 3.2823,
+        "matches": true
+      },
+      "same_colour": true
+    }
+  ]
+}
