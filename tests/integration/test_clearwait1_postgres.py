@@ -18,6 +18,7 @@ from tests.integration.test_falseflip1_postgres_epochs import postgres_factory  
 from tests.unit.test_clearwait1_session_rollover import (
     ACCOUNTS, NOW, PRIMARY, RAW, WEBULL, ms, recorded_request, request, seed, service, strategy,
 )
+from tests.unit.test_clearwait1_unbound import NOW as UNBOUND_NOW, controlled_books
 
 
 @pytest.fixture
@@ -127,3 +128,64 @@ def test_pg_recorded_dki_missing_shared_proof_stays_unknown(pg_db):
     assert req.opportunity_id == 0 and req.requested_at_ms == 1791465918168
     proof, = store.proofs((req,), ACCOUNTS, now=NOW)
     assert not proof.clear and store.restore() == {"DKI": req}
+
+
+def unbound_control(database, req, drained=True):
+    """Real PostgreSQL/CAS with explicitly controlled books and publication witness."""
+    return database[0].retire_unbound((req,), ACCOUNTS, books=controlled_books(database),
+        publication_closed={req: drained}, now=UNBOUND_NOW)[0]
+
+
+def test_pg_unbound_dki_control_commits_exact_inactive_token(pg_db):
+    req = recorded_request("DKI")
+    seed(pg_db, req, receipts=False)
+    proof = unbound_control(pg_db, req)
+    assert proof.clear and proof.reason == "unbound_symbol_terminal"
+    assert not pg_db[0].restore() and pg_db[0].restore_terminal_proofs() == (proof,)
+
+
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("kind", ["order", "pending", "managed"])
+def test_pg_unbound_buy_and_owned_open_fences_both_accounts(pg_db, account, kind):
+    req = recorded_request("DKI")
+    seed(pg_db, req, receipts=False)
+    with pg_db[1]() as session:
+        if kind == "order":
+            session.add(BrokerOrder(strategy_id=pg_db[3], broker_account_id=pg_db[2][account],
+                symbol="DKI", side="buy", order_type="limit", time_in_force="day", quantity=1,
+                status="accepted", client_order_id="controlled-working"))
+        elif kind == "pending":
+            session.add(TradeIntent(strategy_id=pg_db[3], broker_account_id=pg_db[2][account],
+                symbol="DKI", side="", intent_type="cancel", quantity=1,
+                reason="controlled unanswered empty-side cancel", status="pending"))
+        else:
+            session.add(OmsManagedPosition(strategy_code="schwab_1m_v2", broker_account_name=account,
+                symbol="DKI", entry_price=1, original_quantity=1, current_quantity=1, status="open"))
+        session.commit()
+    assert not unbound_control(pg_db, req).clear and pg_db[0].restore() == {"DKI": req}
+
+
+def test_pg_unbound_publication_gap_not_empty_db_clear(pg_db):
+    req = recorded_request("DKI")
+    seed(pg_db, req, receipts=False)
+    assert not unbound_control(pg_db, req, drained=False).clear
+    assert pg_db[0].restore() == {"DKI": req}
+
+
+def test_pg_unbound_same_day_retry_retains_active_request(pg_db):
+    req = replace(recorded_request("DKI"), purpose="retry_exhausted")
+    seed(pg_db, req, receipts=False)
+    proof = unbound_control(pg_db, req)
+    assert proof.clear and pg_db[0].restore() == {"DKI": req}
+    assert pg_db[0].restore_terminal_proofs() == (proof,)
+
+
+def test_pg_unrelated_closed_history_does_not_exhaust_current_proof(pg_db):
+    req = recorded_request("DKI")
+    seed(pg_db, req, receipts=False)
+    with pg_db[1]() as session:
+        session.add_all(OmsManagedPosition(strategy_code="schwab_1m_v2", broker_account_name=PRIMARY,
+            symbol="DKI", entry_price=1, original_quantity=1, current_quantity=0, status="closed")
+            for _ in range(2049))
+        session.commit()
+    assert unbound_control(pg_db, req).clear
