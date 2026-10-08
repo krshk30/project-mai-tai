@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import OrbPaperEvent
-from project_mai_tai.orb_paper_store import OrbPaperDecision, OrbPaperStore
+from tests.support.retired_orb_store import OrbPaperDecision, OrbPaperStore
 from tests.support.retired_orb_simulation import OrbService, _PendingPaperEntry, _SymbolState
 from tests.support.retired_orb_settings import RetiredOrbSettings as Settings
 

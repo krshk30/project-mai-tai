@@ -12,7 +12,7 @@ from project_mai_tai.broker_adapters.webull import configured_webull_accounts
 from project_mai_tai.db.models import OrbPaperEvent
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
-from project_mai_tai.orb_paper_store import ORB_PAPER_ACCOUNT_NAME, OrbPaperDecision
+from tests.support.retired_orb_store import ORB_PAPER_ACCOUNT_NAME, OrbPaperDecision
 from project_mai_tai.runtime_registry import (
     configured_broker_account_registrations,
     strategy_registration_map,
@@ -88,7 +88,7 @@ def test_orb_modules_have_no_trade_intent_broker_or_dynamic_dispatch_path() -> N
     paths = (
         Path("src/project_mai_tai/services/orb_app.py"),
         Path("src/project_mai_tai/orb_paper_lifecycle.py"),
-        Path("src/project_mai_tai/orb_paper_store.py"),
+        Path("tests/support/retired_orb_store.py"),
     )
     sources = {path: path.read_text() for path in paths}
 

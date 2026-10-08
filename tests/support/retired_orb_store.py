@@ -1,3 +1,5 @@
+"""Historical paper evidence writer, retained for offline tests only."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
