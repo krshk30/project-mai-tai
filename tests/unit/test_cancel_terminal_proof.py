@@ -110,3 +110,22 @@ def test_broker_receipt_needs_all_exact_source_fields(field):
                        target_symbol=SCOPE.symbol, target_account_id=SCOPE.account_id,
                        target_filled_quantity="0")
     assert not evaluate(replace(evidence, **{field: "unknown"})).terminal
+
+
+@pytest.mark.parametrize("url", [
+    "postgresql+psycopg://postgres@production/project_mai_tai_test",
+    "postgresql+psycopg://postgres@127.0.0.1/project_mai_tai",
+    "postgresql+psycopg://postgres@127.0.0.1/project_mai_tai_test?host=production",
+    "sqlite+pysqlite:///:memory:",
+])
+def test_pg_guard_denies_before_engine_or_create_schema(monkeypatch, url):
+    from tests.integration import test_cancel_terminal_runtime as runtime
+
+    monkeypatch.setenv("MAI_TAI_DATABASE_URL", url)
+
+    def must_not_connect(*args, **kwargs):
+        pytest.fail("database connection attempted before test DSN denial")
+
+    monkeypatch.setattr(runtime, "create_engine", must_not_connect)
+    with pytest.raises(AssertionError, match="refusing writes"):
+        next(runtime.sessions.__wrapped__())
