@@ -717,7 +717,7 @@ async def test_nfq_uncertain_transfer_retains_exact_pending_client_and_never_res
 
 
 @pytest.mark.asyncio
-async def test_final_cap_guard_survives_an_accepted_fourth_wire_then_cancel(lane):
+async def test_accepted_fourth_wire_then_cancel_does_not_spend_refusal_cap(lane):
     service, client, factory, clock = lane
     client.raises["place"] = _ServerException("ORDER_RISK_RULE_PRICE_AGGRESSIVE", "CONTROLLED", 417)
     for number in range(4):
@@ -737,8 +737,10 @@ async def test_final_cap_guard_survives_an_accepted_fourth_wire_then_cancel(lane
     next_price = event_for(lane, stop="5.3")
     quote(lane, next_price, "5.1")
     result = await service.process_trade_intent(next_price)
-    assert client.calls["place"] == 4
-    assert result[-1].payload.reason == "mirrorhold_actual_submission_cap"
+    assert client.calls["place"] == 5
+    assert result[-1].payload.status == "accepted"
+    assert state(lane, next_price)["wire_submissions"] == 5
+    assert state(lane, next_price)["price_aggressive_refusals"] == 3
 
 
 @pytest.mark.asyncio

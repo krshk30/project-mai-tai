@@ -1,5 +1,10 @@
 # Lane G frozen-source review receipt
 
+Historical direct-only receipt at `5a8b3208`. The later authorized queue/restore
+and D28 wire-cap successor is described in [QUEUE-WIRECAP.md](QUEUE-WIRECAP.md).
+The original evidence and scope limitations below remain preserved, not current
+successor claims.
+
 Per-intent dispatch ONLY. Coarse SQL selects current 04:00 ET session buys,
 same-segment buys across age, all working/unknown-status buys, NULL timestamps,
 and explicit unreadable identity. Historical unrelated terminal rows are not

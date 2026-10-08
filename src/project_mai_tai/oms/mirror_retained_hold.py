@@ -22,7 +22,7 @@ from project_mai_tai.oms.mirror_fresh_price import HELD_REASON, SNAPSHOT_TYPE as
 
 
 SNAPSHOT_TYPE = "oms_webull_mirror_retained_hold"
-MAX_WIRE_SUBMISSIONS = 4  # One initial submission, then at most three resubmissions.
+MAX_PRICE_AGGRESSIVE_REFUSALS = 4  # Initial refusal, then at most three actual resubmissions.
 FENCED_PHASES = {"dispatching", "uncertain"}
 
 
@@ -147,7 +147,10 @@ class MirrorRetainedHoldMixin:
             row = self._mirrorhold_read(session, event)
             if row is None:
                 return self._mirrorhold_new_enabled() and not event.payload.metadata.get("mirrorhold_token")
-            data = row.payload
+            legacy_budget = "price_aggressive_clients" not in row.payload
+            data = self._mirrorhold_upgrade_budget(session, row, event)
+            if legacy_budget:
+                session.commit()
             if data["phase"] in FENCED_PHASES | {"retired", "filled", "capped"}:
                 return False
             if event.payload.metadata.get("mirrorhold_token"):
@@ -191,10 +194,11 @@ class MirrorRetainedHoldMixin:
 
     def _mirrorhold_log(self, data, reason):
         self.logger.info("[OMS-MIRRORHOLD1] account=%s symbol=%s segment=%s slot=%s "
-                         "phase=%s wires=%s resubmissions=%s reason=%s",
+                         "phase=%s wires=%s resubmissions=%s price_aggressive_refusals=%s reason=%s",
                          data["identity"][0], data["identity"][2], data["identity"][3],
                          data["identity"][4], data["phase"], data["wire_submissions"],
-                         max(0, data["wire_submissions"] - 1), reason)
+                         max(0, data["wire_submissions"] - 1),
+                         data.get("price_aggressive_refusals", data["wire_submissions"]), reason)
 
     def _mirrorhold_project(self, data):
         from project_mai_tai.oms.service import _DeferredWebullRestingMirror
@@ -217,11 +221,12 @@ class MirrorRetainedHoldMixin:
         if row is None:
             if not self._mirrorhold_new_enabled():
                 raise RuntimeError("mirrorhold1 admission OFF; no new owner")
-            clients, uncertain = self._mirrorhold_prior_wires(session, event)
+            clients, uncertain, aggressive = self._mirrorhold_prior_wires(session, event)
             row = DashboardSnapshot(id=row_id(event), snapshot_type=SNAPSHOT_TYPE, payload={
                 "revision": 0, "identity": identity(event), "event": event.model_dump(mode="json"),
                 "price_generation": price_generation(event), "phase": "uncertain" if uncertain else "held", "token": "",
                 "wire_submissions": len(clients), "wire_clients": clients, "dispatch_client": "",
+                "price_aggressive_clients": aggressive, "price_aggressive_refusals": len(aggressive),
                 "dispatch_unresolved": uncertain,
                 "local_no_wire": no_wire and not uncertain, "reason": "prior_wire_unproven" if uncertain else "new_opportunity",
             })
@@ -229,7 +234,7 @@ class MirrorRetainedHoldMixin:
             session.flush()
             self._mirrorhold_cache_after_commit(session, row.id, row.payload)
             return row
-        data = row.payload
+        data = self._mirrorhold_upgrade_budget(session, row, event)
         if data["phase"] in FENCED_PHASES or data["phase"] in {"retired", "filled", "capped"}:
             return row
         if event.payload.metadata.get("mirrorhold_token"):
@@ -310,14 +315,16 @@ class MirrorRetainedHoldMixin:
                     "fanout_segment_id", "fanout_slot_id", "rpg_handoff_token", "rpg_resting_generation"))
                 or not self._mirrorhold_clear_order(session, order)):
             return False
-        clients, uncertain = self._mirrorhold_prior_wires(session, event)
+        clients, uncertain, aggressive = self._mirrorhold_prior_wires(session, event)
         if uncertain:
             return False  # Terminal-zero does not prove an unknown historical wire budget.
         clients = list(dict.fromkeys([*data["wire_clients"], *clients]))
+        aggressive = list(dict.fromkeys([*data.get("price_aggressive_clients", []), *aggressive]))
         no_wire = self._mirrorhold_proven_no_wire(session, order)
         phase = "retired" if data["phase"] == "retired" else "held" if no_wire else "blocked"
         data = self._mirrorhold_write(session, row, {**data, "phase": phase, "token": "",
             "wire_clients": clients, "wire_submissions": len(clients), "dispatch_unresolved": False,
+            "price_aggressive_clients": aggressive, "price_aggressive_refusals": len(aggressive),
             "local_no_wire": no_wire, "reason": "exact_terminal_audit_accounted"})
         self._mirrorhold_project(data)
         self._mirrorhold_log(data, data["reason"])
@@ -326,13 +333,13 @@ class MirrorRetainedHoldMixin:
     def _mirrorhold_prior_wires(self, session, event):
         account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == event.payload.broker_account_name))
         if account is None:
-            return [], False
+            return [], False, []
         orders = session.scalars(select(BrokerOrder).where(
             BrokerOrder.broker_account_id == account.id, BrokerOrder.symbol == event.payload.symbol,
             BrokerOrder.side == "buy", BrokerOrder.payload["fanout_slot_id"].as_string() == identity(event)[4],
             BrokerOrder.payload["fanout_segment_id"].as_string() == identity(event)[3],
         )).all()
-        clients, uncertain = [], False
+        clients, aggressive, uncertain = [], [], False
         for order in orders:
             audits = self._mirrorhold_audits(session, order)
             wire = (bool(order.broker_order_id)
@@ -341,9 +348,40 @@ class MirrorRetainedHoldMixin:
                            for a in audits))
             if wire:
                 clients.append(order.client_order_id)
+                refusals = [a for a in audits if a.event_source == "broker" and a.event_type == "rejected"
+                            and all((a.payload or {}).get("metadata", {}).get(k) == (order.payload or {}).get(k)
+                                    for k in ("fanout_slot_id", "fanout_segment_id"))]
+                codes = [(a.payload or {}).get("metadata", {}).get("webull_error_code") for a in refusals]
+                if "ORDER_RISK_RULE_PRICE_AGGRESSIVE" in codes:
+                    aggressive.append(order.client_order_id)
+                elif order.status == "rejected" and not any(codes):
+                    uncertain = True  # An unclassified prior wire cannot be a free reprice.
             elif not self._mirrorhold_proven_no_wire(session, order):
                 uncertain = True
-        return list(dict.fromkeys(clients)), uncertain
+        return list(dict.fromkeys(clients)), uncertain, list(dict.fromkeys(aggressive))
+
+    def _mirrorhold_budget_exhausted(self, data):
+        # Legacy cache entries stay conservative until an off-loop proof upgrade.
+        return data.get("price_aggressive_refusals", data["wire_submissions"]) >= MAX_PRICE_AGGRESSIVE_REFUSALS
+
+    def _mirrorhold_upgrade_budget(self, session, row, event):
+        data = row.payload
+        if "price_aggressive_clients" in data:
+            return data
+        clients, uncertain, aggressive = self._mirrorhold_prior_wires(session, event)
+        uncertain = (uncertain or any(client not in clients for client in data["wire_clients"])
+                     or data["wire_submissions"] != len(data["wire_clients"]))
+        clients = list(dict.fromkeys([*data["wire_clients"], *clients]))
+        phase, reason = data["phase"], data["reason"]
+        if uncertain and phase not in {"retired", "filled"}:
+            phase, reason = "uncertain", "prior_price_aggressive_budget_unproven"
+        elif phase == "capped" and len(aggressive) < MAX_PRICE_AGGRESSIVE_REFUSALS:
+            phase, reason = "blocked", "legacy_wire_cap_reclassified"
+        return self._mirrorhold_write(session, row, {**data, "wire_clients": clients,
+            "wire_submissions": len(clients), "price_aggressive_clients": aggressive,
+            "price_aggressive_refusals": len(aggressive), "phase": phase, "reason": reason,
+            "dispatch_unresolved": data.get("dispatch_unresolved", False)
+                or (uncertain and phase not in {"retired", "filled"})})
 
     def _mirrorhold_segment_readable(self, metadata):
         segment = metadata.get("fanout_segment_id") if isinstance(metadata, dict) else None
@@ -516,26 +554,29 @@ class MirrorRetainedHoldMixin:
             self._mirrorhold_log(data, "outside_8pct_no_submission")
         return outside
 
+    def _mirrorhold_refusal(self, event, reason, scan_receipt):
+        self.logger.warning("[OMS-MIRRORHOLD1] account=%s symbol=%s phase=refused reason=%s orders_considered=%s",
+                            event.payload.broker_account_name, event.payload.symbol, reason,
+                            scan_receipt["orders_considered"])
+        return reason
+
     def _mirrorhold_dispatch(self, session, event):
         if not self._mirrorhold_scope(event):
             return None
         scan_receipt = {"orders_considered": 0}
 
         def refuse(reason):
-            self.logger.warning("[OMS-MIRRORHOLD1] account=%s symbol=%s phase=refused reason=%s orders_considered=%s",
-                                event.payload.broker_account_name, event.payload.symbol, reason,
-                                scan_receipt["orders_considered"])
-            return reason
+            return self._mirrorhold_refusal(event, reason, scan_receipt)
 
         if self.__dict__.get("_symbol_tick_work_closing", False):
             return refuse("mirrorhold_shutdown")
         row = self._mirrorhold_read(session, event)
         if row is None:
             return refuse("mirrorhold_owner_missing")
-        data, md = row.payload, event.payload.metadata
+        data, md = self._mirrorhold_upgrade_budget(session, row, event), event.payload.metadata
         if data["phase"] not in {"held", "queued"}:
             return refuse("mirrorhold_owner_" + data["phase"])
-        if data["wire_submissions"] >= MAX_WIRE_SUBMISSIONS:
+        if self._mirrorhold_budget_exhausted(data):
             self._mirrorhold_write(session, row, {**data, "phase": "capped", "token": "",
                                                    "reason": "actual_submission_cap"})
             return refuse("mirrorhold_actual_submission_cap")
@@ -602,21 +643,27 @@ class MirrorRetainedHoldMixin:
                  and r.side == "buy" and r.intent_type == "open" and r.quantity == event.payload.quantity]
         if not exact:
             return
+        data = self._mirrorhold_upgrade_budget(session, row, event)
         wired = any(r.metadata.get("webull_wire_submitted_at_utc") or
                     (r.origin == "broker" and (r.broker_order_id or r.event_type in {"accepted", "filled", "partially_filled"}))
                     for r in exact)
         clients = list(data["wire_clients"])
+        aggressive = list(data.get("price_aggressive_clients", []))
         if wired and client not in clients:
             clients.append(client)
-        data = {**data, "wire_clients": clients, "wire_submissions": len(clients)}
+        price_aggressive = (wired and all(r.event_type == "rejected" and r.origin == "broker" and
+            r.metadata.get("webull_error_code") == "ORDER_RISK_RULE_PRICE_AGGRESSIVE" for r in exact))
+        if price_aggressive and client not in aggressive:
+            aggressive.append(client)
+        data = {**data, "wire_clients": clients, "wire_submissions": len(clients),
+                "price_aggressive_clients": aggressive, "price_aggressive_refusals": len(aggressive)}
         if any((r.event_type in {"filled", "partially_filled"} or r.filled_quantity > 0)
                and r.origin == "broker" for r in exact):
             phase, reason = "filled", "mirror_fill"
         elif any(r.event_type == "accepted" and r.origin == "broker" for r in exact):
             phase, reason = "accepted", "mirror_accepted"
-        elif client in clients and all(r.event_type == "rejected" and r.origin == "broker" and
-                 r.metadata.get("webull_error_code") == "ORDER_RISK_RULE_PRICE_AGGRESSIVE" for r in exact):
-            phase, reason = ("capped" if len(clients) >= MAX_WIRE_SUBMISSIONS else "held"), "PRICE_AGGRESSIVE"
+        elif price_aggressive:
+            phase, reason = ("capped" if self._mirrorhold_budget_exhausted(data) else "held"), "PRICE_AGGRESSIVE"
         elif all(r.event_type == "rejected" and r.origin == "client" and
                  r.metadata.get("webull_local_no_wire") == "true" and not
                  r.metadata.get("webull_wire_submitted_at_utc") for r in exact):
@@ -669,7 +716,9 @@ class MirrorRetainedHoldMixin:
             return job.get("attempt", 0) >= self._WEBULL_MIRROR_RESUBMIT_MAX_ATTEMPTS
         with self.session_factory() as session:
             row = self._mirrorhold_read(session, event)
-            return row is None or row.payload["wire_submissions"] >= MAX_WIRE_SUBMISSIONS
+            exhausted = row is None or self._mirrorhold_budget_exhausted(self._mirrorhold_upgrade_budget(session, row, event))
+            session.commit()
+            return exhausted
 
     def _mirrorhold_token_matches(self, data, event):
         return (data["phase"] == "queued" and data["token"] == event.payload.metadata.get("mirrorhold_token")
@@ -690,7 +739,7 @@ class MirrorRetainedHoldMixin:
                     and not data["event"]["payload"]["metadata"].get("rpg_handoff_token")
                     and reading.fresh
                     and reading.price >= Decimal(data["event"]["payload"]["metadata"]["stop_price"]) * Decimal("0.92")
-                    and data["wire_submissions"] < MAX_WIRE_SUBMISSIONS
+                    and not self._mirrorhold_budget_exhausted(data)
                     and (key, data["revision"]) not in self.__dict__.get("_mirrorhold_tick_attempts", set())]
             if not keys:
                 return
@@ -751,11 +800,14 @@ class MirrorRetainedHoldMixin:
                 query = query.where(DashboardSnapshot.payload["phase"].as_string().in_(["held", "queued"]))
             rows = session.scalars(query.with_for_update()).all()
             for row in rows:
-                data = row.payload
-                event = TradeIntentEvent.model_validate(data["event"])
+                event = TradeIntentEvent.model_validate(row.payload["event"])
+                data = self._mirrorhold_upgrade_budget(session, row, event)
                 if symbol is not None and event.payload.symbol != symbol.upper():
                     continue
-                reason = self._mirrorhold_gate(session, event)
+                scan_receipt = {"orders_considered": 0}
+                reason = self._mirrorhold_gate(session, event, session_bound=True, scan_receipt=scan_receipt)
+                if reason:
+                    self._mirrorhold_refusal(event, "mirrorhold_" + reason, scan_receipt)
                 if reason in {"resting_window_ended", "segment_ended", "mirror_filled"}:
                     data = self._mirrorhold_write(session, row, {**data, "phase": "retired",
                         "token": "", "reason": reason})
@@ -771,7 +823,7 @@ class MirrorRetainedHoldMixin:
                 reading = self._mirror_reading(event.payload.symbol)
                 if not reading.fresh or reading.price < Decimal(event.payload.metadata["stop_price"]) * Decimal("0.92"):
                     continue
-                if data["wire_submissions"] >= MAX_WIRE_SUBMISSIONS:
+                if self._mirrorhold_budget_exhausted(data):
                     continue
                 retry = TradeIntentEvent(source_service="oms-risk", produced_at=self._nfq_now(),
                                          payload=event.payload.model_copy(deep=True))
@@ -834,16 +886,22 @@ class MirrorRetainedHoldMixin:
                     self._nfq_price_holds.pop(event.payload.metadata["fanout_slot_id"], None)
             rows = session.scalars(select(DashboardSnapshot).where(
                 DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
-                DashboardSnapshot.payload["phase"].as_string().in_(["held", "queued"]))).all()
-            self._mirrorhold_durable_owner_ids = {row.id for row in rows}
+                or_(DashboardSnapshot.payload["phase"].as_string().in_(["held", "queued"]),
+                    and_(DashboardSnapshot.payload["phase"].as_string() == "capped",
+                         DashboardSnapshot.payload["price_aggressive_clients"].as_string().is_(None))))).all()
+            self._mirrorhold_durable_owner_ids = set()
             for row in rows:
-                data = row.payload
+                event = TradeIntentEvent.model_validate(row.payload["event"])
+                data = self._mirrorhold_upgrade_budget(session, row, event)
                 if data["phase"] == "queued":
                     data = self._mirrorhold_write(session, row, {**data, "phase": "held", "token": "",
                         "reason": "restart_queue_invalidated"})
                 if data["phase"] == "held":
                     event = TradeIntentEvent.model_validate(data["event"])
-                    reason = self._mirrorhold_gate(session, event)
+                    scan_receipt = {"orders_considered": 0}
+                    reason = self._mirrorhold_gate(session, event, session_bound=True, scan_receipt=scan_receipt)
+                    if reason:
+                        self._mirrorhold_refusal(event, "mirrorhold_" + reason, scan_receipt)
                     if reason in {"resting_window_ended", "segment_ended", "mirror_filled"}:
                         data = self._mirrorhold_write(session, row, {**data, "phase": "retired", "token": "",
                             "reason": reason})
