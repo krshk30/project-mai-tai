@@ -199,6 +199,27 @@ class UnboundCancelRequest:
     requested_at_ms: int
     account_ids: Mapping[str, str]
     account_providers: Mapping[str, str] = field(default_factory=dict)
+    session_key: str = ""
+
+
+@dataclass(frozen=True)
+class SchwabLocalCancelWitness:
+    """Consumer-owned causal closure, NOT broker inventory or SQL-absence alone.
+
+    Ordinary and replacement BUY submissions can precede durable journal writes.
+    The consumer must cover those paths or leave no_unjournaled_buy false.
+    """
+    request: UnboundCancelRequest
+    account_name: str
+    account_id: str
+    session_key: str
+    observed_at_ms: int
+    closure_kind: str
+    publication_closed: bool
+    no_unjournaled_buy: bool
+    no_live_buy: bool
+    no_inflight_buy: bool
+    no_unanswered_cancel: bool
 
 
 @dataclass(frozen=True)
@@ -223,6 +244,7 @@ def evaluate_unbound_cancel_terminal(
     books: Mapping[str, CompleteWorkingBook | None],
     *,
     fences: UnboundCancelFences | None,
+    schwab_witness: SchwabLocalCancelWitness | None = None,
     now_ms: int,
     freshness_ms: int = FRESHNESS_MS,
 ) -> UnboundCancelTerminalProof:
@@ -243,7 +265,7 @@ def evaluate_unbound_cancel_terminal(
 
     if (not all(_identity(v) for v in (expected.symbol, expected.request_id, expected.token,
                                      expected.generation, expected.purpose))
-            or len(expected.account_ids) != 2 or set(books) != set(expected.account_ids)
+            or len(expected.account_ids) != 2 or not set(books) <= set(expected.account_ids)
             or not all(_identity(n) and _identity(i) for n, i in expected.account_ids.items())):
         return result("unbound_request_identity_unknown")
     if (set(expected.account_providers) != set(expected.account_ids)
@@ -258,7 +280,23 @@ def evaluate_unbound_cancel_terminal(
                                           fences.owned_rows_closed, fences.request_cas_current))):
         return result("unbound_request_db_or_cas_unknown")
     for name, account_id in expected.account_ids.items():
-        book = books[name]
+        if expected.account_providers[name] == "schwab":
+            witness = schwab_witness
+            if (not isinstance(witness, SchwabLocalCancelWitness)
+                    or witness.request != expected or not _identity(expected.session_key)
+                    or (witness.account_name, witness.account_id, witness.session_key) != (
+                        name, account_id, expected.session_key)
+                    or witness.closure_kind not in {"no_dispatch", "exact_cancel_chain"}
+                    or any(v is not True for v in (witness.publication_closed,
+                        witness.no_unjournaled_buy, witness.no_live_buy,
+                        witness.no_inflight_buy, witness.no_unanswered_cancel))):
+                return result("unbound_schwab_causal_closure_unknown")
+            if (type(witness.observed_at_ms) is not int
+                    or not expected.requested_at_ms <= witness.observed_at_ms <= now_ms
+                    or now_ms - witness.observed_at_ms > freshness_ms):
+                return result("unbound_schwab_local_witness_stale")
+            continue
+        book = books.get(name)
         if (not isinstance(book, CompleteWorkingBook) or book.complete is not True
                 or book.source != "broker" or book.coverage != "all_working"
                 or (book.account_name, book.account_id) != (name, account_id)
