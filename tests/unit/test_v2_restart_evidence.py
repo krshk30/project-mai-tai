@@ -568,7 +568,7 @@ def test_report_contains_every_required_denominator(monkeypatch, tmp_path: Path,
 
     output = capsys.readouterr().out
     assert "new active/running PID=1/1" in output
-    assert "unchanged PID=8/8" in output
+    assert "unchanged PID=7/7" in output
     assert "before resolved=2/2 open managed rows=0 nonzero account-position rows=0" in output
     assert "after resolved=2/2 open managed rows=0 nonzero account-position rows=0" in output
     assert "alembic_version=20260910_0020->20260910_0020" in output
@@ -797,7 +797,7 @@ def test_approved_orb_restart_and_new_observer_are_not_a_false_failure(
     old["captured_at_utc"] = datetime(2026, 9, 27, tzinfo=UTC).isoformat()
     args.snapshot.write_text(json.dumps(old), encoding="utf-8")
     started = datetime(2026, 9, 30, 0, 11, tzinfo=UTC)
-    for name in ("oms", "strategy", "orb"):
+    for name in ("oms", "strategy"):
         current[name] = vre.ServiceState(
             name, 900 + len(name), "active", "running", 0, started.isoformat()
         )
@@ -807,7 +807,7 @@ def test_approved_orb_restart_and_new_observer_are_not_a_false_failure(
     )
     logs["orb-schwab"] = [("orb-schwab.log", ["2026-09-30 00:11:01,000 INFO OBSERVE_ONLY"])]
     monkeypatch.setattr(vre, "_installed_optional_services", lambda runner: ("orb-schwab",))
-    args.restarted.extend(("oms", "strategy", "orb"))
+    args.restarted.extend(("oms", "strategy"))
     args.new_service = ["orb-schwab"]
     args.expect_flag.extend(
         (
@@ -827,7 +827,7 @@ def test_approved_orb_restart_and_new_observer_are_not_a_false_failure(
 
     assert vre.report(args, runner=lambda command: "") == 0
     output = capsys.readouterr().out
-    assert "new active/running PID=4/4" in output
+    assert "new active/running PID=3/3" in output
     assert "active/running after snapshot=1/1; orb-schwab" in output
     assert "matched=3/3" in output
     assert "Final call: EXPECTED BY DESIGN" in output
@@ -897,7 +897,7 @@ def test_last_nights_prose_install_record_is_unknown_until_every_unit_is_classif
 ) -> None:
     args, current, logs = _report_fixture(monkeypatch, tmp_path)
     started = datetime(2026, 9, 30, 0, 11, tzinfo=UTC)
-    for name in ("oms", "strategy", "orb"):
+    for name in ("oms", "strategy"):
         current[name] = vre.ServiceState(name, 900 + len(name), "active", "running", 0, started.isoformat())
         logs[name] = [(f"{name}.log", ["2026-09-30 00:11:01,000 INFO healthy"])]
     current["orb-schwab"] = vre.ServiceState(
@@ -905,7 +905,7 @@ def test_last_nights_prose_install_record_is_unknown_until_every_unit_is_classif
     )
     logs["orb-schwab"] = [("orb-schwab.log", ["2026-09-30 00:11:01,000 INFO OBSERVE_ONLY"])]
     monkeypatch.setattr(vre, "_installed_optional_services", lambda runner: ("orb-schwab",))
-    args.restarted.extend(("oms", "strategy", "orb"))
+    args.restarted.extend(("oms", "strategy"))
     args.new_service = ["orb-schwab"]
     args.expect_flag.extend(
         (
@@ -1035,7 +1035,7 @@ def test_undeclared_new_observer_is_unknown(monkeypatch, tmp_path: Path, capsys)
 def test_new_observer_already_in_snapshot_is_unknown(monkeypatch, tmp_path: Path) -> None:
     args, current, _ = _report_fixture(monkeypatch, tmp_path)
     payload = json.loads(args.snapshot.read_text(encoding="utf-8"))
-    payload["services"]["orb-schwab"] = payload["services"]["orb"]
+    payload["services"]["orb-schwab"] = payload["services"]["oms"]
     args.snapshot.write_text(json.dumps(payload), encoding="utf-8")
     monkeypatch.setattr(vre, "_installed_optional_services", lambda runner: ("orb-schwab",))
     current["orb-schwab"] = vre.ServiceState(
