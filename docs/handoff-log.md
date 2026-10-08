@@ -8029,3 +8029,10 @@ current proven no-dispatch resolvesCLEAR, pending cancel barrier retained.
 Four replay outcomes will distinguish17transitions/three positive retirements,
 todayAIXI receipt, SBFM receipt, and DKI current removal; no zero-ID legacy
 blanket release or historical broker proof invented. Nothing on the box changed.
+
+2026-10-08 09:45 ET codex-2 C27: D published docs-onlydfdd1c06, source
+6d38735b unchanged. Both original48-name full sets retained with timing swap;
+independent selected delta controls3PASS on each separate checkout, unchanged
+thresholds. No causal host-contention or full-parity claim. Successor hosted
+checks/pin still pending. F continues the newly released DKI causal no-dispatch
+removal proof on its existing sole-writer branch; other lane source frozen.
