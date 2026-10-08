@@ -257,3 +257,31 @@ async def test_real_pg_schwab_source_mutations_are_detected(sessions, sdk, monke
             await test_unfiltered_slices_walk_terminal_parents(sessions, sdk, rows, ["working"], False)
         else:
             await test_schwab_acquisition_over_15_seconds_is_unknown(sessions, sdk, monkeypatch)
+
+
+@pytest.mark.parametrize("terminal_receipt", [True, False])
+@pytest.mark.asyncio
+async def test_same_request_broker_receipt_reused_but_absence_book_reacquired(sessions, sdk, monkeypatch, terminal_receipt):
+    from project_mai_tai.db.models import TradeIntent
+    from project_mai_tai.oms import cancel_terminal as journal
+
+    detail = {"account_id": "ACC1", "client_order_id": "exact-coid", "order_id": "broker-id",
+              "items": [{"symbol": "DKI", "order_status": "CANCELLED", "filled_qty": "0"}]}
+    client = runtime.Client(detail=detail if terminal_receipt else None)
+    routed = runtime.adapter(client)
+    clock = [0.0]
+    broker.broker_binding(routed, "live:orb")[0]._query_budget.clock = lambda: clock[0]
+    intent_id = runtime.seed(sessions, routed)
+    assert await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    count = len(client.calls)
+    if terminal_receipt:
+        client.on_read = lambda: pytest.fail("an exact recorded terminal receipt needs no new HTTP")
+    advanced = NOW + 8 * 3_600_000
+    clock[0] = 8 * 3600
+    monkeypatch.setattr(broker, "now_ms", lambda: advanced)
+    evidence = await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert len(client.calls) == count + (0 if terminal_receipt else 2)
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        receipt = journal.receipt_from_intent(intent, session.get(runtime.BrokerAccount, intent.broker_account_id))
+        assert evaluate_cancel_terminal(receipt, evidence[receipt.scope.event_id], now_ms=advanced).terminal
