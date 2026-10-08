@@ -130,6 +130,16 @@ Raw local receipts (not copied into Git because they contain account data):
 - /tmp/oct8-gate-readonly-stderr-v5.txt: empty,
   sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.
 
+Fresh follow-up at 08:38:50 ET on the final committed helper returned rc 0:
+both direct broker holdings and working-order lists empty, managed/virtual
+book and in-flight intents empty, blockers/unknown/errors empty. Raw local
+/tmp/oct8-gate-readonly-0839.json sha256
+9ce0c8aaa51baca5920670de8ae21701ad0e194e534a664e588a2b06639627fe;
+/tmp/oct8-gate-readonly-0839.stderr is empty (same empty hash above). The
+unmodified native preflight_oms_restart.sh also returned GO at 08:38:16 ET,
+both account stamps 0 seconds old and zero open managed rows. These morning
+receipts do not authorize a restart or replace the after-close fresh reads.
+
 The committed mechanics suite has 200 passing tests: runner/read retries,
 stager/manifest/ancestry controls, broker/book gates, post-install proofs and
 preopen/daily binding refresh. Ruff (excluding unchanged historical fixtures)
