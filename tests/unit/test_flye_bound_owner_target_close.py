@@ -250,6 +250,28 @@ def test_repeated_flat_polls_do_not_write_owner_or_budget():
     assert writes == []
 
 
+@pytest.mark.parametrize("phase", ["resting", "awaiting_fill"])
+@pytest.mark.parametrize("fault", ["none", "union", "held", "open", "no_terminal"])
+def test_unfilled_pending_union_recovers_only_after_exact_terminal_and_flat_book(phase, fault):
+    from tests.unit.test_v2_flip_owned_first_entry import _book, _place_first, _strategy
+
+    strategy, clock, _, _ = _strategy(dual=True)
+    state, opportunity = _place_first(strategy, clock, "FLYE")
+    strategy.drain_pending_intents()
+    strategy.drain_webull_direct_intents()
+    state.flip_owner_phase = phase
+    state.position_qty = 1  # Conservative pending BUY union; no held shares or managed row.
+    _book(strategy, clock, "FLYE")
+    strategy._end_flip_owner_on_sell(state)
+    assert state.flip_owner_phase == "unknown"
+    state.position_qty = 1 if fault == "union" else 0
+    state.position_qty_held = 1 if fault == "held" else 0
+    legs = (FlipPositionLeg(WEBULL, "test-live-row", clock[0], 1),) if fault == "open" else ()
+    _book(strategy, clock, "FLYE", *legs,
+          terminal_unfilled_opportunities=frozenset() if fault == "no_terminal" else frozenset({opportunity}))
+    assert (state.flip_owner_phase == "idle") is (fault == "none")
+
+
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("receipt_clear", [False, True])
 @pytest.mark.parametrize("book_fault", ["none", "open", "unknown", "held"])
