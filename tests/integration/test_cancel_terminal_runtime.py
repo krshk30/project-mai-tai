@@ -9,10 +9,10 @@ import threading
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import ModuleType, SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import create_engine, event, select, text
+from sqlalchemy import create_engine, event, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
@@ -23,7 +23,7 @@ from project_mai_tai.broker_adapters.webull import WebullAccountConfig, WebullBr
 from project_mai_tai.broker_adapters.webull_order_reads import shared_budget
 from project_mai_tai.cancel_terminal_proof import evaluate_cancel_terminal
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerAccount, Strategy, TradeIntent
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms import cancel_terminal as journal
 from project_mai_tai.oms.service import OmsRiskService
@@ -356,10 +356,26 @@ async def test_schwab_exact_target_receipt_without_relabelled_account_list(sessi
 
     leaf._authorized_request_json = get
     intent_id = seed(sessions, leaf)
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        account = session.get(BrokerAccount, intent.broker_account_id)
+        account.provider = "schwab"
+        order = BrokerOrder(strategy_id=intent.strategy_id, broker_account_id=account.id,
+                            client_order_id="exact-coid", broker_order_id="broker-id", symbol="DKI",
+                            side="buy", quantity=Decimal(1), status="cancelled",
+                            order_type="limit", time_in_force="day", payload={})
+        session.add(order)
+        event = cancel_event()
+        event.event_id = UUID(intent.payload["event_id"])
+        journal.bind_cancel_target(intent, event, leaf, order)
+        session.flush()
+        session.execute(update(TradeIntent).where(TradeIntent.id == intent_id).values(
+            updated_at=datetime.fromtimestamp((NOW - 20_000) / 1000, UTC)))
+        session.commit()
+    await journal.acquire_cancel_terminal_evidence(sessions, leaf, [intent_id])
+    assert read(sessions, intent_id)[1].terminal
     request = await asyncio.to_thread(journal._read_request, sessions, intent_id)
-    evidence = await broker.acquire_broker_cancel_evidence(leaf, request.receipt,
-                                                         broker_order_id="broker-id")
-    assert evaluate_cancel_terminal(request.receipt, evidence, now_ms=NOW).terminal
     assert calls == [("GET", "/trader/v1/accounts/ACC1/orders/broker-id")]
     unknown = await broker.acquire_broker_cancel_evidence(leaf, request.receipt)
     assert not evaluate_cancel_terminal(request.receipt, unknown, now_ms=NOW).terminal
+    assert await broker.acquire_complete_working_book(leaf, "live:orb") is None
