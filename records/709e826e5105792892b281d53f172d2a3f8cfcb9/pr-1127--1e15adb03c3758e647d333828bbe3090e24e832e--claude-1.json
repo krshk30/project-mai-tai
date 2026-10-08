@@ -1,0 +1,9 @@
+{
+  "pr_number": 1127,
+  "range_base": "1e15adb03c3758e647d333828bbe3090e24e832e",
+  "range_head": "709e826e5105792892b281d53f172d2a3f8cfcb9",
+  "reviewed_at": "2026-10-08T17:27:01Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "LINESRC2 re-review after rebase onto main 1e15adb0 (GAPLINE1 merged). Range-diff vs my 10-08 pin 84bd8b80: commit 2 identical; commit 1 conflict resolution keeps BOTH paths \u2014 gap_resume keeps GAPLINE1's one-shot budget, other reasons keep LineRepair (<=5 attempts, 1/min, inflight guard); shadow and gap carry merged into one state-only update (no historical flip, no slot unconsumed). Line/gap/restore unit files (22): 441 passed on PR vs 417 on main, 0 failures. My mutations on the new conflict lines: gap_resume routed to LineRepair -> 2F; carry dropped from the state-only update -> 2F. CI validate green twice. Hot path: unchanged from the 84bd8b80 review (repair off-loop via asyncio.to_thread; bar handler adds in-memory state-only update only). Install after the close with LINE_CHART_RESTORATION=true and GAP_LINE_CARRY=true; acceptance 10-09 07:00-07:15: a probe per closed bar per watched name from 07:01, fallback lines counted, 0 anchored-poll errors; rollback env 243 false + v2 restart."
+}
