@@ -8304,3 +8304,20 @@ fresh full pair47 same failures/zeroaddedremoved; parent read pair JSON.
 F43eb misses14:30, four actual outcomes unchanged:0/7 old active retired,
 AIXI waits exact receipt, SBFMCLEAR20.173175s, DKIzerooppblocked. No proof
 invented; C runner informed exclude unpinned/blocked lanes. No production action.
+
+2026-10-08 15:06 ET codex-2 C50: exact G031/main1e15 Ubuntu pair completed
+in isolated Actions37828102474/evidence42dd2dcc:20/20 PASS each, original50ms
+test threshold, alternating fresh pytest subprocesses. Parent read40 logs:
+G24.040-25.812ms, main24.216-25.466ms. No failed slow frames; original912ms
+still UNMEASURED. Largest GC sample was outside the measured interval, not
+causality. Unchanged-head Validate37822520711 attempt2 running. C49 correction:
+RPG budget initial SELECT existed on main; additions are legacy-upgrade reads
+and commit, separate from the memory-only quote scheduling chain.
+I draft#1136 c6f44672 published:24-line production change preserves genuine
+fresh SELL awaiting_close through existing retry_exhausted cancellation barrier.
+254 focused/36 new controls,9/9 mutants RED, full pair pending. Read-only sweep
+98 resets/29names;15 reset-after-exit cases,14 all-sibling closures measured,
+13 later rest and1FLYE14:10 missing. Historical positive cancel completion
+UNMEASURED, controlled positive receipt explicitly labelled. Open/UNKNOWN
+siblings never released; same-segment real retry remains held. H frozen READY,
+F functional blocker unchanged. No production or candidate activation.
