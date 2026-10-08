@@ -8,7 +8,7 @@ from decimal import Decimal
 from hashlib import sha256
 from threading import RLock
 
-from sqlalchemy import func, select, tuple_, update
+from sqlalchemy import BigInteger, cast, func, select, tuple_, update
 
 from project_mai_tai.db.models import (
     BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition, Strategy,
@@ -136,7 +136,7 @@ class FalseFlipStore:
                 DashboardSnapshot.snapshot_type == BUDGET_TYPE,
                 DashboardSnapshot.created_at >= current_session_anchor(at),
                 DashboardSnapshot.payload["symbol"].as_string() == before.symbol,
-                DashboardSnapshot.payload["segment"].as_integer() == before.segment,
+                cast(DashboardSnapshot.payload["segment"].as_string(), BigInteger) == before.segment,
             ).order_by(DashboardSnapshot.payload["revision"].as_integer().desc())
                 .limit(1).with_for_update()).all()
             stored = FalseBudget.read(rows[0].payload) if rows else FalseBudget(before.symbol, before.segment)
@@ -164,7 +164,7 @@ def record_bar(session_factory, payload: dict, *, now: datetime | None = None) -
             DashboardSnapshot.snapshot_type == BAR_TYPE,
             DashboardSnapshot.created_at >= current_session_anchor(now),
             DashboardSnapshot.payload["symbol"].as_string() == bar.symbol,
-            DashboardSnapshot.payload["bar_ms"].as_integer() == bar.bar_ms,
+            cast(DashboardSnapshot.payload["bar_ms"].as_string(), BigInteger) == bar.bar_ms,
         ).limit(513)).all()
         if len(rows) > 512:
             raise ValueError("entry-bar proof census exceeds bound")
@@ -180,7 +180,7 @@ def record_bar(session_factory, payload: dict, *, now: datetime | None = None) -
                     OmsManagedPosition.strategy_code == "schwab_1m_v2",
                     OmsManagedPosition.entry_time >= current_session_anchor(now),
                     OmsManagedPosition.symbol == bar.symbol,
-                    OmsManagedPosition.entry_classification["bar_ms"].as_integer() == bar.bar_ms,
+                    cast(OmsManagedPosition.entry_classification["bar_ms"].as_string(), BigInteger) == bar.bar_ms,
                 ).limit(513).with_for_update()).all()
                 if len(managed) > 512:
                     raise ValueError("entry-bar invalidation census exceeds bound")
@@ -231,7 +231,7 @@ def classify_managed_entries(session_factory, *, now: datetime | None = None) ->
         bars = session.scalars(select(DashboardSnapshot).where(
             DashboardSnapshot.snapshot_type == BAR_TYPE, DashboardSnapshot.created_at >= anchor,
             tuple_(DashboardSnapshot.payload["symbol"].as_string(),
-                   DashboardSnapshot.payload["bar_ms"].as_integer()).in_(keys)).limit(2049)).all()
+                   cast(DashboardSnapshot.payload["bar_ms"].as_string(), BigInteger)).in_(keys)).limit(2049)).all()
         if len(bars) > 2048:
             raise ValueError("false-flip bar proof census exceeds bound")
         by_bar = {(p.payload["symbol"], int(p.payload["bar_ms"])): p.payload for p in bars}
