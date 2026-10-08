@@ -175,18 +175,16 @@ async def acquire_complete_working_book(adapter, account_name: str) -> CompleteW
     return None
 
 
-async def _schwab_book(leaf, account_name: str, account_id: str) -> CompleteWorkingBook:
+async def _schwab_book(leaf, account_name: str, account_id: str, *, target_client_order_id="") -> CompleteWorkingBook:
     """365-day equity coverage under the explicitly approved below-cap contract.
 
-    Include terminal roots: a FILLED entry can still own an active BUY child.
-    No partial result survives an unreadable/capped status or the global bound.
+    Unfiltered seven-day slices include terminal roots with active BUY children.
+    No partial result survives an unreadable/capped slice or the global bound.
     """
     started = now_ms()
     end = datetime.fromtimestamp(started / 1000, UTC)
     orders: dict[str, BookOrder] = {}
     seen_trees: dict[str, dict] = {}
-    statuses = (leaf.ACCEPTED_STATUSES | {"AWAITING_STOP_CONDITION", "AWAITING_UR_OUT", "UNKNOWN"}
-                | leaf.FILLED_STATUSES | (leaf.CANCELLED_STATUSES - {"CANCELLED"}) | leaf.REJECTED_STATUSES)
 
     def walk(row, depth=0):
         if not isinstance(row, dict) or depth > 20:
@@ -210,6 +208,18 @@ async def _schwab_book(leaf, account_name: str, account_id: str) -> CompleteWork
             status = _status(raw)
         if status not in TERMINAL | {"filled", "partially_filled", "working", "replaced"}:
             raise ValueError("schwab_book_status_unknown")
+        for child in children:
+            walk(child, depth + 1)
+        exact_target = bool(target_client_order_id) and row.get("clientOrderId") == target_client_order_id
+        # Terminal history is not part of the working book. Walk its children
+        # first; retain an exact bound target so fills cannot become absence.
+        if status in TERMINAL | {"filled", "replaced"} and not exact_target:
+            return
+        if exact_target and status in TERMINAL | {"replaced"}:
+            if status == "replaced" or row.get("filledQuantity") is None:
+                raise ValueError("schwab_target_terminal_fills_unknown")
+            if not _zero(row["filledQuantity"]):
+                status = "partially_filled"
         if legs:
             if len(legs) != 1 or not isinstance(legs[0], dict):
                 raise ValueError("schwab_book_multileg_unknown")
@@ -225,22 +235,25 @@ async def _schwab_book(leaf, account_name: str, account_id: str) -> CompleteWork
                 orders[str(oid)] = BookOrder(coid, instrument["symbol"], status, side, str(oid))
         elif not children:
             raise ValueError("schwab_book_empty_order_unknown")
-        for child in children:
-            walk(child, depth + 1)
 
     async with asyncio.timeout(15):
-        for root_status in sorted(statuses):
-            params = urlencode({"fromEnteredTime": (end - timedelta(days=365)).isoformat(),
-                                "toEnteredTime": end.isoformat(), "maxResults": 3000,
-                                "status": root_status})
+        start = end - timedelta(days=365)
+        while start < end:
+            stop = min(start + timedelta(days=7), end)
+            params = urlencode({"fromEnteredTime": start.isoformat(),
+                                "toEnteredTime": stop.isoformat(), "maxResults": 3000})
             code, _headers, rows = await leaf._authorized_request_json(
                 "GET", f"/trader/v1/accounts/{quote(account_id, safe='')}/orders?{params}")
             if code != 200 or not isinstance(rows, list) or len(rows) >= 3000:
                 raise ValueError("schwab_book_unreadable_or_capped")
             for row in rows:
-                if not isinstance(row, dict) or row.get("status") != root_status:
-                    raise ValueError("schwab_book_filter_mismatch")
+                if not isinstance(row, dict) or not isinstance(row.get("enteredTime"), str):
+                    raise ValueError("schwab_book_date_unknown")
+                entered = datetime.fromisoformat(row["enteredTime"].replace("Z", "+00:00"))
+                if entered.tzinfo is None or not start <= entered <= stop:
+                    raise ValueError("schwab_book_date_scope_mismatch")
                 walk(row)
+            start = stop
     finished = now_ms()
     if not started <= finished <= started + 15_000:
         raise ValueError("schwab_book_acquisition_stale")
@@ -349,7 +362,11 @@ async def acquire_broker_cancel_evidence(
             or receipt.refusal_origin == "skipped_before_submit"
         ):
             return evidence
-        book = await acquire_complete_working_book(adapter, receipt.scope.account_name)
+        try:
+            book = await _schwab_book(leaf, receipt.scope.account_name, account_id,
+                                      target_client_order_id=receipt.scope.client_order_id)
+        except Exception:
+            return evidence
         return replace(evidence, book=book, source="broker" if book is not None else "unknown")
     if status:
         return replace(evidence, source="broker", target_status=status,
