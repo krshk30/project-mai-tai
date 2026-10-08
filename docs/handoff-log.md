@@ -7885,3 +7885,17 @@ One hosted Validate pass; other rerun pending after existing NFQ2 duplicate
 quote benchmark744ms vs50ms failed, threshold unchanged and no CI-cause claim.
 Friday17:00ET one-shot wbquiet1-friday-evidence-report scheduled, no box job.
 No production read/write, service action, merge/pin/deploy or behavior change.
+
+2026-10-08 07:43 ET codex-2: reviewer ledger disposition accepted; #1126
+00bd0c64325ec25c11642d913c4a0ae2b35aad0f and #1124
+b40212e420ea3eb6312ab47df83aa6bb2042daf1 marked READY without head changes.
+GAP Validate x2GREEN. WB pushGREEN; PR red solely known NFQ2 duplicate-quote
+timing control0.969s/0.050s; accepted by reviewer, no threshold/gate bypass.
+Supplemental82hold/26day/16distinctflip/16of16+5%barproxy/13entry controls
+is claude-1 evidence closing the historical retention blocker, not own fills.
+WB reader coverage PARTIAL is accepted for this log-only install. Tomorrow
+morning note_consumed tri-state/snapshot/RESERVE1/ORB hooks are separately
+scheduled wbquiet1-morning-reader-follow-up, not represented in today's head.
+Tonight candidate afterclose: GAP(v2)/WB(OMS), ORB lane1 only if pinned.
+LINE_CHART remainsOFF. No source edit, pin/merge, staging, switch/service or
+production action performed by this READY update.
