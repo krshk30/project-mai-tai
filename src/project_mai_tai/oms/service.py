@@ -62,6 +62,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms import wbquiet_shadow
 from project_mai_tai.oms.mirror_fresh_price import MirrorFreshPriceMixin
 from project_mai_tai.oms.eh_fresh_price import EhFreshPriceMixin
 from project_mai_tai.oms.mirror_retained_hold import MirrorRetainedHoldMixin
@@ -1115,12 +1116,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
             now = asyncio.get_running_loop().time()
             if now - last_broker_sync >= broker_sync_interval_secs:
+                shadow_periodic = wbquiet_shadow.PERIODIC.set(True)
                 try:
                     sync_summary = await self.sync_broker_state()
                 except Exception:
                     self.logger.exception("failed syncing broker state")
                 else:
                     self.logger.debug("broker state sync complete: %s", sync_summary)
+                finally:
+                    wbquiet_shadow.PERIODIC.reset(shadow_periodic)
                 last_broker_sync = now
                 # #3: the uncovered-share page runs on the sync cadence, independent of every exit
                 # routine. Wrapped - it must never break the control loop, and never be silent.
@@ -10233,8 +10237,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
 
     async def sync_broker_state(self, *, account_names: list[str] | None = None) -> dict[str, int]:
+        shadow_observer, shadow_frame = await wbquiet_shadow.prepare(self, account_names)
+        shadow_token = wbquiet_shadow.CURRENT.set(shadow_frame)
         pass_id = self.__dict__.get("_reserve1_sync_pass_id", 0) + 1
         self._reserve1_sync_pass_id = pass_id
+        wbquiet_shadow.bind_pass(shadow_frame, pass_id)
         started = time.monotonic()
         outcome = "failed"
         self.logger.info(
@@ -10257,6 +10264,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "[OMS-BROKER-SYNC-PASS] id=%d phase=end outcome=%s duration_ms=%.3f "
                 "exceeds_note_age=%s", pass_id, outcome, duration_ms, duration_ms > bound_ms,
             )
+            wbquiet_shadow.CURRENT.reset(shadow_token)
+            await wbquiet_shadow.finish(self, shadow_observer, shadow_frame, outcome)
 
     async def _sync_broker_state_pass(
         self, *, account_names: list[str] | None = None
@@ -10402,6 +10411,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - a failed read is UNKNOWN, never flat
+                wbquiet_shadow.note_read(account_name, "unreadable")
                 unreadable.append(account_name)
                 # ⛔⭐⭐ `consecutive=` MAKES A RUN A FACT INSTEAD OF AN INFERENCE.
                 # A successful read logs NOTHING, so before this counter existed the only way
@@ -10439,6 +10449,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     account_name, n, exc,
                 )
                 continue
+            wbquiet_shadow.note_read(account_name, "returned_not_wire_proof")
             # ⭐ The read SUCCEEDED. Reset the run — this is the event that was previously
             # invisible, and its absence is what forced Q5 to infer run boundaries from gaps.
             try:
@@ -10479,6 +10490,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     broker_account_id=account_id,
                     snapshots=snapshots,
                 )
+                wbquiet_shadow.note_consumed(
+                    [name for aid, name in accounts if aid == account_id],
+                    "sync_account_positions",
+                )
             # ⛔⭐ N3 — NEVER PUBLISH A FRESH FALSE ZERO. #714 made an erased row restorable, but
             # measured restores took 6.648s--19.119s while downstream consumers act inside 10s.
             # Restoration is therefore recovery, never permission to erase early. The measured
@@ -10502,6 +10517,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 minimum_age_seconds=clear_min_age_seconds,
                 observed_at=utcnow(),
                 deferred_out=deferred,
+            )
+            wbquiet_shadow.note_consumed(
+                [name for aid, name in accounts if aid in account_ids], "virtual_clear",
             )
             if deferred:
                 account_names = {account_id: name for account_id, name in accounts}
@@ -10542,6 +10560,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             # `oms_managed_positions` is the ownership discriminator (#704) and carries OUR quantity.
             restored = self.store.restore_virtual_positions_from_managed(
                 session, broker_account_ids=account_ids,
+            )
+            wbquiet_shadow.note_consumed(
+                [name for aid, name in accounts if aid in account_ids], "virtual_restore",
             )
             if restored:
                 account_names = {account_id: name for account_id, name in accounts}

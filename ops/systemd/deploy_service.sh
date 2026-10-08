@@ -22,7 +22,7 @@ if [[ ! -d "$REPO_DIR/.git" ]]; then
 fi
 
 if [[ -z "$SERVICE_TARGET" ]]; then
-  echo "usage: deploy_service.sh <repo_dir> <branch> <control|reconciler|strategy|oms|market-data|schwab-1m-v2|orb>"
+  echo "usage: deploy_service.sh <repo_dir> <branch> <control|reconciler|strategy|oms|market-data|schwab-1m-v2|orb-schwab>"
   exit 1
 fi
 
@@ -51,8 +51,8 @@ case "$SERVICE_TARGET" in
     PRIMARY_UNIT="project-mai-tai-schwab-1m-v2.service"
     HIGH_RISK=0
     ;;
-  orb)
-    PRIMARY_UNIT="project-mai-tai-orb.service"
+  orb-schwab)
+    PRIMARY_UNIT="project-mai-tai-orb-schwab.service"
     # The operator requires ORB changes to land outside its observed session.
     HIGH_RISK=1
     ;;
@@ -76,7 +76,7 @@ fi
 
 if [[ "$HIGH_RISK" == "1" && "$ALLOW_LIVE_RESTART" != "1" && "$IN_MARKET_WINDOW" == "1" ]]; then
   echo "refusing $SERVICE_TARGET deploy during ET market hours without MAI_TAI_ALLOW_LIVE_RESTART=1"
-  echo "control and reconciler are lower-risk; strategy, oms, market-data, and orb require explicit live approval"
+  echo "control and reconciler are lower-risk; strategy, oms, market-data, and orb-schwab require explicit live approval"
   exit 1
 fi
 
@@ -188,7 +188,7 @@ heartbeat_service_for_unit() {
     project-mai-tai-oms.service) echo "oms-risk" ;;
     project-mai-tai-market-data.service) echo "market-data-gateway" ;;
     project-mai-tai-schwab-1m-v2.service) echo "schwab-1m-v2" ;;
-    project-mai-tai-orb.service) echo "orb" ;;
+    project-mai-tai-orb-schwab.service) echo "orb-schwab" ;;
     *)
       echo "No heartbeat service mapping for $1" >&2
       return 3
@@ -354,7 +354,7 @@ echo "Refreshing runtime in $REPO_DIR (migrations=$RUN_MIGRATIONS)..."
 sudo MAI_TAI_RUN_MIGRATIONS="$RUN_MIGRATIONS" bash ops/bootstrap/08_install_runtime.sh "$REPO_DIR"
 
 case "$SERVICE_TARGET" in
-  control|reconciler|strategy|schwab-1m-v2|orb)
+  control|reconciler|strategy|schwab-1m-v2|orb-schwab)
     restart_unit "$PRIMARY_UNIT"
     ;;
   oms)

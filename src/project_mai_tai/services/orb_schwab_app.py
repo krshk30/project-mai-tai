@@ -6,12 +6,15 @@ import asyncio
 import json
 import logging
 import signal
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.events import (
+    HeartbeatEvent,
+    HeartbeatPayload,
     MarketDataSubscriptionEvent,
     MarketDataSubscriptionPayload,
     stream_name,
@@ -66,16 +69,65 @@ class OrbSchwabService(OrbService):
         self._observe_plan_at: dict[str, datetime] = {}
         self._observe_crosses: set[tuple[str, str, str]] = set()
         self._observe_seen_bars: dict[str, set[datetime]] = {}
-        if (self._observe_only or self.settings.orb_live_schwab_orders_enabled) and (
-            self.settings.orb_paper_atr_entry_gate_enabled or self.settings.orb_paper_four_red_delay_enabled
-        ):
-            raise ValueError("Optional paper entry gates need a separately reviewed native-order design")
         self._exit_held_symbols: set[str] = set()
         self._exit_last_poll: datetime | None = None
         self._exit_atr_cache: dict[str, tuple[datetime, list, str]] = {}
         self._exit_last_publish: dict[str, datetime] = {}
         self._observe_exit_entries: dict[str, dict] = {}
         self._observe_exit_records: set[tuple[str, str | None, str, str]] = set()
+        self._live_last_bar_at: datetime | None = None
+        self._live_last_decision_at: datetime | None = None
+        self._live_healthy_since: datetime | None = None
+
+    def _live_phase(self, now: datetime) -> str:
+        opening = self._session_open_utc()
+        if now < opening - timedelta(minutes=5):
+            return "waiting_for_open"
+        if now < opening - timedelta(minutes=3):
+            return "opening_range"
+        if now < opening + timedelta(minutes=30):
+            return "entry_window"
+        return "session_complete"
+
+    async def _publish_live_heartbeat(self) -> None:
+        now = self._processing_time()
+        since = self._live_healthy_since or now
+        event = HeartbeatEvent(
+            source_service=_SERVICE,
+            produced_at=now,
+            payload=HeartbeatPayload(
+                service_name=_SERVICE, instance_name=_SERVICE, status="healthy",
+                details={
+                    "mode": "OBSERVE_ONLY" if self._observe_only else "LIVE",
+                    "phase": self._live_phase(now),
+                    # HeartbeatPayload's existing wire contract is dict[str, str].
+                    "universe": json.dumps(sorted(self._universe)),
+                    "subscribed": json.dumps(
+                        [] if self._observe_only or not self._gateway_subscription_announced
+                        else self._last_gateway_symbols
+                    ),
+                    "last_bar_at": self._live_last_bar_at.isoformat() if self._live_last_bar_at else "",
+                    "last_decision_at": self._live_last_decision_at.isoformat() if self._live_last_decision_at else "",
+                    "healthy_since": since.isoformat(),
+                },
+            ),
+        )
+        await asyncio.wait_for(self.redis.xadd(
+            stream_name(self.settings.redis_stream_prefix, "heartbeats"),
+            {"data": event.model_dump_json()},
+            maxlen=self.settings.redis_heartbeat_stream_maxlen, approximate=True,
+        ), timeout=2)
+        self._live_healthy_since = since
+
+    async def _live_heartbeat_loop(self) -> None:
+        # Separate task: Redis latency never serializes bar processing or exits.
+        while True:
+            try:
+                await self._publish_live_heartbeat()
+            except Exception as exc:
+                self._live_healthy_since = None
+                logger.warning("[ORB-SCHWAB-HEARTBEAT] publish failed: %s", type(exc).__name__)
+            await asyncio.sleep(15)
 
     def _maybe_roll_session(self, now: datetime | None = None) -> None:
         current = now or datetime.now(UTC)
@@ -104,6 +156,8 @@ class OrbSchwabService(OrbService):
         self._exit_last_poll = None
         self._observe_exit_entries.clear()
         self._observe_exit_records.clear()
+        self._live_last_bar_at = None
+        self._live_last_decision_at = None
 
     async def _sync_gateway_subscription(self, symbols: list[str]) -> None:
         desired = sorted({str(symbol).upper() for symbol in symbols if str(symbol).strip()})
@@ -175,6 +229,8 @@ class OrbSchwabService(OrbService):
         observed_price: float | None = None,
     ) -> None:
         if symbol in self._universe:
+            if self._live_last_bar_at is None or bar.timestamp > self._live_last_bar_at:
+                self._live_last_bar_at = bar.timestamp
             opening = self._session_open_utc()
             if opening - timedelta(minutes=3) <= bar.timestamp < opening:
                 self._first_macd_processing_at.setdefault(
@@ -426,6 +482,7 @@ class OrbSchwabService(OrbService):
                     deferred_symbols.add(symbol)
                     continue
                 if atr.verdict != "allowed":
+                    self._live_last_decision_at = now
                     order.cancelled = True
                     self._pending_macd_checked_at.pop(key, None)
                     self._first_macd_processing_at.pop(key, None)
@@ -441,6 +498,7 @@ class OrbSchwabService(OrbService):
                 deferred_symbols.add(symbol)
                 continue
             self._pending_macd_checked_at.pop(key, None)
+            self._live_last_decision_at = now
             first_processing_at = self._first_macd_processing_at.pop(key)
             was_deferred = key in self._macd_deferred_bars
             self._macd_deferred_bars.discard(key)
@@ -561,6 +619,7 @@ class OrbSchwabService(OrbService):
                 open_entries, self.session_factory, self.settings.strategy_schwab_1m_v2_account_name
             )
             self._exit_held_symbols = {entry["symbol"] for entry in entries}
+        heartbeat_task = asyncio.create_task(self._live_heartbeat_loop(), name="orb-schwab-heartbeat")
         try:
             while True:
                 self._maybe_roll_session()
@@ -580,6 +639,9 @@ class OrbSchwabService(OrbService):
                 if processed == 0:
                     await asyncio.sleep(1)
         finally:
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
             # A failed/ambiguous first XADD is not permission to clear retained
             # coverage. Only a successfully announced instance may release it.
             if not self.settings.market_data_subscription_startup_enabled or self._gateway_subscription_announced:

@@ -7,5 +7,5 @@ sudo systemctl status \
   project-mai-tai-oms.service \
   project-mai-tai-reconciler.service \
   project-mai-tai-control.service \
-  project-mai-tai-orb.service \
+  project-mai-tai-orb-schwab.service \
   --no-pager

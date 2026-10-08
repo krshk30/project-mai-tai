@@ -3,7 +3,7 @@ from __future__ import annotations
 import types
 from datetime import timedelta
 
-from project_mai_tai.services.orb_app import OrbService
+from tests.support.retired_orb_simulation import OrbService
 from project_mai_tai.strategy_core.orb_intrabar import ExecutionMode, OrbBar, OrbConfig
 
 OPEN = OrbService._session_open_utc()  # today's 09:30 ET (UTC) — same clock the service uses

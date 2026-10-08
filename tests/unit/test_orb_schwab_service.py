@@ -311,11 +311,11 @@ def _trade(at, price, symbol="CLRO"):
 
 
 @pytest.mark.parametrize("flag", ["orb_paper_atr_entry_gate_enabled", "orb_paper_four_red_delay_enabled"])
-def test_inactive_paper_entry_filters_cannot_be_silently_enabled_on_live_route(flag):
-    with pytest.raises(ValueError, match="Optional paper entry gates"):
-        OrbSchwabService(settings=Settings(orb_schwab_observe_enabled=True,
-                                           orb_running_high_enabled=True,
-                                           orb_resting_entry_enabled=True, **{flag: True}))
+def test_retired_paper_entry_filters_have_no_live_route(flag):
+    settings = Settings(orb_schwab_observe_enabled=True, **{flag: True})
+    service = OrbSchwabService(settings=settings)
+    assert flag not in Settings.model_fields
+    assert not hasattr(service, "_evaluate_fixed_entry_gates")
 
 
 def test_observer_exit_is_conditional_and_never_writes_or_publishes(monkeypatch, caplog):
@@ -357,7 +357,7 @@ def test_observer_records_same_three_actions_with_sending_off(monkeypatch, caplo
     assert [row["range_bars_seen"] for row in rows] == [3, 4, 5]
     assert all(row["fill_status"] == "UNMEASURED" and row["broker_orders_sent"] == 0 for row in rows)
     assert not service.settings.orb_live_schwab_orders_enabled
-    assert service._states == {} and service._pending_paper_entries == []
+    assert service._states == {} and not hasattr(service, "_pending_paper_entries")
 
 
 def test_observer_subscription_and_shutdown_do_not_change_gateway_owners(monkeypatch):
@@ -529,7 +529,7 @@ def test_observer_records_price_crosses_not_fills_or_profit(monkeypatch, caplog)
     rows = [row for row in _observations(caplog) if row["kind"] == "price_cross_only"]
     assert [row["relation"] for row in rows] == ["within_cap", "above_cap"]
     assert all(row["fill_status"] == "UNMEASURED" and row["execution"] == "NOT_TESTED" for row in rows)
-    assert service._paper_positions == {} and service._paper_closed_today == []
+    assert not hasattr(service, "_paper_positions") and not hasattr(service, "_paper_closed_today")
 
 
 @pytest.mark.parametrize("seconds,age", [(-1, 0), (1800, 0), (1, 6), (1, -1)])
@@ -574,7 +574,7 @@ def test_observer_ten_oclock_cancels_only_hypothetical_unfilled_order(monkeypatc
     rows = [row for row in _observations(caplog) if row["kind"] == "working_plan_check"]
     assert rows[0]["proposed_action"] == "cancel_if_still_unfilled"
     assert rows[0]["reason"] == "entry_window_ended"
-    assert service._paper_positions == {}
+    assert not hasattr(service, "_paper_positions")
 
 
 @pytest.mark.parametrize("today", [(2026, 9, 29), (2026, 9, 30), (2026, 10, 1)])

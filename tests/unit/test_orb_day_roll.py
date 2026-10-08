@@ -4,8 +4,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from unittest.mock import MagicMock
 
-from project_mai_tai.services.orb_app import OrbService, _SymbolState, _ET
-from project_mai_tai.settings import Settings
+from tests.support.retired_orb_simulation import OrbService, _SymbolState, _ET
+from tests.support.retired_orb_settings import RetiredOrbSettings as Settings
 
 
 def _svc() -> OrbService:

@@ -81,17 +81,18 @@ def test_orb_environment_builder_excludes_broker_credentials_and_enables_observa
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
-def test_runtime_installer_regenerates_the_broker_free_orb_environment() -> None:
+def test_runtime_installer_never_regenerates_or_enables_retired_paper_process() -> None:
     installer = (ROOT / "ops/bootstrap/08_install_runtime.sh").read_text()
 
-    assert '"$REPO_DIR/ops/systemd/build_orb_paper_env.sh" "$APP_ENV_FILE"' in installer
-    assert '"$REPO_DIR/ops/systemd/project-mai-tai-orb.service"' in installer
-    assert "systemctl enable project-mai-tai-orb.service" in installer
+    assert "build_orb_paper_env.sh" not in installer
+    assert "project-mai-tai-orb.service" not in installer
+    assert "project-mai-tai-orb.service" not in (ROOT / "ops/systemd/project-mai-tai.target").read_text()
+    assert "project-mai-tai-orb.service" not in (ROOT / "ops/systemd/install_units.sh").read_text()
 
 
-def test_orb_has_a_post_close_service_deploy_path_with_health_identity() -> None:
+def test_only_live_orb_has_a_post_close_deploy_path_with_its_own_health_identity() -> None:
     deploy = (ROOT / "ops/systemd/deploy_service.sh").read_text()
 
-    assert 'PRIMARY_UNIT="project-mai-tai-orb.service"' in deploy
-    assert 'project-mai-tai-orb.service) echo "orb"' in deploy
-    assert "control|reconciler|strategy|schwab-1m-v2|orb" in deploy
+    assert 'PRIMARY_UNIT="project-mai-tai-orb-schwab.service"' in deploy
+    assert 'project-mai-tai-orb-schwab.service) echo "orb-schwab"' in deploy
+    assert "project-mai-tai-orb.service" not in deploy

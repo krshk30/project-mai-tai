@@ -50,7 +50,7 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 138
+    assert len(entries) == 131
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
@@ -398,7 +398,7 @@ def test_lowercase_dotenv_flag_is_not_mistaken_for_absent(
     assert lines[-1].startswith("Final call: UNKNOWN;")
 
 
-@pytest.mark.parametrize("service", ["orb", "orb-schwab"])
+@pytest.mark.parametrize("service", ["orb-schwab"])
 def test_orb_services_explicitly_ignore_checkout_dotenv(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, service: str
 ) -> None:

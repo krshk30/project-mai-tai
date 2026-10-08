@@ -48,7 +48,6 @@ DEFAULT_SERVICES = (
     "market-capture",
     "market-data",
     "oms",
-    "orb",
     "reconciler",
     "schwab-1m-v2",
     "strategy",
