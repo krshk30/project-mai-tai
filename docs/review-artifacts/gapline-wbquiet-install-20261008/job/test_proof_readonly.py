@@ -57,9 +57,6 @@ def good():
     for i, role in enumerate(sorted(proof.RESTARTED)):
         after["services"][role] = identity(201 + i, "new" + role)
         after["logs"][role] = proof.summarize_logs(records(sync_pair() if role == "oms" else logged("healthy")))
-    from test_retire_orb import receipt
-    after['orb_retirement'] = receipt()
-    after['services']['orb'].update(MainPID=0, ActiveState='inactive', SubState='dead')
     for role in ("oms", "schwab-1m-v2"):
         values = {key: ["true"] for key in proof.FLAG_KEYS}
         values.update({proof.LINE: ["true"], proof.HANDOFF: ["false"]})
@@ -72,6 +69,17 @@ def test_complete_evidence_passes_without_granting_admission(good):
     result = proof.evaluate(*good, SHA)
     assert result["verdict"] == "PASS"
     assert "no trading admission" in result["scope"]
+
+
+def test_paper_orb_unchanged_active_is_preserved_not_falsely_retired(good):
+    before, after = good
+    assert after['services']['orb'] == before['services']['orb']
+    assert proof.evaluate(before, after, SHA)['verdict'] == 'PASS'
+    after['services']['orb']['MainPID'] = 0
+    after['services']['orb']['ActiveState'] = 'inactive'
+    result = proof.evaluate(before, after, SHA)
+    assert 'untouched_identity_changed:orb' in result['failures']
+    assert proof.receipt_exit_code({'assessment': result}) == 1
 
 
 def test_v2_worker_prefill_and_scanner_observations_are_not_fake_acceptance():

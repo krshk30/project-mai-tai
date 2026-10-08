@@ -98,7 +98,7 @@ def test_literal_deploy_sequence_fresh_gate_before_each_restart_retirement_and_f
                         'before-deploy-oms', 'before-deploy-schwab-1m-v2', 'native-v2-readonly', 'before-deploy-control',
                         'post-install-trading-read']
     assert not any('disable' in call or 'publish' in call for call in run.calls)
-    assert json.loads((run.attempt / 'orb-retirement.json').read_bytes()) == receipt()
+    assert not (run.attempt / 'orb-retirement.json').exists()
     snapshot = next(call for call in run.calls if 'snapshot' in call)
     assert str(snapshot[1]).endswith('/official_v2_restart_evidence.py')
     record = json.loads((run.attempt / 'install-record.json').read_bytes())
@@ -106,7 +106,7 @@ def test_literal_deploy_sequence_fresh_gate_before_each_restart_retirement_and_f
     assert 'orb' not in record['service_actions']
     repin = next(call for call in run.calls if str(call[1]).endswith('/repin_preopen.py'))
     assert repin[repin.index('--line-enabled') + 1] == 'true'
-    assert '--retirement' in repin
+    assert '--retirement' not in repin
     assert (run.job / 'COMPLETE.json').is_file()
     assert runner.LINE + '=true' in env.read_text() and runner.HANDOFF + '=false' in env.read_text()
     assert any(row['name'] == 'orb_paper_enabled' for row in json.loads(catalog.read_bytes())['flags'])

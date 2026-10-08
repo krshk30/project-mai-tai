@@ -10,12 +10,11 @@ import pytest
 
 import make_release
 import stage
-from test_retire_orb import receipt
 
 
 def review():
     return dict(approved_sha='a' * 40, line_enabled=True,
-        candidate_prs=['1126', '1127', '1130', '1134', '1135'], completed_retirement=receipt(),
+        candidate_prs=['1126', '1127', '1130', '1134', '1135'],
         box_baseline=dict(sha='c' * 40, captured_at_utc='2026-10-08T20:00:00+00:00',
             authorization_source='isolated authorized baseline fixture',
             services={role: dict(MainPID=100, NRestarts=0, ActiveState='active', SubState='running',
@@ -54,7 +53,7 @@ def fixture_release(monkeypatch):
     monkeypatch.setattr(make_release, 'git', git)
     monkeypatch.setattr(make_release, 'verify_pin', lambda pr, row, ledger: dict(ledger_commit='9' * 40,
         stdout_sha256='0' * 64, stderr_sha256=make_release.digest(b'')))
-    return (*names, 'candidate-review.json', 'completed-retirement.json', 'approved-migrations.tar', 'official_v2_restart_evidence.py'), blobs
+    return (*names, 'candidate-review.json', 'approved-migrations.tar', 'official_v2_restart_evidence.py'), blobs
 
 
 def test_release_from_committed_blobs_binds_plan_app_baseline_and_each_byte(monkeypatch):
@@ -235,16 +234,15 @@ def test_h_requires_its_own_reviewed_landing(monkeypatch):
         make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
 
 
-def test_release_requires_explicit_candidate_and_completed_manual_retirement(monkeypatch):
+def test_release_requires_explicit_candidate_without_fictitious_retirement(monkeypatch):
     fixture_release(monkeypatch)
     value = review()
     value['candidate_prs'].append('1133')
     with pytest.raises(ValueError, match='explicit final P1'):
         make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
     value = review()
-    del value['completed_retirement']
-    with pytest.raises(ValueError, match='completed manual ORB'):
-        make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
+    _, _, blobs = make_release.release('b' * 40, 'a' * 40, 'c' * 40, value)
+    assert 'completed-retirement.json' not in blobs
 
 
 @pytest.mark.parametrize('defect', ['missing', 'other_box', 'missing_role', 'missing_start'])

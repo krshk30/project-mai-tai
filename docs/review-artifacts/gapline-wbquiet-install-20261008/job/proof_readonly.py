@@ -561,14 +561,6 @@ def evaluate(before, after, approved_sha, line_enabled=True):
                 unknown.append("ten_minute_window_not_complete:" + role)
             if new.get("process_cwd") != str(REPO):
                 unknown.append("process_source_cwd:" + role)
-        elif role == "orb":
-            try:
-                from retire_orb import validate_receipt
-                validate_receipt(after.get("orb_retirement", {}))
-                if new["MainPID"] != 0 or new["ActiveState"] != "inactive":
-                    failures.append("retirement_identity:orb")
-            except Exception:
-                failures.append("retirement_proof:orb")
         else:
             keys = ("MainPID", "NRestarts", "ActiveState", "SubState", "InvocationID", "ExecMainStartTimestampMonotonic")
             if any(old[key] != new[key] for key in keys):
@@ -719,7 +711,7 @@ def main(argv=None):
     after.add_argument("--approved-sha", required=True)
     after.add_argument("--restart-window", type=Path)
     after.add_argument("--line-enabled", choices=('true', 'false'), required=True)
-    after.add_argument("--retirement", type=Path, required=True)
+    after.add_argument("--retirement", type=Path)
     after.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.mode == "after" and not re.fullmatch(r"[0-9a-f]{40}", args.approved_sha):
@@ -733,7 +725,7 @@ def main(argv=None):
             before = json.loads(bounded_file(args.baseline, 2_000_000))
             window = json.loads(bounded_file(args.restart_window, 10000)) if args.restart_window else None
             result = collect_after(before, args.approved_sha, window, line_enabled=args.line_enabled == 'true',
-                                   retirement=json.loads(bounded_file(args.retirement, 300000)))
+                                   retirement=json.loads(bounded_file(args.retirement, 300000)) if args.retirement else None)
             verdict = result["assessment"]["verdict"]
     except Exception as exc:
         result = {"schema_version": 1, "assessment": {"verdict": "UNKNOWN"}, "error_type": type(exc).__name__}

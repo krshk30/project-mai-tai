@@ -149,19 +149,15 @@ def verify_package(job):
              'staged artifact hash differs: ' + name)
     need({'runner.py', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'retire_orb.py', 'migration0023.py',
           'approved-migrations.tar', 'health_view.py',
-          'official_v2_restart_evidence.py', 'candidate-review.json', 'completed-retirement.json', 'run.sh'}
+          'official_v2_restart_evidence.py', 'candidate-review.json', 'run.sh'}
          <= set(release['artifacts']), 'incomplete runtime artifact set')
     candidate = json.loads((job / 'candidate-review.json').read_bytes())
     need(candidate['approved_sha'] == release['approved_sha'] and candidate['line_enabled'] == release['line_enabled']
          and candidate['landed_prs'] == release['landed_reviews'], 'candidate review binding differs')
     need(set(candidate['candidate_prs']) == set(candidate['landed_prs'])
          and {'1126', '1127', '1130', '1134', '1135'} <= set(candidate['candidate_prs'])
-         and set(candidate['candidate_prs']) <= {'1126', '1127', '1130', '1134', '1135', '1136'},
+         and set(candidate['candidate_prs']) <= {'1126', '1127', '1130', '1134', '1135'},
          'candidate outside reviewed P1-only install capability')
-    need(json.loads((job / 'completed-retirement.json').read_bytes()) == candidate['completed_retirement'],
-         'completed retirement receipt binding differs')
-    from retire_orb import validate_receipt
-    validate_receipt(candidate['completed_retirement'])
     return release
 
 
@@ -342,13 +338,6 @@ class Run:
                               'bash', str(REPO / 'ops/systemd/deploy_service.sh'), str(REPO),
                               self.release['release_branch'], target], timeout=1800)
             self.note(deploy_finished=target, identities=self.identities())
-        # Parent reports retirement completed manually. Preserve its actual
-        # receipt; this P1-only installer must not publish another replace.
-        self.stage = 'completed-retirement-evidence'
-        retirement = (self.job / 'completed-retirement.json').read_bytes()
-        from retire_orb import validate_receipt
-        validate_receipt(json.loads(retirement))
-        save(self.attempt / 'orb-retirement.json', json.loads(retirement))
         self.stage = 'post-install'
         after = self.identities()
         for name, row in after.items():
@@ -367,14 +356,13 @@ class Run:
                       '--baseline', str(self.attempt / 'proof-before.json'),
                       '--approved-sha', self.release['approved_sha'],
                       '--line-enabled', str(self.release['line_enabled']).lower(),
-                      '--retirement', str(self.attempt / 'orb-retirement.json'),
                       '--output', str(self.attempt / 'post-install-proof.json')])
         self.stage = 'flag-audit'
         rc, flags, errors = self.command([str(PYTHON), str(REPO / 'ops/health/expected_flags_check.py'),
             '--catalog', str(CATALOG), '--numeric-catalog', '/home/trader/restart_evidence/expected_numeric.json'])
         save(self.attempt / 'flaggate.json', dict(rc=rc, stdout=str(flags), stderr=str(errors),
                                                lines=flags.read_text().splitlines()))
-        # Inactive momentum-paper UNKNOWN remains honest; retired ORB rows are removed.
+        # Preserve the actual box population; inactive paper UNKNOWN stays honest.
         failures = [line for line in flags.read_text().splitlines() if line.startswith('REAL FAILURE')]
         need(not failures, 'unexpected process-flag mismatch')
         unknown = [line for line in flags.read_text().splitlines() if line.startswith('UNKNOWN')]
@@ -393,7 +381,6 @@ class Run:
                       '--snapshot', str(self.attempt / 'before-restart.json'),
                       '--install-record', str(self.attempt / 'install-record.json'),
                       '--line-enabled', str(self.release['line_enabled']).lower(),
-                      '--retirement', str(self.attempt / 'orb-retirement.json'),
                       '--receipt', str(self.attempt / 'preopen-repin.json')])
         self.checked(['bash', '-n', '/home/trader/preopen.sh'])
         proof = json.loads((self.attempt / 'post-install-proof.json').read_bytes())

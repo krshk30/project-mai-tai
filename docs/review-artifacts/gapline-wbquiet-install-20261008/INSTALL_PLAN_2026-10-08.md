@@ -3,16 +3,15 @@
 ## Authority and Candidate
 Lane C owns only this plan/job directory. Parent owns landings and handoff.
 Latest operator GO covers B1127, A1130, G1134, H1135 on main1e15 plus merged
-GAP1126; F1133 is EXCLUDED. I1136 may join only if independently pinned,
-reviewed and explicitly in the final set before execution. No non-P1/data lanes.
-B landed 4ec93308aab379894b69de0b84622d6ce3a7c756; A/G/H rebased landings and
-the final APP are NOT yet supplied. That B SHA is NOT a substitute final APP.
+GAP1126; F1133 and I1136 are EXCLUDED. No non-P1/data lanes.
+B landed4ec93308, A06336beb, Ga447ea3d. H reviewed7d7034f0 is pinned,
+but its final landing APP is NOT yet supplied. Partial main is not final APP.
 No staging, deployment, env/schema/service write or approval hash is claimed.
 
 Release generation binds full APP/plan/box SHAs, the exact explicit candidate
 set, per-PR reviewed base/head/landing trees and binary diffs, committed pin
 verification and Validate receipts. Required PRs:1126/1127/1130/1134/1135.
-Only optional1136 is allowed; F and future WB data additions refuse packaging.
+F1133 and I1136 are explicitly excluded; future WB data additions refuse packaging.
 Every artifact is from committed blobs, never dirty files or moving main.
 Exact clean box baseline identities need an actual fresh acknowledged read.
 No arbitrary PID adoption, archived snapshot/ledger mutation or recovery.
@@ -76,8 +75,12 @@ sequence; real holding/order/unreadability/start/migration errors fail closed.
    are unchanged. No native gate/source edits, new thresholds or new gates.
 6. Require four new active/NRestarts0 identities (OMS/v2/strategy/control);
    orb-schwab and other untouched identities stay unchanged. Manual paper ORB
-   retirement is already complete: consume its actual hash-bound historical
-   receipt, never disable/publish again. Ten minutes after all starts collect
+   retirement is NOT part of this install. Actual16:07 baseline shows paper
+   ORB active/PID1322003 and owner AIXI/FLYE: preserve both untouched, do not
+   fabricate a completed-retirement receipt, disable or publish. The official
+   application's snapshot population already excludes paper ORB, independently
+   of whether its old process remains alive; do not add it back to that tool.
+   Ten minutes after all starts collect
    new-PID journals plus timestamped live/rotated logs, actual /proc on OMS/v2,
    boolean/numeric audit, DB tx/s, OMS sync-ms, per-name v2 observations,
    scanner/warm/prefill/alert counts and OMS-FALSE-FLIP events. Missing workload
@@ -118,11 +121,12 @@ docs/review-artifacts/gapline-wbquiet-install-20261008/job/runner.py.
 Unit/path names retaining wbquiet do not authorize WB studies or source edits.
 Standalone runtime: application venv Python/redis/SQLAlchemy/Alembic/Settings,
 systemctl/journalctl/git/bash. All helpers, official APP snapshot collector,
-completed-retirement receipt and approved-migrations.tar are hash-bound.
+approved-migrations.tar and actual acknowledged baseline are hash-bound.
+No completed-retirement receipt is required or invented for untouched paper ORB.
 No unconditional permission-mode/log-signature/control-page self-stops.
 
-Await parent exact final merged APP and optional I decision; fresh acknowledged
-baseline and complete retirement receipt. Only then generate actual manifest,
+Await parent exact final merged APP and fresh acknowledged baseline.
+Only then generate actual manifest,
 read-only rehearsal at real time, stage once afterclose and execute if green.
 No source writer outside this owned directory; no production action so far.
 Tomorrow scanner rule9b and first organic FALSEFLIP workload stay UNMEASURED.

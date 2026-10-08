@@ -1,8 +1,8 @@
 # October 8 B/A/G/H mechanics checkpoint
 
 NOT staged; final APP not supplied. Parent owns exact rebase landings/pins,
-source integration and C-rows. F excluded. I1136 only if pinned/reviewed and
-explicitly included before execution. No production writes in this lane.
+source integration and C-rows. F1133 and I1136 explicitly excluded.
+No production writes in this lane.
 
 Current runner scope: migration0023 -> OMS (strategy via repo) -> v2 ->
 control; four restarted identities. orb-schwab is UNTOUCHED and its exact
@@ -12,10 +12,13 @@ and SLOTCLEAR flags. Migration source is the actual reviewed H nullable JSON
 entry_classification file at sql/migrations/versions/20261008_0023_entry_classification.py;
 target20261008_0023, base20261005_0022. No upgrade head, downgrade or recovery.
 
-Latest isolated tests: 330 PASS (8.45s), including actual reviewed git-archive
+Latest isolated tests: 331 PASS (7.08s), including actual reviewed git-archive
 extraction, real daily runtime verification, native health freshness/SLA,
 serialized bot heartbeat details and loopback unreadability propagation.
-Mutation receipt /tmp/oct8-lane-c-clock-authority-mutations.json:35/35 RED.
+Mutation receipt /tmp/oct8-lane-c-four-service-final-mutations.json:31/31 RED.
+Four obsolete retirement-only mutation cases were removed from the current
+capability list; the retired-identity case became an unchanged-active-ORB
+identity mutation. Legacy helper unit tests remain, but are not live authority.
 Controls include FALSE activation removed, unrelated catalog reset,
 wrong migration target, native rehearsal skipped, H landing missing,
 non-P1 admission, retries/window/dependencies/identity/owner safeguards and
@@ -26,11 +29,11 @@ date/window/continuation bounds and a fresh native v2 recheck before deployment.
 Seven original Linux-Bash gate controls: zero-armed/flat passes; armed, stale,
 unreadable state, holding, failed position query and open managed row refuse.
 This Mac has Bash3.2, which cannot parse the original gate's command-substitution
-case syntax. The full330 run explicitly opted into Linux SSH in-memory fixtures:
+case syntax. The full331 run explicitly opted into Linux SSH in-memory fixtures:
 OCT8_NATIVE_GATE_SSH_HOST=mai-tai-vps. All privileged/data commands were stub
 functions; no remote file/state read or write, no live override. Without that
 opt-in on Bash3.2 those seven Linux-specific controls are honestly skipped.
-Receipt /tmp/oct8-lane-c-clock-successor.xml and matching .log.
+Receipt /tmp/oct8-lane-c-four-service-final.xml and matching .log.
 Ruff passes for job code/tests excluding unchanged raw production fixtures;
 those fixtures retain their original two unused imports. bash -n and diff
 whitespace checks pass. No fixture was rewritten for lint green.
@@ -48,6 +51,15 @@ Actual read-only receipt15:10 ET:
 
 Remaining before execution: exact finalAPP + committed pin/CI source receipts,
 fresh acknowledged after-close baseline and full real-time read-only pass.
+Actual after-close reads20:00:14-25UTC: direct/nativeOMS/nativev2 rc0,
+holdings/orders/managed/virtual/inflight/armed0; native v2 clock-only override.
+Raw /tmp/oct8-lane-c-{gate,native-oms,native-v2}-after1600.stdout; stderr empty.
+Actual baseline20:07:13UTC /tmp/oct8-lane-c-baseline-after1600.json: errors{},
+clean d244f602; paper ORB still active1322003/owner AIXI-FLYE. Thus the old
+completed-retirement prerequisite was false and is removed, not forged.
+Paper ORB identity stays exact/untouched; official new snapshot inventory may
+exclude it without this job stopping it or changing its Redis owner. The
+repin's real daily-runtime test now exercises the no-retirement four-service path.
 Literal runner is in job/runner.py; migration in job/migration0023.py.
 Runner-local health_view.py admits only the existing authorized exact
 off-hours v2 shape in a copy of each freshly fetched actual response; original

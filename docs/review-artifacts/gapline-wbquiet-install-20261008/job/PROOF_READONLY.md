@@ -3,6 +3,8 @@
 Current integration owner: Lane C. Earlier receipts below are historical,
 not fresh install authorization. Latest scope is reviewed P1-only; no
 WBQUIET hook/data observation contract remains in this collector.
+Paper ORB is untouched, not assumed retired. The actual baseline identity
+must remain unchanged; no retirement certificate or owner-clear write occurs.
 
 ## CLI Contract
 
@@ -17,7 +19,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/trader/project-mai-tai/src \
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/trader/project-mai-tai/src \
   /home/trader/project-mai-tai/.venv/bin/python proof_readonly.py \
   after --baseline attempt/proof-before.json --approved-sha "$APPROVED_SHA" \
-  --line-enabled true --retirement attempt/orb-retirement.json \
+  --line-enabled true \
   --restart-window attempt/v2-restart-window.json --output attempt/proof-after.json
 ```
 

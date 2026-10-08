@@ -102,7 +102,7 @@ def case(tmp_path):
 
 def build(case):
     root, obs, _ = case
-    return m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW, retirement=RETIREMENT)
+    return m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW)
 
 
 def test_current_box_template_repin_group_and_process_keys(case):
@@ -425,7 +425,10 @@ def test_old_collector_or_retired_orb_population_not_adopted(case):
         build(case)
 
 
-def test_missing_retirement_proof_never_refreshes_daily_gate(case):
+def test_four_service_repin_does_not_fabricate_or_require_orb_retirement(case):
     root, obs, _ = case
-    with pytest.raises(m.Refusal, match='retirement receipt required'):
-        m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW)
+    result = m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW)
+    current = json.loads(result[m.DAILY + '/binding.json'])['current_install']
+    assert current['retirement'] is None
+    assert RETIREMENT not in current['hashes']
+    assert current['restarted'] == sorted(m.RESTARTED)

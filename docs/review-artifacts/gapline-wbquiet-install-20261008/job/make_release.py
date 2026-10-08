@@ -9,7 +9,7 @@ import sys
 
 PREFIX = 'docs/review-artifacts/gapline-wbquiet-install-20261008/job/'
 REQUIRED_PRS = {'1126', '1127', '1130', '1134', '1135'}
-P1_PRS = REQUIRED_PRS | {'1136'}
+P1_PRS = REQUIRED_PRS
 BASELINE_ROLES = {'oms', 'schwab-1m-v2', 'strategy', 'orb-schwab', 'control', 'orb',
                   'market-capture', 'market-data', 'reconciler', 'momentum-paper',
                   'option-a-daily-guard', 'redis', 'postgresql'}
@@ -95,11 +95,6 @@ def release(plan, approved, box, review, ledger=None):
         if git('rev-parse', value + '^{commit}').decode().strip() != value:
             raise ValueError('commit identity differs')
     pins = validate_reviews(review, approved, ledger)
-    from retire_orb import validate_receipt
-    retirement = review.get('completed_retirement')
-    if not isinstance(retirement, dict):
-        raise ValueError('completed manual ORB retirement receipt required; no repeat publication')
-    validate_receipt(retirement)
     baseline = review.get('box_baseline', {})
     if baseline.get('sha') != box or not baseline.get('authorization_source') or not baseline.get('captured_at_utc'):
         raise ValueError('actual acknowledged box baseline receipt required')
@@ -120,7 +115,6 @@ def release(plan, approved, box, review, ledger=None):
     if not required <= blobs.keys():
         raise ValueError('incomplete committed runner artifacts: ' + ','.join(sorted(required - blobs.keys())))
     blobs['candidate-review.json'] = canonical(review)
-    blobs['completed-retirement.json'] = canonical(retirement)
     blobs['approved-migrations.tar'] = git('archive', '--format=tar', approved, 'alembic.ini', 'sql/migrations')
     blobs['official_v2_restart_evidence.py'] = git('show', approved + ':ops/health/v2_restart_evidence.py')
     result = dict(schema_version=1, date_et='2026-10-08', scope=SCOPE,

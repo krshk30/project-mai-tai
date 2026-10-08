@@ -195,9 +195,11 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
     before = json.loads(read(snapshot))
     actions = json.loads(read(record))
     validate_evidence(before, actions, observations["states"], now)
-    from retire_orb import validate_receipt
-    need(retirement is not None, 'retirement receipt required')
-    validate_receipt(json.loads(read(retirement)))
+    inputs = (snapshot, record)
+    if retirement is not None:
+        from retire_orb import validate_receipt
+        validate_receipt(json.loads(read(retirement)))
+        inputs += (retirement,)
     journal = actions.get("source_journal")
     need(isinstance(journal, str) and read(journal).strip(), "install source journal absent/empty")
     old_runtime = json.loads(read(DAILY + "/runtime.json"))
@@ -242,7 +244,7 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
                    historical_binding_sha256=digest(read(DAILY + "/binding.json")),
                    current_install=dict(snapshot=snapshot, install_record=record, source_journal=journal,
                                         retirement=retirement,
-                                        hashes={path: digest(read(path)) for path in (snapshot, record, journal, retirement)},
+                                        hashes={path: digest(read(path)) for path in (*inputs, journal)},
                                         restarted=sorted(RESTARTED)))
     result[DAILY + "/binding.json"] = canonical(binding)
     # APP and TREE already derive from binding.json; do not change historical installer policy constants.
@@ -267,7 +269,7 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
         runtime["artifacts"][name] = digest(result.get(path, read(path)))
     for path in REFRESHABLE & set(runtime["evidence_inputs"]):
         runtime["evidence_inputs"][path] = digest(read(path))
-    for path in (snapshot, record, journal, retirement):
+    for path in (*inputs, journal):
         runtime["evidence_inputs"][path] = digest(read(path))
     numerics = json.loads(read("/home/trader/restart_evidence/expected_numeric.json"))["settings"]
     def count(rows):
@@ -352,7 +354,7 @@ def main():
     parser.add_argument("--snapshot", required=True)
     parser.add_argument("--install-record", required=True)
     parser.add_argument('--line-enabled', choices=('true', 'false'), required=True)
-    parser.add_argument('--retirement', required=True)
+    parser.add_argument('--retirement')
     parser.add_argument("--receipt", help="exclusive output path; the receipt never asserts the daily gate passed")
     parser.add_argument("--observations", type=Path, help="isolated fixture root only; never accepted for production")
     parser.add_argument("--dry-run", action="store_true", help="read-only preview; default writes only the declared repins")
