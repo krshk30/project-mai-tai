@@ -43,6 +43,8 @@ def assess(replay, bars, fills, text):
         same_segment = [b for b in bars["bars"] if b["symbol"] == first["symbol"]
                         and entry_ms <= int(datetime.fromisoformat(b["bar_time"]).timestamp() * 1000) < segment_end]
         real_buy = first["next_buy"]
+        real_window = [b for b in same_segment if real_buy is not None
+                       and int(datetime.fromisoformat(b["bar_time"]).timestamp()*1000) >= real_buy["minute"]]
         actual_later = [f for f in fills["rows"] if f["symbol"] == first["symbol"] and f["side"] == "buy"
                         and real_buy is not None and real_buy["minute"] <= int(
                             datetime.fromisoformat(f["filled_at"]).timestamp() * 1000) < segment_end]
@@ -53,7 +55,7 @@ def assess(replay, bars, fills, text):
         output.append(dict(symbol=first["symbol"], slot=slot, entry_bar_ms=entry_ms,
             filled_legs=len(cases), runtime_bound_legs=bound,
             historical_restore="UNMEASURED: feature not installed",
-            controlled_restore="independent episode, exact controlled bindings: normal path; not a historical fill",
+            controlled_restore="See private runtime replay receipt; no historical restore is inferred",
             causal_sell=previous[-1] if previous else None, segment_end_ms=segment_end,
             next_real_buy_same_segment=real_buy,
             subsequent_actual_buys=[{k: f[k] for k in ("id", "order_id", "account", "filled_at", "quantity", "price")}
@@ -61,6 +63,13 @@ def assess(replay, bars, fills, text):
             stored_segment_bar_count=len(same_segment),
             stored_high=str(max((Decimal(b["high_price"]) for b in same_segment), default=Decimal("NaN"))),
             stored_low=str(min((Decimal(b["low_price"]) for b in same_segment), default=Decimal("NaN"))),
+            real_flip_window={"start_ms": real_buy["minute"] if real_buy else None,
+                "end_ms_exclusive": segment_end, "stored_bar_count": len(real_window),
+                "high": str(max(Decimal(b["high_price"]) for b in real_window)) if real_window else "UNMEASURED",
+                "low": str(min(Decimal(b["low_price"]) for b in real_window)) if real_window else "UNMEASURED",
+                "actual_buy_fill_count": len(actual_later),
+                "fill_outcome": "retained actual buy fills; not a counterfactual" if actual_later
+                    else "UNMEASURED: no retained actual BUY fill in this bounded window"},
             sources=sorted({b["source"] for b in same_segment}),
             bar_extrema_are_not_fills=True))
     return {"population_false_slots": len(output), "bar_capture_asof": bars["asof"], "cases": output}
