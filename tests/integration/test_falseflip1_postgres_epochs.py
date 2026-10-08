@@ -6,6 +6,7 @@ import os
 from uuid import uuid4
 
 import pytest
+from psycopg.errors import NumericValueOutOfRange
 from sqlalchemy import Integer, create_engine, select, text
 from sqlalchemy.exc import DataError
 from sqlalchemy.orm import sessionmaker
@@ -129,5 +130,7 @@ def test_real_postgres_millisecond_epoch_roundtrip(postgres_factory, path):
 
 @pytest.mark.parametrize("path", ["record", "budget", "classify", "invalidation"])
 def test_real_postgres_int4_mutation_is_out_of_range(postgres_factory, path, monkeypatch):
-    with pytest.raises(DataError, match="integer out of range"):
+    with pytest.raises(DataError) as error:
         exercise(postgres_factory, path, monkeypatch)
+    assert error.value.orig.sqlstate == "22003"
+    assert isinstance(error.value.orig, NumericValueOutOfRange)
