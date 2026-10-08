@@ -4,7 +4,7 @@ import pytest
 
 from project_mai_tai.cancel_terminal_proof import (
     BookOrder, CancelReceipt, CancelScope, CancelTerminalEvidence, CompleteWorkingBook,
-    UnboundCancelFences, UnboundCancelRequest, evaluate_cancel_terminal,
+    SchwabLocalCancelWitness, UnboundCancelFences, UnboundCancelRequest, evaluate_cancel_terminal,
     evaluate_request_cancel_terminal, evaluate_unbound_cancel_terminal,
 )
 
@@ -145,26 +145,46 @@ def test_pg_guard_denies_before_engine_or_create_schema(monkeypatch, url):
 def test_unbound_approved_replays_require_both_books_and_explicit_fences(symbol, orders, terminal, caplog):
     request = UnboundCancelRequest(symbol, "token", "token", str(NOW), "retry_exhausted",
                                    NOW - 20_000, {"webull": "actual-account", "schwab": "hash"},
-                                   {"webull": "webull", "schwab": "schwab"})
+                                   {"webull": "webull", "schwab": "schwab"}, "2026-10-08")
     fences = UnboundCancelFences(request, True, True, True, True)
-    books = {"webull": replace(BOOK, orders=orders),
-             "schwab": replace(BOOK, account_name="schwab", account_id="hash")}
+    books = {"webull": replace(BOOK, orders=orders)}
+    witness = SchwabLocalCancelWitness(request, "schwab", "hash", request.session_key,
+        NOW, "exact_cancel_chain", True, True, True, True, True)
     with caplog.at_level("INFO"):
-        proof = evaluate_unbound_cancel_terminal(request, books, fences=fences, now_ms=NOW)
+        proof = evaluate_unbound_cancel_terminal(request, books, fences=fences,
+            schwab_witness=witness, now_ms=NOW)
     assert proof.terminal is terminal
     assert "[V2-CANCEL-TERMINAL]" in caplog.text and "bound=0" in caplog.text
     assert not evaluate_unbound_cancel_terminal(request, {**books, "schwab": None},
                                                 fences=fences, now_ms=NOW).terminal
     for field in ("no_inflight_buy", "no_unanswered_cancel", "owned_rows_closed", "request_cas_current"):
         assert not evaluate_unbound_cancel_terminal(request, books, fences=replace(fences, **{field: False}),
-                                                    now_ms=NOW).terminal
+                                                    schwab_witness=witness, now_ms=NOW).terminal
     for changes in ({"started_at_ms": NOW - 15_001}, {"started_at_ms": request.requested_at_ms - 1},
                     {"finished_at_ms": NOW + 1}, {"complete": False}, {"source": "sql"}):
-        assert not evaluate_unbound_cancel_terminal(request, {**books, "schwab": replace(books["schwab"], **changes)},
-                                                    fences=fences, now_ms=NOW).terminal
+        assert not evaluate_unbound_cancel_terminal(request, {"webull": replace(books["webull"], **changes)},
+                                                    fences=fences, schwab_witness=witness, now_ms=NOW).terminal
     assert not evaluate_unbound_cancel_terminal(request, books, fences=replace(fences, request=replace(request, token="old")),
-                                                now_ms=NOW).terminal
-    assert not evaluate_unbound_cancel_terminal(request, books, fences=fences, now_ms=NOW, freshness_ms=15_001).terminal
+                                                schwab_witness=witness, now_ms=NOW).terminal
+    assert not evaluate_unbound_cancel_terminal(request, books, fences=fences, schwab_witness=witness,
+                                                now_ms=NOW, freshness_ms=15_001).terminal
+
+
+@pytest.mark.parametrize("field,value", [
+    ("publication_closed", False), ("no_unjournaled_buy", False), ("no_live_buy", False),
+    ("no_inflight_buy", False), ("no_unanswered_cancel", False),
+    ("account_id", "foreign"), ("session_key", "yesterday"), ("closure_kind", "empty_db"),
+    ("observed_at_ms", NOW + 1), ("observed_at_ms", NOW - 15_001),
+])
+def test_local_schwab_witness_never_certifies_uncovered_wire_or_empty_db(field, value):
+    request = UnboundCancelRequest("FLYE", "token", "token", str(NOW), "retry_exhausted",
+        NOW - 20_000, {"webull": "actual-account", "schwab": "hash"},
+        {"webull": "webull", "schwab": "schwab"}, "2026-10-08")
+    witness = SchwabLocalCancelWitness(request, "schwab", "hash", request.session_key,
+        NOW, "no_dispatch", True, True, True, True, True)
+    assert not evaluate_unbound_cancel_terminal(request, {"webull": BOOK},
+        fences=UnboundCancelFences(request, True, True, True, True), now_ms=NOW,
+        schwab_witness=replace(witness, **{field: value})).terminal
 
 
 @pytest.mark.parametrize("coverage", ["entered_60d", "entered_365d", "status_working_under_3000"])
