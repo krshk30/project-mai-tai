@@ -1,0 +1,107 @@
+[
+  {
+    "mutation": "_rpg_external_retry",
+    "red": true,
+    "exit": 1,
+    "summary": "1 failed, 44 passed in 7.72s",
+    "log_sha256": "01eb0fa14b6167223241480f1ce52b7cf4ebecab3c91f880fb8c5eac42e3b737"
+  },
+  {
+    "mutation": "_rpg_begin_cancel",
+    "red": true,
+    "exit": 1,
+    "summary": "1 failed, 44 passed in 7.32s",
+    "log_sha256": "660a1c13916ffd5569771944bcfa01f815d2938db7079e1e76919a8baf2e8864"
+  },
+  {
+    "mutation": "_rpg_advance",
+    "red": true,
+    "exit": 1,
+    "summary": "1 failed, 44 passed in 7.54s",
+    "log_sha256": "32be0fc67383cf667e344157263b1335ee678fd6e434b11c37f7669eb85de9fb"
+  },
+  {
+    "mutation": "_rpg_retry_jobs",
+    "red": true,
+    "exit": 1,
+    "summary": "1 failed, 44 passed in 7.54s",
+    "log_sha256": "344b83591ef97959ef03eaa4790dec75b81c1e18af696bdc247f38567a69e275"
+  },
+  {
+    "mutation": "_rpg_mark_committed_evidence",
+    "red": true,
+    "exit": 1,
+    "summary": "1 failed, 44 passed in 7.27s",
+    "log_sha256": "dbc13e81d9102a67818d48af7c07e5ddc02d426a6e6d16dd6538cba94337aac3"
+  },
+  {
+    "mutation": "oms_open_refusal",
+    "red": true,
+    "exit": 1,
+    "summary": "20 failed, 25 passed in 11.47s",
+    "log_sha256": "6b70363f90dacf867a82cce56543e8bbe06e9509d7b79986b5737b3e4526f2fe"
+  },
+  {
+    "mutation": "oms_old_order_ownership",
+    "red": true,
+    "exit": 1,
+    "summary": "1 failed, 44 passed in 7.16s",
+    "log_sha256": "3e0a0400151a01652d81e83dd3f1df9ded84279edf30aff45e2cd5c2b3de64b2"
+  },
+  {
+    "mutation": "oms_retry_startup",
+    "red": true,
+    "exit": 1,
+    "summary": "2 failed, 43 passed in 11.88s",
+    "log_sha256": "99c70a779ed3b787f1423ac3f69f3fba5f18549045a5fa25b0a63af8627f311b"
+  },
+  {
+    "mutation": "oms_retry_switch_off",
+    "red": true,
+    "exit": 1,
+    "summary": "1 failed, 44 passed in 7.35s",
+    "log_sha256": "332b79238168483e4b53cba8f0d40d0630b68717fea4ad5f35e58d3cd2c0565e"
+  },
+  {
+    "mutation": "oms_cancel_route",
+    "red": true,
+    "exit": 1,
+    "summary": "2 failed, 43 passed in 7.09s",
+    "log_sha256": "9222bb8f564b65999668f2c91d99e4b64239e487b0132b86c27c9c227a4c8b15"
+  },
+  {
+    "mutation": "v2_restore",
+    "red": true,
+    "exit": 1,
+    "summary": "3 failed, 42 passed in 7.13s",
+    "log_sha256": "dc19c3f1cf3e8459eb7853ed8dbbccd6b7b7eb2b525b0bdd17b5940282d76894"
+  },
+  {
+    "mutation": "v2_authorization",
+    "red": true,
+    "exit": 1,
+    "summary": "2 failed, 43 passed in 7.01s",
+    "log_sha256": "ff485e86d14921370409077de8fd274a28c63250766636164e9577022ecdf50e"
+  },
+  {
+    "mutation": "v2_cached_ownership",
+    "red": true,
+    "exit": 1,
+    "summary": "2 failed, 43 passed in 7.39s",
+    "log_sha256": "c997cbbb1f52c63995b342740215bcbc22df089415124c7faf0c652b78321d27"
+  },
+  {
+    "mutation": "v2_refused_legs",
+    "red": true,
+    "exit": 1,
+    "summary": "2 failed, 43 passed in 6.80s",
+    "log_sha256": "38d207616178419368b9959950cf33fd1cbc25643781f75d35c4b818893eaa32"
+  },
+  {
+    "mutation": "v2_placement_cache",
+    "red": true,
+    "exit": 1,
+    "summary": "2 failed, 43 passed in 6.98s",
+    "log_sha256": "fe8a7984ef2f25ea25f7d84955e4505003ee6e58e4614ba8735742f311d7d2bd"
+  }
+]

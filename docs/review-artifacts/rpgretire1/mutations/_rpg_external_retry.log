@@ -1,0 +1,19 @@
+.......................................F.....                            [100%]
+=================================== FAILURES ===================================
+________ test_flag_off_oms_restore_ticks_evidence_and_token_do_not_read ________
+tests/unit/test_rpgretire1_flag_off.py:107: in test_flag_off_oms_restore_ticks_evidence_and_token_do_not_read
+    assert not h.service._rpg_external_retry(opening)
+E   AssertionError: assert not True
+E    +  where True = _rpg_external_retry(TradeIntentEvent(event_id=UUID('b991df0e-4328-4b38-aae8-cf44c98d341d'), event_type='trade_intent', source_service='sch...er_id': '1008159036414', 'resting_entry_cancel': 'true', 'rpg_handoff_token': 'e39ca8da-5f8e-5352-8d35-6cb4743f32c0'})))
+E    +    where _rpg_external_retry = <project_mai_tai.oms.service.OmsRiskService object at 0x10d00cf80>._rpg_external_retry
+E    +      where <project_mai_tai.oms.service.OmsRiskService object at 0x10d00cf80> = namespace(service=<project_mai_tai.oms.service.OmsRiskService object at 0x10d00cf80>, strategy=<project_mai_tai.strate...e': 'schwab_1m_v2', 'strategy_version': 'v1.32', 'broker_order_id': '1008159036414', 'resting_entry_cancel': 'true'}))).service
+----------------------------- Captured stdout call -----------------------------
+2026-10-08 08:12:18,626 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:12:18,626 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:12:18,626 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:12:18,626 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:12:18,626 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:12:18,639 INFO [oms-risk] [OMS-RPG1] token=e39ca8da-5f8e-5352-8d35-6cb4743f32c0 ignored=1 reason=handoff_owns_retry
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgretire1_flag_off.py::test_flag_off_oms_restore_ticks_evidence_and_token_do_not_read
+1 failed, 44 passed in 7.72s

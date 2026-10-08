@@ -1,0 +1,58 @@
+.......................................F....F                            [100%]
+=================================== FAILURES ===================================
+________ test_flag_off_oms_restore_ticks_evidence_and_token_do_not_read ________
+tests/unit/test_rpgretire1_flag_off.py:115: in test_flag_off_oms_restore_ticks_evidence_and_token_do_not_read
+    assert h.service._rpg_retry_started().is_set()
+E   AssertionError: assert False
+E    +  where False = is_set()
+E    +    where is_set = <asyncio.locks.Event object at 0x10b9fb0e0 [unset]>.is_set
+E    +      where <asyncio.locks.Event object at 0x10b9fb0e0 [unset]> = _rpg_retry_started()
+E    +        where _rpg_retry_started = <project_mai_tai.oms.service.OmsRiskService object at 0x10b9c88f0>._rpg_retry_started
+E    +          where <project_mai_tai.oms.service.OmsRiskService object at 0x10b9c88f0> = namespace(service=<project_mai_tai.oms.service.OmsRiskService object at 0x10b9c88f0>, strategy=<project_mai_tai.strate...e': 'schwab_1m_v2', 'strategy_version': 'v1.32', 'broker_order_id': '1008159036414', 'resting_entry_cancel': 'true'}))).service
+----------------------------- Captured stdout call -----------------------------
+2026-10-08 08:13:20,103 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:13:20,103 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:13:20,103 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:13:20,103 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:13:20,103 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+_ test_recorded_tickets_real_startup_off_leaves_journal_and_ownership_dormant __
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+src/project_mai_tai/oms/service.py:1040: in run
+    await self._run_control_loop(stop_event)
+tests/unit/test_rpgstuck1_startup.py:184: in control
+    await asyncio.wait_for(h.service._rpg_retry_started().wait(), timeout=5)
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/unit/test_rpgretire1_flag_off.py:182: in test_recorded_tickets_real_startup_off_leaves_journal_and_ownership_dormant
+    await real_oms_startup(monkeypatch, h)
+tests/unit/test_rpgstuck1_startup.py:199: in real_oms_startup
+    await asyncio.wait_for(h.service.run(), timeout=5)
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+----------------------------- Captured stdout call -----------------------------
+2026-10-08 08:13:20,758 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50
+2026-10-08 08:13:20,758 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SLOT-BOUND] AMOD source=rth_resting_mirror slot=resting slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 segment_id=1790961902899 bound=1 — polarity: bound=1 means the draft has a durable economic slot
+2026-10-08 08:13:20,758 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-CLAIM] AMOD slot_id=34bfaeed-c5e2-553f-af7c-a09c936e0087 outcome=queued held=1 evidence=provisional reason=resting_mirror_draft_queued — positive OMS evidence must arrive before grace expiry
+2026-10-08 08:13:20,758 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-FANOUT-SEGMENT-BOUND] AMOD source=rth_resting_mirror trigger=fanout_draft attributed=1 segment_id=1790961902899 entry_n=1 — polarity: attributed=1 means this leg can be grouped; unattributed filled legs make the duplicate grade UNEXERCISED
+2026-10-08 08:13:20,758 INFO [project_mai_tai.strategy_core.schwab_1m_v2] [V2-WEBULL-RESTING-PLACE] AMOD slot=first line=3.1000 trigger=3.1155 limit=3.1311 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)
+2026-10-08 08:13:20,789 INFO [project_mai_tai.services.schwab_1m_v2_bot] schwab_1m_v2 bot starting pid=15860 (enabled=True)
+2026-10-08 08:13:20,791 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-IDENTITY-RESTORE] restored=0 could_not_tell=0
+2026-10-08 08:13:20,794 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT-OUTCOME-RESTORE] evaluated=0 applied=0 could_not_tell=0
+2026-10-08 08:13:20,794 INFO [project_mai_tai.services.schwab_1m_v2_bot] [V2-FANOUT] dual-broker fan-out ENABLED — Webull leg -> account live:orb
+2026-10-08 08:13:20,798 INFO [oms-risk] seeded runtime metadata: 2 strategies, 3 broker accounts
+=========================== short test summary info ============================
+FAILED tests/unit/test_rpgretire1_flag_off.py::test_flag_off_oms_restore_ticks_evidence_and_token_do_not_read
+FAILED tests/unit/test_rpgretire1_flag_off.py::test_recorded_tickets_real_startup_off_leaves_journal_and_ownership_dormant
+2 failed, 43 passed in 11.88s
