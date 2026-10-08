@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import logging
 
 FRESHNESS_MS = 15_000
 TERMINAL = frozenset({"cancelled", "canceled", "expired", "rejected"})
@@ -34,6 +35,7 @@ class BookOrder:
     client_order_id: str
     symbol: str
     status: str
+    side: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -182,3 +184,89 @@ def evaluate_request_cancel_terminal(
     return tuple(evaluate_cancel_terminal(
         receipt, evidence.get(receipt.scope.event_id), now_ms=now_ms, freshness_ms=freshness_ms,
     ) for receipt in expected)
+
+
+@dataclass(frozen=True)
+class UnboundCancelRequest:
+    symbol: str
+    request_id: str
+    token: str
+    generation: str
+    purpose: str
+    requested_at_ms: int
+    account_ids: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class UnboundCancelFences:
+    request: UnboundCancelRequest
+    no_inflight_buy: bool
+    no_unanswered_cancel: bool
+    owned_rows_closed: bool
+    request_cas_current: bool
+
+
+@dataclass(frozen=True)
+class UnboundCancelTerminalProof:
+    request: UnboundCancelRequest
+    observed_at_ms: int
+    terminal: bool
+    reason: str
+
+
+def evaluate_unbound_cancel_terminal(
+    expected: UnboundCancelRequest,
+    books: Mapping[str, CompleteWorkingBook | None],
+    *,
+    fences: UnboundCancelFences | None,
+    now_ms: int,
+    freshness_ms: int = FRESHNESS_MS,
+) -> UnboundCancelTerminalProof:
+    """Separate approved unbound rule, never an invented client-order binding.
+
+    The consumer supplies its transaction's exact-request closure/CAS witness.
+    This proof does not authorize position changes or bypass owned open rows.
+    """
+    def result(reason: str, terminal: bool = False) -> UnboundCancelTerminalProof:
+        counts = ",".join(f"{name}:{len(book.orders) if isinstance(book, CompleteWorkingBook) else '?'}"
+                          for name, book in books.items())
+        logging.getLogger(__name__).info(
+            "[V2-CANCEL-TERMINAL] sym=%s request=%s bound=0 decision=%s reason=%s books=%s",
+            expected.symbol, expected.request_id, "TERMINAL" if terminal else "UNKNOWN", reason, counts,
+        )
+        return UnboundCancelTerminalProof(expected, now_ms, terminal, reason)
+
+    if (not all(_identity(v) for v in (expected.symbol, expected.request_id, expected.token,
+                                     expected.generation, expected.purpose))
+            or not expected.account_ids or set(books) != set(expected.account_ids)
+            or not all(_identity(n) and _identity(i) for n, i in expected.account_ids.items())):
+        return result("unbound_request_identity_unknown")
+    if (type(now_ms) is not int or type(expected.requested_at_ms) is not int
+            or not 0 < expected.requested_at_ms <= now_ms or type(freshness_ms) is not int
+            or not 0 < freshness_ms <= FRESHNESS_MS):
+        return result("unbound_request_time_unknown")
+    if (not isinstance(fences, UnboundCancelFences) or fences.request != expected
+            or any(v is not True for v in (fences.no_inflight_buy, fences.no_unanswered_cancel,
+                                          fences.owned_rows_closed, fences.request_cas_current))):
+        return result("unbound_request_db_or_cas_unknown")
+    for name, account_id in expected.account_ids.items():
+        book = books[name]
+        if (not isinstance(book, CompleteWorkingBook) or book.complete is not True
+                or book.source != "broker" or book.coverage != "all_working"
+                or (book.account_name, book.account_id) != (name, account_id)
+                or not isinstance(book.orders, tuple)):
+            return result("unbound_complete_book_unknown")
+        if (type(book.started_at_ms) is not int or type(book.finished_at_ms) is not int
+                or not expected.requested_at_ms <= book.started_at_ms <= book.finished_at_ms <= now_ms
+                or now_ms - book.started_at_ms > freshness_ms):
+            return result("unbound_book_stale_or_pre_request")
+        seen = set()
+        for order in book.orders:
+            if (not isinstance(order, BookOrder) or order.side not in {"buy", "sell"}
+                    or not all(_identity(v) for v in (order.client_order_id, order.symbol, order.status))
+                    or order.client_order_id in seen or order.status not in WORKING | TERMINAL | {"filled"}):
+                return result("unbound_book_row_or_side_unknown")
+            seen.add(order.client_order_id)
+            if order.symbol == expected.symbol and order.side == "buy" and order.status in WORKING:
+                return result("unbound_symbol_working_buy")
+    return result("unbound_symbol_terminal", True)
