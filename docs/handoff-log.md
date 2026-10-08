@@ -8453,3 +8453,13 @@ Mechanicsb877108e302PASS/7skip/13mutationRED, unstaged isolatedOMS/v2package.
 No migration/env/control action. OriginalABORT preserved. Actual deployed-store
 restore counts and boot lines owed after authorizedrestart; directboot count
 not instrumented, never claim quietlogs prove0. F/I next evening unchanged.
+
+2026-10-08 17:13 ET codex-2 C60: #1137 matchedhead merge21:09:43Z,
+main06b5e388affb5f33e4edf80c6e635cf72dbc3f78 whole tree92a4d4456b401464df364c1c909e96298a4e3ab7
+equals pinned5d17199c. LatesthostedpinPASS andbothValidatePASS independentlyread.
+Hotfixfirstattempt sealsABORT21:12:11Z source-precheck128 beforeapplicationwrite:
+missingremoteimmutablecodex/install-2026-10-08-06b5e388affb. Tradinggatereadrc0,
+actual OMS2073383/v22074723/strategy2073394 active/NRestarts0 unchanged.
+Csolewriter correctspublish/verify immutable ref and tests before newactivation,
+preserves oldseal/receipt and issues fresh no-overlap package. No hotfix source
+change, no extra services/schema/env/archival action, no COMPLETE claim.
