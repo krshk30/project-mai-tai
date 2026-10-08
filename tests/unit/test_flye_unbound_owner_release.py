@@ -173,6 +173,49 @@ def test_fresh_sell_releases_closed_false_owner_without_carrying_old_budget(pm):
     assert state.position_qty == state.position_qty_held == 1000
 
 
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("fault", ["none", "token", "stale", "not_clear", "row"])
+def test_same_segment_false_restore_requires_exact_terminal_witness(pm, fault):
+    from tests.unit.test_falseflip1_runtime import ack, book as false_book, runtime
+
+    strategy, state, clock, proofs, _ = runtime(pm=pm)
+    false_book(strategy, state, clock, proofs)
+    ack(strategy)
+    false_book(strategy, state, clock, proofs)
+    request, = strategy.pending_falseflip_cancel_publications()
+    strategy._removed_wait_persist(request, True)
+    strategy.acknowledge_falseflip_cancel_publication(request)
+    strategy.drain_pending_intents()
+    strategy.drain_webull_direct_intents()
+    before = strategy._falseflip_budget(state)
+    witness = ControlledUnboundProof(request, clock[0], True, "unbound_symbol_terminal",
+                                     tuple(state.flip_owner_position_ids.items()))
+    if fault == "token":
+        witness = replace(witness, request=replace(request, token="foreign-token"))
+    elif fault == "stale":
+        witness = replace(witness, observed_at_ms=clock[0] - 15_001)
+    elif fault == "not_clear":
+        witness = replace(witness, clear=False)
+    elif fault == "row":
+        witness = replace(witness, closed_owned_rows=((WEBULL, "foreign-row"),))
+    strategy.apply_removed_wait_proofs((witness,))
+    false_book(strategy, state, clock, proofs)
+    assert bool(strategy.pending_falseflip_budgets()) is (fault == "none")
+    ack(strategy)
+    false_book(strategy, state, clock, proofs)
+    assert (state.flip_owner_phase == "idle") is (fault == "none")
+    assert strategy._falseflip_budget(state).segment == before.segment
+    assert state.retry_one_closes_in_segment == 1
+    assert strategy._falseflip_effective_closes(state, 1) == 0
+    assert (state.symbol in strategy._removed_wait_requests) is (fault != "none")
+    assert strategy._falseflip_budget(state).cancelled == (
+        (*before.cancelled, request.opportunity_id) if fault == "none" else before.cancelled)
+    if fault != "none":
+        assert strategy._falseflip_budget(state) == before
+        assert not strategy._strict_first_rest_admitted(state, slot="first")
+    assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
+
+
 @pytest.mark.parametrize("active", [False, True])
 @pytest.mark.parametrize("fault", ["none", "stale", "open", "unknown", "token", "persist"])
 def test_boot_stores_configure_before_lazy_owner_creation(active, fault):
