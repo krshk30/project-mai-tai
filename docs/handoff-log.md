@@ -7974,3 +7974,13 @@ All six sole writers received the same receipt; head pairings remain pending.
 LaneF boot retirement must precede stale barrier publication, use durable
 exact-token proof/CAS and guard against in-flight emits/new same-symbol requests;
 session-rollover is not hours expiry. No production writes.
+
+2026-10-08 09:17 ET codex-2 C16 LaneF: independently pulled17archive
+transitions, twelve rawactive, nine latest symbols/seven latestactive.
+The user17active denominator is not reproduced; four latest requests have
+zero opportunity and cannot be called prior-session by segment proof.
+DKI/OLOX/BIYA positive identities and today's AIXI active/receipt bytes
+retained. Historical direct-flat freshness at the missed flips UNMEASURED.
+Source STEP0_RAW.json, read13:13:42UTC. Build uses session identity, not hours;
+retire request only, no unrelated consumed-owner/slot clearing, NULL order
+and intent status remains UNKNOWN. All six lanes continue, no box write.
