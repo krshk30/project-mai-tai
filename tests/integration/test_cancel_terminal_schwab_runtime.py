@@ -221,3 +221,39 @@ async def test_journal_provider_mismatch_cannot_publish_evidence(sessions, sdk, 
     assert bool(client.calls) is (when == "during_read")
     with sessions() as session:
         assert journal.JOURNAL_KEY not in session.get(TradeIntent, intent_id).payload
+
+
+@pytest.mark.parametrize("mutation", ["cap", "age_coverage", "children", "freshness"])
+@pytest.mark.asyncio
+async def test_real_pg_schwab_source_mutations_are_detected(sessions, sdk, monkeypatch, mutation):
+    import inspect
+
+    # Establish the positive adapter/evaluator path and bigint SQL on this real
+    # test service before exercising a deliberately damaged producer in memory.
+    await test_unfiltered_slices_walk_terminal_parents(sessions, sdk, [], [], True)
+    original = broker._schwab_book
+    source = inspect.getsource(original)
+    old, new = {
+        "cap": ("len(rows) >= 3000", "len(rows) > 3000"),
+        "age_coverage": ("timedelta(days=181)", "timedelta(days=60)"),
+        "children": ("walk(child, depth + 1)", "pass"),
+        "freshness": ("started + 15_000", "started + 30_000"),
+    }[mutation]
+    damaged = source.replace(old, new)
+    assert damaged != source
+    # Use the live module globals so the clock monkeypatch below reaches the
+    # compiled function too; a copied globals dict could give a false RED.
+    exec(compile(damaged, "<cancel-terminal-test-mutant>", "exec"), vars(broker))
+    mutant = broker._schwab_book
+    broker._schwab_book = original
+    monkeypatch.setattr(broker, "_schwab_book", mutant)
+    with pytest.raises(AssertionError):
+        if mutation == "cap":
+            await test_unreadable_capped_or_malformed_schwab_book_is_unknown(sessions, sdk, 200, [order()] * 3000)
+        elif mutation == "age_coverage":
+            await test_unfiltered_slices_walk_terminal_parents(sessions, sdk, [], [], True)
+        elif mutation == "children":
+            rows = [order(status="FILLED", children=[order(oid=2, status="AWAITING_PARENT_ORDER")])]
+            await test_unfiltered_slices_walk_terminal_parents(sessions, sdk, rows, ["working"], False)
+        else:
+            await test_schwab_acquisition_over_15_seconds_is_unknown(sessions, sdk, monkeypatch)
