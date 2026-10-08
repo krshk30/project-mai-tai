@@ -8002,3 +8002,16 @@ cancelpublication;04passoffloop;exacttoken/freshness/inflightguards.
 WorkingNULL/managed/pendingBUYkept,slotandfilledowneruntouched,gate100lookup
 zeroSQL/logstatechangeonly. Presentproofthreecleared/fourzeroIDUNKNOWN.
 Fullheadpair/hostedValidatepending; draftnotREADY,pinabsent,noactivation.
+
+2026-10-08 09:36 ET codex-2 C20-C22: Lane C published plan9b9a207c,
+265 isolated mechanics PASS / 16 assertion mutations RED. Final APP/release
+hash still blocked on reviewed source landings; nothing staged or activated.
+Normal ORB empty replace requires its own applied cursor and preserves other
+owners; final five-service preopen evidence tested with the unchanged daily
+runtime verifier. Full unit timing swap is explicit, not failed-name parity.
+Lane A draft1130 head1f4a49e4 adds causal SELL segment transport for the real
+BUY callback:375 focused PASS/10RED, controlled ask2.03 drafts296/148 once.
+Historical quote/broker absence remains UNMEASURED; source delta needs review.
+Lane B exacthead709e826e full47FAIL/7699PASS/55SKIP, zero added failed names;
+only baseline HOTFIX retained-off timing failure absent. Fresh pin/CI still
+required. All six isolated lanes remain free of production writes.
