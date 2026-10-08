@@ -4,7 +4,8 @@ import pytest
 
 from project_mai_tai.cancel_terminal_proof import (
     BookOrder, CancelReceipt, CancelScope, CancelTerminalEvidence, CompleteWorkingBook,
-    evaluate_cancel_terminal, evaluate_request_cancel_terminal,
+    UnboundCancelFences, UnboundCancelRequest, evaluate_cancel_terminal,
+    evaluate_request_cancel_terminal, evaluate_unbound_cancel_terminal,
 )
 
 NOW = 1_791_466_919_000
@@ -133,3 +134,33 @@ def test_pg_guard_denies_before_engine_or_create_schema(monkeypatch, url):
     monkeypatch.setattr(runtime, "create_engine", must_not_connect)
     with pytest.raises(AssertionError, match="refusing writes"):
         next(runtime.sessions.__wrapped__())
+
+
+@pytest.mark.parametrize("symbol,orders,terminal", [
+    ("FLYE", (), True), ("DKI", (), True),
+    ("FLYE", (BookOrder("operator-buy", "FLYE", "working", "buy"),), False),
+    ("FLYE", (BookOrder("operator-sell", "FLYE", "working", "sell"),), True),
+    ("FLYE", (BookOrder("unknown", "OTHER", "working"),), False),
+])
+def test_unbound_approved_replays_require_both_books_and_explicit_fences(symbol, orders, terminal, caplog):
+    request = UnboundCancelRequest(symbol, "token", "token", str(NOW), "retry_exhausted",
+                                   NOW - 20_000, {"webull": "actual-account", "schwab": "hash"})
+    fences = UnboundCancelFences(request, True, True, True, True)
+    books = {"webull": replace(BOOK, orders=orders),
+             "schwab": replace(BOOK, account_name="schwab", account_id="hash")}
+    with caplog.at_level("INFO"):
+        proof = evaluate_unbound_cancel_terminal(request, books, fences=fences, now_ms=NOW)
+    assert proof.terminal is terminal
+    assert "[V2-CANCEL-TERMINAL]" in caplog.text and "bound=0" in caplog.text
+    assert not evaluate_unbound_cancel_terminal(request, {**books, "schwab": None},
+                                                fences=fences, now_ms=NOW).terminal
+    for field in ("no_inflight_buy", "no_unanswered_cancel", "owned_rows_closed", "request_cas_current"):
+        assert not evaluate_unbound_cancel_terminal(request, books, fences=replace(fences, **{field: False}),
+                                                    now_ms=NOW).terminal
+    for changes in ({"started_at_ms": NOW - 15_001}, {"started_at_ms": request.requested_at_ms - 1},
+                    {"finished_at_ms": NOW + 1}, {"complete": False}, {"source": "sql"}):
+        assert not evaluate_unbound_cancel_terminal(request, {**books, "schwab": replace(books["schwab"], **changes)},
+                                                    fences=fences, now_ms=NOW).terminal
+    assert not evaluate_unbound_cancel_terminal(request, books, fences=replace(fences, request=replace(request, token="old")),
+                                                now_ms=NOW).terminal
+    assert not evaluate_unbound_cancel_terminal(request, books, fences=fences, now_ms=NOW, freshness_ms=15_001).terminal
