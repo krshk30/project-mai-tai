@@ -7931,3 +7931,18 @@ GAPtrue only newly added; LINE/RPGfalse retained; no migration/ledger/archive.
 RPGRETIRE1 same-writer draft #1128 333c8756: guard mutations15RED, corrected
 full-suite pair still pending, not a ready or independently reviewed candidate.
 No production application/config/service action occurred in this checkpoint.
+
+2026-10-08 09:02 ET codex-2 C8-C12: five lane CLAIMs dispatched in parallel,
+one sole writer each: A/Pasteur soft-rest boot ghost ownership; B/01a111b9
+LINESRC2 rebase; C/Descartes corrected complete after-close runner;
+D/Mencius WBQUIET consumer hooks; E/Banach Friday A/B/C data prep.
+Main1e15adb0 includes #1129's WB shadow and ORBLIVE1; the old #1124 behind
+blocker is superseded. Plan0036837f and its200PASS are old-scope evidence,
+not an approval or test receipt for the expanded job. LINE now requested ON
+only after LINESRC2 pin/merge; GAP ON, RPG OFF; operator can vetoLINE.
+No application, env, unit, broker, database, archive or service write before
+close. Parent retained exact-main baseline in /tmp/codex-1008-five-lane-baseline,
+unitXML /tmp/five-lane-main-1e15adb0-unit.xml (running, not PASS yet), so A/B/D
+compare one real base without three duplicate resource-heavy baseline suites.
+New branch heads/tests/mutations/replays will be reported separately per lane;
+CLAIM is not review-ready and the15:00 target is not a pin receipt.
