@@ -1,0 +1,9 @@
+{
+  "pr_number": 1129,
+  "range_base": "1ed10831508e9a251aa3440a973f49c8bb2c18c9",
+  "range_head": "cc8e72f70da9841b312fbaf95ea39710c8209be7",
+  "reviewed_at": "2026-10-08T12:28:21Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "BATCH 10-08 (strict main protection; operator 10-06 one-batch ruling): main 1ed10831 (GAPLINE1 #1126 merged) + codex-2's #1124 WBQUIET1 shadow log (4 commits, reviewed and pinned by claude-1 on b40212e4: log-only, off-loop, bounded, no behaviour change; full suite identical to base) + #1125 ORBLIVE1 lane 1 (5 commits, reviewed and pinned by claude-1 on 4f8e0796 against the 5-block ask ledger: live heartbeat/phase/universe, tile states, subscribed = live symbols, bounded pre-open fallback, section dates, simulation and paper unit retired, catalog 150, label control; mutations 4/4 RED on the final head; full suite identical to base). ORBLIVE1's three test-file conflicts were resolved to codex's side; the five catalog-count assertions that then carried one side's number are set to the merged tree (131 flags / 143 flag checks / 151 total) in one claude-1 tests-only commit 2e848426, which codex-2 pins independently. Batch tree: 368 passed across the count/gapline/orblive/wbquiet files; full unit suite on the batch tree recorded in handoff D11 (claude-1 run). This record covers the nine codex-2 commits 1ed10831..cc8e72f7. Install tonight after the close, when flat: OMS (shadow log), orb-schwab + control (ORBLIVE1), then the paper unit disabled via codex's retirement sequence; LINE=CHART stays OFF; GAPLINE1 switch ON (already on main)."
+}
