@@ -11,6 +11,7 @@ from io import StringIO
 import json
 import logging
 from pathlib import Path
+import subprocess
 import time
 from typing import Any
 from urllib.error import HTTPError
@@ -3238,7 +3239,7 @@ class ControlPlaneRepository:
         }
 
         try:
-            heartbeats = await self._read_stream_events("heartbeats", limit=50)
+            heartbeats = await self._read_stream_events("heartbeats", limit=200)
             latest_by_service: dict[str, dict[str, Any]] = {}
             for event in heartbeats:
                 heartbeat = HeartbeatEvent.model_validate(event)
@@ -3255,6 +3256,37 @@ class ControlPlaneRepository:
                     "observed_at": _datetime_str(heartbeat.produced_at),
                     "observed_at_raw": heartbeat.produced_at,
                 }
+            if self.settings.orb_enabled and self.settings.orb_live_schwab_orders_enabled:
+                if "orb-schwab" not in latest_by_service:
+                    now_et = utcnow().astimezone(EASTERN_TZ)
+                    if (now_et.hour, now_et.minute) < (9, 27):
+                        try:
+                            unit = await asyncio.to_thread(_orb_live_unit_state)
+                            owned = await asyncio.wait_for(self.redis.hget(
+                                stream_name(self.settings.redis_stream_prefix, "market-data-subscription-owners"),
+                                "orb-schwab",
+                            ), timeout=2)
+                            symbols = json.loads(owned) if owned is not None else None
+                            if (
+                                unit is not None and isinstance(symbols, list)
+                                and all(isinstance(symbol, str) for symbol in symbols)
+                            ):
+                                latest_by_service["orb-schwab"] = {
+                                    "service_name": "orb-schwab", "status": "unknown",
+                                    "effective_status": "starting", "observed_at": "",
+                                    "runtime_fallback": unit,
+                                    "details": {"mode": "LIVE", "phase": "waiting_for_open",
+                                                "universe": json.dumps(symbols), "subscribed": json.dumps(symbols)},
+                                }
+                        except Exception:
+                            pass  # Missing independent evidence remains STOPPED, never adopted.
+                orb = latest_by_service.setdefault("orb-schwab", {
+                    "service_name": "orb-schwab", "instance_name": "orb-schwab",
+                    "status": "unknown", "details": {}, "observed_at": "",
+                })
+                age = _orb_heartbeat_age(orb)
+                if (age is None or not 0 <= age <= 60) and not _orb_unit_fallback_fresh(orb):
+                    orb["effective_status"] = "stopped"
             services = sorted(latest_by_service.values(), key=lambda item: item["service_name"])
         except Exception as exc:
             errors.append(f"redis:heartbeats:{exc}")
@@ -5074,7 +5106,7 @@ def _format_interval_label(interval_secs: object) -> str:
 
 def _find_bot_view(data: dict[str, Any], strategy_code: str) -> dict[str, Any] | None:
     normalized = _normalize_strategy_code(strategy_code)
-    return next(
+    bot = next(
         (
             bot
             for bot in data["bots"]
@@ -5082,6 +5114,9 @@ def _find_bot_view(data: dict[str, Any], strategy_code: str) -> dict[str, Any] |
         ),
         None,
     )
+    if bot is not None and normalized == "orb_schwab":
+        return {**bot, "watchlist": _orb_heartbeat_symbols(data, "subscribed")}
+    return bot
 
 
 def _resolved_bot_recent_decisions(data: dict[str, Any], bot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -5143,34 +5178,118 @@ def _orb_within_display_session(timestamp: str | None) -> bool:
     return observed.date() == today and observed <= observed.replace(hour=16, minute=0, second=0, microsecond=0)
 
 
+def _orb_live_unit_state() -> dict[str, Any] | None:
+    result = subprocess.run([
+        "systemctl", "show", "project-mai-tai-orb-schwab.service",
+        "--property=ActiveState,SubState,NRestarts,ActiveEnterTimestamp",
+    ], capture_output=True, text=True, timeout=2)
+    if result.returncode != 0:
+        return None
+    values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    if values.get("ActiveState") != "active" or values.get("SubState") != "running":
+        return None
+    if not values.get("ActiveEnterTimestamp") or not values.get("NRestarts", "").isdigit():
+        return None
+    return {**values, "checked_at": utcnow().isoformat()}
+
+
+def _orb_unit_fallback_fresh(service: dict[str, Any]) -> bool:
+    unit = service.get("runtime_fallback") or {}
+    # Transitional pre-open evidence is not a heartbeat and cannot mask a stale one.
+    if service.get("observed_at") or service.get("observed_at_raw"):
+        return False
+    now_et = utcnow().astimezone(EASTERN_TZ)
+    if (now_et.hour, now_et.minute) >= (9, 27):
+        return False
+    try:
+        stamp = datetime.fromisoformat(unit.get("checked_at", ""))
+        age = (utcnow() - stamp).total_seconds()
+    except (ValueError, TypeError):
+        return False
+    return (
+        0 <= age <= 60 and unit.get("ActiveState") == "active"
+        and unit.get("SubState") == "running" and bool(unit.get("ActiveEnterTimestamp"))
+        and str(unit.get("NRestarts", "")).isdigit()
+    )
+
+
+def _orb_heartbeat_age(service: dict[str, Any]) -> float | None:
+    raw = service.get("observed_at_raw") or service.get("observed_at")
+    if isinstance(raw, datetime):
+        observed = raw
+    else:
+        observed = _parse_eastern_label(str(raw or ""))
+        if observed is None:
+            try:
+                observed = datetime.fromisoformat(str(raw))
+            except (ValueError, TypeError):
+                return None
+    if observed.tzinfo is None:
+        return None
+    return (utcnow() - observed).total_seconds()
+
+
+def _orb_heartbeat_symbols(data: dict[str, Any], key: str) -> list[str]:
+    details = (_service_by_name(data, "orb-schwab") or {}).get("details") or {}
+    raw = details.get(key, "[]")
+    try:
+        symbols = json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(symbols, list) or any(not isinstance(symbol, str) for symbol in symbols):
+        return []
+    return sorted({symbol.strip().upper() for symbol in symbols if symbol.strip()})
+
+
 def _build_orb_live_listening_status(
     data: dict[str, Any], bot: dict[str, Any], latest_tick: str
 ) -> dict[str, Any]:
     service = _service_by_name(data, "orb-schwab") or {}
+    details = service.get("details") or {}
     heartbeat_at = str(service.get("observed_at") or "")
-    tick_age = _seconds_since_eastern_label(latest_tick)
-    state, detail, color = "UNKNOWN", "ORB-Schwab activity is not reported by the installed service.", "#ffcc5b"
-    if bot.get("positions"):
+    age = _orb_heartbeat_age(service)
+    universe = _orb_heartbeat_symbols(data, "universe")
+    subscribed = _orb_heartbeat_symbols(data, "subscribed")
+    state, detail, color = "UNKNOWN", "ORB-Schwab reported an unknown live phase.", "#ffcc5b"
+    status = str(service.get("effective_status", service.get("status", ""))).lower()
+    if _orb_unit_fallback_fresh(service):
+        unit = service["runtime_fallback"]
+        state, color = "WAITING FOR 09:27", "#5fff8d"
+        detail = (f"Unit active since {unit['ActiveEnterTimestamp']}; NRestarts={unit['NRestarts']}. "
+                  f"Gateway-owned universe: {', '.join(universe) or 'empty'}. Heartbeat not yet reported.")
+    elif age is None or not 0 <= age <= 60 or status != "healthy":
+        state, detail, color = "STOPPED", "ORB-Schwab heartbeat is missing, stale, or not healthy.", "#ff6b6b"
+    elif details.get("mode") != "LIVE":
+        detail = "ORB-Schwab is not reporting LIVE mode."
+    elif bot.get("positions"):
         state, color = "IN TRADE", "#5fff8d"
         detail = (
             "ORB strategy book has an open managed row. Display window ended at 16:00 ET; auto-refresh is paused."
             if _orb_display_refresh_paused(bot)
             else "ORB strategy book has an open managed row. Auto-refresh continues until 16:00 ET."
         )
-    elif _orb_session_closed(bot):
+    elif bot.get("pending_open_symbols") or any(
+        str(order.get("status") or "").lower() in {
+            "accepted", "working", "queued", "pending", "submitted", "partially_filled",
+        } for order in bot.get("recent_orders", [])
+    ):
+        state, detail, color = "WORKING", "An ORB live broker order is working.", "#5fff8d"
+    elif details.get("phase") == "session_complete":
         date_label = utcnow().astimezone(EASTERN_TZ).strftime("%Y-%m-%d")
         state, detail, color = "SESSION COMPLETE", f"{date_label} ORB entry window is complete and its managed book is flat. Today's live broker results through 16:00 ET remain visible; auto-refresh is paused.", "#98a6c8"
-    elif str(service.get("effective_status", service.get("status", ""))).lower() in {"inactive", "stopped", "stopping", "failed"}:
-        state, detail, color = "STOPPED", "ORB-Schwab service is not running.", "#ff6b6b"
-    elif tick_age is not None and 0 <= tick_age <= 90:
-        state, detail, color = "WATCHING", "Fresh ticks reached ORB-Schwab.", "#5fff8d"
-    elif latest_tick:
-        state, detail = "STALE", "No fresh ORB-Schwab tick activity."
+    elif details.get("phase") == "waiting_for_open":
+        state, color = "WAITING FOR 09:27", "#5fff8d"
+        detail = f"Universe: {', '.join(universe) or 'empty'}. Healthy since {details.get('healthy_since') or heartbeat_at}."
+    elif details.get("phase") in {"opening_range", "entry_window"}:
+        state, detail, color = "EVALUATING", "ORB-Schwab is evaluating today's opening range.", "#5fff8d"
     return {
         "state": state, "detail": detail, "color": color,
-        "latest_decision_at": "", "latest_bot_tick_at": latest_tick,
+        "latest_decision_at": str(details.get("last_decision_at") or ""), "latest_bot_tick_at": latest_tick,
         "latest_market_data_at": "", "latest_heartbeat_at": heartbeat_at,
-        "watchlist_count": len(bot.get("watchlist", [])),
+        "last_bar_at": str(details.get("last_bar_at") or ""),
+        "healthy_since": str(details.get("healthy_since") or ""),
+        "universe": universe, "subscribed": subscribed,
+        "watchlist_count": len(subscribed),
         "position_count": len(bot.get("positions", [])),
         "tracked_bar_count": sum(int(value or 0) for value in bot.get("bar_counts", {}).values()),
         "data_health": dict(bot.get("data_health", {}) or {}),
@@ -5897,6 +6016,10 @@ def _render_bot_detail_page(
         return "<h1>Bot not initialized</h1>"
 
     meta = BOT_PAGE_META[strategy_code]
+    section_date = (
+        " &#183; " + utcnow().astimezone(EASTERN_TZ).strftime("%Y-%m-%d")
+        if strategy_code == "orb_schwab" else ""
+    )
     refresh_seconds = 30
     refresh_meta = f'<meta http-equiv="refresh" content="{refresh_seconds}">'
     if strategy_code == "orb_schwab" and _orb_display_refresh_paused(bot):
@@ -6009,6 +6132,8 @@ def _render_bot_detail_page(
         for item in bot["positions"]
         if item.get("ticker") or item.get("symbol")
     }
+    if strategy_code == "orb_schwab":
+        active_symbols = list(listening_status["subscribed"])
     pending_symbols = {str(symbol).upper() for symbol in bot["pending_open_symbols"] + bot["pending_close_symbols"]}
     tracked_retention_symbols = set(active_symbols) | bot_watchlist | open_symbols | pending_symbols
     live_symbol_html = _build_bot_symbol_action_html(
@@ -6222,7 +6347,7 @@ def _render_bot_detail_page(
             <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Completed Positions</h3>
+                        <h3>Completed Positions{section_date}</h3>
                     <div class="sub">Completed trade cycles for this bot, including positions that finished by scale-out.</div>
                 </div>
                 <span class="count pink">{completed_count}</span>
@@ -6301,7 +6426,7 @@ def _render_bot_detail_page(
             <section class="panel full accent-panel">
                 <div class="panel-header">
                     <div>
-                        <h2>Listening Status</h2>
+                        <h2>Listening Status{section_date}</h2>
                         <div class="sub">Explicit signal for whether this bot is actively listening and evaluating bars.</div>
                     </div>
                     <span class="count accent" style="color:{listening_status["color"]}">{escape(listening_status["state"])}</span>
@@ -6796,7 +6921,7 @@ def _render_bot_detail_page(
             </div>
 
             <div class="side-section">
-                <div class="side-label">Live Symbols</div>
+                <div class="side-label">Live Symbols{section_date}</div>
                 <div>{live_symbol_html}</div>
             </div>
 
@@ -6858,7 +6983,7 @@ def _render_bot_detail_page(
             <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Open Positions</h3>
+                        <h3>Open Positions{section_date}</h3>
                         <div class="sub">Live bot, virtual, and broker quantities side by side.</div>
                     </div>
                     <span class="count">{bot["position_count"]}</span>
@@ -6879,7 +7004,7 @@ def _render_bot_detail_page(
             <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Order History</h3>
+                        <h3>Order History{section_date}</h3>
                         <div class="sub">Entry, scale, and exit orders with fill price, status, and reason.</div>
                     </div>
                     <span class="count accent">{order_count}</span>
@@ -6895,7 +7020,7 @@ def _render_bot_detail_page(
             <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Decision Tape</h3>
+                        <h3>Decision Tape{section_date}</h3>
                         <div class="sub">Recent entry checks and block reasons from the strategy runtime.</div>
                     </div>
                     <span class="count accent">{len(recent_decisions)}</span>
@@ -6911,7 +7036,7 @@ def _render_bot_detail_page(
             <section class="panel full">
                 <div class="panel-header">
                     <div>
-                        <h3>Failed Actions</h3>
+                        <h3>Failed Actions{section_date}</h3>
                         <div class="sub">Recent failed order events in a simple tape format.</div>
                     </div>
                     <span class="count pink">{failed_count}</span>

@@ -17,8 +17,8 @@ from project_mai_tai.runtime_registry import (
     configured_broker_account_registrations,
     strategy_registration_map,
 )
-from project_mai_tai.services.orb_app import OrbService, _PendingPaperEntry, _SymbolState
-from project_mai_tai.settings import Settings
+from tests.support.retired_orb_simulation import OrbService, _PendingPaperEntry, _SymbolState
+from tests.support.retired_orb_settings import RetiredOrbSettings as Settings
 
 
 class _PaperStore:
@@ -265,7 +265,7 @@ def test_orblive1_registration_is_live_and_simulation_never_registered() -> None
     ), "the paper label must never become a configured BROKER account"
 
 
-def test_orblive1_service_entrypoint_remains_running(monkeypatch) -> None:
+def test_orblive1_retired_service_entrypoint_cannot_start_a_second_producer(monkeypatch) -> None:
     from project_mai_tai.services import orb_app
 
     started = []
@@ -275,5 +275,6 @@ def test_orblive1_service_entrypoint_remains_running(monkeypatch) -> None:
             started.append(True)
 
     monkeypatch.setattr(orb_app, "OrbService", Service)
-    asyncio.run(orb_app.main())
-    assert started == [True]
+    with pytest.raises(RuntimeError, match="retired"):
+        asyncio.run(orb_app.main())
+    assert started == []

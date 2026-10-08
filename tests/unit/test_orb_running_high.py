@@ -11,8 +11,8 @@ from __future__ import annotations
 from datetime import timedelta
 from unittest.mock import MagicMock
 
-from project_mai_tai.services.orb_app import OrbService
-from project_mai_tai.settings import Settings
+from tests.support.retired_orb_simulation import OrbService
+from tests.support.retired_orb_settings import RetiredOrbSettings as Settings
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
 
 

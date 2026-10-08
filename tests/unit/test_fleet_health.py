@@ -563,6 +563,7 @@ def test_d6_freshness_check_is_registered_in_the_executed_check_list() -> None:
 
 def test_every_fleet_check_has_an_explicit_alert_class() -> None:
     assert {spec.check.__name__: spec.alert_class for spec in fhc.CHECKS} == {
+        "check_orb_schwab_heartbeat": fhc.FLEET_RUNTIME,
         "check_service_restart_storms": fhc.FLEET_RUNTIME,
         "check_massive_socket_policy_violations": fhc.FLEET_RUNTIME,
         "check_strategy_bar_freshness": fhc.PAPER,

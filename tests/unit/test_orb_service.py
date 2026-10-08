@@ -5,7 +5,7 @@ import json
 import types
 from datetime import UTC, datetime, timedelta
 
-from project_mai_tai.services.orb_app import OrbService, _normalize_trade_ts_ns
+from tests.support.retired_orb_simulation import OrbService, _normalize_trade_ts_ns
 
 
 class _Boom:

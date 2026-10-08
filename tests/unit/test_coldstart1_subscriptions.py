@@ -19,11 +19,11 @@ import pytest
 from project_mai_tai.events import MarketDataSubscriptionEvent
 from project_mai_tai.market_data.gateway import MarketDataGatewayService
 from project_mai_tai.services.momentum_paper_app import MomentumPaperService
-from project_mai_tai.services.orb_app import OrbService
+from tests.support.retired_orb_simulation import OrbService
 from project_mai_tai.services.orb_schwab_app import OrbSchwabService
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.services.strategy_engine_app import StrategyEngineService
-from project_mai_tai.settings import Settings
+from tests.support.retired_orb_settings import RetiredOrbSettings as Settings
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "coldstart1"
 RECORDED = json.loads((FIXTURES / "owners-final-20261003.json").read_text())
@@ -288,7 +288,8 @@ async def test_healthy_startup_path_publishes_without_any_new_watchlist_event(na
     elif name in {"orb", "orb-schwab"}:
         service.settings.orb_enabled = True
         monkeypatch.setattr(service, "_maybe_roll_session", lambda: None)
-        monkeypatch.setattr(service, "_restore_paper_lifecycle", lambda: None)
+        if name == "orb":
+            monkeypatch.setattr(service, "_restore_paper_lifecycle", lambda: None)
         monkeypatch.setattr(service, "_refresh_universe", lambda: None)
         monkeypatch.setattr(service, "_drain_market_data", AsyncMock(side_effect=BootComplete))
         monkeypatch.setattr("project_mai_tai.services.orb_schwab_app.open_entries", lambda *_args: [])

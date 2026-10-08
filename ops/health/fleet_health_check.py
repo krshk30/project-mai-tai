@@ -5,7 +5,8 @@ Why this exists: every silent failure we've had was a component reporting *healt
 while its function was dead — the OMS up-but-zombied, #388 deployed-but-reconcile-never-
 fired, a position record-said-held while the broker was flat. The self-report is the thing
 that lies. F3 checks "is it doing its job" against GROUND TRUTH (DB / fills / independent
-capture), never the component's own heartbeat/snapshot.
+capture). Separately classified runtime checks also verify process liveness and
+heartbeat freshness; a fresh heartbeat is not proof of functional correctness.
 
 Independence: stdlib + `psql`/`redis-cli` subprocess only — NO app imports, so a frozen
 service (or a hung DB) can't take this check down the same way. Runs from an independent
@@ -638,6 +639,33 @@ def _read_service_runtimes(
     return parsed
 
 
+def check_orb_schwab_heartbeat() -> tuple[str, str, str]:
+    name = "orb-schwab-heartbeat"
+    stream = os.environ.get("MAI_TAI_REDIS_STREAM_PREFIX", "mai_tai") + ":heartbeats"
+    try:
+        result = subprocess.run(
+            ["redis-cli", "--json", "XREVRANGE", stream, "+", "-", "COUNT", "200"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return "AMBER", name, "heartbeat source unreadable"
+        for _entry_id, fields in json.loads(result.stdout):
+            event = json.loads(dict(zip(fields[::2], fields[1::2]))["data"])
+            payload = event.get("payload") or {}
+            if payload.get("service_name") != "orb-schwab":
+                continue
+            observed = datetime.fromisoformat(event["produced_at"])
+            if observed.tzinfo is None:
+                return "RED", name, "heartbeat timestamp lacks timezone"
+            age = (datetime.now(UTC) - observed).total_seconds()
+            healthy = payload.get("status") == "healthy"
+            level = "GREEN" if healthy and 0 <= age <= 60 else "RED"
+            return level, name, f"age_s={age:.1f} status={payload.get('status')} bound_s=60"
+        return "RED", name, "heartbeat absent"
+    except Exception as exc:
+        return "AMBER", name, f"heartbeat source unreadable: {type(exc).__name__}"
+
+
 def check_service_restart_storms(
     *,
     now_epoch: float | None = None,
@@ -1053,6 +1081,7 @@ class CheckSpec(NamedTuple):
 # Every check declares its routing class here. There is deliberately no default: adding a check
 # without deciding whether it can page is a construction error, not an implicit page.
 RUNTIME_CHECKS = (
+    CheckSpec(check_orb_schwab_heartbeat, FLEET_RUNTIME),
     CheckSpec(check_service_restart_storms, FLEET_RUNTIME),
     CheckSpec(check_massive_socket_policy_violations, FLEET_RUNTIME),
 )

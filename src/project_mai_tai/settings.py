@@ -203,39 +203,20 @@ class Settings(BaseSettings):
     # Retained for rollback/config compatibility only. The ORB paper observer ignores
     # both broker fields; its runtime registration is hard-coded to provider=none.
     orb_broker_provider: str | None = None
-    # --- Intrabar-reclaim observation (cap-off + 3% trail metadata), default OFF ---
-    # When True: entry is the intrabar reclaim-of-OR_high (price crosses OR_high and
-    # HOLDS for orb_reclaim_hold_secs) observed at OR_high; the 12% width cap is removed.
-    # The historical price/order fields are evidence only and cannot be dispatched.
-    orb_intrabar_reclaim_enabled: bool = False
+    # Numeric historical configuration remains for offline replay compatibility.
+    # ORBLIVE1 removed the seven simulation-only boolean switches from production.
     orb_reclaim_trail_pct: float = 3.0
     orb_reclaim_quantity: int = 5
     orb_reclaim_hold_secs: int = 25
-    # --- Opening-high observation, flag-gated, default OFF ---
-    # Running-high alone retains the legacy dynamic reference. The broker-free ORB env also
-    # enables orb_resting_entry_enabled, selecting the fixed 09:25-09:30 paper order model.
-    orb_running_high_enabled: bool = False
     orb_running_high_window_minutes: int = 30   # entries only 09:30 .. open+30 = 10:00 ET
     orb_running_high_gap_cap_pct: float = 1.5
 
-    # Historical quote-pricing selector, retained for rollback and evidence compatibility.
-    # The paper observer records the selected policy but never invokes the OMS pricing path.
+    # The historical OMS quote-pricing gate remains an OMS reader, not an ORB live switch.
     orb_oms_quote_priced_entry_enabled: bool = False
     orb_oms_quote_priced_max_age_ms: int = 2000   # tunable: max ask staleness to price off
-    # Fixed opening-high resting-entry paper model. The isolated env enables it; the
-    # observer records modeled order decisions only and has no broker route.
-    orb_resting_entry_enabled: bool = False
-    # Complete broker-disconnected paper lifecycle. The isolated ORB environment
-    # pins the settled rule; these values cannot create a broker route.
-    orb_paper_lifecycle_enabled: bool = False
     orb_paper_target_pct: float = 5.0
     orb_paper_stop_pct: float = 8.0
     orb_paper_min_break_body_pct: float = 45.0
-    orb_paper_atr_exit_enabled: bool = True
-    # Independent paper-entry gates. They default off so each operator-approved
-    # rule can be enabled and rolled back without changing the lifecycle itself.
-    orb_paper_atr_entry_gate_enabled: bool = False
-    orb_paper_four_red_delay_enabled: bool = False
     # P0.6 WINDOW FLATTEN (docs: P0.6-eod-flatten-design). ORB trades 09:30-10:00. AFTER 10:00 IT
     # SHOULD BE FLAT -- that is the rule, not a safety net. This enforces it.
     #

@@ -12,8 +12,8 @@ from project_mai_tai.orb_paper_store import (
     ORB_PAPER_EVENT_TYPE,
     ORB_PAPER_ORDER_PLACED_EVENT_TYPE,
 )
-from project_mai_tai.services.orb_app import OrbService
-from project_mai_tai.settings import Settings
+from tests.support.retired_orb_simulation import OrbService
+from tests.support.retired_orb_settings import RetiredOrbSettings as Settings
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
 from project_mai_tai.strategy_core.orb_tick_aggregator import OrbTickAggregator
 

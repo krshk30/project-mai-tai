@@ -10,8 +10,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from project_mai_tai.services.orb_app import OrbService
-from project_mai_tai.settings import Settings
+from tests.support.retired_orb_simulation import OrbService
+from tests.support.retired_orb_settings import RetiredOrbSettings as Settings
 
 
 def _tick(i: int) -> tuple[str, dict]:
