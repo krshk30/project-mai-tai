@@ -1,0 +1,9 @@
+{
+  "pr_number": 1129,
+  "range_base": "cc8e72f70da9841b312fbaf95ea39710c8209be7",
+  "range_head": "2e848426d398adbfd1816c087617360d1b8af740",
+  "reviewed_at": "2026-10-08T12:34:11Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read the single Claude-authored tests-only commit: five exact count assertions in four files match the merged catalog (131 distinct boolean flags, 143 boolean process checks, 8 numeric checks, 151 total); Settings bool coverage exact with no duplicates. All 157 tests in the four changed files pass. Diff for src/ops/scripts is empty. Review covers cc8e72f7..2e848426 only; no self-review of the preceding Codex commits."
+}
