@@ -1,64 +1,126 @@
-name: Validate
+name: Lane I Linux NFQ2 Pair Evidence
 
 on:
   push:
-    branches:
-      - main
-      - "codex/**"
-  pull_request:
+    branches: [codex/flye-nfq2-linux-pair-1008]
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  alternating-pair:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: project_mai_tai_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d project_mai_tai_test"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 10
+    timeout-minutes: 15
     steps:
-      - name: Check out repository
+      - name: Check out exact base
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+        with:
+          ref: 1e15adb03c3758e647d333828bbe3090e24e832e
+          path: paired-base
+          persist-credentials: false
+      - name: Check out immutable Lane I head
+        uses: actions/checkout@v4
+        with:
+          ref: c6f44672c66f5a83b2c871fa0ff0de8796e6537a
+          path: paired-head
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install package and dev dependencies
+      - name: Install common dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-
-      - name: Install PostgreSQL client and migrate test database
-        env:
-          MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
+          python -m pip install -e "./paired-head[dev]"
+          python -m pip freeze > dependencies.txt
+      - name: Twenty sequential alternating fresh-process pairs
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client
-          alembic upgrade head
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import platform
+          from pathlib import Path
+          import subprocess
+          import sys
+          import time
+          import xml.etree.ElementTree as ET
 
-      - name: Check log marker isolation
-        run: python ops/health/check_log_marker_collisions.py
-
-      - name: Run unit tests
-        run: python -m pytest -p no:cacheprovider tests/unit
-
-      - name: Run integration, replay, and backtest golden gate
-        env:
-          MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
-        run: python -m pytest -p no:cacheprovider tests/integration tests/replay tests/backtest
-
-      - name: Run Ruff
-        run: python -m ruff check src tests
+          root = Path.cwd()
+          output = root / "pair-output"
+          output.mkdir()
+          revisions = {
+              "base": "1e15adb03c3758e647d333828bbe3090e24e832e",
+              "head": "c6f44672c66f5a83b2c871fa0ff0de8796e6537a",
+          }
+          test_file = "tests/unit/test_nfq2_tick_path.py"
+          node = test_file + "::test_nfq2_slow_save_does_not_stall_loop_and_concurrent_quotes_queue_once"
+          unchanged = [test_file, "tests/unit/test_nfq2_eh_fresh_price.py",
+                       "src/project_mai_tai/oms/eh_fresh_price.py",
+                       "src/project_mai_tai/oms/service.py", "pyproject.toml"]
+          hashes = {}
+          for relative in unchanged:
+              digests = {}
+              for label, revision in revisions.items():
+                  checkout = root / ("paired-" + label)
+                  actual = subprocess.check_output(["git", "rev-parse", "HEAD"],
+                                                   cwd=checkout, text=True).strip()
+                  assert actual == revision, (label, actual)
+                  digests[label] = hashlib.sha256((checkout / relative).read_bytes()).hexdigest()
+              assert digests["base"] == digests["head"], (relative, digests)
+              hashes[relative] = digests
+          report = {
+              "revisions": revisions, "node": node,
+              "platform": platform.platform(), "python": sys.version,
+              "unchanged_sha256": hashes,
+              "design": "20 rounds: base then head, sequential fresh pytest process each time",
+              "assertion": "original gather elapsed < 0.05 seconds; no threshold or GC changes",
+              "scope": "isolated target-test evidence only; not full-suite causality",
+              "runs": [],
+          }
+          for number in range(1, 21):
+              for label in revisions:
+                  checkout = root / ("paired-" + label)
+                  stem = f"{number:02d}-{label}"
+                  xml = output / (stem + ".xml")
+                  env = os.environ.copy()
+                  env["PYTHONPATH"] = str(checkout / "src")
+                  start = time.monotonic()
+                  result = subprocess.run(
+                      [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q",
+                       node, "--junitxml=" + str(xml)],
+                      cwd=checkout, env=env, text=True, capture_output=True,
+                  )
+                  (output / (stem + ".log")).write_text(result.stdout + result.stderr, encoding="utf-8")
+                  cases = list(ET.parse(xml).getroot().iter("testcase")) if xml.exists() else []
+                  failures = [c.find("failure") for c in cases if c.find("failure") is not None]
+                  errors = [c.find("error") for c in cases if c.find("error") is not None]
+                  skipped = [c.find("skipped") for c in cases if c.find("skipped") is not None]
+                  passed = result.returncode == 0 and len(cases) == 1 and not failures + errors + skipped
+                  entry = {"round": number, "label": label, "revision": revisions[label],
+                           "exit_code": result.returncode, "passed": passed,
+                           "process_elapsed_seconds": time.monotonic() - start,
+                           "failures": [f.text for f in failures], "errors": [e.text for e in errors],
+                           "xml": xml.name, "log": stem + ".log"}
+                  report["runs"].append(entry)
+                  (output / "pair-results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                  print(json.dumps(entry), flush=True)
+          report["rates"] = {
+              label: {"passed": sum(r["passed"] for r in report["runs"] if r["label"] == label),
+                      "failed": sum(not r["passed"] for r in report["runs"] if r["label"] == label),
+                      "total": 20}
+              for label in revisions
+          }
+          (output / "pair-results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+          print(json.dumps(report["rates"], indent=2), flush=True)
+          raise SystemExit(0 if all(r["passed"] for r in report["runs"]) else 1)
+          PY
+      - name: Upload raw evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-i-nfq2-linux-pair
+          path: |
+            pair-output/
+            dependencies.txt
+          retention-days: 14
