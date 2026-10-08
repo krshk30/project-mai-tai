@@ -71,7 +71,7 @@ from project_mai_tai.fanout_outcome_consumer import (
 )
 from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.falseflip1_runtime import FalseFlipStore
-from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
+from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore, current_session_anchor
 from project_mai_tai.v2_flip_entry_ownership import (
     FlipConfirmationClose,
     FlipEntryOwnershipStore,
@@ -137,7 +137,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     TradeIntentDraft,
     session_start_ts_ms,
 )
-from project_mai_tai.v2_removed_wait import RemovedWaitStore
+from project_mai_tai.v2_removed_wait import RemovedWaitStore, SETTLE_MS
 
 logger = logging.getLogger(__name__)
 
@@ -812,7 +812,7 @@ class SchwabV2BotService:
             getattr(self.settings, "strategy_schwab_1m_v2_streamer_enabled", False)
         )
 
-    def _configure_removed_wait_store(self) -> None:
+    async def _configure_removed_wait_store(self) -> None:
         if not (self.strategy._removed_wait_enabled or getattr(self.strategy, "_retry_one_enabled", False)):
             return
         store = None
@@ -820,7 +820,23 @@ class SchwabV2BotService:
             if self.session_factory is None:
                 raise RuntimeError("removal evidence database unavailable")
             store = RemovedWaitStore(self.session_factory)
-            restored = store.restore()
+            accounts = {self.settings.strategy_schwab_1m_v2_account_name}
+            if self.strategy._dual_broker_fanout_enabled:
+                accounts.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
+
+            def restore_and_retire():
+                restored = store.restore()
+                proofs = store.retire_prior_sessions(tuple(restored.values()), accounts)
+                return store.restore(), proofs
+
+            restored, proofs = await asyncio.to_thread(restore_and_retire)
+            now_ms = self.strategy._now_ms()
+            for proof in proofs:
+                if proof.clear:
+                    if not 0 <= now_ms - proof.observed_at_ms <= SETTLE_MS:
+                        raise RuntimeError("stale boot rollover proof")
+                    logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=CLEAR reason=session_rollover",
+                                proof.request.symbol, proof.request.opportunity_id)
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=restore_unreadable")
             self.strategy.configure_removed_wait(None, restored={}, readable=False)
@@ -828,6 +844,7 @@ class SchwabV2BotService:
             self.strategy.configure_removed_wait(store.record, restored=restored, readable=True,
                                                  dispatch_persist=store.record_dispatch)
         self._removed_wait_store = store
+        self._removed_wait_roll_anchor = current_session_anchor()
 
     async def _removed_wait_poll(self) -> None:
         if not (getattr(self.strategy, "_removed_wait_enabled", False)
@@ -846,6 +863,18 @@ class SchwabV2BotService:
         if self.strategy._dual_broker_fanout_enabled:
             accounts.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
         try:
+            anchor = current_session_anchor()
+            if anchor != getattr(self, "_removed_wait_roll_anchor", anchor):
+                if self._removed_wait_rollover_busy():
+                    return
+                proofs = await asyncio.to_thread(store.retire_prior_sessions, requests, accounts)
+                if self._removed_wait_rollover_busy():
+                    return
+                self.strategy.apply_removed_wait_rollover(proofs)
+                self._removed_wait_roll_anchor = anchor
+                requests = tuple(self.strategy._removed_wait_requests.values())
+                if not requests:
+                    return
             proofs = await asyncio.to_thread(store.proofs, requests, accounts)
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=evidence_unreadable")
@@ -858,19 +887,31 @@ class SchwabV2BotService:
         counts = getattr(self, "_clearwait_open_emits", {})
         return any(counts.get(symbol, 0) for symbol in self.strategy._removed_wait_requests)
 
+    def _removed_wait_rollover_busy(self) -> bool:
+        symbols = self.strategy._removed_wait_requests
+        queued = (*getattr(self.strategy, "_pending_intents", ()),
+                  *getattr(self.strategy, "_pending_webull_direct_intents", ()))
+        return (self._removed_wait_emits_inflight()
+                or any(d.symbol.upper() in symbols and d.side == "buy"
+                       and d.intent_type in {"open", "cancel"} for d in queued))
+
     async def _emit_removal_tracked(self, emitter, draft) -> bool:
-        if (getattr(draft, "intent_type", "") != "open"
+        if (getattr(draft, "intent_type", "") not in {"open", "cancel"}
+                or getattr(draft, "side", "") != "buy"
                 or not getattr(getattr(self, "strategy", None), "_removed_wait_enabled", False)):
             await emitter.emit(draft)
             return True
-        if not self._line_draft_allowed(draft):
+        if draft.intent_type == "open" and not self._line_draft_allowed(draft):
+            return False
+        if (draft.intent_type == "open"
+                and self.strategy._removed_wait_gate_closed(draft.symbol)):
             return False
         counts = self.__dict__.setdefault("_clearwait_open_emits", {})
         symbol = draft.symbol.upper()
         counts[symbol] = counts.get(symbol, 0) + 1
         try:
             account = getattr(emitter, "broker_account_name", "")
-            if not self.strategy.track_removed_wait_dispatch(draft, account):
+            if draft.intent_type == "open" and not self.strategy.track_removed_wait_dispatch(draft, account):
                 return False
             await emitter.emit(draft)
         finally:
@@ -905,7 +946,7 @@ class SchwabV2BotService:
         await asyncio.to_thread(self._rpg_retire_disabled_at_boot)
         active_segments = self._configure_fanout_identity_store()
         self._configure_flip_entry_ownership_store(active_segments)
-        self._configure_removed_wait_store()
+        await self._configure_removed_wait_store()
         await self._recover_soft_rest_boot()
         self._configure_fanout_outcome_journal(active_segments)
         self.intent_emitter = SchwabV2IntentEmitter(
