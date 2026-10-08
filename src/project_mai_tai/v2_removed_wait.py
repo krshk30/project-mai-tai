@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from typing import Callable, Mapping, Sequence
 
 from sqlalchemy import func, or_, select
@@ -24,7 +25,7 @@ from project_mai_tai.db.models import (
 )
 from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.fanout_segment_store import current_session_anchor
-from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear
+from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear, replacement_terminal_zero
 
 SNAPSHOT_TYPE = "v2_removed_wait"
 DISPATCH_SNAPSHOT_TYPE = "v2_wait_dispatch"
@@ -64,6 +65,54 @@ class RemovedWaitProof:
     observed_at_ms: int
     clear: bool
     reason: str
+
+
+def prior_session_request(request: RemovedWait, now: datetime) -> bool:
+    """Classify the positive opportunity, never request age or its rewrite time."""
+    if request.opportunity_id <= 0:
+        return False
+    anchor = current_session_anchor(now)
+    return current_session_anchor(datetime.fromtimestamp(request.opportunity_id / 1000, UTC)) < anchor
+
+
+def rollover_retry_proven_terminal(row: DashboardSnapshot, account_names: set[str]) -> bool:
+    """Mutable retry journal rows are current revisions, not historical presence."""
+    p = row.payload
+    if not isinstance(p, dict):
+        return False
+    rpg = row.snapshot_type == "atr_reprice_handoff"
+    event = p.get("event")
+    scoped = p.get("old") if rpg else event.get("payload") if isinstance(event, dict) else None
+    if not isinstance(scoped, dict) or not scoped.get("broker_account_name"):
+        return False
+    if scoped["broker_account_name"] not in account_names:
+        return True
+    md = scoped.get("metadata")
+    if (scoped.get("side") != "buy" or not scoped.get("strategy_code")
+            or not isinstance(md, dict) or not str(md.get("fanout_segment_id", "")).isdigit()
+            or int(md["fanout_segment_id"]) <= 0):
+        return False
+    if rpg:
+        if p.get("phase") == "filled" and p.get("no_rebuy") is True:
+            try:
+                quantity = float(p.get("filled_quantity", "nan"))
+            except (TypeError, ValueError):
+                return False
+            return bool(p.get("replacement_filled") is True
+                        or (math.isfinite(quantity) and quantity > 0))
+        cleared = p.get("cleared_at")
+        typed_clear = p.get("local_no_wire") is True or (
+            type(cleared) in {int, float} and math.isfinite(cleared) and cleared > 0)
+        return bool(p.get("phase") in {"expired", "refused"} and typed_clear
+            and old_buy_proven_clear(p)
+            and (not p.get("replacement") or replacement_terminal_zero(p)))
+    if row.snapshot_type == "oms_webull_mirror_price_hold":
+        return p.get("phase") == "retired" and isinstance(p.get("token"), str)
+    expected = [scoped["broker_account_name"], scoped["strategy_code"], scoped.get("symbol"),
+                md["fanout_segment_id"], md.get("fanout_slot_id")]
+    return bool(p.get("identity") == expected and md.get("fanout_slot_id")
+        and p.get("phase") in {"retired", "filled", "capped"}
+        and p.get("dispatch_unresolved") is False)
 
 
 def _utc(value: datetime) -> datetime:
@@ -460,6 +509,26 @@ class RemovedWaitStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 
+    @staticmethod
+    def _lock_request(session: Session, symbol: str) -> None:
+        # Append-only rows need a per-symbol lock, not just a lock on yesterday's row.
+        if session.get_bind().dialect.name == "postgresql":
+            session.execute(select(func.pg_advisory_xact_lock(
+                func.hashtext("v2_removed_wait:" + symbol))))
+
+    @staticmethod
+    def _rollover_retry_unknown(session: Session, symbol: str, account_names: set[str]) -> bool:
+        rows = session.scalars(select(DashboardSnapshot).where(
+            DashboardSnapshot.snapshot_type.in_({"atr_reprice_handoff",
+                "oms_webull_mirror_price_hold", "oms_webull_mirror_retained_hold"}),
+            or_(DashboardSnapshot.payload["symbol"].as_string() == symbol,
+                DashboardSnapshot.payload["old"]["symbol"].as_string() == symbol,
+                DashboardSnapshot.payload["event"]["payload"]["symbol"].as_string() == symbol),
+        ).order_by(DashboardSnapshot.created_at, DashboardSnapshot.id).limit(ROW_LIMIT + 1)).all()
+        if len(rows) > ROW_LIMIT:
+            return True
+        return any(not rollover_retry_proven_terminal(row, account_names) for row in rows)
+
     def record_dispatch(self, payload: dict) -> None:
         with self.session_factory() as session:
             session.add(DashboardSnapshot(snapshot_type=DISPATCH_SNAPSHOT_TYPE, payload=payload))
@@ -467,12 +536,89 @@ class RemovedWaitStore:
 
     def record(self, request: RemovedWait, active: bool) -> None:
         with self.session_factory() as session:
+            self._lock_request(session, request.symbol)
             session.add(
                 DashboardSnapshot(
                     snapshot_type=SNAPSHOT_TYPE, payload=request.payload(active=active)
                 )
             )
             session.commit()
+
+    def retire_prior_sessions(
+        self, requests: Sequence[RemovedWait], account_names: set[str], *,
+        now: datetime | None = None,
+    ) -> tuple[RemovedWaitProof, ...]:
+        """Off-loop, bounded CAS retirement. Never retire an unbound/zero identity.
+
+        The caller holds the in-memory gate closed throughout this transaction.
+        All-account symbol blockers intentionally ignore generation/strategy.
+        Retry journals require typed terminal evidence, never absence by age.
+        """
+        observed = now or datetime.now(UTC)
+        started = monotonic()
+        prior = tuple(r for r in requests if prior_session_request(r, observed))
+        try:
+            canonical = {p.request: p for p in self.proofs(prior, account_names, now=observed)} if prior else {}
+        except Exception:  # noqa: BLE001
+            canonical = {}
+        results = []
+        for request in requests:
+            reason = "same_session_or_unknown_opportunity"
+            clear = False
+            if prior_session_request(request, observed):
+                with self.session_factory() as session:
+                    self._lock_request(session, request.symbol)
+                    accounts = session.scalars(select(BrokerAccount).where(
+                        BrokerAccount.name.in_(account_names))).all()
+                    ids = [a.id for a in accounts]
+                    latest = session.scalar(select(DashboardSnapshot).where(
+                        DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                        DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+                    ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc())
+                      .limit(1).with_for_update())
+                    if (not account_names or len(accounts) != len(account_names)
+                            or {a.name for a in accounts} != account_names
+                            or len(request.account_names) != len(account_names)
+                            or set(request.account_names) != account_names):
+                        reason = "account_binding_unknown"
+                    elif latest is None or latest.payload != request.payload(active=True):
+                        reason = "active_request_changed"
+                    elif session.scalar(select(BrokerOrder.id).where(
+                        BrokerOrder.broker_account_id.in_(ids),
+                        BrokerOrder.symbol == request.symbol,
+                        or_(BrokerOrder.status.is_(None),
+                            BrokerOrder.status.not_in(TERMINAL | {"filled"})),
+                    ).limit(1)) is not None:
+                        reason = "working_order"
+                    elif session.scalar(select(OmsManagedPosition.id).where(
+                        OmsManagedPosition.broker_account_name.in_(account_names),
+                        OmsManagedPosition.symbol == request.symbol,
+                        OmsManagedPosition.status == "open",
+                    ).limit(1)) is not None:
+                        reason = "open_managed_row"
+                    elif session.scalar(select(TradeIntent.id).where(
+                        TradeIntent.broker_account_id.in_(ids),
+                        TradeIntent.symbol == request.symbol,
+                        TradeIntent.side == "buy",
+                        or_(TradeIntent.status.is_(None),
+                            TradeIntent.status.not_in(TERMINAL | {"filled", "aborted"})),
+                    ).limit(1)) is not None:
+                        reason = "pending_buy_intent"
+                    elif self._rollover_retry_unknown(session, request.symbol, account_names):
+                        reason = "retry_proof_unknown"
+                    elif request not in canonical or not canonical[request].clear:
+                        # Empty OMS rows cannot prove an unpublished/queued cancel absent.
+                        reason = canonical[request].reason if request in canonical else "canonical_proof_unknown"
+                    elif (monotonic() - started) * 1000 > SETTLE_MS:
+                        reason = "stale_proof"
+                    else:
+                        session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE,
+                            payload={**request.payload(active=False), "verdict": "CLEAR",
+                                     "reason": "session_rollover"}, created_at=observed))
+                        session.commit()
+                        clear, reason = True, "session_rollover"
+            results.append(RemovedWaitProof(request, int(observed.timestamp() * 1000), clear, reason))
+        return tuple(results)
 
     def restore(self) -> dict[str, RemovedWait]:
         with self.session_factory() as session:
