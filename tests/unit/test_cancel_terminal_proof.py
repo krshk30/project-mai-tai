@@ -165,3 +165,17 @@ def test_unbound_approved_replays_require_both_books_and_explicit_fences(symbol,
     assert not evaluate_unbound_cancel_terminal(request, books, fences=replace(fences, request=replace(request, token="old")),
                                                 now_ms=NOW).terminal
     assert not evaluate_unbound_cancel_terminal(request, books, fences=fences, now_ms=NOW, freshness_ms=15_001).terminal
+
+
+@pytest.mark.parametrize("coverage", ["entered_60d", "entered_365d", "status_working_under_3000"])
+def test_bounded_schwab_lists_cannot_prove_absence_of_older_gtc(coverage):
+    request = UnboundCancelRequest("FLYE", "token", "token", str(NOW), "retry_exhausted", NOW - 1000,
+        {"webull": "actual-account", "schwab": "hash"}, {"webull": "webull", "schwab": "schwab"})
+    fences = UnboundCancelFences(request, True, True, True, True)
+    # A fresh read of a date/status slice is not a fresh COMPLETE account book.
+    partial = replace(BOOK, account_name="schwab", account_id="hash", coverage=coverage)
+    assert not evaluate_unbound_cancel_terminal(request, {"webull": BOOK, "schwab": partial},
+                                                fences=fences, now_ms=NOW).terminal
+    old_gtc = replace(partial, coverage="all_working", orders=(BookOrder("older-gtc", "FLYE", "working", "buy"),))
+    assert not evaluate_unbound_cancel_terminal(request, {"webull": BOOK, "schwab": old_gtc},
+                                                fences=fences, now_ms=NOW).terminal

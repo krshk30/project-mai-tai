@@ -30,6 +30,7 @@ from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 
 NOW = 1_791_466_919_000
+EMPTY_DETAIL = object()
 
 
 def _test_database_engine():
@@ -114,6 +115,8 @@ class Client:
         if self.on_read:
             self.on_read()
         if request.kind == "detail":
+            if self.detail is EMPTY_DETAIL:
+                return SimpleNamespace(status_code=200, body=None, content=b"", json=lambda: None)
             return SimpleNamespace(status_code=417 if self.detail is None else 200,
                                    body={"error_code": "ORDER_NOT_FOUND"} if self.detail is None else self.detail)
         assert request.kind == "open", "today/cache cannot prove complete working book"
@@ -446,3 +449,25 @@ async def test_offloop_v2_nested_items_book_for_approved_unbound_rule(sessions, 
     assert all(t != threading.get_ident() for _, _, t in client.calls)
     with sessions() as session:
         assert session.execute(text("SELECT CAST(:epoch AS bigint)"), {"epoch": request.requested_at_ms}).scalar_one() == NOW - 1000
+
+
+@pytest.mark.parametrize("status,origin,code,terminal", [
+    ("rejected", "client", "cancel_target_not_found", True),
+    ("rejected", "skipped_before_submit", "", True),
+    ("pending", "skipped_before_submit", "cancel_target_not_found", False),
+    ("rejected", "broker_reject", "cannot_cancel", False),
+])
+@pytest.mark.asyncio
+async def test_measured_empty_detail_needs_exact_local_refusal_and_fresh_book(sessions, sdk, status, origin, code, terminal):
+    client = Client(detail=EMPTY_DETAIL)
+    routed = adapter(client)
+    intent_id = seed(sessions, routed)
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        session.execute(update(TradeIntent).where(TradeIntent.id == intent_id).values(
+            status=status, payload={**intent.payload, "refusal_origin": origin, "refusal_code": code},
+            updated_at=intent.updated_at))
+        session.commit()
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert read(sessions, intent_id)[1].terminal is terminal
+    assert [kind for kind, _, _ in client.calls] == (["detail", "open"] if terminal else ["detail"])
