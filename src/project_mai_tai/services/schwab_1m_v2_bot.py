@@ -46,6 +46,7 @@ from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    DashboardSnapshot,
     Fill,
     OmsManagedPosition,
     PaperExitRuleConfig,
@@ -893,6 +894,7 @@ class SchwabV2BotService:
         active_segments = self._configure_fanout_identity_store()
         self._configure_flip_entry_ownership_store(active_segments)
         self._configure_removed_wait_store()
+        await self._recover_soft_rest_boot()
         self._configure_fanout_outcome_journal(active_segments)
         self.intent_emitter = SchwabV2IntentEmitter(
             self.settings,
@@ -2527,6 +2529,187 @@ class SchwabV2BotService:
             logger.exception("schwab_1m_v2 _fetch_open_positions failed")
             return None
         return positions, held
+
+    async def _recover_soft_rest_boot(self) -> None:
+        candidates = self.strategy.soft_rest_boot_candidates()
+        if not candidates:
+            return
+        try:
+            proofs = await asyncio.wait_for(
+                asyncio.to_thread(self._soft_rest_boot_proofs, candidates), 15)
+        except Exception:
+            logger.exception("[V2-SOFT-REST-BOOT] proof unreadable; restored owners retained")
+            return
+        self.strategy.recover_soft_rest_boot(candidates, proofs)
+
+    async def _soft_rest_boot_positions(self) -> dict[str, tuple[int, set[str]]]:
+        """Fresh, mapped complete books, once at boot; never adapter caches or refresh grants."""
+        from urllib.parse import quote
+        from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+        from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+        from webull.trade.request.get_account_positions_request import AccountPositionsRequest
+
+        def quantity(value):
+            if isinstance(value, bool):
+                raise ValueError("boolean position")
+            number = Decimal(str(value))
+            if not number.is_finite():
+                raise ValueError("nonfinite position")
+            return number
+
+        primary = self.settings.strategy_schwab_1m_v2_account_name
+        mirror = self.settings.strategy_schwab_1m_v2_webull_account_name
+        schwab = SchwabBrokerAdapter(self.settings)
+        if schwab._adapter_refresh_enabled:
+            raise ValueError("boot proof must not refresh Schwab tokens")
+        configured = schwab.accounts_by_name[primary]
+        token = await schwab._get_access_token()
+        async def get(path):
+            status, _, body = await asyncio.wait_for(
+                schwab._request_json("GET", path, access_token=token), 5)
+            if not 200 <= status < 300:
+                raise ValueError("Schwab position source unreadable")
+            return body
+        started = int(datetime.now(UTC).timestamp() * 1000)
+        mapping = await get("/trader/v1/accounts/accountNumbers")
+        if not isinstance(mapping, list) or len(mapping) > 64:
+            raise ValueError("Schwab account map incomplete")
+        matches = [r["accountNumber"] for r in mapping if isinstance(r, dict)
+                   and r.get("hashValue") == configured.account_hash and r.get("accountNumber")]
+        if len(matches) != 1:
+            raise ValueError("Schwab account not uniquely mapped")
+        body = await get(f"/trader/v1/accounts/{quote(configured.account_hash, safe='')}?fields=positions")
+        account = body.get("securitiesAccount") if isinstance(body, dict) else None
+        if (not isinstance(account, dict) or account.get("accountNumber") != matches[0]
+                or not isinstance(account.get("currentBalances"), dict)):
+            raise ValueError("Schwab position account unproven")
+        rows = account.get("positions", [])
+        if not isinstance(rows, list) or len(rows) > 2048:
+            raise ValueError("Schwab positions incomplete")
+        held, seen = set(), set()
+        for row in rows:
+            symbol = row["instrument"]["symbol"].upper()
+            if not symbol or symbol in seen or not ({"longQuantity", "shortQuantity"} & row.keys()):
+                raise ValueError("Schwab position identity/quantity unproven")
+            seen.add(symbol)
+            long, short = quantity(row.get("longQuantity", 0)), quantity(row.get("shortQuantity", 0))
+            if long < 0 or short < 0:
+                raise ValueError("negative Schwab position")
+            if long or short:
+                held.add(symbol)
+        books = {primary: (started, held)}
+        if not self.strategy._dual_broker_fanout_enabled:
+            return books
+        webull = WebullBrokerAdapter(self.settings)
+        account_id = webull.accounts_by_name[mirror].account_id
+        started = int(datetime.now(UTC).timestamp() * 1000)
+        client, cursor, held, seen = webull._get_client(), None, set(), set()
+        for page in range(20):
+            if page:
+                await asyncio.sleep(2)
+            request = AccountPositionsRequest()
+            request.set_account_id(account_id)
+            request.set_page_size(50)
+            if cursor:
+                request.set_last_instrument_id(cursor)
+            response = await asyncio.wait_for(asyncio.to_thread(client.get_response, request), 5)
+            if not 200 <= response.status_code < 300:
+                raise ValueError("Webull position source unreadable")
+            body = response.json()
+            if not isinstance(body, dict) or body.get("error_code"):
+                raise ValueError("Webull position envelope unreadable")
+            for key in ("account_id", "accountId"):
+                if key in body and str(body[key]) != account_id:
+                    raise ValueError("foreign Webull position book")
+            rows = body.get("holdings", body.get("positions"))
+            if "holdings" in body and "positions" in body and body["holdings"] != body["positions"]:
+                raise ValueError("conflicting Webull position books")
+            markers = [body[k] for k in ("has_next", "hasNext") if k in body]
+            if (not isinstance(rows, list) or len(rows) > 50 or not markers
+                    or any(type(v) is not bool for v in markers) or len(set(markers)) != 1):
+                raise ValueError("Webull positions pagination unproven")
+            for row in rows:
+                for key in ("account_id", "accountId"):
+                    if key in row and str(row[key]) != account_id:
+                        raise ValueError("foreign Webull holding")
+                symbol = (row.get("symbol") or row.get("ticker") or row.get("instrument", {}).get("symbol"))
+                if not isinstance(symbol, str) or not symbol or symbol.upper() in seen:
+                    raise ValueError("Webull holding identity unproven")
+                seen.add(symbol.upper())
+                raw = next((row[k] for k in ("quantity", "qty", "position", "shares") if k in row), None)
+                if raw is None:
+                    raise ValueError("Webull holding quantity absent")
+                if quantity(raw):
+                    held.add(symbol.upper())
+            if not markers[0]:
+                books[mirror] = (started, held)
+                return books
+            next_cursor = rows[-1].get("instrument_id", rows[-1].get("instrumentId")) if rows else None
+            if not next_cursor or next_cursor == cursor:
+                raise ValueError("Webull pagination incomplete")
+            cursor = next_cursor
+        raise ValueError("Webull position page bound exceeded")
+
+    def _soft_rest_boot_proofs(self, candidates: dict[str, int]) -> dict[str, dict]:
+        from project_mai_tai.v2_removed_wait import DISPATCH_SNAPSHOT_TYPE
+
+        books = asyncio.run(self._soft_rest_boot_positions())
+        accounts = set(books)
+        expected = {self.settings.strategy_schwab_1m_v2_account_name}
+        if self.strategy._dual_broker_fanout_enabled:
+            expected.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
+        if accounts != expected:
+            raise ValueError("boot broker book coverage incomplete")
+        proofs = {}
+        with self.session_factory() as session:
+            if session.bind.dialect.name == "postgresql":
+                session.execute(text("SET TRANSACTION READ ONLY"))
+            mapped = dict(session.execute(select(BrokerAccount.id, BrokerAccount.name)
+                                         .where(BrokerAccount.name.in_(accounts))).all())
+            if len(mapped) != len(accounts) or set(mapped.values()) != accounts:
+                raise ValueError("boot proof account mapping incomplete")
+            for symbol, opportunity in candidates.items():
+                anchor = datetime.fromtimestamp(opportunity / 1000, UTC)
+                proof = dict(opportunity_id=opportunity, never_dispatched=False,
+                             flat_accounts=[], observed_at_ms=min(t for t, _ in books.values()),
+                             reason="dispatch_or_position_unproven")
+                proofs[symbol] = proof
+                snapshots = session.scalars(select(DashboardSnapshot).where(
+                    DashboardSnapshot.snapshot_type == DISPATCH_SNAPSHOT_TYPE,
+                    DashboardSnapshot.payload["symbol"].as_string() == symbol,
+                    DashboardSnapshot.payload["opportunity_id"].as_string() == str(opportunity),
+                ).limit(2049)).all()
+                # Publication is durably marked BEFORE xadd. A begin without ANY attempt
+                # is positive no-wire evidence, not an absent broker row or a net-zero fill.
+                if (len(snapshots) != 1 or snapshots[0].payload != {
+                    "schema_version": 1, "strategy_code": STRATEGY_CODE, "symbol": symbol,
+                    "opportunity_id": str(opportunity), "account_names": list(books),
+                    "kind": "begin", "attempt_token": "", "account_name": "",
+                }):
+                    continue
+                barriers = [
+                    select(TradeIntent.id).where(TradeIntent.broker_account_id.in_(mapped),
+                        TradeIntent.symbol == symbol, or_(TradeIntent.created_at >= anchor,
+                        TradeIntent.status.is_(None),
+                        TradeIntent.status.not_in(["completed", "rejected", "cancelled", "filled", "expired"]))),
+                    select(BrokerOrder.id).where(BrokerOrder.broker_account_id.in_(mapped),
+                        BrokerOrder.symbol == symbol, or_(BrokerOrder.submitted_at >= anchor,
+                        BrokerOrder.status.is_(None),
+                        BrokerOrder.status.not_in(["cancelled", "canceled", "rejected", "aborted", "filled", "expired", "replaced"]))),
+                    select(Fill.id).where(Fill.broker_account_id.in_(mapped), Fill.symbol == symbol,
+                                         Fill.filled_at >= anchor),
+                    select(OmsManagedPosition.id).where(OmsManagedPosition.broker_account_name.in_(accounts),
+                        OmsManagedPosition.symbol == symbol, OmsManagedPosition.status == "open"),
+                    select(VirtualPosition.id).where(VirtualPosition.broker_account_id.in_(mapped),
+                        VirtualPosition.symbol == symbol, VirtualPosition.quantity != 0),
+                ]
+                if any(session.scalar(query.limit(1)) is not None for query in barriers):
+                    continue
+                if any(symbol in held for _, held in books.values()):
+                    proof["reason"] = "broker_position_held"
+                    continue
+                proof.update(never_dispatched=True, flat_accounts=list(accounts), reason="positive_begin_no_attempt")
+        return proofs
 
     def _fetch_flip_position_book(
         self,
