@@ -2791,6 +2791,8 @@ class ControlPlaneRepository:
                     intent_reason = intent.reason if intent is not None else ""
                     recent_orders.append(
                         {
+                            "order_id": str(order.id),
+                            "entry_classification": (order.payload or {}).get("entry_classification"),
                             "intent_id": str(order.intent_id) if order.intent_id else "",
                             "strategy_code": strategy.code if strategy else str(order.strategy_id),
                             "broker_account_name": account.name if account else str(order.broker_account_id),
@@ -2850,6 +2852,8 @@ class ControlPlaneRepository:
                     row.id: str(row.client_order_id or "")
                     for row in (recent_order_rows + open_order_rows)
                 }
+                entry_class_by_id = {row.id: (row.payload or {}).get("entry_classification")
+                                     for row in recent_order_rows}
                 for fill in session.scalars(
                     select(Fill)
                     .where(Fill.filled_at >= session_start, Fill.filled_at < session_end)
@@ -2866,6 +2870,8 @@ class ControlPlaneRepository:
                     )
                     recent_fills.append(
                         {
+                            "order_id": str(fill.order_id),
+                            "entry_classification": entry_class_by_id.get(fill.order_id),
                             "strategy_code": strategy.code if strategy else str(fill.strategy_id),
                             "broker_account_name": account.name if account else str(fill.broker_account_id),
                             "symbol": fill.symbol,

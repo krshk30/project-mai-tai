@@ -69,6 +69,9 @@ class FlipPositionBook:
     terminal_unfilled_opportunities_by_symbol: Mapping[
         str, frozenset[int]
     ] = field(default_factory=dict)
+    entry_classifications: Mapping[str, tuple[dict, ...]] = field(default_factory=dict)
+    filled_opportunities: Mapping[str, tuple[tuple[str, int], ...]] = field(default_factory=dict)
+    closed_entry_rows: frozenset[tuple[str, str]] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)

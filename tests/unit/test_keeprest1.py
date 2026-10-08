@@ -301,7 +301,7 @@ def test_all_on_effective_catalog_zero_with_controlled_process_environments():
     rc, lines = audit(entries, environment_reader=lambda service: ServiceEnvironment(
         101, environments[service], frozenset(), None))
     assert rc == 0
-    assert lines[-1] == "Final call: PASS; checked=151/151 mismatches=0 unknown=0"
+    assert lines[-1] == "Final call: PASS; checked=153/153 mismatches=0 unknown=0"
     assert len(environments) == 8
 
 

@@ -63,6 +63,7 @@ from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms import wbquiet_shadow
+from project_mai_tai.falseflip1_runtime import classify_managed_entries, record_bar
 from project_mai_tai.oms.mirror_fresh_price import MirrorFreshPriceMixin
 from project_mai_tai.oms.eh_fresh_price import EhFreshPriceMixin
 from project_mai_tai.oms.mirror_retained_hold import MirrorRetainedHoldMixin
@@ -1037,13 +1038,21 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # price, never a backlogged one.
         tick_task = asyncio.create_task(self._run_tick_consumer(stop_event))
         rpg_task = asyncio.create_task(self._run_rpg_retry_loop(stop_event))
+        falseflip_task = (
+            asyncio.create_task(self._run_falseflip_worker(stop_event))
+            if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True
+            else None
+        )
         try:
             await self._run_control_loop(stop_event)
         finally:
             stop_event.set()
             tick_task.cancel()
             rpg_task.cancel()
-            await asyncio.gather(rpg_task, return_exceptions=True)
+            if falseflip_task is not None:
+                falseflip_task.cancel()
+            await asyncio.gather(rpg_task, *([falseflip_task] if falseflip_task is not None else []),
+                                 return_exceptions=True)
             try:
                 await tick_task
             except asyncio.CancelledError:
@@ -1308,6 +1317,40 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 continue
         return events
 
+    def _falseflip_signal(self) -> asyncio.Event:
+        if not hasattr(self, "_falseflip_work_signal"):
+            self._falseflip_work_signal = asyncio.Event()
+            self._falseflip_bar_queue = asyncio.Queue(maxsize=512)
+        return self._falseflip_work_signal
+
+    async def _run_falseflip_worker(self, stop_event: asyncio.Event) -> None:
+        """One bounded evidence worker; it never owns the serial intent/tick consumer."""
+        signal = self._falseflip_signal()
+        while not stop_event.is_set():
+            await signal.wait()
+            signal.clear()
+            if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is not True:
+                continue
+            try:
+                while not self._falseflip_bar_queue.empty():
+                    payload = self._falseflip_bar_queue.get_nowait()
+                    await self._falseflip_database_work(record_bar, self.session_factory, payload)
+                await self._falseflip_database_work(classify_managed_entries, self.session_factory)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - missing proof blocks entries, never exits
+                self.logger.exception("[OMS-FALSE-FLIP] reason=classification_unreadable")
+
+    async def _falseflip_database_work(self, function, *args) -> None:
+        # Cancelling the asyncio worker cannot cancel its DB thread. Keep ownership
+        # until that transaction finishes rather than abandoning a writer at shutdown.
+        work = asyncio.create_task(asyncio.to_thread(function, *args))
+        try:
+            await asyncio.shield(work)
+        except asyncio.CancelledError:
+            await asyncio.gather(work, return_exceptions=True)
+            raise
+
     async def _handle_stream_message(self, fields: dict[str, str]) -> None:
         data = fields.get("data")
         if not data:
@@ -1315,6 +1358,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
         payload = json.loads(data)
         event_type = str(payload.get("event_type", "")).strip().lower()
+        if event_type == "v2_entry_bar_close":
+            if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True:
+                signal = self._falseflip_signal()
+                try:
+                    self._falseflip_bar_queue.put_nowait(payload)
+                except asyncio.QueueFull:
+                    self.logger.warning("[OMS-FALSE-FLIP] reason=proof_queue_full entry_refund=0")
+                signal.set()
+            return
         if event_type == "atr_reprice_tick":
             await self._rpg_advance(UUID(payload["token"]), proof_edge=payload.get("proof_edge"))
             return
@@ -10298,6 +10350,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         except Exception:  # noqa: BLE001 - bookkeeping must never break the protective sync
             self.logger.exception("[OMS-OCO-EXIT-POLL] pass failed")
         position_summary = await self.sync_broker_positions(account_names=account_names)
+        if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False):
+            self._falseflip_signal().set()
         return {
             "accounts": position_summary["accounts"],
             "positions": position_summary["positions"],

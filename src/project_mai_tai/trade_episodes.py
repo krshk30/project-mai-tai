@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from project_mai_tai.strategy_core.time_utils import EASTERN_TZ
+from project_mai_tai.falseflip1 import Classification
 
 
 @dataclass(frozen=True)
@@ -187,7 +188,8 @@ def collect_completed_trade_cycles(
                 "exit_price": blended_exit,
                 "pnl": total_pnl,
                 "pnl_pct": pnl_pct,
-                "summary": summarize_exit_events(trade["exit_events"], initial_qty),
+                "summary": ("False flip / " if trade.get("false_flip") else "")
+                + summarize_exit_events(trade["exit_events"], initial_qty),
                 "sort_time": str(trade["exit_time"] or trade["entry_time"]),
             }
         )
@@ -230,6 +232,18 @@ def collect_completed_trade_cycles(
                     reason = ""
 
             if intent_type == "open" and side == "buy":
+                false_flip = False
+                evidence = item.get("entry_classification")
+                if isinstance(evidence, dict):
+                    try:
+                        proof = Classification.from_payload(evidence)
+                        false_flip = (proof.kind == "FALSE_FLIP"
+                                      and proof.identity.account == event_account_name
+                                      and proof.identity.symbol == symbol
+                                      and proof.identity.entry_order_id == str(item.get("order_id", ""))
+                                      and proof.identity.entry_client_order_id == item.get("client_order_id"))
+                    except (ValueError, TypeError, KeyError):
+                        pass
                 open_trades_by_account_symbol.setdefault((event_account_name, symbol), []).append(
                     {
                         "ticker": symbol,
@@ -242,6 +256,7 @@ def collect_completed_trade_cycles(
                         "exit_value": 0.0,
                         "exit_time": "",
                         "exit_events": [],
+                        "false_flip": false_flip,
                     }
                 )
                 continue

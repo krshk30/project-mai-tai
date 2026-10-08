@@ -1,8 +1,7 @@
 """Identity-bound entry-bar classification; no exit or entry-budget mutation.
 
-The runtime integration and skip budget remain gated until the operator resolves
-the post-second-false-flip rule. These pure functions deliberately cannot send an
-order, change a stop, or refund an opportunity.
+These pure functions cannot send an order, change a stop, or refund an opportunity.
+Runtime callers must additionally prove closure, cancellation and the durable budget.
 """
 
 from __future__ import annotations
@@ -50,6 +49,25 @@ class Classification:
     reason: str
     identity: EntryIdentity
     bar: EntryBarClose
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> Classification:
+        if payload.get("schema_version") != 1 or payload.get("strategy_code") != "schwab_1m_v2":
+            raise ValueError("entry classification source is unproven")
+        identity = EntryIdentity(
+            payload["symbol"], payload["account"], payload["managed_row_id"],
+            payload["entry_order_id"], payload["entry_client_order_id"],
+            payload["entry_order_id"], payload["entry_client_order_id"],
+            int(payload["fill_ms"]), int(payload["opportunity_id"]), payload["slot_id"],
+            payload["account"], payload["symbol"], payload["account"], payload["symbol"],
+        )
+        bar = EntryBarClose(payload["symbol"], int(payload["bar_ms"]),
+                            int(payload["observed_at_ms"]), Decimal(payload["close"]),
+                            Decimal(payload["trail"]), payload["state"])
+        value = classify_entry(identity, bar)
+        if value.kind != payload["classification"] or value.reason != payload["reason"]:
+            raise ValueError("entry classification failed its proof check")
+        return value
 
     def as_payload(self) -> dict[str, object]:
         return {

@@ -58,6 +58,8 @@ from project_mai_tai.v2_flip_entry_ownership import (
     FlipPositionLeg,
 )
 from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitProof, RemovalPersist
+from project_mai_tai.falseflip1 import Classification, false_episode_proven_closed
+from project_mai_tai.falseflip1_runtime import FalseBudget
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.entry_gate import resolve_entry_window, within_rth_entry_window
@@ -1201,7 +1203,7 @@ class SchwabV2Strategy:
             symbol for symbol, request in restored.items() if request.purpose == "scanner_removal")
         for symbol, request in restored.items():
             state = self.watchlist_state(symbol)
-            if request.purpose == "retry_exhausted" or not self._removed_wait_has_owner(state):
+            if request.purpose in {"retry_exhausted", "false_flip_restore"} or not self._removed_wait_has_owner(state):
                 self._queue_removed_wait_barriers(state, request)
 
     def scanner_readded(self, symbol: str) -> None:
@@ -1252,7 +1254,7 @@ class SchwabV2Strategy:
 
     def _removed_wait_gate_closed(self, symbol: str) -> bool:
         request = getattr(self, "_removed_wait_requests", {}).get(symbol.upper())
-        if request is not None and request.purpose == "retry_exhausted":
+        if request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"}:
             return True
         if (getattr(self, "_retry_one_enabled", False)
                 and not getattr(self, "_removed_wait_restore_readable", True)):
@@ -1273,8 +1275,11 @@ class SchwabV2Strategy:
         for proof in proofs:
             request = proof.request
             state = self._symbol_states.get(request.symbol)
-            if request.purpose == "retry_exhausted":
-                if (proof.clear and proof.reason == "retry_leftovers_cancelled_owner_kept"
+            if request.purpose in {"retry_exhausted", "false_flip_restore"}:
+                expected_reason = ("false_flip_leftovers_cancelled_owner_kept"
+                                   if request.purpose == "false_flip_restore"
+                                   else "retry_leftovers_cancelled_owner_kept")
+                if (proof.clear and proof.reason == expected_reason
                         and self._removed_wait_requests.get(request.symbol) == request
                         and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
                     try:
@@ -1287,6 +1292,9 @@ class SchwabV2Strategy:
                         self._removed_wait_requests.pop(request.symbol, None)
                         self.__dict__.setdefault("_retry_leftover_receipts", set()).add(
                             (request.symbol, request.opportunity_id))
+                        if request.purpose == "false_flip_restore":
+                            self.__dict__.setdefault("_falseflip_cancel_receipts", set()).add(
+                                (request.symbol, request.opportunity_id))
                         logger.info("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=confirmed owner_kept=1",
                                     request.symbol)
                 continue
@@ -1385,6 +1393,7 @@ class SchwabV2Strategy:
         md = {"clearwait_removal_token": request.token,
               "clearwait_opportunity_id": str(request.opportunity_id),
               "resting_entry_cancel": "true", "reason": (
+                  "false_flip_restore" if request.purpose == "false_flip_restore" else
                   "retry_budget_exhausted" if request.purpose == "retry_exhausted" else "watchlist-removed"),
               "clearwait_buy_only": "true",
               "source": STRATEGY_CODE, "strategy_version": STRATEGY_VERSION}
@@ -1393,7 +1402,7 @@ class SchwabV2Strategy:
                       fanout_slot_id=fanout_slot_id(strategy_code=STRATEGY_CODE, symbol=symbol,
                           segment_id=request.opportunity_id, slot="resting"))
         # Ordinary serial-lane cancels also revoke deferred mirror/NFQ retries.
-        retry_cancel = request.purpose == "retry_exhausted"
+        retry_cancel = request.purpose in {"retry_exhausted", "false_flip_restore"}
         self._pending_intents.append(TradeIntentDraft(symbol=symbol, side="buy", intent_type="cancel",
             quantity=Decimal((state.resting_schwab_quantity or self._atr_qty) if retry_cancel else self._atr_qty),
             reason="retry exhausted cancellation barrier" if retry_cancel else "scanner removal cancellation barrier",
@@ -1567,6 +1576,8 @@ class SchwabV2Strategy:
         )
 
     def apply_flip_position_book(self, book: FlipPositionBook) -> None:
+        if self._falseflip_enabled():
+            self._falseflip_book = book
         """Apply one account-neutral OMS ownership read on the strategy state thread."""
 
         if not self._flip_owned_first_entry_enabled:
@@ -1758,7 +1769,8 @@ class SchwabV2Strategy:
             self._set_flip_owner_unknown(state, reason="retry_budget_count_mismatch")
             return False
         max_closes = 1 + self._retry_one_max_retries
-        retries_left = max(0, max_closes - closes_in_segment)
+        effective_closes = self._falseflip_effective_closes(state, closes_in_segment)
+        retries_left = max(0, max_closes - effective_closes)
         action = "held"
         reason = "retry_budget_exhausted"
         persisted = False
@@ -1790,7 +1802,7 @@ class SchwabV2Strategy:
             reason = "retry_budget_unreadable"
 
         released = False
-        if persisted and closes_in_segment < max_closes:
+        if persisted and effective_closes < max_closes:
             released = self._retire_flip_owner_opportunity(
                 state,
                 reason=f"first_try_closed_{self._retry_one_exit_reason(exit_reason)}",
@@ -1802,7 +1814,7 @@ class SchwabV2Strategy:
         if not released:
             state.flip_owner_phase = "consumed"
             self._persist_flip_owner(state, active=True, reason=reason)
-        if persisted and closes_in_segment >= max_closes:
+        if persisted and effective_closes >= max_closes:
             self._cancel_retry_leftovers(state)
         logger.info(
             "[V2-FLIP-OWNER-RETRY] %s segment_id=%d closes_in_segment=%d "
@@ -2080,6 +2092,172 @@ class SchwabV2Strategy:
             )
         return False
 
+    def _falseflip_enabled(self) -> bool:
+        return bool(getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False))
+
+    def configure_falseflip(self, budgets: dict, *, readable: bool) -> None:
+        self._falseflip_budgets = dict(budgets)
+        self._falseflip_readable = readable
+        self._falseflip_pending = {}
+        self._falseflip_cross_high = {key for key, value in budgets.items() if value.skipped}
+        self._falseflip_rearm = set()
+        self._falseflip_cancel_publications = {}
+
+    def pending_falseflip_cancel_publications(self) -> tuple[RemovedWait, ...]:
+        return tuple(getattr(self, "_falseflip_cancel_publications", {}).values())
+
+    def acknowledge_falseflip_cancel_publication(self, request: RemovedWait) -> None:
+        state = self._symbol_states.get(request.symbol)
+        if (self._falseflip_cancel_publications.get(request.symbol) != request or state is None
+                or request.symbol in self._removed_wait_requests
+                or int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) != request.opportunity_id):
+            self._falseflip_readable = False
+            return
+        self._falseflip_cancel_publications.pop(request.symbol)
+        self._removed_wait_requests[request.symbol] = request
+        self._queue_removed_wait_barriers(state, request)
+        state.resting_active = state.webull_resting_active = False
+
+    def _falseflip_budget(self, state: SymbolState) -> FalseBudget:
+        segment = int(state.retry_one_segment_id)
+        return getattr(self, "_falseflip_budgets", {}).get(
+            (state.symbol, segment), FalseBudget(state.symbol, segment))
+
+    def pending_falseflip_budgets(self) -> tuple[tuple[FalseBudget, FalseBudget], ...]:
+        return tuple(getattr(self, "_falseflip_pending", {}).values())
+
+    def acknowledge_falseflip_budget(self, before: FalseBudget, after: FalseBudget) -> None:
+        key = (before.symbol, before.segment)
+        if self._falseflip_pending.get(key) != (before, after):
+            return
+        self._falseflip_budgets[key] = after
+        self._falseflip_pending.pop(key)
+        if after.skipped and not before.skipped:
+            logger.info("[V2-FALSE-FLIP-SKIP] sym=%s segment=%d false_flips=2 skipped=1",
+                        after.symbol, after.segment)
+
+    def _falseflip_effective_closes(self, state: SymbolState, count: int) -> int:
+        if not self._falseflip_enabled():
+            return count
+        budget = self._falseflip_budget(state)
+        return count - sum(value <= count for value in budget.refunded_counts)
+
+    def _falseflip_entry_blocked(self, state: SymbolState) -> bool:
+        if not self._falseflip_enabled():
+            return False
+        key = (state.symbol, int(state.retry_one_segment_id))
+        return bool(not getattr(self, "_falseflip_readable", False)
+                    or not self._retry_one_enabled or not self._flip_owned_first_entry_enabled
+                    or key in getattr(self, "_falseflip_pending", {})
+                    or self._falseflip_budget(state).skip_due
+                    or key in getattr(self, "_falseflip_cross_high", set()))
+
+    def _falseflip_cross(self, state: SymbolState, price: float, *, confirming: bool) -> bool:
+        """An owed skip observes a cross in memory; persistence happens on the poll task."""
+        if not self._falseflip_enabled():
+            return False
+        key = (state.symbol, int(state.retry_one_segment_id))
+        budget = self._falseflip_budget(state)
+        trigger = self._resting_trigger_for_line(float(state.atr_trail or 0))
+        if (not getattr(self, "_falseflip_readable", False) or not confirming
+                or not math.isfinite(price) or price <= 0 or trigger <= 0):
+            return self._falseflip_entry_blocked(state)
+        if price < trigger:
+            # Duplicate quote/print/bar deliveries above the skipped level are not another cross.
+            self._falseflip_cross_high.discard(key)
+        elif budget.skip_due and key not in self._falseflip_pending:
+            self._falseflip_cross_high.add(key)
+            self._falseflip_pending[key] = (budget, budget.skip())
+        return self._falseflip_entry_blocked(state)
+
+    def _falseflip_reconcile(self, state: SymbolState) -> bool:
+        if not self._falseflip_enabled():
+            return False
+        budget = self._falseflip_budget(state)
+        opportunity = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+        idle_recovery = opportunity <= 0 and state.flip_owner_phase == "idle" and not state.resting_active
+        if idle_recovery:
+            opportunity = budget.awaiting_rearm
+        book = getattr(self, "_falseflip_book", None)
+        if (opportunity <= 0 or book is None or not book.readable
+                or not self._flip_owner_evidence_fresh(state)):
+            return False
+        accounts = frozenset(account for account, value in book.filled_opportunities.get(state.symbol, ())
+                             if value == opportunity)
+        if not accounts:
+            return False
+        accounts |= frozenset(state.flip_owner_fill_accounts)
+        values = []
+        try:
+            for payload in book.entry_classifications.get(state.symbol, ()):
+                if int(payload.get("opportunity_id", 0)) == opportunity:
+                    values.append(Classification.from_payload(payload))
+        except (ValueError, KeyError, TypeError):
+            return True  # No budget permission from an unreadable classification.
+        if any(value.kind != "FALSE_FLIP" for value in values):
+            return False  # REAL/UNKNOWN uses the existing conservative owner/close path.
+        proven_rows = {(value.identity.account, value.identity.managed_row_id) for value in values}
+        if (any(value.identity.symbol != state.symbol for value in values)
+                or not set(state.flip_owner_position_ids.items()) <= proven_rows):
+            return True
+        if not false_episode_proven_closed(tuple(values), filled_accounts=accounts,
+                                           closed_rows=book.closed_entry_rows):
+            return True  # Exit stays immediate; entry waits for the completed bar and all siblings.
+        if state.flip_owner_open_positions or state.position_qty_held or state.position_qty:
+            return True
+        segment = int(state.retry_one_segment_id if idle_recovery else state.flip_owner_retry_segment_id)
+        if (segment <= 0 or segment != state.retry_one_segment_id
+                or not getattr(self, "_falseflip_readable", False)):
+            return True
+        key = (state.symbol, segment)
+        if opportunity not in budget.episodes:
+            # Never decrement the old budget. A compensated close is bound to this
+            # exact episode and persisted atomically with its false-episode identity.
+            refund = 0
+            spent = state.flip_owner_retry_closes_at_place + 1
+            if state.flip_owner_phase == "consumed" and state.retry_one_closes_in_segment == spent:
+                refund = spent
+            self._falseflip_pending.setdefault(key, (budget, budget.closed(opportunity, refund)))
+            return True
+        receipt = (state.symbol, opportunity)
+        if opportunity not in budget.cancelled and (
+                receipt in self.__dict__.get("_falseflip_cancel_receipts", set())
+                or receipt in self.__dict__.get("_retry_leftover_receipts", set())):
+            self._falseflip_pending.setdefault(key, (budget, budget.cancellation_confirmed(opportunity)))
+            return True
+        if opportunity not in budget.cancelled:
+            if state.symbol not in self._removed_wait_requests:
+                if self._removed_wait_persist is None:
+                    return True
+                self._falseflip_cancel_publications.setdefault(state.symbol, RemovedWait(
+                    state.symbol, opportunity, str(uuid4()), self._now_ms(),
+                    self._removed_wait_accounts(), "false_flip_restore"))
+            return True
+        mechanisms = {self._retry_one_exit_reason(c.exit_reason) for c in
+                      book.closes_by_symbol.get(state.symbol, ())
+                      if (c.account_name, c.managed_row_id) in
+                      {(v.identity.account, v.identity.managed_row_id) for v in values}}
+        reason = "false_flip_" + ("_and_".join(sorted(mechanisms)) or "closed")
+        if idle_recovery or self._retire_flip_owner_opportunity(state, reason=reason):
+            self._falseflip_rearm.add(state.symbol)
+        return True
+
+    def _falseflip_restoring_track(self, state: SymbolState) -> None:
+        if (not self._falseflip_enabled() or state.symbol not in getattr(self, "_falseflip_rearm", set())
+                or self._falseflip_entry_blocked(state) or self._entries_held
+                or self.gap_hold_active(state.symbol) or not self._resting_in_window()
+                or self._entry_window_closed_for_session() or not self.line_buy_ready(state.symbol)
+                or not self._liquidity_floor_ok(state) or not state.bars
+                or not 0 <= self._now_ms() - state.bars[-1].timestamp_ms <= self._resting_max_bar_age_ms):
+            return
+        self._queue_resting_place(state, float(state.atr_trail or 0), slot="first")
+        if state.resting_active:
+            self._falseflip_rearm.discard(state.symbol)
+            budget = self._falseflip_budget(state)
+            if budget.awaiting_rearm:
+                self._falseflip_pending.setdefault((budget.symbol, budget.segment),
+                    (budget, budget.rest_drafted(budget.awaiting_rearm)))
+
     def _apply_flip_position_evidence(
         self,
         state: SymbolState,
@@ -2088,6 +2266,8 @@ class SchwabV2Strategy:
         terminal_unfilled_opportunities: frozenset[int],
     ) -> None:
         open_positions = state.flip_owner_open_positions
+        if self._falseflip_reconcile(state):
+            return
         phase = state.flip_owner_phase
         if phase == "idle":
             if open_positions:
@@ -2320,6 +2500,8 @@ class SchwabV2Strategy:
         )
 
     def _strict_first_rest_admitted(self, state: SymbolState, *, slot: str) -> bool:
+        if self._falseflip_entry_blocked(state):
+            return False
         if not self._flip_owned_first_entry_enabled:
             return True
         self._flip_owner_counts["admission_evaluated"] += 1
@@ -2344,7 +2526,7 @@ class SchwabV2Strategy:
             short_segment != state.retry_one_segment_id
         ):
             allowed, reason = False, "retry_segment_mismatch"
-        elif self._retry_one_enabled and state.retry_one_closes_in_segment >= (
+        elif self._retry_one_enabled and self._falseflip_effective_closes(state, state.retry_one_closes_in_segment) >= (
             1 + self._retry_one_max_retries
         ):
             allowed, reason = False, "retry_budget_exhausted"
@@ -3652,6 +3834,15 @@ class SchwabV2Strategy:
         ⛔ Scope, by operator ruling: before 09:30 ET only. It never calls `_cw_v2_quote` or
         `_fanout_rth_resting_cross`, never writes `state.last_quote`, and never creates a symbol state
         (a print for a name we are not watching is ignored)."""
+        skip_state = self._symbol_states.get(str(symbol).upper())
+        if self._falseflip_enabled() and skip_state is not None:
+            fresh = 0 <= self._now_ms() - event_ts_ms <= self._eh_stream_print_max_age_ms
+            trigger = self._resting_trigger_for_line(float(skip_state.atr_trail or 0))
+            if self._resting_session_is_eh():
+                fresh = fresh and ask_price is not None and (price < trigger or ask_price >= trigger) and ask_age_ms is not None
+                fresh = fresh and 0 <= ask_age_ms <= self._eh_stream_print_max_age_ms
+            if self._falseflip_cross(skip_state, price, confirming=fresh):
+                return None
         if not (self._eh_stream_cross_enabled and self._eh_resting_enabled and self._cw_v2_enabled):
             return None
         state = self._symbol_states.get(str(symbol).upper())
@@ -3735,6 +3926,13 @@ class SchwabV2Strategy:
         # touch). See docs/intrabar-hold-confirmation-design.md.
         state = self.watchlist_state(symbol)
         state.last_quote = quote
+        if self._falseflip_enabled():
+            ask = self._fresh_resting_ask(quote)
+            trigger = self._resting_trigger_for_line(float(state.atr_trail or 0))
+            confirming = ask is not None and (not self._resting_session_is_eh()
+                                              or quote.last_price < trigger or ask >= trigger)
+            if self._falseflip_cross(state, quote.last_price, confirming=confirming):
+                return None
         if not self.line_buy_ready(state.symbol):
             return None
         if self._first_rest_quote_wait_valid(state):
@@ -7675,6 +7873,7 @@ class SchwabV2Strategy:
         # CW-v2 RESTING flip-entry: manage the resting buy-stop-limit that tracks the ATR short
         # trail (place / no-overlap replace / cancel). No-op unless the resting flag is on; appends
         # place/cancel drafts to _pending_intents, which the bot loop drains after on_bar.
+        self._falseflip_restoring_track(state)
         self._cw_v2_resting_track(state, atr_signal)
         # RESTED RECLAIM: runs AFTER the first-entry manager, and stands down whenever that slot owns
         # the live order. One resting order per symbol, always — see the method's docstring.
@@ -8094,6 +8293,10 @@ class SchwabV2IntentEmitter:
             draft.reason,
         )
         return event.event_id
+
+    async def emit_entry_bar_close(self, payload: dict) -> None:
+        await self.redis.xadd(self.stream, {"data": json.dumps({**payload, "event_type": "v2_entry_bar_close"})},
+                              maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)
 
     async def emit_atr_sell_observation(self, observation: ATRSellObservation) -> None:
         """Publish an account-neutral ATR SELL observation, never an order instruction."""

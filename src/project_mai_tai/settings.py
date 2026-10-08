@@ -531,6 +531,7 @@ class Settings(BaseSettings):
     # opportunity back for a bounded number of fresh crosses that trade date. OFF preserves the
     # confirmation-only reset exactly. The count is anchored to the 04:00 ET strategy session.
     strategy_schwab_1m_v2_retry_one_enabled: bool = False
+    strategy_schwab_1m_v2_false_flip_enabled: bool = False
     # CLEARWAIT1: retire only a removed, durably terminal unfilled episode. OFF is rollback.
     strategy_schwab_1m_v2_removed_wait_clear_enabled: bool = True
     strategy_schwab_1m_v2_retry_one_max_retries: int = 1
