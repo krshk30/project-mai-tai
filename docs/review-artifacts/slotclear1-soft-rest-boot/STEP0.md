@@ -22,7 +22,7 @@ The exact opportunity must have exactly one durable begin, no attempt, and no pe
 
 ## Limits
 
-The replay uses all 101 stored AIXI bars and recorded flip timing through both math-only seeding and historical callback delivery, then the real on_observed_bar/live BUY and quote/draft queues. The prior short level is computed (2.010536023440064); a controlled legal-cent confirming ask of 2.03 emits exactly one primary 295 and mirror 147 draft, then no duplicate. The quote is an explicit in-band control, not a claimed historical print/cache observation.
+The replay uses all 101 stored AIXI bars and recorded flip timing through both math-only seeding and historical callback delivery, then the real on_observed_bar/live BUY and quote/draft queues. The prior short level is computed (2.010536023440064); a controlled legal-cent confirming ask of 2.03 emits exactly one primary 296 and mirror 148 draft (existing HALF_UP sizing), then no duplicate. Both drafts record that same sizing ask and first-slot identity. The quote is an explicit in-band control, not a claimed historical print/cache observation.
 
 The real callback exposed an additional identity-transport defect: ATR clears atr_short_flip_bar_ts on BUY before SLOTCLEAR reads it, and strict admission compares the cleared value to the retry segment. The ATR decision now carries its causal short segment; the fresh-BUY marker carries that same identity into strict admission on that exact bar only. Neither budget counts nor entry/window rules change. Historical delivery cannot mint this marker; both callbacks are covered. The new marker is included in the existing state probe.
 

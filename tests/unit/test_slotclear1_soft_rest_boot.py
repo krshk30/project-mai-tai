@@ -109,7 +109,10 @@ def test_recorded_aixi_ghost_retired_before_seed_cap_live_buy_is_first_not_retry
     assert len(mirrors) == 1
     assert primary.metadata["cw_entry_slot"] == mirrors[0].metadata["cw_entry_slot"] == "first"
     assert primary.metadata["fanout_slot_id"] == mirrors[0].metadata["fanout_slot_id"]
-    assert primary.quantity == 295 and mirrors[0].quantity == 147
+    assert confirming_ask == 2.03
+    assert primary.metadata["entry_size_price"] == mirrors[0].metadata["entry_size_price"] == "2.03"
+    # Existing dollar sizing rounds whole shares HALF_UP, not down.
+    assert primary.quantity == 296 and mirrors[0].quantity == 148
     assert strategy.on_quote("AIXI", quote) is None
     assert strategy.drain_webull_fanout_intents() == []
 
