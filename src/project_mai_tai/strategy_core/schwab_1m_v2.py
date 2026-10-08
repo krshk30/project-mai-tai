@@ -1033,6 +1033,51 @@ class SchwabV2Strategy:
             **self._flip_owner_counts,
         }
 
+    def soft_rest_boot_candidates(self) -> dict[str, int]:
+        """Only untouched durable rests can be recovered before historical seeding."""
+        if not getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_flip_enabled", False):
+            return {}
+        return {
+            symbol: record.opportunity_id
+            for symbol, record in self._restored_flip_owners.items()
+            if record is not None and record.phase == "resting"
+            and not record.fill_accounts and not record.position_ids
+            and not record.position_entry_ms and not record.flip_bar_ts
+            and not record.provisional_started_ms and not record.retry_closes_at_place
+        }
+
+    def recover_soft_rest_boot(
+        self, candidates: Mapping[str, int], proofs: Mapping[str, Mapping[str, object]],
+    ) -> None:
+        """Retire a lost memory-only rest, never a wired or uncertain first entry."""
+        for symbol, opportunity_id in candidates.items():
+            proof = proofs.get(symbol, {})
+            accounts = {self.settings.strategy_schwab_1m_v2_account_name}
+            if self._dual_broker_fanout_enabled:
+                accounts.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
+            observed = proof.get("observed_at_ms", 0)
+            if (proof.get("opportunity_id") != opportunity_id
+                    or proof.get("never_dispatched") is not True
+                    or set(proof.get("flat_accounts", ())) != accounts
+                    or not isinstance(observed, int)
+                    or not 0 <= self._now_ms() - observed <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+                logger.info("[V2-SOFT-REST-BOOT] %s opportunity_id=%d action=kept reason=%s",
+                            symbol, opportunity_id, proof.get("reason", "unproven"))
+                continue
+            state = self.watchlist_state(symbol)
+            if (state.flip_owner_phase != "resting"
+                    or state.flip_owner_opportunity_id != opportunity_id
+                    or state.flip_owner_fill_accounts or state.flip_owner_position_ids
+                    or state.flip_owner_open_positions or state.position_qty
+                    or state.position_qty_held or state.resting_active
+                    or state.retry_one_closes_in_segment or not state.retry_one_budget_readable):
+                continue
+            if self._retire_flip_owner_opportunity(state, reason="boot_soft_rest_proven_never_dispatched"):
+                if self._restored_fanout_segment_ids.get(symbol) == opportunity_id:
+                    self._restored_fanout_segment_ids.pop(symbol)
+                logger.info("[V2-SOFT-REST-BOOT] %s opportunity_id=%d action=retired "
+                            "reason=never_dispatched_fresh_both_legs_flat", symbol, opportunity_id)
+
     def _flip_owner_record(self, state: SymbolState) -> FlipEntryOwnershipRecord:
         return FlipEntryOwnershipRecord(
             symbol=state.symbol.upper(),

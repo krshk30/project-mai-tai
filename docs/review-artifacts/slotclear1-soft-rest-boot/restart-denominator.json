@@ -1,0 +1,210 @@
+{
+  "as_of_utc": "2026-10-08T13:04:08.457940+00:00",
+  "starts": 20,
+  "starts_with_pending_soft_rest": 1,
+  "pending_symbol_start_pairs": 1,
+  "restarts": [
+    {
+      "time_utc": "2026-09-23 23:52:47,248",
+      "pid": "33096",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260924.gz",
+      "line_number": 74076,
+      "restored_owners": [
+        "2026-09-23 23:52:47,548 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] ARTL opportunity_id=1790189642604 phase=bound positions=2 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-09-23 23:52:47,548 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] BENF opportunity_id=1790189822346 phase=bound positions=2 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-09-23 23:52:47,548 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] VSA opportunity_id=1790189943104 phase=consumed positions=1 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-09-23 23:57:06,570 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] LXEH opportunity_id=1790163002631 phase=unknown positions=0 entry_allowed=0 pending_fresh_position_read=1"
+      ]
+    },
+    {
+      "time_utc": "2026-09-24 13:04:35,461",
+      "pid": "163926",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260925.gz",
+      "line_number": 33318,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-09-26 23:02:19,922",
+      "pid": "804046",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260927.gz",
+      "line_number": 40912,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-09-27 10:29:31,651",
+      "pid": "891850",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260928.gz",
+      "line_number": 10058,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-09-27 10:30:54,292",
+      "pid": "893226",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260928.gz",
+      "line_number": 10092,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-09-28 22:42:27,164",
+      "pid": "1329729",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20260929.gz",
+      "line_number": 47292,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-09-30 00:08:18,272",
+      "pid": "1664453",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261001.gz",
+      "line_number": 192,
+      "restored_owners": [
+        "2026-09-30 00:08:18,591 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] MSGY opportunity_id=1790707022389 phase=awaiting_fill positions=0 entry_allowed=0 pending_fresh_position_read=1"
+      ]
+    },
+    {
+      "time_utc": "2026-10-03 14:22:11,886",
+      "pid": "2800028",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261004.gz",
+      "line_number": 16614,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-10-03 22:03:20,433",
+      "pid": "2912",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261004.gz",
+      "line_number": 22973,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-10-04 02:53:31,264",
+      "pid": "26811",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261005.gz",
+      "line_number": 2483,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-10-06 00:53:33,788",
+      "pid": "362945",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261007.gz",
+      "line_number": 652,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-10-06 23:48:03,922",
+      "pid": "611572",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261007.gz",
+      "line_number": 63071,
+      "restored_owners": [
+        "2026-10-06 23:48:04,201 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] AIXI opportunity_id=1791294242804 phase=unknown positions=0 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-06 23:48:04,206 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] IPDN opportunity_id=1791310082693 phase=bound positions=2 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-06 23:48:04,214 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] MOBX opportunity_id=1791312420591 phase=bound positions=1 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-06 23:48:04,214 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] OLOX opportunity_id=1791313204064 phase=resting positions=0 entry_allowed=0 pending_fresh_position_read=1"
+      ]
+    },
+    {
+      "time_utc": "2026-10-07 01:53:51,771",
+      "pid": "626439",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261008",
+      "line_number": 5884,
+      "restored_owners": [
+        "2026-10-07 01:53:52,236 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] AIXI opportunity_id=1791294242804 phase=unknown positions=0 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-07 01:53:52,243 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] IPDN opportunity_id=1791310082693 phase=bound positions=2 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-07 01:53:52,262 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] MOBX opportunity_id=1791312420591 phase=bound positions=1 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-07 01:53:52,262 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] OLOX opportunity_id=1791313204064 phase=resting positions=0 entry_allowed=0 pending_fresh_position_read=1"
+      ]
+    },
+    {
+      "time_utc": "2026-10-07 11:14:09,242",
+      "pid": "917354",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261008",
+      "line_number": 159596,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-10-07 17:45:27,188",
+      "pid": "1207761",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261008",
+      "line_number": 184958,
+      "restored_owners": [
+        "2026-10-07 17:45:27,643 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] SXTC opportunity_id=1791380522895 phase=awaiting_fill positions=0 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-07 17:45:27,644 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] BIYA opportunity_id=1791387662451 phase=bound positions=1 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-07 17:45:27,656 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] DKI opportunity_id=1791390242543 phase=awaiting_fill positions=0 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-07 17:45:27,658 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] PFAI opportunity_id=1791394683048 phase=resting positions=0 entry_allowed=0 pending_fresh_position_read=1"
+      ]
+    },
+    {
+      "time_utc": "2026-10-07 22:15:23,540",
+      "pid": "1409999",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261008",
+      "line_number": 203865,
+      "restored_owners": [
+        "2026-10-07 22:15:24,015 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] DKI opportunity_id=1791396182729 phase=awaiting_fill positions=0 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-07 22:15:24,055 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] BIYA opportunity_id=1791395941957 phase=bound positions=1 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-07 22:15:24,059 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] NCPL opportunity_id=1791399663104 phase=consumed positions=1 entry_allowed=0 pending_fresh_position_read=1"
+      ]
+    },
+    {
+      "time_utc": "2026-10-07 22:17:37,660",
+      "pid": "1412228",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log-20261008",
+      "line_number": 204098,
+      "restored_owners": [
+        "2026-10-07 22:17:38,003 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] BIYA opportunity_id=1791395941957 phase=bound positions=1 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-07 22:17:38,004 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] DKI opportunity_id=1791396182729 phase=awaiting_fill positions=0 entry_allowed=0 pending_fresh_position_read=1",
+        "2026-10-07 22:17:38,022 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] NCPL opportunity_id=1791399663104 phase=consumed positions=1 entry_allowed=0 pending_fresh_position_read=1"
+      ]
+    },
+    {
+      "time_utc": "2026-10-08 11:28:34,157",
+      "pid": "1895743",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line_number": 19333,
+      "restored_owners": []
+    },
+    {
+      "time_utc": "2026-10-08 12:30:14,201",
+      "pid": "1933383",
+      "pending_soft_rests": {
+        "AIXI": {
+          "time_utc": "2026-10-08 12:21:02,269",
+          "source": "/var/log/project-mai-tai/schwab-1m-v2.log",
+          "line_number": 21523,
+          "line": "2026-10-08 12:21:02,269 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-EH-ARM] AIXI slot=first line=2.1057 trigger=2.1200 band_pct=0.50 offset_pct=0.50 soft-rest armed (EH; broker stop dead, watching quotes)"
+        }
+      },
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line_number": 21784,
+      "restored_owners": [
+        "2026-10-08 12:30:15,242 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] AIXI opportunity_id=1791462062227 phase=resting positions=0 entry_allowed=0 pending_fresh_position_read=1"
+      ]
+    },
+    {
+      "time_utc": "2026-10-08 12:58:12,471",
+      "pid": "1941193",
+      "pending_soft_rests": {},
+      "source": "/var/log/project-mai-tai/schwab-1m-v2.log",
+      "line_number": 23425,
+      "restored_owners": [
+        "2026-10-08 12:58:12,878 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RESTORED] AIXI opportunity_id=1791462062227 phase=awaiting_fill positions=0 entry_allowed=0 pending_fresh_position_read=1"
+      ]
+    }
+  ],
+  "coverage": "Kept logs since September22; log pending is not positive no-wire proof. Older starts without dispatch begin remain UNMEASURED/owned."
+}

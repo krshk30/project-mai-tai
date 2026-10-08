@@ -1,0 +1,1258 @@
+{
+  "as_of_utc": "2026-10-08T13:09:28.834542+00:00",
+  "read_only": "on",
+  "aixi_bars": [
+    {
+      "bar_time": "2026-10-08 11:00:00+00:00",
+      "open_price": "2.27000000",
+      "high_price": "2.31000000",
+      "low_price": "2.17000000",
+      "close_price": "2.19800000",
+      "volume": 186936,
+      "source": "live",
+      "created_at": "2026-10-08 11:01:02.149766+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:01:00+00:00",
+      "open_price": "2.19500000",
+      "high_price": "2.19500000",
+      "low_price": "2.10000000",
+      "close_price": "2.11020000",
+      "volume": 140502,
+      "source": "live",
+      "created_at": "2026-10-08 11:02:02.637519+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:02:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.12000000",
+      "low_price": "2.03000000",
+      "close_price": "2.03000000",
+      "volume": 150499,
+      "source": "live",
+      "created_at": "2026-10-08 11:03:02.238609+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:03:00+00:00",
+      "open_price": "2.03000000",
+      "high_price": "2.10000000",
+      "low_price": "2.02010000",
+      "close_price": "2.09000000",
+      "volume": 115213,
+      "source": "live",
+      "created_at": "2026-10-08 11:04:01.473868+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:04:00+00:00",
+      "open_price": "2.08000000",
+      "high_price": "2.11000000",
+      "low_price": "2.07000000",
+      "close_price": "2.11000000",
+      "volume": 46286,
+      "source": "live",
+      "created_at": "2026-10-08 11:05:02.422407+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:05:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.11000000",
+      "low_price": "2.06000000",
+      "close_price": "2.07000000",
+      "volume": 63243,
+      "source": "live",
+      "created_at": "2026-10-08 11:06:02.953727+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:06:00+00:00",
+      "open_price": "2.06040000",
+      "high_price": "2.07000000",
+      "low_price": "2.06000000",
+      "close_price": "2.06010000",
+      "volume": 43975,
+      "source": "live",
+      "created_at": "2026-10-08 11:07:02.471748+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:07:00+00:00",
+      "open_price": "2.06000000",
+      "high_price": "2.14000000",
+      "low_price": "2.06000000",
+      "close_price": "2.11000000",
+      "volume": 80478,
+      "source": "live",
+      "created_at": "2026-10-08 11:08:02.953574+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:08:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.12000000",
+      "low_price": "2.10000000",
+      "close_price": "2.11960000",
+      "volume": 29630,
+      "source": "live",
+      "created_at": "2026-10-08 11:09:01.025054+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:09:00+00:00",
+      "open_price": "2.11040000",
+      "high_price": "2.12000000",
+      "low_price": "2.11000000",
+      "close_price": "2.12000000",
+      "volume": 12549,
+      "source": "live",
+      "created_at": "2026-10-08 11:10:03.252127+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:10:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.12000000",
+      "low_price": "2.06000000",
+      "close_price": "2.06000000",
+      "volume": 46377,
+      "source": "live",
+      "created_at": "2026-10-08 11:11:02.478233+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:11:00+00:00",
+      "open_price": "2.06040000",
+      "high_price": "2.09000000",
+      "low_price": "2.06000000",
+      "close_price": "2.09000000",
+      "volume": 15435,
+      "source": "live",
+      "created_at": "2026-10-08 11:12:02.993702+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:12:00+00:00",
+      "open_price": "2.09000000",
+      "high_price": "2.09000000",
+      "low_price": "2.07000000",
+      "close_price": "2.07000000",
+      "volume": 15020,
+      "source": "live",
+      "created_at": "2026-10-08 11:13:02.699690+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:13:00+00:00",
+      "open_price": "2.07010000",
+      "high_price": "2.07010000",
+      "low_price": "2.06000000",
+      "close_price": "2.07000000",
+      "volume": 23224,
+      "source": "live",
+      "created_at": "2026-10-08 11:14:01.024811+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:14:00+00:00",
+      "open_price": "2.08000000",
+      "high_price": "2.10000000",
+      "low_price": "2.08000000",
+      "close_price": "2.09000000",
+      "volume": 19569,
+      "source": "live",
+      "created_at": "2026-10-08 11:15:03.022580+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:15:00+00:00",
+      "open_price": "2.10000000",
+      "high_price": "2.13000000",
+      "low_price": "2.09000000",
+      "close_price": "2.11960000",
+      "volume": 41883,
+      "source": "live",
+      "created_at": "2026-10-08 11:16:02.325778+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:16:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.17000000",
+      "low_price": "2.11000000",
+      "close_price": "2.13990000",
+      "volume": 82369,
+      "source": "live",
+      "created_at": "2026-10-08 11:17:02.892539+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:17:00+00:00",
+      "open_price": "2.14000000",
+      "high_price": "2.43000000",
+      "low_price": "2.13000000",
+      "close_price": "2.40020000",
+      "volume": 440396,
+      "source": "live",
+      "created_at": "2026-10-08 11:18:02.455726+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:18:00+00:00",
+      "open_price": "2.41000000",
+      "high_price": "2.47000000",
+      "low_price": "2.18000000",
+      "close_price": "2.26000000",
+      "volume": 823376,
+      "source": "live",
+      "created_at": "2026-10-08 11:19:02.898700+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:19:00+00:00",
+      "open_price": "2.25850000",
+      "high_price": "2.40000000",
+      "low_price": "2.22000000",
+      "close_price": "2.35000000",
+      "volume": 598406,
+      "source": "live",
+      "created_at": "2026-10-08 11:20:02.867040+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:20:00+00:00",
+      "open_price": "2.36000000",
+      "high_price": "2.39000000",
+      "low_price": "2.32000000",
+      "close_price": "2.38000000",
+      "volume": 433278,
+      "source": "live",
+      "created_at": "2026-10-08 11:21:02.943613+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:21:00+00:00",
+      "open_price": "2.38000000",
+      "high_price": "2.43000000",
+      "low_price": "2.23000000",
+      "close_price": "2.26000000",
+      "volume": 565790,
+      "source": "live",
+      "created_at": "2026-10-08 11:22:02.494756+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:22:00+00:00",
+      "open_price": "2.27000000",
+      "high_price": "2.27000000",
+      "low_price": "2.14000000",
+      "close_price": "2.16000000",
+      "volume": 303954,
+      "source": "live",
+      "created_at": "2026-10-08 11:23:02.998058+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:23:00+00:00",
+      "open_price": "2.16000000",
+      "high_price": "2.18000000",
+      "low_price": "2.12000000",
+      "close_price": "2.12110000",
+      "volume": 180379,
+      "source": "live",
+      "created_at": "2026-10-08 11:24:02.517742+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:24:00+00:00",
+      "open_price": "2.13000000",
+      "high_price": "2.17000000",
+      "low_price": "2.13000000",
+      "close_price": "2.13850000",
+      "volume": 85328,
+      "source": "live",
+      "created_at": "2026-10-08 11:25:03.226989+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:25:00+00:00",
+      "open_price": "2.13960000",
+      "high_price": "2.17000000",
+      "low_price": "2.12000000",
+      "close_price": "2.13000000",
+      "volume": 63439,
+      "source": "live",
+      "created_at": "2026-10-08 11:26:02.651507+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:26:00+00:00",
+      "open_price": "2.13110000",
+      "high_price": "2.20000000",
+      "low_price": "2.13000000",
+      "close_price": "2.19500000",
+      "volume": 105760,
+      "source": "live",
+      "created_at": "2026-10-08 11:27:02.308444+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:27:00+00:00",
+      "open_price": "2.21000000",
+      "high_price": "2.21000000",
+      "low_price": "2.15000000",
+      "close_price": "2.16970000",
+      "volume": 63912,
+      "source": "live",
+      "created_at": "2026-10-08 11:28:02.687169+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:28:00+00:00",
+      "open_price": "2.16000000",
+      "high_price": "2.17000000",
+      "low_price": "2.13000000",
+      "close_price": "2.14000000",
+      "volume": 67692,
+      "source": "live",
+      "created_at": "2026-10-08 11:29:02.746987+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:29:00+00:00",
+      "open_price": "2.14000000",
+      "high_price": "2.15000000",
+      "low_price": "2.06000000",
+      "close_price": "2.07010000",
+      "volume": 133365,
+      "source": "live",
+      "created_at": "2026-10-08 11:30:03.589102+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:30:00+00:00",
+      "open_price": "2.08000000",
+      "high_price": "2.08200000",
+      "low_price": "2.05000000",
+      "close_price": "2.06000000",
+      "volume": 91756,
+      "source": "live",
+      "created_at": "2026-10-08 11:31:02.866222+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:31:00+00:00",
+      "open_price": "2.07000000",
+      "high_price": "2.12000000",
+      "low_price": "2.06000000",
+      "close_price": "2.12000000",
+      "volume": 61505,
+      "source": "live",
+      "created_at": "2026-10-08 11:32:02.215648+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:32:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.14000000",
+      "low_price": "2.11000000",
+      "close_price": "2.12000000",
+      "volume": 72695,
+      "source": "live",
+      "created_at": "2026-10-08 11:33:02.636165+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:33:00+00:00",
+      "open_price": "2.12010000",
+      "high_price": "2.13000000",
+      "low_price": "2.10000000",
+      "close_price": "2.10980000",
+      "volume": 36258,
+      "source": "live",
+      "created_at": "2026-10-08 11:34:02.548303+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:34:00+00:00",
+      "open_price": "2.10980000",
+      "high_price": "2.12000000",
+      "low_price": "2.05000000",
+      "close_price": "2.06990000",
+      "volume": 77661,
+      "source": "live",
+      "created_at": "2026-10-08 11:35:02.788508+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:35:00+00:00",
+      "open_price": "2.07000000",
+      "high_price": "2.07960000",
+      "low_price": "2.06000000",
+      "close_price": "2.07000000",
+      "volume": 39057,
+      "source": "live",
+      "created_at": "2026-10-08 11:36:02.631002+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:36:00+00:00",
+      "open_price": "2.06000000",
+      "high_price": "2.09000000",
+      "low_price": "2.05000000",
+      "close_price": "2.09000000",
+      "volume": 40350,
+      "source": "live",
+      "created_at": "2026-10-08 11:37:02.974701+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:37:00+00:00",
+      "open_price": "2.09000000",
+      "high_price": "2.09000000",
+      "low_price": "2.07000000",
+      "close_price": "2.08000000",
+      "volume": 14384,
+      "source": "live",
+      "created_at": "2026-10-08 11:38:02.310303+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:38:00+00:00",
+      "open_price": "2.07020000",
+      "high_price": "2.08970000",
+      "low_price": "2.07000000",
+      "close_price": "2.07010000",
+      "volume": 26785,
+      "source": "live",
+      "created_at": "2026-10-08 11:39:02.963596+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:39:00+00:00",
+      "open_price": "2.07900000",
+      "high_price": "2.09000000",
+      "low_price": "2.07000000",
+      "close_price": "2.09000000",
+      "volume": 20325,
+      "source": "live",
+      "created_at": "2026-10-08 11:40:03.248057+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:40:00+00:00",
+      "open_price": "2.09000000",
+      "high_price": "2.15000000",
+      "low_price": "2.09000000",
+      "close_price": "2.12010000",
+      "volume": 84183,
+      "source": "live",
+      "created_at": "2026-10-08 11:41:02.294461+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:41:00+00:00",
+      "open_price": "2.12980000",
+      "high_price": "2.15850000",
+      "low_price": "2.12000000",
+      "close_price": "2.12500000",
+      "volume": 56551,
+      "source": "live",
+      "created_at": "2026-10-08 11:42:02.643460+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:42:00+00:00",
+      "open_price": "2.12500000",
+      "high_price": "2.14000000",
+      "low_price": "2.11000000",
+      "close_price": "2.11000000",
+      "volume": 61850,
+      "source": "live",
+      "created_at": "2026-10-08 11:43:02.952266+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:43:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.14000000",
+      "low_price": "2.11000000",
+      "close_price": "2.12000000",
+      "volume": 40938,
+      "source": "live",
+      "created_at": "2026-10-08 11:44:02.315688+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:44:00+00:00",
+      "open_price": "2.12000000",
+      "high_price": "2.12000000",
+      "low_price": "2.07000000",
+      "close_price": "2.08000000",
+      "volume": 35838,
+      "source": "live",
+      "created_at": "2026-10-08 11:45:03.209424+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:45:00+00:00",
+      "open_price": "2.08960000",
+      "high_price": "2.11000000",
+      "low_price": "2.08000000",
+      "close_price": "2.11000000",
+      "volume": 29288,
+      "source": "live",
+      "created_at": "2026-10-08 11:46:03.006670+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:46:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.12000000",
+      "low_price": "2.10000000",
+      "close_price": "2.10000000",
+      "volume": 30416,
+      "source": "live",
+      "created_at": "2026-10-08 11:47:01.542771+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:47:00+00:00",
+      "open_price": "2.10000000",
+      "high_price": "2.11000000",
+      "low_price": "2.09000000",
+      "close_price": "2.10000000",
+      "volume": 26968,
+      "source": "live",
+      "created_at": "2026-10-08 11:48:02.700934+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:48:00+00:00",
+      "open_price": "2.09000000",
+      "high_price": "2.21000000",
+      "low_price": "2.09000000",
+      "close_price": "2.20500000",
+      "volume": 66283,
+      "source": "live",
+      "created_at": "2026-10-08 11:49:03.103542+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:49:00+00:00",
+      "open_price": "2.20140000",
+      "high_price": "2.20140000",
+      "low_price": "2.15000000",
+      "close_price": "2.16000000",
+      "volume": 68304,
+      "source": "live",
+      "created_at": "2026-10-08 11:50:02.552953+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:50:00+00:00",
+      "open_price": "2.16010000",
+      "high_price": "2.22000000",
+      "low_price": "2.16000000",
+      "close_price": "2.16000000",
+      "volume": 62484,
+      "source": "live",
+      "created_at": "2026-10-08 11:51:02.678344+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:51:00+00:00",
+      "open_price": "2.16000000",
+      "high_price": "2.17000000",
+      "low_price": "2.10000000",
+      "close_price": "2.11010000",
+      "volume": 42620,
+      "source": "live",
+      "created_at": "2026-10-08 11:52:03.030084+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:52:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.13000000",
+      "low_price": "2.11000000",
+      "close_price": "2.11020000",
+      "volume": 24916,
+      "source": "live",
+      "created_at": "2026-10-08 11:53:02.362308+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:53:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.12000000",
+      "low_price": "2.08000000",
+      "close_price": "2.10000000",
+      "volume": 40076,
+      "source": "live",
+      "created_at": "2026-10-08 11:54:02.577043+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:54:00+00:00",
+      "open_price": "2.09000000",
+      "high_price": "2.13000000",
+      "low_price": "2.09000000",
+      "close_price": "2.12000000",
+      "volume": 23457,
+      "source": "live",
+      "created_at": "2026-10-08 11:55:02.690269+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:55:00+00:00",
+      "open_price": "2.12000000",
+      "high_price": "2.12000000",
+      "low_price": "2.08000000",
+      "close_price": "2.08000000",
+      "volume": 20856,
+      "source": "live",
+      "created_at": "2026-10-08 11:56:02.545286+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:56:00+00:00",
+      "open_price": "2.08910000",
+      "high_price": "2.10000000",
+      "low_price": "2.08000000",
+      "close_price": "2.09000000",
+      "volume": 12570,
+      "source": "live",
+      "created_at": "2026-10-08 11:57:02.933608+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:57:00+00:00",
+      "open_price": "2.09000000",
+      "high_price": "2.11000000",
+      "low_price": "2.08990000",
+      "close_price": "2.10930000",
+      "volume": 12418,
+      "source": "live",
+      "created_at": "2026-10-08 11:58:02.320629+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:58:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.13000000",
+      "low_price": "2.10020000",
+      "close_price": "2.12000000",
+      "volume": 18487,
+      "source": "live",
+      "created_at": "2026-10-08 11:59:02.731193+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 11:59:00+00:00",
+      "open_price": "2.12000000",
+      "high_price": "2.17000000",
+      "low_price": "2.12000000",
+      "close_price": "2.14000000",
+      "volume": 54369,
+      "source": "live",
+      "created_at": "2026-10-08 12:00:03.128149+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:00:00+00:00",
+      "open_price": "2.14000000",
+      "high_price": "2.15000000",
+      "low_price": "2.11000000",
+      "close_price": "2.15000000",
+      "volume": 35797,
+      "source": "live",
+      "created_at": "2026-10-08 12:01:01.814847+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:01:00+00:00",
+      "open_price": "2.15000000",
+      "high_price": "2.17000000",
+      "low_price": "2.13000000",
+      "close_price": "2.13100000",
+      "volume": 30540,
+      "source": "live",
+      "created_at": "2026-10-08 12:02:02.480958+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:02:00+00:00",
+      "open_price": "2.14000000",
+      "high_price": "2.18000000",
+      "low_price": "2.12000000",
+      "close_price": "2.15000000",
+      "volume": 62977,
+      "source": "live",
+      "created_at": "2026-10-08 12:03:02.900979+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:03:00+00:00",
+      "open_price": "2.15150000",
+      "high_price": "2.20000000",
+      "low_price": "2.15000000",
+      "close_price": "2.19020000",
+      "volume": 87042,
+      "source": "live",
+      "created_at": "2026-10-08 12:04:02.291525+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:04:00+00:00",
+      "open_price": "2.20000000",
+      "high_price": "2.24000000",
+      "low_price": "2.17000000",
+      "close_price": "2.21970000",
+      "volume": 99857,
+      "source": "live",
+      "created_at": "2026-10-08 12:05:02.880847+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:05:00+00:00",
+      "open_price": "2.22000000",
+      "high_price": "2.22000000",
+      "low_price": "2.15000000",
+      "close_price": "2.15000000",
+      "volume": 68692,
+      "source": "live",
+      "created_at": "2026-10-08 12:06:02.328636+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:06:00+00:00",
+      "open_price": "2.15010000",
+      "high_price": "2.16000000",
+      "low_price": "2.09000000",
+      "close_price": "2.09000000",
+      "volume": 90815,
+      "source": "live",
+      "created_at": "2026-10-08 12:07:02.463121+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:07:00+00:00",
+      "open_price": "2.10000000",
+      "high_price": "2.12000000",
+      "low_price": "2.09000000",
+      "close_price": "2.09000000",
+      "volume": 35804,
+      "source": "live",
+      "created_at": "2026-10-08 12:08:02.904970+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:08:00+00:00",
+      "open_price": "2.09000000",
+      "high_price": "2.12000000",
+      "low_price": "2.08000000",
+      "close_price": "2.11000000",
+      "volume": 29009,
+      "source": "live",
+      "created_at": "2026-10-08 12:09:02.647407+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:09:00+00:00",
+      "open_price": "2.11000000",
+      "high_price": "2.11000000",
+      "low_price": "2.06000000",
+      "close_price": "2.08000000",
+      "volume": 34247,
+      "source": "live",
+      "created_at": "2026-10-08 12:10:03.218077+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:10:00+00:00",
+      "open_price": "2.08000000",
+      "high_price": "2.11000000",
+      "low_price": "2.07030000",
+      "close_price": "2.09000000",
+      "volume": 25494,
+      "source": "live",
+      "created_at": "2026-10-08 12:11:02.477034+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:11:00+00:00",
+      "open_price": "2.09020000",
+      "high_price": "2.09990000",
+      "low_price": "2.07000000",
+      "close_price": "2.08000000",
+      "volume": 26698,
+      "source": "live",
+      "created_at": "2026-10-08 12:12:03.016147+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:12:00+00:00",
+      "open_price": "2.08000000",
+      "high_price": "2.08000000",
+      "low_price": "2.07000000",
+      "close_price": "2.07000000",
+      "volume": 19900,
+      "source": "live",
+      "created_at": "2026-10-08 12:13:02.887547+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:13:00+00:00",
+      "open_price": "2.07000000",
+      "high_price": "2.08000000",
+      "low_price": "2.07000000",
+      "close_price": "2.07020000",
+      "volume": 20563,
+      "source": "live",
+      "created_at": "2026-10-08 12:14:01.918463+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:14:00+00:00",
+      "open_price": "2.07000000",
+      "high_price": "2.08000000",
+      "low_price": "2.06000000",
+      "close_price": "2.06000000",
+      "volume": 24735,
+      "source": "live",
+      "created_at": "2026-10-08 12:15:02.791466+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:15:00+00:00",
+      "open_price": "2.07000000",
+      "high_price": "2.07000000",
+      "low_price": "2.05000000",
+      "close_price": "2.06000000",
+      "volume": 21909,
+      "source": "live",
+      "created_at": "2026-10-08 12:16:02.350575+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:16:00+00:00",
+      "open_price": "2.05000000",
+      "high_price": "2.06000000",
+      "low_price": "2.05000000",
+      "close_price": "2.05500000",
+      "volume": 22083,
+      "source": "live",
+      "created_at": "2026-10-08 12:17:01.644370+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:17:00+00:00",
+      "open_price": "2.05000000",
+      "high_price": "2.06000000",
+      "low_price": "2.00000000",
+      "close_price": "2.00000000",
+      "volume": 49356,
+      "source": "live",
+      "created_at": "2026-10-08 12:18:03.035981+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:18:00+00:00",
+      "open_price": "2.00000000",
+      "high_price": "2.04000000",
+      "low_price": "1.98000000",
+      "close_price": "1.99000000",
+      "volume": 239819,
+      "source": "live",
+      "created_at": "2026-10-08 12:19:02.889971+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:19:00+00:00",
+      "open_price": "1.98500000",
+      "high_price": "2.03000000",
+      "low_price": "1.98200000",
+      "close_price": "2.02000000",
+      "volume": 70112,
+      "source": "live",
+      "created_at": "2026-10-08 12:20:02.971092+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:20:00+00:00",
+      "open_price": "2.02000000",
+      "high_price": "2.03000000",
+      "low_price": "2.00000000",
+      "close_price": "2.00000000",
+      "volume": 27448,
+      "source": "live",
+      "created_at": "2026-10-08 12:21:02.204269+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:21:00+00:00",
+      "open_price": "2.00000000",
+      "high_price": "2.06000000",
+      "low_price": "2.00000000",
+      "close_price": "2.05500000",
+      "volume": 45731,
+      "source": "live",
+      "created_at": "2026-10-08 12:22:02.827138+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:22:00+00:00",
+      "open_price": "2.05000000",
+      "high_price": "2.06000000",
+      "low_price": "2.02000000",
+      "close_price": "2.02970000",
+      "volume": 17589,
+      "source": "live",
+      "created_at": "2026-10-08 12:23:02.867299+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:23:00+00:00",
+      "open_price": "2.03000000",
+      "high_price": "2.04000000",
+      "low_price": "2.02000000",
+      "close_price": "2.03980000",
+      "volume": 17510,
+      "source": "live",
+      "created_at": "2026-10-08 12:24:02.764799+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:24:00+00:00",
+      "open_price": "2.04000000",
+      "high_price": "2.04000000",
+      "low_price": "2.02000000",
+      "close_price": "2.03000000",
+      "volume": 21112,
+      "source": "live",
+      "created_at": "2026-10-08 12:25:03.063765+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:25:00+00:00",
+      "open_price": "2.03000000",
+      "high_price": "2.03000000",
+      "low_price": "2.02000000",
+      "close_price": "2.03000000",
+      "volume": 11899,
+      "source": "live",
+      "created_at": "2026-10-08 12:26:02.418585+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:26:00+00:00",
+      "open_price": "2.02980000",
+      "high_price": "2.02980000",
+      "low_price": "2.00000000",
+      "close_price": "2.00000000",
+      "volume": 29878,
+      "source": "live",
+      "created_at": "2026-10-08 12:27:02.279843+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:27:00+00:00",
+      "open_price": "2.00020000",
+      "high_price": "2.04000000",
+      "low_price": "2.00000000",
+      "close_price": "2.03060000",
+      "volume": 33343,
+      "source": "live",
+      "created_at": "2026-10-08 12:28:02.120362+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:28:00+00:00",
+      "open_price": "2.03990000",
+      "high_price": "2.03990000",
+      "low_price": "2.02000000",
+      "close_price": "2.02000000",
+      "volume": 4212,
+      "source": "live",
+      "created_at": "2026-10-08 12:29:02.903109+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:29:00+00:00",
+      "open_price": "2.02000000",
+      "high_price": "2.02000000",
+      "low_price": "2.01000000",
+      "close_price": "2.01000000",
+      "volume": 13385,
+      "source": "live",
+      "created_at": "2026-10-08 12:30:03.127390+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:30:00+00:00",
+      "open_price": "2.00000000",
+      "high_price": "2.01000000",
+      "low_price": "2.00000000",
+      "close_price": "2.00000000",
+      "volume": 8882,
+      "source": "live",
+      "created_at": "2026-10-08 12:31:02.937122+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:31:00+00:00",
+      "open_price": "2.00020000",
+      "high_price": "2.01000000",
+      "low_price": "2.00000000",
+      "close_price": "2.00000000",
+      "volume": 11570,
+      "source": "live",
+      "created_at": "2026-10-08 12:32:02.587714+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:32:00+00:00",
+      "open_price": "2.00990000",
+      "high_price": "2.01000000",
+      "low_price": "2.00000000",
+      "close_price": "2.01000000",
+      "volume": 8961,
+      "source": "live",
+      "created_at": "2026-10-08 12:33:02.167249+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:33:00+00:00",
+      "open_price": "2.00980000",
+      "high_price": "2.01000000",
+      "low_price": "2.00000000",
+      "close_price": "2.00990000",
+      "volume": 11749,
+      "source": "live",
+      "created_at": "2026-10-08 12:34:01.550876+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:34:00+00:00",
+      "open_price": "2.00000000",
+      "high_price": "2.00150000",
+      "low_price": "1.92000000",
+      "close_price": "1.92000000",
+      "volume": 74558,
+      "source": "live",
+      "created_at": "2026-10-08 12:35:02.734490+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:35:00+00:00",
+      "open_price": "1.92000000",
+      "high_price": "1.93000000",
+      "low_price": "1.91000000",
+      "close_price": "1.91000000",
+      "volume": 71176,
+      "source": "live",
+      "created_at": "2026-10-08 12:36:02.223995+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:36:00+00:00",
+      "open_price": "1.91020000",
+      "high_price": "2.00000000",
+      "low_price": "1.91000000",
+      "close_price": "2.00000000",
+      "volume": 101967,
+      "source": "live",
+      "created_at": "2026-10-08 12:37:02.703978+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:37:00+00:00",
+      "open_price": "1.99000000",
+      "high_price": "2.01000000",
+      "low_price": "1.99000000",
+      "close_price": "2.00010000",
+      "volume": 34561,
+      "source": "live",
+      "created_at": "2026-10-08 12:38:02.229925+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:38:00+00:00",
+      "open_price": "2.00000000",
+      "high_price": "2.02000000",
+      "low_price": "1.95000000",
+      "close_price": "2.00000000",
+      "volume": 300514,
+      "source": "live",
+      "created_at": "2026-10-08 12:39:01.708050+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:39:00+00:00",
+      "open_price": "1.99000000",
+      "high_price": "2.10000000",
+      "low_price": "1.97000000",
+      "close_price": "2.06990000",
+      "volume": 306114,
+      "source": "live",
+      "created_at": "2026-10-08 12:40:02.498804+00:00"
+    },
+    {
+      "bar_time": "2026-10-08 12:40:00+00:00",
+      "open_price": "2.06960000",
+      "high_price": "2.10000000",
+      "low_price": "2.06000000",
+      "close_price": "2.07960000",
+      "volume": 80019,
+      "source": "live",
+      "created_at": "2026-10-08 12:41:02.947961+00:00"
+    }
+  ],
+  "journal": [
+    {
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-08 12:18:03.053253+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791459182644",
+        "phase": "bound",
+        "flip_bar_ts": "1791460080000",
+        "provisional_started_ms": "1791460143129",
+        "fill_accounts": [
+          "live:orb"
+        ],
+        "position_ids": {
+          "live:orb": "4a5591d1-0f17-47c0-b5d1-f9da571cf548"
+        },
+        "position_entry_ms": {
+          "live:orb": "1791460223893"
+        },
+        "retry_segment_id": "1791458940000",
+        "retry_closes_at_place": 0,
+        "active": false,
+        "reason": "sell_flip_flat"
+      }
+    },
+    {
+      "snapshot_type": "v2_wait_dispatch",
+      "created_at": "2026-10-08 12:21:02.245985+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791462062227",
+        "account_names": [
+          "live:schwab_1m_v2",
+          "live:orb"
+        ],
+        "kind": "begin",
+        "attempt_token": "",
+        "account_name": ""
+      }
+    },
+    {
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-08 12:21:02.255533+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791462062227",
+        "phase": "resting",
+        "flip_bar_ts": "0",
+        "provisional_started_ms": "0",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791461820000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "first_rest_working"
+      }
+    },
+    {
+      "snapshot_type": "v2_flip_entry_ownership",
+      "created_at": "2026-10-08 12:30:15.299247+00:00",
+      "payload": {
+        "schema_version": 1,
+        "strategy_code": "schwab_1m_v2",
+        "symbol": "AIXI",
+        "opportunity_id": "1791462062227",
+        "phase": "awaiting_fill",
+        "flip_bar_ts": "1791460080000",
+        "provisional_started_ms": "1791462615299",
+        "fill_accounts": [],
+        "position_ids": {},
+        "position_entry_ms": {},
+        "retry_segment_id": "1791461820000",
+        "retry_closes_at_place": 0,
+        "active": true,
+        "reason": "buy_flip_waiting_for_first_rest_fill"
+      }
+    }
+  ],
+  "orders": [
+    {
+      "account": "live:schwab_1m_v2",
+      "symbol": "AIXI",
+      "client_order_id": "schwab_1m_v2-AIXI-open-dd7571e4ad3f",
+      "status": "aborted",
+      "quantity": "270.00000000",
+      "submitted_at": "2026-10-08 11:50:22.606473+00:00",
+      "intent_created_at": "2026-10-08 11:50:22.532419+00:00",
+      "payload": {
+        "event_id": "dd7571e4-ad3f-41aa-870c-094776940808",
+        "source_service": "schwab-1m-v2",
+        "metadata": {
+          "path": "ATR Flip",
+          "atr_variant": "CW-v2-resting",
+          "order_type": "limit",
+          "reference_price": "2.22",
+          "entry_price": "2.2200",
+          "stop_price": "2.2200",
+          "limit_price": "2.22",
+          "resting_level": "2.2200",
+          "resting_band_pct": "0.5",
+          "resting_offset_pct": "0.5",
+          "cw_flip_level": "2.2004",
+          "resting_entry": "true",
+          "eh_resting": "true",
+          "nfq2_generation": "",
+          "cw_entry_slot": "first",
+          "fanout_segment_id": "1791459182644",
+          "cw_arm_bar_ts": "1791460080000",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "355bb1a0-e6e0-59b4-860c-dc7c9924aa93",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "entry_notional_target_usd": "600",
+          "entry_size_price_basis": "limit_price",
+          "entry_size_price": "2.22",
+          "entry_computed_shares": "270",
+          "pm_confirming_ask": "2.22",
+          "pm_confirming_ask_source": "stream_ask_cache",
+          "pm_confirming_ask_age_ms": "2016",
+          "pm_confirming_ask_decision_ms": "1791460222470",
+          "resting_buy_round_up": "true",
+          "resting_wire_stop_price": "2.2200",
+          "resting_wire_limit_price": "2.23",
+          "eh_cross_source": "stream_trade",
+          "eh_cross_print_ts_ms": "1791460222125",
+          "session": "AM",
+          "time_in_force": "day",
+          "extended_hours": "true",
+          "price_source": "ask",
+          "clearwait_dispatch_token": "4c712bc3-e8c9-4037-a51c-585ebbcf6427",
+          "fanout_attempt_id": "schwab_1m_v2-AIXI-open-dd7571e4ad3f"
+        },
+        "refusal_origin": "client_abort",
+        "refusal_code": "rpg_old_buy_still_owned"
+      }
+    },
+    {
+      "account": "live:orb",
+      "symbol": "AIXI",
+      "client_order_id": "schwab_1m_v2-AIXI-open-ec407a4e45b0",
+      "status": "filled",
+      "quantity": "135.00000000",
+      "submitted_at": "2026-10-08 11:50:23.331252+00:00",
+      "intent_created_at": "2026-10-08 11:50:22.752704+00:00",
+      "payload": {
+        "event_id": "ec407a4e-45b0-4bac-aa13-41e3e5ffc182",
+        "source_service": "schwab-1m-v2",
+        "metadata": {
+          "path": "ATR Flip",
+          "atr_variant": "CW-v2-fanout",
+          "entry_price": "2.2200",
+          "reference_price": "2.22",
+          "cw_flip_level": "2.2004",
+          "fanout_leg": "webull",
+          "fanout_source": "eh_resting",
+          "cw_entry_n": "1",
+          "cw_entry_slot": "first",
+          "cw_arm_bar_ts": "1791460080000",
+          "fanout_segment_id": "1791459182644",
+          "fanout_identity_schema": "entry_opportunity_v2",
+          "fanout_slot": "resting",
+          "fanout_slot_id": "355bb1a0-e6e0-59b4-860c-dc7c9924aa93",
+          "order_type": "limit",
+          "source": "schwab_1m_v2",
+          "strategy_version": "v1.32",
+          "entry_notional_target_usd": "300",
+          "entry_size_price_basis": "limit_price",
+          "entry_size_price": "2.22",
+          "entry_computed_shares": "135",
+          "resting_band_pct": "0.5",
+          "resting_offset_pct": "0.5",
+          "resting_buy_round_up": "true",
+          "resting_wire_stop_price": "2.2200",
+          "resting_wire_limit_price": "2.23",
+          "nfq2_generation": "ebd013aa-b3a2-478d-ba33-f029bfa89a58",
+          "pm_confirming_ask": "2.22",
+          "pm_confirming_ask_source": "stream_ask_cache",
+          "pm_confirming_ask_age_ms": "2016",
+          "pm_confirming_ask_decision_ms": "1791460222470",
+          "session": "AM",
+          "time_in_force": "day",
+          "extended_hours": "true",
+          "limit_price": "2.22",
+          "price_source": "ask",
+          "clearwait_dispatch_token": "e4473134-cf88-4143-a222-a329d6e2bffe",
+          "fanout_attempt_id": "schwab_1m_v2-AIXI-open-ec407a4e45b0",
+          "oms_v2_eh_resting_entry": "true",
+          "oms_v2_eh_resting_entry_ask": "2.2200",
+          "oms_v2_eh_resting_entry_cap": "2.2300"
+        }
+      }
+    },
+    {
+      "account": "live:orb",
+      "symbol": "AIXI",
+      "client_order_id": "schwab_1m_v2-AIXI-close-89b31ff87190",
+      "status": "filled",
+      "quantity": "135.00000000",
+      "submitted_at": "2026-10-08 12:17:26.670172+00:00",
+      "intent_created_at": "2026-10-08 12:17:26.520746+00:00",
+      "payload": {
+        "event_id": "89b31ff8-7190-4ba0-8d96-cbcd58b11b95",
+        "source_service": "oms-risk",
+        "metadata": {
+          "oms_v2_managed_exit": "true",
+          "reference_price": "2.0326",
+          "order_type": "limit",
+          "time_in_force": "day",
+          "session": "AM",
+          "extended_hours": "true",
+          "limit_price": "2.02",
+          "price_source": "bid"
+        }
+      }
+    }
+  ],
+  "fills": [
+    {
+      "account": "live:orb",
+      "symbol": "AIXI",
+      "side": "buy",
+      "quantity": "135.00000000",
+      "price": "2.20930000",
+      "filled_at": "2026-10-08 11:50:23.325000+00:00"
+    },
+    {
+      "account": "live:orb",
+      "symbol": "AIXI",
+      "side": "sell",
+      "quantity": "135.00000000",
+      "price": "2.03000000",
+      "filled_at": "2026-10-08 12:17:26.673000+00:00"
+    }
+  ]
+}
