@@ -34,7 +34,8 @@ ACTIVE_PHASES = {"prepared", "waiting", "fills_waiting", "clear", "held_unknown"
 
 class AtrRepriceRuntimeMixin:
     def _rpg_enabled(self):
-        return bool(getattr(self.settings, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False))
+        return bool(getattr(getattr(self, "settings", None),
+                            "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False))
 
     @staticmethod
     def _rpg_matches_local_open(opening, event):
