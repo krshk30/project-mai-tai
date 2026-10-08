@@ -13,7 +13,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 now = datetime.now(ZoneInfo('America/New_York'))
 assert now.date().isoformat() == '2026-10-08' and now.hour >= 16, 'NO STAGING BEFORE CLOSE / wrong date'
-job = pathlib.Path('/home/trader/after-hours/2026-10-08/falseflip-pg-hotfix-r2/job')
+job = pathlib.Path('/home/trader/after-hours/2026-10-08/falseflip-pg-hotfix-r3/job')
 raw = sys.stdin.buffer.read(4000001)
 assert len(raw) <= 4000000 and os.geteuid() == 0
 files = {}
@@ -41,7 +41,12 @@ for name, value in files.items():
         stream.write(value)
     path.chmod(0o644)
 assert all(h((job / name).read_bytes()) == h(value) for name, value in files.items())
-unit = 'project-mai-tai-falseflip-pg-r2-20261008'
+unit = 'project-mai-tai-falseflip-pg-r3-20261008'
+for old in ('project-mai-tai-falseflip-pg-20261008', 'project-mai-tai-falseflip-pg-r2-20261008'):
+    state = subprocess.run(['systemctl','show',old+'.service','--property=ActiveState','--value'],
+                           check=True,capture_output=True,text=True).stdout.strip()
+    assert state in ('inactive','failed'), 'prior installer still running; no overlap'
+    subprocess.run(['systemctl','disable','--now',old+'.timer'],check=True)
 backups = {}
 for suffix in ('.service', '.timer'):
     path = pathlib.Path('/etc/systemd/system') / (unit + suffix)
@@ -76,6 +81,15 @@ def package(plan, approved, box, review, ledger=None):
     return buffer.getvalue(), manifest
 
 
+def verify_remote_ref(manifest):
+    row = json.loads(manifest)
+    ref = 'refs/heads/' + row['release_branch']
+    result = subprocess.run(['git', 'ls-remote', '--exit-code', 'origin', ref],
+                            check=True, capture_output=True, text=True, timeout=30)
+    if result.stdout.strip() != row['approved_sha'] + '\t' + ref:
+        raise ValueError('immutable remote application ref absent or differs; do not activate timer')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--plan', required=True)
@@ -87,6 +101,7 @@ def main():
     parser.add_argument('--check-only', action='store_true')
     args = parser.parse_args()
     raw, manifest = package(args.plan, args.approved_sha, args.box_sha, json.load(args.review_receipt), args.review_ledger)
+    verify_remote_ref(manifest)
     if args.check_only:
         print(json.dumps(dict(manifest_sha256=digest(manifest), package_sha256=digest(raw), bytes=len(raw))))
         return

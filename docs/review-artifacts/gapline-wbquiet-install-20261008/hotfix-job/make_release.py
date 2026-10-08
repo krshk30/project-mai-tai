@@ -124,7 +124,7 @@ def release(plan, approved, box, review, ledger=None):
         blobs[name] = git('show', plan + ':' + path)
     required = {'runner.py', 'run.sh', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py',
                 'flag_audit.py', 'catalog_inventory.py', 'bookkeeping.py', 'removed_wait_readonly.py', 'health_view.py',
-                'project-mai-tai-falseflip-pg-r2-20261008.service', 'project-mai-tai-falseflip-pg-r2-20261008.timer'}
+                'project-mai-tai-falseflip-pg-r3-20261008.service', 'project-mai-tai-falseflip-pg-r3-20261008.timer'}
     if not required <= blobs.keys():
         raise ValueError('incomplete committed runner artifacts: ' + ','.join(sorted(required - blobs.keys())))
     blobs['candidate-review.json'] = canonical(review)
