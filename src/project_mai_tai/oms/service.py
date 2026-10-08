@@ -1884,7 +1884,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     event=event,
                 )
                 session.commit()
-                if strategy_code == "schwab_1m_v2":
+                if (strategy_code == "schwab_1m_v2"
+                        and event.payload.metadata.get("clearwait_removal_token")):
                     try:
                         await acquire_cancel_terminal_evidence(
                             self.session_factory, self.broker_adapter, [intent.id],
@@ -2890,7 +2891,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             symbol=event.payload.symbol,
             metadata=metadata,
         )
-        bind_cancel_target(intent, event, self.broker_adapter, target_order)
+        if (event.payload.strategy_code == "schwab_1m_v2"
+                and metadata.get("clearwait_removal_token")):
+            bind_cancel_target(intent, event, self.broker_adapter, target_order)
         if target_order is None:
             self.store.mark_intent_refused(
                 intent,

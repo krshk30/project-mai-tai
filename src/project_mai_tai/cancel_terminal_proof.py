@@ -174,6 +174,8 @@ def evaluate_request_cancel_terminal(
     """
     bindings = [(r.scope.account_name, r.scope.account_id) for r in expected]
     if (not account_ids or len(bindings) != len(set(bindings))
+            or len({r.scope.event_id for r in expected}) != len(expected)
+            or len({r.scope.symbol for r in expected}) != 1
             or dict(bindings) != dict(account_ids)):
         raise ValueError("cancel_request_accounts_unknown")
     return tuple(evaluate_cancel_terminal(
