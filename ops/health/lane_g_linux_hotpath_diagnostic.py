@@ -25,13 +25,14 @@ def child(output):
     calls, sql_counts, cache_sizes = Counter(), Counter(), Counter()
     synchronous_spans, sampled_stacks = [], []
     entries = {}
+    seen_frames = set()
+    test_module = None
     stop = threading.Event()
     report = {"diagnostic_only": True, "excluded_from_twenty_per_ref": True,
               "method": "Profile target method calls and SQL thread/context; sample loop stack every 5ms. Instrumentation can change timing; no GC policy change."}
 
     def work_label():
-        module = sys.modules.get("tests.unit.test_nfq2_hotfix1_combined_proof")
-        return module.WORK.get() if module else "unknown"
+        return test_module.WORK.get() if test_module else "unknown"
 
     def profile(frame, kind, _arg):
         name = frame.f_code.co_name
@@ -39,7 +40,10 @@ def child(output):
             return
         if kind == "call":
             label = work_label()
-            calls[(name, threading.get_ident(), label)] += 1
+            # Python profiles coroutine resumptions as calls; count unique invocations.
+            if frame not in seen_frames:
+                calls[(name, threading.get_ident(), label)] += 1
+                seen_frames.add(frame)
             entries[id(frame)] = (time.monotonic(), label)
             if name == "_mirrorhold_schedule":
                 owner = frame.f_locals.get("self")
@@ -69,6 +73,8 @@ def child(output):
     class Receipt:
         @pytest.hookimpl(hookwrapper=True)
         def pytest_runtest_call(self, item):
+            nonlocal test_module
+            test_module = item.module
             sampler = threading.Thread(target=sample, daemon=True)
             event.listen(Engine, "before_cursor_execute", sql)
             sys.setprofile(profile)
