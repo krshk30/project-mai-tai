@@ -179,3 +179,8 @@ def test_bounded_schwab_lists_cannot_prove_absence_of_older_gtc(coverage):
     old_gtc = replace(partial, coverage="all_working", orders=(BookOrder("older-gtc", "FLYE", "working", "buy"),))
     assert not evaluate_unbound_cancel_terminal(request, {"webull": BOOK, "schwab": old_gtc},
                                                 fences=fences, now_ms=NOW).terminal
+
+
+@pytest.mark.parametrize("status", [None, [], ["cancelled"], {}, {"cancelled": True}, 0, True])
+def test_unreadable_target_status_cannot_raise_or_fall_through_to_absence(status):
+    assert not evaluate(replace(EVIDENCE, target_status=status)).terminal
