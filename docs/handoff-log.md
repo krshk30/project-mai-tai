@@ -8376,3 +8376,13 @@ nowb32f1c1e8663f1e6b596aaff1f7797715eef84ae. Notidenticalpatch-id; disclosed
 forreviewernewpin. NewCI37836252921/37836232309 underway. No finalapplication,
 stagedpackage, migration or productionwrite. Actualafter16gate receipt requested;
 mustrerunfreshagainbeforeeachrestartafterfinalmain/Hpinland.
+
+2026-10-08 16:02 ET codex-2 C54 gate supplement: actualRO afterclose pass
+20:00:14-20:00:25UTC independentlyread from /tmp/oct8-lane-c-gate-after1600.stdout
+(directrc0,bothflat,working/managed/virtual/inflight0,blockers/unknown0),
+/tmp/oct8-lane-c-native-oms-after1600.stdout(rc0,sources14/15sfresh),
+/tmp/oct8-lane-c-native-v2-after1600.stdout(rc0,armed0,state0.9sfresh).
+Existingclock-only override namedoperatorafter16ruling; noarmedoverride.
+Danglinglog-onlyARMs warnedDKI/FFR/LGCL/LPCN/MTEN; nativefreshpublishedstate
+decidedsafe. Receiptsnotinstallreadiness: Hnewpin/CI/finalmainpending,
+freshgatesmustreadagainatexecution. No staging orproductionwrite.
