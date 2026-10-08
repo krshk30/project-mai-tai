@@ -1,9 +1,0 @@
-{
-  "pr_number": 1130,
-  "range_base": "1e15adb03c3758e647d333828bbe3090e24e832e",
-  "range_head": "d170e765d910874e84c996c3f5e5af8fc5891336",
-  "reviewed_at": "2026-10-08T17:33:47Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "SLOTCLEAR1 lane A (restart restores a dead waiting-buy owner; AIXI 10-08 08:39 +6.4% missed). Read both source files (245 lines): boot candidates = same-session restored owners in phase resting with no fills/positions/flip bar; retired only on positive proof (one durable v2_wait_dispatch begin with no attempt; no intent/order/fill since the opportunity; no open managed or virtual row; fresh complete broker books both accounts, observed within the 15 s ownership bound); proof runs once per boot off-loop (asyncio.to_thread, 15 s cap, 5 s HTTP, Webull pages 2 s apart, no Schwab token refresh); unproven = owner kept (today's behaviour). Causal SELL segment carried so the fresh BUY admission matches the retry segment. Next-day boot replay: previous-session owner rows are not restored (DKI 10-07 awaiting_fill row present at the 08:58 boot, restore evaluated=1 = AIXI only), so tomorrow's boot sees only same-session rows. Tests: 12 neighbour files 315 passed vs 254 on main, 0 failures. My mutations: candidates never offered -> 3F; barrier queries ignored -> 9F. Codex: 10/10 mutations RED, full unit 0 added failure names. Follow-up (not blocking, conservative): an operator-held position in the same symbol keeps the ghost (broker-book check); barriers already prove no bot order/fill. Install tonight with SLOTCLEAR flags ON (already true)."
-}
