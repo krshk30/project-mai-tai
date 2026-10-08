@@ -1,0 +1,9 @@
+{
+  "pr_number": 1137,
+  "range_base": "eced4599d05e72adab77551f18df8050a94028e2",
+  "range_head": "5d17199caff81e2b9e232ac78091579aa3ff4334",
+  "reviewed_at": "2026-10-08T21:08:15Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "FALSEFLIP1 Postgres hotfix (found by me in the 16:2x post-install scan: record_bar NumericValueOutOfRange, int4 cast of ms-epoch JSON values). Source: 4 comparisons changed from .as_integer() to cast(.as_string(), BigInteger) \u2014 segment (budget store), bar_ms in record_bar (snapshot + managed invalidation), bar_ms tuple IN in classify_managed_entries. Swept every .as_integer() in all 8 files #1135 touched: only payload revision remains (small counter, safe). New tests/integration/test_falseflip1_postgres_epochs.py ran in CI's Postgres job: 8 passed (integration 94 passed / 1 xfail); codex: 4 overflow mutations RED by SQLSTATE. No other behaviour change; deploy oms + v2 tonight, then read: zero [OMS-FALSE-FLIP] classification_unreadable, entry-bar facts stored per closed bar."
+}
