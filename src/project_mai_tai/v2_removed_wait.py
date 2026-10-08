@@ -11,6 +11,7 @@ from typing import Callable, Mapping, Sequence
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from project_mai_tai.cancel_terminal_proof import CancelTerminalProof, evaluate_cancel_terminal
 from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
@@ -26,6 +27,7 @@ from project_mai_tai.db.models import (
 from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear, replacement_terminal_zero
+from project_mai_tai.oms.cancel_terminal import load_cancel_terminal_evidence, receipt_from_intent
 
 SNAPSHOT_TYPE = "v2_removed_wait"
 DISPATCH_SNAPSHOT_TYPE = "v2_wait_dispatch"
@@ -130,6 +132,7 @@ def assess_removed_wait(
     order_events: Sequence[BrokerOrderEvent],
     snapshots: Sequence[DashboardSnapshot],
     has_position: bool,
+    cancel_terminal_proofs: Mapping[object, CancelTerminalProof | None] | None = None,
 ) -> RemovedWaitProof:
     """Absence alone is never a receipt. Every configured account must acknowledge removal."""
 
@@ -148,6 +151,29 @@ def assess_removed_wait(
             return {}
         md = payload.get("metadata", payload)
         return md if isinstance(md, dict) else {}
+
+    def shared_ack(intent: TradeIntent) -> bool:
+        proof = (cancel_terminal_proofs or {}).get(intent.id)
+        return bool(proof and proof.terminal
+                    and proof.scope.account_name == accounts.get(intent.broker_account_id)
+                    and proof.scope.symbol == request.symbol
+                    and proof.scope.event_id == (intent.payload or {}).get("event_id")
+                    and proof.scope.client_order_id == metadata(intent).get("target_client_order_id"))
+
+    def shared_target(order: BrokerOrder) -> bool:
+        return any(p and p.terminal and p.scope.symbol == request.symbol
+                   and p.scope.account_name == accounts.get(order.broker_account_id)
+                   and p.scope.client_order_id == order.client_order_id
+                   for p in (cancel_terminal_proofs or {}).values())
+
+    def cancel_unknown(intent: TradeIntent) -> str | None:
+        if cancel_terminal_proofs is not None:
+            proof = cancel_terminal_proofs.get(intent.id)
+            if not shared_ack(intent):
+                return proof.reason if proof is not None and not proof.terminal else "cancel_identity_unknown"
+        elif not settled(intent):
+            return "cancel_receipt_settling"
+        return None
 
     expected_slot = (
         fanout_slot_id(
@@ -206,7 +232,7 @@ def assess_removed_wait(
                                        "already_absent", "confirmed_after_accepted_request",
                                        "could_not_tell", "not_confirmed"}
                                    for e in order_events)
-                    if not settled(order) or not (terminal or no_wire):
+                    if not shared_target(order) and (not settled(order) or not (terminal or no_wire)):
                         return result("broker_terminal_unproven")
         for intent in intents:
             md = metadata(intent)
@@ -225,10 +251,11 @@ def assess_removed_wait(
             no_target = (intent.status == "rejected"
                          and p.get("refusal_origin") == "skipped_before_submit"
                          and p.get("refusal_code") == "cancel_target_not_found")
-            if intent.status not in {"cancelled", "canceled"} and not no_target:
+            if (intent.status not in TERMINAL or
+                    (intent.status not in {"cancelled", "canceled"} and not no_target and not shared_ack(intent))):
                 return result("cancel_unknown_or_refused")
-            if not settled(intent):
-                return result("cancel_receipt_settling")
+            if unknown := cancel_unknown(intent):
+                return result(unknown)
             account = accounts.get(intent.broker_account_id)
             if account is None:
                 return result("cancel_account_unproven")
@@ -387,7 +414,7 @@ def assess_removed_wait(
         if str(order.status).lower() not in TERMINAL | {"filled"}:
             return result("opening_order_not_terminal")
         if str(order.status).lower() in TERMINAL:
-            if not settled(order):
+            if not settled(order) and not shared_target(order):
                 return result("terminal_order_settling")
             status = "cancelled" if order.status == "canceled" else order.status
             intent = intents_by_id.get(order.intent_id)
@@ -397,7 +424,7 @@ def assess_removed_wait(
                 and intent is not None
                 and no_wire_intent(intent)
             )
-            if (order.id, status) not in broker_terminal and not pre_wire:
+            if (order.id, status) not in broker_terminal and not pre_wire and not shared_target(order):
                 return result("broker_terminal_unproven")
         if exact(md) or (
             request.opportunity_id == 0
@@ -406,7 +433,7 @@ def assess_removed_wait(
         ):
             if order.id in filled_order_ids or str(order.status).lower() == "filled":
                 return result("own_fill_stays_owned")
-            if not settled(order):
+            if not settled(order) and not shared_target(order):
                 return result("terminal_order_settling")
 
     receipts: set[str] = set()
@@ -446,10 +473,10 @@ def assess_removed_wait(
             and payload.get("refusal_origin") == "skipped_before_submit"
             and payload.get("refusal_code") == "cancel_target_not_found"
         )
-        if status not in {"cancelled", "canceled"} and not no_target:
+        if status not in {"cancelled", "canceled"} and not no_target and not shared_ack(intent):
             return result("cancel_unknown_or_refused")
-        if not settled(intent):
-            return result("cancel_receipt_settling")
+        if unknown := cancel_unknown(intent):
+            return result(unknown)
         account = accounts.get(intent.broker_account_id)
         if account is None:
             return result("cancel_account_unproven")
@@ -696,12 +723,9 @@ class RemovedWaitStore:
         results: list[RemovedWaitProof] = []
         with self.session_factory() as session:
             strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == "schwab_1m_v2"))
-            accounts = {
-                a.id: a.name
-                for a in session.scalars(
-                    select(BrokerAccount).where(BrokerAccount.name.in_(account_names))
-                ).all()
-            }
+            account_rows = {a.id: a for a in session.scalars(
+                select(BrokerAccount).where(BrokerAccount.name.in_(account_names))).all()}
+            accounts = {ident: row.name for ident, row in account_rows.items()}
             if strategy_id is None or set(accounts.values()) != account_names:
                 raise ValueError("required removal accounts unavailable")
             for request in requests:
@@ -808,6 +832,16 @@ class RemovedWaitStore:
                     ),
                 ]
                 has_position = any(session.scalar(q.limit(1)) is not None for q in position_queries)
+                evidence = load_cancel_terminal_evidence(session, intents)
+                cancel_proofs = {}
+                for intent in intents:
+                    md = (intent.payload or {}).get("metadata", {})
+                    if not isinstance(md, dict) or md.get("clearwait_removal_token") != request.token:
+                        continue
+                    account = account_rows.get(intent.broker_account_id)
+                    receipt = receipt_from_intent(intent, account) if account is not None else None
+                    cancel_proofs[intent.id] = evaluate_cancel_terminal(receipt,
+                        evidence.get(receipt.scope.event_id), now_ms=int(observed.timestamp() * 1000)) if receipt else None
                 results.append(
                     assess_removed_wait(
                         request,
@@ -819,6 +853,7 @@ class RemovedWaitStore:
                         order_events=order_events,
                         snapshots=snapshots,
                         has_position=has_position,
+                        cancel_terminal_proofs=cancel_proofs,
                     )
                 )
         return tuple(results)
