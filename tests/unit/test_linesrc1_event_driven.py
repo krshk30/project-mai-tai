@@ -114,7 +114,7 @@ async def test_one_real_parser_fetch_then_live_callbacks_advance_immutable_seed_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("symbol", ["BIYA", "MI", "MTEN", "SXTC"])
-async def test_recorded_empty_event_is_once_waiting_without_callback_retry(symbol):
+async def test_recorded_empty_event_is_waiting_with_bounded_repair_retries(symbol):
     current = _ms("2026-10-07T07:00:00-04:00")
     bot = _bot(symbol, current)
     now = [current + 61_000]
@@ -140,7 +140,7 @@ async def test_recorded_empty_event_is_once_waiting_without_callback_retry(symbo
         bot._line_source_event.set()
         await asyncio.wait_for(bot._line_source_events_pass(), timeout=2.0)
         assert not bot._line_buy_ready(symbol)
-    assert bot.rest_client._authorized_get.call_count == 1
+    assert bot.rest_client._authorized_get.call_count == 5
     assert not bot._line_source_pending and not bot._line_published
 
 
@@ -158,7 +158,7 @@ async def test_recorded_empty_control_times_out_when_queue_refuses(monkeypatch):
     # The outer watchdog bounds this negative control even if its inner guard regresses.
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(
-            test_recorded_empty_event_is_once_waiting_without_callback_retry("BIYA"), timeout=3.0,
+            test_recorded_empty_event_is_waiting_with_bounded_repair_retries("BIYA"), timeout=3.0,
         )
     assert timeouts == [3.0, 2.0]
 

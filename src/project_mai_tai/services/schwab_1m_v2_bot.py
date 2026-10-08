@@ -88,6 +88,7 @@ from project_mai_tai.events import (
     StrategyStateSnapshotEvent,
     stream_name,
 )
+from project_mai_tai.market_data.line_repair import LineRepair
 from project_mai_tai.market_data.schwab_v2_loop_health import (
     LoopHealthTracker,
     run_resilient_loop,
@@ -579,6 +580,8 @@ class SchwabV2BotService:
         self._line_source_pending: dict[str, tuple[int, int, int, int, str]] = {}
         self._line_source_identity: dict[str, int] = {}
         self._line_source_budget: set[tuple[str, int, int, str, int, int]] = set()
+        self._line_repairs: dict[str, LineRepair] = {}
+        self._line_source_inflight: set[str] = set()
         self._line_scanner_symbols: set[str] = set()
         self._line_membership: dict[str, int] = {}
         self._line_confirmed_identity: dict[str, str] = {}
@@ -4653,13 +4656,15 @@ class SchwabV2BotService:
             logger.exception("schwab_1m_v2 on_bar failed for %s", symbol)
             return
         self._wake_line_after_ingest(symbol)
-        if observation_phase == "live" and getattr(self, "_line_restoration_enabled", False):
+        normalized = symbol.upper()
+        fallback = self.strategy.watchlist_state(normalized).line_live_fallback
+        if observation_phase == "live" and getattr(self, "_line_restoration_enabled", False) and not fallback:
             normalized = symbol.upper()
             self._confirmation_last_live_bar_ms[normalized] = max(
                 bar.timestamp_ms, self._confirmation_last_live_bar_ms.get(normalized, 0)
             )
             self._note_line_live_bar(normalized, bar)
-        if observation_phase == "live" and not getattr(self, "_line_restoration_enabled", False):
+        if observation_phase == "live" and (not getattr(self, "_line_restoration_enabled", False) or fallback):
             normalized = symbol.upper()
             atr_state = str(
                 getattr(self.strategy._symbol_states.get(normalized), "atr_state", None)
@@ -4711,6 +4716,7 @@ class SchwabV2BotService:
             self._line_live_bars.pop(symbol, None)
             self._line_source_waiting.pop(symbol, None)
             self._line_source_pending.pop(symbol, None)
+            self._line_repairs.pop(symbol, None)
             self._line_source_identity[symbol] = self._line_source_identity.get(symbol, 0) + 1
             self._line_startup_pending.discard(symbol)
             self._line_readd_pending.discard(symbol)
@@ -4728,6 +4734,10 @@ class SchwabV2BotService:
                 self._line_live_bars.pop(symbol, None)
                 self._line_source_waiting.pop(symbol, None)
                 self._line_source_pending.pop(symbol, None)
+                self._line_repairs.pop(symbol, None)
+                state = self.strategy.watchlist_state(symbol)
+                state.line_live_shadow = True
+                state.line_live_fallback = False
                 self._line_source_identity[symbol] = self._line_source_identity.get(symbol, 0) + 1
                 retired = self._line_retired.pop(symbol, None)
                 if retired is not None:
@@ -4767,6 +4777,9 @@ class SchwabV2BotService:
             closed_live = bool(source_callback
                                and 60_000 <= self.strategy._now_ms() - bar.timestamp_ms <= 180_000)
             if closed_live:
+                repair = self._line_repair_for(ledger.symbol)
+                if not repair.first_closed_at_ms:
+                    repair.first_closed_at_ms = self.strategy._now_ms()
                 ledger.observe_closed_live(bar)
                 self._note_line_live_bar(ledger.symbol, bar)
                 self._confirmation_last_live_bar_ms[ledger.symbol] = max(
@@ -4796,6 +4809,7 @@ class SchwabV2BotService:
                 self._queue_line_source_event(ledger.symbol, "first_0700_closed")
             if closed_live and ledger.symbol in self._line_readd_pending:
                 self._request_line_repairs({ledger.symbol})
+            self._line_repair_maintenance()
         except ValueError:
             ledger.invalidate_coverage()
             logger.exception("[V2-LINE-RESTORE] sym=%s outcome=invalid_bar entry_allowed=0", symbol)
@@ -4821,12 +4835,17 @@ class SchwabV2BotService:
             self._line_source_pending.pop(sym, None)
             self._line_source_identity[sym] = self._line_source_identity.get(sym, 0) + 1
             self._line_readd_pending.discard(sym)
+            self._line_repairs.pop(sym, None)
         self._line_scanner_symbols = set(selected)
         self._line_confirmed_identity = identities
         for sym in reconfirmed:
             initial = sym not in self._line_membership
             self._line_membership[sym] = self._line_membership.get(sym, 0) + 1
             self._line_source_pending.pop(sym, None)
+            self._line_repairs.pop(sym, None)
+            state = self.strategy.watchlist_state(sym)
+            state.line_live_shadow = True
+            state.line_live_fallback = False
             self._line_source_identity[sym] = self._line_source_identity.get(sym, 0) + 1
             if initial:
                 self._line_startup_pending.add(sym)
@@ -4887,8 +4906,14 @@ class SchwabV2BotService:
         epoch, anchor, current = context
         budget = (symbol, epoch, self._line_membership.get(symbol, 0), reason,
                   event_token, event_revision)
-        if budget in self._line_source_budget:
-            return False
+        if reason == "gap_resume":
+            if budget in self._line_source_budget:
+                return False
+        else:
+            repair = self._line_repair_for(symbol, reason)
+            if (symbol in self._line_source_pending or symbol in self._line_source_inflight
+                    or not repair.due(self.strategy._now_ms())):
+                return False
         self._line_source_budget.add(budget)
         self._line_source_identity[symbol] = self._line_source_identity.get(symbol, 0) + 1
         identity = self._line_source_identity[symbol]
@@ -4898,6 +4923,34 @@ class SchwabV2BotService:
         self._line_source_event.set()
         return True
 
+    def _line_repair_for(self, symbol: str, reason: str = "first_0700_closed") -> LineRepair:
+        ledger = self._line_sessions[symbol]
+        membership = self._line_membership.get(symbol, 0)
+        repair = self._line_repairs.get(symbol)
+        if repair is None or (repair.epoch, repair.membership) != (ledger.epoch, membership):
+            repair = LineRepair(ledger.epoch, membership, reason)
+            self._line_repairs[symbol] = repair
+        return repair
+
+    def _line_repair_maintenance(self) -> None:
+        now = self.strategy._now_ms()
+        for symbol, repair in tuple(self._line_repairs.items()):
+            ledger = self._line_sessions.get(symbol)
+            if (ledger is None or ledger.epoch != repair.epoch
+                    or repair.membership != self._line_membership.get(symbol, 0)
+                    or symbol not in self._watchlist):
+                continue
+            if repair.fallback_due(now):
+                repair.fallback = True
+                state = self.strategy.watchlist_state(symbol)
+                state.line_live_shadow = False
+                state.line_live_fallback = True
+                self._line_published.pop(symbol, None)
+                logger.warning("[V2-LINE-LIVE-FALLBACK] sym=%s epoch=%d attempts=%d "
+                               "reason=repair_deadline", symbol, ledger.epoch, repair.attempts)
+            if repair.attempts and repair.due(now):
+                self._queue_line_source_event(symbol, repair.reason)
+
     async def _line_source_events_loop(self) -> None:
         await run_resilient_loop(
             stop_event=self._stop_event, tracker=self._loop_health, name="line_source_events",
@@ -4906,8 +4959,17 @@ class SchwabV2BotService:
         )
 
     async def _line_source_events_pass(self) -> None:
+        self._line_repair_maintenance()
         if not self._line_source_pending:
-            await self._line_source_event.wait()
+            pending = any(not repair.published and repair.attempts < 5
+                          for repair in self._line_repairs.values())
+            if pending:
+                try:
+                    await asyncio.wait_for(self._line_source_event.wait(), 1.0)
+                except TimeoutError:
+                    return
+            else:
+                await self._line_source_event.wait()
         self._line_source_event.clear()
         for symbol in sorted(tuple(self._line_source_pending)):
             context = self._line_source_pending.pop(symbol, None)
@@ -4917,6 +4979,9 @@ class SchwabV2BotService:
             allow_exit = reason == "gap_resume"
             if not self._line_event_current(symbol, epoch, identity, allow_exit=allow_exit):
                 continue
+            if reason != "gap_resume":
+                self._line_repair_for(symbol, reason).started(self.strategy._now_ms())
+            self._line_source_inflight.add(symbol)
             try:
                 bars, proof = await asyncio.to_thread(
                     self.rest_client.fetch_session_history, symbol, anchor, current,
@@ -4941,6 +5006,13 @@ class SchwabV2BotService:
                 if self._line_event_current(symbol, epoch, identity, allow_exit=allow_exit):
                     self._line_source_failure(symbol, epoch)
                     self.rest_client._set_line_source_state(symbol, ("error", type(exc).__name__))
+                    logger.warning("[V2-LINE-SOURCE-STATE] sym=%s state=error epoch=%d reason=%s "
+                                   "exception=%r response_shape=%s anchor_ms=%d current_bar_ms=%d",
+                                   symbol, epoch, type(exc).__name__, str(exc)[:1024],
+                                   json.dumps(getattr(exc, "line_response_shape", {}), sort_keys=True),
+                                   anchor, current)
+            finally:
+                self._line_source_inflight.discard(symbol)
 
     def _line_event_current(
         self, symbol: str, epoch: int, identity: int, *, allow_exit: bool = False,
@@ -4970,6 +5042,15 @@ class SchwabV2BotService:
         )
 
     def _line_buy_ready(self, symbol: str) -> bool:
+        state = self.strategy._symbol_states.get(symbol)
+        if state is not None and state.line_live_fallback:
+            return bool(symbol in self._watchlist and state.bars
+                        and state.bars[-1].timestamp_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000
+                        and session_start_ts_ms(state.bars[-1].timestamp_ms)
+                        == session_start_ts_ms(self.strategy._now_ms())
+                        and state.atr_state in {"long", "short"}
+                        and state.atr_trail is not None and math.isfinite(state.atr_trail)
+                        and state.atr_trail > 0 and not self.strategy.gap_hold_active(symbol))
         if symbol in self._line_readd_needs_live:
             return False
         ledger = self._line_sessions.get(symbol)
@@ -4999,6 +5080,9 @@ class SchwabV2BotService:
         live.intersection_update(ts for ts in live.copy() if ts >= current - 600_000)
 
     def _line_version(self, symbol: str) -> str:
+        state = self.strategy._symbol_states.get(symbol)
+        if state is not None and state.line_live_fallback and state.bars:
+            return f"live:{self._line_sessions[symbol].epoch}:{state.bars[-1].timestamp_ms}"
         result = self._line_published.get(symbol)
         if result is None:
             return ""
@@ -5026,6 +5110,7 @@ class SchwabV2BotService:
 
     async def _line_restoration_pass(self) -> None:
         self._sync_line_epochs()
+        self._line_repair_maintenance()
         if not self._line_dirty:
             try:
                 await asyncio.wait_for(self._line_rebuild_event.wait(), 1.0)
@@ -5043,7 +5128,8 @@ class SchwabV2BotService:
             ledger = self._line_sessions.get(symbol)
             if ledger is not None:
                 published = await self._rebuild_session_line(symbol, ledger)
-                if not published and ledger.current_bar_ms in self._line_live_bars.get(symbol, set()):
+                if (not published and not self.strategy.watchlist_state(symbol).line_live_fallback
+                        and ledger.current_bar_ms in self._line_live_bars.get(symbol, set())):
                     for expired in self._confirmation_exit.expire_before(
                         symbol=symbol, bar_start_ms=ledger.current_bar_ms,
                     ):
@@ -5088,7 +5174,14 @@ class SchwabV2BotService:
             ledger.observe(bar)
             if not state.bars or bar.timestamp_ms > state.bars[-1].timestamp_ms:
                 phase = "live" if was_warmed and bar.timestamp_ms == bars[-1].timestamp_ms else "replay"
-                self._strategy_on_bar(symbol, bar, observation_phase=phase)
+                # Repair responses advance mathematics, never the live fallback's
+                # trading callback. Publication below retains the history fences.
+                fallback = state.line_live_fallback
+                state.line_live_fallback = False
+                try:
+                    self._strategy_on_bar(symbol, bar, observation_phase=phase)
+                finally:
+                    state.line_live_fallback = fallback
         ledger.attest(proof)
         self._line_readd_needs_live.discard(symbol)
         self._line_reconcile_pending.add(symbol)
@@ -5220,11 +5313,17 @@ class SchwabV2BotService:
         state.line_restore_reset_after_ms = 0
         self._confirmation_bar_states = confirmations
         self._line_published[symbol] = result
+        was_fallback = state.line_live_fallback
+        state.line_live_shadow = False
+        state.line_live_fallback = False
+        repair = self._line_repairs.get(symbol)
+        if repair is not None:
+            repair.published = True
 
         # Only an unchanged, adjacent live append can be a new signal. Initial
         # admission, restart, re-add, corrections and backfill never replay flips.
         adjacent_live = bool(
-            previous is not None and previous.request.epoch == result.request.epoch
+            not was_fallback and previous is not None and previous.request.epoch == result.request.epoch
             and previous.snapshot.reset_after_ms == reset_fence
             and previous.request.bars == result.request.bars[:-1]
             and previous.request.current_bar_ms + 60_000 == result.request.current_bar_ms
