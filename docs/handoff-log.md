@@ -8110,3 +8110,16 @@ and five semantic mutants RED retained. Queue/restore history residual and
 RTH-only production dispatch window remain disclosed. F remains NOT READY
 while same writer corrects generic cancel publication/receipt inventory.
 No source merge, pin, activation, staging or production action.
+
+2026-10-08 11:04 ET codex-2 C35: isolated unchanged HOTFIX retained-on
+benchmark passes serially on exact base1e15adb0 and head5a8b3208 (61.18s and
+60.72s); /tmp/mirrorholdG-two-delta-proof.json preserves receipts and hashes.
+Canonical87-character checkout paths on both base and head produce the same
+1003-character cron line failure against1000; /tmp/mirrorholdG-canonical-cron-proof.json
+preserves identical installer/test hashes and empty ops diff. This explains
+the local path-dependent addition without modifying unrelated code or
+claiming full failed-name parity. Actual PM eh_resting metadata bypasses the
+rth_resting_mirror scope; before04 synthetic controls are not PM dispatch
+proof. Queue/restore all-history residual remains explicit in draft1134.
+F same writer is correcting generic cancel inventory; not ready until its
+publication gap and restart recovery are both proven. All production unchanged.
