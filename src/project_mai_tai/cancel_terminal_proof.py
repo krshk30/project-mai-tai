@@ -106,6 +106,8 @@ def evaluate_cancel_terminal(
         return result("cancel_receipt_changed")
     if evidence.source != "broker":
         return result("cancel_source_unknown")
+    if not isinstance(evidence.target_status, str):
+        return result("broker_target_status_unknown")
     if evidence.target_status:
         if (evidence.target_client_order_id, evidence.target_symbol, evidence.target_account_id) != (
             scope.client_order_id, scope.symbol, scope.account_id,
