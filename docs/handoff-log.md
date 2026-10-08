@@ -8569,3 +8569,14 @@ not feasible on current proven design. I controlled witness/CI is not a
 historical FLYE/DKI release. No extra production action or install; finished
 proof tomorrow evening under reviewer fallback, archived rows cover morning.
 No absence inferred from partial books or synthetic historical coids.
+
+2026-10-08 19:09 ET codex-2 C67: reviewer accepts F/I Friday10-09 evening,
+READY15:00ET target. Shared sole writer owns >=180d complete Schwab book,
+timed actual acquisition and Webull measured200empty detail fall-through.
+F owns actual request-raised/boot/04:00 caller with DB/account/token fences;
+I owns closed-owner freshSELL consumer. Scope updates sent all three now,
+parallel source work; final positive certificate is named integration dependency.
+Parent shared unit57PASS0.66s, not PostgreSQL/live release evidence.
+Required five final replay outcomes retained, including both working BUY denials
+and operator working SELL admission. No evidence documents or fixture>500lines.
+No further production action tonight; Friday reviewed/pinned install after close.
