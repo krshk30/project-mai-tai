@@ -78,10 +78,17 @@ def sdk(monkeypatch):
         def get_method(self):
             return "GET"
 
-        def __getattr__(self, name):
-            if name.startswith("set_"):
-                return lambda value: self.values.__setitem__(name[4:], value)
-            raise AttributeError(name)
+        def set_account_id(self, value):
+            self.values["account_id"] = value
+
+        def set_client_order_id(self, value):
+            self.values["client_order_id"] = value
+
+        def set_page_size(self, value):
+            self.values["page_size"] = value
+
+        def set_last_client_order_id(self, value):
+            self.values["last_client_order_id"] = value
 
     for path, cls_name, kind in (
         ("get_open_orders_request", "OpenOrdersListRequest", "open"),
@@ -416,3 +423,26 @@ async def test_ten_request_burst_uses_actual_aggregate_two_per_two_second_budget
     clock[0] = 2.0
     await broker.acquire_broker_cancel_evidence(routed, receipt)
     assert len(client.calls) == 4
+
+
+@pytest.mark.parametrize("side,coid,terminal", [("BUY", "operator", False), ("SELL", "operator", True),
+                                              ("SELL", "", True), (None, "operator", False)])
+@pytest.mark.asyncio
+async def test_offloop_v2_nested_items_book_for_approved_unbound_rule(sessions, sdk, side, coid, terminal):
+    from dataclasses import replace
+    from project_mai_tai.cancel_terminal_proof import UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal
+
+    client = Client(pages=[{"hasNext": False, "orders": [{"account_id": "ACC1",
+        "client_order_id": coid, "order_id": "actual-operator-broker-id", "items": [
+            {"symbol": "FLYE", "order_status": "SUBMITTED", "side": side}]}]}])
+    book = await broker.acquire_complete_working_book(adapter(client), "live:orb")
+    request = UnboundCancelRequest("FLYE", "token", "token", str(NOW), "retry_exhausted", NOW - 1000,
+        {"live:orb": "ACC1", "schwab": "hash"}, {"live:orb": "webull", "schwab": "schwab"})
+    assert book and book.orders[0].client_order_id == coid
+    # A controlled second book tests the evaluator, NOT actual Schwab completeness.
+    books = {"live:orb": book, "schwab": replace(book, account_name="schwab", account_id="hash", orders=())}
+    proof = evaluate_unbound_cancel_terminal(request, books, fences=UnboundCancelFences(request, True, True, True, True), now_ms=NOW)
+    assert proof.terminal is terminal
+    assert all(t != threading.get_ident() for _, _, t in client.calls)
+    with sessions() as session:
+        assert session.execute(text("SELECT CAST(:epoch AS bigint)"), {"epoch": request.requested_at_ms}).scalar_one() == NOW - 1000
