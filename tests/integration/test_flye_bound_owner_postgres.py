@@ -211,3 +211,24 @@ async def test_pg_open_managed_row_in_either_account_blocks_canonical_release(pg
     assert state.flip_owner_phase != "idle"
     assert not strategy._strict_first_rest_admitted(state, slot="first")
     assert store.restore() == {"FLYE": request}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("fault", ["none", "stale", "open", "unknown"])
+async def test_pg_actual_boot_restores_scoped_witness_before_owner_state(pg, active, fault):
+    from tests.unit.test_flye_unbound_owner_release import (
+        test_actual_service_boot_delivers_closed_owner_witness_before_watch as boot_control,
+    )
+
+    with pg() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="I controlled boot ordering")
+        accounts = {name: BrokerAccount(name=name, provider="webull" if name == WEBULL else "schwab",
+            environment="test", external_account_id=name) for name in (PRIMARY, WEBULL)}
+        session.add_all([strategy, *accounts.values()])
+        session.flush()
+        strategy_id = strategy.id
+        ids = {name: account.id for name, account in accounts.items()}
+        session.commit()
+    # Real PG store and service loader; the reused books/drain remain explicit controls.
+    await boot_control((RemovedWaitStore(pg), pg, ids, strategy_id), active, fault)

@@ -6,10 +6,12 @@ import pytest
 
 from project_mai_tai.v2_flip_entry_ownership import FlipPositionLeg
 from project_mai_tai.v2_removed_wait import RemovedWaitProof
+from tests.unit.test_clearwait1_session_rollover import db as rollover_db
 from tests.unit.test_flye_bound_owner_target_close import FLYE, WEBULL, book, replay, sell
 
 
 ControlledUnboundProof = RemovedWaitProof
+db = rollover_db
 
 
 def setup(*, pm=False):
@@ -173,7 +175,7 @@ def test_boot_stores_configure_before_lazy_owner_creation(active, fault):
     restored_requests = {"FLYE": current} if active or fault == "token" else {}
     assert not restarted._symbol_states
     restarted.configure_removed_wait(complete, restored=restored_requests,
-                                     readable=True, terminal_proofs=(proof,))
+                                     readable=True, terminal_proofs=iter((proof,)))
     if not restored_requests:
         assert not restarted._symbol_states, "completed proof restores before watch state creation"
     restored = restarted.watchlist_state("FLYE")
@@ -189,3 +191,66 @@ def test_boot_stores_configure_before_lazy_owner_creation(active, fault):
         assert cached.observed_at_ms == proof.observed_at_ms
     assert writes == ([(current, False)] if released and active else [])
     assert ("FLYE" in restarted._removed_wait_requests) is (bool(restored_requests) and not released)
+    if fault != "token":
+        assert not restarted.drain_pending_intents() and not restarted.drain_webull_direct_intents()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("fault", ["none", "stale", "open", "unknown"])
+async def test_actual_service_boot_delivers_closed_owner_witness_before_watch(db, active, fault):
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    from project_mai_tai.cancel_terminal_proof import CompleteWorkingBook
+    from project_mai_tai.db.models import BrokerOrder, OmsManagedPosition
+    from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
+    from tests.unit.test_clearwait1_session_rollover import seed, service
+
+    strategy, state, _, clock, _, controlled = setup()
+    persisted = strategy._flip_owner_record(state)
+    request = controlled.request
+    store, sessions, ids, strategy_id = db
+    seed(db, request, receipts=False)
+    with sessions() as session:
+        for account, row in persisted.position_ids.items():
+            entry = BrokerOrder(strategy_id=strategy_id, broker_account_id=ids[account],
+                symbol="FLYE", side="buy", order_type="limit", time_in_force="day",
+                quantity=280, status="filled", client_order_id="controlled-owned-" + account,
+                payload={"fanout_segment_id": str(request.opportunity_id)})
+            session.add(entry)
+            session.flush()
+            session.add(OmsManagedPosition(id=UUID(row), strategy_code="schwab_1m_v2",
+                broker_account_name=account, symbol="FLYE", entry_order_id=entry.id,
+                entry_price=2.22, original_quantity=280, current_quantity=0, status="closed"))
+        session.commit()
+    # Explicit controlled both-account books/drain, not retained historical broker evidence.
+    books = {account: CompleteWorkingBook(account, account, clock[0], clock[0], True,
+                                         "all_working", (), "broker") for account in request.account_names}
+    proof, = store.retire_unbound((request,), set(request.account_names), books=books,
+        publication_closed={request: True}, now=datetime.fromtimestamp(clock[0] / 1000, UTC))
+    assert proof.clear and proof.closed_owned_rows == tuple(sorted(persisted.position_ids.items()))
+    if not active:
+        store.record(request, False)
+    if fault == "stale":
+        clock[0] += 15_001
+    restarted = SchwabV2Strategy(strategy.settings)
+    restarted._now_ms = lambda: clock[0]
+    restarted.configure_fanout_identity_persistence(lambda *_: None)
+    restarted.configure_flip_entry_ownership(lambda *_: None, restored={"FLYE": persisted},
+        active_segments={"FLYE": persisted.opportunity_id}, retry_budget_persist=lambda *_: None,
+        restored_retry_budgets={"FLYE": (FLYE["fresh_sell_bar_ms"], 0)})
+    assert not restarted._symbol_states
+    await service(restarted, store)._configure_removed_wait_store()
+    if not active:
+        assert not restarted._symbol_states
+    restored = restarted.watchlist_state("FLYE")
+    restored.position_qty = restored.position_qty_held = 1000
+    assert restarted._closed_owner_terminal_receipts[("FLYE", request.opportunity_id)] == proof
+    assert not restarted.drain_pending_intents() and not restarted.drain_webull_direct_intents()
+    legs = (FlipPositionLeg(WEBULL, "unknown-open-row", clock[0], 1),) if fault == "open" else ()
+    book(restarted, persisted, clock, legs=legs, readable=fault != "unknown")
+    assert (restored.flip_owner_phase == "idle") is (fault == "none")
+    assert store.restore_terminal_proofs() == (proof,), "boot/completion must not refresh broker book time"
+    assert restored.position_qty == restored.position_qty_held == 1000
+    assert bool(store.restore()) is (active and fault != "none")
