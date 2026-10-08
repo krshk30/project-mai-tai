@@ -4,6 +4,7 @@
   "days": {
     "2026-10-02": {
       "actual_live_orb_ok_zero_windows": 0,
+      "ambiguous_counter_minutes": 0,
       "as_of_utc": "2026-10-08T13:03:28.288912+00:00",
       "census_replay_receipts": [
         {
@@ -9206,6 +9207,7 @@
       },
       "counter_first_minute": "2026-10-02T04:00:00+00:00",
       "counter_last_minute": "2026-10-03T03:59:00+00:00",
+      "counter_total_scope": "selected final/max per minute and endpoint; conflicting epochs are not summed or claimed as actual wire traffic",
       "decision_lines_searched": 85,
       "decision_minutes_searched": 47,
       "decision_search_receipts": [
@@ -9826,6 +9828,10 @@
           "nominal_suppressed_opportunities": 4704,
           "other_direct_readers": "UNMEASURED"
         },
+        "followup_generation_unmeasured": 0,
+        "followup_reader_invocations": 0,
+        "followup_reader_minutes": 0,
+        "followup_same_cache_identity": 0,
         "nominal_read_skip_counts": {},
         "observed_shadow_account_passes": 0,
         "state_counts": {},
@@ -9929,6 +9935,7 @@
     },
     "2026-10-03": {
       "actual_live_orb_ok_zero_windows": 0,
+      "ambiguous_counter_minutes": 0,
       "as_of_utc": "2026-10-08T13:03:28.288912+00:00",
       "census_replay_receipts": [
         {
@@ -18850,6 +18857,7 @@
       },
       "counter_first_minute": "2026-10-03T04:00:00+00:00",
       "counter_last_minute": "2026-10-04T03:59:00+00:00",
+      "counter_total_scope": "selected final/max per minute and endpoint; conflicting epochs are not summed or claimed as actual wire traffic",
       "decision_lines_searched": 236,
       "decision_minutes_searched": 60,
       "decision_search_receipts": [
@@ -20304,6 +20312,10 @@
           "nominal_suppressed_opportunities": 4512,
           "other_direct_readers": "UNMEASURED"
         },
+        "followup_generation_unmeasured": 0,
+        "followup_reader_invocations": 0,
+        "followup_reader_minutes": 0,
+        "followup_same_cache_identity": 0,
         "nominal_read_skip_counts": {},
         "observed_shadow_account_passes": 0,
         "state_counts": {},
@@ -20327,6 +20339,7 @@
     },
     "2026-10-04": {
       "actual_live_orb_ok_zero_windows": 0,
+      "ambiguous_counter_minutes": 0,
       "as_of_utc": "2026-10-08T13:03:28.288912+00:00",
       "census_replay_receipts": [
         {
@@ -29529,6 +29542,7 @@
       },
       "counter_first_minute": "2026-10-04T04:00:00+00:00",
       "counter_last_minute": "2026-10-05T03:59:00+00:00",
+      "counter_total_scope": "selected final/max per minute and endpoint; conflicting epochs are not summed or claimed as actual wire traffic",
       "decision_lines_searched": 0,
       "decision_minutes_searched": 0,
       "decision_search_receipts": [],
@@ -29566,6 +29580,10 @@
           "nominal_suppressed_opportunities": 4704,
           "other_direct_readers": "UNMEASURED"
         },
+        "followup_generation_unmeasured": 0,
+        "followup_reader_invocations": 0,
+        "followup_reader_minutes": 0,
+        "followup_same_cache_identity": 0,
         "nominal_read_skip_counts": {},
         "observed_shadow_account_passes": 0,
         "state_counts": {},
@@ -29589,6 +29607,7 @@
     },
     "2026-10-05": {
       "actual_live_orb_ok_zero_windows": 0,
+      "ambiguous_counter_minutes": 0,
       "as_of_utc": "2026-10-08T13:03:28.288912+00:00",
       "census_replay_receipts": [
         {
@@ -38831,6 +38850,7 @@
       },
       "counter_first_minute": "2026-10-05T04:00:00+00:00",
       "counter_last_minute": "2026-10-06T03:59:00+00:00",
+      "counter_total_scope": "selected final/max per minute and endpoint; conflicting epochs are not summed or claimed as actual wire traffic",
       "decision_lines_searched": 11,
       "decision_minutes_searched": 9,
       "decision_search_receipts": [
@@ -38995,6 +39015,10 @@
           "nominal_suppressed_opportunities": 4700,
           "other_direct_readers": "UNMEASURED"
         },
+        "followup_generation_unmeasured": 0,
+        "followup_reader_invocations": 0,
+        "followup_reader_minutes": 0,
+        "followup_same_cache_identity": 0,
         "nominal_read_skip_counts": {},
         "observed_shadow_account_passes": 0,
         "state_counts": {},
@@ -39074,6 +39098,7 @@
     },
     "2026-10-06": {
       "actual_live_orb_ok_zero_windows": 0,
+      "ambiguous_counter_minutes": 0,
       "as_of_utc": "2026-10-08T13:03:28.288912+00:00",
       "census_replay_receipts": [
         {
@@ -48188,6 +48213,7 @@
       },
       "counter_first_minute": "2026-10-06T04:00:00+00:00",
       "counter_last_minute": "2026-10-07T03:59:00+00:00",
+      "counter_total_scope": "selected final/max per minute and endpoint; conflicting epochs are not summed or claimed as actual wire traffic",
       "decision_lines_searched": 121,
       "decision_minutes_searched": 90,
       "decision_search_receipts": [
@@ -49024,6 +49050,10 @@
           "nominal_suppressed_opportunities": 4598,
           "other_direct_readers": "UNMEASURED"
         },
+        "followup_generation_unmeasured": 0,
+        "followup_reader_invocations": 0,
+        "followup_reader_minutes": 0,
+        "followup_same_cache_identity": 0,
         "nominal_read_skip_counts": {},
         "observed_shadow_account_passes": 0,
         "state_counts": {},
@@ -49262,6 +49292,7 @@
     },
     "2026-10-07": {
       "actual_live_orb_ok_zero_windows": 0,
+      "ambiguous_counter_minutes": 0,
       "as_of_utc": "2026-10-08T13:03:28.288912+00:00",
       "census_replay_receipts": [
         {
@@ -58464,6 +58495,7 @@
       },
       "counter_first_minute": "2026-10-07T04:00:00+00:00",
       "counter_last_minute": "2026-10-08T03:59:00+00:00",
+      "counter_total_scope": "selected final/max per minute and endpoint; conflicting epochs are not summed or claimed as actual wire traffic",
       "decision_lines_searched": 18,
       "decision_minutes_searched": 18,
       "decision_search_receipts": [
@@ -58682,6 +58714,10 @@
           "nominal_suppressed_opportunities": 4704,
           "other_direct_readers": "UNMEASURED"
         },
+        "followup_generation_unmeasured": 0,
+        "followup_reader_invocations": 0,
+        "followup_reader_minutes": 0,
+        "followup_same_cache_identity": 0,
         "nominal_read_skip_counts": {},
         "observed_shadow_account_passes": 0,
         "state_counts": {},
@@ -59160,6 +59196,7 @@
     },
     "2026-10-08": {
       "actual_live_orb_ok_zero_windows": 0,
+      "ambiguous_counter_minutes": 0,
       "as_of_utc": "2026-10-08T13:03:28.288912+00:00",
       "census_replay_receipts": [
         {
@@ -62642,6 +62679,7 @@
       },
       "counter_first_minute": "2026-10-08T04:00:00+00:00",
       "counter_last_minute": "2026-10-08T13:02:00+00:00",
+      "counter_total_scope": "selected final/max per minute and endpoint; conflicting epochs are not summed or claimed as actual wire traffic",
       "decision_lines_searched": 6,
       "decision_minutes_searched": 6,
       "decision_search_receipts": [
@@ -62764,6 +62802,10 @@
           "nominal_suppressed_opportunities": 1821,
           "other_direct_readers": "UNMEASURED"
         },
+        "followup_generation_unmeasured": 0,
+        "followup_reader_invocations": 0,
+        "followup_reader_minutes": 0,
+        "followup_same_cache_identity": 0,
         "nominal_read_skip_counts": {},
         "observed_shadow_account_passes": 0,
         "state_counts": {},
@@ -62788,6 +62830,13 @@
         "start": 2168
       }
     }
+  },
+  "followup_readers": {
+    "coverage": "PARTIAL; observed cache identities are not decision equivalence or wire proof",
+    "duplicate_receipts": [],
+    "first_reader_sequence_by_process": {},
+    "malformed": [],
+    "rows": []
   },
   "malformed_counters": [],
   "manual_positions": "nominal first seen <=60s daytime / <=300s overnight vs <=15s now, plus lag; ownership unchanged",

@@ -36,6 +36,20 @@ def run():
          ({"acquired_at": (tests.AT - tests.timedelta(seconds=2)).isoformat()},)),
         ("complete ET day falsely claimed", '"complete_ET_day_claim": False,', '"complete_ET_day_claim": True,',
          "test_missing_rotated_interval_is_enumerated_not_complete_day_claim", ()),
+        ("reader overlap nearest pass adopted", 'elif len(anchors) > 1:', 'elif False:',
+         "test_multiple_overlap_never_picks_nearest_or_claims_reuse", ()),
+        ("committed generation identity removed", 'committed.get(field) != anchor.get(field)', 'False',
+         "test_followup_anchor_each_identity_publication_window_guard", ({"local_read_id": "foreign"},)),
+        ("reader loss ignored", 'if gap or dropped != 0:', 'if False:',
+         "test_reader_reported_loss_vetoes_same_generation", ()),
+        ("unknown equals unknown treated as cache match",
+         'elif acquired is None or acquired != cache_identity(anchor.get("acquisition_generation")):',
+         'elif acquired != cache_identity(anchor.get("acquisition_generation")):',
+         "test_both_unknown_cache_ids_not_positive_same_generation", ()),
+        ("reader anchor window unbounded", 'math.isfinite(elapsed) and 0 <= elapsed <= 60', 'math.isfinite(elapsed)',
+         "test_followup_anchor_each_identity_publication_window_guard", ({"elapsed_seconds": 61},)),
+        ("unpublished anchor accepted", 'anchor.get("shadow_receipt_emitted") is not True', 'False',
+         "test_followup_anchor_each_identity_publication_window_guard", ({"shadow_receipt_emitted": False},)),
     ]
     receipts = []
     for name, old, new, test, args in mutations:

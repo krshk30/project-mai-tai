@@ -1,0 +1,67 @@
+[
+  {
+    "mutation": "held cadence reduced",
+    "test": "test_hot_state_never_reduces_fifteen_second_cadence",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "terminal account match removed",
+    "test": "test_terminal_match_needs_each_identity_freshness_and_source_guard",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "accepted row treated terminal",
+    "test": "test_terminal_match_needs_each_identity_freshness_and_source_guard",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "reader window unbounded",
+    "test": "test_reader_window_sixty_included_sixtyone_excluded",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "counter final selection removed",
+    "test": "test_partial_endpoint_snapshots_not_summed_as_requests",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "terminal freshness removed",
+    "test": "test_terminal_match_needs_each_identity_freshness_and_source_guard",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "complete ET day falsely claimed",
+    "test": "test_missing_rotated_interval_is_enumerated_not_complete_day_claim",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "reader overlap nearest pass adopted",
+    "test": "test_multiple_overlap_never_picks_nearest_or_claims_reuse",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "committed generation identity removed",
+    "test": "test_followup_anchor_each_identity_publication_window_guard",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "reader loss ignored",
+    "test": "test_reader_reported_loss_vetoes_same_generation",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "unknown equals unknown treated as cache match",
+    "test": "test_both_unknown_cache_ids_not_positive_same_generation",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "reader anchor window unbounded",
+    "test": "test_followup_anchor_each_identity_publication_window_guard",
+    "verdict": "RED"
+  },
+  {
+    "mutation": "unpublished anchor accepted",
+    "test": "test_followup_anchor_each_identity_publication_window_guard",
+    "verdict": "RED"
+  }
+]

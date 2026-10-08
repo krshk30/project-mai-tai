@@ -126,12 +126,39 @@ terminal account, terminal status, freshness, reader window, cumulative-counter
 selection, false complete-day claim). `MUTATIONS_2026-10-08.json` records each
 control. No production/trading tests are weakened.
 
+Follow-up parser verification: **78 passed**, Ruff clean, **13/13 mutations RED**
+in `MUTATIONS_READER_CONTRACT_2026-10-08.json`. The frozen Lane D v1 schema is
+`6d38735b80f651d366556c8f3b5a0310c6ebfaa3`, file
+`docs/review-artifacts/wbquiet1-reader-hooks/READER_SCHEMA_2026-10-08.md`, SHA256
+`1a422dd220a11fa07e2ff1ded30c6eaac8079b944c9e5cc1143e69ed6ba4e2d8`.
+The offline parser joins `[WBQUIET-READER]` records to the published SHADOW
+account's `committed_generation` using exact process/pass/account/local-read and
+acquisition IDs. It retains instrumented adapter invocation counts, not HTTP
+counts; renewal is not a positions pull. Multiple anchors, loss or missing
+receipts, foreign accounts/processes, unknown/empty acquisitions, unreadable
+reads and Schwab-scoped readers never establish a generation match. Even a
+positive immutable-cache identity leaves decision equivalence and wire savings
+UNMEASURED. The actual 09:03 corpus contains zero such receipts; compatibility
+tests are isolated fixtures, not production measurements. Conflicting endpoint
+counter epochs are explicitly counted in the daily table; selected maxima are
+not actual per-process wire totals.
+
 The exact retained parent baseline is **48 failed / 7,674 passed / 55 skipped**,
 XML `/tmp/five-lane-main-1e15adb0-unit.xml`; failed-name SHA256
 `e0b9fc7478ff484d88d9882194d3525632c0d2d43353d515b28f63a28464e9a9`
 (sorted `classname::name`, newline-joined without terminal newline). This lane's
-full-head XML is `/tmp/five-lane-wbquietE-head-unit.xml`; comparison is pending,
-so no suite-parity claim is made in this checkpoint.
+initial-head XML is `/tmp/five-lane-wbquietE-head-unit.xml`: **48 failed / 7,725
+passed / 55 skipped**, 616.74 seconds, for `09c1aaa7`. Failed-name SHA256 is
+`5e63ad6caec5865100ce4c8b64524e2fcdc12810adc7b807d53b9e074e61e20f`.
+The actual names differ:
+
+- Baseline only: `tests.unit.test_hotfix1_symbol_tick_cache::test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions[retained-off-existing-row]`.
+- Initial head only: `tests.unit.test_nfq2_hotfix1_combined_proof::test_combined_240_events_per_second_60_seconds_active_hold`.
+
+Both are timing benchmarks; no source/trading/benchmark file changes exist in
+this lane. This is a reported residual, **not suite parity**. The final reader-
+parser head's full suite uses `/tmp/five-lane-wbquietE-final-unit.xml`; its pair
+against the retained baseline is pending. The exact baseline is never rerun.
 
 Remaining measurement blockers: per-account decision-time position snapshots,
 successfully acquired day-list response bodies, complete external-reader

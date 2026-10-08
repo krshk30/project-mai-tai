@@ -4,25 +4,27 @@ As-of UTC: `2026-10-08T13:03:28.288912+00:00`.
 
 Historical retained **OMS-only** evidence; no cadence/cancel build or production action. No row claims complete all-service/account ET-day coverage. Today's row is right-censored at the exact as-of above.
 
-| ET Day | Positions calls / fail | Detail calls / fail | Cancel calls / fail | List calls / fail | Census / actual live:orb ok=0 | Decision lines / minutes | B failures / child / UNMEASURED | Shadow account passes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-10-02 | 5744 / 0 | 1937 / 406 | 52 / 2 | 280 / 0 | 287 / 0 | 85 / 47 | 2 / 2 / 2 | 0 |
-| 2026-10-03 | 5481 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 276 / 0 | 236 / 60 | 0 / 0 / 0 | 0 |
-| 2026-10-04 | 5743 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 287 / 0 | 0 / 0 | 0 / 0 / 0 | 0 |
-| 2026-10-05 | 5739 / 0 | 170 / 1 | 7 / 1 | 0 / 0 | 288 / 0 | 11 / 9 | 1 / 0 / 1 | 0 |
-| 2026-10-06 | 5631 / 0 | 2074 / 306 | 65 / 5 | 229 / 0 | 283 / 0 | 121 / 90 | 5 / 4 / 5 | 0 |
-| 2026-10-07 | 5717 / 0 | 28 / 0 | 25 / 10 | 552 / 0 | 287 / 0 | 18 / 18 | 10 / 6 / 10 | 0 |
-| 2026-10-08 (partial) | 2165 / 0 | 2 / 0 | 0 / 0 | 2 / 0 | 108 / 0 | 6 / 6 | 0 / 0 / 0 | 0 |
+| ET Day | Selected positions / fail | Selected detail / fail | Selected cancel / fail | Selected list / fail | Ambiguous endpoint-minute epochs | Census / actual live:orb ok=0 | Decision lines / minutes | B failures / child / UNMEASURED | Shadow account passes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-02 | 5744 / 0 | 1937 / 406 | 52 / 2 | 280 / 0 | 0 | 287 / 0 | 85 / 47 | 2 / 2 / 2 | 0 |
+| 2026-10-03 | 5481 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 | 276 / 0 | 236 / 60 | 0 / 0 / 0 | 0 |
+| 2026-10-04 | 5743 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 | 287 / 0 | 0 / 0 | 0 / 0 / 0 | 0 |
+| 2026-10-05 | 5739 / 0 | 170 / 1 | 7 / 1 | 0 / 0 | 0 | 288 / 0 | 11 / 9 | 1 / 0 / 1 | 0 |
+| 2026-10-06 | 5631 / 0 | 2074 / 306 | 65 / 5 | 229 / 0 | 0 | 283 / 0 | 121 / 90 | 5 / 4 / 5 | 0 |
+| 2026-10-07 | 5717 / 0 | 28 / 0 | 25 / 10 | 552 / 0 | 0 | 287 / 0 | 18 / 18 | 10 / 6 / 10 | 0 |
+| 2026-10-08 (partial) | 2165 / 0 | 2 / 0 | 0 / 0 | 2 / 0 | 0 | 108 / 0 | 6 / 6 | 0 / 0 / 0 | 0 |
 
 ## Limits And Rule Verdicts
 
-A: **UNMEASURED** for actual calls saved, changed decisions and hypothetical census success. Endpoint counts are corrected for cumulative partial counters; they do not identify the caller/account state. No final-order status is backdated. The always-flat opportunity proxy is separate in JSON, not savings.
+A: **UNMEASURED** for actual calls saved, changed decisions and hypothetical census success. Selected endpoint totals deduplicate cumulative partial counters; they do not identify caller/account state or actual wire traffic. A minute/endpoint spanning conflicting final epochs is visibly ambiguous: selecting its maximum does not recover all processes' calls. No final-order status is backdated. The always-flat opportunity proxy is separate in JSON, not savings.
 
 B: **UNMEASURED** where the already-fetched day-list body at the cancel decision is absent. HTTP 417, a later terminal detail proof, or a final DB status is not list membership then. The proven count is an evidence denominator, not evidence that terminal orders never existed.
 
 C: **UNMEASURED**, BIYA `schwab_1m_v2-BIYA-open-0e40052d917c` at 2026-10-07 19:12 UTC. UNREADABLE/UNCONFIRMED does not identify a literal detail-body None or a fresh terminal day-list row. Source lines are retained in JSON.
 
 Reader coverage remains PARTIAL. Agent D's new hooks are not duplicated here. Future Friday observations will update this repeatable report; no agreement or zero-impact assertion is made today.
+
+Following-window WBQUIET-READER receipts are parsed separately and joined only to the actual published SHADOW committed-generation record. Multiple overlaps, loss, missing/empty acquisitions, unpublished receipts and Schwab scope remain UNMEASURED. An observed cache identity is not wire savings or decision equivalence.
 
 ## Cancel Population Reconciliation
 

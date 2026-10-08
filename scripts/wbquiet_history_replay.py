@@ -209,11 +209,123 @@ def shadow_replay(events, as_of):
                     "tagged_readers_within_60s": readers, "malformed_reader_tags": reader_unknown,
                     "right_censored_60s_window": at + timedelta(seconds=60) > as_of,
                     "dropped_observations": receipt.get("dropped_observations"),
+                    "committed_generation": account.get("committed_generation"),
                     "coverage": "PARTIAL invocation tags, not every external reader or committed-generation proof",
                     "wire_calls_saved": "UNMEASURED"})
         except (ValueError, TypeError, KeyError, json.JSONDecodeError):
             malformed.append(provenance(event))
     return {"rows": rows, "malformed": malformed, "duplicate_receipts": duplicates}
+
+
+def cache_identity(value):
+    if not isinstance(value, str) or not value.startswith("adapter_cache:"):
+        return None
+    try:
+        stamp = float(value.removeprefix("adapter_cache:"))
+    except ValueError:
+        return None
+    return value if math.isfinite(stamp) and stamp >= 0 else None
+
+
+def followup_readers(events, shadow, as_of):
+    """Link bounded reader receipts, never infer generation from absent/empty data."""
+    periodic = {(row["process_pid"], row["pass_id"], row["account"]): row for row in shadow["rows"]}
+    duplicated_passes = {(row["process_pid"], row["pass_id"]) for row in shadow["duplicate_receipts"]}
+    rows, malformed, duplicates, previous, seen = [], [], [], {}, set()
+    for event in sorted(events, key=lambda value: moment(value["at"])):
+        if "[WBQUIET-READER] " not in event["line"]:
+            continue
+        try:
+            receipt = json.loads(event["line"].split("[WBQUIET-READER] ", 1)[1])
+            pid, sequence = int(receipt["process_pid"]), int(receipt["reader_sequence"])
+            observed = moment(event["at"])
+            if pid <= 0 or sequence <= 0 or observed > as_of or receipt["policy_applied"] is not False:
+                raise ValueError("invalid reader envelope")
+            records = receipt["readers"]
+            if not isinstance(records, list) or len(records) > 16:
+                raise ValueError("reader population unbounded")
+            identity = pid, sequence
+            if identity in seen:
+                duplicates.append({**provenance(event), "process_pid": pid, "reader_sequence": sequence})
+                continue
+            seen.add(identity)
+            gap = pid in previous and sequence != previous[pid] + 1
+            previous[pid] = sequence
+            dropped = receipt.get("dropped_reader_observations")
+            accepted_rows = []
+            for record in records:
+                if not isinstance(record, dict):
+                    raise ValueError("reader record not an object")
+                account, reader = record["account"], record["reader"]
+                if not isinstance(account, str) or not account or not isinstance(reader, str) or not reader:
+                    raise ValueError("reader identity missing")
+                anchors = record.get("overlapping_periodic_passes", [])
+                if not isinstance(anchors, list) or len(anchors) > 16:
+                    raise ValueError("overlap population unbounded")
+                reason, match = "no_overlapping_periodic_receipt", None
+                acquired = cache_identity(record.get("reader_acquisition_generation"))
+                if gap or dropped != 0:
+                    reason = "lost_or_unmeasured_reader_observations"
+                elif len(anchors) > 1:
+                    reason = "ambiguous_overlapping_passes"
+                elif anchors:
+                    anchor = anchors[0]
+                    if not isinstance(anchor, dict):
+                        raise ValueError("anchor not an object")
+                    key = pid, anchor.get("pass_id"), account
+                    try:
+                        elapsed = float(anchor["elapsed_seconds"])
+                        elapsed_valid = math.isfinite(elapsed) and 0 <= elapsed <= 60
+                    except (KeyError, TypeError, ValueError):
+                        elapsed_valid = False
+                    candidate = periodic.get(key)
+                    committed = candidate.get("committed_generation") if candidate else None
+                    if anchor.get("process_pid") != pid or anchor.get("account") != account:
+                        reason = "foreign_process_or_account_anchor"
+                    elif not elapsed_valid:
+                        reason = "outside_or_unreadable_reader_window"
+                    elif anchor.get("shadow_receipt_emitted") is not True or candidate is None or (pid, key[1]) in duplicated_passes:
+                        reason = "missing_or_duplicate_shadow_receipt"
+                    elif candidate.get("dropped_observations") != 0:
+                        reason = "lost_or_unmeasured_shadow_observations"
+                    elif record.get("provider") != "webull" or record.get("reader_provider_scope") == "schwab" or record.get("webull_cadence_eligible") is not True:
+                        reason = "not_webull_cadence_evidence"
+                    elif record.get("source") != "adapter_positions" or record.get("outcome") != "returned_not_wire_proof" or record.get("adapter_calls") != 1 or not record.get("adapter_read_id"):
+                        reason = "not_a_returned_positions_invocation"
+                    elif (not isinstance(committed, dict) or not anchor.get("local_read_id")
+                            or any(committed.get(field) != anchor.get(field) for field in (
+                                "process_pid", "pass_id", "account", "local_read_id", "acquisition_generation"))):
+                        reason = "committed_generation_not_matched_to_shadow"
+                    elif acquired is None or acquired != cache_identity(anchor.get("acquisition_generation")):
+                        reason = "empty_unknown_or_different_cache_identity"
+                    elif record.get("same_source_generation") != "observed_adapter_cache_identity" or record.get("periodic_evidence") != "committed_generation_observed":
+                        reason = "producer_did_not_attest_same_source"
+                    else:
+                        match, reason = candidate, "single_observed_adapter_cache_identity_not_wire_or_decision_proof"
+                accepted_rows.append({**provenance(event), "observed_at": observed.isoformat(), "process_pid": pid,
+                    "reader_sequence": sequence, "account": account, "reader": reader,
+                    "source": record.get("source"), "outcome": record.get("outcome"),
+                    "provider": record.get("provider"), "reader_provider_scope": record.get("reader_provider_scope"),
+                    "adapter_read_id": record.get("adapter_read_id"), "instrumented_adapter_calls": record.get("adapter_calls"),
+                    "same_source_generation": "observed_adapter_cache_identity" if match else "UNMEASURED",
+                    "reason": reason, "overlapping_periodic_passes": anchors,
+                    "reader_acquisition_generation": record.get("reader_acquisition_generation"),
+                    "dropped_reader_observations": dropped, "sequence_gap": gap,
+                    "linked_pass_id": match["pass_id"] if match else None,
+                    "nominal_periodic_action": match["would"] if match else "UNMEASURED",
+                    "wire_calls_saved": "UNMEASURED", "decision_equivalence": "UNMEASURED"})
+            rows.extend(accepted_rows)
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            malformed.append(provenance(event))
+    # Duplicate deliveries cannot establish an unambiguous one-reader observation.
+    duplicate_ids = {(row["process_pid"], row["reader_sequence"]) for row in duplicates}
+    for row in rows:
+        if (row["process_pid"], row["reader_sequence"]) in duplicate_ids:
+            row.update(same_source_generation="UNMEASURED", reason="duplicate_reader_receipt",
+                       linked_pass_id=None, nominal_periodic_action="UNMEASURED")
+    return {"rows": rows, "malformed": malformed, "duplicate_receipts": duplicates,
+            "first_reader_sequence_by_process": {str(pid): min(sequence for p, sequence in seen if p == pid) for pid in previous},
+            "coverage": "PARTIAL; observed cache identities are not decision equivalence or wire proof"}
 
 
 def analyze(data):
@@ -223,6 +335,7 @@ def analyze(data):
         raise ValueError("event population unbounded")
     buckets, naive, malformed = counter_buckets(events)
     shadow = shadow_replay(events, as_of)
+    readers = followup_readers(events, shadow, as_of)
     dates = []
     local_day = low.astimezone(ET).date()
     while local_day <= as_of.astimezone(ET).date():
@@ -268,6 +381,7 @@ def analyze(data):
             failures.append({**row, "exit_child_scope_B": child, "terminal_day_list": proof,
                 "identity_source": "nearest SDK exception context; account not reconstructed from latest order"})
         shadow_rows = [row for row in shadow["rows"] if day(row["observed_at"]) == date]
+        followup_rows = [row for row in readers["rows"] if day(row["observed_at"]) == date]
         replay_census = []
         for window in census:
             at = moment(window["at"])
@@ -323,6 +437,8 @@ def analyze(data):
                 "last_current_minute_unflushed": date == as_of.astimezone(ET).date().isoformat(),
                 "other_endpoint_absent_minutes": "not zero request proof; only nonzero minute counters are emitted"},
             "retained_structured_lines": len(day_events), "endpoints": dict(endpoints),
+            "ambiguous_counter_minutes": sum(value["ambiguous_minutes"] for value in endpoints.values()),
+            "counter_total_scope": "selected final/max per minute and endpoint; conflicting epochs are not summed or claimed as actual wire traffic",
             "counter_first_minute": min((key[0] for key, _ in day_buckets), default=None),
             "counter_last_minute": max((key[0] for key, _ in day_buckets), default=None),
             "naive_cumulative_sums": {ep: dict(counts) for (d, ep), counts in naive.items() if d == date},
@@ -336,6 +452,10 @@ def analyze(data):
                 "state_counts": dict(Counter(row["state"] for row in shadow_rows)),
                 "nominal_read_skip_counts": dict(Counter(row["would"] for row in shadow_rows)),
                 "tagged_reader_invocations_on_nominal_skip": sum(len(row["tagged_readers_within_60s"]) for row in shadow_rows if row["would"] == "skip"),
+                "followup_reader_invocations": len(followup_rows),
+                "followup_reader_minutes": len({row["observed_at"][:16] for row in followup_rows}),
+                "followup_same_cache_identity": sum(row["same_source_generation"] == "observed_adapter_cache_identity" for row in followup_rows),
+                "followup_generation_unmeasured": sum(row["same_source_generation"] == "UNMEASURED" for row in followup_rows),
                 "actual_saved_calls": "UNMEASURED", "decision_changing_minutes": "UNMEASURED: no historical positions/generation equivalence",
                 "flat_capacity_proxy": {"label": "NOT replay/call savings: one always-flat credentialed account, fixed phase, retained positions minutes only",
                     "covered_counter_minutes": len(position_minutes), "nominal_15s_opportunities": 4 * len(position_minutes),
@@ -365,7 +485,7 @@ def analyze(data):
             **archive_coverage(data["source_files"], low, as_of),
             "unflushed_shutdown_tails": "UNMEASURED: a process shutdown can lose its current endpoint minute; final counter absence is not zero calls",
             "day_list_bodies": "UNMEASURED; terminal DETAIL proof store is not a retained day-list response history"},
-        "days": reports, "shadow_replay": shadow, "malformed_counters": malformed,
+        "days": reports, "shadow_replay": shadow, "followup_readers": readers, "malformed_counters": malformed,
         "rule_C": {"verdict": "UNMEASURED", "account": "live:orb", "client_order_id": BIYA,
             "decision_time_utc": "2026-10-07T19:12:15.930000+00:00", "log_receipts": biya_logs,
             "retained_terminal_detail_proofs": biya_proofs,
@@ -384,8 +504,8 @@ def analyze(data):
 def markdown(report):
     lines = ["# WBQUIET1 Friday Evidence Preparation", "", "As-of UTC: `" + report["as_of_utc"] + "`.", "",
         "Historical retained **OMS-only** evidence; no cadence/cancel build or production action. No row claims complete all-service/account ET-day coverage. Today's row is right-censored at the exact as-of above.", "",
-        "| ET Day | Positions calls / fail | Detail calls / fail | Cancel calls / fail | List calls / fail | Census / actual live:orb ok=0 | Decision lines / minutes | B failures / child / UNMEASURED | Shadow account passes |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+        "| ET Day | Selected positions / fail | Selected detail / fail | Selected cancel / fail | Selected list / fail | Ambiguous endpoint-minute epochs | Census / actual live:orb ok=0 | Decision lines / minutes | B failures / child / UNMEASURED | Shadow account passes |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for date, row in report["days"].items():
         def endpoint(path):
             item = row["endpoints"].get(path, {})
@@ -393,15 +513,17 @@ def markdown(report):
         b = row["rule_B"]
         lines.append("| " + " | ".join([date + (" (partial)" if row["right_censored_day"] else ""),
             endpoint("/account/positions"), endpoint("/trade/order/detail"), endpoint("/trade/order/cancel"),
-            endpoint("/trade/orders/list-today"), str(row["census_windows"]) + " / " + str(row["actual_live_orb_ok_zero_windows"]),
+            endpoint("/trade/orders/list-today"), str(row["ambiguous_counter_minutes"]),
+            str(row["census_windows"]) + " / " + str(row["actual_live_orb_ok_zero_windows"]),
             str(row["decision_lines_searched"]) + " / " + str(row["decision_minutes_searched"]),
             str(b["distinct_cancel_417"]) + " / " + str(b["exit_child_failure_requests"]) + " / " + str(b["terminal_membership_unmeasured"]),
             str(row["rule_A"]["observed_shadow_account_passes"])]) + " |")
     lines.extend(["", "## Limits And Rule Verdicts", "",
-        "A: **UNMEASURED** for actual calls saved, changed decisions and hypothetical census success. Endpoint counts are corrected for cumulative partial counters; they do not identify the caller/account state. No final-order status is backdated. The always-flat opportunity proxy is separate in JSON, not savings.", "",
+        "A: **UNMEASURED** for actual calls saved, changed decisions and hypothetical census success. Selected endpoint totals deduplicate cumulative partial counters; they do not identify caller/account state or actual wire traffic. A minute/endpoint spanning conflicting final epochs is visibly ambiguous: selecting its maximum does not recover all processes' calls. No final-order status is backdated. The always-flat opportunity proxy is separate in JSON, not savings.", "",
         "B: **UNMEASURED** where the already-fetched day-list body at the cancel decision is absent. HTTP 417, a later terminal detail proof, or a final DB status is not list membership then. The proven count is an evidence denominator, not evidence that terminal orders never existed.", "",
         "C: **UNMEASURED**, BIYA `schwab_1m_v2-BIYA-open-0e40052d917c` at 2026-10-07 19:12 UTC. UNREADABLE/UNCONFIRMED does not identify a literal detail-body None or a fresh terminal day-list row. Source lines are retained in JSON.", "",
         "Reader coverage remains PARTIAL. Agent D's new hooks are not duplicated here. Future Friday observations will update this repeatable report; no agreement or zero-impact assertion is made today.", "",
+        "Following-window WBQUIET-READER receipts are parsed separately and joined only to the actual published SHADOW committed-generation record. Multiple overlaps, loss, missing/empty acquisitions, unpublished receipts and Schwab scope remain UNMEASURED. An observed cache identity is not wire savings or decision equivalence.", "",
         "## Cancel Population Reconciliation", "",
         "| ET Day | Corrected endpoint counter calls / failures | Naive cumulative counter failures | SDK HTTP417 exception lines / distinct requests |",
         "| --- | --- | --- | --- |"])

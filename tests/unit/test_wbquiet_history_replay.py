@@ -89,6 +89,11 @@ def test_conflicting_final_counters_epoch_is_reported_not_hidden():
     rows = [event(f"minute={AT.isoformat()} endpoint=/account/positions success={n} failure=0 total={n} partial=0") for n in (1, 2)]
     buckets, _, _ = history.counter_buckets(rows)
     assert next(iter(buckets.values()))["ambiguous_final_epochs"] is True
+    report = history.analyze(data(rows))
+    row = report["days"]["2026-10-07"]
+    assert row["ambiguous_counter_minutes"] == 1
+    assert "not summed" in row["counter_total_scope"]
+    assert "Ambiguous endpoint-minute epochs" in history.markdown(report)
 
 
 def test_counter_day_is_counter_minute_not_flush_time():
@@ -256,3 +261,118 @@ def test_gzip_raw_receipt_replays_identical_hash(tmp_path):
         stream.write(raw)
     history.main(["--input", str(source), "--output", str(target)])
     assert json.loads(target.read_text())["raw_pull_sha256"] == history.hashlib.sha256(raw).hexdigest()
+
+
+def committed(**changes):
+    return {"process_pid": 1, "pass_id": 1, "account": "live:orb", "local_read_id": "1:1:live:orb:1",
+            "acquisition_generation": "adapter_cache:100.0", **changes}
+
+
+def follow(sequence=1, at=None, **changes):
+    at = at or AT + timedelta(seconds=30)
+    row = {"account": "live:orb", "reader": "reconcile_tri_state", "provider": "webull",
+           "reader_provider_scope": "UNMEASURED", "webull_cadence_eligible": True,
+           "source": "adapter_positions", "outcome": "returned_not_wire_proof",
+           "adapter_calls": 1, "adapter_read_id": f"1:{sequence}:live:orb",
+           "reader_acquisition_generation": "adapter_cache:100.0",
+           "same_source_generation": "observed_adapter_cache_identity",
+           "periodic_evidence": "committed_generation_observed",
+           "overlapping_periodic_passes": [{**committed(), "elapsed_seconds": 30, "shadow_receipt_emitted": True}], **changes}
+    return event("[WBQUIET-READER] " + json.dumps({"process_pid": 1, "reader_sequence": sequence,
+        "readers": [row], "window_seconds": 60, "dropped_reader_observations": 0,
+        "policy_applied": False}), at)
+
+
+def reader_result(reader, periodic=None):
+    periodic = periodic or shadow(committed_generation=committed())
+    events = [periodic, reader]
+    return history.followup_readers(events, history.shadow_replay(events, AT + timedelta(minutes=3)),
+                                   AT + timedelta(minutes=3))["rows"][0]
+
+
+def test_followup_reader_joins_actual_published_committed_generation():
+    row = reader_result(follow())
+    assert row["same_source_generation"] == "observed_adapter_cache_identity"
+    assert row["linked_pass_id"] == 1
+    assert row["decision_equivalence"] == row["wire_calls_saved"] == "UNMEASURED"
+
+
+@pytest.mark.parametrize("value", [None, "", "UNMEASURED", "adapter_cache:nan", "adapter_cache:inf", {}, "adapter_cache:101.0"])
+def test_empty_unknown_or_different_reader_cache_never_generation_match(value):
+    assert reader_result(follow(reader_acquisition_generation=value))["same_source_generation"] == "UNMEASURED"
+
+
+def test_multiple_overlap_never_picks_nearest_or_claims_reuse():
+    anchors = [{**committed(pass_id=n), "elapsed_seconds": n, "shadow_receipt_emitted": True} for n in (1, 2)]
+    row = reader_result(follow(overlapping_periodic_passes=anchors))
+    assert row["same_source_generation"] == "UNMEASURED"
+    assert row["reason"] == "ambiguous_overlapping_passes"
+
+
+@pytest.mark.parametrize("changes", [{"process_pid": 2}, {"account": "foreign"}, {"local_read_id": "foreign"},
+    {"acquisition_generation": "adapter_cache:101.0"}, {"shadow_receipt_emitted": False}, {"elapsed_seconds": 61}])
+def test_followup_anchor_each_identity_publication_window_guard(changes):
+    anchors = [{**committed(), "elapsed_seconds": 30, "shadow_receipt_emitted": True, **changes}]
+    assert reader_result(follow(overlapping_periodic_passes=anchors))["same_source_generation"] == "UNMEASURED"
+
+
+def test_followup_requires_committed_shadow_not_just_pass_context():
+    assert reader_result(follow(), shadow())["reason"] == "committed_generation_not_matched_to_shadow"
+
+
+def test_schwab_scope_never_eligible_even_with_false_route_claim():
+    row = reader_result(follow(reader_provider_scope="schwab", reader="orb_close_positions"))
+    assert row["reason"] == "not_webull_cadence_evidence"
+    assert row["same_source_generation"] == "UNMEASURED"
+
+
+def test_followup_lost_or_duplicate_receipts_not_zero_or_match():
+    events = [shadow(committed_generation=committed()), follow(), follow(3), follow(3)]
+    result = history.followup_readers(events, history.shadow_replay(events, AT + timedelta(minutes=3)),
+                                    AT + timedelta(minutes=3))
+    assert len(result["duplicate_receipts"]) == 1
+    assert result["rows"][1]["same_source_generation"] == "UNMEASURED"
+    assert result["rows"][1]["sequence_gap"] is True
+
+
+def test_followup_publication_drop_vetoes_match():
+    periodic = shadow(committed_generation=committed())
+    receipt = json.loads(periodic["line"].split("[WBQUIET-SHADOW] ", 1)[1])
+    receipt["dropped_observations"] = 1
+    periodic["line"] = "[WBQUIET-SHADOW] " + json.dumps(receipt)
+    assert reader_result(follow(), periodic)["same_source_generation"] == "UNMEASURED"
+
+
+def test_reader_reported_loss_vetoes_same_generation():
+    reader = follow()
+    receipt = json.loads(reader["line"].split("[WBQUIET-READER] ", 1)[1])
+    receipt["dropped_reader_observations"] = 1
+    reader["line"] = "[WBQUIET-READER] " + json.dumps(receipt)
+    assert reader_result(reader)["same_source_generation"] == "UNMEASURED"
+
+
+def test_both_unknown_cache_ids_not_positive_same_generation():
+    anchors = [{**committed(acquisition_generation="UNMEASURED"), "elapsed_seconds": 30, "shadow_receipt_emitted": True}]
+    periodic = shadow(committed_generation=committed(acquisition_generation="UNMEASURED"))
+    reader = follow(reader_acquisition_generation="UNMEASURED", overlapping_periodic_passes=anchors)
+    assert reader_result(reader, periodic)["same_source_generation"] == "UNMEASURED"
+
+
+def test_reader_window_elapsed_sixty_is_inclusive():
+    anchors = [{**committed(), "elapsed_seconds": 60, "shadow_receipt_emitted": True}]
+    assert reader_result(follow(overlapping_periodic_passes=anchors))["same_source_generation"] == "observed_adapter_cache_identity"
+
+
+@pytest.mark.parametrize("changes", [{"outcome": "unreadable"}, {"source": "exact_entry_bracket_confirmation", "adapter_calls": 0},
+    {"adapter_read_id": None}, {"periodic_evidence": "UNMEASURED"}])
+def test_reader_no_returned_position_or_missing_evidence_not_generation_proof(changes):
+    row = reader_result(follow(**changes))
+    assert row["same_source_generation"] == "UNMEASURED"
+    assert row["instrumented_adapter_calls"] == changes.get("adapter_calls", 1)
+
+
+def test_followup_summary_reports_consuming_minute_without_decision_claim():
+    report = history.analyze(data([shadow(committed_generation=committed()), follow()]))
+    a = report["days"]["2026-10-07"]["rule_A"]
+    assert a["followup_reader_invocations"] == a["followup_reader_minutes"] == a["followup_same_cache_identity"] == 1
+    assert a["decision_changing_minutes"].startswith("UNMEASURED")
