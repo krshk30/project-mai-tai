@@ -7946,3 +7946,12 @@ unitXML /tmp/five-lane-main-1e15adb0-unit.xml (running, not PASS yet), so A/B/D
 compare one real base without three duplicate resource-heavy baseline suites.
 New branch heads/tests/mutations/replays will be reported separately per lane;
 CLAIM is not review-ready and the15:00 target is not a pin receipt.
+
+2026-10-08 09:09 ET codex-2 C13: user added LaneF CLEARWAIT1 rollover;
+sole agent01a112c4-1e22 dispatched to isolatedcodex/clearwait1-session-rollover-1008.
+A-Eunchanged. Latest17archivedrow/DKI/todayAIXI claims require ownreadonly
+replay. Newdesign is sessionmembership at04:00/boot plus positive absenceof
+workingorders/openmanagedrows, NOT hours/age; unknownsource keepsownership.
+Same-dayreceipt and retrybudgetgate untouched; per-ticklookup remainsmemory.
+Reviewer08:58 v2restart makes old stagingbaselineobsolete; LaneCmustobtain
+freshauthorized identities, never adoptanunexplainednewPID. No boxwrite.
