@@ -11,7 +11,7 @@ from project_mai_tai.db.models import (
     AccountPosition, BrokerAccount, BrokerOrder, DashboardSnapshot, OmsManagedPosition, TradeIntent,
 )
 from tests.unit.test_clearwait1_session_rollover import (
-    ACCOUNTS, PRIMARY, WEBULL, ms, recorded_request, request, seed,
+    ACCOUNTS, PRIMARY, WEBULL, ms, recorded_request, request, seed, service, strategy,
 )
 from tests.unit.test_clearwait1_session_rollover import db as rollover_db
 
@@ -141,6 +141,22 @@ def test_owned_witness_is_exact_opportunity_account_and_row(db):
     db[0].record(replace(req, token="newer"), True)
     with pytest.raises(ValueError, match="active removal request changed"):
         db[0].record(req, False)
+
+
+@pytest.mark.asyncio
+async def test_real_boot_delivers_witness_without_rejuvenation_or_duplicate_barrier(db):
+    req = replace(recorded_request("DKI"), purpose="retry_exhausted")
+    seed(db, req, receipts=False)
+    proof = assess(db, req)
+    strat = strategy(req)
+    strat._now_ms = lambda: ms(NOW) + 16000
+    bot = service(strat, db[0])
+    await bot._configure_removed_wait_store()
+    assert strat._removed_wait_requests == {"DKI": req}
+    assert strat._removed_wait_terminal_proofs == (proof,)
+    assert strat._removed_wait_terminal_proofs[0].observed_at_ms == ms(NOW)
+    assert not strat._pending_intents and not strat._pending_webull_direct_intents
+    assert strat._removed_wait_gate_closed("DKI")
 
 
 @pytest.mark.parametrize("side", ["buy", ""])
