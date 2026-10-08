@@ -8071,3 +8071,14 @@ publication; AIXI and SBFM use their original receipts, archive denominator
 remains17transitions/three retirements/four zero-ID UNKNOWN. Full and hosted
 checks pending on this exact head, not ready/pinned/installed. G independent
 read/replay continues, A-E unchanged, no production writes.
+
+2026-10-08 10:24 ET codex-2 C32: F full on frozen3f8120c7 completed
+47FAIL/7782PASS/55SKIP in605.17s; parent XML comparison zero added names,
+only baseline HOTFIX retained-off timing failure absent. Exact hosted runs
+still in progress; this is not identical-name parity or a timing waiver.
+G own bounded read10:22:58ET retains135orders/25currentintents/135historical
+intents/237audits/21fills, no truncated scope or missing strategy identity.
+Real AIXI earlier same-day fill is included in replay, not minted from status;
+user11 blockers are a subset of47prior AIXI buys. Source and final tests/mutants
+remain with Newton alone; intermediate130PASS receipt not final-ready claim.
+A-E frozen, C unstaged, all production untouched.
