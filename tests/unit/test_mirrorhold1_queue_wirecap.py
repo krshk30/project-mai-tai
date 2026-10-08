@@ -1,22 +1,147 @@
 """Queue/restart use actual recorded histories; new SDK acknowledgements are controlled."""
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import json
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy import event as sqlalchemy_event, select
-from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill
+from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
+from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.mirror_retained_hold import row_id
 from project_mai_tai.fanout_segment_store import SNAPSHOT_TYPE as SEGMENT_SNAPSHOT
 from tests.unit.test_mirrorhold1_retained_hold import event_for, quote, restart, state
 from tests.unit.test_mirrorhold1_retained_hold import lane as lane
-from tests.unit.test_mirrorhold1_session_duplicate_scan import dispatch, prepare, recorded_setup, seed_order
+from tests.unit.test_mirrorhold1_session_duplicate_scan import (
+    RECORDED as SESSION_RECORDED, dispatch, prepare, recorded_setup, seed_order,
+)
 from tests.unit.test_webull_adapter import _ServerException
 
 
 D28 = json.loads((Path(__file__).parents[1] / 'fixtures/mirrorhold1_wirecap_1008_recorded.json').read_text())
+
+
+def temporal_event(lane, row):
+    event = TradeIntentEvent(event_id=UUID(row['payload']['event_id']),
+        source_service=row['payload']['source_service'], produced_at=datetime.fromisoformat(row['created_at']),
+        payload=TradeIntentPayload(strategy_code=row['strategy'], broker_account_name=row['account'],
+            symbol=row['symbol'], side=row['side'], intent_type=row['intent_type'],
+            quantity=Decimal(str(row['quantity'])), reason=row['reason'], metadata=dict(row['payload']['metadata'])))
+    md = event.payload.metadata
+    quote_at = datetime.fromisoformat(md['webull_shape_market_at_utc'])
+    lane[3][0] = max(event.produced_at, quote_at)
+    lane[0]._latest_quotes_by_symbol[event.payload.symbol] = {
+        'ask': Decimal(md['webull_shape_market_price']), 'received_at': quote_at}
+    return event
+
+
+async def temporal_queue_place(lane, event, *, target=None):
+    lane[0]._restore_mirrorhold()
+    queued = lane[0]._mirrorhold_prepare_queue(event.payload.symbol, [row_id(event)])
+    assert len(queued) == 1
+    retry = queued[0][2]
+    if target is not None:
+        md = target.payload.metadata
+        assert retry.payload.quantity == target.payload.quantity
+        for key in ('stop_price', 'limit_price', 'rpg_resting_generation', 'webull_mirror_generation_id'):
+            assert retry.payload.metadata[key] == md[key]
+    assert lane[0]._mirrorhold_claim(retry)
+    result = await lane[0].process_trade_intent(retry)
+    assert result[-1].payload.status == 'accepted'
+    if target is not None:
+        placed = lane[1].last['place'].values
+        assert Decimal(placed['stop_price']) == Decimal(md['stop_price'])
+        assert Decimal(placed['limit_price']) == Decimal(md['limit_price'])
+        assert Decimal(placed['qty']) == target.payload.quantity
+    await lane[0].process_trade_intent(retry)
+    assert lane[1].calls['place'] == 1
+
+
+@pytest.mark.asyncio
+async def test_temporal_aixi_held_back_in_band_places_once(lane):
+    event, history = recorded_setup(lane, 'AIXI')
+    assert len(history) == 48
+    actual_quote_at = lane[0]._latest_quotes_by_symbol['AIXI']['received_at']
+    actual_price = lane[0]._latest_quotes_by_symbol['AIXI']['ask']
+    lane[3][0] = event.produced_at
+    quote(lane, event, '2.10')  # CONTROLLED outside-band prestage, not an observed AIXI quote.
+    await lane[0].process_trade_intent(event)
+    assert state(lane, event)['phase'] == 'held'
+    assert state(lane, event)['reason'] == 'outside_8pct'
+    assert lane[1].calls.get('place', 0) == 0
+    lane[3][0] = max(actual_quote_at, event.produced_at + timedelta(seconds=1))
+    lane[0]._latest_quotes_by_symbol['AIXI'] = {'ask': actual_price, 'received_at': actual_quote_at}
+    await temporal_queue_place(lane, event)
+    assert state(lane, event)['wire_submissions'] == 1
+    assert state(lane, event)['price_aggressive_refusals'] == 0
+
+
+@pytest.mark.asyncio
+async def test_temporal_flye_0938_to_0955_places_once(lane):
+    first_id = 'bd074901-077c-4a3b-b551-ead6c82a6f5e'
+    event, history = recorded_setup(lane, 'FLYE', intent_id=first_id)
+    assert len(history) == 38
+    rows = [r for r in SESSION_RECORDED['intents'] if r['symbol'] == 'FLYE']
+    assert [r['created_at'][11:16] for r in rows] == ['13:38', '13:42', '13:44', '13:47', '13:55']
+    for row in rows[:-1]:
+        event = temporal_event(lane, row)
+        await lane[0].process_trade_intent(event)
+        assert state(lane, event)['phase'] == 'held'
+        assert state(lane, event)['reason'] == 'outside_8pct'
+        assert lane[1].calls.get('place', 0) == 0
+    target = temporal_event(lane, rows[-1])
+    # Actual 09:55 changes quote/token, not price authorization; use a fresh durable queue token.
+    assert target.payload.quantity == event.payload.quantity
+    for key in ('stop_price', 'limit_price', 'rpg_resting_generation', 'webull_mirror_generation_id'):
+        assert target.payload.metadata[key] == event.payload.metadata[key]
+    await temporal_queue_place(lane, event, target=target)
+    assert state(lane, event)['wire_submissions'] == 1
+    assert state(lane, event)['price_aggressive_refusals'] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('outcome,places,refusals', [('accepted', 5, 0), ('price_aggressive', 4, 4)])
+async def test_temporal_flye_five_reprices_and_inverted_refusal_cap(lane, outcome, places, refusals):
+    rows = D28['intents']
+    assert [r['created_at'][11:16] for r in rows] == ['15:20', '15:22', '15:24', '15:32', '15:38']
+    event, history = recorded_setup(lane, 'FLYE', recorded=D28, intent_id=rows[0]['id'])
+    assert len(history) == 39  # Do not seed any of the four later accepted wires.
+    if outcome == 'price_aggressive':
+        lane[1].raises['place'] = _ServerException('ORDER_RISK_RULE_PRICE_AGGRESSIVE', 'CONTROLLED inverse', 417)
+    for index, row in enumerate(rows):
+        event = temporal_event(lane, row)
+        result = await lane[0].process_trade_intent(event)
+        assert lane[1].calls['place'] == min(index + 1, places)
+        if outcome == 'accepted':
+            assert result[-1].payload.status == 'accepted'
+            assert state(lane, event)['wire_submissions'] == index + 1
+            placed = lane[1].last['place'].values
+            assert Decimal(placed['stop_price']) == Decimal(row['payload']['metadata']['stop_price'])
+            assert Decimal(placed['limit_price']) == Decimal(row['payload']['metadata']['limit_price'])
+            assert Decimal(placed['qty']) == Decimal(str(row['quantity']))
+            if index < 4:
+                client = state(lane, event)['dispatch_client']
+                recorded_order = next(r for r in D28['orders'] if r['client_order_id'] == client)
+                audit = next(r for r in D28['audits'] if r['order_id'] == recorded_order['id']
+                             and r['event_type'] == 'cancelled' and r['event_source'] == 'broker')
+                lane[3][0] = datetime.fromisoformat(audit['event_at'])
+                with lane[2]() as session:
+                    order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == client))
+                    order.status = 'cancelled'
+                    # Actual terminal evidence/timing, linked to the CONTROLLED newly placed order.
+                    session.add(BrokerOrderEvent(id=UUID(audit['id']), order_id=order.id,
+                        event_type='cancelled', event_source='broker', payload=audit['payload'],
+                        event_at=lane[3][0]))
+                    session.flush()
+                    assert lane[0]._mirrorhold_clear_order(session, order)
+                    session.commit()
+        else:
+            assert state(lane, event)['price_aggressive_refusals'] == min(index + 1, 4)
+    assert state(lane, event)['wire_submissions'] == places
+    assert state(lane, event)['price_aggressive_refusals'] == refusals
+    assert state(lane, event)['phase'] == ('accepted' if outcome == 'accepted' else 'capped')
 
 
 @pytest.mark.asyncio
@@ -155,7 +280,7 @@ def test_queue_restore_unknowns_and_prior_working_stay_conservative(lane, condit
 async def test_recorded_flye_four_accepted_reprices_do_not_cap_next(lane, legacy):
     assert D28['raw_capture']['complete'] is True
     assert D28['replay_projection']['counts'] == {
-        'intents': 1, 'orders': 43, 'historical_intents': 43, 'audits': 52, 'fills': 1}
+        'intents': 5, 'orders': 43, 'historical_intents': 43, 'audits': 52, 'fills': 1}
     assert len(D28['orders']) == 43 and len(D28['audits']) == 52 and len(D28['fills']) == 1
     assert all(row['strategy'] is not None for row in D28['historical_intents'])
     reprices = [o for o in D28['orders'] if o['submitted_at'] >= '2026-10-08T15:15:00Z']

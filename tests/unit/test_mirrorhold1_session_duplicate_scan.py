@@ -135,7 +135,7 @@ def test_recorded_scope_is_complete_and_day_only():
     assert raw["limits"]["audits"]["returned"] == 237
     assert raw["prior_working_or_null"] == []
     assert RECORDED["replay_projection"]["counts"] == {
-        "intents": 2, "orders": 86, "historical_intents": 86, "audits": 135, "fills": 11}
+        "intents": 6, "orders": 86, "historical_intents": 86, "audits": 135, "fills": 11}
     assert all(len(RECORDED[key]) == count for key, count in RECORDED["replay_projection"]["counts"].items())
     assert {r["time_in_force"] for r in RECORDED["orders"]} == {"day"}
     assert all(not v["truncated"] for v in raw["limits"].values())
