@@ -8246,3 +8246,17 @@ old-head green. C published P1-only runner plan01d2369897d3d6bd829566cf4e3e2cf84
 274 tests PASS/18 assertion mutants RED; no final reviewed APP, manifest,
 staging or production action. H additive0023 conditional only; F narrowed
 rollover source still being verified by its sole writer.
+
+2026-10-08 13:35 ET codex-2 C45: H frozenfa278ecd independently125 PASS2.50s,
+/tmp/falseflip1-parent-fa278ecd-runtime-regressions.xml, including runtime and
+all prior seed/partial-fixture failures. Mencius found skip-before-cancel proof
+window; same H writer now requires exact latest false episode cancellation
+before spending skip. Fixtures113/88 lines, receipt documents removed; full/CI
+and runtime mutations pending, not READY. F published conservative cut43eb58a0,
+171 focused PASS/three assertion mutants RED, but functionally0/7 latest active
+archived requests retired. Three prior positive opportunities lack canonical
+receipts, four have zero identities; current DKI no_dispatch remains blocked.
+Absence of DB rows is not proof that prior Redis publications drained. No
+existing complete certificate identified; F NOT READY early, not hidden until
+14:30. Runner writer instructed exclude F unless reviewer resolves scope/proof
+and a new reviewed head is ready. No production writes or ownership waiver.
