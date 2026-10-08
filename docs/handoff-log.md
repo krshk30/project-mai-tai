@@ -8097,3 +8097,16 @@ full still running. RTH dispatch acceptance is recorded-bar/real adapter with
 fake SDK; PM scope not certified because unchanged window requires RTH.
 Queue/restore old all-history behavior remains disclosed, not secretly fixed.
 All A-E unchanged; C plan unstaged; no production changes.
+
+2026-10-08 10:52 ET codex-2 C34: G frozen5a8b3208 full receipt
+/tmp/mirrorholdG-final-head-unit.xml completes49failed/7738passed/55skipped,
+612.50s. Baseline1e15adb0 failed-name comparison adds HOTFIX retained-on
+stall318.467ms against unchanged50ms limit and cron install plan length1003
+against1000; removes baseline HOTFIX retained-off timing failure. Not parity.
+Requested serial isolated baseline/head benchmark controls and equal-path
+cron geometry reproduction; do not relabel cron failure as a timing flake
+or weaken its limit. Both exact hosted Validate runs green, focused134pass
+and five semantic mutants RED retained. Queue/restore history residual and
+RTH-only production dispatch window remain disclosed. F remains NOT READY
+while same writer corrects generic cancel publication/receipt inventory.
+No source merge, pin, activation, staging or production action.
