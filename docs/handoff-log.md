@@ -8147,3 +8147,17 @@ skipped cross, later cross in same segment allowed versus blocked untilSELL.
 No invented third-false waiver; continue classification/replay work while
 the post-skip rule is resolved. Follow-up real flip must be within same
 causal segment, not any future symbol BUY. No production action.
+
+2026-10-08 11:36 ET codex-2 C38: H sole-writer checkpoint published draft
+PR1135 exact6f8d10d9da4418cc5652348497c9e0e53dd9e15d; clean tree,
+Codex-only commit. Parent independently144 controlsPASS1.31s with explicit
+worktree PYTHONPATH in /tmp/falseflip1-parent-checkpoint.xml. Eight pure
+classifier/sibling/label semantic mutants assertionRED; not runtime budget
+mutants. CauseAGREE;17 false slots/24 legs in90legs/61slots,8 bound falselegs
+versus16 historical unknown for refund purposes. Table includes same-segment
+nextBUY transitions but restoration remainsUNMEASURED. No durable/page update,
+refund, counter or normal-place restoration implemented; no full parity claim.
+Unused-module check FAIL is actual incomplete integration, not a waiver.
+H3 post-second-false/one-skip wording outstanding; no partial installation.
+Attachment tool refused at existing100-artifact capacity; PRlink delivered.
+No production action; all other lane writers unchanged.
