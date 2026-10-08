@@ -1,0 +1,54 @@
+..F.F.....................                                               [100%]
+=================================== FAILURES ===================================
+_________ test_snapshot_refresh_still_persists_once_and_keeps_quantity _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b9219a0>
+
+    @pytest.mark.asyncio
+    async def test_snapshot_refresh_still_persists_once_and_keeps_quantity(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        service.store.get_account_position.return_value = SimpleNamespace(quantity=Decimal("2"))
+        session, account_id = object(), uuid4()
+        assert await service._refresh_broker_position_quantity(
+            session=session, broker_account_id=account_id, broker_account_name=WB, symbol="IPDN",
+        ) == Decimal("2")
+        service.store.sync_account_positions.assert_called_once_with(
+            session, broker_account_id=account_id,
+            snapshots=service.broker_adapter.list_account_positions.return_value,
+        )
+>       row = notes(service)[0]["readers"][0]
+              ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:96: IndexError
+_____ test_unreadable_real_read_keeps_existing_failure_semantics[refresh] ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b921580>
+reader = 'refresh'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["reconcile", "refresh", "orb"])
+    async def test_unreadable_real_read_keeps_existing_failure_semantics(monkeypatch, reader):
+        service, _frame, _clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        if reader == "reconcile":
+            assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.UNKNOWN
+        elif reader == "refresh":
+            assert await service._refresh_broker_position_quantity(
+                session=object(), broker_account_id=uuid4(), broker_account_name=WB, symbol="IPDN",
+            ) is None
+            service.store.sync_account_positions.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="unreadable"):
+                await orb_schwab_eod._broker_quantity(service, SimpleNamespace(
+                    account=SCHWAB, symbol="IPDN", quantity=Decimal("2")))
+>       row = notes(service)[0]["readers"][0]
+              ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:118: IndexError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/exit_snapshot_refresh.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_snapshot_refresh_still_persists_once_and_keeps_quantity
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_unreadable_real_read_keeps_existing_failure_semantics[refresh]
+2 failed, 24 passed in 0.95s

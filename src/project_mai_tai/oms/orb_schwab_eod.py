@@ -16,6 +16,7 @@ from project_mai_tai.db.models import (
     BrokerAccount, BrokerOrder, Fill, Strategy, SystemIncident, TradeIntent, VirtualPosition,
 )
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.oms import wbquiet_shadow
 from project_mai_tai.orb_schwab_exits import CONTEXT_KEY, confirmed_entry_time, exit_signal
 
 if TYPE_CHECKING:
@@ -91,7 +92,21 @@ async def _finish(service: OmsRiskService, target: _Target, phase: str, now: dat
 
 
 async def _broker_quantity(service: OmsRiskService, target: _Target) -> Decimal:
-    positions = await service.broker_adapter.list_account_positions(target.account)
+    try:
+        positions = await service.broker_adapter.list_account_positions(target.account)
+    except Exception:
+        wbquiet_shadow.note_consumed(
+            [target.account], "orb_close_positions", service=service,
+            source="adapter_positions", outcome="unreadable",
+            provider="schwab",
+        )
+        raise
+    wbquiet_shadow.note_consumed(
+        [target.account], "orb_close_positions", service=service,
+        source="adapter_positions", outcome="returned_not_wire_proof",
+        positions=positions, symbol=target.symbol,
+        provider="schwab",
+    )
     matches = [p for p in positions if p.symbol.upper() == target.symbol]
     if len(matches) != 1 or matches[0].broker_account_name != target.account:
         raise ValueError("broker_position_not_positively_identified")

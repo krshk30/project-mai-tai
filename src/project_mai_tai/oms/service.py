@@ -1610,11 +1610,22 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         event.payload.broker_account_name
                     )
                 except Exception:
+                    wbquiet_shadow.note_consumed(
+                        [event.payload.broker_account_name], "orb_admission_positions", service=self,
+                        source="adapter_positions", outcome="unreadable",
+                        provider="schwab",
+                    )
                     self.logger.exception(
                         "[OMS-ORB-SCHWAB-REFUSED] symbol=%s reason=broker_position_unknown",
                         event.payload.symbol,
                     )
                     return []
+                wbquiet_shadow.note_consumed(
+                    [event.payload.broker_account_name], "orb_admission_positions", service=self,
+                    source="adapter_positions", outcome="returned_not_wire_proof",
+                    positions=broker_positions, symbol=event.payload.symbol,
+                    provider="schwab",
+                )
                 if any(
                     position.symbol.upper() == event.payload.symbol.upper()
                     and position.quantity != 0
@@ -10128,6 +10139,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         now = utcnow()
         for key in armed:
             self._native_oco_armed_confirmed_at[key] = now
+            wbquiet_shadow.note_consumed(
+                [key[0]], "reserve1_bracket_note_renewal", service=self,
+                source="exact_entry_bracket_confirmation", outcome="renewed",
+                generation=f"{current_bindings[key][0]}:{current_bindings[key][1]}:{now.isoformat()}",
+            )
             # re-armed -> no longer resolving
             getattr(self, "_native_oco_resolving", {}).pop(key, None)
         for key in list(self._native_oco_armed_confirmed_at):
@@ -10411,7 +10427,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - a failed read is UNKNOWN, never flat
-                wbquiet_shadow.note_read(account_name, "unreadable")
+                wbquiet_shadow.note_read(account_name, "unreadable", service=self)
                 unreadable.append(account_name)
                 # ⛔⭐⭐ `consecutive=` MAKES A RUN A FACT INSTEAD OF AN INFERENCE.
                 # A successful read logs NOTHING, so before this counter existed the only way
@@ -10449,7 +10465,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     account_name, n, exc,
                 )
                 continue
-            wbquiet_shadow.note_read(account_name, "returned_not_wire_proof")
+            wbquiet_shadow.note_read(account_name, "returned_not_wire_proof", service=self, positions=snapshots)
             # ⭐ The read SUCCEEDED. Reset the run — this is the event that was previously
             # invisible, and its absence is what forced Q5 to infer run boundaries from gaps.
             try:
@@ -10578,6 +10594,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return synced_positions
 
         synced_positions = await self._run_db(_persist)
+        wbquiet_shadow.note_committed([name for aid, name in accounts if aid in account_ids])
 
         return {
             "accounts": len(accounts),
@@ -12975,11 +12992,20 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
+            wbquiet_shadow.note_consumed(
+                [broker_account_name], "reconcile_tri_state", service=self,
+                source="adapter_positions", outcome="unreadable",
+            )
             self.logger.warning(
                 "[RECONCILE-READ] acct=%s sym=%s result=ERROR (%s) -> UNKNOWN, keeping protection",
                 broker_account_name, symbol, exc,
             )
             return _PositionRead.UNKNOWN
+        wbquiet_shadow.note_consumed(
+            [broker_account_name], "reconcile_tri_state", service=self,
+            source="adapter_positions", outcome="returned_not_wire_proof",
+            positions=positions, symbol=symbol,
+        )
         # Shape decision delegated to the shared pure classifier so the live stop path and the
         # settlement probe can never disagree about what a read MEANS.
         state = self._classify_position_read(positions, symbol)
@@ -15345,6 +15371,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         try:
             snapshots = await self.broker_adapter.list_account_positions(broker_account_name)
         except Exception as exc:
+            wbquiet_shadow.note_consumed(
+                [broker_account_name], "exit_snapshot_refresh", service=self,
+                source="adapter_positions", outcome="unreadable",
+            )
             self.logger.warning(
                 "failed broker position refresh before exit recheck for %s %s: %s",
                 broker_account_name,
@@ -15353,6 +15383,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             return None
 
+        wbquiet_shadow.note_consumed(
+            [broker_account_name], "exit_snapshot_refresh", service=self,
+            source="adapter_positions", outcome="returned_not_wire_proof",
+            positions=snapshots, symbol=symbol,
+        )
         self.store.sync_account_positions(
             session,
             broker_account_id=broker_account_id,

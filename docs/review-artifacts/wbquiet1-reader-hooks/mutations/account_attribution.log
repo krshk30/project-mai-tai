@@ -1,0 +1,22 @@
+.................F........                                               [100%]
+=================================== FAILURES ===================================
+_____ test_account_mismatch_or_iterator_never_supplies_snapshot_generation _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10939f3b0>
+
+    def test_account_mismatch_or_iterator_never_supplies_snapshot_generation(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        for positions in ([position(SCHWAB)], iter([position()])):
+            shadow.note_consumed([WB], "test_reader", service=service,
+                                 source="adapter_positions", positions=positions, symbol="IPDN")
+>           assert notes(service)[-1]["readers"][0]["generation"] == "UNMEASURED"
+E           AssertionError: assert '2026-10-08T14:00:00+00:00' == 'UNMEASURED'
+E             
+E             - UNMEASURED
+E             + 2026-10-08T14:00:00+00:00
+
+tests/unit/test_wbquiet_shadow_readers.py:297: AssertionError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/account_attribution.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_account_mismatch_or_iterator_never_supplies_snapshot_generation
+1 failed, 25 passed in 0.98s

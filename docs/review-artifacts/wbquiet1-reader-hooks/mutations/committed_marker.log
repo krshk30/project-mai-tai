@@ -1,0 +1,42 @@
+..................F.......                                               [100%]
+=================================== FAILURES ===================================
+____ test_real_sync_only_registers_after_persist_transaction_returns[False] ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cbd5b50>
+commit_fails = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("commit_fails", [False, True])
+    async def test_real_sync_only_registers_after_persist_transaction_returns(monkeypatch, commit_fails):
+        service, _old_frame, _clock = harness(monkeypatch)
+        service.settings = SimpleNamespace(oms_virtual_position_clear_min_age_seconds=24.119)
+        account_id = uuid4()
+        service.store.list_active_broker_accounts = Mock(return_value=[SimpleNamespace(id=account_id, name=WB)])
+        service.store.sync_account_positions.return_value = 1
+        service.store.clear_virtual_positions_without_account_backing = Mock(return_value=[])
+        service.store.restore_virtual_positions_from_managed = Mock(return_value=[])
+        service._observe_settlement = lambda *_: None
+        async def run_db(fn, commit=True):
+            result = fn(object())
+            if commit and commit_fails:
+                raise RuntimeError("commit failed")
+            return result
+        service._run_db = run_db
+        frame = shadow.Frame(72, AT, 100, {WB: {}})
+        token = shadow.CURRENT.set(frame)
+        try:
+            if commit_fails:
+                with pytest.raises(RuntimeError, match="commit failed"):
+                    await service.sync_broker_positions()
+                assert frame.committed == {}
+            else:
+                assert await service.sync_broker_positions() == {"accounts": 1, "positions": 1}
+>               assert frame.committed[WB]["pass_id"] == 72
+                       ^^^^^^^^^^^^^^^^^^^
+E               KeyError: 'live:webull_1m_v2'
+
+tests/unit/test_wbquiet_shadow_readers.py:327: KeyError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/committed_marker.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_real_sync_only_registers_after_persist_transaction_returns[False]
+1 failed, 25 passed in 0.89s

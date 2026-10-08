@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from itertools import islice
 import json
 import math
 import os
@@ -21,6 +23,8 @@ from project_mai_tai.db.models import (
 
 MAX_ACCOUNTS = 16
 MAX_READERS = 48
+MAX_WINDOWS = 16
+READER_WINDOW_SECONDS = 60
 WAIT_SECONDS = 0.05
 TERMINAL = ("filled", "cancelled", "canceled", "rejected", "aborted", "expired")
 ET = ZoneInfo("America/New_York")
@@ -35,10 +39,15 @@ class Frame:
     actual: dict = field(default_factory=dict)
     readers: list = field(default_factory=list)
     read_elapsed: dict = field(default_factory=dict)
+    read_counts: dict = field(default_factory=dict)
+    committed: dict = field(default_factory=dict)
+    acquisition_generations: dict = field(default_factory=dict)
 
     def read(self, name: str, outcome: str) -> None:
         if name in self.accounts:
             self.actual[name] = outcome
+            self.acquisition_generations[name] = "UNMEASURED"
+            self.read_counts[name] = self.read_counts.get(name, 0) + 1
             self.read_elapsed[name] = round(time.monotonic() - self.started, 6)
 
     def consumed(self, names, reader: str) -> None:
@@ -52,20 +61,63 @@ CURRENT: ContextVar[Frame | None] = ContextVar("wbquiet_shadow_frame", default=N
 PERIODIC: ContextVar[bool] = ContextVar("wbquiet_shadow_periodic", default=False)
 
 
-def note_read(name: str, outcome: str) -> None:
+def note_read(name: str, outcome: str, *, service=None, positions=None) -> None:
     try:
         frame = CURRENT.get()
         if frame is not None:
             frame.read(name, outcome)
+            if service is not None and name in frame.accounts:
+                _, adapter = cached_adapter(service.broker_adapter, name)
+                frame.acquisition_generations[name] = source_evidence(
+                    adapter, name, time.monotonic(), positions=positions,
+                ).get("acquisition_generation", "UNMEASURED")
     except Exception:
         pass
 
 
-def note_consumed(names, reader: str) -> None:
+def note_consumed(names, reader: str, *, service=None, source="periodic_positions",
+                  outcome="consumed", generation=None, positions=None, symbol=None,
+                  provider=None) -> None:
+    observer = None
     try:
         frame = CURRENT.get()
         if frame is not None:
             frame.consumed(names, reader)
+        if service is not None:
+            observer = vars(service).get("_wbquiet_shadow")
+            if observer is not None:
+                acquisition = "UNMEASURED"
+                if isinstance(positions, (list, tuple)) and symbol is not None:
+                    stamp = next((getattr(p, "as_of", None) for p in islice(positions, 256)
+                                  if p.symbol.upper() == symbol.upper()
+                                  and p.broker_account_name in names), None)
+                    generation = stamp.isoformat() if isinstance(stamp, datetime) else None
+                    if len(names) == 1:
+                        _, adapter = cached_adapter(service.broker_adapter, names[0])
+                        acquisition = source_evidence(adapter, names[0], time.monotonic(),
+                                                      positions=positions).get("acquisition_generation", "UNMEASURED")
+                observer.reader_note(service, names, reader, source, outcome, generation, provider, acquisition)
+    except Exception:
+        if isinstance(observer, ShadowObserver):
+            observer.reader_dropped += 1
+
+
+def note_committed(names) -> None:
+    """Called only after the existing position-persistence transaction returns."""
+    try:
+        frame = CURRENT.get()
+        if frame is not None:
+            for name in names:
+                if frame.actual.get(name) == "returned_not_wire_proof":
+                    frame.committed[name] = {
+                        "process_pid": os.getpid(), "pass_id": frame.pass_id, "account": name,
+                        "acquisition_generation": frame.acquisition_generations.get(name, "UNMEASURED"),
+                        "local_read_id": f"{os.getpid()}:{frame.pass_id}:{name}:{frame.read_counts[name]}",
+                        "generation_basis": "matched_immutable_cache_objects_not_wire_or_broker_id",
+                        "adapter_calls": frame.read_counts[name],
+                        "acquired_elapsed_seconds": frame.read_elapsed[name],
+                        "committed_elapsed_seconds": round(time.monotonic() - frame.started, 6),
+                    }
     except Exception:
         pass
 
@@ -89,7 +141,7 @@ def cached_adapter(router, name):
     return None, None
 
 
-def source_evidence(adapter, name: str, now: float) -> dict:
+def source_evidence(adapter, name: str, now: float, *, positions=None) -> dict:
     evidence = {"source_age_seconds": None, "source": "UNMEASURED", "fresh": False}
     if adapter is None:
         return evidence
@@ -110,6 +162,12 @@ def source_evidence(adapter, name: str, now: float) -> dict:
         evidence.update(source="adapter_cache_acquisition_not_pass_or_wire_id",
                         source_age_seconds=round(age, 6),
                         fresh=age < ttl and not backed_off)
+        # Empty/equal-valued lists cannot prove which acquisition was returned.
+        if (isinstance(positions, (list, tuple)) and 0 < len(positions) <= 256
+                and len(positions) == len(cached[1])
+                and all(returned is stored and returned.broker_account_name == name
+                        for returned, stored in zip(positions, cached[1]))):
+            evidence["acquisition_generation"] = f"adapter_cache:{stamp!r}"
         if len(cached[1]) > 256:
             evidence["fresh"] = False
         else:
@@ -174,6 +232,94 @@ class ShadowObserver:
         self.sequence = 0
         self.last_nominal: dict[str, float] = {}
         self.dropped = 0
+        self.reader_lock = threading.Lock()
+        self.committed_generations: dict[str, deque] = {}
+        self.last_pass = None
+        self.reader_sequence = 0
+        self.reader_dropped = 0
+
+    def retain(self, frame, *, published=False):
+        if not self.reader_lock.acquire(blocking=False):
+            self.reader_dropped += 1
+            return
+        try:
+            now = time.monotonic()
+            self.last_pass = (frame.pass_id, now)
+            self.expire(now)
+            for name, facts in frame.committed.items():
+                if name not in self.committed_generations:
+                    if len(self.committed_generations) >= MAX_ACCOUNTS:
+                        self.reader_dropped += 1
+                        continue
+                    self.committed_generations[name] = deque(maxlen=MAX_WINDOWS)
+                generations = self.committed_generations[name]
+                if len(generations) == MAX_WINDOWS:
+                    self.reader_dropped += 1
+                committed_at = frame.started + facts.get("committed_elapsed_seconds", 0)
+                generations.append((committed_at, {**facts, "shadow_receipt_emitted": published}))
+        finally:
+            self.reader_lock.release()
+
+    def expire(self, now):
+        for name, generations in list(self.committed_generations.items()):
+            while generations and now - generations[0][0] > READER_WINDOW_SECONDS:
+                generations.popleft()
+            if not generations:
+                del self.committed_generations[name]
+
+    def reader_note(self, service, names, reader, source, outcome, generation, provider, acquisition):
+        # Never wait for observation or retain a reader task/logging backlog.
+        if not self.reader_lock.acquire(blocking=False):
+            self.reader_dropped += 1
+            return
+        try:
+            now = time.monotonic()
+            self.expire(now)
+            if self.last_pass is None or not 0 <= now - self.last_pass[1] <= READER_WINDOW_SECONDS:
+                return
+            self.reader_sequence += 1
+            records = []
+            for index, name in enumerate(names):
+                if index >= MAX_ACCOUNTS:
+                    self.reader_dropped += 1
+                    break
+                route, _ = cached_adapter(service.broker_adapter, name)
+                actual_provider = route or "UNMEASURED"
+                anchors = [{**facts, "elapsed_seconds": round(now - started, 6)}
+                           for started, facts in self.committed_generations.get(name, ())
+                           if 0 <= now - started <= READER_WINDOW_SECONDS]
+                records.append({"account": name, "reader": reader, "source": source,
+                                "provider": actual_provider,
+                                "reader_provider_scope": provider or "UNMEASURED",
+                                "webull_cadence_eligible": actual_provider == "webull" and provider != "schwab",
+                                "outcome": outcome, "generation": generation or "UNMEASURED",
+                                "generation_basis": "caller_observed_metadata_not_wire_id",
+                                "adapter_calls": int(source == "adapter_positions"),
+                                "adapter_read_id": (f"{os.getpid()}:{self.reader_sequence}:{name}"
+                                                    if source == "adapter_positions" else None),
+                                "overlapping_periodic_passes": anchors,
+                                "reader_acquisition_generation": acquisition,
+                                "same_source_generation": (
+                                    "observed_adapter_cache_identity" if acquisition != "UNMEASURED"
+                                    and not self.reader_dropped
+                                    and all(a["shadow_receipt_emitted"] for a in anchors)
+                                    and any(a.get("acquisition_generation") == acquisition for a in anchors)
+                                    else "UNMEASURED"),
+                                "periodic_evidence": ("UNMEASURED" if not anchors or self.reader_dropped
+                                                      or not all(a["shadow_receipt_emitted"] for a in anchors)
+                                                      or any(a.get("acquisition_generation") == "UNMEASURED"
+                                                             for a in anchors)
+                                                      else "committed_generation_observed")})
+            record = {"process_pid": os.getpid(), "reader_sequence": self.reader_sequence,
+                      "readers": records, "window_seconds": READER_WINDOW_SECONDS,
+                      "dropped_reader_observations": self.reader_dropped,
+                      "other_oms_and_external_readers": "PARTIAL",
+                      "wire_calls": "UNMEASURED", "wire_calls_saved": "UNMEASURED",
+                      "policy_applied": False}
+        finally:
+            self.reader_lock.release()
+        # Logging is also best effort. The public hook catches its exceptions.
+        service.logger.info("[WBQUIET-READER] %s", json.dumps(record, sort_keys=True))
 
     async def off_loop(self, fn):
         # The worker owns the lock until it REALLY finishes, even after timeout.
@@ -254,6 +400,8 @@ class ShadowObserver:
                 records.append({"account": name, "state": state, "nominal_seconds": cadence,
                                 "would": action, "actual_adapter_read": actual,
                                 "actual_read_completed_elapsed_seconds": frame.read_elapsed.get(name),
+                                "actual_adapter_calls": frame.read_counts.get(name, 0),
+                                "committed_generation": frame.committed.get(name, "UNMEASURED"),
                                 "facts_at_pass_start": facts, "covered_readers": readers})
             service.logger.info("[WBQUIET-SHADOW] %s", json.dumps({
                 "pass_id": frame.pass_id, "process_pid": os.getpid(),
@@ -263,7 +411,9 @@ class ShadowObserver:
                 "wire_calls_saved": "UNMEASURED", "policy_applied": False,
                 "basis": "nominal_counterfactual_not_decision_equivalence",
             }, sort_keys=True))
-        await self.off_loop(emit)
+            return True
+        published = await self.off_loop(emit)
+        self.retain(frame, published=published is True)
 
 
 async def prepare(service, account_names):

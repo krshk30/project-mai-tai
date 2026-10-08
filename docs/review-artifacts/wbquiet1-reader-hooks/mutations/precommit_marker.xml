@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="26" time="0.871" timestamp="2026-10-08T09:21:08.414509-04:00" hostname="Shirleys-MacBook-Pro-2.local"><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reconcile_consumes_own_account_generation_after_context_reset[2-_PositionRead.HELD]" time="0.005" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reconcile_consumes_own_account_generation_after_context_reset[0-_PositionRead.FLAT_CONFIRMED]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_snapshot_refresh_still_persists_once_and_keeps_quantity" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[reconcile]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[refresh]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[orb]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_orb_eod_repeated_reads_are_schwab_not_webull_consumption" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_orb_admission_reader_refusal_and_pull_count_unchanged[False]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_orb_admission_reader_refusal_and_pull_count_unchanged[True]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reserve1_renewal_notes_exact_bound_entry_without_position_pull" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[logging]" time="0.009" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[registry]" time="0.006" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[contention]" time="0.005" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_missing_observer_or_expired_window_is_not_zero_evidence" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_per_account_registry_is_bounded_and_loss_is_unmeasured" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_one_shadow_receipt_is_not_rewritten_by_later_reader_notes" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_failed_or_missing_commit_cannot_anchor_generation" time="0.000" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_account_mismatch_or_iterator_never_supplies_snapshot_generation" time="0.000" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_sync_only_registers_after_persist_transaction_returns[False]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_sync_only_registers_after_persist_transaction_returns[True]" time="0.001"><failure message="AssertionError: assert {'live:webull...lls': 1, ...}} == {}&#10;  &#10;  Left contains 1 more item:&#10;  {'live:webull_1m_v2': {'account': 'live:webull_1m_v2',&#10;                         'acquired_elapsed_seconds': 0.0,&#10;                         'acquisition_generation': 'adapter_cache:99.0',&#10;                         'adapter_calls': 1,&#10;                         'committed_elapsed_seconds': 0.0,...&#10;  &#10;  ...Full output truncated (5 lines hidden), use '-vv' to show">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10ce31a90&gt;
+commit_fails = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("commit_fails", [False, True])
+    async def test_real_sync_only_registers_after_persist_transaction_returns(monkeypatch, commit_fails):
+        service, _old_frame, _clock = harness(monkeypatch)
+        service.settings = SimpleNamespace(oms_virtual_position_clear_min_age_seconds=24.119)
+        account_id = uuid4()
+        service.store.list_active_broker_accounts = Mock(return_value=[SimpleNamespace(id=account_id, name=WB)])
+        service.store.sync_account_positions.return_value = 1
+        service.store.clear_virtual_positions_without_account_backing = Mock(return_value=[])
+        service.store.restore_virtual_positions_from_managed = Mock(return_value=[])
+        service._observe_settlement = lambda *_: None
+        async def run_db(fn, commit=True):
+            result = fn(object())
+            if commit and commit_fails:
+                raise RuntimeError("commit failed")
+            return result
+        service._run_db = run_db
+        frame = shadow.Frame(72, AT, 100, {WB: {}})
+        token = shadow.CURRENT.set(frame)
+        try:
+            if commit_fails:
+                with pytest.raises(RuntimeError, match="commit failed"):
+                    await service.sync_broker_positions()
+&gt;               assert frame.committed == {}
+E               AssertionError: assert {'live:webull...lls': 1, ...}} == {}
+E                 
+E                 Left contains 1 more item:
+E                 {'live:webull_1m_v2': {'account': 'live:webull_1m_v2',
+E                                        'acquired_elapsed_seconds': 0.0,
+E                                        'acquisition_generation': 'adapter_cache:99.0',
+E                                        'adapter_calls': 1,
+E                                        'committed_elapsed_seconds': 0.0,...
+E                 
+E                 ...Full output truncated (5 lines hidden), use '-vv' to show
+
+tests/unit/test_wbquiet_shadow_readers.py:324: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_failed_shadow_publication_cannot_claim_complete_join" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_window_is_60_seconds_after_commit_and_multiple_passes_are_not_aliases" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_orb_scope_is_excluded_even_with_misrouted_or_unknown_provider" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_acquisition_stamp_and_unknown_source_are_not_pass_id_guesses" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_same_source_only_when_nonempty_immutable_cache_objects_match" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_repeated_read_cannot_inherit_a_prior_source_acquisition_on_metadata_error" time="0.000" /></testsuite></testsuites>

@@ -1,0 +1,60 @@
+.............F.......F....                                               [100%]
+=================================== FAILURES ===================================
+_________ test_missing_observer_or_expired_window_is_not_zero_evidence _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cfaf140>
+
+    @pytest.mark.asyncio
+    async def test_missing_observer_or_expired_window_is_not_zero_evidence(monkeypatch):
+        service, _frame, clock = harness(monkeypatch)
+        clock[0] += 60.001
+        assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.HELD
+>       assert notes(service) == [] and not service._wbquiet_shadow.committed_generations
+E       AssertionError: assert ([{'dropped_re...: 11256, ...}] == []
+E         
+E         Left contains one more item: {'dropped_reader_observations': 0, 'other_oms_and_external_readers': 'PARTIAL', 'policy_applied': False, 'process_pid': 11256, ...}
+E         Use -v to get more diff)
+
+tests/unit/test_wbquiet_shadow_readers.py:232: AssertionError
+__ test_window_is_60_seconds_after_commit_and_multiple_passes_are_not_aliases __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cfea810>
+
+    def test_window_is_60_seconds_after_commit_and_multiple_passes_are_not_aliases(monkeypatch):
+        service, frame, clock = harness(monkeypatch)
+        observer = service._wbquiet_shadow
+        observer.committed_generations.clear()
+        frame.started = 90
+        frame.committed[WB]["committed_elapsed_seconds"] = 10
+        observer.retain(frame, published=True)
+        later = shadow.Frame(72, AT, 150, {WB: {}})
+        clock[0] = 150
+        token = shadow.CURRENT.set(later)
+        try:
+            shadow.note_read(WB, "returned_not_wire_proof")
+            shadow.note_read(WB, "returned_not_wire_proof")
+            shadow.note_committed([WB])
+        finally:
+            shadow.CURRENT.reset(token)
+        observer.retain(later, published=True)
+        clock[0] = 160
+        shadow.note_consumed([WB], "test_reader", service=service)
+        anchors = notes(service)[-1]["readers"][0]["overlapping_periodic_passes"]
+        assert [a["pass_id"] for a in anchors] == [71, 72]
+        assert [a["adapter_calls"] for a in anchors] == [1, 2]
+        assert len({a["local_read_id"] for a in anchors}) == 2
+        clock[0] = 160.001
+        shadow.note_consumed([WB], "test_reader", service=service)
+>       assert [a["pass_id"] for a in notes(service)[-1]["readers"][0]["overlapping_periodic_passes"]] == [72]
+E       assert [71, 72] == [72]
+E         
+E         At index 0 diff: 71 != 72
+E         Left contains one more item: 72
+E         Use -v to get more diff
+
+tests/unit/test_wbquiet_shadow_readers.py:375: AssertionError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/window_expiry.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_missing_observer_or_expired_window_is_not_zero_evidence
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_window_is_60_seconds_after_commit_and_multiple_passes_are_not_aliases
+2 failed, 24 passed in 0.91s

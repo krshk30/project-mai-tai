@@ -1,0 +1,112 @@
+..........FF..............                                               [100%]
+=================================== FAILURES ===================================
+______ test_observer_failure_never_changes_reconcile_or_adds_io[logging] _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108d03500>
+broken = 'logging'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("broken", ["logging", "registry", "contention"])
+    async def test_observer_failure_never_changes_reconcile_or_adds_io(monkeypatch, broken):
+        service, _frame, _clock = harness(monkeypatch)
+        observer = service._wbquiet_shadow
+        if broken == "logging":
+            def log(format_string, *_args):
+                if format_string == "[WBQUIET-READER] %s":
+                    raise RuntimeError("observer logging")
+            service.logger.info.side_effect = log
+        elif broken == "registry":
+            monkeypatch.setattr(observer, "reader_note", Mock(side_effect=RuntimeError("observer registry")))
+        else:
+            observer.reader_lock.acquire()
+        try:
+            for _ in range(240):
+>               assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.HELD
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_wbquiet_shadow_readers.py:218: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/project_mai_tai/oms/service.py:13004: in _broker_symbol_position_state
+    wbquiet_shadow.note_consumed(
+src/project_mai_tai/oms/wbquiet_shadow.py:99: in note_consumed
+    observer.reader_note(service, names, reader, source, outcome, generation, provider, acquisition)
+src/project_mai_tai/oms/wbquiet_shadow.py:321: in reader_note
+    service.logger.info("[WBQUIET-READER] %s", json.dumps(record, sort_keys=True))
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py:1143: in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py:1204: in _execute_mock_call
+    result = effect(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+format_string = '[WBQUIET-READER] %s'
+_args = ('{"dropped_reader_observations": 0, "other_oms_and_external_readers": "PARTIAL", "policy_applied": false, "process_pi...ebull_cadence_eligible": true}], "window_seconds": 60, "wire_calls": "UNMEASURED", "wire_calls_saved": "UNMEASURED"}',)
+
+    def log(format_string, *_args):
+        if format_string == "[WBQUIET-READER] %s":
+>           raise RuntimeError("observer logging")
+E           RuntimeError: observer logging
+
+tests/unit/test_wbquiet_shadow_readers.py:210: RuntimeError
+______ test_observer_failure_never_changes_reconcile_or_adds_io[registry] ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108cfcc50>
+broken = 'registry'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("broken", ["logging", "registry", "contention"])
+    async def test_observer_failure_never_changes_reconcile_or_adds_io(monkeypatch, broken):
+        service, _frame, _clock = harness(monkeypatch)
+        observer = service._wbquiet_shadow
+        if broken == "logging":
+            def log(format_string, *_args):
+                if format_string == "[WBQUIET-READER] %s":
+                    raise RuntimeError("observer logging")
+            service.logger.info.side_effect = log
+        elif broken == "registry":
+            monkeypatch.setattr(observer, "reader_note", Mock(side_effect=RuntimeError("observer registry")))
+        else:
+            observer.reader_lock.acquire()
+        try:
+            for _ in range(240):
+>               assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.HELD
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_wbquiet_shadow_readers.py:218: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/project_mai_tai/oms/service.py:13004: in _broker_symbol_position_state
+    wbquiet_shadow.note_consumed(
+src/project_mai_tai/oms/wbquiet_shadow.py:99: in note_consumed
+    observer.reader_note(service, names, reader, source, outcome, generation, provider, acquisition)
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py:1143: in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Mock id='4442814848'>
+args = (<project_mai_tai.oms.service.OmsRiskService object at 0x108cfef00>, ['live:webull_1m_v2'], 'reconcile_tri_state', 'adapter_positions', 'returned_not_wire_proof', '2026-10-08T14:00:00+00:00', ...)
+kwargs = {}, effect = RuntimeError('observer registry')
+
+    def _execute_mock_call(self, /, *args, **kwargs):
+        # separate from _increment_mock_call so that awaited functions are
+        # executed separately from their call, also AsyncMock overrides this method
+    
+        effect = self.side_effect
+        if effect is not None:
+            if _is_exception(effect):
+>               raise effect
+E               RuntimeError: observer registry
+
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py:1198: RuntimeError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/failure_isolation.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_observer_failure_never_changes_reconcile_or_adds_io[logging]
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_observer_failure_never_changes_reconcile_or_adds_io[registry]
+2 failed, 24 passed in 1.21s

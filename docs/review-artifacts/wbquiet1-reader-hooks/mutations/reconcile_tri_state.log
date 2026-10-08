@@ -1,0 +1,201 @@
+FF.F......FFFF.F..........                                               [100%]
+=================================== FAILURES ===================================
+_ test_reconcile_consumes_own_account_generation_after_context_reset[2-_PositionRead.HELD] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108f60830>
+quantity = '2', expected = <_PositionRead.HELD: 'held'>
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("quantity,expected", [("2", _PositionRead.HELD),
+                                                   ("0", _PositionRead.FLAT_CONFIRMED)])
+    async def test_reconcile_consumes_own_account_generation_after_context_reset(monkeypatch, quantity, expected):
+        service, frame, clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.return_value = [position(quantity=quantity)]
+        clock[0] += 59
+        assert shadow.CURRENT.get() is None
+        assert await service._broker_symbol_position_state(WB, "IPDN") is expected
+        service.broker_adapter.list_account_positions.assert_awaited_once_with(WB)
+>       row = notes(service)[0]["readers"][0]
+              ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:72: IndexError
+_ test_reconcile_consumes_own_account_generation_after_context_reset[0-_PositionRead.FLAT_CONFIRMED] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10af636b0>
+quantity = '0', expected = <_PositionRead.FLAT_CONFIRMED: 'flat_confirmed'>
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("quantity,expected", [("2", _PositionRead.HELD),
+                                                   ("0", _PositionRead.FLAT_CONFIRMED)])
+    async def test_reconcile_consumes_own_account_generation_after_context_reset(monkeypatch, quantity, expected):
+        service, frame, clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.return_value = [position(quantity=quantity)]
+        clock[0] += 59
+        assert shadow.CURRENT.get() is None
+        assert await service._broker_symbol_position_state(WB, "IPDN") is expected
+        service.broker_adapter.list_account_positions.assert_awaited_once_with(WB)
+>       row = notes(service)[0]["readers"][0]
+              ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:72: IndexError
+____ test_unreadable_real_read_keeps_existing_failure_semantics[reconcile] _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10af6ebd0>
+reader = 'reconcile'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["reconcile", "refresh", "orb"])
+    async def test_unreadable_real_read_keeps_existing_failure_semantics(monkeypatch, reader):
+        service, _frame, _clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        if reader == "reconcile":
+            assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.UNKNOWN
+        elif reader == "refresh":
+            assert await service._refresh_broker_position_quantity(
+                session=object(), broker_account_id=uuid4(), broker_account_name=WB, symbol="IPDN",
+            ) is None
+            service.store.sync_account_positions.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="unreadable"):
+                await orb_schwab_eod._broker_quantity(service, SimpleNamespace(
+                    account=SCHWAB, symbol="IPDN", quantity=Decimal("2")))
+>       row = notes(service)[0]["readers"][0]
+              ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:118: IndexError
+______ test_observer_failure_never_changes_reconcile_or_adds_io[logging] _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10af73b00>
+broken = 'logging'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("broken", ["logging", "registry", "contention"])
+    async def test_observer_failure_never_changes_reconcile_or_adds_io(monkeypatch, broken):
+        service, _frame, _clock = harness(monkeypatch)
+        observer = service._wbquiet_shadow
+        if broken == "logging":
+            def log(format_string, *_args):
+                if format_string == "[WBQUIET-READER] %s":
+                    raise RuntimeError("observer logging")
+            service.logger.info.side_effect = log
+        elif broken == "registry":
+            monkeypatch.setattr(observer, "reader_note", Mock(side_effect=RuntimeError("observer registry")))
+        else:
+            observer.reader_lock.acquire()
+        try:
+            for _ in range(240):
+                assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.HELD
+            assert service.broker_adapter.list_account_positions.await_count == 240
+>           assert observer.reader_dropped == 240
+E           assert 0 == 240
+E            +  where 0 = <project_mai_tai.oms.wbquiet_shadow.ShadowObserver object at 0x10af81cd0>.reader_dropped
+
+tests/unit/test_wbquiet_shadow_readers.py:220: AssertionError
+______ test_observer_failure_never_changes_reconcile_or_adds_io[registry] ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10af6cbc0>
+broken = 'registry'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("broken", ["logging", "registry", "contention"])
+    async def test_observer_failure_never_changes_reconcile_or_adds_io(monkeypatch, broken):
+        service, _frame, _clock = harness(monkeypatch)
+        observer = service._wbquiet_shadow
+        if broken == "logging":
+            def log(format_string, *_args):
+                if format_string == "[WBQUIET-READER] %s":
+                    raise RuntimeError("observer logging")
+            service.logger.info.side_effect = log
+        elif broken == "registry":
+            monkeypatch.setattr(observer, "reader_note", Mock(side_effect=RuntimeError("observer registry")))
+        else:
+            observer.reader_lock.acquire()
+        try:
+            for _ in range(240):
+                assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.HELD
+            assert service.broker_adapter.list_account_positions.await_count == 240
+>           assert observer.reader_dropped == 240
+E           assert 0 == 240
+E            +  where 0 = <project_mai_tai.oms.wbquiet_shadow.ShadowObserver object at 0x10af6e240>.reader_dropped
+
+tests/unit/test_wbquiet_shadow_readers.py:220: AssertionError
+_____ test_observer_failure_never_changes_reconcile_or_adds_io[contention] _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10af8a870>
+broken = 'contention'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("broken", ["logging", "registry", "contention"])
+    async def test_observer_failure_never_changes_reconcile_or_adds_io(monkeypatch, broken):
+        service, _frame, _clock = harness(monkeypatch)
+        observer = service._wbquiet_shadow
+        if broken == "logging":
+            def log(format_string, *_args):
+                if format_string == "[WBQUIET-READER] %s":
+                    raise RuntimeError("observer logging")
+            service.logger.info.side_effect = log
+        elif broken == "registry":
+            monkeypatch.setattr(observer, "reader_note", Mock(side_effect=RuntimeError("observer registry")))
+        else:
+            observer.reader_lock.acquire()
+        try:
+            for _ in range(240):
+                assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.HELD
+            assert service.broker_adapter.list_account_positions.await_count == 240
+>           assert observer.reader_dropped == 240
+E           assert 0 == 240
+E            +  where 0 = <project_mai_tai.oms.wbquiet_shadow.ShadowObserver object at 0x10af90ef0>.reader_dropped
+
+tests/unit/test_wbquiet_shadow_readers.py:220: AssertionError
+_________ test_missing_observer_or_expired_window_is_not_zero_evidence _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10afb8e30>
+
+    @pytest.mark.asyncio
+    async def test_missing_observer_or_expired_window_is_not_zero_evidence(monkeypatch):
+        service, _frame, clock = harness(monkeypatch)
+        clock[0] += 60.001
+        assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.HELD
+>       assert notes(service) == [] and not service._wbquiet_shadow.committed_generations
+E       AssertionError: assert ([] == []
+E         
+E         Use -v to get more diff and not {'live:webull_1m_v2': deque([(100.0, {'account': 'live:webull_1m_v2', 'acquired_elapsed_seconds': 0.0, 'acquisition_generation': 'adapter_cache:99.0', 'adapter_calls': 1, ...})])})
+E        +  where {'live:webull_1m_v2': deque([(100.0, {'account': 'live:webull_1m_v2', 'acquired_elapsed_seconds': 0.0, 'acquisition_generation': 'adapter_cache:99.0', 'adapter_calls': 1, ...})])} = <project_mai_tai.oms.wbquiet_shadow.ShadowObserver object at 0x10afba450>.committed_generations
+E        +    where <project_mai_tai.oms.wbquiet_shadow.ShadowObserver object at 0x10afba450> = <project_mai_tai.oms.service.OmsRiskService object at 0x10afb8b60>._wbquiet_shadow
+
+tests/unit/test_wbquiet_shadow_readers.py:232: AssertionError
+________ test_one_shadow_receipt_is_not_rewritten_by_later_reader_notes ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10afca0c0>
+
+    @pytest.mark.asyncio
+    async def test_one_shadow_receipt_is_not_rewritten_by_later_reader_notes(monkeypatch):
+        service, frame, clock = harness(monkeypatch)
+        observer = service._wbquiet_shadow
+        observer.committed_generations.clear()
+        await observer.finish(service, frame, "ok")
+        published = service.logger.info.call_args.args[1]
+        clock[0] += 30
+        await service._broker_symbol_position_state(WB, "IPDN")
+        shadow_calls = [c for c in service.logger.info.call_args_list if c.args[0] == "[WBQUIET-SHADOW] %s"]
+        assert len(shadow_calls) == 1 and shadow_calls[0].args[1] == published
+>       assert len(notes(service)) == 1
+E       assert 0 == 1
+E        +  where 0 = len([])
+E        +    where [] = notes(<project_mai_tai.oms.service.OmsRiskService object at 0x10afc81a0>)
+
+tests/unit/test_wbquiet_shadow_readers.py:272: AssertionError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/reconcile_tri_state.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_reconcile_consumes_own_account_generation_after_context_reset[2-_PositionRead.HELD]
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_reconcile_consumes_own_account_generation_after_context_reset[0-_PositionRead.FLAT_CONFIRMED]
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_unreadable_real_read_keeps_existing_failure_semantics[reconcile]
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_observer_failure_never_changes_reconcile_or_adds_io[logging]
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_observer_failure_never_changes_reconcile_or_adds_io[registry]
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_observer_failure_never_changes_reconcile_or_adds_io[contention]
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_missing_observer_or_expired_window_is_not_zero_evidence
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_one_shadow_receipt_is_not_rewritten_by_later_reader_notes
+8 failed, 18 passed in 0.95s

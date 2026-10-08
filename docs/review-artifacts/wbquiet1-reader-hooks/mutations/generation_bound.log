@@ -1,0 +1,29 @@
+..............F...........                                               [100%]
+=================================== FAILURES ===================================
+_________ test_per_account_registry_is_bounded_and_loss_is_unmeasured __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108ee3350>
+
+    def test_per_account_registry_is_bounded_and_loss_is_unmeasured(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        observer = service._wbquiet_shadow
+        for pass_id in range(100):
+            frame = shadow.Frame(pass_id, AT, 100, {WB: {}})
+            token = shadow.CURRENT.set(frame)
+            try:
+                shadow.note_read(WB, "returned_not_wire_proof", service=service,
+                                 positions=service.broker_adapter.list_account_positions.return_value)
+                shadow.note_committed([WB])
+            finally:
+                shadow.CURRENT.reset(token)
+            observer.retain(frame, published=True)
+>       assert len(observer.committed_generations[WB]) == shadow.MAX_WINDOWS
+E       AssertionError: assert 101 == 16
+E        +  where 101 = len(deque([(100.0, {'account': 'live:webull_1m_v2', 'acquired_elapsed_seconds': 0.0, 'acquisition_generation': 'adapter_ca..._v2', 'acquired_elapsed_seconds': 0.0, 'acquisition_generation': 'adapter_cache:99.0', 'adapter_calls': 1, ...}), ...]))
+E        +  and   16 = shadow.MAX_WINDOWS
+
+tests/unit/test_wbquiet_shadow_readers.py:251: AssertionError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/generation_bound.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_per_account_registry_is_bounded_and_loss_is_unmeasured
+1 failed, 25 passed in 0.91s

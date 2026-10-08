@@ -1,0 +1,252 @@
+[
+  {
+    "mutation": "reconcile_tri_state",
+    "source": "src/project_mai_tai/oms/service.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_reconcile_consumes_own_account_generation_after_context_reset[2-_PositionRead.HELD]",
+      "test_reconcile_consumes_own_account_generation_after_context_reset[0-_PositionRead.FLAT_CONFIRMED]",
+      "test_unreadable_real_read_keeps_existing_failure_semantics[reconcile]",
+      "test_observer_failure_never_changes_reconcile_or_adds_io[logging]",
+      "test_observer_failure_never_changes_reconcile_or_adds_io[registry]",
+      "test_observer_failure_never_changes_reconcile_or_adds_io[contention]",
+      "test_missing_observer_or_expired_window_is_not_zero_evidence",
+      "test_one_shadow_receipt_is_not_rewritten_by_later_reader_notes"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "436c18a4a3786f687eefd5f4f32a27792aceaab62298816f022a46d7affee900",
+    "source_sha256": "50594058a2c58bd8c716ad991f011fee1b495acac15ac2e1ac07947b4f8e7c89"
+  },
+  {
+    "mutation": "exit_snapshot_refresh",
+    "source": "src/project_mai_tai/oms/service.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_snapshot_refresh_still_persists_once_and_keeps_quantity",
+      "test_unreadable_real_read_keeps_existing_failure_semantics[refresh]"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "979ddebe38979525814f7270f334a9e6b02a0d43d6a3f154b6c21c03559d0f03",
+    "source_sha256": "12e915c9ed8123af8ad8b278c471a31e9777cd0c3e7f98df41ea207e828d38b6"
+  },
+  {
+    "mutation": "orb_admission_positions",
+    "source": "src/project_mai_tai/oms/service.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_real_orb_admission_reader_refusal_and_pull_count_unchanged[False]",
+      "test_real_orb_admission_reader_refusal_and_pull_count_unchanged[True]"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "f749cf3ef71727dae36f18e325a15b1f24afa7b0a45a98cef229142c28a4547a",
+    "source_sha256": "5ecf566518d4716df4a59fbd6a3dc25bc37afdea47c7bd34d81cfa367420c786"
+  },
+  {
+    "mutation": "orb_close_positions",
+    "source": "src/project_mai_tai/oms/orb_schwab_eod.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_unreadable_real_read_keeps_existing_failure_semantics[orb]",
+      "test_orb_eod_repeated_reads_are_schwab_not_webull_consumption"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "8aec4a7b2aa7e30044829e58303ee76f1254baf08f8d5714eb42e4a2ef0ea870",
+    "source_sha256": "9454756069637c081ebc2dcf53101ae934159a4b2a748baaa07125ce4a520b7d"
+  },
+  {
+    "mutation": "reserve1_bracket_note_renewal",
+    "source": "src/project_mai_tai/oms/service.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_reserve1_renewal_notes_exact_bound_entry_without_position_pull"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "e2670f57ad47b2488acf3cc4ccbdeb7cb5ff0db7cedf84c1ec9e0122d7c51db0",
+    "source_sha256": "8db71c0dcc6f4e351e9895e085350775b08210a25071550722aa2f14b7f013c0"
+  },
+  {
+    "mutation": "committed_marker",
+    "source": "src/project_mai_tai/oms/service.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_real_sync_only_registers_after_persist_transaction_returns[False]"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "b80bec9873fd2861673d0b95c1fc947ff59251b82eb1883927e9d576663e3ce2",
+    "source_sha256": "3c4c1e42e088a615343c700fca97f3e49f83a874c13b3b18ab4be747981f5f79"
+  },
+  {
+    "mutation": "precommit_marker",
+    "source": "src/project_mai_tai/oms/service.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_real_sync_only_registers_after_persist_transaction_returns[True]"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "66a708c15049de09b460d546f7c357a45a47475c5e31049bed9d4856df7fe36a",
+    "source_sha256": "14d098baba3fda501ce5f40dc0bbe258b7a81a693343ad7d55795e1c9da8d414"
+  },
+  {
+    "mutation": "window_expiry",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_missing_observer_or_expired_window_is_not_zero_evidence",
+      "test_window_is_60_seconds_after_commit_and_multiple_passes_are_not_aliases"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "ff1e980319009cb9ac3ff0969d3cda37fd6806c245822407b64f274b02ca5b9d",
+    "source_sha256": "d05d561bffde3aaa557e726763db6b27ef2d8e0da18aa6ed84a283a243d4760b"
+  },
+  {
+    "mutation": "generation_bound",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_per_account_registry_is_bounded_and_loss_is_unmeasured"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "830cac626e657dc85bc982c630689f8cd3da93a93e71470fbdc18f42f99b62b9",
+    "source_sha256": "87aaf6d642db43abed48ef5debf8964690274e70e94d68e395c3c1f98c2fb04e"
+  },
+  {
+    "mutation": "account_bound",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_per_account_registry_is_bounded_and_loss_is_unmeasured"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "6676fda5c4f01f2192351e829e14fafd46a215d791b0300560e402dd1c2238e6",
+    "source_sha256": "306e146d032e9c128380de96ef5722db217f26f9d6485fa07bf59dc5c21de05c"
+  },
+  {
+    "mutation": "account_attribution",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_account_mismatch_or_iterator_never_supplies_snapshot_generation"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "cc962be331851fd473358f1a40c7a9bd630ab831fb55896774ae8b9506802996",
+    "source_sha256": "935f9ebbffcde504ee2f8d2f0784f22d25ff38310cdf7e4f6ec932f74c9e52ce"
+  },
+  {
+    "mutation": "provider_exclusion",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_orb_scope_is_excluded_even_with_misrouted_or_unknown_provider"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "b83619897f2db47c2b9ab04770a0747b28546b8402c22535dfcce2eb859a93df",
+    "source_sha256": "15085403c96854b68bbe0493793b51cda8a85cb54e20d55ed546508c4790ddf4"
+  },
+  {
+    "mutation": "adapter_pull_count",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_reconcile_consumes_own_account_generation_after_context_reset[2-_PositionRead.HELD]",
+      "test_reconcile_consumes_own_account_generation_after_context_reset[0-_PositionRead.FLAT_CONFIRMED]",
+      "test_snapshot_refresh_still_persists_once_and_keeps_quantity",
+      "test_unreadable_real_read_keeps_existing_failure_semantics[reconcile]",
+      "test_unreadable_real_read_keeps_existing_failure_semantics[refresh]",
+      "test_unreadable_real_read_keeps_existing_failure_semantics[orb]",
+      "test_orb_eod_repeated_reads_are_schwab_not_webull_consumption",
+      "test_real_orb_admission_reader_refusal_and_pull_count_unchanged[False]",
+      "test_real_orb_admission_reader_refusal_and_pull_count_unchanged[True]"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "4565b5167e7be2313a62ff4c2f009542701432a6bbedc9280184572ba7735f3e",
+    "source_sha256": "a1f53bd90f8a0e03e623ea0fbd120463af17625317ebf2001d04e3104aabecd9"
+  },
+  {
+    "mutation": "publication_loss",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_failed_shadow_publication_cannot_claim_complete_join"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "94f60bcb0e9a4b13434b9c339fda5ffcffa0d401db63542fc264a28ed00aad1f",
+    "source_sha256": "b1d1b2f435682b07f9fd3044efaacc3dbd069228cacfc6bb224d2d455d1307a5"
+  },
+  {
+    "mutation": "overflow_loss",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_per_account_registry_is_bounded_and_loss_is_unmeasured"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "3b02fc5517f2c649186b630ff6c98e270a21b8875c15ba39e31f87159310d91d",
+    "source_sha256": "25f27d1bb937549764d14ee97c2e372b7c61148bf3a8ef3ab95b7e26b648a375"
+  },
+  {
+    "mutation": "failure_isolation",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_observer_failure_never_changes_reconcile_or_adds_io[logging]",
+      "test_observer_failure_never_changes_reconcile_or_adds_io[registry]"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "f8b15ed91d8ee851ec6f4024080e5ffe180ed7defbeb8992153096210d153a70",
+    "source_sha256": "7f8c423c280f8895ad8d80d6c39e1171f44ec750e23f48a77d3c0cbf931b0ecb"
+  },
+  {
+    "mutation": "empty_generation_guess",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_same_source_only_when_nonempty_immutable_cache_objects_match"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "89c3bd6b2cac3edc9cd3c22077db3611f56a15c4b37a19374e1cde71321ac9f5",
+    "source_sha256": "03db70f57480493f218d4c15e91a376b76ce224f0acfb7833630dac675e69987"
+  },
+  {
+    "mutation": "cache_identity_guess",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_reconcile_consumes_own_account_generation_after_context_reset[2-_PositionRead.HELD]",
+      "test_reconcile_consumes_own_account_generation_after_context_reset[0-_PositionRead.FLAT_CONFIRMED]",
+      "test_same_source_only_when_nonempty_immutable_cache_objects_match"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "40f1fb85b03afbfbf400c390b1617f503be07b2520e53537b2ac515e6dd1db1b",
+    "source_sha256": "4ba1ef48a9cce6ce09529917e3b0e1ccd0f7ee310a3a7a09910d919e306f651d"
+  },
+  {
+    "mutation": "stale_generation_reuse",
+    "source": "src/project_mai_tai/oms/wbquiet_shadow.py",
+    "exit_code": 1,
+    "assertion_failures": [
+      "test_repeated_read_cannot_inherit_a_prior_source_acquisition_on_metadata_error"
+    ],
+    "errors": [],
+    "red": true,
+    "log_sha256": "aa4aa6d637078d54f5786a685f8bdab5278b7848e74c3bab5c509ad0007810e7",
+    "source_sha256": "e93431f08410116648b21c087beaf056e69901857a5bed09b8d7138fff312479"
+  }
+]
