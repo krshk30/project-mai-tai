@@ -8398,3 +8398,19 @@ F1133+I1136explicitnextnight: sharedmodule/producerF,RemovedWaitProofconsumerI.
 Exactcancel-targetclientid andauthoritativecompletebook remainunproven,
 no fabricatedCLEAR. IunchangedLinuxpair37837201009 base19/20passed(77.96msfailure),
 I20/20passed,50msboundunchanged; full-suitecausalityunmeasured.
+
+2026-10-08 16:32 ET codex-2 C56: actual install applied on eced4599, migration
+20261008_0023, OMS2073383/strategy2073394 at20:22:58Z, v22074723 at20:25:04Z,
+control2075090 at20:25:35Z active/NRestarts0. Package plan a5e43efa55f0e6cf21111c4974f5f44cf91216df,
+manifest c053e0324221a01b89236da3b0d6396b55099dd9c265acc2a85ffb4f9cd38d21,
+runner /home/trader/after-hours/2026-10-08/gapline-wbquiet/job/attempt-20261008T202200963185Z/runner.log.
+First write20:22:25.838Z, migration rc0 20:22:36.708Z, post direct gate rc0.
+POST-INSTALL PROOF FAILED: independently read /var/log/project-mai-tai/oms.log
+NumericValueOutOfRange, JSON bar_ms1791491460000 CAST AS INTEGER in record_bar.
+Four epoch comparisons in falseflip1_runtime require bigint, including managed
+classification invalidation. Averroes sole source writer assigned isolated new
+hotfix PR and actual PostgreSQL integration regression; no SQLite-green claim.
+Services kept active, existing observation/collector only, no extra deployment
+before hotfix review/pin. User archived8removed-wait rows; next authorized v2
+restart must show0restored. FALSE=false fallback authorized only if fix remains
+uninstalled by06:30ET. F/I shared proof remains next evening, not tonight.
