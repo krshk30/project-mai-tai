@@ -8161,3 +8161,18 @@ Unused-module check FAIL is actual incomplete integration, not a waiver.
 H3 post-second-false/one-skip wording outstanding; no partial installation.
 Attachment tool refused at existing100-artifact capacity; PRlink delivered.
 No production action; all other lane writers unchanged.
+
+2026-10-08 12:11 ET codex-2 C39: H3 post-second-false-flip ruling is now
+explicit: skip one cross only; next cross in the same segment may trade;
+fresh SELL resets. Resumed existing Averroes writer on PR1135 H1-H7 runtime,
+normal-path restoration, durable/page labels, exact ownership and UNKNOWN
+controls. Parent read hosted Validate37801996344:1 failed/7797 passed/55 skipped,
+778.88s, sole failure the unused falseflip1 module. Prior C38 full-suite
+UNMEASURED wording is superseded by this receipt, not by a green claim.
+Focused tests are76 new+68 existing; no inert-module exemption authorized.
+Newton G resumed PR1134 queue/restore session-bound ownership and wire cap;
+read Claude D28 directly: four accepted FLYE reprices exhausted lifetime
+wire count and11:38 legitimate reprice refused. Cap counts PRICE_AGGRESSIVE
+refusals only, not accepted reprices/free holds/re-authorization retries.
+Both same writers, no side patches, no production action. A-E deliveries
+unchanged; F's durable cancel-inventory correction remains independent.
