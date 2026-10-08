@@ -272,6 +272,7 @@ class SymbolState:
     cw_reclaim_taken: bool = False              # the reclaim slot for THIS cross is used
     cw_seed_cap_watch_start_ms: int = 0         # nonzero only when the cap, not an entry, took both slots
     slotclear_fresh_buy_bar_ms: int = 0
+    slotclear_fresh_buy_segment_id: int = 0
     slotclear_reconstructed_watch_start_ms: int = 0
     slotclear_last_fresh_sell_bar_ms: int = 0
     cw_resting_suppressed_segment_id: int = 0   # SLOT2 marker dedupe; policy remains cw_resting_taken
@@ -2324,6 +2325,11 @@ class SchwabV2Strategy:
         self._flip_owner_counts["admission_evaluated"] += 1
         reason = "allowed"
         allowed = True
+        short_segment = int(state.atr_short_flip_bar_ts or 0)
+        if (state.slotclear_fresh_buy_bar_ms and state.bars
+                and state.slotclear_fresh_buy_bar_ms == state.bars[-1].timestamp_ms
+                and state.atr_state == "long"):
+            short_segment = state.slotclear_fresh_buy_segment_id
         if self._removed_wait_gate_closed(state.symbol):
             allowed, reason = False, "scanner_removed_waiting_buy"
         elif slot != "first":
@@ -2335,7 +2341,7 @@ class SchwabV2Strategy:
         elif self._retry_one_enabled and state.retry_one_segment_id <= 0:
             allowed, reason = False, "retry_segment_unknown"
         elif self._retry_one_enabled and (
-            int(state.atr_short_flip_bar_ts or 0) != state.retry_one_segment_id
+            short_segment != state.retry_one_segment_id
         ):
             allowed, reason = False, "retry_segment_mismatch"
         elif self._retry_one_enabled and state.retry_one_closes_in_segment >= (
@@ -2458,6 +2464,7 @@ class SchwabV2Strategy:
         state.cw_reclaim_taken = False
         state.cw_seed_cap_watch_start_ms = 0
         state.slotclear_fresh_buy_bar_ms = 0
+        state.slotclear_fresh_buy_segment_id = 0
         state.slotclear_reconstructed_watch_start_ms = 0
         state.cw_resting_suppressed_segment_id = 0
         state.cw_resting_suppressed_bars = 0
@@ -4450,6 +4457,7 @@ class SchwabV2Strategy:
         # --- flip state machine (close vs PRIOR trail) ---
         flip: str | None = None
         flip_level: float | None = None    # short trail crossed at a BUY flip (CW-v2 rule-7 line)
+        decision_short_segment_id = int(state.atr_short_flip_bar_ts or 0)
         close = cur.close
         if state.atr_state is None:
             state.atr_state, state.atr_trail, state.atr_state_age = "long", close - loss, 0
@@ -4507,6 +4515,7 @@ class SchwabV2Strategy:
             "decision_prev_bar_ts": decision_prev_bar_ts,
             "decision_cur_bar_ts": int(cur.timestamp_ms),
             "decision_gap_ms": decision_gap_ms,
+            "decision_short_segment_id": decision_short_segment_id,
             "observation_phase": phase,
         }
 
@@ -5000,6 +5009,7 @@ class SchwabV2Strategy:
             "flip_owner_evidence_at_ms=%d flip_owner_evidence_readable=%s "
             "flip_owner_open_positions=%d flip_owner_phase=%s "
             "retry_one_segment_id=%d retry_one_closes_in_segment=%d "
+            "slotclear_fresh_buy_bar_ms=%d slotclear_fresh_buy_segment_id=%d "
             "retry_one_budget_readable=%s last_quote=%s",
             state.symbol, state.cw_armed, state.cw_bars_waited, state.cw_trigger,
             state.cw_segment_high, state.cw_flip_level, state.cw_entries_this_flip,
@@ -5019,6 +5029,7 @@ class SchwabV2Strategy:
             state.flip_owner_evidence_readable, len(state.flip_owner_open_positions),
             state.flip_owner_phase,
             state.retry_one_segment_id, state.retry_one_closes_in_segment,
+            state.slotclear_fresh_buy_bar_ms, state.slotclear_fresh_buy_segment_id,
             state.retry_one_budget_readable,
             state.last_quote.quote_time_ms if state.last_quote is not None else "missing",
         )
@@ -5072,7 +5083,9 @@ class SchwabV2Strategy:
         if not math.isfinite(level) or level <= 0:
             return
         if self._retry_one_enabled:
-            segment = int(state.atr_short_flip_bar_ts or 0)
+            # The real ATR callback has already cleared atr_short_flip_bar_ts on BUY.
+            # Preserve its causal SELL identity, without resetting the retry budget.
+            segment = int(state.atr_short_flip_bar_ts or signal.get("decision_short_segment_id") or 0)
             if (not state.retry_one_budget_readable or segment <= 0
                     or state.retry_one_segment_id not in {0, segment}
                     or state.retry_one_closes_in_segment != 0 or self._retry_one_budget_persist is None):
@@ -5088,6 +5101,7 @@ class SchwabV2Strategy:
                 state.retry_one_segment_id = segment
         self._clear_cw_slot_claims(state)
         state.slotclear_fresh_buy_bar_ms = int(state.bars[-1].timestamp_ms)
+        state.slotclear_fresh_buy_segment_id = segment if self._retry_one_enabled else 0
         logger.info("[V2-SLOTCLEAR1] %s watch_start=%d flip_close=%d action=fresh_first_reactive",
                     state.symbol, watch_ms, state.slotclear_fresh_buy_bar_ms + 60000)
 
@@ -5315,6 +5329,7 @@ class SchwabV2Strategy:
         if fresh_first:
             state.cw_resting_taken = True
             state.slotclear_fresh_buy_bar_ms = 0
+            state.slotclear_fresh_buy_segment_id = 0
         else:
             state.cw_reclaim_taken = True       # the reactive path owns the reclaim slot for this cross
         state.last_entry_price = px

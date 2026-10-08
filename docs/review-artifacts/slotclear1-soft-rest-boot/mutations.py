@@ -15,6 +15,8 @@ CASES = {
     "broker_holding_ignored": (SchwabV2BotService, "_soft_rest_boot_proofs", "if any(symbol in held for _, held in books.values()):", "if False:"),
     "filled_phase_admitted": (SchwabV2Strategy, "soft_rest_boot_candidates", 'record.phase == "resting"', "True"),
     "refresh_allowed": (SchwabV2BotService, "_soft_rest_boot_positions", "if schwab._adapter_refresh_enabled:", "if False:"),
+    "causal_buy_segment_omitted": (SchwabV2Strategy, "_slotclear_fresh_buy", 'or signal.get("decision_short_segment_id")', "or 0"),
+    "strict_causal_segment_omitted": (SchwabV2Strategy, "_strict_first_rest_admitted", "short_segment = state.slotclear_fresh_buy_segment_id", "short_segment = int(state.atr_short_flip_bar_ts or 0)"),
 }
 cls, method, before, after = CASES[sys.argv[1]]
 original = getattr(cls, method)
