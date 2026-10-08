@@ -1,12 +1,16 @@
 """Controlled Option 2 store witnesses; never historical broker-book receipts."""
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from project_mai_tai.cancel_terminal_proof import BookOrder, CompleteWorkingBook
+from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
+from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBrokerAdapter
+from project_mai_tai.broker_adapters.webull import WebullAccountConfig, WebullBrokerAdapter
 from project_mai_tai.db.models import (
     AccountPosition, BrokerAccount, BrokerOrder, DashboardSnapshot, OmsManagedPosition, TradeIntent,
 )
@@ -14,9 +18,70 @@ from tests.unit.test_clearwait1_session_rollover import (
     ACCOUNTS, PRIMARY, WEBULL, ms, recorded_request, request, seed, service, strategy,
 )
 from tests.unit.test_clearwait1_session_rollover import db as rollover_db
+from project_mai_tai.v2_removed_wait import configured_removed_wait_bindings
 
 db = rollover_db
 NOW = datetime(2026, 10, 8, 13, 41, tzinfo=UTC)
+CONFIGURED_IDS = {PRIMARY: "controlled-schwab-config-hash", WEBULL: "controlled-webull-config-id"}
+
+
+def controlled_routing():
+    """Real adapter/routing types with explicit controlled config, no credentials or HTTP."""
+    schwab = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
+    schwab.accounts_by_name = {PRIMARY: SchwabAccountConfig(account_hash=CONFIGURED_IDS[PRIMARY])}
+    webull = WebullBrokerAdapter.__new__(WebullBrokerAdapter)
+    webull.accounts_by_name = {WEBULL: WebullAccountConfig(account_id=CONFIGURED_IDS[WEBULL])}
+    return RoutingBrokerAdapter(default_provider="schwab",
+        provider_by_account={PRIMARY: "schwab", WEBULL: "webull"},
+        factories_by_provider={"schwab": lambda: schwab, "webull": lambda: webull})
+
+
+def configured_control(database, req, account, case):
+    """Nullable box-shaped rows; positive books/drain remain controlled assumptions."""
+    seed(database, req, receipts=False)
+    expected = configured_removed_wait_bindings(controlled_routing(), req.account_names)
+    books = {name: CompleteWorkingBook(name, CONFIGURED_IDS[name], ms(NOW), ms(NOW),
+        True, "all_working", (), "broker") for name in req.account_names}
+    with database[1]() as session:
+        session.execute(update(BrokerAccount).values(external_account_id=None))
+        if case in {"retained_match", "retained_mismatch"}:
+            session.execute(update(BrokerAccount).where(BrokerAccount.name == account).values(
+                external_account_id=CONFIGURED_IDS[account] if case == "retained_match" else "other-id"))
+        elif case == "provider_mismatch":
+            session.execute(update(BrokerAccount).where(BrokerAccount.name == account).values(provider="other"))
+        session.commit()
+        before = {a.name: (a.provider, a.external_account_id) for a in session.scalars(select(BrokerAccount))}
+    if case == "missing_binding":
+        expected.pop(account)
+    elif case == "configured_provider_mismatch":
+        expected[account] = ("webull" if account == PRIMARY else "schwab", CONFIGURED_IDS[account])
+    elif case == "book_identity_mismatch":
+        books[account] = replace(books[account], account_id="response-cannot-adopt-this-id")
+    elif case == "missing_config":
+        expected = None
+    proof, = database[0].retire_unbound((req,), ACCOUNTS, books=books,
+        publication_closed={req: True}, expected_bindings=expected, now=NOW)
+    with database[1]() as session:
+        assert {a.name: (a.provider, a.external_account_id) for a in session.scalars(select(BrokerAccount))} == before
+    return proof
+
+
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("case", ["null", "retained_match", "retained_mismatch", "provider_mismatch",
+                                 "configured_provider_mismatch", "missing_binding", "book_identity_mismatch",
+                                 "missing_config"])
+def test_configured_binding_not_book_or_nullable_db_identity(db, account, case):
+    proof = configured_control(db, recorded_request("DKI"), account, case)
+    assert proof.clear is (case in {"null", "retained_match"})
+
+
+def test_routing_binding_refuses_missing_duplicate_or_untyped_accounts():
+    for names in ((PRIMARY, "absent"), (PRIMARY, PRIMARY)):
+        with pytest.raises((ValueError, RuntimeError)):
+            configured_removed_wait_bindings(controlled_routing(), names)
+    with pytest.raises(ValueError):
+        configured_removed_wait_bindings(SimpleNamespace(accounts_by_name={PRIMARY:
+            SimpleNamespace(account_hash="untyped")}), (PRIMARY,))
 
 
 def controlled_books(database, at=NOW):
