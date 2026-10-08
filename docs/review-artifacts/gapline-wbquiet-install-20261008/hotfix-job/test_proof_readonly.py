@@ -20,6 +20,34 @@ SHA = "a" * 40
 START = datetime(2026, 10, 8, 22, 0, tzinfo=UTC)
 
 
+def test_same_second_actual_stop_start_identity_preserves_microseconds(monkeypatch):
+    fields = dict(MainPID="2096131", NRestarts="0", ActiveState="active", SubState="running",
+        Result="success", InvocationID="actual-invocation", ExecMainStartTimestamp="Thu 2026-10-08 21:18:16.959983 UTC",
+        ExecMainStartTimestampMonotonic="430612072329", InactiveEnterTimestamp="", ExecMainStatus="0", ExecMainCode="0")
+    def command(args):
+        if args[0] == "systemctl":
+            assert args[:4] == ["systemctl", "--timestamp=us", "show", "project-mai-tai-schwab-1m-v2.service"]
+            return "\n".join(key + "=" + value for key, value in fields.items())
+        assert args == ["date", "--date=" + fields["ExecMainStartTimestamp"], "--utc", "--iso-8601=ns"]
+        return "2026-10-08T21:18:16.959983000+00:00\n"
+    monkeypatch.setattr(proof, "command", command)
+    started = proof.moment(proof.service_identity("schwab-1m-v2")["start_utc"])
+    stopped = datetime(2026, 10, 8, 21, 18, 16, 443700, tzinfo=UTC)
+    rows = [{"symbol": "AIXI", "bar_time": "2026-10-08T21:17:00+00:00",
+             "created_at": "2026-10-08T21:18:05+00:00", "updated_at": "2026-10-08T21:18:05+00:00"},
+            {"symbol": "AIXI", "bar_time": "2026-10-08T21:18:00+00:00",
+             "created_at": "2026-10-08T21:19:05+00:00", "updated_at": "2026-10-08T21:19:05+00:00"},
+            {"symbol": "AIXI", "bar_time": "2026-10-08T21:19:00+00:00",
+             "created_at": "2026-10-08T21:20:05+00:00", "updated_at": "2026-10-08T21:20:05+00:00"}]
+    result = proof.bar_continuity(rows, ["AIXI"], stopped, started, started + timedelta(minutes=11))
+    assert result["verdict"] == "MEASURED"
+    assert result["per_symbol"][0]["scheduled_missing_minutes_utc"] == []
+    with pytest.raises(proof.Unknown, match="restart_window_unproven"):
+        proof.bar_continuity(rows, ["AIXI"], started, stopped, started + timedelta(minutes=11))
+    with pytest.raises(proof.Unknown, match="restart_window_unproven"):
+        proof.bar_continuity(rows, ["AIXI"], stopped, started, started + timedelta(hours=3))
+
+
 def logged(line, seconds=0):
     return (START + timedelta(seconds=seconds)).strftime("%Y-%m-%d %H:%M:%S,000") + " INFO [oms-risk] " + line + "\n"
 

@@ -89,7 +89,8 @@ def service_identity(role):
     fields = ("MainPID", "NRestarts", "ActiveState", "SubState", "Result", "InvocationID",
               "ExecMainStartTimestamp", "ExecMainStartTimestampMonotonic", "InactiveEnterTimestamp",
               "ExecMainStatus", "ExecMainCode")
-    raw = command(["systemctl", "show", unit, *["--property=" + field for field in fields]])
+    # A stop and start can share a second; rounded starts can precede the real stop.
+    raw = command(["systemctl", "--timestamp=us", "show", unit, *["--property=" + field for field in fields]])
     pairs = [line.split("=", 1) for line in raw.splitlines()]
     if any(len(pair) != 2 for pair in pairs) or len(dict(pairs)) != len(pairs):
         raise Unknown("identity_malformed")
