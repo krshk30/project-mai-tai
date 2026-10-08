@@ -19,11 +19,11 @@ import uuid
 DAILY = "/home/trader/preopen-daily"
 GATE = "/home/trader/preopen.sh"
 REPO = "/home/trader/project-mai-tai"
-RESTARTED = {"oms", "strategy", "schwab-1m-v2"}
-DEFAULT_SERVICES = {"control", "market-capture", "market-data", "oms", "orb", "reconciler",
+RESTARTED = {"oms", "strategy", "schwab-1m-v2", "orb-schwab", "control"}
+DEFAULT_SERVICES = {"control", "market-capture", "market-data", "oms", "reconciler",
                     "schwab-1m-v2", "strategy", "tv-alerts"}
 PREFIX = "MAI_TAI_STRATEGY_SCHWAB_1M_V2_"
-OVERRIDES = {PREFIX + "LINE_CHART_RESTORATION_ENABLED": "false",
+OVERRIDES = {PREFIX + "LINE_CHART_RESTORATION_ENABLED": "true",
              PREFIX + "ATR_REPRICE_HANDOFF_ENABLED": "false"}
 GAP = PREFIX + "GAP_LINE_CARRY_ENABLED"
 REFRESHABLE = {REPO + "/ops/health/v2_restart_evidence.py",
@@ -31,6 +31,17 @@ REFRESHABLE = {REPO + "/ops/health/v2_restart_evidence.py",
                "/home/trader/restart_evidence/expected_flags.json",
                "/home/trader/restart_evidence/expected_numeric.json"}
 FIELDS = ("MainPID", "NRestarts", "ActiveState", "SubState", "ExecMainStartTimestamp")
+REQUIRED_ARTIFACTS = {"binding.json", "binding.py", "catalog_policy.py", "daily.py", "linesrc_disposition.py",
+                      "notify.sh", "release_policy.py", "restart_report.py", "retry_zero_readonly.py",
+                      "run.sh", "upgrade-ack.json", "upgrade_ack.py"}
+REQUIRED_INPUTS = REFRESHABLE | {
+    "/home/trader/restart_evidence/expected_flags_check.py",
+    "/home/trader/restart_evidence/preopen_restart_evidence.sh",
+    "/home/trader/restart_evidence/v2_restart_evidence.py",
+    "/etc/systemd/system/project-mai-tai-preopen.service",
+    "/etc/systemd/system/project-mai-tai-preopen.timer",
+    "/etc/systemd/system/project-mai-tai-preopen-failure.service",
+}
 
 
 class Refusal(RuntimeError):
@@ -90,7 +101,7 @@ def rebind_upgrade(source, old, new):
     return re.sub(pattern, 'APP = "' + new + '"', source, flags=re.M).encode()
 
 
-def gate_candidate(text, app, snapshot, record, states, environments, catalog):
+def gate_candidate(text, app, snapshot, record, states, environments, catalog, line_enabled=True):
     need('EXPECTED_DATE="$(TZ=America/New_York date +%F)"' in text
          and 'v2-restart-evidence-${EXPECTED_DATE//-/}.md' in text
          and "/home/trader/preopen-daily/daily.py paper" in text,
@@ -98,9 +109,19 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog):
     result = replace_assignment(text, "EXPECTED_SHA", app)
     result = replace_assignment(result, "SNAPSHOT", snapshot)
     result = replace_assignment(result, "INSTALL_RECORD", record)
-    for name, label in (("oms", "OMS_"), ("strategy", "STRATEGY_"), ("schwab-1m-v2", "")):
+    for name, label in (("oms", "OMS_"), ("strategy", "STRATEGY_"), ("schwab-1m-v2", ""),
+                        ("orb-schwab", "ORB_SCHWAB_"), ("control", "CONTROL_")):
         result = replace_assignment(result, "EXPECTED_" + label + "PID", states[name]["MainPID"])
         result = replace_assignment(result, "EXPECTED_" + label + "START", states[name]["ExecMainStartTimestamp"])
+    result = re.sub(r'^(ORB_UNIT|EXPECTED_ORB_PID|EXPECTED_ORB_START)=.*\n', '', result, flags=re.M)
+    result = re.sub(r'^check_identity orb "\$ORB_UNIT" "\$EXPECTED_ORB_PID" "\$EXPECTED_ORB_START"\n', '', result, flags=re.M)
+    acknowledgement = ('if "$REPO/.venv/bin/python" /home/trader/preopen-daily/upgrade_ack.py; then\n'
+        '  pass "orb-schwab exact Redis-upgrade restart ACKNOWLEDGED; actual NRestarts=1"\n'
+        'else\n  fail "orb-schwab upgrade acknowledgement mismatch"\nfi\n')
+    ordinary = 'check_identity orb-schwab "$ORB_SCHWAB_UNIT" "$EXPECTED_ORB_SCHWAB_PID" "$EXPECTED_ORB_SCHWAB_START"\n'
+    need(result.count(acknowledgement) == 1 or result.count(ordinary) == 1, 'orb-schwab admission template ambiguous')
+    result = result.replace(acknowledgement, ordinary)
+    overrides = {**OVERRIDES, PREFIX + 'LINE_CHART_RESTORATION_ENABLED': str(line_enabled).lower()}
     original = re.findall(r"^  --expect-flag '([^']+)' \\\n", text, re.M)
     need(original and len(original) == len(set(original)), "expect-flag population ambiguous")
     flags = {}
@@ -109,11 +130,11 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog):
         key, expected = pair.split("=", 1)
         if owner not in RESTARTED:
             continue
-        expected = OVERRIDES.get(key, expected)
+        expected = overrides.get(key, expected)
         need(environments[owner].get(key) == expected, "process flag differs: " + owner + ":" + key)
         flags[(owner, key)] = expected
     for owner in ("oms", "schwab-1m-v2"):
-        for key, expected in OVERRIDES.items():
+        for key, expected in overrides.items():
             need(environments[owner].get(key) == expected, "required OFF process key missing: " + owner + ":" + key)
             flags[(owner, key)] = expected
     need(environments["schwab-1m-v2"].get(GAP) == "true", "gap carry not explicitly ON")
@@ -141,7 +162,8 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog):
 
 def validate_evidence(before, record, states, now):
     need(before.get("schema_version") in {2, 3} and isinstance(before.get("services"), dict), "snapshot shape")
-    need(DEFAULT_SERVICES <= set(before["services"]) and before.get("alembic_version"), "snapshot fleet/schema incomplete")
+    need(DEFAULT_SERVICES <= set(before["services"]) and 'orb' not in before['services']
+         and before.get("alembic_version"), "snapshot fleet/schema incomplete or retired ORB adopted")
     exposure = before.get("live_exposure", {})
     need({"accounts_found", "accounts_expected", "open_managed_rows", "nonzero_account_position_rows"} <= set(exposure),
          "snapshot exposure incomplete")
@@ -163,7 +185,7 @@ def validate_evidence(before, record, states, now):
              "new identity not proven: " + owner)
 
 
-def plan(root, app, snapshot, record, observations, now):
+def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, retirement=None):
     need(sha(app) and observations["head"] == app and observations["clean"] is True
          and sha(observations["tree"]), "checkout not exact clean application")
     def read(name):
@@ -171,9 +193,14 @@ def plan(root, app, snapshot, record, observations, now):
     before = json.loads(read(snapshot))
     actions = json.loads(read(record))
     validate_evidence(before, actions, observations["states"], now)
+    from retire_orb import validate_receipt
+    need(retirement is not None, 'retirement receipt required')
+    validate_receipt(json.loads(read(retirement)))
     journal = actions.get("source_journal")
     need(isinstance(journal, str) and read(journal).strip(), "install source journal absent/empty")
     old_runtime = json.loads(read(DAILY + "/runtime.json"))
+    need(REQUIRED_ARTIFACTS <= set(old_runtime.get("artifacts", {})), "daily dependency artifact omitted")
+    need(REQUIRED_INPUTS <= set(old_runtime.get("evidence_inputs", {})), "daily dependency evidence omitted")
     expected_uid = 0 if root == Path("/") else os.geteuid()
     for name in ("runtime.json", *old_runtime["artifacts"]):
         metadata = location(root, DAILY + "/" + name).stat()
@@ -192,20 +219,29 @@ def plan(root, app, snapshot, record, observations, now):
         if path not in REFRESHABLE:
             need(digest(read(path)) == expected, "historical evidence drift: " + path)
     ack = json.loads(read(DAILY + "/upgrade-ack.json"))
-    need(ack["application"] == old_app and ack["decision"] == "ACKNOWLEDGED_REDIS_UPGRADE_RESTART"
-         and ack["state"] == observations["upgrade_state"], "upgrade acknowledgement differs from actual identity")
+    need(ack["application"] == old_app and ack["decision"] == "ACKNOWLEDGED_REDIS_UPGRADE_RESTART",
+         "historical upgrade acknowledgement binding differs")
+    need(ack['state']['MainPID'] != observations['states']['orb-schwab']['MainPID'],
+         'old upgrade acknowledgement cannot substitute for authorized new identity')
+    ack['historical_receipt'] = json.loads(read(DAILY + '/upgrade-ack.json'))
     ack["application"] = app
+    ack['active_for_current_install'] = False
+    ack['superseded_by_current_restart'] = dict(state=observations['states']['orb-schwab'],
+        snapshot=snapshot, install_record=record, source_journal=journal,
+        reason='authorized orb-schwab restart; new NRestarts0 identity pinned normally')
     flags = json.loads(read("/home/trader/restart_evidence/expected_flags.json"))["flags"]
-    for key, expected in {**OVERRIDES, GAP: "true"}.items():
+    overrides = {**OVERRIDES, PREFIX + 'LINE_CHART_RESTORATION_ENABLED': str(line_enabled).lower()}
+    for key, expected in {**overrides, GAP: "true"}.items():
         rows = [row for row in flags if "MAI_TAI_" + row["name"].upper() == key]
         need(len(rows) == 1 and rows[0]["expected"] is (expected == "true")
              and rows[0]["owning_service"] == "schwab-1m-v2", "required catalog row missing/drift: " + key)
     result = {GATE: gate_candidate(read(GATE).decode(), app, snapshot, record,
-                                   observations["states"], observations["environments"], flags)}
+                                   observations["states"], observations["environments"], flags, line_enabled)}
     binding = dict(approved_sha=app, tree=observations["tree"], historical_binding=old_binding,
                    historical_binding_sha256=digest(read(DAILY + "/binding.json")),
                    current_install=dict(snapshot=snapshot, install_record=record, source_journal=journal,
-                                        hashes={path: digest(read(path)) for path in (snapshot, record, journal)},
+                                        retirement=retirement,
+                                        hashes={path: digest(read(path)) for path in (snapshot, record, journal, retirement)},
                                         restarted=sorted(RESTARTED)))
     result[DAILY + "/binding.json"] = canonical(binding)
     # APP and TREE already derive from binding.json; do not change historical installer policy constants.
@@ -214,6 +250,12 @@ def plan(root, app, snapshot, record, observations, now):
          "release APP/TREE are not binding-derived")
     result[DAILY + "/upgrade-ack.json"] = canonical(ack)
     result[DAILY + "/upgrade_ack.py"] = rebind_upgrade(read(DAILY + "/upgrade_ack.py").decode(), old_app, app)
+    wrapper = read(DAILY + '/restart_report.py').decode()
+    old_condition = "    if Path('/home/trader/preopen-daily/upgrade-ack.json').is_file():"
+    new_condition = ("    if (Path('/home/trader/preopen-daily/upgrade-ack.json').is_file()\n"
+        "            and json.loads(Path('/home/trader/preopen-daily/upgrade-ack.json').read_bytes()).get('active_for_current_install', True)):")
+    need(wrapper.count(old_condition) == 1 or wrapper.count(new_condition) == 1, 'upgrade wrapper template ambiguous')
+    result[DAILY + '/restart_report.py'] = wrapper.replace(old_condition, new_condition).encode()
     gate_stat = location(root, GATE).stat()
     need(stat.S_IMODE(gate_stat.st_mode) == 0o700 and gate_stat.st_uid == old_runtime["gate_uid"], "gate owner/mode drift")
     runtime = json.loads(read(DAILY + "/runtime.json"))
@@ -224,7 +266,7 @@ def plan(root, app, snapshot, record, observations, now):
         runtime["artifacts"][name] = digest(result.get(path, read(path)))
     for path in REFRESHABLE & set(runtime["evidence_inputs"]):
         runtime["evidence_inputs"][path] = digest(read(path))
-    for path in (snapshot, record, journal):
+    for path in (snapshot, record, journal, retirement):
         runtime["evidence_inputs"][path] = digest(read(path))
     numerics = json.loads(read("/home/trader/restart_evidence/expected_numeric.json"))["settings"]
     def count(rows):
@@ -308,6 +350,8 @@ def main():
     parser.add_argument("--approved-sha", required=True)
     parser.add_argument("--snapshot", required=True)
     parser.add_argument("--install-record", required=True)
+    parser.add_argument('--line-enabled', choices=('true', 'false'), required=True)
+    parser.add_argument('--retirement', required=True)
     parser.add_argument("--receipt", help="exclusive output path; the receipt never asserts the daily gate passed")
     parser.add_argument("--observations", type=Path, help="isolated fixture root only; never accepted for production")
     parser.add_argument("--dry-run", action="store_true", help="read-only preview; default writes only the declared repins")
@@ -323,7 +367,8 @@ def main():
             need(not location(root, args.receipt).exists(), "receipt already exists")
         with location(root, DAILY + "/run.lock").open("r+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            candidates = plan(root, args.approved_sha, args.snapshot, args.install_record, observations, now)
+            candidates = plan(root, args.approved_sha, args.snapshot, args.install_record, observations, now,
+                              line_enabled=args.line_enabled == 'true', retirement=args.retirement)
             for name, raw in candidates.items():
                 if name.endswith(".py"):
                     ast.parse(raw)

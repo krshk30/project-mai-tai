@@ -9,6 +9,10 @@ from make_release import digest, release
 
 REMOTE = r'''
 import hashlib, io, json, os, pathlib, subprocess, sys, tarfile
+from datetime import datetime
+from zoneinfo import ZoneInfo
+now = datetime.now(ZoneInfo('America/New_York'))
+assert now.date().isoformat() == '2026-10-08' and now.hour >= 16, 'NO STAGING BEFORE CLOSE / wrong date'
 job = pathlib.Path('/home/trader/after-hours/2026-10-08/gapline-wbquiet/job')
 raw = sys.stdin.buffer.read(4000001)
 assert len(raw) <= 4000000 and os.geteuid() == 0
@@ -24,8 +28,8 @@ h = lambda value: hashlib.sha256(value).hexdigest()
 assert approval['manifest_sha256'] == h(files['release.json'])
 assert approval['approved_sha'] == manifest['approved_sha'] and approval['decision'] == 'APPROVED'
 assert approval['plan_commit'] == manifest['plan_commit'] and approval['authority'] == 'operator-standing-go'
-assert manifest['date_et'] == '2026-10-08' and manifest['scope'] == 'gapline1-wbquiet1-oms-strategy-v2'
-assert {'runner.py','run.sh','gate_readonly.py','proof_readonly.py','repin_preopen.py'} <= set(manifest['artifacts'])
+assert manifest['date_et'] == '2026-10-08' and manifest['scope'] == 'gapline1-wbquiet1-linesrc2-orblive1-retirement-five-services'
+assert {'runner.py','run.sh','gate_readonly.py','proof_readonly.py','repin_preopen.py','retire_orb.py','official_v2_restart_evidence.py','candidate-review.json'} <= set(manifest['artifacts'])
 assert set(files) == set(manifest['artifacts']) | {'release.json', 'approval.json'}
 assert all(h(files[name]) == expected for name, expected in manifest['artifacts'].items())
 job.parent.mkdir(parents=True, exist_ok=True)
@@ -59,8 +63,8 @@ print(json.dumps(receipt,sort_keys=True,indent=2))
 '''
 
 
-def package(plan, approved, box):
-    manifest, approval, blobs = release(plan, approved, box)
+def package(plan, approved, box, review, ledger=None):
+    manifest, approval, blobs = release(plan, approved, box, review, ledger)
     values = {**blobs, 'release.json': manifest, 'approval.json': approval}
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode='w') as archive:
@@ -76,10 +80,12 @@ def main():
     parser.add_argument('--plan', required=True)
     parser.add_argument('--approved-sha', required=True)
     parser.add_argument('--box-sha', required=True)
+    parser.add_argument('--review-receipt', type=argparse.FileType('r'), required=True)
+    parser.add_argument('--review-ledger', required=True)
     parser.add_argument('--host', default='mai-tai-vps')
     parser.add_argument('--check-only', action='store_true')
     args = parser.parse_args()
-    raw, manifest = package(args.plan, args.approved_sha, args.box_sha)
+    raw, manifest = package(args.plan, args.approved_sha, args.box_sha, json.load(args.review_receipt), args.review_ledger)
     if args.check_only:
         print(json.dumps(dict(manifest_sha256=digest(manifest), package_sha256=digest(raw), bytes=len(raw))))
         return

@@ -26,7 +26,7 @@ LOG_DIR = Path("/var/log/project-mai-tai")
 SERVICES = ("oms", "schwab-1m-v2", "strategy", "control", "market-capture",
             "market-data", "orb", "orb-schwab", "reconciler", "momentum-paper",
             "option-a-daily-guard", "redis", "postgresql")
-RESTARTED = {"oms", "schwab-1m-v2", "strategy"}
+RESTARTED = {"oms", "schwab-1m-v2", "strategy", "orb-schwab", "control"}
 OWNERS = {"strategy-engine", "schwab-1m-v2", "orb", "orb-schwab", "momentum-paper"}
 OWNER_FIELDS = OWNERS | {"_migration_complete", "_last_applied_id"}
 PREFIX = "MAI_TAI_STRATEGY_SCHWAB_1M_V2_"
@@ -536,7 +536,7 @@ def stopping_time(before, role="schwab-1m-v2"):
     return stamps[0]
 
 
-def evaluate(before, after, approved_sha):
+def evaluate(before, after, approved_sha, line_enabled=True):
     failures, unknown, observations = [], [], []
     unknown.extend("baseline:" + key for key in before.get("errors", {}))
     unknown.extend("after:" + key for key in after.get("errors", {}))
@@ -563,6 +563,14 @@ def evaluate(before, after, approved_sha):
                 unknown.append("ten_minute_window_not_complete:" + role)
             if new.get("process_cwd") != str(REPO):
                 unknown.append("process_source_cwd:" + role)
+        elif role == "orb":
+            try:
+                from retire_orb import validate_receipt
+                validate_receipt(after.get("orb_retirement", {}))
+                if new["MainPID"] != 0 or new["ActiveState"] != "inactive":
+                    failures.append("retirement_identity:orb")
+            except Exception:
+                failures.append("retirement_proof:orb")
         else:
             keys = ("MainPID", "NRestarts", "ActiveState", "SubState", "InvocationID", "ExecMainStartTimestampMonotonic")
             if any(old[key] != new[key] for key in keys):
@@ -581,7 +589,7 @@ def evaluate(before, after, approved_sha):
         if not old or not new:
             unknown.append("proc_flags:" + role)
             continue
-        for key, expected in {LINE: "false", HANDOFF: "false", **({GAP: "true"} if role == "schwab-1m-v2" else {})}.items():
+        for key, expected in {LINE: str(line_enabled).lower(), HANDOFF: "false", **({GAP: "true"} if role == "schwab-1m-v2" else {})}.items():
             if new.get(key) != [expected]:
                 failures.append("required_flag:" + role + ":" + key)
         for key in FLAG_KEYS - {GAP, LINE, HANDOFF}:
@@ -636,7 +644,7 @@ def receipt_exit_code(result):
     assessment = result.get("assessment", {})
     critical_failure = ("checkout_not_approved_clean_sha", "new_identity:", "start_outside_attempt:",
         "untouched_identity_changed:", "required_flag:", "retained_flag_changed:", "redis_evictions_changed",
-        "redis_memory_bound", "post_start_traceback_or_error:", "post_start_journal_error:")
+        "redis_memory_bound", "post_start_traceback_or_error:", "post_start_journal_error:", "retirement_")
     if any(failure.startswith(critical_failure) for failure in assessment.get("failures", [])):
         return 1
     unknown_prefix = ("identity:", "start:", "proc_flags:", "process_source_cwd:", "redis_proof_missing", "checkout_proof_unreadable")
@@ -650,8 +658,9 @@ def receipt_exit_code(result):
     return 0
 
 
-def collect_after(before, approved_sha, restart_window=None):
+def collect_after(before, approved_sha, restart_window=None, *, line_enabled=True, retirement=None):
     after = collect_baseline()
+    after['orb_retirement'] = retirement
     now = moment(after["captured_at_utc"])
     after["logs"] = {}
     after["journals"] = {}
@@ -700,7 +709,7 @@ def collect_after(before, approved_sha, restart_window=None):
         after["bar_continuity"]["watchlist_at_baseline"] = before["redis"]["v2_watchlist"]
     except Exception as exc:
         after["errors"]["bar_continuity"] = str(exc) if isinstance(exc, Unknown) else type(exc).__name__
-    after["assessment"] = evaluate(before, after, approved_sha)
+    after["assessment"] = evaluate(before, after, approved_sha, line_enabled)
     after["baseline_errors"] = before.get("errors", {})
     after["source_binding"] = {"approved_checkout_sha": approved_sha,
         "scope": "clean current checkout plus new identities and process cwd; not an in-memory bytecode hash"}
@@ -716,6 +725,8 @@ def main(argv=None):
     after.add_argument("--baseline", type=Path, required=True)
     after.add_argument("--approved-sha", required=True)
     after.add_argument("--restart-window", type=Path)
+    after.add_argument("--line-enabled", choices=('true', 'false'), required=True)
+    after.add_argument("--retirement", type=Path, required=True)
     after.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.mode == "after" and not re.fullmatch(r"[0-9a-f]{40}", args.approved_sha):
@@ -728,7 +739,8 @@ def main(argv=None):
         else:
             before = json.loads(bounded_file(args.baseline, 2_000_000))
             window = json.loads(bounded_file(args.restart_window, 10000)) if args.restart_window else None
-            result = collect_after(before, args.approved_sha, window)
+            result = collect_after(before, args.approved_sha, window, line_enabled=args.line_enabled == 'true',
+                                   retirement=json.loads(bounded_file(args.retirement, 300000)))
             verdict = result["assessment"]["verdict"]
     except Exception as exc:
         result = {"schema_version": 1, "assessment": {"verdict": "UNKNOWN"}, "error_type": type(exc).__name__}

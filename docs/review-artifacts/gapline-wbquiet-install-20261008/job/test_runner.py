@@ -39,10 +39,11 @@ def environment():
             '# Retained settings\nOTHER=true\n').encode()
 
 
-def test_env_add_changes_only_gap_and_retains_line_rpg_false():
+def test_env_add_changes_only_gap_line_and_retains_rpg_false():
     before = environment()
-    assert runner.env_candidate(before) == before + (runner.GAP + '=true\n').encode()
+    assert runner.env_candidate(before) == before.replace((runner.LINE + '=false').encode(), (runner.LINE + '=true').encode()) + (runner.GAP + '=true\n').encode()
     assert runner.env_candidate(runner.env_candidate(before)) == runner.env_candidate(before)
+    assert runner.env_candidate(before, False) == before + (runner.GAP + '=true\n').encode()
 
 
 @pytest.mark.parametrize('extra', [
@@ -57,10 +58,9 @@ def test_env_duplicates_aliases_unknown_refuse(extra):
         runner.env_candidate(environment() + extra().encode())
 
 
-def test_env_cannot_turn_line_or_handoff_on():
-    for key in (runner.LINE, runner.HANDOFF):
-        with pytest.raises(RuntimeError):
-            runner.env_candidate(environment().replace((key + '=false').encode(), (key + '=true').encode()))
+def test_env_cannot_turn_handoff_on():
+    with pytest.raises(RuntimeError):
+        runner.env_candidate(environment().replace((runner.HANDOFF + '=false').encode(), (runner.HANDOFF + '=true').encode()))
 
 
 def catalogs():
@@ -70,18 +70,20 @@ def catalogs():
         {'name': 'orb_paper_enabled', 'expected': False, 'owning_service': 'orb-schwab'},
     ]}
     approved = {'schema_version': 1, 'flags': [
+        *original['flags'][:2],
         {'name': 'strategy_schwab_1m_v2_gap_line_carry_enabled', 'expected': True,
          'owning_service': 'schwab-1m-v2', 'ruling': 'Approved carry card'},
     ]}
     return original, approved
 
 
-def test_catalog_only_gap_add_and_actual_rolled_back_line_expectation():
+def test_catalog_reviewed_inventory_replaces_retired_fields_and_line_on():
     original, approved = catalogs()
     result = json.loads(runner.catalog_candidate(runner.canonical(original), approved))
-    assert result['flags'][0]['expected'] is False
-    assert result['flags'][1:3] == original['flags'][1:3]
-    assert result['flags'][3] == approved['flags'][0]
+    assert result['flags'][0]['expected'] is True
+    assert result['flags'][1]['expected'] is False
+    assert result['flags'][2] == approved['flags'][2]
+    assert not any(row['name'] == 'orb_paper_enabled' for row in result['flags'])
     assert runner.catalog_candidate(runner.canonical(result), approved) == runner.canonical(result)
 
 
@@ -91,20 +93,22 @@ def test_catalog_duplicates_and_rpg_on_refuse():
     with pytest.raises(RuntimeError):
         runner.catalog_candidate(runner.canonical(original), approved)
     original, approved = catalogs()
-    original['flags'][1]['expected'] = True
+    approved['flags'].append(approved['flags'][0])
     with pytest.raises(RuntimeError):
         runner.catalog_candidate(runner.canonical(original), approved)
 
 
 def test_approval_and_all_artifact_bytes_bound(tmp_path):
-    names = ('runner.py', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'run.sh')
+    names = ('runner.py', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'run.sh',
+             'retire_orb.py', 'official_v2_restart_evidence.py', 'candidate-review.json')
     artifacts = {}
+    candidate = dict(approved_sha='a' * 40, line_enabled=True, landed_prs={})
     for name in names:
-        raw = name.encode()
+        raw = runner.canonical(candidate) if name == 'candidate-review.json' else name.encode()
         (tmp_path / name).write_bytes(raw)
         artifacts[name] = hashlib.sha256(raw).hexdigest()
     release = dict(approved_sha='a' * 40, plan_commit='b' * 40, box_sha='c' * 40,
-                   date_et='2026-10-08', scope='gapline1-wbquiet1-oms-strategy-v2',
+                   date_et='2026-10-08', scope=runner.SCOPE, line_enabled=True, landed_reviews={},
                    release_branch='codex/install-2026-10-08-' + 'a' * 12, artifacts=artifacts)
     raw = runner.canonical(release)
     (tmp_path / 'release.json').write_bytes(raw)
@@ -139,13 +143,13 @@ def test_own_timer_date_and_no_installer_start_in_stager():
     assert 'MAI_TAI_ALLOW_LIVE_RESTART=1' not in (job / 'runner.py').read_text()
 
 
-def test_runner_no_clock_check_after_first_write_no_migration_no_control_restart():
+def test_runner_no_clock_check_after_first_write_exact_restarts_retirement_no_migration():
     source = Path(runner.__file__).read_text()
     body = source.split("self.backup_write(ENV, env)", 1)[1].split('def main()', 1)[0]
     assert 'window(' not in body
     assert 'MAI_TAI_RUN_MIGRATIONS=0' in body
-    assert "for target in ('oms', 'schwab-1m-v2')" in body
-    assert "'control'" not in body
+    assert "for target in ('oms', 'schwab-1m-v2', 'orb-schwab', 'control')" in body
+    assert "['systemctl', 'disable', '--now', 'project-mai-tai-orb.service']" in body
     assert 'CancelledError' not in source
     assert 'chmod(0o775)' not in source
 

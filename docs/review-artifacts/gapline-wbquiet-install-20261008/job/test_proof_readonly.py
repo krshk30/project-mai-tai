@@ -28,7 +28,7 @@ def records(text):
     return proof.log_records([{"path": "oms.log", "text": text}], START, START + timedelta(minutes=20))
 
 
-def shadow(pass_id, pid=201, dropped=0):
+def shadow(pass_id, pid=202, dropped=0):
     return logged("[WBQUIET-SHADOW] " + json.dumps({"pass_id": pass_id, "process_pid": pid,
         "dropped_observations": dropped, "policy_applied": False}), 3)
 
@@ -57,10 +57,12 @@ def good():
     for i, role in enumerate(sorted(proof.RESTARTED)):
         after["services"][role] = identity(201 + i, "new" + role)
         after["logs"][role] = proof.summarize_logs(records(sync_pair() if role == "oms" else logged("healthy")))
-    # sorted restarted roles puts OMS at 201, matching the shadow fixture.
+    from test_retire_orb import receipt
+    after['orb_retirement'] = receipt()
+    after['services']['orb'].update(MainPID=0, ActiveState='inactive', SubState='dead')
     for role in ("oms", "schwab-1m-v2"):
         values = {key: ["true"] for key in proof.FLAG_KEYS}
-        values.update({proof.LINE: ["false"], proof.HANDOFF: ["false"]})
+        values.update({proof.LINE: ["true"], proof.HANDOFF: ["false"]})
         before["process_flags"][role] = {"values": values, "sha256": proof.digest(values)}
         after["process_flags"][role] = copy.deepcopy(before["process_flags"][role])
     return before, after
@@ -74,7 +76,7 @@ def test_complete_evidence_passes_without_granting_admission(good):
 
 @pytest.mark.parametrize("role,key,values", [
     ("schwab-1m-v2", proof.GAP, ["false"]), ("schwab-1m-v2", proof.GAP, []),
-    ("oms", proof.LINE, ["true"]), ("schwab-1m-v2", proof.LINE, ["true"]),
+    ("oms", proof.LINE, ["false"]), ("schwab-1m-v2", proof.LINE, ["false"]),
     ("oms", proof.HANDOFF, ["true"]), ("schwab-1m-v2", proof.HANDOFF, ["true"]),
     ("oms", proof.HANDOFF, ["false", "false"]),
 ])
@@ -504,7 +506,11 @@ def test_cli_after_receives_runner_boundary_and_sha(tmp_path, monkeypatch):
     interval = tmp_path / "interval.json"
     interval.write_text(json.dumps({"stop_started_utc": START.isoformat()}))
     called = []
-    monkeypatch.setattr(proof, "collect_after", lambda *args: called.append(args) or {"assessment": {"verdict": "UNKNOWN"}})
+    monkeypatch.setattr(proof, "collect_after", lambda *args, **kwargs: called.append((args, kwargs)) or {"assessment": {"verdict": "UNKNOWN"}})
+    retirement = tmp_path / 'retirement.json'
+    retirement.write_text('{"fixture":"retirement"}')
     assert proof.main(["after", "--baseline", str(baseline), "--approved-sha", SHA,
+        '--line-enabled', 'true', '--retirement', str(retirement),
         "--restart-window", str(interval), "--output", str(tmp_path / "after.json")]) == 0
-    assert called == [({}, SHA, {"stop_started_utc": START.isoformat()})]
+    assert called == [(({}, SHA, {"stop_started_utc": START.isoformat()}),
+                       dict(line_enabled=True, retirement={'fixture': 'retirement'}))]

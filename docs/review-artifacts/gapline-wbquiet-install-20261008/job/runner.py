@@ -20,7 +20,8 @@ PYTHON = REPO / '.venv/bin/python'
 GAP = 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_GAP_LINE_CARRY_ENABLED'
 LINE = 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_LINE_CHART_RESTORATION_ENABLED'
 HANDOFF = 'MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_REPRICE_HANDOFF_ENABLED'
-UNITS = ('oms', 'schwab-1m-v2', 'strategy')
+UNITS = ('oms', 'schwab-1m-v2', 'strategy', 'orb-schwab', 'control')
+SCOPE = 'gapline1-wbquiet1-linesrc2-orblive1-retirement-five-services'
 DAY = '2026-10-08'
 
 
@@ -48,7 +49,7 @@ def window(now):
     return 'READY' if local.hour >= 16 else 'BEFORE_CLOSE'
 
 
-def env_candidate(raw):
+def env_candidate(raw, line_enabled=True):
     text = raw.decode('utf-8')
     bindings = {}
     for index, line in enumerate(text.splitlines(keepends=True)):
@@ -60,17 +61,20 @@ def env_candidate(raw):
         need(len(rows) <= 1 and all(row[1] == key for row in rows), 'duplicate/aliased env key ' + key)
     for key in (LINE, HANDOFF):
         rows = bindings.get(key, [])
-        need(len(rows) == 1 and rows[0][2] == 'false', key + ' must remain explicitly false')
+        need(len(rows) == 1 and rows[0][2] in ('false', 'true'), key + ' must remain explicit/readable')
+    need(bindings[HANDOFF][0][2] == 'false', HANDOFF + ' must remain false')
     rows = bindings.get(GAP, [])
     lines = text.splitlines(keepends=True)
+    lines[bindings[LINE][0][0]] = LINE + '=' + str(line_enabled).lower() + '\n'
     if rows:
         need(rows[0][2] in ('false', 'true'), 'unreadable GAP env value')
         lines[rows[0][0]] = GAP + '=true\n'
         return ''.join(lines).encode()
+    text = ''.join(lines)
     return (text + ('' if text.endswith('\n') else '\n') + GAP + '=true\n').encode()
 
 
-def catalog_candidate(raw, approved):
+def catalog_candidate(raw, approved, line_enabled=True):
     current = json.loads(raw)
     names = [row['name'] for row in current['flags']]
     need(len(names) == len(set(names)), 'duplicate catalog rows')
@@ -78,14 +82,19 @@ def catalog_candidate(raw, approved):
     gap = [row for row in approved['flags'] if row['name'] == gap_name]
     need(len(gap) == 1 and gap[0]['expected'] is True
          and gap[0]['owning_service'] == 'schwab-1m-v2', 'approved GAP catalog row unreadable')
-    if gap_name in names:
-        current['flags'][names.index(gap_name)] = gap[0]
-    else:
-        current['flags'].append(gap[0])
+    # The reviewed ORBLIVE inventory removes seven retired Settings fields;
+    # appending a GAP row to the old catalog would retain invalid owners/fields.
+    current = json.loads(canonical(approved))
+    names = [row['name'] for row in current['flags']]
+    need(len(names) == len(set(names)), 'duplicate approved catalog rows')
     for row in current['flags']:
         if row['name'] == 'strategy_schwab_1m_v2_line_chart_restoration_enabled':
+            row['expected'] = line_enabled
+            row['ruling'] = ('Operator 2026-10-08: LINESRC2 reviewed and merged; LINE ON at after-close install'
+                             if line_enabled else 'Operator pre-close veto: LINE stays OFF; no activation inferred')
+        if row['name'] == 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled':
             row['expected'] = False
-            row['ruling'] = 'Reviewer 2026-10-08: LINE_CHART_RESTORATION remains OFF after 07:28 rollback; LINESRC2 pending'
+            row['ruling'] = 'Operator 2026-10-07 13:45: RPG1 OFF; retained Oct8'
     need(any(row['name'] == 'strategy_schwab_1m_v2_atr_reprice_handoff_enabled'
              and row['expected'] is False for row in current['flags']), 'box RPG catalog must remain false')
     return canonical(current)
@@ -101,7 +110,8 @@ def verify_package(job):
          and approval['plan_commit'] == release['plan_commit'], 'approval/manifest binding differs')
     for key in ('approved_sha', 'plan_commit', 'box_sha'):
         need(re.fullmatch('[0-9a-f]{40}', release[key]) is not None, 'incomplete SHA ' + key)
-    need(release['date_et'] == DAY and release['scope'] == 'gapline1-wbquiet1-oms-strategy-v2', 'foreign release scope/date')
+    need(release['date_et'] == DAY and release['scope'] == SCOPE, 'foreign release scope/date')
+    need(type(release['line_enabled']) is bool, 'LINE disposition not explicitly bound')
     need(re.fullmatch(r'codex/install-2026-10-08-[0-9a-f]{12}', release['release_branch']) is not None,
          'release must use the immutable exact-main-head branch')
     for name, expected in release['artifacts'].items():
@@ -109,8 +119,12 @@ def verify_package(job):
         path = job / name
         need(path.is_file() and not path.is_symlink() and digest(path.read_bytes()) == expected,
              'staged artifact hash differs: ' + name)
-    need({'runner.py', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'run.sh'}
+    need({'runner.py', 'gate_readonly.py', 'proof_readonly.py', 'repin_preopen.py', 'retire_orb.py',
+          'official_v2_restart_evidence.py', 'candidate-review.json', 'run.sh'}
          <= set(release['artifacts']), 'incomplete runtime artifact set')
+    candidate = json.loads((job / 'candidate-review.json').read_bytes())
+    need(candidate['approved_sha'] == release['approved_sha'] and candidate['line_enabled'] == release['line_enabled']
+         and candidate['landed_prs'] == release['landed_reviews'], 'candidate review binding differs')
     return release
 
 
@@ -216,14 +230,14 @@ class Run:
                                  self.release['approved_sha'] + ':' + relative])
             need(digest(blob.read_bytes()) == expected, 'approved source blob differs: ' + relative)
         need(digest((REPO / 'ops/systemd/deploy_service.sh').read_bytes())
-             == self.release['source_hashes']['ops/systemd/deploy_service.sh'], 'baseline deploy script differs')
+             == self.release['baseline_deploy_sha256'], 'baseline deploy script differs')
         self.stage = 'baseline-proof'
         self.checked([str(PYTHON), str(self.job / 'proof_readonly.py'), 'baseline',
                       '--output', str(self.attempt / 'proof-before.json')])
-        self.checked([str(PYTHON), str(REPO / 'ops/health/v2_restart_evidence.py'), 'snapshot',
+        self.checked([str(PYTHON), str(self.job / 'official_v2_restart_evidence.py'), 'snapshot',
                       '--output', str(self.attempt / 'before-restart.json')])
         identities = self.identities()
-        env = env_candidate(ENV.read_bytes())
+        env = env_candidate(ENV.read_bytes(), self.release['line_enabled'])
         orb_env = Path('/etc/project-mai-tai/orb-paper.env')
         orb_backup = self.attempt / 'orb-paper.env.before'
         if orb_env.exists():
@@ -233,7 +247,7 @@ class Run:
                       before_sha256=digest(orb_backup.read_bytes()))
         blob = self.checked(['sudo', '-u', 'trader', 'git', '-C', str(REPO), 'show',
                              self.release['approved_sha'] + ':ops/health/expected_flags.json'])
-        catalog = catalog_candidate(CATALOG.read_bytes(), json.loads(blob.read_bytes()))
+        catalog = catalog_candidate(CATALOG.read_bytes(), json.loads(blob.read_bytes()), self.release['line_enabled'])
         rc = self.gate('final-before-first-write')
         if rc == 1:
             raise WaitWork('measured work appeared before first write')
@@ -241,11 +255,12 @@ class Run:
         need(window(datetime.now(timezone.utc)) == 'READY', 'first write outside Oct8 after-close window')
         claim = self.job / 'write-started.json'
         with claim.open('xb') as stream:
-            stream.write(canonical(dict(attempt=str(self.attempt), approved_sha=self.release['approved_sha'])))
+            stream.write(canonical(dict(attempt=str(self.attempt), approved_sha=self.release['approved_sha'],
+                                        at_utc=datetime.now(timezone.utc).isoformat())))
         self.stage = 'env-and-catalog'
         self.backup_write(ENV, env)
         self.backup_write(CATALOG, catalog)
-        for target in ('oms', 'schwab-1m-v2'):
+        for target in ('oms', 'schwab-1m-v2', 'orb-schwab', 'control'):
             need(self.gate('before-deploy-' + target) == 0, 'fresh trading gate blocked before ' + target)
             self.stage = 'deploy-' + target
             self.checked(['sudo', '-u', 'trader', 'env',
@@ -254,6 +269,15 @@ class Run:
                           'bash', str(REPO / 'ops/systemd/deploy_service.sh'), str(REPO),
                           self.release['release_branch'], target], timeout=1800)
             self.note(deploy_finished=target, identities=self.identities())
+        need(self.gate('before-orb-retirement') == 0, 'fresh trading gate blocked before ORB retirement')
+        self.stage = 'retire-orb-paper'
+        self.checked([str(PYTHON), str(self.job / 'retire_orb.py'), 'before',
+                      '--output', str(self.attempt / 'orb-retirement-before.json')])
+        self.checked(['systemctl', 'disable', '--now', 'project-mai-tai-orb.service'])
+        self.checked([str(PYTHON), str(self.job / 'retire_orb.py'), 'publish',
+                      '--before', str(self.attempt / 'orb-retirement-before.json'),
+                      '--authorization', str(claim),
+                      '--output', str(self.attempt / 'orb-retirement.json')])
         self.stage = 'post-install'
         after = self.identities()
         for name, row in after.items():
@@ -271,17 +295,17 @@ class Run:
         self.checked([str(PYTHON), str(self.job / 'proof_readonly.py'), 'after',
                       '--baseline', str(self.attempt / 'proof-before.json'),
                       '--approved-sha', self.release['approved_sha'],
+                      '--line-enabled', str(self.release['line_enabled']).lower(),
+                      '--retirement', str(self.attempt / 'orb-retirement.json'),
                       '--output', str(self.attempt / 'post-install-proof.json')])
         self.stage = 'flag-audit'
         rc, flags, errors = self.command([str(PYTHON), str(REPO / 'ops/health/expected_flags_check.py'),
             '--catalog', str(CATALOG), '--numeric-catalog', '/home/trader/restart_evidence/expected_numeric.json'])
         save(self.attempt / 'flaggate.json', dict(rc=rc, stdout=str(flags), stderr=str(errors),
                                                lines=flags.read_text().splitlines()))
-        # Keep paper UNKNOWN and the two named ORB catalog mismatches truthful.
+        # Inactive momentum-paper UNKNOWN remains honest; retired ORB rows are removed.
         failures = [line for line in flags.read_text().splitlines() if line.startswith('REAL FAILURE')]
-        allowed = {'orb_paper_enabled', 'orb_paper_stream_only_enabled'}
-        need(all(any('flag=' + name + ' ' in line for name in allowed) for line in failures),
-             'unexpected process-flag mismatch')
+        need(not failures, 'unexpected process-flag mismatch')
         unknown = [line for line in flags.read_text().splitlines() if line.startswith('UNKNOWN')]
         need(all('service=momentum-paper ' in line for line in unknown), 'unreadable non-paper process flags')
         self.stage = 'preopen-bookkeeping'
@@ -297,6 +321,8 @@ class Run:
                       '--approved-sha', self.release['approved_sha'],
                       '--snapshot', str(self.attempt / 'before-restart.json'),
                       '--install-record', str(self.attempt / 'install-record.json'),
+                      '--line-enabled', str(self.release['line_enabled']).lower(),
+                      '--retirement', str(self.attempt / 'orb-retirement.json'),
                       '--receipt', str(self.attempt / 'preopen-repin.json')])
         self.checked(['bash', '-n', '/home/trader/preopen.sh'])
         proof = json.loads((self.attempt / 'post-install-proof.json').read_bytes())

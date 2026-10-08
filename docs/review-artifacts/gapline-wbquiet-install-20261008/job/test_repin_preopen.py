@@ -21,6 +21,7 @@ NOW = datetime(2026, 10, 8, 22, 10, tzinfo=timezone.utc)
 SNAPSHOT = "/home/trader/attempt/before-restart.json"
 RECORD = "/home/trader/attempt/install-record.json"
 JOURNAL = "/home/trader/attempt/sealed-actions.json"
+RETIREMENT = '/home/trader/attempt/orb-retirement.json'
 
 
 def put(root, path, raw, mode=0o600):
@@ -64,6 +65,8 @@ def case(tmp_path):
     put(root, SNAPSHOT, m.canonical(snapshot))
     put(root, RECORD, m.canonical(record))
     put(root, JOURNAL, b'{"actual_commands":["deploy oms","deploy schwab-1m-v2"]}\n')
+    from test_retire_orb import receipt
+    put(root, RETIREMENT, m.canonical(receipt()))
     adapter = (HERE / "fixtures" / "release_policy.py").read_text().split('ADAPTER = "', 1)[1].split('"')[0]
     # Test root substitutes an isolated reviewed adapter; production requires its actual fixed hash.
     adapter_raw = b"#!/bin/bash\nexit 0\n"
@@ -85,6 +88,10 @@ def case(tmp_path):
     runtime["evidence_inputs"] = {historical: m.digest(m.location(root, historical).read_bytes()),
                                   "/home/trader/restart_evidence/expected_flags.json": "0" * 64,
                                   "/home/trader/restart_evidence/expected_numeric.json": "0" * 64}
+    for path in m.REQUIRED_INPUTS:
+        if path not in runtime['evidence_inputs']:
+            put(root, path, b'isolated dependency fixture\n')
+            runtime['evidence_inputs'][path] = m.digest(m.location(root, path).read_bytes())
     runtime["artifacts"] = {name: m.digest(m.location(root, m.DAILY + "/" + name).read_bytes()) for name in runtime["artifacts"]}
     put(root, m.DAILY + "/runtime.json", m.canonical(runtime))
     put(root, m.DAILY + "/run.lock", b"")
@@ -93,18 +100,19 @@ def case(tmp_path):
 
 def build(case):
     root, obs, _ = case
-    return m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW)
+    return m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW, retirement=RETIREMENT)
 
 
 def test_current_box_template_repin_group_and_process_keys(case):
     changes = build(case)
     gate = changes[m.GATE].decode()
     assert set(re.findall(r"--restarted ([\w-]+)", gate)) == m.RESTARTED
-    assert "orb-schwab:" not in gate and "control:" not in gate
+    assert "orb-schwab:" in gate and 'EXPECTED_CONTROL_PID=' in gate
+    assert 'EXPECTED_ORB_PID=' not in gate and 'check_identity orb ' not in gate
     assert f"EXPECTED_SHA={APP}" in gate
     assert f"SNAPSHOT={SNAPSHOT}" in gate and f"INSTALL_RECORD={RECORD}" in gate
     assert "ATR_REPRICE_HANDOFF_ENABLED=true" not in gate
-    assert "LINE_CHART_RESTORATION_ENABLED=true" not in gate
+    assert "LINE_CHART_RESTORATION_ENABLED=true" in gate
     assert m.GAP + "=true" in gate
     assert "oms:MAI_TAI_OMS_V2_EH_FRESH_PRICE_ENABLED=true" in gate
     assert 'EXPECTED_DATE="$(TZ=America/New_York date +%F)"' in gate
@@ -123,7 +131,10 @@ def test_refresh_all_application_bindings_preserve_history_and_ack(case):
     assert binding["approved_sha"] == APP and binding["tree"] == TREE
     assert binding["historical_binding"] == old_binding
     ack = json.loads(changes[m.DAILY + "/upgrade-ack.json"])
-    assert ack == {**old_ack, "application": APP}
+    assert ack['historical_receipt'] == old_ack
+    assert ack['state'] == old_ack['state']
+    assert ack['application'] == APP and ack['active_for_current_install'] is False
+    assert ack['superseded_by_current_restart']['state'] == case[1]['states']['orb-schwab']
     assert f'APP = "{APP}"' in changes[m.DAILY + "/upgrade_ack.py"].decode()
     assert 'APP = BINDING.get("approved_sha",' in m.location(root, m.DAILY + "/release_policy.py").read_text()
     runtime = json.loads(changes[m.DAILY + "/runtime.json"])
@@ -179,7 +190,7 @@ def test_inactive_restarted_unproven_timestamp_refuses(case, field, value):
 
 @pytest.mark.parametrize("key,value", [(m.GAP, "false"), (m.GAP, None),
                                      (m.PREFIX + "ATR_REPRICE_HANDOFF_ENABLED", "true"),
-                                     (m.PREFIX + "LINE_CHART_RESTORATION_ENABLED", "true")])
+                                     (m.PREFIX + "LINE_CHART_RESTORATION_ENABLED", "false")])
 def test_required_live_switch_mismatch_is_not_adopted(case, key, value):
     case[1]["environments"]["schwab-1m-v2"][key] = value
     with pytest.raises(m.Refusal):
@@ -206,8 +217,8 @@ def test_daily_artifact_drift_not_rehashed_to_green(case):
 
 
 def test_upgrade_ack_never_adopts_another_restart(case):
-    case[1]["upgrade_state"] = {**case[1]["upgrade_state"], "MainPID": "999"}
-    with pytest.raises(m.Refusal, match="upgrade acknowledgement"):
+    case[1]['states']['orb-schwab']['NRestarts'] = '1'
+    with pytest.raises(m.Refusal, match="NRestarts0"):
         build(case)
 
 
@@ -223,7 +234,7 @@ def test_snapshot_record_mismatch_no_writes(case):
 def test_unintended_restart_not_hidden_by_group_repin(case):
     path = m.location(case[0], RECORD)
     data = json.loads(path.read_bytes())
-    data["service_actions"]["control"] = "restarted"
+    data["service_actions"]["market-data"] = "restarted"
     path.write_bytes(m.canonical(data))
     with pytest.raises(m.Refusal, match="restart group"):
         build(case)
@@ -277,7 +288,7 @@ def test_old_gate_non_target_identity_and_dynamic_paper_lines_unchanged(case):
     root, _, _ = case
     old = m.location(root, m.GATE).read_text()
     new = build(case)[m.GATE].decode()
-    for prefix in ("EXPECTED_ORB_", "EXPECTED_ORB_SCHWAB_", "EXPECTED_CONTROL_", "EXPECTED_MARKET_DATA_", "EXPECTED_PAPER_"):
+    for prefix in ("EXPECTED_MARKET_DATA_", "EXPECTED_PAPER_"):
         assert [line for line in old.splitlines() if line.startswith(prefix)] == [line for line in new.splitlines() if line.startswith(prefix)]
 
 
@@ -350,6 +361,7 @@ def test_parent_runner_cli_contract_and_receipt(case, dry):
     before = m.location(root, m.GATE).read_bytes()
     command = [sys.executable, str(HERE / "repin_preopen.py"), "--root", str(root),
                "--approved-sha", APP, "--snapshot", SNAPSHOT, "--install-record", RECORD,
+               '--line-enabled', 'true', '--retirement', RETIREMENT,
                "--receipt", "/home/trader/attempt/preopen-repin.json", "--observations", str(observation_path)]
     result = subprocess.run(command + (["--dry-run"] if dry else []), capture_output=True, text=True, check=True)
     receipt = json.loads(result.stdout)
@@ -364,6 +376,54 @@ def test_parent_runner_cli_contract_and_receipt(case, dry):
 def test_isolated_observations_cannot_be_used_as_production_proof(tmp_path):
     result = subprocess.run([sys.executable, str(HERE / "repin_preopen.py"), "--root", "/",
                              "--approved-sha", APP, "--snapshot", SNAPSHOT, "--install-record", RECORD,
+                             '--line-enabled', 'true', '--retirement', RETIREMENT,
                              "--observations", str(tmp_path / "fake.json"), "--dry-run"], capture_output=True, text=True)
     assert result.returncode == 2
     assert "requires root" in result.stdout or "observations pair" in result.stdout
+
+
+@pytest.mark.parametrize('name', sorted(m.REQUIRED_ARTIFACTS))
+def test_omitting_runtime_dependency_never_rehashes_to_green(case, name):
+    path = m.location(case[0], m.DAILY + '/runtime.json')
+    value = json.loads(path.read_bytes())
+    del value['artifacts'][name]
+    path.write_bytes(m.canonical(value))
+    with pytest.raises(m.Refusal, match='dependency artifact omitted'):
+        build(case)
+
+
+@pytest.mark.parametrize('name', sorted(m.REQUIRED_INPUTS))
+def test_omitting_runtime_evidence_dependency_never_rehashes_to_green(case, name):
+    path = m.location(case[0], m.DAILY + '/runtime.json')
+    value = json.loads(path.read_bytes())
+    del value['evidence_inputs'][name]
+    path.write_bytes(m.canonical(value))
+    with pytest.raises(m.Refusal, match='dependency evidence omitted'):
+        build(case)
+
+
+def test_new_orb_schwab_control_identities_and_ack_history_not_adopted(case):
+    changes = build(case)
+    gate = changes[m.GATE].decode()
+    for name, label in [('orb-schwab', 'ORB_SCHWAB_'), ('control', 'CONTROL_')]:
+        assert 'EXPECTED_' + label + 'PID=' + case[1]['states'][name]['MainPID'] in gate
+    assert 'upgrade_ack.py; then' not in gate
+    assert 'check_identity orb-schwab ' in gate
+    wrapper = changes[m.DAILY + '/restart_report.py'].decode()
+    assert "get('active_for_current_install', True)" in wrapper
+    assert json.loads(changes[m.DAILY + '/upgrade-ack.json'])['active_for_current_install'] is False
+
+
+def test_old_collector_or_retired_orb_population_not_adopted(case):
+    path = m.location(case[0], SNAPSHOT)
+    value = json.loads(path.read_bytes())
+    value['services']['orb'] = {'pid': 1322003}
+    path.write_bytes(m.canonical(value))
+    with pytest.raises(m.Refusal, match='retired ORB adopted'):
+        build(case)
+
+
+def test_missing_retirement_proof_never_refreshes_daily_gate(case):
+    root, obs, _ = case
+    with pytest.raises(m.Refusal, match='retirement receipt required'):
+        m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW)
