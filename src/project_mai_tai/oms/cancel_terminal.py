@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 from project_mai_tai.broker_adapters.cancel_terminal import (
     acquire_broker_cancel_evidence, broker_binding,
 )
+from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.cancel_terminal_proof import (
     BookOrder, CancelReceipt, CancelScope, CancelTerminalEvidence, CompleteWorkingBook,
 )
@@ -120,7 +121,7 @@ class _Request:
     updated_at: datetime
 
 
-def _read_request(session_factory, intent_id) -> _Request | None:
+def _read_request(session_factory, intent_id, adapter) -> _Request | None:
     with session_factory() as session:
         intent = session.get(TradeIntent, intent_id)
         if intent is None:
@@ -128,6 +129,13 @@ def _read_request(session_factory, intent_id) -> _Request | None:
         account = session.get(BrokerAccount, intent.broker_account_id)
         receipt = receipt_from_intent(intent, account) if account else None
         if receipt is None:
+            return None
+        try:
+            leaf, account_id = broker_binding(adapter, account.name)
+        except (ValueError, AttributeError):
+            return None
+        provider = "schwab" if isinstance(leaf, SchwabBrokerAdapter) else "webull"
+        if account.provider != provider or receipt.scope.account_id != account_id:
             return None
         broker_id = intent.payload[BINDING_KEY].get("broker_order_id", "")
         if account.provider == "schwab" and broker_id:
@@ -144,13 +152,23 @@ def _read_request(session_factory, intent_id) -> _Request | None:
         return _Request(intent.id, receipt, dict(intent.payload), intent.updated_at)
 
 
-def _write_evidence(session_factory, request: _Request, evidence: CancelTerminalEvidence) -> bool:
+def _write_evidence(session_factory, request: _Request, evidence: CancelTerminalEvidence, adapter) -> bool:
     with session_factory() as session:
         current = session.scalar(select(TradeIntent).where(
             TradeIntent.id == request.intent_id,
         ).with_for_update())
         if (current is None or current.status != request.receipt.status
                 or current.updated_at != request.updated_at or current.payload != request.payload):
+            return False
+        account = session.get(BrokerAccount, current.broker_account_id)
+        if account is None or receipt_from_intent(current, account) != request.receipt:
+            return False
+        try:
+            leaf, account_id = broker_binding(adapter, account.name)
+        except (ValueError, AttributeError):
+            return False
+        provider = "schwab" if isinstance(leaf, SchwabBrokerAdapter) else "webull"
+        if account.provider != provider or account_id != request.receipt.scope.account_id:
             return False
         payload = {**current.payload, JOURNAL_KEY: {
             "binding": request.payload[BINDING_KEY], "evidence": asdict(evidence),
@@ -173,7 +191,7 @@ async def acquire_cancel_terminal_evidence(
     """
     result = {}
     for intent_id in intent_ids:
-        request = await asyncio.to_thread(_read_request, session_factory, intent_id)
+        request = await asyncio.to_thread(_read_request, session_factory, intent_id, adapter)
         if request is None:
             continue
         try:
@@ -183,6 +201,6 @@ async def acquire_cancel_terminal_evidence(
             )
         except Exception:
             evidence = CancelTerminalEvidence(request.receipt, None)
-        if await asyncio.to_thread(_write_evidence, session_factory, request, evidence):
+        if await asyncio.to_thread(_write_evidence, session_factory, request, evidence, adapter):
             result[request.receipt.scope.event_id] = evidence
     return result
