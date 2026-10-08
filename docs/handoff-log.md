@@ -8015,3 +8015,17 @@ Historical quote/broker absence remains UNMEASURED; source delta needs review.
 Lane B exacthead709e826e full47FAIL/7699PASS/55SKIP, zero added failed names;
 only baseline HOTFIX retained-off timing failure absent. Fresh pin/CI still
 required. All six isolated lanes remain free of production writes.
+
+2026-10-08 09:42 ET codex-2 C23-C26: A final47FAIL/7736PASS/55SKIP,
+no added names; D full48FAIL/7700PASS/55SKIP with retained-on/off timing
+swap, hosted Validate x2 GREEN. E final9d8dd70d source6d4141fa has78
+focusPASS/13RED; full49FAIL/7751PASS/55SKIP retains all48 baseline names
+plus retained-on timing failure. No parity/host-flake waiver. F b7ac full
+49FAIL/7731PASS/55SKIP likewise plus retained-on; hosted push has one
+RESERVE1 TimeoutError, parallel PR green. Parent186 focused PASS and
+dedupe-removed mutation1 assertion RED (101vs2logs), source unchanged.
+New user DKI09:25/SBFM08:00 addendum assigned to the SAME F writer1133:
+current proven no-dispatch resolvesCLEAR, pending cancel barrier retained.
+Four replay outcomes will distinguish17transitions/three positive retirements,
+todayAIXI receipt, SBFM receipt, and DKI current removal; no zero-ID legacy
+blanket release or historical broker proof invented. Nothing on the box changed.
