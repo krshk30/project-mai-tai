@@ -176,8 +176,9 @@ async def acquire_complete_working_book(adapter, account_name: str) -> CompleteW
 
 
 async def _schwab_book(leaf, account_name: str, account_id: str, *, target_client_order_id="") -> CompleteWorkingBook:
-    """365-day equity coverage under the explicitly approved below-cap contract.
+    """181-day equity coverage under the explicitly approved below-cap contract.
 
+    Stock/ETF GTC lasts at most180 calendar days; allow a one-day boundary margin.
     Unfiltered seven-day slices include terminal roots with active BUY children.
     No partial result survives an unreadable/capped slice or the global bound.
     """
@@ -237,7 +238,7 @@ async def _schwab_book(leaf, account_name: str, account_id: str, *, target_clien
             raise ValueError("schwab_book_empty_order_unknown")
 
     async with asyncio.timeout(15):
-        start = end - timedelta(days=365)
+        start = end - timedelta(days=181)
         while start < end:
             stop = min(start + timedelta(days=7), end)
             params = urlencode({"fromEnteredTime": start.isoformat(),
