@@ -8536,3 +8536,20 @@ book; QueryBudget counts per endpoint, so strict alone is not aggregate2/2s.
 Shared sole writer handles actual missing-target response and broker capability
 plus burst tests. No invented IDs, historical complete books or replay PASS.
 F/I continue consumers in parallel; no new production action.
+
+2026-10-08 18:43 ET codex-2 C65: shared6ef65ea1,Ffef85a72,Ie2d56c02
+hosted exact-head Validate pairs PASS; no end-to-end readiness inferred.
+Parent readonly Schwab no-filter60d/365d max3000 timed out as adapter599.
+Filtered180dWORKING HTTP200/0rows in442ms. Serial365d probe over16
+accepted working-state filters HTTP200/0rows22:42:23.725-28.047Z,4.322s;
+PARTIAL_FILL is invalid query HTTP400. Working older60d returned0 within
+accepted filters only. No excluded-order absence or cap completeness invented.
+Schwab primary stock-GTC guidance permits180days:
+https://www.schwab.com/content/how-to-place-trade-using-good-till-canceled-on-schwab-mobile
+so60d-only coverage cannot cover the stated any-owner working-buy rule.
+Shared writer correcting producer; parent flagged F's absent actual unbound
+book/retire caller and causal publication attestation. Runtime must consume
+positive books/account IDs/DB fences/token/owned-row proof, not helper mocks.
+Actual Webull synthetic never-submitted-coid HTTP200/empty-byte probe is not
+historical FLYE proof; unbound acquisition must rely on both complete books.
+No order/service/env/DB/Redis write;19:30 status/20READY conditional.
