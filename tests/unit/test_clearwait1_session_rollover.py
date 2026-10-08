@@ -2,7 +2,7 @@
 import asyncio
 import json
 import threading
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -15,6 +15,9 @@ from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from project_mai_tai.cancel_terminal_proof import (
+    CancelReceipt, CancelScope, CancelTerminalEvidence, CompleteWorkingBook,
+)
 from project_mai_tai.db.models import (
     Base, BrokerAccount, BrokerOrder, DashboardSnapshot, OmsManagedPosition, Strategy, TradeIntent,
 )
@@ -97,19 +100,57 @@ def seed(db, req, receipts=True):
                          "opportunity_id": str(req.opportunity_id), "kind": "begin",
                          "account_names": list(req.account_names)}))
             for name in req.account_names:
+                account_id = session.get(BrokerAccount, ids[name]).external_account_id
+                assert account_id
+                md = {"clearwait_removal_token": req.token, "clearwait_opportunity_id": str(req.opportunity_id),
+                      "clearwait_buy_only": "true", "reason": ("retry_budget_exhausted"
+                          if req.purpose == "retry_exhausted" else "watchlist-removed"),
+                      "fanout_segment_id": str(req.opportunity_id), "fanout_slot": "resting",
+                      "fanout_slot_id": fanout_slot_id(strategy_code="schwab_1m_v2",
+                          symbol=req.symbol, segment_id=req.opportunity_id, slot="resting"),
+                      "target_client_order_id": f"controlled-opening-{name}-{req.token}"}
+                scope = CancelScope(name, account_id, req.symbol, md["target_client_order_id"], str(uuid4()))
+                receipt = CancelReceipt(scope, req.requested_at_ms, "cancelled", "", "")
+                binding = {"scope": asdict(scope), "broker_order_id": "", "purpose": md["reason"],
+                           "token": req.token, "generation": str(req.opportunity_id)}
+                proof = CancelTerminalEvidence(receipt, None, source="broker", target_status="cancelled",
+                    target_observed_at_ms=req.requested_at_ms, target_client_order_id=scope.client_order_id,
+                    target_symbol=req.symbol, target_account_id=account_id, target_filled_quantity="0")
                 session.add(TradeIntent(strategy_id=strategy_id, broker_account_id=ids[name],
                     symbol=req.symbol, side="buy", intent_type="cancel", quantity=100,
-                    reason="controlled canonical receipt", status="rejected", created_at=at, updated_at=at,
-                    payload={"refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found",
-                             "metadata": {"clearwait_removal_token": req.token,
-                                          "clearwait_opportunity_id": str(req.opportunity_id),
-                                          "clearwait_buy_only": "true",
-                                          "reason": "retry_budget_exhausted",
-                                          "fanout_segment_id": str(req.opportunity_id),
-                                          "fanout_slot": "resting",
-                                          "fanout_slot_id": fanout_slot_id(strategy_code="schwab_1m_v2",
-                                              symbol=req.symbol, segment_id=req.opportunity_id, slot="resting")}}))
+                    reason="controlled canonical broker receipt", status="cancelled", created_at=at, updated_at=at,
+                    payload={"event_id": scope.event_id, "metadata": md, "cancel_target_binding": binding,
+                        "cancel_terminal_evidence": {"binding": binding, "evidence": asdict(proof)}}))
         session.commit()
+
+
+@pytest.mark.parametrize("elapsed_ms", [0, 1000, 15000, 16000])
+@pytest.mark.parametrize("source", ["broker_terminal", "complete_book"])
+def test_shared_stored_receipt_clock_boundary(db, elapsed_ms, source):
+    store, sessions, _, _ = db
+    req = replace(request(), requested_at_ms=ms(NOW))
+    seed(db, req)
+    if source == "complete_book":
+        with sessions() as session:
+            for intent in session.scalars(select(TradeIntent)).all():
+                p = dict(intent.payload)
+                scope = CancelScope(**p["cancel_target_binding"]["scope"])
+                receipt = CancelReceipt(scope, ms(NOW), "rejected", "skipped_before_submit",
+                                        "cancel_target_not_found")
+                book = CompleteWorkingBook(scope.account_name, scope.account_id, ms(NOW), ms(NOW),
+                                           True, "all_working", (), "broker")
+                evidence = CancelTerminalEvidence(receipt, book, source="broker")
+                p.update(refusal_origin=receipt.refusal_origin, refusal_code=receipt.refusal_code,
+                    cancel_terminal_evidence={"binding": p["cancel_target_binding"],
+                                              "evidence": asdict(evidence)})
+                session.execute(update(TradeIntent).where(TradeIntent.id == intent.id).values(
+                    status="rejected", payload=p, updated_at=NOW))
+            session.commit()
+    proof, = store.proofs((req,), ACCOUNTS, now=NOW + timedelta(milliseconds=elapsed_ms))
+    expected = source == "broker_terminal" or elapsed_ms <= 15000
+    assert proof.clear is expected
+    if not expected:
+        assert proof.reason == "book_stale_or_pre_cancel"
 
 
 @pytest.mark.parametrize("purpose", ["scanner_removal", "retry_exhausted"])
