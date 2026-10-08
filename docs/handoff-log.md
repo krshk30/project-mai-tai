@@ -8189,3 +8189,23 @@ not age. Writer16 F1 plus2 rollover mutants assertionRED in committed receipts.
 New full-suite/CI still pending; old3f8 results not reused. PostgreSQL runtime
 advisory-lock integration remains UNMEASURED. Sent H/F purpose-agnostic barrier
 integration contract; no cross-branch source edits or production action.
+
+2026-10-08 13:05 ET codex-2 C41: G follow-up906944bdd352ad9fdaabdaaa9581eb21885de3a5
+is clean/pushed; parent161 focusedPASS23.57s, raw
+/tmp/mirrorholdG-parent-906944bd-focused.xml. Hosted Validate37809113172 and
+37809113601 SUCCESS; no pin yet. Writer268 focused/neighbor PASS plus13/13
+green-baseline/assertion-RED mutants and actual READ ONLY PostgreSQL predicate.
+New full /tmp/mirrorholdG-queue-head-unit.xml49 failed/7765 passed/55 skipped;
+added cron portability and NFQ2 sustained-loop timing, baseline HOTFIX-off
+missing. Equal counts or isolated passes are not full failed-name parity.
+H first runtime focus378 PASS4.97s, but full candidate PID13322 exceeded26min;
+parent sampled it non-destructively at12:59 in
+/tmp/falseflip1-parent-full-process-sample.txt and directed ONLY its writer to
+inspect/stop the owned test. PartialXML6232 cases72 failures/55 skipped is not
+a full receipt. Files changed while the process had imported old line numbers;
+source-inspection failures must be reproduced frozen, not patched blindly.
+The exact hanging node and final three-false/manual-stop/outcome controls remain
+with H sole writer. F frozenb235 full47/7835/55 zero added local names; both
+hosted Validate fail NFQ2 concurrent-quotes timing982.53/798.41ms against50ms.
+Same F writer investigating/rerunning with no threshold or source waiver.
+No parent source edits, production writes, pin or install readiness claim.
