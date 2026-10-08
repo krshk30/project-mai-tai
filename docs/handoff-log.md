@@ -8427,3 +8427,17 @@ HotfixPR1137 a02bb42bf107f69bcacc9a681f6fec94ae9cc45a: fourBigIntegercasts,
 fourint4mutation probes. Existing151corePASS/RuffPASS; bothValidate stillrunning,
 actualPG notyetmeasured. Reviewed/pinnedhead andgreenCI before nextdeploy.
 Sealedoldjob mustnotrerun; serviceskeptup, newhotfixpackage isolated.
+
+2026-10-08 16:54 ET codex-2 C58: actual PostgreSQL16 run37840191505 on
+hotfixa02: four positive epoch paths PASS; golden93PASS/1xfail/1FAIL, units
+8054PASS/55skip. The classifier int4 mutant correctly raised NumericValueOutOfRange
+but PostgreSQL's message differed from the regex. Successor5d17199c changes
+tests only, requiring SQLSTATE22003 and exact psycopg NumericValueOutOfRange.
+Parent independently verified source unchanged; both successor Validate still
+running, all8PG controls not yet verified. No READY/pin/merge/deploy claim.
+Existing sealedABORT remains immutable and services remain active.
+Repo audit151/153,0mismatch,2paperUNKNOWN measured. StaleBOXcatalog has7removed
+Settings fields; normalize to reviewed132row boolean inventory with common
+expected values unchanged and preserveBOXnumeric10/retry0. Expected153/155
+checked plus2UNKNOWN after normalization, not a live receipt yet. New separate
+OMS/v2 package in preparation, no staging, no schema/env/archived-row writes.
