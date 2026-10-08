@@ -39,6 +39,25 @@ ROW_LIMIT = 2048
 TERMINAL = frozenset({"cancelled", "canceled", "rejected", "expired"})
 
 
+def configured_removed_wait_bindings(adapter, account_names: Sequence[str]) -> dict[str, tuple[str, str]]:
+    """Expected identities come from configured adapters, never from book response content."""
+    from project_mai_tai.broker_adapters.cancel_terminal import broker_binding
+    from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+    from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+
+    result = {}
+    for name in account_names:
+        if not isinstance(name, str) or not name or name in result:
+            raise ValueError("removal account names unproven")
+        leaf, account_id = broker_binding(adapter, name)
+        provider = ("schwab" if isinstance(leaf, SchwabBrokerAdapter) else
+                    "webull" if isinstance(leaf, WebullBrokerAdapter) else "")
+        if not provider or not isinstance(account_id, str) or not account_id.strip():
+            raise ValueError("removal configured account unproven")
+        result[name] = (provider, account_id)
+    return result
+
+
 @dataclass(frozen=True)
 class RemovedWait:
     symbol: str
@@ -606,6 +625,7 @@ class RemovedWaitStore:
         self, requests: Sequence[RemovedWait], account_names: set[str], *,
         books: Mapping[str, CompleteWorkingBook | None],
         publication_closed: Mapping[RemovedWait, bool], now: datetime | None = None,
+        expected_bindings: Mapping[str, tuple[str, str]] | None = None,
     ) -> tuple[RemovedWaitProof, ...]:
         """Off-loop exact-request CAS; an empty DB is not a publication-drained witness."""
         observed = now or datetime.now(UTC)
@@ -616,9 +636,18 @@ class RemovedWaitStore:
                 accounts = session.scalars(select(BrokerAccount).where(
                     BrokerAccount.name.in_(account_names))).all()
                 ids = {a.id: a.name for a in accounts}
-                binding = {a.name: a.external_account_id or "" for a in accounts}
-                exact_accounts = (len(accounts) == len(account_names) == len(request.account_names)
-                                  and set(binding) == account_names == set(request.account_names))
+                configured = (dict(expected_bindings) if expected_bindings is not None else
+                              {a.name: (a.provider, a.external_account_id or "") for a in accounts})
+                valid_bindings = all(isinstance(v, tuple) and len(v) == 2
+                    and v[0] in {"schwab", "webull"} and isinstance(v[1], str) and bool(v[1].strip())
+                    for v in configured.values())
+                binding = {name: value[1] for name, value in configured.items()} if valid_bindings else {}
+                exact_accounts = (valid_bindings
+                    and len(accounts) == len(account_names) == len(request.account_names)
+                    and set(configured) == account_names == set(request.account_names)
+                    and all(a.provider == configured[a.name][0]
+                        and (a.external_account_id is None or a.external_account_id == configured[a.name][1])
+                        for a in accounts))
                 latest = session.scalar(select(DashboardSnapshot).where(
                     DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
                     DashboardSnapshot.payload["symbol"].as_string() == request.symbol,

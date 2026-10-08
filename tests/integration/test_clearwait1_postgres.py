@@ -18,7 +18,7 @@ from tests.integration.test_falseflip1_postgres_epochs import postgres_factory  
 from tests.unit.test_clearwait1_session_rollover import (
     ACCOUNTS, NOW, PRIMARY, RAW, WEBULL, ms, recorded_request, request, seed, service, strategy,
 )
-from tests.unit.test_clearwait1_unbound import NOW as UNBOUND_NOW, controlled_books
+from tests.unit.test_clearwait1_unbound import NOW as UNBOUND_NOW, configured_control, controlled_books
 
 
 @pytest.fixture
@@ -142,6 +142,14 @@ def test_pg_unbound_dki_control_commits_exact_inactive_token(pg_db):
     proof = unbound_control(pg_db, req)
     assert proof.clear and proof.reason == "unbound_symbol_terminal"
     assert not pg_db[0].restore() and pg_db[0].restore_terminal_proofs() == (proof,)
+
+
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("case", ["null", "retained_mismatch", "provider_mismatch",
+                                 "configured_provider_mismatch", "book_identity_mismatch"])
+def test_pg_nullable_config_binding_and_mismatch_controls(pg_db, account, case):
+    proof = configured_control(pg_db, recorded_request("DKI"), account, case)
+    assert proof.clear is (case == "null")
 
 
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL])
