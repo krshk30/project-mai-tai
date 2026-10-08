@@ -8594,3 +8594,17 @@ coalesced actual-account complete books percycle with15sfresh/postrequest fences
 F consumes pendingrequestbatch once, not repeated per-request periodicfullreads.
 Public official Schwab GET quota unreadable;120/min not a verified safety claim.
 PRbody needs exactcurrenthead/cost/unknowns; no evidence docs or production edits.
+
+2026-10-08 19:41 ET codex-2 C69: BEFORE building revised Schwab local proof,
+own source answer YES: ordinary v2 first-rest/reactive and ORB-Schwab BUY
+can reachbroker without a committedBrokerOrder; TradeIntent add/flush is
+also uncommitted. service2472-2482 pre-wire pendingcommit is conditional
+RPG/NFQretry/deferred/retained-mirror only; ordinary2494wire precedes2497
+reports/15450rowcreation and2540finalcommit. BUYwatchdogreplacement17091
+also precedes17106newrowreports, although prior workingrow usually blocks.
+Shared/F informed BEFORE build: empty independent DB is not no-wire proof;
+affected unsafepaths UNKNOWN, exact positive local no-dispatch plus causal
+fences only, no fabricated complete Schwab book or unrelated prewire rewrite.
+Webullbook stays background/shared15s with postrequesttime and token/DBfences.
+Runtime/PG replays and <50ms exit/quote hanging-read proof still owed.
+No production action, revised hybrid head pending, Friday15 target unchanged.
