@@ -7872,3 +7872,16 @@ Receipt-only head00bd0c64325ec25c11642d913c4a0ae2b35aad0f pushed.
 Final-source resets/wait/seed-long/carry mutations RED65/22/6/28/2;
 focus230PASS/55SKIP, original gap controls34PASS, Ruff clean.
 CI/reviewer pin pending, population retention limits disclosed; no production action.
+
+2026-10-08 07:23 ET codex-2: WBQUIET1 DATA #1124 final docs head
+b40212e420ea3eb6312ab47df83aa6bb2042daf1 over frozen ce3b51a3 source.
+Main47FAIL/7491PASS versus head47FAIL/7535PASS, identical failed names;
+294focusedPASS/Ruff clean. The observer has three sync-call tags, not a
+60-second post-commit downstream-consumption window. Independent read-only
+audit confirms draft-only coverage; no zero-impact or exact saved-call claim.
+Source acquisition attribution and untagged/external readers require bounded
+generation instrumentation; historical absent bodies remain UNMEASURED.
+One hosted Validate pass; other rerun pending after existing NFQ2 duplicate
+quote benchmark744ms vs50ms failed, threshold unchanged and no CI-cause claim.
+Friday17:00ET one-shot wbquiet1-friday-evidence-report scheduled, no box job.
+No production read/write, service action, merge/pin/deploy or behavior change.
