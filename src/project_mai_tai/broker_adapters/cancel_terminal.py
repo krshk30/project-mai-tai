@@ -69,6 +69,33 @@ class _TargetNotFound(ValueError):
     """Only a structured venue ORDER_NOT_FOUND, never malformed/empty detail."""
 
 
+def _webull_book_row(row: dict, account_id: str) -> BookOrder:
+    # Official v2 TradeClient.getOpenedOrders returns Orders<ComboOrder> for US:
+    # identity is on the parent and symbol/status/side are in its items.
+    items = row.get("items") if "items" in row else [row]
+    if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+        raise ValueError("open_book_legs_unknown")
+    item = items[0]
+    if item.get("account_id", account_id) != account_id:
+        raise ValueError("open_book_leg_account_unknown")
+    coid, broker_id = row.get("client_order_id", ""), row.get("order_id", "")
+    symbol = item.get("symbol")
+    status = _status(item.get("order_status", item.get("status", "")))
+    side = item.get("side", "unknown")
+    side = side.lower() if isinstance(side, str) else "unknown"
+    if (not isinstance(coid, str) or not isinstance(broker_id, str) or not (coid or broker_id)
+            or not isinstance(symbol, str) or not symbol
+            or status not in {"working", "pending", "pending_cancel", "pending_replace",
+                              "partially_filled", "accepted", "new"} | TERMINAL | {"filled"}):
+        raise ValueError("open_book_row_unknown")
+    if item is not row and any(k in row and row[k] != item.get(k)
+                              for k in ("symbol", "side", "order_status", "status")):
+        raise ValueError("open_book_parent_leg_conflict")
+    if status in TERMINAL and not _zero(item.get("filled_qty")):
+        raise ValueError("open_book_terminal_fills_unknown_or_present")
+    return BookOrder(coid, symbol, status, side, broker_id)
+
+
 def _webull_book(
     leaf: WebullBrokerAdapter, account_name: str, account_id: str,
 ) -> CompleteWorkingBook:
@@ -77,7 +104,7 @@ def _webull_book(
 
     started = now_ms()
     orders: list[BookOrder] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     cursors: set[str] = set()
     cursor = ""
     for _ in range(20):
@@ -106,19 +133,14 @@ def _webull_book(
         for row in rows:
             if not isinstance(row, dict) or row.get("account_id", account_id) != account_id:
                 raise ValueError("open_book_row_account_unknown")
-            coid, symbol = row.get("client_order_id"), row.get("symbol")
-            status = _status(row.get("order_status", row.get("status", "")))
-            if (not isinstance(coid, str) or not coid or coid in seen
-                    or not isinstance(symbol, str) or not symbol
-                    or status not in {"working", "pending", "pending_cancel", "pending_replace",
-                                      "partially_filled", "accepted", "new"} | TERMINAL | {"filled"}):
-                raise ValueError("open_book_row_unknown")
-            if status in TERMINAL and not _zero(row.get("filled_qty")):
-                raise ValueError("open_book_terminal_fills_unknown_or_present")
-            seen.add(coid)
-            side = row.get("side", "unknown")
-            side = side.lower() if isinstance(side, str) else "unknown"
-            orders.append(BookOrder(coid, symbol, status, side))
+            order = _webull_book_row(row, account_id)
+            identity = order.client_order_id, order.broker_order_id
+            if any((order.client_order_id and order.client_order_id == coid)
+                   or (order.broker_order_id and order.broker_order_id == broker_id)
+                   for coid, broker_id in seen):
+                raise ValueError("open_book_duplicate_order")
+            seen.add(identity)
+            orders.append(order)
         if not flags[0]:
             return CompleteWorkingBook(account_name, account_id, started, now_ms(),
                                        True, "all_working", tuple(orders), "broker")
