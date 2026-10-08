@@ -1,0 +1,9 @@
+{
+  "pr_number": 1124,
+  "range_base": "d244f602491e5d316a05670b205315466aed2a4d",
+  "range_head": "b40212e420ea3eb6312ab47df83aa6bb2042daf1",
+  "reviewed_at": "2026-10-08T12:00:07Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "WBQUIET1 shadow log (operator 10-08 ~07:0x: \"gather more data today and tomorrow, decide this weekend\"): data-only. On every periodic OMS broker-sync pass the shadow classifier samples, off-loop (asyncio.to_thread, 50 ms wait with shield; read-only DB session with 100 ms statement timeout / 25 ms lock timeout; Webull accounts only, bounded), what cadence rule A would have done (held / working / fresh-fill / flat / overnight \u2192 read or skip) and which readers consumed the pass (sync_account_positions, virtual_clear, virtual_restore instrumented), and emits one [WBQUIET-SHADOW] JSON line per pass. No behaviour change: the sync cadence, reads, cancels and every decision path are untouched (service.py diff = context-var set/reset + note_* hooks, 21 lines). Reviewed by claude-1 against the ask ledger (2 blocks): [DELIVERED] per-pass hypothetical read/skip with cadence state; [PARTIAL] reader-consumed-within-60-s coverage \u2014 the reconcile tri-state read (:12953), the :15325 snapshot read, RESERVE1's bracket-note renewal and the ORB reads are not yet instrumented (codex states this; follow-up tomorrow morning so the weekend read has them); [NOT IN THIS PR, by design] the history replay for A/B/C is codex's Friday report. Tests: 44 focused passed; full unit suite failed-name set identical to base (my run); CI: one validate run failed on the known flaky timing test (test_nfq2_hotfix1_combined_proof slow-eligible persistence), the parallel run passed. Hot path: per sync pass (15 s), not per tick; bounded by the 50 ms wait (drops the sample, never the pass). Install: OMS restart after the close with the other items; no flag."
+}
