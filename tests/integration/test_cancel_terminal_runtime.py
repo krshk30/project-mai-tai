@@ -388,7 +388,7 @@ async def test_schwab_exact_target_receipt_without_relabelled_account_list(sessi
         session.commit()
     await journal.acquire_cancel_terminal_evidence(sessions, leaf, [intent_id])
     assert read(sessions, intent_id)[1].terminal
-    request = await asyncio.to_thread(journal._read_request, sessions, intent_id)
+    request = await asyncio.to_thread(journal._read_request, sessions, intent_id, leaf)
     assert calls == [("GET", "/trader/v1/accounts/ACC1/orders/broker-id")]
     unknown = await broker.acquire_broker_cancel_evidence(leaf, request.receipt)
     assert not evaluate_cancel_terminal(request.receipt, unknown, now_ms=NOW).terminal
