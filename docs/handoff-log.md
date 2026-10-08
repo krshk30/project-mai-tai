@@ -7964,3 +7964,13 @@ greenandzeroharnesserrors. Fullheadpair/CIpending; historical35bar/11probe
 morningdataset cannotcertify60probeacceptance. Noactivationreadinessclaim.
 GAPexplicitreason/token/revisiondedupcoexistswithLINEretry/inflightbudget,
 04anchor/cleanbarwait/lateflipfencesretained. A/C/D/E/Fcontinueisolated.
+
+2026-10-08 09:14 ET codex-2 C15: exact-main1e15adb0 unit baseline finished
+48failed/7674passed/55skipped in606.61s in detached real Git worktree,
+XML /tmp/five-lane-main-1e15adb0-unit.xml. Failed-name hash
+e0b9fc7478ff484d88d9882194d3525632c0d2d43353d515b28f63a28464e9a9.
+Actual host timing failures retained, not assumed equivalent or waived.
+All six sole writers received the same receipt; head pairings remain pending.
+LaneF boot retirement must precede stale barrier publication, use durable
+exact-token proof/CAS and guard against in-flight emits/new same-symbol requests;
+session-rollover is not hours expiry. No production writes.
