@@ -451,15 +451,25 @@ async def test_offloop_v2_nested_items_book_for_approved_unbound_rule(sessions, 
         assert session.execute(text("SELECT CAST(:epoch AS bigint)"), {"epoch": request.requested_at_ms}).scalar_one() == NOW - 1000
 
 
-@pytest.mark.parametrize("status,origin,code,terminal", [
-    ("rejected", "client", "cancel_target_not_found", True),
-    ("rejected", "skipped_before_submit", "", True),
-    ("pending", "skipped_before_submit", "cancel_target_not_found", False),
-    ("rejected", "broker_reject", "cannot_cancel", False),
+@pytest.mark.parametrize("status,origin,code,book_case,terminal", [
+    ("rejected", "client", "cancel_target_not_found", "empty", True),
+    ("rejected", "skipped_before_submit", "", "empty", True),
+    ("rejected", "client", "cancel_target_not_found", "working", False),
+    ("rejected", "client", "cancel_target_not_found", "timeout", False),
+    ("pending", "skipped_before_submit", "cancel_target_not_found", "empty", False),
+    ("rejected", "broker_reject", "cannot_cancel", "empty", False),
 ])
 @pytest.mark.asyncio
-async def test_measured_empty_detail_needs_exact_local_refusal_and_fresh_book(sessions, sdk, status, origin, code, terminal):
+async def test_measured_empty_detail_needs_exact_local_refusal_and_fresh_book(sessions, sdk, status, origin, code, book_case, terminal):
     client = Client(detail=EMPTY_DETAIL)
+    if book_case == "working":
+        client.pages = [{"hasNext": False, "orders": [{"client_order_id": "operator-buy",
+            "symbol": "DKI", "status": "working", "side": "BUY"}]}]
+    if book_case == "timeout":
+        def timeout():
+            if client.calls[-1][0] == "open":
+                raise TimeoutError("controlled book timeout")
+        client.on_read = timeout
     routed = adapter(client)
     intent_id = seed(sessions, routed)
     with sessions() as session:
@@ -470,4 +480,5 @@ async def test_measured_empty_detail_needs_exact_local_refusal_and_fresh_book(se
         session.commit()
     await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
     assert read(sessions, intent_id)[1].terminal is terminal
-    assert [kind for kind, _, _ in client.calls] == (["detail", "open"] if terminal else ["detail"])
+    eligible = status == "rejected" and (code == "cancel_target_not_found" or origin == "skipped_before_submit")
+    assert [kind for kind, _, _ in client.calls] == (["detail", "open"] if eligible else ["detail"])

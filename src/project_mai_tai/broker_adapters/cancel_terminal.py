@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from time import time_ns
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
@@ -160,21 +161,103 @@ def _webull_book(
 async def acquire_complete_working_book(adapter, account_name: str) -> CompleteWorkingBook | None:
     """One uncached account acquisition; absence is not a no-dispatch/cancel proof.
 
-    No client identity is invented for a never-dispatched request. Unsupported
-    account-book capabilities, including Schwab's capped listing, remain UNKNOWN.
+    No client identity is invented for a never-dispatched request. Failed,
+    capped, or malformed acquisitions remain UNKNOWN.
     """
     try:
         leaf, account_id = broker_binding(adapter, account_name)
         if isinstance(leaf, WebullBrokerAdapter):
             return await asyncio.to_thread(_webull_book, leaf, account_name, account_id)
+        if isinstance(leaf, SchwabBrokerAdapter):
+            return await _schwab_book(leaf, account_name, account_id)
     except Exception:
         pass
     return None
 
 
+async def _schwab_book(leaf, account_name: str, account_id: str) -> CompleteWorkingBook:
+    """365-day equity coverage under the explicitly approved below-cap contract.
+
+    Include terminal roots: a FILLED entry can still own an active BUY child.
+    No partial result survives an unreadable/capped status or the global bound.
+    """
+    started = now_ms()
+    end = datetime.fromtimestamp(started / 1000, UTC)
+    orders: dict[str, BookOrder] = {}
+    seen_trees: dict[str, dict] = {}
+    statuses = (leaf.ACCEPTED_STATUSES | {"AWAITING_STOP_CONDITION", "AWAITING_UR_OUT", "UNKNOWN"}
+                | leaf.FILLED_STATUSES | (leaf.CANCELLED_STATUSES - {"CANCELLED"}) | leaf.REJECTED_STATUSES)
+
+    def walk(row, depth=0):
+        if not isinstance(row, dict) or depth > 20:
+            raise ValueError("schwab_book_tree_unknown")
+        oid = row.get("orderId")
+        if type(oid) not in {str, int} or not str(oid):
+            raise ValueError("schwab_book_order_identity_unknown")
+        if str(oid) in seen_trees:
+            if seen_trees[str(oid)] != row:
+                raise ValueError("schwab_book_order_changed_during_acquisition")
+            return
+        seen_trees[str(oid)] = row
+        children = row.get("childOrderStrategies", [])
+        legs = row.get("orderLegCollection", [])
+        if not isinstance(children, list) or not isinstance(legs, list):
+            raise ValueError("schwab_book_legs_unknown")
+        raw = row.get("status")
+        if raw in leaf.ACCEPTED_STATUSES | {"AWAITING_STOP_CONDITION", "AWAITING_UR_OUT"}:
+            status = "working"
+        else:
+            status = _status(raw)
+        if status not in TERMINAL | {"filled", "partially_filled", "working", "replaced"}:
+            raise ValueError("schwab_book_status_unknown")
+        if legs:
+            if len(legs) != 1 or not isinstance(legs[0], dict):
+                raise ValueError("schwab_book_multileg_unknown")
+            leg = legs[0]
+            instrument = leg.get("instrument")
+            coid = row.get("clientOrderId", "")
+            side = {"BUY": "buy", "SELL": "sell"}.get(leg.get("instruction"), "unknown")
+            if (not isinstance(instrument, dict) or instrument.get("assetType") != "EQUITY"
+                    or not isinstance(instrument.get("symbol"), str) or not instrument["symbol"]
+                    or not isinstance(coid, str) or side == "unknown"):
+                raise ValueError("schwab_book_identity_or_side_unknown")
+            if status != "replaced":
+                orders[str(oid)] = BookOrder(coid, instrument["symbol"], status, side, str(oid))
+        elif not children:
+            raise ValueError("schwab_book_empty_order_unknown")
+        for child in children:
+            walk(child, depth + 1)
+
+    async with asyncio.timeout(15):
+        for root_status in sorted(statuses):
+            params = urlencode({"fromEnteredTime": (end - timedelta(days=365)).isoformat(),
+                                "toEnteredTime": end.isoformat(), "maxResults": 3000,
+                                "status": root_status})
+            code, _headers, rows = await leaf._authorized_request_json(
+                "GET", f"/trader/v1/accounts/{quote(account_id, safe='')}/orders?{params}")
+            if code != 200 or not isinstance(rows, list) or len(rows) >= 3000:
+                raise ValueError("schwab_book_unreadable_or_capped")
+            for row in rows:
+                if not isinstance(row, dict) or row.get("status") != root_status:
+                    raise ValueError("schwab_book_filter_mismatch")
+                walk(row)
+    finished = now_ms()
+    if not started <= finished <= started + 15_000:
+        raise ValueError("schwab_book_acquisition_stale")
+    return CompleteWorkingBook(account_name, account_id, started, finished, True,
+                               "all_working", tuple(orders.values()), "broker")
+
+
 async def acquire_request_working_books(adapter, account_names) -> dict[str, CompleteWorkingBook | None]:
-    """Explicit per-request acquisition only; unsupported accounts stay present as UNKNOWN."""
-    return {name: await acquire_complete_working_book(adapter, name) for name in account_names}
+    """Explicit per-request acquisition with one shared 15-second read bound."""
+    books = dict.fromkeys(account_names)
+    try:
+        async with asyncio.timeout(15):
+            for name in books:
+                books[name] = await acquire_complete_working_book(adapter, name)
+    except TimeoutError:
+        pass
+    return books
 
 
 def _webull_target(leaf: WebullBrokerAdapter, receipt: CancelReceipt, broker_order_id: str):
@@ -260,6 +343,14 @@ async def acquire_broker_cancel_evidence(
             return evidence
         status = _status(body.get("status", ""))
         filled = "0" if _zero(body.get("filledQuantity")) else "unknown_or_present"
+    elif isinstance(leaf, SchwabBrokerAdapter):
+        if receipt.status != "rejected" or not (
+            receipt.refusal_code == "cancel_target_not_found"
+            or receipt.refusal_origin == "skipped_before_submit"
+        ):
+            return evidence
+        book = await acquire_complete_working_book(adapter, receipt.scope.account_name)
+        return replace(evidence, book=book, source="broker" if book is not None else "unknown")
     if status:
         return replace(evidence, source="broker", target_status=status,
                        target_observed_at_ms=now_ms(), target_client_order_id=receipt.scope.client_order_id,
