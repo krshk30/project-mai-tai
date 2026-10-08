@@ -359,3 +359,45 @@ def test_empty_orb_owner_replacement_preserves_live_owner_and_migration_marker(m
         }
 
     asyncio.run(exercise())
+
+
+def test_retired_paper_unit_is_not_a_restart_or_readiness_dependency():
+    from ops.health import v2_restart_evidence as evidence
+
+    root = Path(__file__).parents[2]
+    assert "orb" not in evidence.DEFAULT_SERVICES
+    assert "orb" not in evidence.KNOWN_SERVICES
+    for name in ["restart_all.sh", "status.sh", "deploy_main.sh", "install_units.sh"]:
+        source = (root / "ops/systemd" / name).read_text()
+        assert "project-mai-tai-orb.service" not in source
+    readiness = (root / "ops/health/preopen_readiness_check.py").read_text()
+    assert 'hbs.get("orb-schwab")' in readiness
+    assert 'orb_states.get("orb")' not in readiness
+
+
+def test_live_start_subscribes_without_a_paper_process_or_owner(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from project_mai_tai.events import MarketDataSubscriptionEvent
+    from tests.unit.test_coldstart1_subscriptions import BootComplete, RedisReplay
+
+    async def exercise():
+        redis = RedisReplay()
+        svc = OrbSchwabService(
+            settings=Settings(redis_stream_prefix="test", orb_enabled=True,
+                              orb_live_schwab_orders_enabled=True,
+                              market_data_subscription_startup_enabled=True),
+            redis_client=redis, session_factory=lambda: None,
+        )
+        monkeypatch.setattr(svc, "_maybe_roll_session", lambda: None)
+        monkeypatch.setattr(svc, "_refresh_universe", lambda: svc._universe.update({"AIXI", "DKI"}))
+        monkeypatch.setattr(svc, "_drain_market_data", AsyncMock(side_effect=BootComplete))
+        monkeypatch.setattr("project_mai_tai.services.orb_schwab_app.open_entries", lambda *_args: [])
+        with pytest.raises(BootComplete):
+            await svc.run()
+        event = MarketDataSubscriptionEvent.model_validate_json(redis.entries[0][1]["data"])
+        assert event.payload.consumer_name == "orb-schwab"
+        assert event.payload.symbols == ["AIXI", "DKI"]
+        assert "orb" not in redis.hashes.get("test:market-data-subscription-owners", {})
+
+    asyncio.run(exercise())

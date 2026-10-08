@@ -9,7 +9,10 @@ Sections: (1) Schwab token SPOF  (2) services  (3) heartbeats/zombie
 (4) bar flow (v2 + ORB, time-aware)  (5) watchlists + protected config
 (6) data_health.  Run as `trader` (calls sudo internally for root logs/env).
 """
-import subprocess, json, time, sys
+import json
+import subprocess
+import sys
+import time
 from datetime import datetime, timezone, timedelta
 
 ET = timezone(timedelta(hours=-4))          # EDT (summer). July 2026 = EDT.
@@ -25,9 +28,13 @@ def sh(cmd):
 
 def ok(msg):   print(f"  [ OK ] {msg}")
 def warn(msg):
-    global WARN; WARN += 1; print(f"  [WARN] {msg}")
+    global WARN
+    WARN += 1
+    print(f"  [WARN] {msg}")
 def bad(msg):
-    global FAIL; FAIL += 1; print(f"  [FAIL] {msg}")
+    global FAIL
+    FAIL += 1
+    print(f"  [FAIL] {msg}")
 def info(msg): print(f"  [info] {msg}")
 
 def iso_age(s):
@@ -123,16 +130,7 @@ else:
 
 # ============================================================ (2) SERVICES
 print("\n(2) SERVICES  — systemd active state")
-# ORB readiness is conditional on the service being enabled. Its three
-# checks were still hard FAILs, so the whole verdict went RED — "DO NOT trust the open" — every
-# morning with nothing actually wrong. A pager that cries wolf daily is how a REAL red gets ignored,
-# so the ORB checks are conditional on the service being ENABLED. Broker registration is no
-# longer coupled to ORB; the enabled unit is now a broker-disconnected paper observer.
-ORB_DECOMMISSIONED = sh("systemctl is-enabled project-mai-tai-orb.service").strip() != "enabled"
-
-core = ["strategy", "oms", "market-data", "control", "reconciler", "schwab-1m-v2"]
-if not ORB_DECOMMISSIONED:
-    core.append("orb")
+core = ["strategy", "oms", "market-data", "control", "reconciler", "schwab-1m-v2", "orb-schwab"]
 aux = ["market-capture", "trade-coach"]
 for svc in core:
     st = sh(f"systemctl is-active project-mai-tai-{svc}.service").strip()
@@ -144,7 +142,7 @@ for svc in aux:
 # ============================================================ (3) HEARTBEATS
 print("\n(3) HEARTBEATS  — zombie check (active service must still beat)")
 hbs = latest_by("mai_tai:heartbeats", ["source_service"])
-expect_hb = ["strategy-engine", "oms-risk", "market-data-gateway", "reconciler", "schwab-1m-v2"]
+expect_hb = ["strategy-engine", "oms-risk", "market-data-gateway", "reconciler", "schwab-1m-v2", "orb-schwab"]
 for svc in expect_hb:
     d = hbs.get(svc)
     if not d:
@@ -153,7 +151,9 @@ for svc in expect_hb:
     age = iso_age(d["produced_at"])
     status = d.get("payload", {}).get("status", "?")
     m = f"{svc:22} {age:.0f}s ago  status={status}"
-    if age > 240:
+    if svc == "orb-schwab":
+        (ok if 0 <= age <= 60 and status == "healthy" else bad)(m + "  (live heartbeat bound=60s)")
+    elif age > 240:
         bad(m + "  (STALE — zombie?)")
     elif age > 90:
         warn(m)
@@ -164,18 +164,8 @@ for svc in expect_hb:
 # control: liveness via API
 code = sh("curl -s -o /dev/null -w %{http_code} http://localhost:8100/api/positions").strip()
 (ok if code == "200" else bad)(f"{'control (API)':22} HTTP {code}")
-# orb: liveness via isolated-state freshness
-orb_states = latest_by("mai_tai:strategy-state-isolated", ["payload", "strategy_code"], count=20)
-orb = orb_states.get("orb")
-if orb:
-    age = iso_age(orb["produced_at"])
-    disp = "just now" if age < 5 else f"{age:.0f}s ago"
-    (ok if age < 90 else warn if age < 240 else bad)(f"{'orb (iso-state)':22} {disp}")
-elif ORB_DECOMMISSIONED:
-    info(f"{'orb (iso-state)':22} n/a — ORB paper observer is disabled")
-else:
-    bad(f"{'orb (iso-state)':22} NO recent isolated-state")
-v2 = orb_states.get("schwab_1m_v2")
+isolated_states = latest_by("mai_tai:strategy-state-isolated", ["payload", "strategy_code"], count=20)
+v2 = isolated_states.get("schwab_1m_v2")
 
 # ============================================================ (4) BAR FLOW
 print("\n(4) BAR FLOW")
@@ -209,34 +199,16 @@ if v2:
 else:
     bad("v2 no isolated-state")
 # --- ORB (time-aware) ---
-if orb:
-    p = orb["payload"]
-    md_id = redis("XREVRANGE mai_tai:market-data + - COUNT 1").split("\n")[0].strip()
-    md_age = None
-    if "-" in md_id and md_id.split("-")[0].isdigit():
-        md_age = (time.time() * 1000 - int(md_id.split("-")[0])) / 1000
-    print(f"  ORB watchlist={p.get('watchlist')}  universe_size={p.get('data_health',{}).get('universe_size')}")
-    if md_age is not None:
-        (ok if md_age < 15 else warn if md_age < 60 else bad)(
-            f"gateway stream mai_tai:market-data newest tick {md_age:.0f}s old (ORB's feed)")
-    else:
-        warn("cannot read market-data stream age")
-    sub = sh("sudo grep 'ORB-GATEWAY-SUBSCRIBE' /var/log/project-mai-tai/orb.log | tail -1").strip()
-    subn = sub.split("symbols=")[-1] if "symbols=" in sub else "?"
+orb_live = hbs.get("orb-schwab")
+if orb_live:
+    details = orb_live.get("payload", {}).get("details", {})
+    print(f"  ORB Live universe={details.get('universe')} subscribed={details.get('subscribed')}")
     if not anchor_passed:
-        info(f"ORB bar-build starts at 09:25 anchor — no bars yet is EXPECTED "
-             f"(subscribed symbols={subn}). Confirm bars in the 09:25-09:29 window.")
-        ok("ORB alive + subscribed + gateway feeding it (pre-anchor readiness OK)")
+        info("ORB Live bar-build starts at 09:25 anchor; no bars before it is expected")
     else:
-        lta = p.get("last_tick_at", {})
-        if lta:
-            ok(f"ORB post-anchor last_tick_at present: {lta}")
-        else:
-            warn("ORB post-09:25 but no last_tick_at yet — watch bar-build now")
-elif ORB_DECOMMISSIONED:
-    info("ORB bar-flow n/a — paper observer is disabled")
+        info(f"ORB Live phase={details.get('phase')} last_bar_at={details.get('last_bar_at')}")
 else:
-    bad("ORB no isolated-state")
+    bad("ORB Live no heartbeat")
 
 # ============================================================ (5) WATCHLISTS + CONFIG
 print("\n(5) WATCHLISTS + PROTECTED CONFIG")
@@ -267,7 +239,7 @@ for svc in ["schwab-1m-v2", "oms"]:
 
 # ============================================================ (6) DATA_HEALTH
 print("\n(6) DATA_HEALTH")
-for name, st in [("v2", v2), ("orb", orb)]:
+for name, st in [("v2", v2)]:
     if not st:
         continue
     dh = st["payload"].get("data_health", {})
