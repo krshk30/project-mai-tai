@@ -44,6 +44,16 @@ def _status(value: object) -> str:
             "partial_fill": "partially_filled", "failed": "rejected"}.get(raw, raw)
 
 
+def _webull_response(leaf, request, *, endpoint: str, owner: str):
+    client = leaf._get_client()
+    # ApiClient defaults auto_retry=False. Refuse injected/unknown retry policies
+    # so one permit cannot hide multiple target endpoint HTTP attempts.
+    if getattr(client, "_auto_retry", None) is not False:
+        raise ValueError("sdk_retry_policy_unknown")
+    leaf._query_budget.claim(endpoint, owner, strict=True)
+    return client.get_response(request)
+
+
 def _webull_book(leaf: WebullBrokerAdapter, receipt: CancelReceipt) -> CompleteWorkingBook:
     # This SDK request is /trade/orders/list-open, never list-today or target cache.
     from webull.trade.request.get_open_orders_request import OpenOrdersListRequest
@@ -56,13 +66,18 @@ def _webull_book(leaf: WebullBrokerAdapter, receipt: CancelReceipt) -> CompleteW
     cursor = ""
     for _ in range(20):
         request = OpenOrdersListRequest()
+        if (request.get_action_name(), request.get_version(), request.get_method()) != (
+            "/trade/orders/list-open", "v2", "GET",
+        ):
+            raise ValueError("open_book_sdk_contract_unmeasured")
         request.set_account_id(scope.account_id)
         request.set_page_size(100)
         if cursor:
             request.set_last_client_order_id(cursor)
-        response = leaf._get_client().get_response(request)
+        response = _webull_response(leaf, request, endpoint="list-open", owner=scope.account_id)
         body = leaf._body(response)
-        if leaf._response_status(response) != 200 or not isinstance(body, dict):
+        if (leaf._response_status(response) != 200 or not isinstance(body, dict)
+                or body.get("error_code")):
             raise ValueError("open_book_unreadable")
         if body.get("account_id", scope.account_id) != scope.account_id:
             raise ValueError("open_book_account_mismatch")
@@ -70,7 +85,7 @@ def _webull_book(leaf: WebullBrokerAdapter, receipt: CancelReceipt) -> CompleteW
         if not flags or any(type(flag) is not bool or flag != flags[0] for flag in flags):
             raise ValueError("open_book_pagination_unknown")
         rows = body.get("orders")
-        if not isinstance(rows, list):
+        if not isinstance(rows, list) or len(rows) > 100:
             raise ValueError("open_book_rows_unknown")
         for row in rows:
             if not isinstance(row, dict) or row.get("account_id", scope.account_id) != scope.account_id:
@@ -105,7 +120,8 @@ def _webull_target(leaf: WebullBrokerAdapter, receipt: CancelReceipt, broker_ord
     request = OrderDetailRequest()
     request.set_account_id(scope.account_id)
     request.set_client_order_id(scope.client_order_id)
-    response = leaf._get_client().get_response(request)
+    response = _webull_response(leaf, request, endpoint="detail",
+                              owner=f"{scope.account_id}:{scope.client_order_id}")
     body = leaf._body(response)
     if leaf._response_status(response) != 200 or not isinstance(body, dict):
         raise ValueError("target_unreadable")
