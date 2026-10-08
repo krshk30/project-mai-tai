@@ -827,6 +827,7 @@ class OmsManagedPosition(Base):
     symbol: Mapped[str] = mapped_column(String(16), index=True)
     entry_order_id: Mapped[UUID | None] = mapped_column(Uuid(), nullable=True)
     entry_client_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    entry_classification: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     entry_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
     original_quantity: Mapped[int] = mapped_column(Integer)
     current_quantity: Mapped[int] = mapped_column(Integer)

@@ -70,6 +70,7 @@ from project_mai_tai.fanout_outcome_consumer import (
     identity_from_metadata,
 )
 from project_mai_tai.fanout_identity import fanout_slot_id
+from project_mai_tai.falseflip1_runtime import FalseFlipStore
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.v2_flip_entry_ownership import (
     FlipConfirmationClose,
@@ -788,6 +789,13 @@ class SchwabV2BotService:
             restored_retry_budgets=restored_retry_budgets,
             retry_budget_restore_readable=restore_readable,
         )
+        if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False):
+            try:
+                self._falseflip_store = FalseFlipStore(self.session_factory)
+                self.strategy.configure_falseflip(self._falseflip_store.restore(), readable=True)
+            except Exception:  # noqa: BLE001 - no unproved budget after restart
+                logger.exception("[V2-FALSE-FLIP] reason=budget_restore_unreadable")
+                self.strategy.configure_falseflip({}, readable=False)
 
     @property
     def streamer_enabled(self) -> bool:
@@ -1991,6 +1999,7 @@ class SchwabV2BotService:
         )
 
     async def _position_poll_pass(self) -> None:
+        await self._falseflip_poll()
         evaluate_gap_holds = getattr(self, "_evaluate_gap_holds", None)
         if callable(evaluate_gap_holds):
             await evaluate_gap_holds()
@@ -2759,6 +2768,9 @@ class SchwabV2BotService:
         retry_exit_rows: list[
             tuple[Fill, BrokerOrder, BrokerAccount, TradeIntent | None]
         ] = []
+        entry_classifications = {}
+        filled_opportunities = {}
+        closed_entry_rows = frozenset()
         try:
             with self.session_factory() as session:
                 rows = session.scalars(
@@ -2820,6 +2832,24 @@ class SchwabV2BotService:
                             unknown_opportunities=unknown_opportunities,
                         )
                     )
+                if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False):
+                    for row in [*rows, *closed_rows]:
+                        if isinstance(row.entry_classification, dict):
+                            entry_classifications.setdefault(row.symbol, []).append(dict(row.entry_classification))
+                    closed_entry_rows = frozenset((row.broker_account_name, str(row.id)) for row in closed_rows)
+                    entry_fills = session.execute(select(Fill, BrokerOrder, BrokerAccount)
+                        .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
+                        .join(BrokerAccount, BrokerAccount.id == Fill.broker_account_id)
+                        .join(Strategy, Strategy.id == Fill.strategy_id)
+                        .where(Strategy.code == STRATEGY_CODE, BrokerAccount.name.in_(accounts),
+                               Fill.side == "buy", Fill.filled_at >= session_start).limit(2049)).all()
+                    if len(entry_fills) > 2048:
+                        raise ValueError("false-flip filled-account census exceeds bound")
+                    for fill, order, account in entry_fills:
+                        md = order.payload or {}
+                        opportunity = int(md.get("fanout_segment_id", 0))
+                        if opportunity > 0:
+                            filled_opportunities.setdefault(order.symbol, set()).add((account.name, opportunity))
         except Exception:  # noqa: BLE001 - an unreadable owner is an entry refusal
             logger.exception(
                 "[V2-FLIP-OWNER-POSITION-BOOK] evaluated=0 known=0 unknown=1 "
@@ -2957,6 +2987,9 @@ class SchwabV2BotService:
             },
             closes_by_symbol=retry_closes_by_symbol,
             terminal_unfilled_opportunities_by_symbol=terminal_unfilled,
+            entry_classifications={key: tuple(value) for key, value in entry_classifications.items()},
+            filled_opportunities={key: tuple(value) for key, value in filled_opportunities.items()},
+            closed_entry_rows=closed_entry_rows,
         )
 
     def _terminal_unfilled_first_rest_opportunities(
@@ -5644,8 +5677,56 @@ class SchwabV2BotService:
 
         observed = getattr(self.strategy, "on_observed_bar", None)
         if callable(observed):
-            return observed(symbol, bar, observation_phase=observation_phase)
-        return self.strategy.on_bar(symbol, bar)
+            result = observed(symbol, bar, observation_phase=observation_phase)
+        else:
+            result = self.strategy.on_bar(symbol, bar)
+        if (getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False)
+                and observation_phase == "live"):
+            state = self.strategy._symbol_states.get(symbol.upper())
+            now_ms = self.strategy._now_ms()
+            if state is not None and now_ms >= bar.timestamp_ms + 60000:
+                pending = self.__dict__.setdefault("_falseflip_bars", {})
+                anchor_ms = session_start_ts_ms(now_ms)
+                for old in tuple(pending):
+                    if old[1] < anchor_ms:
+                        pending.pop(old)
+                delivered = self.__dict__.setdefault("_falseflip_delivered_bars", set())
+                delivered.intersection_update(key for key in delivered if key[1] >= anchor_ms)
+                key = (symbol.upper(), bar.timestamp_ms)
+                value = {"symbol": key[0], "bar_ms": key[1], "observed_at_ms": now_ms,
+                         "close": str(bar.close), "trail": str(state.atr_trail or 0),
+                         "state": str(state.atr_state), "phase": "live"}
+                if key not in delivered and (key in pending or len(pending) < 2048):
+                    pending[key] = value
+        return result
+
+    async def _falseflip_poll(self) -> None:
+        if not getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False):
+            return
+        for key, value in tuple(self.__dict__.get("_falseflip_bars", {}).items()):
+            try:
+                await self.intent_emitter.emit_entry_bar_close(value)
+            except Exception:  # noqa: BLE001 - retain undelivered evidence, never infer FALSE
+                logger.exception("[V2-FALSE-FLIP] sym=%s reason=bar_publish_failed", key[0])
+                break
+            self._falseflip_bars.pop(key, None)
+            self.__dict__.setdefault("_falseflip_delivered_bars", set()).add(key)
+        store = getattr(self, "_falseflip_store", None)
+        if store is not None:
+            for before, after in self.strategy.pending_falseflip_budgets():
+                try:
+                    await asyncio.to_thread(store.commit, before, after)
+                except Exception:  # noqa: BLE001 - pending budget remains an entry barrier
+                    logger.exception("[V2-FALSE-FLIP] sym=%s reason=budget_write_failed", before.symbol)
+                    break
+                self.strategy.acknowledge_falseflip_budget(before, after)
+        for request in self.strategy.pending_falseflip_cancel_publications():
+            try:
+                await asyncio.to_thread(self.strategy._removed_wait_persist, request, True)
+            except Exception:  # noqa: BLE001 - no cancel publication before its durable request
+                logger.exception("[V2-FALSE-FLIP] sym=%s reason=cancel_barrier_write_failed", request.symbol)
+                break
+            self.strategy.acknowledge_falseflip_cancel_publication(request)
 
     async def _drain_direct_strategy_intents(self) -> None:
         """Emit strategy-owned resting place/cancel queues without an entry-window gate.

@@ -128,7 +128,7 @@ def assess_removed_wait(
     ):
         return result("accounts_unreadable")
 
-    if request.purpose == "retry_exhausted":
+    if request.purpose in {"retry_exhausted", "false_flip_restore"}:
         # Cancellation-only receipt: historical fills stay owned. This proof must
         # never be used to retire the opportunity or grant another entry.
         if has_position:
@@ -168,7 +168,8 @@ def assess_removed_wait(
             if (intent.intent_type != "cancel" or not exact(md)
                     or str(md.get("clearwait_opportunity_id")) != str(request.opportunity_id)
                     or md.get("clearwait_buy_only") != "true"
-                    or md.get("reason") != "retry_budget_exhausted"
+                    or md.get("reason") != ("false_flip_restore" if request.purpose == "false_flip_restore"
+                                            else "retry_budget_exhausted")
                     or _utc(intent.created_at).timestamp() * 1000 < request.requested_at_ms):
                 return result("cancel_receipt_invalid")
             p = intent.payload or {}
@@ -185,7 +186,8 @@ def assess_removed_wait(
             receipts.add(account)
         if receipts != set(request.account_names):
             return result("waiting_for_all_cancel_receipts")
-        return result("retry_leftovers_cancelled_owner_kept", True)
+        return result("false_flip_leftovers_cancelled_owner_kept" if request.purpose == "false_flip_restore"
+                      else "retry_leftovers_cancelled_owner_kept", True)
     if request.purpose != "scanner_removal":
         return result("purpose_unreadable")
 
@@ -529,7 +531,7 @@ class RemovedWaitStore:
                 tuple(raw_accounts),
                 str(p.get("purpose", "scanner_removal")),
             )
-            if request.purpose not in {"scanner_removal", "retry_exhausted"}:
+            if request.purpose not in {"scanner_removal", "retry_exhausted", "false_flip_restore"}:
                 raise ValueError("invalid cancellation purpose")
             if request.opportunity_id < 0 or not request.token or request.requested_at_ms <= 0:
                 raise ValueError("invalid removal identity")
