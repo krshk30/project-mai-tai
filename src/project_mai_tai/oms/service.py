@@ -10350,7 +10350,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         except Exception:  # noqa: BLE001 - bookkeeping must never break the protective sync
             self.logger.exception("[OMS-OCO-EXIT-POLL] pass failed")
         position_summary = await self.sync_broker_positions(account_names=account_names)
-        if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False):
+        if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True:
             self._falseflip_signal().set()
         return {
             "accounts": position_summary["accounts"],

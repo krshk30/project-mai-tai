@@ -13,7 +13,7 @@ from sqlalchemy import func, select, tuple_, update
 from project_mai_tai.db.models import (
     BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition, Strategy,
 )
-from project_mai_tai.falseflip1 import EntryBarClose, EntryIdentity, classify_entry
+from project_mai_tai.falseflip1 import Classification, EntryBarClose, EntryIdentity, classify_entry
 from project_mai_tai.fanout_segment_store import current_session_anchor
 
 BAR_TYPE = "v2_falseflip_entry_bar"
@@ -165,13 +165,37 @@ def record_bar(session_factory, payload: dict, *, now: datetime | None = None) -
             DashboardSnapshot.created_at >= current_session_anchor(now),
             DashboardSnapshot.payload["symbol"].as_string() == bar.symbol,
             DashboardSnapshot.payload["bar_ms"].as_integer() == bar.bar_ms,
-        )).all()
+        ).limit(513)).all()
+        if len(rows) > 512:
+            raise ValueError("entry-bar proof census exceeds bound")
         evidence = {"symbol": bar.symbol, "bar_ms": bar.bar_ms, "close": str(bar.close),
                     "trail": str(bar.trail), "state": bar.state, "phase": "live"}
         if rows:
             if any({key: row.payload.get(key) for key in evidence} != evidence for row in rows):
                 for row in rows:
                     row.payload = {**row.payload, "conflicting": True}
+                # A late contradictory delivery must also revoke an earlier label.
+                # Retain the exact identity so v2 can fail closed for its budget episode.
+                managed = session.scalars(select(OmsManagedPosition).where(
+                    OmsManagedPosition.strategy_code == "schwab_1m_v2",
+                    OmsManagedPosition.entry_time >= current_session_anchor(now),
+                    OmsManagedPosition.symbol == bar.symbol,
+                    OmsManagedPosition.entry_classification["bar_ms"].as_integer() == bar.bar_ms,
+                ).limit(513).with_for_update()).all()
+                if len(managed) > 512:
+                    raise ValueError("entry-bar invalidation census exceeds bound")
+                orders = {order.id: order for order in session.scalars(select(BrokerOrder).where(
+                    BrokerOrder.id.in_([row.entry_order_id for row in managed]))) }
+                for row in managed:
+                    prior = Classification.from_payload(row.entry_classification)
+                    unknown = classify_entry(prior.identity, replace(prior.bar, state="unknown")).as_payload()
+                    order = orders.get(row.entry_order_id)
+                    if order is None or order.payload.get("entry_classification") != row.entry_classification:
+                        raise ValueError("entry-bar invalidation identity mismatch")
+                    session.execute(update(OmsManagedPosition).where(OmsManagedPosition.id == row.id).values(
+                        entry_classification=unknown, updated_at=OmsManagedPosition.updated_at))
+                    session.execute(update(BrokerOrder).where(BrokerOrder.id == order.id).values(
+                        payload={**order.payload, "entry_classification": unknown}, updated_at=BrokerOrder.updated_at))
                 session.commit()
             return
         session.add(DashboardSnapshot(snapshot_type=BAR_TYPE,

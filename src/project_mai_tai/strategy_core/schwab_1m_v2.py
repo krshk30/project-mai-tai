@@ -2093,7 +2093,7 @@ class SchwabV2Strategy:
         return False
 
     def _falseflip_enabled(self) -> bool:
-        return bool(getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False))
+        return getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is True
 
     def configure_falseflip(self, budgets: dict, *, readable: bool) -> None:
         self._falseflip_budgets = dict(budgets)
@@ -2146,10 +2146,20 @@ class SchwabV2Strategy:
         if not self._falseflip_enabled():
             return False
         key = (state.symbol, int(state.retry_one_segment_id))
+        budget = self._falseflip_budget(state)
+        book = getattr(self, "_falseflip_book", None)
+        if book is not None:
+            try:
+                for payload in book.entry_classifications.get(state.symbol, ()):
+                    if int(payload.get("opportunity_id", 0)) in budget.episodes:
+                        if Classification.from_payload(payload).kind != "FALSE_FLIP":
+                            return True
+            except (KeyError, TypeError, ValueError):
+                return True
         return bool(not getattr(self, "_falseflip_readable", False)
                     or not self._retry_one_enabled or not self._flip_owned_first_entry_enabled
                     or key in getattr(self, "_falseflip_pending", {})
-                    or self._falseflip_budget(state).skip_due
+                    or budget.skip_due
                     or key in getattr(self, "_falseflip_cross_high", set()))
 
     def _falseflip_cross(self, state: SymbolState, price: float, *, confirming: bool) -> bool:
@@ -2162,6 +2172,9 @@ class SchwabV2Strategy:
         if (not getattr(self, "_falseflip_readable", False) or not confirming
                 or not math.isfinite(price) or price <= 0 or trigger <= 0):
             return self._falseflip_entry_blocked(state)
+        # A sibling may still be wired until this exact episode's cancel receipt.
+        if budget.skip_due and budget.episodes[-1] not in budget.cancelled:
+            return True
         if price < trigger:
             # Duplicate quote/print/bar deliveries above the skipped level are not another cross.
             self._falseflip_cross_high.discard(key)

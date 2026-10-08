@@ -31,8 +31,8 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC and SPEC.loader
 STUDY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(STUDY)
-REPLAY = json.loads((ROOT / "docs/review-artifacts/falseflip1/"
-                     "STEP0_REPLAY_2026-10-08.json").read_text())
+REPLAY = json.loads((ROOT / "tests/fixtures/falseflip1/"
+                     "entry-cases-20261008.json").read_text())
 CASES = REPLAY["cases"]
 FALSE_SLOTS = sorted({row["slot"] for row in CASES
                       if row["classification"] == "FALSE_FLIP"})

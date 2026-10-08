@@ -789,7 +789,7 @@ class SchwabV2BotService:
             restored_retry_budgets=restored_retry_budgets,
             retry_budget_restore_readable=restore_readable,
         )
-        if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False):
+        if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is True:
             try:
                 self._falseflip_store = FalseFlipStore(self.session_factory)
                 self.strategy.configure_falseflip(self._falseflip_store.restore(), readable=True)
@@ -1999,7 +1999,10 @@ class SchwabV2BotService:
         )
 
     async def _position_poll_pass(self) -> None:
-        await self._falseflip_poll()
+        falseflip_poll = getattr(self, "_falseflip_poll", None)
+        if (getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is True
+                and callable(falseflip_poll)):
+            await falseflip_poll()
         evaluate_gap_holds = getattr(self, "_evaluate_gap_holds", None)
         if callable(evaluate_gap_holds):
             await evaluate_gap_holds()
@@ -2832,7 +2835,7 @@ class SchwabV2BotService:
                             unknown_opportunities=unknown_opportunities,
                         )
                     )
-                if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False):
+                if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True:
                     for row in [*rows, *closed_rows]:
                         if isinstance(row.entry_classification, dict):
                             entry_classifications.setdefault(row.symbol, []).append(dict(row.entry_classification))
@@ -5680,8 +5683,8 @@ class SchwabV2BotService:
             result = observed(symbol, bar, observation_phase=observation_phase)
         else:
             result = self.strategy.on_bar(symbol, bar)
-        if (getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False)
-                and observation_phase == "live"):
+        if (observation_phase == "live"
+                and getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is True):
             state = self.strategy._symbol_states.get(symbol.upper())
             now_ms = self.strategy._now_ms()
             if state is not None and now_ms >= bar.timestamp_ms + 60000:
@@ -5701,7 +5704,7 @@ class SchwabV2BotService:
         return result
 
     async def _falseflip_poll(self) -> None:
-        if not getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False):
+        if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is not True:
             return
         for key, value in tuple(self.__dict__.get("_falseflip_bars", {}).items()):
             try:
