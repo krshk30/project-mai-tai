@@ -2002,6 +2002,8 @@ class SchwabV2Strategy:
             and not open_positions
             and not state.flip_owner_fill_accounts
             and not state.flip_owner_position_ids
+            and state.position_qty == 0
+            and state.position_qty_held == 0
         ):
             recovered = self._retire_flip_owner_opportunity(
                 state,
@@ -2764,6 +2766,11 @@ class SchwabV2Strategy:
             )
             return
         if state.position_qty or state.position_qty_held:
+            if (phase in {"resting", "awaiting_fill"}
+                    and not state.flip_owner_fill_accounts and not state.flip_owner_position_ids
+                    and not state.flip_owner_open_positions and not state.position_qty_held):
+                self._set_flip_owner_unknown(state, reason="sell_flip_unfilled_waiting_for_terminal")
+                return
             state.flip_owner_phase = "awaiting_close"
             self._persist_flip_owner(state, active=True, reason="sell_flip_waiting_for_close")
             return
