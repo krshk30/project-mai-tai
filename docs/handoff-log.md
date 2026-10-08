@@ -8553,3 +8553,19 @@ positive books/account IDs/DB fences/token/owned-row proof, not helper mocks.
 Actual Webull synthetic never-submitted-coid HTTP200/empty-byte probe is not
 historical FLYE proof; unbound acquisition must rely on both complete books.
 No order/service/env/DB/Redis write;19:30 status/20READY conditional.
+
+2026-10-08 19:03 ET codex-2 C66: material status before19:30 deadline.
+Shared exact44a live readonly acquisition returnedNone after12.150s:
+CANCELED365 HTTP599/10.020s. Same1d unique-ID comparison at1791500404199
+finds72cancelled IDs in both unfiltered72root and filtered28root responses;
+all6children under noncancelled parents covered, no missing IDs. Raw node
+count difference was duplication, not proof of excluded child orders.
+Latest84600444 uses53seven-day slices; real successful bounded book acquisition
+UNMEASURED, currentCI pending. Ff63e89ee configured account binding fixes
+actual NULL database account IDs without writes;434focusPASS/3mutantsRED,
+newCI pending. Actual runtime unbound acquisition/retire caller absent and
+queued-publication closure still unproven. F explicitly reports20ET READY
+not feasible on current proven design. I controlled witness/CI is not a
+historical FLYE/DKI release. No extra production action or install; finished
+proof tomorrow evening under reviewer fallback, archived rows cover morning.
+No absence inferred from partial books or synthetic historical coids.
