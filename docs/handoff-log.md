@@ -8036,3 +8036,14 @@ independent selected delta controls3PASS on each separate checkout, unchanged
 thresholds. No causal host-contention or full-parity claim. Successor hosted
 checks/pin still pending. F continues the newly released DKI causal no-dispatch
 removal proof on its existing sole-writer branch; other lane source frozen.
+
+2026-10-08 10:08 ET codex-2 C28: Lane F published aa4f228b on draft1133,
+225 focused PASS/five assertion mutations RED. Same writer now covers the
+parent's publication gap: a cancelled envelope already sent but not yet in
+the intent table cannot be mistaken for no dispatch; exact per-account
+terminal receipts are required before clearing. Current-day recorded DKI
+boot recovery is tested separately from a new causal raise; prior-session
+zero-ID requests are not cleared by age or SQL absence. Own F1 read09:41:59
+ET keeps SBFM's20.17s receipt and AIXI's existing receipt semantics. Final
+full/CI and safety delta pending; draft is not ready. A-E source unchanged,
+no production action.
