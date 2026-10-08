@@ -459,6 +459,13 @@
       "ruling": "operator 10-06: fix item 7; installed when the acceptance runner is green"
     },
     {
+      "name": "strategy_schwab_1m_v2_gap_line_carry_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "Carry ATR state while the existing clean-bar entry hold remains active.",
+      "ruling": "Operator 2026-10-08: carry the pre-hold line and repair available backfill; ON at reviewed install"
+    },
+    {
       "name": "strategy_schwab_1m_v2_gap_hold_enabled",
       "expected": true,
       "owning_service": "schwab-1m-v2",
