@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="7" time="1.653" timestamp="2026-10-08T08:28:50.494378-04:00" hostname="Shirleys-MacBook-Pro-2.local"><testcase classname="tests.unit.test_line_chart_restoration_integration" name="test_rpg_authorization_refuses_replacement_without_current_line" time="0.009" /><testcase classname="tests.unit.test_orb_paper_boundary" name="test_manual_orb_intent_is_refused_by_oms_before_any_dependency_is_touched[live:orb]" time="0.011" /><testcase classname="tests.unit.test_orb_paper_boundary" name="test_manual_orb_intent_is_refused_by_oms_before_any_dependency_is_touched[paper:orb]" time="0.006" /><testcase classname="tests.unit.test_orb_paper_boundary" name="test_manual_orb_intent_is_refused_by_oms_before_any_dependency_is_touched[live:schwab_1m_v2]" time="0.006" /><testcase classname="tests.unit.test_paper_exit" name="test_oms_refuses_polygon_intent_before_database_or_broker" time="0.002" /><testcase classname="tests.unit.test_eod_cron_adoption" name="test_current_wrapper_and_installer_remain_executable" time="0.015"><failure message="subprocess.CalledProcessError: Command '['git', 'ls-files', '--stage', '--', 'ops/health/eod_cron.sh']' returned non-zero exit status 128.">def test_current_wrapper_and_installer_remain_executable() -&gt; None:
+        for relative in ("ops/health/eod_cron.sh", "ops/health/install_eod_cron.sh"):
+&gt;           staged = subprocess.run(
+                ["git", "ls-files", "--stage", "--", relative],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+tests/unit/test_eod_cron_adoption.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+input = None, capture_output = True, timeout = None, check = True
+popenargs = (['git', 'ls-files', '--stage', '--', 'ops/health/eod_cron.sh'],)
+kwargs = {'cwd': PosixPath('/private/tmp/rpgretire1-baseline.7O1kTp'), 'stderr': -1, 'stdout': -1, 'text': True}
+process = &lt;Popen: returncode: 128 args: ['git', 'ls-files', '--stage', '--', 'ops/heal...&gt;
+stdout = ''
+stderr = 'fatal: not a git repository (or any of the parent directories): .git\n'
+retcode = 128
+
+    def run(*popenargs,
+            input=None, capture_output=False, timeout=None, check=False, **kwargs):
+        """Run command with arguments and return a CompletedProcess instance.
+    
+        The returned instance will have attributes args, returncode, stdout and
+        stderr. By default, stdout and stderr are not captured, and those attributes
+        will be None. Pass stdout=PIPE and/or stderr=PIPE in order to capture them,
+        or pass capture_output=True to capture both.
+    
+        If check is True and the exit code was non-zero, it raises a
+        CalledProcessError. The CalledProcessError object will have the return code
+        in the returncode attribute, and output &amp; stderr attributes if those streams
+        were captured.
+    
+        If timeout (seconds) is given and the process takes too long,
+         a TimeoutExpired exception will be raised.
+    
+        There is an optional argument "input", allowing you to
+        pass bytes or a string to the subprocess's stdin.  If you use this argument
+        you may not also use the Popen constructor's "stdin" argument, as
+        it will be used internally.
+    
+        By default, all communication is in bytes, and therefore any "input" should
+        be bytes, and the stdout and stderr will be bytes. If in text mode, any
+        "input" should be a string, and stdout and stderr will be strings decoded
+        according to locale encoding, or by "encoding" if set. Text mode is
+        triggered by setting any of text, encoding, errors or universal_newlines.
+    
+        The other arguments are the same as for the Popen constructor.
+        """
+        if input is not None:
+            if kwargs.get('stdin') is not None:
+                raise ValueError('stdin and input arguments may not both be used.')
+            kwargs['stdin'] = PIPE
+    
+        if capture_output:
+            if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
+                raise ValueError('stdout and stderr arguments may not be used '
+                                 'with capture_output.')
+            kwargs['stdout'] = PIPE
+            kwargs['stderr'] = PIPE
+    
+        with Popen(*popenargs, **kwargs) as process:
+            try:
+                stdout, stderr = process.communicate(input, timeout=timeout)
+            except TimeoutExpired as exc:
+                process.kill()
+                if _mswindows:
+                    # Windows accumulates the output in a single blocking
+                    # read() call run on child threads, with the timeout
+                    # being done in a join() on those threads.  communicate()
+                    # _after_ kill() is required to collect that and add it
+                    # to the exception.
+                    exc.stdout, exc.stderr = process.communicate()
+                else:
+                    # POSIX _communicate already populated the output so
+                    # far into the TimeoutExpired exception.
+                    process.wait()
+                raise
+            except:  # Including KeyboardInterrupt, communicate handled that.
+                process.kill()
+                # We don't call process.wait() as .__exit__ does that for us.
+                raise
+            retcode = process.poll()
+            if check and retcode:
+&gt;               raise CalledProcessError(retcode, process.args,
+                                         output=stdout, stderr=stderr)
+E               subprocess.CalledProcessError: Command '['git', 'ls-files', '--stage', '--', 'ops/health/eod_cron.sh']' returned non-zero exit status 128.
+
+/Users/velkris/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/subprocess.py:571: CalledProcessError</failure></testcase><testcase classname="tests.unit.test_momentum_gateway_throughput" name="test_real_dead_consumer_cannot_block_the_paced_producer" time="0.900" /></testsuite></testsuites>
