@@ -8123,3 +8123,15 @@ rth_resting_mirror scope; before04 synthetic controls are not PM dispatch
 proof. Queue/restore all-history residual remains explicit in draft1134.
 F same writer is correcting generic cancel inventory; not ready until its
 publication gap and restart recovery are both proven. All production unchanged.
+
+2026-10-08 11:22 ET codex-2 C36 CLAIM FALSEFLIP1: eighth sole writer
+Averroes01a11c18-679c-77a0-b5a3-009026853f05, own branch
+codex/falseflip1-entry-close-budget-1008 at exactbase1e15adb0; actual isolated
+worktree confirmed. Independent code/raw assessment first, then H1-H4 patch
+only when cause/card agree. FLYE's stop precedes entry-bar close, so require
+retrospective exact-row classification and no speculative slot refund.
+User17/62 not yet independently measured. Existing RETRYOFF1 ruling uses
+enabled=true/max_retries=0 rather than disabling the old always-release
+code path; H must preserve no second REAL trade, not casually change env.
+No source edits by parent, no shared writer, no production action; A-G
+continue independently, F receipt inventory remains under correction.
