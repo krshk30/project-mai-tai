@@ -8333,3 +8333,18 @@ literalgate->0023once->OMS(strategy)->v2->control->audit->preopenrepin,
 LINE/GAP/FALSEtrue,MIRROR/SLOTtrue,RPGfalse. MigrationreadnullableJSON
 entry_classification down0022, automaticmigrationsdisabledperdeploy.
 No finalcandidate SHA,manifest,staging orproductionmutationclaim.
+
+2026-10-08 15:26 ET codex-2 C52: A306 exactpin/bothValidatePASS verified,
+matched-head rebase-merged19:25:03UTC to06336beb2340c6334ff4e6b0d64b23c1c2b96215,
+whole tree2b31eff3ab8c276acdba4d885ed465503efc1302 equals pinnedA.
+G27b3244364aa011eb8fd9b7991407f94894a66ac cleanrebasedonto063,
+4range-diffcommits equal,old/newstablepatch424bc875998b9a3b0ae0fd60333b408320c0dc7f.
+ExactGrepinrequested; HwaitsactualGmerge, noindependentdoublewriter.
+Cpublishedc10a5c50 runner316PASS/32RED. Fresh15:24directgate0/BOTflatboth,
+working/managed/virtual/inflight0,nativeOMS0; nativev2FLYEarmed andclock<18
+rc1,notPASS, nooverride. Parentreadrawstdout. Noapplicationwrites/staging.
+I sourceREADYc6f full47F/7711P/55S,base48F/7674P/55S:47shared,0added,
+onebaselineHOTFIXtimingfailurecleared. Notliteralidenticalfailedset.
+HostedbothNFQduplicate1F/7757P/55S,0.8907/0.9379s; parentreranonce
+unchangedhead,no thresholdwaiver. Iremainconditionalpin+Hcomposition;
+Fexcluded. FinalAPP andactualafterclosegate stillpending.
