@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -188,6 +189,27 @@ def test_live_book_overrides_complete_phase_but_terminal_orders_do_not(monkeypat
     else:
         bot["recent_orders"] = [{"status": "accepted" if kind == "order" else "cancelled"}]
     assert cp._build_bot_listening_status({"services": [_orbpage_service(NOW, "session_complete")]}, bot, [])["state"] == expected
+
+
+def test_compact_orb_live_card_exact_label_and_page_have_no_paper_or_observer(monkeypatch):
+    monkeypatch.setattr(cp, "utcnow", lambda: NOW)
+    card = cp._compact_bot_card(
+        {"strategy_code": "orb_schwab", "display_name": "ORB Bot",
+         "account_name": "live:schwab_1m_v2", "provider": "schwab",
+         "watchlist_count": 2},
+        service_by_name={"orb-schwab": _orbpage_service(NOW, "waiting_for_open")},
+        latest_strategy_bars={},
+    )
+    visible_name = re.search(r'<div class="bot-name">\s*<a[^>]*>([^<]*)</a>\s*</div>', card)
+    assert visible_name is not None
+    assert visible_name.group(1) == "ORB Live"
+    assert "paper" not in card.lower() and "observer" not in card.lower()
+
+    app, _ = _orbpage_app(monkeypatch)
+    with TestClient(app) as client:
+        response = client.get("/bot/orb")
+        assert response.status_code == 200
+        assert "paper" not in response.text.lower() and "observer" not in response.text.lower()
 
 
 def test_live_heartbeat_reaches_health_and_symbols_without_any_decision_rows(monkeypatch):
