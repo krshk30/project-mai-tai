@@ -8321,3 +8321,15 @@ fresh SELL awaiting_close through existing retry_exhausted cancellation barrier.
 UNMEASURED, controlled positive receipt explicitly labelled. Open/UNKNOWN
 siblings never released; same-segment real retry remains held. H frozen READY,
 F functional blocker unchanged. No production or candidate activation.
+
+2026-10-08 15:10 ET codex-2 C51: tonight exact user set B/A/G/H released,
+I conditional on pin beforeexecution,Fexplicitlyexcluded. Matched-headB709
+rebase-merged19:08:10UTC main4ec93308aab379894b69de0b84622d6ce3a7c756;
+whole treef11cd1722be40560593cc2e4be34bc30b76dbc92 equals pinnedBtree.
+Asolewriter clean rebase306d726f ontoactual4ec,4 equal range-diff commits,
+unchangedstablepatch554b4501af909fccd0a1b66b14de5be5f49ec4cf,61bootPASS.
+Newexactheadre-pinrequested; hostedValidatex2running. Csolewriteramends
+literalgate->0023once->OMS(strategy)->v2->control->audit->preopenrepin,
+LINE/GAP/FALSEtrue,MIRROR/SLOTtrue,RPGfalse. MigrationreadnullableJSON
+entry_classification down0022, automaticmigrationsdisabledperdeploy.
+No finalcandidate SHA,manifest,staging orproductionmutationclaim.
