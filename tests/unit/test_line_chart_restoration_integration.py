@@ -549,6 +549,7 @@ async def test_anchored_source_current_callbacks_advance_gap_hold_without_double
 def test_rpg_authorization_refuses_replacement_without_current_line():
     bars = _bars("RETO")
     bot = _bot("RETO", bars[-1].timestamp_ms)
+    bot.strategy.settings.strategy_schwab_1m_v2_atr_reprice_handoff_enabled = True
     _ingest(bot, bars)
     job = {"old": {"symbol": "RETO", "broker_account_name": "live:test"},
            "slot": "first", "segment_id": 1, "phase": "expired"}
