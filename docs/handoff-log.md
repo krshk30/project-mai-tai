@@ -7899,3 +7899,19 @@ scheduled wbquiet1-morning-reader-follow-up, not represented in today's head.
 Tonight candidate afterclose: GAP(v2)/WB(OMS), ORB lane1 only if pinned.
 LINE_CHART remainsOFF. No source edit, pin/merge, staging, switch/service or
 production action performed by this READY update.
+
+2026-10-08 08:20 ET codex-2: GAPLINE1 #1126 exact pinned head merged by
+merge commit 1ed10831508e9a251aa3440a973f49c8bb2c18c9. WBQUIET1 #1124
+b40212e420ea3eb6312ab47df83aa6bb2042daf1 now has two green Validate runs
+(rerun37769566740 finished12:17:18UTC) and a green hosted pin. GitHub
+refuses the unchanged head as behind main; auto-merge is unavailable.
+No protection bypass or pinned-head rewrite. Asked for merge-policy
+disposition; preparation continues without an invented final application SHA.
+Plan checkpoint02653e08 pushed:24runner/36repin testsPASS. Isolated repin
+binds actual snapshot/install-record/new identities and refreshes daily hashes,
+preserving paper/date shape and the narrow Redis-upgrade acknowledgement.
+Read-only box08:04: d244f602 clean, OMS1408231/v21895743/strategy1408242.
+Box flag audit08:15:160/160 checked, one LINE expectation mismatch from the
+07:28 rollback; actualLINE/RPGfalse retained. Correct that box expectation,
+addGAPtrue row, do not alter unrelated flags. No job staged/timer installed,
+application/env/checkout/service/schema/token/ledger/archive action.
