@@ -4,8 +4,11 @@
 Lane C owns only this plan/job directory. Parent owns landings and handoff.
 Latest operator GO covers B1127, A1130, G1134, H1135 on main1e15 plus merged
 GAP1126; F1133 and I1136 are EXCLUDED. No non-P1/data lanes.
-B landed4ec93308, A06336beb, Ga447ea3d. H reviewed7d7034f0 is pinned,
-but its final landing APP is NOT yet supplied. Partial main is not final APP.
+B landed4ec93308, A06336beb, Ga447ea3d. H reviewed7d7034f0 is pinned
+and landed at final APP eced4599d05e72adab77551f18df8050a94028e2,
+tree4ea8786cb490a6789c45c634ca2129bf16706a28, equal to its reviewed tree.
+Parent verified hosted pin37836526745 and both Validate37836252921/
+37836232309 SUCCESS before the matched-head merge at20:19:32UTC.
 No staging, deployment, env/schema/service write or approval hash is claimed.
 
 Release generation binds full APP/plan/box SHAs, the exact explicit candidate
@@ -125,8 +128,8 @@ approved-migrations.tar and actual acknowledged baseline are hash-bound.
 No completed-retirement receipt is required or invented for untouched paper ORB.
 No unconditional permission-mode/log-signature/control-page self-stops.
 
-Await parent exact final merged APP and fresh acknowledged baseline.
-Only then generate actual manifest,
+Final APP is supplied above; obtain fresh acknowledged baseline and
+generate the actual manifest,
 read-only rehearsal at real time, stage once afterclose and execute if green.
 No source writer outside this owned directory; no production action so far.
 Tomorrow scanner rule9b and first organic FALSEFLIP workload stay UNMEASURED.
