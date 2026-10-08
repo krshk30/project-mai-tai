@@ -1,0 +1,179 @@
+{
+  "session_bound_removed": {
+    "runs": {
+      "baseline": {
+        "rc": 0,
+        "receipt": "/tmp/mirrorholdG-mutants/session_bound_removed-baseline.json",
+        "failures": [],
+        "passed": true,
+        "assertion_red": false
+      },
+      "mutant": {
+        "rc": 1,
+        "receipt": "/tmp/mirrorholdG-mutants/session_bound_removed-mutant.json",
+        "failures": [
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_recorded_dispatch_replay[AIXI-48]",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:152: in test_recorded_dispatch_replay\n    assert dispatch(lane, event) is None\nE   AssertionError: assert 'mirrorhold_dispatch_uncertain' is None\nE    +  where 'mirrorhold_dispatch_uncertain' = dispatch((<project_mai_tai.oms.service.OmsRiskService object at 0x10a89a6c0>, <tests.unit.test_webull_adapter._FakeClient objec...oflush=True, expire_on_commit=False), [datetime.datetime(2026, 10, 8, 13, 35, 5, 75008, tzinfo=datetime.timezone.utc)]), TradeIntentEvent(event_id=UUID('29cfb0e9-2f0e-4acc-a131-eb94e9a264dc'), event_type='trade_intent', source_service='sch...rice': '2.27', 'webull_shape_market_source': 'ask', 'webull_shape_market_at_utc': '2026-10-08T13:35:05.075008+00:00'})))"
+          }
+        ],
+        "passed": false,
+        "assertion_red": true
+      }
+    },
+    "killed": true
+  },
+  "current_pending_guard_removed": {
+    "runs": {
+      "baseline": {
+        "rc": 0,
+        "receipt": "/tmp/mirrorholdG-mutants/current_pending_guard_removed-baseline.json",
+        "failures": [],
+        "passed": true,
+        "assertion_red": false
+      },
+      "mutant": {
+        "rc": 1,
+        "receipt": "/tmp/mirrorholdG-mutants/current_pending_guard_removed-mutant.json",
+        "failures": [
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_current_orders_still_refuse_and_warn[pending-dispatch_uncertain]",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:188: in test_current_orders_still_refuse_and_warn\n    assert dispatch(lane, event) == \"mirrorhold_\" + reason\nE   AssertionError: assert None == ('mirrorhold_' + 'dispatch_uncertain')\nE    +  where None = dispatch((<project_mai_tai.oms.service.OmsRiskService object at 0x10a986e70>, <tests.unit.test_webull_adapter._FakeClient objec...oflush=True, expire_on_commit=False), [datetime.datetime(2026, 10, 8, 13, 35, 5, 75008, tzinfo=datetime.timezone.utc)]), TradeIntentEvent(event_id=UUID('5e6fa9f7-8470-4819-9329-0be93a02a769'), event_type='trade_intent', source_service='sch...-c0a687996011', 'mirrorhold_dispatch_generation': '4454b5ee4fb3a35570d2dfb87102686d91a0d5730ea1708ec5b45eb09f2feb0a'})))"
+          }
+        ],
+        "passed": false,
+        "assertion_red": true
+      }
+    },
+    "killed": true
+  },
+  "same_segment_fill_excluded": {
+    "runs": {
+      "baseline": {
+        "rc": 0,
+        "receipt": "/tmp/mirrorholdG-mutants/same_segment_fill_excluded-baseline.json",
+        "failures": [],
+        "passed": true,
+        "assertion_red": false
+      },
+      "mutant": {
+        "rc": 1,
+        "receipt": "/tmp/mirrorholdG-mutants/same_segment_fill_excluded-mutant.json",
+        "failures": [
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_integer_same_segment_survives_sql_bound",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:272: in test_integer_same_segment_survives_sql_bound\n    assert dispatch(lane, event) == \"mirrorhold_mirror_filled\"\nE   AssertionError: assert None == 'mirrorhold_mirror_filled'\nE    +  where None = dispatch((<project_mai_tai.oms.service.OmsRiskService object at 0x10ca5f170>, <tests.unit.test_webull_adapter._FakeClient objec...oflush=True, expire_on_commit=False), [datetime.datetime(2026, 10, 8, 13, 35, 5, 75008, tzinfo=datetime.timezone.utc)]), TradeIntentEvent(event_id=UUID('09bb5816-1eef-4ab2-9b63-b51a21d047b1'), event_type='trade_intent', source_service='sch...-c0a687996011', 'mirrorhold_dispatch_generation': '4454b5ee4fb3a35570d2dfb87102686d91a0d5730ea1708ec5b45eb09f2feb0a'})))"
+          }
+        ],
+        "passed": false,
+        "assertion_red": true
+      }
+    },
+    "killed": true
+  },
+  "exact_slot_retirement_guard_removed": {
+    "runs": {
+      "baseline": {
+        "rc": 0,
+        "receipt": "/tmp/mirrorholdG-mutants/exact_slot_retirement_guard_removed-baseline.json",
+        "failures": [],
+        "passed": true,
+        "assertion_red": false
+      },
+      "mutant": {
+        "rc": 1,
+        "receipt": "/tmp/mirrorholdG-mutants/exact_slot_retirement_guard_removed-mutant.json",
+        "failures": [
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_other_or_unreadable_slot_fill_never_retires_this_slot[different]",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:283: in test_other_or_unreadable_slot_fill_never_retires_this_slot\n    assert dispatch(lane, event) is None\nE   AssertionError: assert 'mirrorhold_mirror_filled' is None\nE    +  where 'mirrorhold_mirror_filled' = dispatch((<project_mai_tai.oms.service.OmsRiskService object at 0x108dfa060>, <tests.unit.test_webull_adapter._FakeClient objec...oflush=True, expire_on_commit=False), [datetime.datetime(2026, 10, 8, 13, 35, 5, 75008, tzinfo=datetime.timezone.utc)]), TradeIntentEvent(event_id=UUID('f8c3aa0e-977c-49ab-8976-fe00e7c87a77'), event_type='trade_intent', source_service='sch...tion': '1b58e6aa-8540-4677-bc8d-c56549574072', 'webull_mirror_generation_id': 'e1b062ec-47d8-4fcd-9c65-71dbdf7dcdaf'})))"
+          },
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_other_or_unreadable_slot_fill_never_retires_this_slot[absent]",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:286: in test_other_or_unreadable_slot_fill_never_retires_this_slot\n    assert dispatch(lane, event) == \"mirrorhold_dispatch_uncertain\"\nE   AssertionError: assert 'mirrorhold_mirror_filled' == 'mirrorhold_d...tch_uncertain'\nE     \nE     - mirrorhold_dispatch_uncertain\nE     + mirrorhold_mirror_filled"
+          },
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_other_or_unreadable_slot_fill_never_retires_this_slot[null]",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:286: in test_other_or_unreadable_slot_fill_never_retires_this_slot\n    assert dispatch(lane, event) == \"mirrorhold_dispatch_uncertain\"\nE   AssertionError: assert 'mirrorhold_mirror_filled' == 'mirrorhold_d...tch_uncertain'\nE     \nE     - mirrorhold_dispatch_uncertain\nE     + mirrorhold_mirror_filled"
+          },
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_other_or_unreadable_slot_fill_never_retires_this_slot[empty]",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:286: in test_other_or_unreadable_slot_fill_never_retires_this_slot\n    assert dispatch(lane, event) == \"mirrorhold_dispatch_uncertain\"\nE   AssertionError: assert 'mirrorhold_mirror_filled' == 'mirrorhold_d...tch_uncertain'\nE     \nE     - mirrorhold_dispatch_uncertain\nE     + mirrorhold_mirror_filled"
+          }
+        ],
+        "passed": false,
+        "assertion_red": true
+      }
+    },
+    "killed": true
+  },
+  "refusal_warning_removed": {
+    "runs": {
+      "baseline": {
+        "rc": 0,
+        "receipt": "/tmp/mirrorholdG-mutants/refusal_warning_removed-baseline.json",
+        "failures": [],
+        "passed": true,
+        "assertion_red": false
+      },
+      "mutant": {
+        "rc": 1,
+        "receipt": "/tmp/mirrorholdG-mutants/refusal_warning_removed-mutant.json",
+        "failures": [
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_session_anchor_both_clocks_and_accounts[2026-10-08T13:35:05+00:00-2026-10-08T07:59:59+00:00-2026-10-08T08:00:00+00:00-live:orb]",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:177: in test_session_anchor_both_clocks_and_accounts\n    assert any(r.levelname == \"WARNING\" and r.message ==\nE   assert False\nE    +  where False = any(<generator object test_session_anchor_both_clocks_and_accounts.<locals>.<genexpr> at 0x108fd4120>)"
+          },
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_session_anchor_both_clocks_and_accounts[2026-10-08T13:35:05+00:00-2026-10-08T07:59:59+00:00-2026-10-08T08:00:00+00:00-live:schwab_1m_v2]",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:177: in test_session_anchor_both_clocks_and_accounts\n    assert any(r.levelname == \"WARNING\" and r.message ==\nE   assert False\nE    +  where False = any(<generator object test_session_anchor_both_clocks_and_accounts.<locals>.<genexpr> at 0x108f9e7a0>)"
+          },
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_session_anchor_both_clocks_and_accounts[2026-10-08T07:59:59+00:00-2026-10-07T07:59:59+00:00-2026-10-07T08:00:00+00:00-live:orb]",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:177: in test_session_anchor_both_clocks_and_accounts\n    assert any(r.levelname == \"WARNING\" and r.message ==\nE   assert False\nE    +  where False = any(<generator object test_session_anchor_both_clocks_and_accounts.<locals>.<genexpr> at 0x108f49d20>)"
+          },
+          {
+            "nodeid": "tests/unit/test_mirrorhold1_session_duplicate_scan.py::test_session_anchor_both_clocks_and_accounts[2026-10-08T07:59:59+00:00-2026-10-07T07:59:59+00:00-2026-10-07T08:00:00+00:00-live:schwab_1m_v2]",
+            "when": "call",
+            "outcome": "failed",
+            "assertion_failure": true,
+            "failure": "tests/unit/test_mirrorhold1_session_duplicate_scan.py:177: in test_session_anchor_both_clocks_and_accounts\n    assert any(r.levelname == \"WARNING\" and r.message ==\nE   assert False\nE    +  where False = any(<generator object test_session_anchor_both_clocks_and_accounts.<locals>.<genexpr> at 0x108ece260>)"
+          }
+        ],
+        "passed": false,
+        "assertion_red": true
+      }
+    },
+    "killed": true
+  }
+}

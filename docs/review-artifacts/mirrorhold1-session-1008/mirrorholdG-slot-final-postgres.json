@@ -1,0 +1,34 @@
+{
+  "passed": true,
+  "rows": [
+    {
+      "case": "AIXI",
+      "clients": [
+        "schwab_1m_v2-AIXI-open-ec407a4e45b0"
+      ]
+    },
+    {
+      "case": "FLYE",
+      "clients": []
+    },
+    {
+      "case": "CONTROLLED PostgreSQL VALUES",
+      "clients": [
+        "current_pending",
+        "old_working_gtc",
+        "old_same_filled",
+        "null_submitted",
+        "explicit_null",
+        "bad_segment",
+        "boolean_true",
+        "zero_segment",
+        "null_status",
+        "orphan_slot"
+      ]
+    }
+  ],
+  "sql_path": "/tmp/mirrorholdG-postgres.sql",
+  "sql_sha256": "d36798c34565d8962bde2dbd14667314dba0464d19f7d571dd3f8befb845cc70",
+  "source_sha256": "fe621f0d7ac9f4851f205d6ca06f80aa5b9730b8f3bcb766189fd8ddc9cda1bd",
+  "fixture_sha256": "615ba36a4642febac85847c8af26d9e4920d4a48d57e1be63f10c40379ce6233"
+}

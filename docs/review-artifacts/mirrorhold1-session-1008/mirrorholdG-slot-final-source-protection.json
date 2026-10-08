@@ -1,0 +1,53 @@
+{
+  "base": "1e15adb03c3758e647d333828bbe3090e24e832e",
+  "source_sha256": "fe621f0d7ac9f4851f205d6ca06f80aa5b9730b8f3bcb766189fd8ddc9cda1bd",
+  "changed_existing_methods": [
+    "_mirrorhold_dispatch",
+    "_mirrorhold_gate"
+  ],
+  "added_methods": [
+    "_mirrorhold_segment_readable",
+    "_mirrorhold_session_orders",
+    "_mirrorhold_timestamp_readable",
+    "_mirrorhold_unrelated_legacy_fill"
+  ],
+  "protected_methods_unchanged": [
+    "_evaluate_nfq_holds",
+    "_mirrorhold_admit",
+    "_mirrorhold_audits",
+    "_mirrorhold_cache",
+    "_mirrorhold_cache_after_commit",
+    "_mirrorhold_cache_lock",
+    "_mirrorhold_claim",
+    "_mirrorhold_clear_order",
+    "_mirrorhold_enabled",
+    "_mirrorhold_evaluate",
+    "_mirrorhold_evaluate_off_loop",
+    "_mirrorhold_finish",
+    "_mirrorhold_invalidate_enqueue",
+    "_mirrorhold_log",
+    "_mirrorhold_new_enabled",
+    "_mirrorhold_observe_intent",
+    "_mirrorhold_owner_ids",
+    "_mirrorhold_precheck",
+    "_mirrorhold_prepare_queue",
+    "_mirrorhold_price_budget_exhausted",
+    "_mirrorhold_prior_wires",
+    "_mirrorhold_project",
+    "_mirrorhold_proven_no_wire",
+    "_mirrorhold_read",
+    "_mirrorhold_reconcile_terminal",
+    "_mirrorhold_release_before_wire",
+    "_mirrorhold_reports",
+    "_mirrorhold_schedule",
+    "_mirrorhold_scope",
+    "_mirrorhold_token_matches",
+    "_mirrorhold_upsert",
+    "_mirrorhold_write",
+    "_nfq_enabled",
+    "_nfq_observe_reports",
+    "_nfq_pre_submit",
+    "_restore_mirrorhold"
+  ],
+  "protected": true
+}
