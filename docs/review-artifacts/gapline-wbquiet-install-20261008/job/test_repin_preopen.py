@@ -136,6 +136,15 @@ def test_refresh_all_application_bindings_preserve_history_and_ack(case):
     assert runtime["catalog_counts"] == dict(boolean=6, numeric=1, total=7)
 
 
+def test_repin_flag_arguments_remain_parseable_on_next_install(case):
+    root, obs, _ = case
+    first = build(case)[m.GATE]
+    catalog = json.loads(m.location(root, "/home/trader/restart_evidence/expected_flags.json").read_bytes())["flags"]
+    assert re.findall(r"^  --expect-flag '([^']+)' \\\n", first.decode(), re.M)
+    second = m.gate_candidate(first.decode(), APP, SNAPSHOT, RECORD, obs["states"], obs["environments"], catalog)
+    assert second == first
+
+
 def test_atomic_writes_backups_hashes_owner_mode_and_no_fake_pass(case):
     root, _, historical = case
     originals = {name: m.location(root, name).read_bytes() for name in build(case)}

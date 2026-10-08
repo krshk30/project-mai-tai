@@ -37,6 +37,10 @@ def need(condition, message):
         raise RuntimeError(message)
 
 
+class WaitWork(RuntimeError):
+    """Measured work appearing before the first write waits for a later tick."""
+
+
 def window(now):
     local = now.astimezone(ZoneInfo('America/New_York'))
     if local.date().isoformat() != DAY:
@@ -137,6 +141,8 @@ class Run:
         self.events.append(event)
         with (self.attempt / 'runner.log').open('a') as stream:
             stream.write(json.dumps(event, sort_keys=True) + '\n')
+        with (self.job / 'deployments-20261008.md').open('a') as stream:
+            stream.write(event['at_utc'] + ' ' + self.stage + ' ' + json.dumps(event, sort_keys=True) + '\n')
         print(json.dumps(event, sort_keys=True), flush=True)
 
     def command(self, command, *, timeout=1200):
@@ -218,10 +224,20 @@ class Run:
                       '--output', str(self.attempt / 'before-restart.json')])
         identities = self.identities()
         env = env_candidate(ENV.read_bytes())
+        orb_env = Path('/etc/project-mai-tai/orb-paper.env')
+        orb_backup = self.attempt / 'orb-paper.env.before'
+        if orb_env.exists():
+            orb_backup.write_bytes(orb_env.read_bytes())
+            orb_backup.chmod(0o600)
+            self.note(bootstrap_derived_env=str(orb_env), backup=str(orb_backup),
+                      before_sha256=digest(orb_backup.read_bytes()))
         blob = self.checked(['sudo', '-u', 'trader', 'git', '-C', str(REPO), 'show',
                              self.release['approved_sha'] + ':ops/health/expected_flags.json'])
         catalog = catalog_candidate(CATALOG.read_bytes(), json.loads(blob.read_bytes()))
-        need(self.gate('final-before-first-write') == 0, 'trading gate not clear immediately before write')
+        rc = self.gate('final-before-first-write')
+        if rc == 1:
+            raise WaitWork('measured work appeared before first write')
+        need(rc == 0, 'trading gate UNKNOWN immediately before write')
         need(window(datetime.now(timezone.utc)) == 'READY', 'first write outside Oct8 after-close window')
         claim = self.job / 'write-started.json'
         with claim.open('xb') as stream:
@@ -245,6 +261,9 @@ class Run:
                  and row['MainPID'] != identities[name]['MainPID'] and int(row['MainPID']) > 0
                  and row['NRestarts'] == '0', 'failed start or wrong identity: ' + name)
         save(self.attempt / 'service-identities.json', after)
+        if orb_backup.exists():
+            self.note(bootstrap_derived_env=str(orb_env), after_sha256=digest(orb_env.read_bytes()),
+                      no_orb_restart=True)
         need(self.gate('post-install-trading-read') == 0, 'post-install trading gate blocked')
         self.stage = 'ten-minute-observation'
         self.note(observation_seconds=600, restart_identities=after)
@@ -280,10 +299,12 @@ class Run:
                       '--install-record', str(self.attempt / 'install-record.json'),
                       '--receipt', str(self.attempt / 'preopen-repin.json')])
         self.checked(['bash', '-n', '/home/trader/preopen.sh'])
+        proof = json.loads((self.attempt / 'post-install-proof.json').read_bytes())
         self.stage = 'COMPLETE'
         self.note(approved_sha=self.release['approved_sha'], plan_commit=self.release['plan_commit'],
                   release_sha256=digest((self.job / 'release.json').read_bytes()),
                   flaggate_rc=rc, known_orb_mismatches=failures, paper_unknown=unknown,
+                  post_install_assessment=proof['assessment'],
                   morning_scanner_acceptance='UNMEASURED')
         save(self.job / 'COMPLETE.json', dict(attempt=str(self.attempt), approved_sha=self.release['approved_sha'],
              at_utc=datetime.now(timezone.utc).isoformat(), runner_log_sha256=digest((self.attempt / 'runner.log').read_bytes())))
@@ -321,6 +342,10 @@ def main():
                 return 0
             need(rc == 0, 'broker/source UNKNOWN after three read-only attempts')
             run.install()
+            return 0
+        except WaitWork as exc:
+            need(not (args.job / 'write-started.json').exists(), 'WAIT is only allowed before write claim')
+            run.note(verdict='WAIT_MEASURED_TRADING_CONDITION', reason=str(exc), no_application_write=True)
             return 0
         except Exception as exc:
             run.note(verdict='STOP', reason=str(exc), application_write_started=(args.job / 'write-started.json').exists())

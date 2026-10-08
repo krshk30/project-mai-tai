@@ -10,7 +10,8 @@ code, trading conditions, and unreviewed recovery are not waived.
 - GAPLINE1 pinned 00bd0c64325ec25c11642d913c4a0ae2b35aad0f; merge commit
   1ed10831508e9a251aa3440a973f49c8bb2c18c9.
 - WBQUIET1 pinned b40212e420ea3eb6312ab47df83aa6bb2042daf1; its second
-  Validate is being rerun unchanged. GitHub refuses the unchanged pinned head
+  Validate rerun completed PASS at 08:17:18 ET; both Validate runs and the
+  latest hosted pin check are green. GitHub refuses the unchanged pinned head
   as BEHIND after GAPLINE1 merged. No administrative bypass or pinned-head
   change is authorized by this document. Final M is not yet available.
 - RPGRETIRE1 is optional only if tested, reviewed and pinned by 15:00 ET;
@@ -115,3 +116,29 @@ does not claim preparation, first stop or install COMPLETE.
 Tomorrow scanner acceptance, live first-gap outcomes and decision equivalence
 of hypothetical Webull cadence remain UNMEASURED until observed. WBQUIET1 is
 log-only; no live cadence, order, cancel or sizing rule changes.
+
+## Local Verification and Read-Only Rehearsal
+
+October 8, 08:17:24 ET read-only direct broker/book rehearsal returned rc 1:
+AIXI Webull 135 remains held, with open managed and virtual rows. No working
+orders, in-flight intents or unreadable sources were found. This is a measured
+trading blocker, not a gate defect. The unattended job will wait for its close.
+Raw local receipts (not copied into Git because they contain account data):
+
+- /tmp/oct8-gate-readonly-stdout-v5.json:
+  sha256 997e073965c77086d835b68f38ce84d26f7da4af1d5140fa4c9ddddd29816f45.
+- /tmp/oct8-gate-readonly-stderr-v5.txt: empty,
+  sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.
+
+The committed mechanics suite has 200 passing tests: runner/read retries,
+stager/manifest/ancestry controls, broker/book gates, post-install proofs and
+preopen/daily binding refresh. Ruff (excluding unchanged historical fixtures)
+and bash -n pass. Re-pin arguments are consistently quoted and tested through
+a second re-pin, including numeric and wildcard settings. The actual root
+systemd calendar was checked read-only: first fire today 16:00 ET.
+
+No application/env/catalog/service write or timer staging has happened.
+Final release/approval hashes cannot be generated until #1124 is merged and
+both pinned heads are ancestors of the exact candidate. make_release.py tests
+explicitly refuse a GAPLINE1-only candidate. RPGRETIRE1 remains a separate
+draft until its corrected full-suite comparison and independent review pass.

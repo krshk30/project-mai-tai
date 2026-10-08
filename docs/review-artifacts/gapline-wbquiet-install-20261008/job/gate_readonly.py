@@ -333,7 +333,7 @@ async def schwab_reads(adapter):
     # filter (both PARTIAL_FILL/PARTIALLY_FILLED return HTTP400). Also scan the
     # complete session without a status filter; never hide partially filled rows.
     for status in sorted(adapter.ACCEPTED_STATUSES) + ["SESSION_ALL"]:
-        start = session_start(now) if status == "SESSION_ALL" else now - timedelta(days=60)
+        start = session_start(now).astimezone(UTC) if status == "SESSION_ALL" else now - timedelta(days=60)
         params = dict(maxResults=3000, fromEnteredTime=start.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                       toEnteredTime=now.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
         if status != "SESSION_ALL":

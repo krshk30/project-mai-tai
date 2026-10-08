@@ -7,6 +7,8 @@ import re
 import subprocess
 
 PREFIX = 'docs/review-artifacts/gapline-wbquiet-install-20261008/job/'
+PINNED = {'1126': '00bd0c64325ec25c11642d913c4a0ae2b35aad0f',
+          '1124': 'b40212e420ea3eb6312ab47df83aa6bb2042daf1'}
 SOURCES = ('ops/systemd/deploy_service.sh', 'ops/bootstrap/08_install_runtime.sh',
            'ops/preflight/preflight_oms_restart.sh', 'ops/health/expected_flags.json',
            'ops/health/expected_flags_check.py', 'ops/health/v2_restart_evidence.py')
@@ -30,6 +32,8 @@ def release(plan, approved, box):
             raise ValueError('full commit SHA required')
         if git('rev-parse', value + '^{commit}').decode().strip() != value:
             raise ValueError('commit identity differs')
+    for head in PINNED.values():
+        git('merge-base', '--is-ancestor', head, approved)
     blobs = {}
     names = git('ls-tree', '-r', '--name-only', plan, '--', PREFIX).decode().splitlines()
     for path in names:
@@ -43,6 +47,7 @@ def release(plan, approved, box):
     result = dict(schema_version=1, date_et='2026-10-08', scope='gapline1-wbquiet1-oms-strategy-v2',
                   plan_commit=plan, approved_sha=approved, box_sha=box,
                   release_branch='codex/install-2026-10-08-' + approved[:12],
+                  source_pr_heads=PINNED,
                   artifacts={name: digest(raw) for name, raw in sorted(blobs.items())},
                   source_hashes={name: digest(git('show', approved + ':' + name)) for name in SOURCES})
     raw = canonical(result)

@@ -130,8 +130,11 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog):
     anchor = '  --install-record "$INSTALL_RECORD" \\\n'
     need(result.count(anchor) == 1, "report install-record argument ambiguous")
     arguments = "".join("  --restarted " + owner + " \\\n" for owner in sorted(RESTARTED))
-    arguments += "".join("  --expect-flag " + shlex.quote(owner + ":" + key + "=" + value) + " \\\n"
-                         for (owner, key), value in sorted(flags.items()))
+    for (owner, key), value in sorted(flags.items()):
+        expression = owner + ":" + key + "=" + value
+        need(re.fullmatch(r"[A-Za-z0-9_:=.*\-]+", expression), "unsafe flag expression")
+        # Preserve the template's quoting so the next install can parse this pin.
+        arguments += "  --expect-flag '" + expression + "' \\\n"
     result = result.replace(anchor, anchor + arguments)
     return result.encode()
 
