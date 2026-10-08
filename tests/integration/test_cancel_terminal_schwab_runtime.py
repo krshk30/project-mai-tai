@@ -1,6 +1,6 @@
 """Schwab filtered acquisition controls; no live broker traffic."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -20,6 +20,7 @@ sdk = runtime.sdk
 
 def order(*, oid=1, status="WORKING", side="BUY", children=None):
     return {"orderId": oid, "status": status, "filledQuantity": 0,
+            "enteredTime": datetime.fromtimestamp((NOW - 1000) / 1000, UTC).isoformat(),
             "orderLegCollection": [{"instruction": side,
                 "instrument": {"symbol": "FLYE", "assetType": "EQUITY"}}],
             "childOrderStrategies": children or []}
@@ -31,8 +32,10 @@ def adapter(code, rows, calls):
 
     async def get(method, path):
         calls.append((method, path))
-        root_status = parse_qs(urlsplit(path).query)["status"][0]
-        return code, {}, ([r for r in rows if not isinstance(r, dict) or r.get("status") == root_status]
+        query = parse_qs(urlsplit(path).query)
+        start, stop = (datetime.fromisoformat(query[key][0]) for key in ("fromEnteredTime", "toEnteredTime"))
+        return code, {}, ([r for r in rows if not isinstance(r, dict) or "enteredTime" not in r
+                          or start <= datetime.fromisoformat(r["enteredTime"]) <= stop]
                          if isinstance(rows, list) else rows)
 
     leaf._authorized_request_json = get
@@ -43,13 +46,13 @@ def adapter(code, rows, calls):
     ([], [], True),
     ([order()], ["working"], False),
     ([order(status="FILLED", children=[order(oid=2, status="AWAITING_PARENT_ORDER")])],
-     ["filled", "working"], False),
+     ["working"], False),
     ([order(status="FILLED", children=[order(oid=2, status="PARTIAL_FILL")])],
-     ["filled", "partially_filled"], False),
+     ["partially_filled"], False),
     ([order(side="SELL")], ["working"], True),
 ])
 @pytest.mark.asyncio
-async def test_filtered_365d_book_walks_terminal_parents(sessions, sdk, rows, statuses, terminal):
+async def test_unfiltered_slices_walk_terminal_parents(sessions, sdk, rows, statuses, terminal):
     calls = []
     leaf = adapter(200, rows, calls)
     book = await broker.acquire_complete_working_book(leaf, "schwab")
@@ -58,12 +61,14 @@ async def test_filtered_365d_book_walks_terminal_parents(sessions, sdk, rows, st
     assert [row.status for row in book.orders] == statuses
     assert broker.broker_binding(leaf, "schwab") == (leaf, "actual-hash")
     query = parse_qs(urlsplit(calls[0][1]).query)
-    queried = {parse_qs(urlsplit(path).query)["status"][0] for _, path in calls}
-    assert len(calls) == 21 and all(method == "GET" for method, _ in calls)
-    assert {"FILLED", "CANCELED", "EXPIRED", "REJECTED", "REPLACED", "UNKNOWN"} <= queried
-    assert "PARTIAL_FILL" not in queried and query["maxResults"] == ["3000"]
-    assert (datetime.fromisoformat(query["toEnteredTime"][0])
+    queries = [parse_qs(urlsplit(path).query) for _, path in calls]
+    assert len(calls) == 53 and all(method == "GET" for method, _ in calls)
+    assert all("status" not in q and q["maxResults"] == ["3000"] for q in queries)
+    assert (datetime.fromisoformat(queries[-1]["toEnteredTime"][0])
             - datetime.fromisoformat(query["fromEnteredTime"][0])).days == 365
+    assert all(a["toEnteredTime"] == b["fromEnteredTime"] for a, b in zip(queries, queries[1:]))
+    assert all((datetime.fromisoformat(q["toEnteredTime"][0])
+                - datetime.fromisoformat(q["fromEnteredTime"][0])).days <= 7 for q in queries)
     receipt = CancelReceipt(CancelScope("schwab", "actual-hash", "FLYE", "exact", "event"),
                             NOW - 1000, "rejected", "skipped_before_submit", "")
     evidence = await broker.acquire_broker_cancel_evidence(leaf, receipt)
@@ -93,7 +98,7 @@ async def test_filtered_365d_book_walks_terminal_parents(sessions, sdk, rows, st
 async def test_unreadable_capped_or_malformed_schwab_book_is_unknown(sessions, sdk, code, rows):
     calls = []
     assert await broker.acquire_complete_working_book(adapter(code, rows, calls), "schwab") is None
-    assert 1 <= len(calls) <= 21
+    assert 1 <= len(calls) <= 53
     with sessions() as session:
         assert session.execute(text("SELECT CAST(:epoch AS bigint)"), {"epoch": NOW}).scalar_one() == NOW
 
@@ -135,13 +140,13 @@ async def test_both_actual_adapter_paths_for_approved_unbound_replays(sessions, 
 
 
 @pytest.mark.asyncio
-async def test_failed_terminal_parent_filter_invalidates_entire_book(sessions, sdk):
+async def test_failed_date_slice_invalidates_entire_book(sessions, sdk):
     calls = []
     leaf = adapter(200, [], calls)
     get = leaf._authorized_request_json
 
     async def fail_parent(method, path):
-        if parse_qs(urlsplit(path).query)["status"] == ["FILLED"]:
+        if len(calls) == 5:
             calls.append((method, path))
             return 599, {}, {"message": "unreadable terminal roots"}
         return await get(method, path)
@@ -169,3 +174,23 @@ async def test_global_acquisition_timeout_does_not_return_partial_certificate(se
     assert await broker.acquire_request_working_books(leaf, ["schwab", "unavailable"]) == {
         "schwab": None, "unavailable": None}
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("active_child", [False, True])
+@pytest.mark.asyncio
+async def test_terminal_option_multileg_history_does_not_hide_active_child(sessions, sdk, active_child):
+    history = order(status="FILLED", children=[order(oid=2)] if active_child else [])
+    history["orderLegCollection"] = [{"instrument": {"assetType": "OPTION"}}, {}]
+    book = await broker.acquire_complete_working_book(adapter(200, [history], []), "schwab")
+    assert book and book.complete
+    assert [row.status for row in book.orders] == (["working"] if active_child else [])
+
+
+@pytest.mark.parametrize("status,filled", [("FILLED", 1), ("CANCELED", 1), ("CANCELED", None)])
+@pytest.mark.asyncio
+async def test_exact_bound_target_fill_is_not_omitted_with_terminal_history(sessions, sdk, status, filled):
+    target = {**order(status=status), "clientOrderId": "exact", "filledQuantity": filled}
+    receipt = CancelReceipt(CancelScope("schwab", "actual-hash", "FLYE", "exact", "event"),
+                            NOW - 1000, "rejected", "skipped_before_submit", "")
+    evidence = await broker.acquire_broker_cancel_evidence(adapter(200, [target], []), receipt)
+    assert not evaluate_cancel_terminal(receipt, evidence, now_ms=NOW).terminal
