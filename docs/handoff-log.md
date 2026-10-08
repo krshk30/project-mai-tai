@@ -8480,3 +8480,20 @@ Runnerfalseflip-pg-hotfix-r3/attempt20261008T211500954696Z observes600sec
 from21:18:32Z. FourhistoricalclosedFLYE/AIXIconfirmationline_unproven errors
 repeat21:18:21Z, nottracebacks/PGfault, retainednotwaived. NozeroerrorCOMPLETE
 orpreopencloseoutclaim; originalfailedreceipts preserved.
+
+2026-10-08 17:37 ET codex-2 C62: actual r3 ten-minute collector sealed
+ABORT21:28:36Z. Runner hash50e015024767114d591e209ed55a2c88d328b9eec4588382ef9205a7d254cddc.
+OMS/strategy zero errors; v2 four historical closed-episode line_unproven
+ERROR lines retained, not tracebacks. WholeDB18.086tx/s over795.645s,
+50sync passes allok,p95 772.594ms,max1075.423ms. Separate bar-continuity
+UNKNOWN is precision: coarse start21:18:16 versus stop21:18:16.443450;
+native systemd microsecond start21:18:16.959983 shows correct ordering.
+Mechanics sole writer fixes/tests readonly collector, preserves old seal;
+no extra restart, waived error, fabricated PASS, or uncovered bookkeeping write.
+Preopen remains pending. PostgreSQL hotfix live, classification fault absent.
+Latest operator correction releases F/I TONIGHT, READY20:00ET with PostgreSQL
+CI green. Shared Goodall firsthead42ef3486 on06b5e388 forwarded immediately
+to separate F/I consumers: exact broker terminal or fresh complete book<=15s,
+off-loop per request, all accounts required, unreadable/working/fill UNKNOWN.
+F rollover/boot/no-dispatch CLEAR; I freshSELL releases only closed bound owner.
+No source self-pin; later distinct OMS/v2 install needs reviewed exact heads.
