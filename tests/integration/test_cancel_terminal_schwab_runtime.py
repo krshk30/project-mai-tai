@@ -267,7 +267,8 @@ async def test_same_request_broker_receipt_reused_but_absence_book_reacquired(se
 
     detail = {"account_id": "ACC1", "client_order_id": "exact-coid", "order_id": "broker-id",
               "items": [{"symbol": "DKI", "order_status": "CANCELLED", "filled_qty": "0"}]}
-    client = runtime.Client(detail=detail if terminal_receipt else None)
+    client = runtime.Client(detail=detail if terminal_receipt else None,
+                            pages=[{"hasNext": False, "orders": []}, {"hasNext": False, "orders": []}])
     routed = runtime.adapter(client)
     clock = [0.0]
     broker.broker_binding(routed, "live:orb")[0]._query_budget.clock = lambda: clock[0]
