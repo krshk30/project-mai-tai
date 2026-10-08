@@ -7984,3 +7984,13 @@ retained. Historical direct-flat freshness at the missed flips UNMEASURED.
 Source STEP0_RAW.json, read13:13:42UTC. Build uses session identity, not hours;
 retire request only, no unrelated consumed-owner/slot clearing, NULL order
 and intent status remains UNKNOWN. All six lanes continue, no box write.
+
+2026-10-08 09:24 ET codex-2 C17/C18: published D#1132 head6d38735b,
+259focusedPASS/19semanticRED, fullpairpending; log-onlyfollowing60s bounded
+committed-generation tags, empty/ambiguous/drop evidence UNMEASURED.
+E#1131 head09c1aaa7 offline prep51focusedPASS/sevenRED; retainedOMS
+Oct6cancel65/5 andOct7cancel25/10, SDK417distinct5/10, notnaivepartial
+counter sums12/23. Historicaldecision-time bodies absent, actualA/B/C
+savings/terminalimpact UNMEASURED. Todaypartialasof13:03:28UTC.
+EwilljoinDactualreadercontractwithoutrelabelinghistoricalimmediatetags.
+No live cadence/order/cancel/DB change or box write.
