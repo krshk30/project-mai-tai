@@ -1,4 +1,4 @@
-"""Recorded restart ownership; network, future tape and broker answers are simulated.
+"""Flag-ON recorded restart ownership; network, tape and broker answers are simulated.
 
 PMPRINT's implementation is an unmerged composition dependency. Its exact flag
 values are carried here, without pretending the standalone RPG source contains it.
@@ -52,12 +52,14 @@ DISPOSITIONS = {
 }
 
 
-async def startup_harness(monkeypatch, *, with_deferred=False, deferred_rows=None, recorded=RECORDED):
+async def startup_harness(monkeypatch, *, with_deferred=False, deferred_rows=None,
+                          recorded=RECORDED, handoff_enabled=True):
     h = await runtime(monkeypatch, "schwab", notional=600)
     h.recorded = recorded
     h.adapter.override = AtrBuyReadback("unknown", "CONTROLLED strict detail unavailable")
     set_tonight_flags(h)
     settings = h.service.settings.model_copy(update={
+        "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": handoff_enabled,
         "strategy_schwab_1m_v2_enabled": True,
         "strategy_schwab_1m_v2_tick_capture_enabled": False,
         "strategy_schwab_1m_v2_streamer_enabled": False,
@@ -146,7 +148,9 @@ async def real_bot_startup(monkeypatch, h):
         return None
 
     async def scanner_after_restore():
-        assert set(h.strategy._rpg_handoffs) == {row["id"] for row in h.recorded["tickets"]}
+        expected = ({row["id"] for row in h.recorded["tickets"]}
+                    if h.bot.settings.strategy_schwab_1m_v2_atr_reprice_handoff_enabled else set())
+        assert set(h.strategy._rpg_handoffs) == expected
         h.bot._stop_event.set()
 
     class NoNetworkClient:
@@ -521,12 +525,12 @@ async def test_reto_terminal_probe_positive_fill_with_price_uses_existing_accoun
 
 
 @pytest.mark.asyncio
-async def test_tonight_off_existing_clear_local_jobs_resume_without_legacy_duplicate(monkeypatch):
+async def test_flag_on_existing_clear_local_jobs_resume_without_legacy_duplicate(monkeypatch):
     h = await startup_harness(monkeypatch, with_deferred=True)
     await real_bot_startup(monkeypatch, h)
     await real_oms_startup(monkeypatch, h)
     tokens = {token for token, job in HandoffJournal(h.factory).jobs() if job["phase"] == "clear"}
-    assert len(tokens) == 3 and not h.service.settings.strategy_schwab_1m_v2_atr_reprice_handoff_enabled
+    assert len(tokens) == 3 and h.service.settings.strategy_schwab_1m_v2_atr_reprice_handoff_enabled
     for symbol in ("APUS", "VEEA", "RETO"):
         state = h.strategy.watchlist_state(symbol)
         assert h.strategy._rpg_entry_owned(state, account="live:orb")

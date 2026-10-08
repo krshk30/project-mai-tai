@@ -1616,7 +1616,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             event.event_id, None,
         ) == event.model_dump_json()
         if (strategy_code == "schwab_1m_v2" and event.payload.intent_type == "cancel"
-                and event.payload.metadata.get("atr_reprice") == "true"):
+                and self._rpg_enabled() and event.payload.metadata.get("atr_reprice") == "true"):
             return await self._rpg_begin_cancel(event)
         if strategy_code == "orb":
             self.logger.error(
