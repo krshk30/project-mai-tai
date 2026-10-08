@@ -8047,3 +8047,14 @@ zero-ID requests are not cleared by age or SQL absence. Own F1 read09:41:59
 ET keeps SBFM's20.17s receipt and AIXI's existing receipt semantics. Final
 full/CI and safety delta pending; draft is not ready. A-E source unchanged,
 no production action.
+
+2026-10-08 10:10 ET codex-2 C29/C30: current A/B/D/E heads each have
+two hosted Validate successes, independently read at10:09; pins absent and
+literal local failed-name sets remain unchanged. Seventh sole writer Newton
+CLAIMED LaneG on codex/mirrorhold1-session-duplicate-scan-1008 from1e15adb0,
+own worktree. Own Step0/replay first: AIXI09:35 versus FLYE09:55; constrain
+duplicate scan to current04session and preserve same-slot filled proof across
+age, unknown identity fail-closed, warning for every refusal. No tick-path
+SQL/HTTP, precheck/hold/resubmit/cache or production change. User79/214 is
+not yet independently measured. LaneF safety follow-up continues separately;
+A-E remain frozen, C plan remains unstaged.
