@@ -177,6 +177,8 @@ class OHLCVBar:
 class SymbolState:
     symbol: str
     line_restore_reset_after_ms: int = 0
+    line_live_shadow: bool = False
+    line_live_fallback: bool = False
     bars: Deque[OHLCVBar] = field(default_factory=lambda: deque(maxlen=300))
     last_quote: Quote | None = None
     position_qty: int = 0
@@ -7543,23 +7545,21 @@ class SchwabV2Strategy:
         if not is_new_bar:
             return None
 
-        if getattr(self, "_line_restoration_enabled", False) and not restored:
-            # The ordered worker alone admits a complete line for entries. While
-            # repairing a gap, retain/advance the carried math without admitting
-            # the missing series, replaying entries or resetting consumed slots.
+        if (getattr(self, "_line_restoration_enabled", False) and not restored
+                and not state.line_live_fallback):
+            # Shadow and gap carry advance math once while source admission waits.
             anchor = session_start_ts_ms(state.bars[-1].timestamp_ms)
             if (0 < state.atr_session_anchor_ms < anchor
                     and anchor == session_start_ts_ms(self._now_ms())):
                 self._apply_session_anchor_reset(state, anchor)
-            if (getattr(self, "_gap_line_carry_enabled", False)
-                    and state.gap_line_carry_pending
-                    and state.atr_session_anchor_ms == anchor
-                    and state.atr_state in {"long", "short"}
-                    and state.atr_prev_bar is not None
-                    and state.atr_prev_bar.timestamp_ms < state.bars[-1].timestamp_ms):
-                self._update_atr_state(
-                    state, state.bars[-1], state_only=True,
-                )
+            carry = bool(getattr(self, "_gap_line_carry_enabled", False)
+                         and state.gap_line_carry_pending
+                         and state.atr_session_anchor_ms == anchor
+                         and state.atr_state in {"long", "short"}
+                         and state.atr_prev_bar is not None)
+            if ((state.line_live_shadow or carry) and (state.atr_prev_bar is None
+                    or state.atr_prev_bar.timestamp_ms < state.bars[-1].timestamp_ms)):
+                self._update_atr_state(state, state.bars[-1], state_only=True)
             if self._gap_hold_enabled and state.gap_hold_active:
                 self._maybe_resume_gap_hold(state)
             return None

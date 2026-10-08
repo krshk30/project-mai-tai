@@ -23,6 +23,8 @@ import asyncio
 import itertools
 import json
 import logging
+import math
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -125,6 +127,7 @@ class SchwabV2RestClient:
         self._on_session_history = None
         self._on_session_failure = None
         self._line_source_states: dict[str, tuple[str, str]] = {}
+        self._http_observation = threading.local()
 
     @property
     def configured(self) -> bool:
@@ -336,8 +339,10 @@ class SchwabV2RestClient:
         )
         try:
             with urlopen(request, timeout=self.settings.schwab_request_timeout_seconds) as response:
+                self._http_observation.status = getattr(response, "status", None)
                 body = response.read().decode("utf-8")
         except HTTPError as exc:
+            self._http_observation.status = exc.code
             detail = exc.read().decode("utf-8", errors="replace").strip()
             raise RuntimeError(f"schwab REST {exc.code}: {detail or exc}") from exc
         except URLError as exc:
@@ -436,10 +441,6 @@ class SchwabV2RestClient:
         This request has no delivery cursor or seed cap. Completeness is from
         the anchored provider response, not the number of candles returned.
         """
-        from project_mai_tai.strategy_core.session_line_restore import (
-            SessionCoverage, SessionLineRestoration, history_fingerprint,
-        )
-
         if not anchored_session_poll_open(current_bar_ms + 60_000):
             return [], None
         if not anchored_session_poll_open(current_bar_ms):
@@ -452,9 +453,48 @@ class SchwabV2RestClient:
             "frequency": 1, "startDate": anchor_ms, "endDate": end_ms - 1,
             "needExtendedHoursData": "true",
         })
-        payload = self._authorized_get(
-            f"{self.settings.schwab_base_url.rstrip('/')}{self.PRICE_HISTORY_PATH}?{params}"
+        payload = None
+        self._http_observation.status = None
+        try:
+            payload = self._authorized_get(
+                f"{self.settings.schwab_base_url.rstrip('/')}{self.PRICE_HISTORY_PATH}?{params}"
+            )
+            return self._parse_session_history(symbol, anchor_ms, current_bar_ms, payload)
+        except Exception as exc:
+            exc.line_response_shape = self._session_response_shape(payload)
+            raise
+
+    def _session_response_shape(self, payload):
+        shape = {"status": getattr(self._http_observation, "status", None),
+                 "candle_count": None, "first_candle_ts": None, "last_candle_ts": None}
+        if not isinstance(payload, dict):
+            shape["envelope_type"] = type(payload).__name__
+            return shape
+        candles = payload.get("candles")
+        shape["envelope_flags"] = {
+            "empty": payload.get("empty") if isinstance(payload.get("empty"), bool) else None,
+            "empty_present": "empty" in payload,
+            "candles_type": type(candles).__name__,
+            **{key + "_present": bool(payload.get(key))
+               for key in ("next", "nextToken", "nextPage", "truncated")},
+        }
+        shape["response_symbol"] = str(payload.get("symbol", ""))[:32]
+        if isinstance(candles, list):
+            shape["candle_count"] = len(candles)
+            for key, index in (("first_candle_ts", 0), ("last_candle_ts", -1)):
+                if candles and isinstance(candles[index], dict):
+                    value = candles[index].get("datetime")
+                    shape[key] = value if isinstance(value, (int, float)) and math.isfinite(value) else None
+        return shape
+
+    def _parse_session_history(self, symbol, anchor_ms, current_bar_ms, payload):
+        from project_mai_tai.strategy_core.session_line_restore import (
+            SessionCoverage, SessionLineRestoration, history_fingerprint,
         )
+
+        end_ms = current_bar_ms + 60_000
+        if not isinstance(payload, dict):
+            raise ValueError("malformed session envelope")
         candles = payload.get("candles")
         if (str(payload.get("symbol", "")).upper() != symbol.upper()
                 or (payload.get("empty") is not False and payload.get("empty") is not True)
