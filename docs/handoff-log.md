@@ -8222,3 +8222,15 @@ exact failures to Averroes sole H writer for default-OFF and callback-protocol
 correction; no fixture-count weakening. H dirty follow-up contains recorded
 17-slot controlled PM/RTH restore receipts and three-false/manual-stop controls;
 not a final head or readiness receipt. No production action, pin or merge.
+
+2026-10-08 13:26 ET codex-2 C43: operator P1-only cut applied. WBQUIET
+data/hooks stopped; Mencius now read-only G helper, Banach read-only A helper,
+parent verifies H, source remains one writer per branch. A/G have delivered
+source but need evidence packaging cut and readiness signal; F resumes same
+writer for narrowed rollover fix, preserving unknown/working/fill barriers.
+No recorded fixture over500 lines and no separate STEP0/VERIFICATION/receipt
+documents; exact numbers and limitations go in PR bodies. H current JSONs
+898/905/1250/3476 lines must be trimmed before readiness. G14:00, A/F14:30,
+H15:00; H readiness risk reported14:30, not waived. Runner writer notified
+only exact pinned P1 candidate; no staging or production action. Parked
+RPGRETIRE1/1115/1110/1103 not resumed; existing merged shadow code not reverted.
