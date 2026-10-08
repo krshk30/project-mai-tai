@@ -1,0 +1,9 @@
+{
+  "pr_number": 1135,
+  "range_base": "a447ea3dc2579714a9e2911a19693742a477ded7",
+  "range_head": "7d7034f0586691cbbf6a892166c42c3d47c3dc07",
+  "reviewed_at": "2026-10-08T20:02:52Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after rebase onto main a447ea3d (#1127, #1130, #1134 merged). Range-diff vs my pin @fa278ecd: commits 1 and 3 identical; commit 2 differs only in one CONTEXT line (the retry-segment admission check now reads short_segment from #1130, already on main); added/removed lines identical, stable patch-id changed by context only (2677db43 -> b32f1c1e). This exact combination was tested in my trial merge (1,817 passed / 0 failed). On the rebased head: lane H + neighbour + #1130/#1134 lane files 629 passed / 0 failed. Review content unchanged (H1-H7 delivered; mutations 61F/12F)."
+}

@@ -1,9 +1,0 @@
-{
-  "pr_number": 1135,
-  "range_base": "1e15adb03c3758e647d333828bbe3090e24e832e",
-  "range_head": "fa278ecda4214db4764a7021b7dd4877412609af",
-  "reviewed_at": "2026-10-08T19:04:38Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "FALSEFLIP1 lane H (operator card 10-08 11:3x + H3 ruling A 12:3x). Ask ledger H1-H7 all delivered: classification on managed row + owning order + page row ('False flip / OCO bracket (target/stop)' for FLYE 10:00 via the real ControlPlaneRepository read); restore after any exit only when every filled sibling is FALSE, closed and flat, behind the existing RemovedWait cancel-receipt barrier; skip exactly one cross after the 2nd false episode (off-wire), next cross trades, fresh SELL resets; five REAL controls consume the segment (RETRYOFF1 unchanged); 17-case replay with later same-segment REAL BUY times (fill outcomes UNMEASURED, 16 legacy legs without exact bindings stay UNKNOWN = no refund). Hot path read: OMS worker is its own task, wakes per broker sync pass (~15 s) and per entry-bar event, every DB call via asyncio.to_thread, queue 512; quote/bar callbacks memory-only; stalled-worker test proves intents and quotes do not wait. Mine: 13 affected files 472 passed vs 321 on main; mutations: false-flip rule broken 61F, skip removed 12F; trial merge of main + #1127 + #1130 + #1134 + #1135 clean, combined 1,817 passed / 0 failed. CI validate x2 green. Install: alembic 0023 (additive nullable column) + OMS, v2, control restarts, STRATEGY_SCHWAB_1M_V2_FALSE_FLIP_ENABLED=true."
-}
