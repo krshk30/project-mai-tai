@@ -1,0 +1,16 @@
+[Unit]
+Description=Reviewed GAPLINE1 and WBQUIET1 after-close install, Oct 8 only
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+UnsetEnvironment=TZ
+WorkingDirectory=/home/trader/after-hours/2026-10-08/gapline-wbquiet/job
+ExecStart=/bin/bash /home/trader/after-hours/2026-10-08/gapline-wbquiet/job/run.sh
+TimeoutStartSec=3600
+Restart=no
+

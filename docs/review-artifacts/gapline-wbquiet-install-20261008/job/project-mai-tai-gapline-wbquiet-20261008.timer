@@ -1,0 +1,11 @@
+[Unit]
+Description=Oct 8 after-close gate checks until the one-shot release is sealed
+
+[Timer]
+OnCalendar=2026-10-08 16..23:*:00 America/New_York
+Persistent=false
+AccuracySec=1s
+Unit=project-mai-tai-gapline-wbquiet-20261008.service
+
+[Install]
+WantedBy=timers.target
