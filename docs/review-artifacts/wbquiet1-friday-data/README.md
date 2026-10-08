@@ -157,8 +157,25 @@ The actual names differ:
 
 Both are timing benchmarks; no source/trading/benchmark file changes exist in
 this lane. This is a reported residual, **not suite parity**. The final reader-
-parser head's full suite uses `/tmp/five-lane-wbquietE-final-unit.xml`; its pair
-against the retained baseline is pending. The exact baseline is never rerun.
+parser source/test head **6d4141fa85ca9dc75ad630719a140fd6dfa3b035** actually ran
+the full suite: **49 failed / 7,751 passed / 55 skipped**, 619.34 seconds. XML is
+`/tmp/five-lane-wbquietE-final-unit.xml`, log
+`/tmp/five-lane-wbquietE-final-unit.log`. Failed-name SHA256:
+`a9e6cb8e3b3c52346c60c7dbc11c3772ad4fe32722f7b2d771647400dc102a65`.
+`FINAL_FULL_SUITE_PAIR_2026-10-08.json` retains the literal comparison: all 48
+baseline failed names remain, plus
+`tests.unit.test_hotfix1_symbol_tick_cache::test_recorded_240_events_per_second_60_seconds_slow_db_flat_transactions[retained-on]`.
+This is **not parity and not full PASS**. No causal flakiness conclusion is made.
+The exact baseline full suite was not rerun. This receipt follow-up changes only
+documentation/evidence; source/tests remain byte-identical to tested `6d4141fa`.
+
+Serial isolated base/head controls for the initial two timing differences are
+running with verified per-worktree imports, normalized PATH, bytecode/cache
+writes disabled on the baseline, and separate XML/log receipts. Output:
+`/tmp/wbquietE-final-pair-controls.json` (only written after all four cases).
+The control session is 53016. Pending results do not replace or relabel either
+full-suite failed-name set. The additional final retained-ON failure is outside
+that initial two-case control population and remains a reported residual.
 
 Remaining measurement blockers: per-account decision-time position snapshots,
 successfully acquired day-list response bodies, complete external-reader
