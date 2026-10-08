@@ -7915,3 +7915,19 @@ Box flag audit08:15:160/160 checked, one LINE expectation mismatch from the
 07:28 rollback; actualLINE/RPGfalse retained. Correct that box expectation,
 addGAPtrue row, do not alter unrelated flags. No job staged/timer installed,
 application/env/checkout/service/schema/token/ledger/archive action.
+
+2026-10-08 08:41 ET codex-2 C7: published final tested mechanics plan0036837f
+(runtime6d5cb93c), 200 isolated controls PASS, Ruff/bash-n PASS. Corrected
+second-install preopen flag quoting, UTC Schwab session bounds, required-both-
+pinned-head ancestry, private stdout/stderr retries and honest proof UNKNOWN
+in COMPLETE. Initial 08:17 AIXI135 blocker is retained as evidence; fresh
+native OMS fence08:38:16 GO and direct broker/book helper08:38:50 rc0 prove
+the position has closed. Morning reads are not permission for an early stop.
+Final helper raw local0839.json sha9ce0c8aaa51baca5920670de8ae21701ad0e194e534a664e588a2b06639627fe;
+stderr empty. Latest #1124 b40212e4 pin/Validatex2 green but protected merge
+still BEHIND. No invented final M/manifest, staging or actual timer NEXT.
+The local tested package will deploy OMS then v2 after16 with fresh reads,
+GAPtrue only newly added; LINE/RPGfalse retained; no migration/ledger/archive.
+RPGRETIRE1 same-writer draft #1128 333c8756: guard mutations15RED, corrected
+full-suite pair still pending, not a ready or independently reviewed candidate.
+No production application/config/service action occurred in this checkpoint.
