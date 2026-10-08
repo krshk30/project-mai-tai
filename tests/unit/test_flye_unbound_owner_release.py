@@ -1,6 +1,6 @@
 """Approved option-2 consumer controls; no invented historical books or target IDs."""
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 import pytest
 
@@ -9,9 +9,7 @@ from project_mai_tai.v2_removed_wait import RemovedWaitProof
 from tests.unit.test_flye_bound_owner_target_close import FLYE, WEBULL, book, replay, sell
 
 
-@dataclass(frozen=True)
-class ControlledUnboundProof(RemovedWaitProof):
-    closed_owned_rows: tuple[tuple[str, str], ...] = ()
+ControlledUnboundProof = RemovedWaitProof
 
 
 def setup(*, pm=False):
