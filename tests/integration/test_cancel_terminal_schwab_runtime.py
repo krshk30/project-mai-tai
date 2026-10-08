@@ -33,7 +33,7 @@ def adapter(code, rows, calls):
         calls.append((method, path))
         root_status = parse_qs(urlsplit(path).query)["status"][0]
         return code, {}, ([r for r in rows if not isinstance(r, dict) or r.get("status") == root_status]
-                         if isinstance(rows, list) and len(rows) < 3000 else rows)
+                         if isinstance(rows, list) else rows)
 
     leaf._authorized_request_json = get
     return leaf
