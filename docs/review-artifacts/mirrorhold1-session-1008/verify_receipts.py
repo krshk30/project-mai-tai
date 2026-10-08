@@ -31,7 +31,10 @@ def source_receipt():
     return {"base": BASE, "source_sha256": hashlib.sha256(after.encode()).hexdigest(),
             "changed_existing_methods": changed, "added_methods": sorted(set(new) - set(old)),
             "protected_methods_unchanged": sorted(name for name in old if old[name] == new[name]),
-            "protected": changed == ["_mirrorhold_dispatch", "_mirrorhold_gate"]}
+            "protected": changed == ["_mirrorhold_admit", "_mirrorhold_dispatch", "_mirrorhold_gate",
+                "_mirrorhold_log", "_mirrorhold_prepare_queue", "_mirrorhold_price_budget_exhausted",
+                "_mirrorhold_prior_wires", "_mirrorhold_reconcile_terminal", "_mirrorhold_reports",
+                "_mirrorhold_schedule", "_mirrorhold_upsert", "_restore_mirrorhold"]}
 
 
 def xml_receipt(path):

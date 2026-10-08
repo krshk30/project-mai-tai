@@ -63,9 +63,10 @@ def dispatch(lane, event):
     return reason
 
 
-def recorded_setup(lane, symbol):
+def recorded_setup(lane, symbol, *, recorded=None, intent_id=None):
     service, client, factory, clock = lane
-    row = next(r for r in RECORDED["intents"] if r["id"] == INTENTS[symbol])
+    recorded = RECORDED if recorded is None else recorded
+    row = next(r for r in recorded["intents"] if r["id"] == (intent_id or INTENTS[symbol]))
     md = row["payload"]["metadata"]
     # Intent creation is a proxy for produced_at; preserve the recorded quote clock.
     produced = datetime.fromisoformat(row["created_at"])
@@ -75,7 +76,7 @@ def recorded_setup(lane, symbol):
         produced_at=produced, payload=TradeIntentPayload(strategy_code=row["strategy"],
             broker_account_name=row["account"], symbol=symbol, side=row["side"], intent_type=row["intent_type"],
             quantity=Decimal(str(row["quantity"])), reason=row["reason"], metadata=dict(md)))
-    histories = [r for r in RECORDED["orders"] if r["account"] == "live:orb" and r["symbol"] == symbol
+    histories = [r for r in recorded["orders"] if r["account"] == "live:orb" and r["symbol"] == symbol
                  and r["submitted_at"] < row["created_at"]]
     for order in histories:
         seed_order(lane, event, status=order["status"], submitted_at=datetime.fromisoformat(order["submitted_at"]),
@@ -83,7 +84,7 @@ def recorded_setup(lane, symbol):
                    client=order["client_order_id"])
     # Restore actual historical quantities/audits; no invented historical replies.
     with factory() as session:
-        historical_intents = {r["id"]: r for r in RECORDED["historical_intents"]}
+        historical_intents = {r["id"]: r for r in recorded["historical_intents"]}
         added = set()
         for order in histories:
             persisted = session.get(BrokerOrder, UUID(order["id"]))
@@ -102,12 +103,12 @@ def recorded_setup(lane, symbol):
                     added.add(intent_id)
                 persisted.intent_id = intent_id
         ids = {r["id"] for r in histories}
-        for audit in RECORDED["audits"]:
+        for audit in recorded["audits"]:
             if audit["order_id"] in ids and audit["event_at"] < row["created_at"]:
                 session.add(BrokerOrderEvent(id=UUID(audit["id"]), order_id=UUID(audit["order_id"]),
                     event_type=audit["event_type"], event_source=audit["event_source"],
                     event_at=datetime.fromisoformat(audit["event_at"]), payload=audit["payload"]))
-        for fill in RECORDED["fills"]:
+        for fill in recorded["fills"]:
             if fill["order_id"] in ids and fill["filled_at"] < row["created_at"]:
                 order = session.get(BrokerOrder, UUID(fill["order_id"]))
                 session.add(Fill(id=UUID(fill["id"]), order_id=order.id, strategy_id=order.strategy_id,
@@ -352,14 +353,15 @@ def test_only_this_account_symbol_buy_can_block(lane, foreign):
     assert dispatch(lane, event) is None
 
 
-def test_queue_gate_remains_all_history_while_dispatch_is_session_bound(lane):
+def test_queue_gate_uses_session_bound_before_dispatch(lane):
     event = prepare(lane)
     seed_order(lane, event, status="rejected", submitted_at=datetime(2026, 8, 25, 15, tzinfo=UTC))
     with lane[2]() as session:
         assert lane[0]._mirrorhold_gate(session, event) == "dispatch_uncertain"
-    assert lane[0]._mirrorhold_prepare_queue("AIXI", [row_id(event)]) == []
-    assert state(lane, event)["phase"] == "held"
-    assert dispatch(lane, event) is None
+    queued = lane[0]._mirrorhold_prepare_queue("AIXI", [row_id(event)])
+    assert len(queued) == 1
+    assert state(lane, event)["phase"] == "queued"
+    assert dispatch(lane, queued[0][2]) is None
 
 
 @pytest.mark.parametrize("failure,code", [("missing", "owner_missing"), ("shutdown", "shutdown"),
@@ -374,7 +376,7 @@ def test_every_dispatch_refusal_is_warning_with_actual_scan_count(lane, caplog, 
         if failure == "missing":
             session.delete(row)
         elif failure == "cap":
-            row.payload = {**data, "wire_submissions": 4}
+            row.payload = {**data, "wire_submissions": 4, "price_aggressive_refusals": 4}
         elif failure == "client":
             row.payload = {**data, "wire_clients": [lane[0]._build_client_order_id(event)]}
         elif failure == "phase":
