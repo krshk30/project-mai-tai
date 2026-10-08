@@ -1,0 +1,15 @@
+[Unit]
+Description=Reviewed PG-only FALSEFLIP hotfix, OMS and v2, no migration
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+UnsetEnvironment=TZ
+WorkingDirectory=/home/trader/after-hours/2026-10-08/falseflip-pg-hotfix/job
+ExecStart=/bin/bash /home/trader/after-hours/2026-10-08/falseflip-pg-hotfix/job/run.sh
+TimeoutStartSec=3600
+Restart=no
