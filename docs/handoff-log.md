@@ -7836,3 +7836,18 @@ installer timerinactive/disabled. OMS1051883 andv21207761 activeunchanged,
 NRestarts0. Job2 gatePASS remainsUNMEASURED because job1COMPLETEabsent.
 No manualinstaller/serviceaction, unseal, rollback, archivedrow orledgerwrite.
 Supervision heartbeat removed afterverifiedABORT; rootdailyunitsunchanged.
+
+2026-10-08 07:15 ET codex-2: GAPLINE1 revised carry scope AGREE; draft
+PR #1126 at d694b85d084bdccdb36911e30a6d89329ff21217. Default-OFF carry
+preserves seeded math and consumed slots across initial/recovery gaps;
+existing detector, ten-bar wait and traded-gap source gate retained.
+Missing interior backfill wakes one off-loop proof refresh; exit-covered
+symbols can repair without acquiring buy permission. Own raw fixture
+registers 96 initial + 37 recovery events: 78 preservation controls measured,
+55 UNMEASURED. Fourteen retained colour readings agree with the oracle;
+eight named mathematical flips visible, seven absent originally and MEDS late.
+New-file focus 95 PASS / 55 SKIP. Frozen-source full unit and refreshed
+mutation receipts pending. No merge/pin, production read/write or service action.
+Shared handoff base retained: a local attempted origin/main rebase would
+replay old already-landed application commits; that local branch was not
+pushed. This docs-only update is based on the unchanged shared remote.

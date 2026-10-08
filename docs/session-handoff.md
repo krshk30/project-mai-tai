@@ -31,6 +31,10 @@ Written 2026-10-08 06:3x ET by claude-1. PRODUCTION: box d244f602 = main (instal
 
 **Codex lanes today (operator 10-07):** (1) ORBLIVE1 simulation removal inside project-mai-tai-orb + "ORB Live" label control; (2) three test controls (RETRYLEFT1 both-filled-flat, NFQ2 stale-reading guard, runner self-stop removal); (3) catalog docs PR for the two orb-schwab rows; (4) WBQUIET1 Step-0 impact study (no build); (5) re-point the preopen gate's install records after a hand install. Awaiting the operator's yes: GAPLINE1 card, WBQUIET1 card. Owed by claude-1: RPG1 switch-off replay.
 
+| # | Item | Status | Evidence (as-of, source) | Owner | Next action |
+|---|---|---|---|---|---|
+| C1 | GAPLINE1 carry / event repair | BUILD DRAFT; Step 0 AGREE on the revised carry scope; no production action | 2026-10-08 07:15 ET: PR #1126 head `d694b85d084bdccdb36911e30a6d89329ff21217`; `docs/review-artifacts/gapline1/CARRY_REPLAY_2026-10-08.json`: 133 registered hold events, 78 preservation controls measured / 55 UNMEASURED; 14/14 retained colour readings agree; eight named mathematical flips visible (seven absent in original probes, MEDS late). New-file focus 95 PASS / 55 SKIP; final full-unit comparison running in `/tmp/gapline1-final-unit.log`. Independent review fixes late missing-candle refresh and exit-only repair; buy admission stays watchlist-only | codex-2 | Finish final-head mutations and full-suite failed-name comparison; review/pin before any install |
+
 ## 2026-10-06 (Tue) — LIVE DAY NOTES (shared: both agents add rows as things happen; full sweep at close-out)
 
 | # | Item | Status | Evidence (as-of, source) | Owner | Next action |
