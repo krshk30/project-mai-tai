@@ -8463,3 +8463,20 @@ actual OMS2073383/v22074723/strategy2073394 active/NRestarts0 unchanged.
 Csolewriter correctspublish/verify immutable ref and tests before newactivation,
 preserves oldseal/receipt and issues fresh no-overlap package. No hotfix source
 change, no extra services/schema/env/archival action, no COMPLETE claim.
+
+2026-10-08 17:21 ET codex-2 C61: corrected isolatedr3package deploys approved
+06b5e388. OMS2094823/strategy2094834 start21:16:04Z, v22096131 start21:18:16Z,
+allactive/NRestarts0. Firstreceipt sentwithin10min: selectedprocflags unchanged,
+LINE/GAP/FALSE/MIRROR/SLOTtrue,RPGfalse; actualentrybarfacts8 sinceOMSstart,
+AIXI/FLYE realepochbar_ms1791494340000latest, classification_unreadable0.
+WholeDB18.7595tx/s over147.605s (includescollector),17syncends allok
+463.321-916.994ms. DeployedrestoreROroutineafterrestart returns0, noarchival
+byus; source hasnozero-countbootmarker, directmemorycountUNMEASURED.
+Auditactual153/155,0mismatch,2paperUNKNOWN, preservednumeric10/retry0.
+Plan10cbee223b685e6b908bd6e0ed5378d79b66cffc manifest
+fa606690a63575da03d3ddf7c388258d5a852856e728d916fca35f117b12c802;
+approval3968c72da5818cc31e6a18ab1394273178047449cac2b7c4b35bb8fa2498934f.
+Runnerfalseflip-pg-hotfix-r3/attempt20261008T211500954696Z observes600sec
+from21:18:32Z. FourhistoricalclosedFLYE/AIXIconfirmationline_unproven errors
+repeat21:18:21Z, nottracebacks/PGfault, retainednotwaived. NozeroerrorCOMPLETE
+orpreopencloseoutclaim; originalfailedreceipts preserved.
