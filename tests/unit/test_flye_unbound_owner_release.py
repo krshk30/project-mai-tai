@@ -5,13 +5,40 @@ from dataclasses import replace
 import pytest
 
 from project_mai_tai.v2_flip_entry_ownership import FlipPositionLeg
-from project_mai_tai.v2_removed_wait import RemovedWaitProof
+from project_mai_tai.v2_removed_wait import RemovedWaitProof, configured_removed_wait_bindings
 from tests.unit.test_clearwait1_session_rollover import db as rollover_db
 from tests.unit.test_flye_bound_owner_target_close import FLYE, WEBULL, book, replay, sell
 
 
 ControlledUnboundProof = RemovedWaitProof
 db = rollover_db
+
+
+@pytest.fixture
+def unbound_db(db):
+    from sqlalchemy import select
+    from project_mai_tai.db.models import BrokerAccount
+
+    with db[1]() as session:
+        for account in session.scalars(select(BrokerAccount)):
+            account.external_account_id = None
+        session.commit()
+    return db
+
+
+def controlled_routing():
+    from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
+    from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBrokerAdapter
+    from project_mai_tai.broker_adapters.webull import WebullAccountConfig, WebullBrokerAdapter
+    from tests.unit.test_flye_bound_owner_target_close import PRIMARY
+
+    primary = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
+    primary.accounts_by_name = {PRIMARY: SchwabAccountConfig(account_hash="TEST-SCHWAB")}
+    webull = WebullBrokerAdapter.__new__(WebullBrokerAdapter)
+    webull.accounts_by_name = {WEBULL: WebullAccountConfig(account_id="TEST-WEBULL")}
+    return RoutingBrokerAdapter(default_provider="schwab",
+        provider_by_account={PRIMARY: "schwab", WEBULL: "webull"},
+        factories_by_provider={"schwab": lambda: primary, "webull": lambda: webull})
 
 
 def setup(*, pm=False):
@@ -198,7 +225,7 @@ def test_boot_stores_configure_before_lazy_owner_creation(active, fault):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("active", [False, True])
 @pytest.mark.parametrize("fault", ["none", "stale", "open", "unknown"])
-async def test_actual_service_boot_delivers_closed_owner_witness_before_watch(db, active, fault):
+async def test_actual_service_boot_delivers_closed_owner_witness_before_watch(unbound_db, active, fault):
     from datetime import UTC, datetime
     from uuid import UUID
 
@@ -210,8 +237,8 @@ async def test_actual_service_boot_delivers_closed_owner_witness_before_watch(db
     strategy, state, _, clock, _, controlled = setup()
     persisted = strategy._flip_owner_record(state)
     request = controlled.request
-    store, sessions, ids, strategy_id = db
-    seed(db, request, receipts=False)
+    store, sessions, ids, strategy_id = unbound_db
+    seed(unbound_db, request, receipts=False)
     with sessions() as session:
         for account, row in persisted.position_ids.items():
             entry = BrokerOrder(strategy_id=strategy_id, broker_account_id=ids[account],
@@ -225,10 +252,12 @@ async def test_actual_service_boot_delivers_closed_owner_witness_before_watch(db
                 entry_price=2.22, original_quantity=280, current_quantity=0, status="closed"))
         session.commit()
     # Explicit controlled both-account books/drain, not retained historical broker evidence.
-    books = {account: CompleteWorkingBook(account, account, clock[0], clock[0], True,
+    bindings = configured_removed_wait_bindings(controlled_routing(), request.account_names)
+    books = {account: CompleteWorkingBook(account, bindings[account][1], clock[0], clock[0], True,
                                          "all_working", (), "broker") for account in request.account_names}
     proof, = store.retire_unbound((request,), set(request.account_names), books=books,
-        publication_closed={request: True}, now=datetime.fromtimestamp(clock[0] / 1000, UTC))
+        expected_bindings=bindings, publication_closed={request: True},
+        now=datetime.fromtimestamp(clock[0] / 1000, UTC))
     assert proof.clear and proof.closed_owned_rows == tuple(sorted(persisted.position_ids.items()))
     if not active:
         store.record(request, False)
@@ -258,21 +287,25 @@ async def test_actual_service_boot_delivers_closed_owner_witness_before_watch(db
 
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("fault", ["none", "schwab_buy", "webull_buy", "open_owned", "unknown_book",
-                                  "same_segment", "operator_sell"])
-def test_controlled_unbound_store_flye_sell_rest_buy_chronology(db, pm, fault):
+                                  "same_segment", "operator_sell", "missing_config", "retained_id", "provider"])
+def test_controlled_unbound_store_flye_sell_rest_buy_chronology(unbound_db, pm, fault):
     from datetime import UTC, datetime
     from uuid import UUID
 
     from project_mai_tai.cancel_terminal_proof import BookOrder, CompleteWorkingBook
-    from project_mai_tai.db.models import AccountPosition, BrokerOrder, OmsManagedPosition
+    from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, OmsManagedPosition
     from tests.unit.test_clearwait1_session_rollover import seed
     from tests.unit.test_flye_bound_owner_target_close import PRIMARY, confirm_controlled_next_entry
 
     strategy, state, record, clock, _, controlled = setup(pm=pm)
     request = controlled.request
-    store, sessions, ids, strategy_id = db
-    seed(db, request, receipts=False)
+    store, sessions, ids, strategy_id = unbound_db
+    seed(unbound_db, request, receipts=False)
     with sessions() as session:
+        if fault == "retained_id":
+            session.get(BrokerAccount, ids[PRIMARY]).external_account_id = "retained-wrong-id"
+        elif fault == "provider":
+            session.get(BrokerAccount, ids[PRIMARY]).provider = "webull"
         for account, row in record.position_ids.items():
             entry = BrokerOrder(strategy_id=strategy_id, broker_account_id=ids[account], symbol="FLYE",
                 side="buy", order_type="limit", time_in_force="day", quantity=280, status="filled",
@@ -293,7 +326,8 @@ def test_controlled_unbound_store_flye_sell_rest_buy_chronology(db, pm, fault):
                 session.add(AccountPosition(broker_account_id=ids[account], symbol="FLYE", quantity=1000))
         session.commit()
     # Counterfactual both-account broker shapes/drain; not acquired or historical books.
-    books = {account: CompleteWorkingBook(account, account, clock[0], clock[0], True,
+    bindings = configured_removed_wait_bindings(controlled_routing(), request.account_names)
+    books = {account: CompleteWorkingBook(account, bindings[account][1], clock[0], clock[0], True,
                                          "all_working", (), "broker") for account in request.account_names}
     if fault in {"schwab_buy", "webull_buy", "operator_sell"}:
         books[account] = replace(books[account], orders=(BookOrder("controlled-working-order", "FLYE",
@@ -307,6 +341,7 @@ def test_controlled_unbound_store_flye_sell_rest_buy_chronology(db, pm, fault):
         state.position_qty = state.position_qty_held = 1000
     strategy._removed_wait_persist = store.record
     proof, = store.retire_unbound((request,), set(request.account_names), books=books,
+        expected_bindings=None if fault == "missing_config" else bindings,
         publication_closed={request: True}, now=datetime.fromtimestamp(clock[0] / 1000, UTC))
     assert proof.clear is (fault in {"none", "same_segment", "operator_sell"})
     strategy.apply_removed_wait_proofs((proof,))
@@ -330,3 +365,7 @@ def test_controlled_unbound_store_flye_sell_rest_buy_chronology(db, pm, fault):
         assert store.restore() == {"FLYE": request}
         assert not strategy._strict_first_rest_admitted(state, slot="first")
         assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
+    with sessions() as session:
+        assert session.get(BrokerAccount, ids[PRIMARY]).external_account_id == (
+            "retained-wrong-id" if fault == "retained_id" else None)
+        assert session.get(BrokerAccount, ids[WEBULL]).external_account_id is None
