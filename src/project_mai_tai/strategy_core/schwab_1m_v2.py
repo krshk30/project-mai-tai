@@ -1768,6 +1768,11 @@ class SchwabV2Strategy:
             return
         state.retry_one_segment_id = segment_id
         state.retry_one_closes_in_segment = 0
+        request = self._removed_wait_requests.get(state.symbol)
+        if (request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"}
+                and request.opportunity_id == state.flip_owner_opportunity_id > 0):
+            # A previous request book may have expired; wake its off-loop caller once per SELL.
+            self.__dict__.setdefault("_removed_wait_evidence_wakes", set()).add(request)
         logger.info(
             "[V2-FLIP-OWNER-RETRY] %s segment_id=%d closes_in_segment=0 "
             "retries_left=%d action=reset_new_segment reason=fresh_sell_flip",

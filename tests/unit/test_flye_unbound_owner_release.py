@@ -158,6 +158,7 @@ def test_fresh_sell_releases_closed_false_owner_without_carrying_old_budget(pm):
     false_book(strategy, state, clock, proofs)
     strategy._cw_v2_track(state, {"flip": "SELL", "observation_phase": "live"})
     assert state.flip_owner_phase == "awaiting_close"
+    assert strategy._removed_wait_evidence_wakes == {request}
     witness = ControlledUnboundProof(request, clock[0], True, "unbound_symbol_terminal",
                                      tuple(state.flip_owner_position_ids.items()))
     strategy.apply_removed_wait_proofs((witness,))
@@ -214,6 +215,63 @@ def test_same_segment_false_restore_requires_exact_terminal_witness(pm, fault):
         assert strategy._falseflip_budget(state) == before
         assert not strategy._strict_first_rest_admitted(state, slot="first")
     assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
+
+
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("fault", ["none", "not_live", "same_segment", "unreadable", "persist", "identity", "token", "opportunity"])
+def test_fresh_sell_wakes_only_exact_pending_request_after_committed_segment(pm, fault):
+    strategy, state, _, clock, _, proof = setup(pm=pm)
+    request = proof.request
+    wakes = strategy.__dict__.setdefault("_removed_wait_evidence_wakes", set())
+    assert wakes == {request}
+    wakes.clear()  # The actual off-loop caller consumes this wake before acquisition.
+    strategy._retry_one_start_segment_on_sell(state, live=True)
+    assert not wakes, "duplicate same-bar delivery must not cause another broker read"
+    clock[0] += 60_000
+    from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar
+
+    state.bars.append(OHLCVBar(clock[0], 2.3, 2.35, 2.27, 2.28, 1))
+    state.atr_short_flip_bar_ts = clock[0]
+    if fault == "same_segment":
+        state.retry_one_segment_id = clock[0]
+    elif fault == "unreadable":
+        state.retry_one_budget_readable = False
+    elif fault == "persist":
+        def fail(*_):
+            raise RuntimeError("controlled segment persistence failure")
+        strategy._retry_one_budget_persist = fail
+    elif fault == "identity":
+        state.atr_short_flip_bar_ts = 0
+    elif fault == "token":
+        strategy._removed_wait_requests[state.symbol] = replace(request, token="new-current-token")
+    elif fault == "opportunity":
+        strategy._removed_wait_requests[state.symbol] = replace(request, opportunity_id=request.opportunity_id + 1)
+    strategy._retry_one_start_segment_on_sell(state, live=fault != "not_live")
+    expected = strategy._removed_wait_requests[state.symbol]
+    assert wakes == ({expected} if fault in {"none", "token"} else set())
+    assert request not in wakes or fault == "none"
+
+
+@pytest.mark.parametrize("pm", [False, True])
+def test_1304_terminal_book_needs_fresh_sell_resample_not_timestamp_refresh(pm):
+    strategy, state, record, clock, _ = replay(pm=pm)
+    book(strategy, record, clock)
+    request = strategy._removed_wait_requests["FLYE"]
+    strategy.drain_pending_intents()
+    strategy.drain_webull_direct_intents()
+    old = ControlledUnboundProof(request, clock[0], True, "unbound_symbol_terminal",
+                                 tuple(record.position_ids.items()))
+    strategy.apply_removed_wait_proofs((old,))
+    clock[0] = FLYE["fresh_sell_poll_ms"]
+    book(strategy, record, clock)
+    sell(strategy, state, clock)
+    assert strategy._removed_wait_evidence_wakes == {request}
+    assert strategy._closed_owner_terminal_receipts[("FLYE", record.opportunity_id)] is old
+    assert state.flip_owner_phase == "awaiting_close"
+    assert "FLYE" in strategy._removed_wait_requests
+    strategy.apply_removed_wait_proofs((replace(old, observed_at_ms=clock[0]),))
+    book(strategy, record, clock)
+    assert state.flip_owner_phase == "idle"
 
 
 @pytest.mark.parametrize("active", [False, True])
