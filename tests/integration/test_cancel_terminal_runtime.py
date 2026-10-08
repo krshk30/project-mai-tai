@@ -107,7 +107,8 @@ class Client:
         if self.on_read:
             self.on_read()
         if request.kind == "detail":
-            return SimpleNamespace(status_code=404 if self.detail is None else 200, body=self.detail)
+            return SimpleNamespace(status_code=417 if self.detail is None else 200,
+                                   body={"error_code": "ORDER_NOT_FOUND"} if self.detail is None else self.detail)
         assert request.kind == "open", "today/cache cannot prove complete working book"
         index = sum(kind == "open" for kind, _, _ in self.calls) - 1
         return SimpleNamespace(status_code=200, body=self.pages[index])
@@ -167,9 +168,8 @@ def read(sessions, intent_id):
 
 @pytest.mark.asyncio
 async def test_offloop_real_pg_exact_journal_and_every_page(sessions, sdk):
-    client = Client(pages=[{"has_next": True, "orders": [
-        {"client_order_id": "other", "symbol": "OTHER", "order_status": "SUBMITTED"}]},
-        {"has_next": False, "orders": []}])
+    client = Client(pages=[{"has_next": False, "orders": [
+        {"client_order_id": "other", "symbol": "OTHER", "order_status": "SUBMITTED"}]}])
     routed = adapter(client)
     intent_id = seed(sessions, routed)
     sessions.test_threads.clear()
@@ -179,7 +179,11 @@ async def test_offloop_real_pg_exact_journal_and_every_page(sessions, sdk):
     intent, proof = read(sessions, intent_id)
     assert proof.terminal and proof.scope.account_id == "ACC1"
     assert intent.updated_at == datetime.fromtimestamp((NOW - 20_000) / 1000, UTC)
-    assert client.calls[-1][1]["last_client_order_id"] == "other"
+    pages = Client(pages=[{"hasNext": True, "orders": [
+        {"client_order_id": "other", "symbol": "OTHER", "order_status": "SUBMITTED"}]},
+        {"hasNext": False, "orders": []}])
+    assert (await broker.acquire_complete_working_book(adapter(pages), "live:orb")).complete
+    assert pages.calls[-1][1]["last_client_order_id"] == "other"
     assert intent.payload[journal.JOURNAL_KEY]["binding"]["generation"] == str(NOW)
     assert intent.payload[journal.JOURNAL_KEY]["binding"]["token"] == "exact-token"
     with sessions() as session:
@@ -379,3 +383,36 @@ async def test_schwab_exact_target_receipt_without_relabelled_account_list(sessi
     unknown = await broker.acquire_broker_cancel_evidence(leaf, request.receipt)
     assert not evaluate_cancel_terminal(request.receipt, unknown, now_ms=NOW).terminal
     assert await broker.acquire_complete_working_book(leaf, "live:orb") is None
+
+
+@pytest.mark.parametrize("detail", [{}, {"items": []}, {"error_code": "UNKNOWN_ERROR"}])
+@pytest.mark.asyncio
+async def test_empty_malformed_detail_is_not_explicit_not_found(sessions, sdk, detail):
+    client = Client(detail=detail)
+    routed = adapter(client)
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert not read(sessions, intent_id)[1].terminal
+    assert [kind for kind, _, _ in client.calls] == ["detail"]
+
+
+@pytest.mark.asyncio
+async def test_ten_request_burst_uses_actual_aggregate_two_per_two_second_budget(sdk):
+    from project_mai_tai.broker_adapters.webull_order_reads import QueryBudget
+    from project_mai_tai.cancel_terminal_proof import CancelReceipt, CancelScope
+
+    client = Client()
+    routed = adapter(client)
+    clock = [0.0]
+    budget = QueryBudget(clock=lambda: clock[0])
+    routed._adapter_for_account("live:orb")._query_budget = budget
+    for index in range(10):
+        receipt = CancelReceipt(CancelScope("live:orb", "ACC1", f"SYM{index}", f"coid{index}", f"event{index}"),
+                                NOW - 20_000, "rejected", "skipped_before_submit", "cancel_target_not_found")
+        evidence = await broker.acquire_broker_cancel_evidence(routed, receipt)
+        assert evaluate_cancel_terminal(receipt, evidence, now_ms=NOW).terminal is (index == 0)
+    assert [kind for kind, _, _ in client.calls] == ["detail", "open"]
+    assert len(budget.attempts["detail"]) == len(budget.attempts["list-open"]) == 1
+    clock[0] = 2.0
+    await broker.acquire_broker_cancel_evidence(routed, receipt)
+    assert len(client.calls) == 4

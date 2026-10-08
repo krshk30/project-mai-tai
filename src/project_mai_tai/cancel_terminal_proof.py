@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 
 FRESHNESS_MS = 15_000
@@ -195,6 +195,7 @@ class UnboundCancelRequest:
     purpose: str
     requested_at_ms: int
     account_ids: Mapping[str, str]
+    account_providers: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -228,8 +229,9 @@ def evaluate_unbound_cancel_terminal(
     This proof does not authorize position changes or bypass owned open rows.
     """
     def result(reason: str, terminal: bool = False) -> UnboundCancelTerminalProof:
-        counts = ",".join(f"{name}:{len(book.orders) if isinstance(book, CompleteWorkingBook) else '?'}"
-                          for name, book in books.items())
+        counts = ",".join(sorted(
+            f"{expected.account_providers.get(name, name)}:{len(book.orders) if isinstance(book, CompleteWorkingBook) else '?'}"
+            for name, book in books.items()))
         logging.getLogger(__name__).info(
             "[V2-CANCEL-TERMINAL] sym=%s request=%s bound=0 decision=%s reason=%s books=%s",
             expected.symbol, expected.request_id, "TERMINAL" if terminal else "UNKNOWN", reason, counts,
@@ -238,9 +240,12 @@ def evaluate_unbound_cancel_terminal(
 
     if (not all(_identity(v) for v in (expected.symbol, expected.request_id, expected.token,
                                      expected.generation, expected.purpose))
-            or not expected.account_ids or set(books) != set(expected.account_ids)
+            or len(expected.account_ids) != 2 or set(books) != set(expected.account_ids)
             or not all(_identity(n) and _identity(i) for n, i in expected.account_ids.items())):
         return result("unbound_request_identity_unknown")
+    if (set(expected.account_providers) != set(expected.account_ids)
+            or set(expected.account_providers.values()) != {"schwab", "webull"}):
+        return result("unbound_request_broker_set_unknown")
     if (type(now_ms) is not int or type(expected.requested_at_ms) is not int
             or not 0 < expected.requested_at_ms <= now_ms or type(freshness_ms) is not int
             or not 0 < freshness_ms <= FRESHNESS_MS):
