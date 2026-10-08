@@ -144,7 +144,8 @@ def test_pg_guard_denies_before_engine_or_create_schema(monkeypatch, url):
 ])
 def test_unbound_approved_replays_require_both_books_and_explicit_fences(symbol, orders, terminal, caplog):
     request = UnboundCancelRequest(symbol, "token", "token", str(NOW), "retry_exhausted",
-                                   NOW - 20_000, {"webull": "actual-account", "schwab": "hash"})
+                                   NOW - 20_000, {"webull": "actual-account", "schwab": "hash"},
+                                   {"webull": "webull", "schwab": "schwab"})
     fences = UnboundCancelFences(request, True, True, True, True)
     books = {"webull": replace(BOOK, orders=orders),
              "schwab": replace(BOOK, account_name="schwab", account_id="hash")}

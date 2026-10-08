@@ -50,8 +50,23 @@ def _webull_response(leaf, request, *, endpoint: str, owner: str):
     # so one permit cannot hide multiple target endpoint HTTP attempts.
     if getattr(client, "_auto_retry", None) is not False:
         raise ValueError("sdk_retry_policy_unknown")
+    # Detail and open-book reads share a stricter ceiling in addition to the
+    # existing endpoint ceilings; no other caller's permits are weakened.
+    leaf._query_budget.claim("cancel-terminal-family", owner, strict=True)
     leaf._query_budget.claim(endpoint, owner, strict=True)
     return client.get_response(request)
+
+
+def _http_status(response) -> int | None:
+    for attr in ("status_code", "code", "status"):
+        code = getattr(response, attr, None)
+        if type(code) is int:
+            return code
+    return None
+
+
+class _TargetNotFound(ValueError):
+    """Only a structured venue ORDER_NOT_FOUND, never malformed/empty detail."""
 
 
 def _webull_book(
@@ -77,7 +92,7 @@ def _webull_book(
             request.set_last_client_order_id(cursor)
         response = _webull_response(leaf, request, endpoint="list-open", owner=account_id)
         body = leaf._body(response)
-        if (leaf._response_status(response) != 200 or not isinstance(body, dict)
+        if (_http_status(response) != 200 or not isinstance(body, dict)
                 or body.get("error_code")):
             raise ValueError("open_book_unreadable")
         if body.get("account_id", account_id) != account_id:
@@ -143,10 +158,21 @@ def _webull_target(leaf: WebullBrokerAdapter, receipt: CancelReceipt, broker_ord
     request = OrderDetailRequest()
     request.set_account_id(scope.account_id)
     request.set_client_order_id(scope.client_order_id)
-    response = _webull_response(leaf, request, endpoint="detail",
-                              owner=f"{scope.account_id}:{scope.client_order_id}")
+    try:
+        response = _webull_response(leaf, request, endpoint="detail",
+                                  owner=f"{scope.account_id}:{scope.client_order_id}")
+    except Exception as exc:
+        if (getattr(exc, "error_code", None) == "ORDER_NOT_FOUND"
+                and getattr(exc, "http_status", None) in {404, 417}):
+            raise _TargetNotFound("broker_order_not_found") from exc
+        raise
     body = leaf._body(response)
-    if leaf._response_status(response) != 200 or not isinstance(body, dict):
+    if (isinstance(body, dict) and body.get("error_code") == "ORDER_NOT_FOUND"
+            and _http_status(response) in {200, 404, 417}
+            and body.get("account_id", scope.account_id) == scope.account_id
+            and body.get("client_order_id", scope.client_order_id) == scope.client_order_id):
+        raise _TargetNotFound("broker_order_not_found")
+    if _http_status(response) != 200 or not isinstance(body, dict) or body.get("error_code"):
         raise ValueError("target_unreadable")
     items = body.get("items")
     if (body.get("account_id", scope.account_id) != scope.account_id
@@ -173,11 +199,10 @@ async def acquire_broker_cancel_evidence(
     if isinstance(leaf, WebullBrokerAdapter):
         try:
             status, filled = await asyncio.to_thread(_webull_target, leaf, receipt, broker_order_id)
-        except ValueError as exc:
-            if str(exc) == "target_identity_unknown":
-                return evidence
-        except Exception:
+        except _TargetNotFound:
             pass
+        except Exception:
+            return evidence
         # A known working/fill read is a contradiction and cannot fall back to absence.
         if not status:
             try:
