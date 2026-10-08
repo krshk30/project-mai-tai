@@ -96,7 +96,6 @@ def sdk(monkeypatch):
 
 class Client:
     _auto_retry = False
-
     def __init__(self, pages=None, detail=None):
         self.pages = pages or [{"has_next": False, "orders": []}]
         self.detail = detail
