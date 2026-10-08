@@ -146,6 +146,8 @@ def test_command_captures_both_streams_and_rc(tmp_path):
 def test_native_oms_v2_readonly_rehearsal_preserves_rc_and_no_override(tmp_path, monkeypatch, codes, expected):
     run = runner.Run(tmp_path, {}, tmp_path)
     calls, notes = [], []
+    monkeypatch.setattr(runner, 'native_v2_command', lambda now, **kwargs:
+                        ['bash', str(runner.REPO / 'ops/preflight/preflight_v2_restart.sh')])
     def command(args, **kwargs):
         calls.append(args)
         return codes[len(calls) - 1], None, None
@@ -154,7 +156,7 @@ def test_native_oms_v2_readonly_rehearsal_preserves_rc_and_no_override(tmp_path,
     original = runner.retry_read
     monkeypatch.setattr(runner, 'retry_read', lambda call, **kwargs: original(call, sleep=lambda seconds: None, **kwargs))
     if expected == 'WAIT':
-        with pytest.raises(runner.WaitWork, match='no clock override'):
+        with pytest.raises(runner.WaitWork, match='no armed or trading-gate override'):
             run.native_rehearsal()
     elif expected == 'UNKNOWN':
         with pytest.raises(RuntimeError, match='unreadable'):

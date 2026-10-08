@@ -10,6 +10,15 @@ import sys
 import tempfile
 
 CASES = [
+    ('named_clock_authority_omitted', 'runner.py',
+     "command += ['--clock-override', CLOCK_REASON, '--i-accept-clock']", 'pass',
+     'test_clock_authority.py::test_named_clock_only_authority_date_and_after_close_bound'),
+    ('clock_authority_before_close', 'runner.py',
+     "authorized = local.date().isoformat() == DAY and local.hour >= 16",
+     "authorized = local.date().isoformat() == DAY and local.hour >= 0",
+     'test_clock_authority.py::test_named_clock_only_authority_date_and_after_close_bound'),
+    ('fresh_native_v2_skipped', 'runner.py', "self.native_rehearsal(('v2',), continuation=True)", 'pass',
+     'test_sequence.py::test_literal_deploy_sequence_fresh_gate_before_each_restart_retirement_and_five_service_repin'),
     ('offhours_flow_waived', 'health_view.py', "detail.get('data_flow') == 'stalled_offhours_rest_dry'", 'True',
      'test_health_view.py::test_each_shape_guard_blocks_without_allowance'),
     ('offhours_session_waived', 'health_view.py', "detail.get('market_session') == session", 'True',
@@ -43,7 +52,8 @@ CASES = [
     ('h_landing_not_required', 'make_release.py', "REQUIRED_PRS = {'1126', '1127', '1130', '1134', '1135'}",
      "REQUIRED_PRS = {'1126', '1127', '1130', '1134'}",
      'test_stage.py::test_h_requires_its_own_reviewed_landing'),
-    ('first_write_before_close', 'runner.py', 'local.hour >= 16', 'local.hour >= 0',
+    ('first_write_before_close', 'runner.py', "return 'READY' if local.hour >= 16 else 'BEFORE_CLOSE'",
+     "return 'READY' if local.hour >= 0 else 'BEFORE_CLOSE'",
      'test_runner.py::test_first_write_date_and_after_close_only'),
     ('retry_measured_blocker', 'runner.py', 'if rc != 2 or attempt == 3:', 'if rc != 1 or attempt == 3:',
      'test_runner.py::test_rc_two_only_bounded_read_retries_preserve_every_attempt'),

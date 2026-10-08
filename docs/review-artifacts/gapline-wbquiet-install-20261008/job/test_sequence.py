@@ -48,8 +48,8 @@ def rehearsal(tmp_path, monkeypatch):
             self.reads.append(label)
             return 1 if label == self.block_at else 0
 
-        def native_rehearsal(self):
-            self.reads.append('native-oms-v2-readonly')
+        def native_rehearsal(self, names=('oms', 'v2'), **kwargs):
+            self.reads.append('native-' + '-'.join(names) + '-readonly')
 
         def identities(self):
             self.identity_reads += 1
@@ -95,7 +95,7 @@ def test_literal_deploy_sequence_fresh_gate_before_each_restart_retirement_and_f
     assert all('MAI_TAI_EXPECTED_SHA=' + 'a' * 40 in call for call in deploys)
     assert all('APP_HEALTH_URL=http://127.0.0.1:12345/health' in call for call in deploys)
     assert run.reads == ['native-oms-v2-readonly', 'final-before-first-write', 'before-migration0023',
-                        'before-deploy-oms', 'before-deploy-schwab-1m-v2', 'before-deploy-control',
+                        'before-deploy-oms', 'before-deploy-schwab-1m-v2', 'native-v2-readonly', 'before-deploy-control',
                         'post-install-trading-read']
     assert not any('disable' in call or 'publish' in call for call in run.calls)
     assert json.loads((run.attempt / 'orb-retirement.json').read_bytes()) == receipt()

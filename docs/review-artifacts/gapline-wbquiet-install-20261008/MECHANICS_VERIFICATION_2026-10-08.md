@@ -12,14 +12,25 @@ and SLOTCLEAR flags. Migration source is the actual reviewed H nullable JSON
 entry_classification file at sql/migrations/versions/20261008_0023_entry_classification.py;
 target20261008_0023, base20261005_0022. No upgrade head, downgrade or recovery.
 
-Latest isolated tests: 316 PASS (3.01s), including actual reviewed git-archive
+Latest isolated tests: 330 PASS (8.45s), including actual reviewed git-archive
 extraction, real daily runtime verification, native health freshness/SLA,
 serialized bot heartbeat details and loopback unreadability propagation.
-Mutation receipt /tmp/oct8-lane-c-bagh-health-serialized-mutations.json:32/32 RED.
+Mutation receipt /tmp/oct8-lane-c-clock-authority-mutations.json:35/35 RED.
 Controls include FALSE activation removed, unrelated catalog reset,
 wrong migration target, native rehearsal skipped, H landing missing,
 non-P1 admission, retries/window/dependencies/identity/owner safeguards and
 ten off-hours health controls (exact fields/freshness/other-service isolation).
+Latest after-close authority uses the native gate's named two-token clock-only
+interface between16:00 and18:00; no armed override or gate-policy edit. Tested
+date/window/continuation bounds and a fresh native v2 recheck before deployment.
+Seven original Linux-Bash gate controls: zero-armed/flat passes; armed, stale,
+unreadable state, holding, failed position query and open managed row refuse.
+This Mac has Bash3.2, which cannot parse the original gate's command-substitution
+case syntax. The full330 run explicitly opted into Linux SSH in-memory fixtures:
+OCT8_NATIVE_GATE_SSH_HOST=mai-tai-vps. All privileged/data commands were stub
+functions; no remote file/state read or write, no live override. Without that
+opt-in on Bash3.2 those seven Linux-specific controls are honestly skipped.
+Receipt /tmp/oct8-lane-c-clock-successor.xml and matching .log.
 Ruff passes for job code/tests excluding unchanged raw production fixtures;
 those fixtures retain their original two unused imports. bash -n and diff
 whitespace checks pass. No fixture was rewritten for lint green.

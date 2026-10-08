@@ -27,6 +27,8 @@ RETAINED = ('MAI_TAI_OMS_V2_WEBULL_MIRROR_RETAINED_HOLD_ENABLED',
 UNITS = ('oms', 'schwab-1m-v2', 'strategy', 'control')
 SCOPE = 'oct8-p1-bagh-migration0023-four-services'
 DAY = '2026-10-08'
+CLOCK_REASON = ('Operator 2026-10-08 after-close GO: waive clock proxy only; '
+                'native fresh zero-armed, managed-row and broker-flat gates remain mandatory')
 
 
 def digest(raw):
@@ -51,6 +53,15 @@ def window(now):
     if local.date().isoformat() != DAY:
         return 'EXPIRED'
     return 'READY' if local.hour >= 16 else 'BEFORE_CLOSE'
+
+
+def native_v2_command(now, *, continuation=False):
+    command = ['bash', str(REPO / 'ops/preflight/preflight_v2_restart.sh')]
+    local = now.astimezone(ZoneInfo('America/New_York'))
+    authorized = local.date().isoformat() == DAY and local.hour >= 16
+    if local.hour < 18 and (authorized or continuation):
+        command += ['--clock-override', CLOCK_REASON, '--i-accept-clock']
+    return command
 
 
 def env_candidate(raw, line_enabled=True):
@@ -215,14 +226,18 @@ class Run:
             return rc
         return retry_read(read, record=lambda attempt, rc: self.note(read_attempt=attempt, rc=rc))
 
-    def native_rehearsal(self):
-        for name in ('oms', 'v2'):
+    def native_rehearsal(self, names=('oms', 'v2'), *, continuation=False):
+        for name in names:
             self.stage = 'native-readonly-' + name
-            command = ['bash', str(REPO / 'ops/preflight' / ('preflight_' + name + '_restart.sh'))]
+            command = (native_v2_command(datetime.now(timezone.utc), continuation=continuation) if name == 'v2'
+                       else ['bash', str(REPO / 'ops/preflight/preflight_oms_restart.sh')])
             rc = retry_read(lambda number: self.command(command, timeout=180)[0],
                             record=lambda attempt, code: self.note(read_attempt=attempt, rc=code))
             if rc == 1:
-                raise WaitWork('native read-only fence refused ' + name + '; preserve exact output, no clock override')
+                message = 'native read-only fence refused ' + name + '; no armed or trading-gate override'
+                if continuation:
+                    raise RuntimeError(message)
+                raise WaitWork(message)
             need(rc == 0, 'native read-only fence unreadable ' + name)
 
     def backup_write(self, path, raw):
@@ -315,6 +330,8 @@ class Run:
                       '--job', str(self.job), '--attempt', str(self.attempt)], timeout=600)
         for target in ('oms', 'schwab-1m-v2', 'control'):
             need(self.gate('before-deploy-' + target) == 0, 'fresh trading gate blocked before ' + target)
+            if target == 'schwab-1m-v2':
+                self.native_rehearsal(('v2',), continuation=True)
             self.stage = 'deploy-' + target
             from health_view import health_view
             with health_view(lambda event: self.note(**event)) as health_url:

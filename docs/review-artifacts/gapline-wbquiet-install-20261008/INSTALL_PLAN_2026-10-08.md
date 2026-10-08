@@ -19,10 +19,15 @@ No arbitrary PID adoption, archived snapshot/ledger mutation or recovery.
 
 ## Literal Sequence
 First write is after16:00 ET October8, flat; held work waits for its close.
-Native clock gate remains >=18:00 with NO invented override or threshold.
-A clock refusal is recorded literally. After the first write, clock
-advancement alone never aborts. Real holding/order/unreadability/start or
-migration errors remain fail closed.
+Native gate/source threshold remains >=18:00. Latest explicit after-close GO
+authorizes its EXISTING clock-only interface between16:00 and18:00:
+--clock-override 'Operator 2026-10-08 after-close GO: waive clock proxy only;
+native fresh zero-armed, managed-row and broker-flat gates remain mandatory'
+--i-accept-clock. No armed override or threshold/gate-policy edit. The native
+gate must still return0 with all actual trading/armed/freshness checks green;
+all output is retained. No override before close or on another install date.
+After the first write, clock advancement alone never aborts an already-started
+sequence; real holding/order/unreadability/start/migration errors fail closed.
 
 1. Verify all manifest/approval/artifact bytes, exclusive attempt/nonblocking
    deployment lock, exact clean box checkout, fetched immutable candidate
@@ -49,6 +54,9 @@ migration errors remain fail closed.
    Existing0023 is read/proven, not re-applied. Unexpected revision/error stops.
    No other schema/ledger/archived-row action or automatic downgrade.
 5. Fresh gate before each repo deployment, in order OMS -> v2 -> control:
+   Re-run the same native v2 fence immediately before its deployment, after
+   OMS/strategy are healthy. Clock-only authority is unchanged; armed state
+   must be fresh and empty. A real refusal stops, never bypasses or recovers.
    OMS script stops/starts strategy itself. No orb-schwab restart, no extra
    strategy restart, no paper retirement write. Literal command for each:
 
