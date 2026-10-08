@@ -8135,3 +8135,15 @@ enabled=true/max_retries=0 rather than disabling the old always-release
 code path; H must preserve no second REAL trade, not casually change env.
 No source edits by parent, no shared writer, no production action; A-G
 continue independently, F receipt inventory remains under correction.
+
+2026-10-08 11:26 ET codex-2 C37: parent reviewed worker's provisional
+/tmp/falseflip1-step0-1008.json (raw cut11:20:37ET):90 buy-fill legs,
+61 distinct slots,24 false legs in17 false slots,64 real legs,2 unmeasured.
+Do not call this17of62 literal fills or final replay proof. FLYE canonical
+10:00 bar delivered10:01:02.866 isSHORT/close2.790100/trail3.006326,
+both exact filled legs included; no buy-restoration or livepage claim yet.
+Asked substantive H3 clarification: after the second false flip and one
+skipped cross, later cross in same segment allowed versus blocked untilSELL.
+No invented third-false waiver; continue classification/replay work while
+the post-skip rule is resolved. Follow-up real flip must be within same
+causal segment, not any future symbol BUY. No production action.
