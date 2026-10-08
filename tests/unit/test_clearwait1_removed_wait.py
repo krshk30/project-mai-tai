@@ -620,7 +620,8 @@ def test_real_db_reader_replays_recorded_aixi_and_requires_configured_accounts()
                                               created_at=row.created_at))
         session.commit()
     proof = store.proofs([request], {PRIMARY, WEBULL}, now=NOW)[0]
-    assert proof.clear, proof.reason
+    # Legacy controlled no-target receipts lack the new broker acquisition/binding.
+    assert not proof.clear and proof.reason == "cancel_identity_unknown"
     with pytest.raises(ValueError, match="configuration changed"):
         store.proofs([request], {PRIMARY}, now=NOW)
     with pytest.raises(ValueError, match="accounts unavailable"):

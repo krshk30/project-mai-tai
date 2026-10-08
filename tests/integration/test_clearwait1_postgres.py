@@ -2,12 +2,12 @@
 
 import os
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from threading import get_ident
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.engine import make_url
 
 from project_mai_tai.db.models import (
@@ -39,9 +39,11 @@ def pg_db(request):
 def controlled_terminal(db, req):
     seed(db, req)
     with db[1]() as session:
-        for row in session.scalars(select(TradeIntent)).all():
-            row.status = "cancelled"
+        session.execute(update(TradeIntent).values(status="cancelled",
+            updated_at=datetime.fromtimestamp(req.requested_at_ms / 1000, UTC)))
         session.commit()
+        assert all(row.updated_at == datetime.fromtimestamp(req.requested_at_ms / 1000, UTC)
+                   for row in session.scalars(select(TradeIntent)).all())
 
 
 @pytest.mark.asyncio
