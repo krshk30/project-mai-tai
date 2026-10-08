@@ -1199,6 +1199,13 @@ class SchwabV2Strategy:
         self._removed_wait_persist = persist
         self._removed_wait_restore_readable = readable
         self._removed_wait_requests = dict(restored)
+        self._closed_owner_terminal_receipts = {}
+        for proof in terminal_proofs:
+            request = proof.request
+            if (proof.clear and proof.reason == "unbound_symbol_terminal"
+                    and restored.get(request.symbol, request) == request):
+                # Owner records restore lazily after boot; row validation happens on their book.
+                self._closed_owner_terminal_receipts[(request.symbol, request.opportunity_id)] = proof
         self._removed_wait_dispatch_persist = dispatch_persist
         self._removed_wait_terminal_proofs = tuple(terminal_proofs)
         self._removed_scanner_symbols.update(
@@ -1320,6 +1327,21 @@ class SchwabV2Strategy:
                                 "no_dispatch" if request.opportunity_id == 0 else proof.reason)
                     continue
             if request.purpose in {"retry_exhausted", "false_flip_restore"}:
+                if proof.reason == "unbound_symbol_terminal":
+                    if (state is not None and self._removed_wait_requests.get(request.symbol) == request
+                            and 0 <= self._now_ms() - proof.observed_at_ms <= 15_000
+                            and self._closed_owned_row_witness(state, proof)):
+                        if request.purpose == "false_flip_restore":
+                            try:
+                                if self._removed_wait_persist is None:
+                                    raise RuntimeError("cancellation store unavailable")
+                                self._removed_wait_persist(request, False)
+                            except Exception:  # noqa: BLE001
+                                logger.exception("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=UNKNOWN", request.symbol)
+                                continue
+                            self._removed_wait_requests.pop(state.symbol, None)
+                        self._remember_closed_owner_terminal(state, proof)
+                    continue
                 expected_reason = ("false_flip_leftovers_cancelled_owner_kept"
                                    if request.purpose == "false_flip_restore"
                                    else "retry_leftovers_cancelled_owner_kept")
@@ -1333,6 +1355,8 @@ class SchwabV2Strategy:
                     except Exception:  # noqa: BLE001
                         logger.exception("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=UNKNOWN", request.symbol)
                     else:
+                        self.__dict__.get("_closed_owner_terminal_receipts", {}).pop(
+                            (request.symbol, request.opportunity_id), None)
                         self._removed_wait_requests.pop(request.symbol, None)
                         self.__dict__.setdefault("_retry_leftover_receipts", set()).add(
                             (request.symbol, request.opportunity_id))
@@ -1662,6 +1686,10 @@ class SchwabV2Strategy:
             if duplicate or any(account not in self._flip_owner_accounts for account in by_account):
                 self._set_flip_owner_unknown(state, reason="position_book_identity_ambiguous")
                 continue
+            receipt = self.__dict__.get("_closed_owner_terminal_receipts", {}).get(
+                (state.symbol, state.flip_owner_opportunity_id))
+            if receipt is not None and self._closed_owned_row_witness(state, receipt):
+                self._remember_closed_owner_terminal(state, receipt)
             confirmation_closes = tuple(book.confirmation_closes_by_symbol.get(symbol, ()))
             position_closes = tuple(book.closes_by_symbol.get(symbol, ()))
             terminal_unfilled = frozenset(
@@ -2553,9 +2581,67 @@ class SchwabV2Strategy:
                 int(confirmed_close),
                 int(retry_exit_reason is not None),
             )
-        elif (phase == "awaiting_close" and state.flip_owner_position_ids
-              and not open_positions and state.position_qty == 0 and state.position_qty_held == 0):
+        elif (phase == "awaiting_close" and state.flip_owner_position_ids and not open_positions
+              and ((state.position_qty == 0 and state.position_qty_held == 0)
+                   or self._closed_owner_terminal_request(state))):
+            if not self._finish_closed_owner_terminal_after_sell(state):
+                return
             self._retire_flip_owner_opportunity(state, reason="bound_flip_position_closed")
+
+    def _remember_closed_owner_terminal(self, state: SymbolState, proof: RemovedWaitProof) -> None:
+        key = (state.symbol, proof.request.opportunity_id)
+        self.__dict__.setdefault("_closed_owner_terminal_receipts", {})[key] = proof
+        self.__dict__.setdefault("_retry_leftover_receipts", set()).add(key)
+        if proof.request.purpose == "false_flip_restore":
+            self.__dict__.setdefault("_falseflip_cancel_receipts", set()).add(key)
+
+    def _finish_closed_owner_terminal_after_sell(self, state: SymbolState) -> bool:
+        request = self._removed_wait_requests.get(state.symbol)
+        if request is None:
+            return True
+        proof = self.__dict__.get("_closed_owner_terminal_receipts", {}).get(
+            (state.symbol, state.flip_owner_opportunity_id))
+        if (proof is None or proof.request != request or not self._closed_owned_row_witness(state, proof)
+                or not state.retry_one_budget_readable
+                or not 0 < state.flip_owner_retry_segment_id < state.retry_one_segment_id
+                or not self._flip_owner_evidence_fresh(state) or state.flip_owner_open_positions):
+            return False
+        try:
+            if self._removed_wait_persist is None:
+                raise RuntimeError("cancellation store unavailable")
+            # F's record callback CAS-completes the typed witness without dropping its row scope.
+            self._removed_wait_persist(request, False)
+        except Exception:  # noqa: BLE001
+            logger.exception("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=UNKNOWN", state.symbol)
+            return False
+        self._removed_wait_requests.pop(state.symbol, None)
+        return True
+
+    def _closed_owned_row_witness(self, state: SymbolState, proof: RemovedWaitProof) -> bool:
+        request = proof.request
+        rows = getattr(proof, "closed_owned_rows", ())
+        expected = set(state.flip_owner_position_ids.items())
+        return bool(proof.clear and proof.reason == "unbound_symbol_terminal"
+            and self._flip_owner_restore_readable and self._removed_wait_restore_readable
+            and state.flip_owner_phase in {"bound", "consumed", "awaiting_close"}
+            and request.purpose in {"retry_exhausted", "false_flip_restore"}
+            and request.symbol == state.symbol and request.token
+            and request.opportunity_id == state.flip_owner_opportunity_id > 0
+            and set(request.account_names) == set(self._removed_wait_accounts())
+            and len(request.account_names) == len(set(request.account_names))
+            and expected and state.flip_owner_fill_accounts <= set(state.flip_owner_position_ids)
+            and isinstance(rows, tuple)
+            and all(isinstance(row, tuple) and len(row) == 2
+                    and row[0] in request.account_names and isinstance(row[1], str) and row[1]
+                    for row in rows)
+            and len(rows) == len(set(rows)) and expected <= set(rows))
+
+    def _closed_owner_terminal_request(self, state: SymbolState) -> bool:
+        proof = self.__dict__.get("_closed_owner_terminal_receipts", {}).get(
+            (state.symbol, state.flip_owner_opportunity_id))
+        return bool(proof is not None and self._closed_owned_row_witness(state, proof)
+                    and 0 <= self._now_ms() - proof.observed_at_ms <= 15_000
+                    and self._flip_owner_evidence_fresh(state) and not state.flip_owner_open_positions)
 
     def _flip_owner_evidence_fresh(self, state: SymbolState) -> bool:
         return bool(
@@ -2765,7 +2851,8 @@ class SchwabV2Strategy:
                 reason="sell_flip_without_fresh_position_evidence",
             )
             return
-        if state.position_qty or state.position_qty_held:
+        if ((state.position_qty or state.position_qty_held)
+                and not self._closed_owner_terminal_request(state)):
             if (phase in {"resting", "awaiting_fill"}
                     and not state.flip_owner_fill_accounts and not state.flip_owner_position_ids
                     and not state.flip_owner_open_positions and not state.position_qty_held):
