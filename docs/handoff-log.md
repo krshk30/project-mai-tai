@@ -8209,3 +8209,16 @@ with H sole writer. F frozenb235 full47/7835/55 zero added local names; both
 hosted Validate fail NFQ2 concurrent-quotes timing982.53/798.41ms against50ms.
 Same F writer investigating/rerunning with no threshold or source waiver.
 No parent source edits, production writes, pin or install readiness claim.
+
+2026-10-08 13:23 ET codex-2 C42: F frozen b23520ba Validate reruns
+37807457025/37807465798 PASS at13:15 ET, unchanged source; original NFQ2
+982.53/798.41ms failures preserved. Parent exact H bdcba457 detached snapshot
+61 existing controls PASS1.58s, /tmp/falseflip1-parent-bdcba457-existing-controls.xml.
+This only resolves the moving-source inspection counterexamples, not full parity.
+Hosted frozen bdc push37814365975 measured16 failed/7840 passed/55 skipped,
+625.05s: nine db-seed truncation tests consume just one bar, six partial strategy
+fixtures lack settings, one poll harness lacks the new falseflip hook. Sent
+exact failures to Averroes sole H writer for default-OFF and callback-protocol
+correction; no fixture-count weakening. H dirty follow-up contains recorded
+17-slot controlled PM/RTH restore receipts and three-false/manual-stop controls;
+not a final head or readiness receipt. No production action, pin or merge.
