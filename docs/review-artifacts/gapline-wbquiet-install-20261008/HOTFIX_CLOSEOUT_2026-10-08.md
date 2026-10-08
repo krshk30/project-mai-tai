@@ -1,4 +1,4 @@
-# PG hotfix applied; post-proof FAILED; bookkeeping not yet applied
+# PG hotfix applied; post-proof FAILED; bookkeeping re-pinned, daily gate not PASS
 
 Application 06b5e388affb5f33e4edf80c6e635cf72dbc3f78 is installed. Actual
 runner plan 10cbee223b685e6b908bd6e0ed5378d79b66cffc, manifest
@@ -103,6 +103,57 @@ or UNKNOWN, not waived. No env, catalog, source, DB/Redis, service, timer, schem
 or archived-row action.
 Any identity/artifact/flag discrepancy refuses rather than adopting a new state.
 
-At this report, preopen.sh SHA256 remains
+Before the authorized separate closure, preopen.sh SHA256 remained
 dc64d80a54c9127b74025873455d7ac3d41fc9f985db932afddfe45e5711d73f;
-no r3 preopen-repin receipt exists. Bookkeeping is honestly incomplete.
+no r3 preopen-repin receipt exists, and none was added to that immutable attempt.
+
+## Actual authorized closure, 18:01 ET
+
+Helper plan 92b4219b258c02fc2fe4eb45726805f14b0c852f; separate package
+/home/trader/after-hours/2026-10-08/preopen-bookkeeping-06b5e388.
+Manifest SHA256
+cc6c6231937d3d27632d6dd82911a8131eaf56c4537082a786cea622e9c1e937.
+All five helper/dependency hashes verified before invocation. Mechanics tests
+320 passed, seven platform skips; sixteen assertion mutations RED; Ruff clean.
+No global unit-suite parity assertion is made by these mechanics tests.
+
+Fresh trading receipt 22:01:15-23 UTC: rc 0, direct both-broker holdings/orders
+zero, managed/virtual rows zero, in-flight intents zero. Exact four installed
+PIDs and all untouched identities matched; no arbitrary identity adoption.
+Atomic repin at 22:01:25.899260 UTC, all six targets backed up in
+/home/trader/preopen-daily/repin-backups/20261008T220125899260Z-084c838b1c354ab9ae4fcc2b6119ebb2.
+Runtime published last. Actual schema expectation 0023 with entry_classification
+column; inaccurate --no-schema-change removed. No migration run.
+
+Separate receipt directory:
+/home/trader/restart_evidence/hotfix-bookkeeping-06b5e388.
+preopen-repin.json verdict REPINNED_CHECKS_NOT_RUN, SHA256
+af7622bb6a057e96c944c227aa30cd2e76750f4781765b43f942916eca89d5a0.
+New preopen.sh SHA256
+33fd632963a1da32bb7b65b348c8f3544304ab61773f1a5af155046986b3bb8c.
+The sealed-actions journal retains FAIL and both ABORTs. A separate precision
+addendum binds the corrected read-only receipt e9920312... and the original
+failed-proof hash, without changing the now-bound snapshot/record/journal.
+Addendum SHA256
+7fc8ec0b0c8d956ce0472165b95f975a5df5502283919ba2c95882fdecd15416.
+
+Actual checks-only results: shell syntax rc 0; real daily.verify_runtime rc 0;
+full official preopen rc 1. Restart report: eight PASS / one UNKNOWN, no failed
+checks (NOT 9/9 PASS). Migration and schema-column PASS; four new identities
+PASS; unchanged identities PASS; running-process flags matched 120/120. Its
+bar-continuity row is UNKNOWN for AIXI/FLYE/SAIQ because it cannot find a fresh
+persisted post-restart warmup bar under that official collector's query.
+This is distinct from the corrected attempt-scoped continuity receipt, which
+measures zero missing minutes. Neither reading is substituted for the other.
+Full preopen also FAILs the after-07:00 time and inactive paper/guard admission;
+catalog is 153/155 checked, mismatches zero, two paper UNKNOWNs. No waivers.
+
+Raw stdout/stderr and before/after dated reports are retained in the separate
+receipt directory. checks-only.json SHA256
+fd056de9be4985a3c66c3cb2534cf0070d16d42fcab9ed03ce4c303c997d81c7.
+official-preopen.stdout SHA256
+da93739230356a57c037fb800b43438f87465df1b4ded991abf75b4b10eac486.
+All sixteen manifest-bound r3 helper/artifact bytes verified unchanged after
+closure. All old ABORT/proof/seal hashes unchanged. No app restart, source/env/
+catalog/schema/DB/Redis/service/timer/archived-row action. Global installation
+remains FAIL with the four historical v2 ERRORs, never COMPLETE.
