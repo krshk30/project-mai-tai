@@ -8176,3 +8176,16 @@ wire count and11:38 legitimate reprice refused. Cap counts PRICE_AGGRESSIVE
 refusals only, not accepted reprices/free holds/re-authorization retries.
 Both same writers, no side patches, no production action. A-E deliveries
 unchanged; F's durable cancel-inventory correction remains independent.
+
+2026-10-08 12:18 ET codex-2 C40: F same-writer corrective source published
+b23520ba81a0d9e76dad440ab95cf7237a04dbc5 on draft1133; clean source.
+Parent independent three-file focused run288 PASS16.27s, raw immutable
+/tmp/lane-f-parent-b23520ba-focused.xml, explicit source PYTHONPATH.
+The formerly untagged generic cancel now journals exact publication UUID,
+account and target metadata before xadd; missing/ambiguous publication and
+receipt stay UNKNOWN. Memory generation fences a racing CLEAR and subsequent
+same-symbol OPEN; completed inventory retires only with exact terminal proof,
+not age. Writer16 F1 plus2 rollover mutants assertionRED in committed receipts.
+New full-suite/CI still pending; old3f8 results not reused. PostgreSQL runtime
+advisory-lock integration remains UNMEASURED. Sent H/F purpose-agnostic barrier
+integration contract; no cross-branch source edits or production action.
