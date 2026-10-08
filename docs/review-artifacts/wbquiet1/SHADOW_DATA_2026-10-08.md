@@ -113,8 +113,8 @@ off-loop SQL, recent BUY/SELL fills, state priorities, stale/contested cache,
 logging errors, timeout/no-backlog, memory bounds and truthful reader coverage.
 The separate OMS risk-service file passed 103 tests (294 total across these runs).
 The 240-event bypass test proves non-periodic calls perform zero observer SQL;
-it is not a live throughput or decision-equivalence receipt. Full-suite and
-production observation are not yet measured.
+it is not a live throughput or decision-equivalence receipt. Production
+observation is not yet measured; the final full-suite pair follows below.
 
 Final frozen-source suite on `ce3b51a3a14e406de52c76cbf74aaa357e0b6f91`
 completed at 07:21 ET: 47 failed / 7,535 passed in 609.51 seconds. Main
