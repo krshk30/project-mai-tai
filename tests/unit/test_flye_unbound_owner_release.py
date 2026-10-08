@@ -57,7 +57,8 @@ def setup(*, pm=False):
 
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("fault", ["none", "unknown", "open_owned", "open_sibling", "row", "token", "stale", "generic", "not_clear",
-                                  "stale_book", "unknown_phase", "missing_owned_row", "opportunity", "accounts", "duplicate_rows"])
+                                  "stale_book", "unknown_phase", "missing_owned_row", "opportunity", "accounts", "duplicate_rows",
+                                  "future", "raised_again"])
 def test_operator_1000_ignored_only_for_scoped_closed_owner_release(pm, fault):
     strategy, state, record, clock, writes, proof = setup(pm=pm)
     state.position_qty = state.position_qty_held = 1000
@@ -67,6 +68,11 @@ def test_operator_1000_ignored_only_for_scoped_closed_owner_release(pm, fault):
         proof = replace(proof, request=replace(proof.request, token="foreign"))
     elif fault == "stale":
         proof = replace(proof, observed_at_ms=clock[0] - 15_001)
+    elif fault == "future":
+        proof = replace(proof, observed_at_ms=clock[0] + 1)
+    elif fault == "raised_again":
+        strategy._removed_wait_requests[state.symbol] = replace(
+            proof.request, token="new-request-token", requested_at_ms=clock[0])
     elif fault == "generic":
         proof = replace(proof, reason="retry_leftovers_cancelled_owner_kept")
     elif fault == "not_clear":
