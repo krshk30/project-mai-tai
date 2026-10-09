@@ -20,9 +20,9 @@ from project_mai_tai.broker_adapters.cancel_terminal import broker_binding
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
-from project_mai_tai.cancel_terminal_proof import NeverSentScope, NeverSentWitness
+from project_mai_tai.cancel_terminal_proof import NeverSentScope, NeverSentWitness, TerminalSubmissionWitness
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import DashboardSnapshot
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot
 from project_mai_tai.fanout_segment_store import SNAPSHOT_TYPE, current_session_anchor
 
 PROTOCOL = "durable-buy-v1"
@@ -97,7 +97,49 @@ def opportunity_start_ms(session, symbol: str, generation: str, observed_at_ms: 
     return epoch if 0 < epoch <= observed_at_ms else 0
 
 
+def _token_terminal(session, token: BuySubmissionToken, observed_at_ms: int) -> bool:
+    if token.state not in {"reported_ambiguous", "broker_terminal"} or not isinstance(token.answers, list):
+        return False
+    answers = [a for a in token.answers if isinstance(a, dict)
+               and a.get("client_order_id") == token.client_order_id]
+    broker_ids = {a.get("broker_order_id") for a in answers
+                  if a.get("origin") == "broker" and isinstance(a.get("broker_order_id"), str)
+                  and a["broker_order_id"]}
+    if len(broker_ids) != 1:
+        return False  # Lost acknowledgement/replacement identity cannot be guessed.
+    order = session.scalar(select(BrokerOrder).join(BrokerAccount).where(
+        BrokerAccount.name == token.account_name,
+        BrokerAccount.external_account_id == token.account_id,
+        BrokerOrder.client_order_id == token.client_order_id,
+        BrokerOrder.broker_order_id == next(iter(broker_ids)),
+        BrokerOrder.symbol == token.symbol, BrokerOrder.side == "buy",
+    ).with_for_update(of=BrokerOrder))
+    terminal = {"cancelled", "canceled", "rejected", "expired", "filled"}
+    if order is None or order.status not in terminal:
+        return False
+    events = list(session.scalars(select(BrokerOrderEvent).where(
+        BrokerOrderEvent.order_id == order.id,
+    ).order_by(BrokerOrderEvent.event_at.desc(), BrokerOrderEvent.id.desc())))
+    if not events:
+        return False
+    event = events[0]
+    at = event.event_at.replace(tzinfo=UTC) if event.event_at.tzinfo is None else event.event_at
+    return (event.event_source == "broker" and event.event_type == order.status
+            and token.created_at_ms <= int(at.timestamp() * 1000) <= observed_at_ms)
+
+
 def close_never_sent_admission(session, scope: NeverSentScope, *, observed_at_ms: int) -> NeverSentWitness:
+    return _close_buy_admission(session, scope, observed_at_ms=observed_at_ms, terminal=False)
+
+
+def close_terminal_buy_admission(
+    session, scope: NeverSentScope, *, observed_at_ms: int,
+) -> TerminalSubmissionWitness:
+    """Consumer must separately prove every owned row closed in this transaction."""
+    return _close_buy_admission(session, scope, observed_at_ms=observed_at_ms, terminal=True)
+
+
+def _close_buy_admission(session, scope: NeverSentScope, *, observed_at_ms: int, terminal: bool):
     """Assess and close admission in the consumer's transaction; never commit it.
 
     This is usable only when that same transaction commits its exact request CAS.
@@ -107,7 +149,10 @@ def close_never_sent_admission(session, scope: NeverSentScope, *, observed_at_ms
     lock_buy_scope(session, scope.account_id, scope.symbol)
     epoch = session.get(BuyCoverageEpoch, (scope.coverage_process_id, scope.account_id))
     coverage = epoch.started_at_ms if epoch is not None else 0
+    coids = ()
     def result(reason, accepted=False):
+        if terminal:
+            return TerminalSubmissionWitness(scope, observed_at_ms, coverage, accepted, coids, reason)
         return NeverSentWitness(scope, observed_at_ms, coverage, accepted, reason)
     if (not all(isinstance(v, str) and v and v.strip() == v for v in (
             scope.account_name, scope.account_id, scope.symbol, scope.generation,
@@ -126,8 +171,13 @@ def close_never_sent_admission(session, scope: NeverSentScope, *, observed_at_ms
     attempts = list(session.scalars(select(BuySubmissionToken).where(
         BuySubmissionToken.account_id == scope.account_id,
         BuySubmissionToken.symbol == scope.symbol)))
-    if any(t.created_at_ms >= scope.opportunity_started_at_ms or t.state != "broker_terminal"
-           for t in attempts):
+    if terminal:
+        current = [t for t in attempts if t.created_at_ms >= scope.opportunity_started_at_ms]
+        if not current or any(not _token_terminal(session, t, observed_at_ms) for t in attempts):
+            return result("submission_terminal_unproven")
+        coids = tuple(sorted({t.client_order_id for t in current}))
+    elif any(t.created_at_ms >= scope.opportunity_started_at_ms or t.state != "broker_terminal"
+             for t in attempts):
         return result("never_sent_attempt_or_ambiguity_present")
     key = scope.account_id, scope.symbol, scope.generation
     prior = session.get(BuyAdmissionClosure, key)
@@ -139,7 +189,11 @@ def close_never_sent_admission(session, scope: NeverSentScope, *, observed_at_ms
             generation=scope.generation, opportunity_started_at_ms=scope.opportunity_started_at_ms,
             request_id=scope.request_id, request_token=scope.request_token, closed_at_ms=observed_at_ms))
         session.flush()
-    return result("never_sent_durable_admission_closed", True)
+    if terminal:
+        for attempt in attempts:
+            attempt.state = "broker_terminal"
+    return result("broker_terminal_durable_admission_closed" if terminal
+                  else "never_sent_durable_admission_closed", True)
 
 
 class BuyAdmissionClosed(RuntimeError):
