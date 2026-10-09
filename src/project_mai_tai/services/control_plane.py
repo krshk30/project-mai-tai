@@ -3002,6 +3002,9 @@ class ControlPlaneRepository:
                             }
                         )
 
+                from project_mai_tai.orb_live_decisions import read_decisions
+                recent_bar_decisions.extend(read_decisions(session, session_start, session_end))
+
                 for row in session.execute(
                     text(
                         """
@@ -5152,6 +5155,12 @@ def _find_bot_view(data: dict[str, Any], strategy_code: str) -> dict[str, Any] |
 
 
 def _resolved_bot_recent_decisions(data: dict[str, Any], bot: dict[str, Any]) -> list[dict[str, Any]]:
+    if _normalize_strategy_code(str(bot.get("strategy_code", ""))) == "orb_schwab":
+        live = [dict(item) for item in data.get("recent_bar_decisions", [])
+                if item.get("strategy_code") == "orb_schwab" and item.get("path") == "orb_live"]
+        if live:
+            # Each evaluation is evidence, including repeated attempts on one bar.
+            return live[:50]
     runtime_items = [
         dict(item)
         for item in bot.get("recent_decisions", [])

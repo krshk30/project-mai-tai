@@ -197,6 +197,8 @@ class Settings(BaseSettings):
     # ORBPURPLE1: initial RTH resting buy needs the prior completed Schwab close
     # at/above the exit ATR line. ON at deploy; independent paper-free rollback.
     orb_schwab_atr_entry_gate_enabled: bool = True
+    # ORBFILL1: ORB MACD-only Schwab supplement; enable only at reviewed install.
+    orb_schwab_macd_fill_enabled: bool = False
     # Read-only rehearsal of the separate Schwab route; never publishes an intent
     # or requests additional gateway subscriptions. Cannot run alongside live mode.
     orb_schwab_observe_enabled: bool = False
