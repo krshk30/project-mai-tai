@@ -782,6 +782,27 @@ class RemovedWaitStore:
                 terminal_ids = {name: set(w.client_order_ids) for name, w in terminal_submissions.items()
                     if isinstance(w, TerminalSubmissionWitness) and w.terminal is True
                     and w.reason == "broker_terminal_durable_admission_closed"}
+                terminal_orders = session.scalars(select(BrokerOrder).where(
+                    BrokerOrder.broker_account_id.in_(ids), BrokerOrder.symbol == request.symbol,
+                    BrokerOrder.side == "buy", BrokerOrder.client_order_id.in_(
+                        {coid for coids in terminal_ids.values() for coid in coids}),
+                ).limit(ROW_LIMIT + 1)).all()
+                terminal_orders_covered = all(coids == {order.client_order_id for order in terminal_orders
+                    if ids[order.broker_account_id] == name} for name, coids in terminal_ids.items())
+                terminal_owned = session.scalars(select(OmsManagedPosition).where(
+                    OmsManagedPosition.broker_account_name.in_(account_names),
+                    OmsManagedPosition.strategy_code == "schwab_1m_v2",
+                    OmsManagedPosition.symbol == request.symbol,
+                    OmsManagedPosition.entry_order_id.in_([order.id for order in terminal_orders]),
+                ).limit(ROW_LIMIT + 1)).all()
+                managed = list({row.id: row for row in (*managed, *terminal_owned)}.values())
+                terminal_fills = set(session.scalars(select(Fill.order_id).where(
+                    Fill.order_id.in_([order.id for order in terminal_orders]))))
+                terminal_owners_closed = (all(row.status == "closed" and row.current_quantity == 0
+                    for row in terminal_owned) and all(any(row.entry_order_id == order.id
+                        and row.broker_account_name == ids[order.broker_account_id] for row in terminal_owned)
+                    for order in terminal_orders if order.status == "filled" or order.id in terminal_fills))
+                bounded = bounded and len(terminal_orders) <= ROW_LIMIT and len(managed) <= ROW_LIMIT
                 episode_covered = all(order.client_order_id
                     and order.client_order_id in terminal_ids.get(ids[order.broker_account_id], set())
                     for order in episode_buys)
@@ -793,8 +814,8 @@ class RemovedWaitStore:
                         and publication_closed.get(request) is True
                         and set(process_ids) == set(request.account_names) and start_ms > 0
                         and assessment_book_current,
-                        not unanswered and targets_covered and episode_covered,
-                        rows_closed and filled_owners_closed,
+                        not unanswered and targets_covered and episode_covered and terminal_orders_covered,
+                        rows_closed and filled_owners_closed and terminal_owners_closed,
                         current),
                     never_sent_witnesses=never_sent, terminal_submission_witnesses=terminal_submissions,
                     now_ms=observed_ms)
@@ -804,7 +825,8 @@ class RemovedWaitStore:
                     md = (entry.payload or {}).get("metadata", entry.payload or {}) if entry else {}
                     if (entry is not None and entry.symbol == request.symbol
                             and ids.get(entry.broker_account_id) == row.broker_account_name
-                            and str(md.get("fanout_segment_id")) == str(request.opportunity_id)
+                            and (str(md.get("fanout_segment_id")) == str(request.opportunity_id)
+                                or entry.client_order_id in terminal_ids.get(row.broker_account_name, set()))
                             and request.opportunity_id > 0):
                         witnesses.append((row.broker_account_name, str(row.id)))
                 witnesses = tuple(sorted(witnesses))

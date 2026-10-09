@@ -284,9 +284,17 @@ async def test_pg_clear_commit_failure_rolls_back_all(pg_db, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL, "both"])
 @pytest.mark.parametrize("status", ["cancelled", "rejected", "expired", "filled"])
-async def test_pg_mixed_terminal_and_never_sent_journal_clear(pg_db, sdk, caller_clock, monkeypatch, account, status):
+@pytest.mark.parametrize("order_generation", [True, False])
+async def test_pg_mixed_terminal_and_never_sent_journal_clear(pg_db, sdk, caller_clock, monkeypatch, account, status, order_generation):
     from tests.unit.test_clearwait1_terminal_consumer import test_mixed_terminal_and_never_sent_actual_journal_clears
-    await test_mixed_terminal_and_never_sent_actual_journal_clears(pg_db, monkeypatch, account, status)
+    await test_mixed_terminal_and_never_sent_actual_journal_clears(pg_db, monkeypatch, account, status, order_generation)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+async def test_pg_terminal_filled_unmarked_order_requires_owner(pg_db, sdk, monkeypatch, account):
+    from tests.unit.test_clearwait1_terminal_consumer import test_terminal_filled_token_without_order_marker_still_requires_owner
+    await test_terminal_filled_token_without_order_marker_still_requires_owner(pg_db, monkeypatch, account)
 
 
 @pytest.mark.asyncio
