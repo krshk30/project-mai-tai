@@ -1319,9 +1319,7 @@ class SchwabV2Strategy:
                 self._removed_wait_terminal_proofs = tuple(
                     p for p in getattr(self, "_removed_wait_terminal_proofs", ())
                     if p.request.symbol != request.symbol) + (proof,)
-                if request.purpose == "retry_exhausted":
-                    continue  # Positive cancellation proof never refunds a same-session trade.
-                if request.purpose != "false_flip_restore":
+                if request.purpose not in {"retry_exhausted", "false_flip_restore"}:
                     self._removed_wait_requests.pop(request.symbol, None)
                     logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=CLEAR reason=%s",
                                 request.symbol, request.opportunity_id,

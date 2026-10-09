@@ -332,7 +332,7 @@ def test_boot_stores_configure_before_lazy_owner_creation(active, fault):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("active", [False, True])
 @pytest.mark.parametrize("fault", ["none", "stale", "open", "unknown"])
-async def test_actual_service_boot_delivers_closed_owner_witness_before_watch(unbound_db, active, fault):
+async def test_legacy_books_do_not_create_closed_owner_boot_witness(unbound_db, active, fault):
     from datetime import UTC, datetime
     from uuid import UUID
 
@@ -365,7 +365,8 @@ async def test_actual_service_boot_delivers_closed_owner_witness_before_watch(un
     proof, = store.retire_unbound((request,), set(request.account_names), books=books,
         expected_bindings=bindings, publication_closed={request: True},
         now=datetime.fromtimestamp(clock[0] / 1000, UTC))
-    assert proof.clear and proof.closed_owned_rows == tuple(sorted(persisted.position_ids.items()))
+    assert not proof.clear and proof.closed_owned_rows == ()
+    assert store.restore_terminal_proofs() == ()
     if not active:
         store.record(request, False)
     if fault == "stale":
@@ -377,32 +378,36 @@ async def test_actual_service_boot_delivers_closed_owner_witness_before_watch(un
         active_segments={"FLYE": persisted.opportunity_id}, retry_budget_persist=lambda *_: None,
         restored_retry_budgets={"FLYE": (FLYE["fresh_sell_bar_ms"], 0)})
     assert not restarted._symbol_states
-    await service(restarted, store)._configure_removed_wait_store()
+    bot = service(restarted, store)
+    bot._removed_wait_adapter = controlled_routing()
+    await bot._configure_removed_wait_store()
     if not active:
         assert not restarted._symbol_states
     restored = restarted.watchlist_state("FLYE")
     restored.position_qty = restored.position_qty_held = 1000
-    assert restarted._closed_owner_terminal_receipts[("FLYE", request.opportunity_id)] == proof
-    assert not restarted.drain_pending_intents() and not restarted.drain_webull_direct_intents()
+    assert not restarted._closed_owner_terminal_receipts
+    for drafts in (restarted.drain_pending_intents(), restarted.drain_webull_direct_intents()):
+        assert len(drafts) == int(active)
+        assert all(d.intent_type == "cancel" for d in drafts)
     legs = (FlipPositionLeg(WEBULL, "unknown-open-row", clock[0], 1),) if fault == "open" else ()
     book(restarted, persisted, clock, legs=legs, readable=fault != "unknown")
-    assert (restored.flip_owner_phase == "idle") is (fault == "none")
-    assert store.restore_terminal_proofs() == (proof,), "boot/completion must not refresh broker book time"
+    assert restored.flip_owner_phase != "idle"
+    assert store.restore_terminal_proofs() == (), "boot must not promote legacy book absence"
     assert restored.position_qty == restored.position_qty_held == 1000
-    assert bool(store.restore()) is (active and fault != "none")
+    assert bool(store.restore()) is active
 
 
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("fault", ["none", "schwab_buy", "webull_buy", "open_owned", "unknown_book",
                                   "same_segment", "operator_sell", "missing_config", "retained_id", "provider"])
-def test_controlled_unbound_store_flye_sell_rest_buy_chronology(unbound_db, pm, fault):
+def test_legacy_unbound_store_books_never_clear_wired_owner(unbound_db, pm, fault):
     from datetime import UTC, datetime
     from uuid import UUID
 
     from project_mai_tai.cancel_terminal_proof import BookOrder, CompleteWorkingBook
     from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, OmsManagedPosition
     from tests.unit.test_clearwait1_session_rollover import seed
-    from tests.unit.test_flye_bound_owner_target_close import PRIMARY, confirm_controlled_next_entry
+    from tests.unit.test_flye_bound_owner_target_close import PRIMARY
 
     strategy, state, record, clock, _, controlled = setup(pm=pm)
     request = controlled.request
@@ -450,28 +455,19 @@ def test_controlled_unbound_store_flye_sell_rest_buy_chronology(unbound_db, pm, 
     proof, = store.retire_unbound((request,), set(request.account_names), books=books,
         expected_bindings=None if fault == "missing_config" else bindings,
         publication_closed={request: True}, now=datetime.fromtimestamp(clock[0] / 1000, UTC))
-    assert proof.clear is (fault in {"none", "same_segment", "operator_sell"})
+    assert not proof.clear and proof.closed_owned_rows == ()
     strategy.apply_removed_wait_proofs((proof,))
     legs = tuple(FlipPositionLeg(account, row, record.position_entry_ms[account], 1)
                  for account, row in record.position_ids.items()) if fault == "open_owned" else ()
     book(strategy, record, clock, legs=legs)
-    assert (state.flip_owner_phase == "idle") is (fault in {"none", "operator_sell"})
+    assert state.flip_owner_phase != "idle"
     if fault == "operator_sell":
         assert state.position_qty == state.position_qty_held == 1000
         strategy._cw_v2_resting_track(state, {"state": "short", "trail": 2.558685})
         assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
-    elif fault == "none":
-        assert not store.restore()
-        strategy._queue_resting_place(state, 2.558685, slot="first")
-        assert state.resting_active
-        if not pm:
-            assert strategy.drain_pending_intents()[0].intent_type == "open"
-            assert strategy.drain_webull_direct_intents()[0].intent_type == "open"
-        confirm_controlled_next_entry(strategy, state, clock)
-    else:
-        assert store.restore() == {"FLYE": request}
-        assert not strategy._strict_first_rest_admitted(state, slot="first")
-        assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
+    assert store.restore() == {"FLYE": request}
+    assert not strategy._strict_first_rest_admitted(state, slot="first")
+    assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
     with sessions() as session:
         assert session.get(BrokerAccount, ids[PRIMARY]).external_account_id == (
             "retained-wrong-id" if fault == "retained_id" else None)
