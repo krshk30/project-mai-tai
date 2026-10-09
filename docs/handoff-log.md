@@ -8936,3 +8936,24 @@ FinalSHA/pins/postarchiveG2 owed; currentpreopen cumulativeOMS/
 strategy group not reusable as control/ORB/v2 binding. Actual
 after-close gateproof stillpending. No productionwrite,merge,pin,
 restart,flag/order/DB action; ownC-row and narrative only.
+
+2026-10-09 15:03 ET codex-2 C21: latestMASTER assessment and
+ACK landed in chat; main+AgentA+Singer onFI priority1. #1145 exact
+pinned1c91 merged14:47:25ET to67131907; #1144 already merged,
+supersession recorded. Read-only directgate14:55:57ET rc0: both
+brokersflat,orders0,managed/virtual0,inflight0,stderr0. No after-close
+or staged/runnable installer claim. E41 independently confirmed3
+archived/active0. G2 fresh literal prior-sessionDBcopy/controlled
+Monday input replay:25bootcomplete,0oldgates,24repair+NXTSunseeded,
+21firstflips/4horizonlimits,0tracebacks; MI07:17BUYready. Table in
+1143body/comment6087396639, unchanged16f9 exactpin requested.
+FI source1db1 moves identical quote-less limitcachepredicate into
+SQL;131focused/82equivalence/RuffPASS. StrictLinux37976428107
+RED (Floop43.890/close67.463;Iloop55.720/close61.857ms).
+SlowIframe loopGC44.126ms at native-stopguard orderread, not
+remaining collector hydration. No threshold/GC-policy waiver.
+F7001local175caller/129neighbor/64PGPASS,28.003/23.314ms does
+not certify finalcombinedLinuxhead. SharedWebullproof withAgentA,
+FcallerSinger,mainlatency; finalcomposition/CI owed. LINE/RPG
+remainfalse live. No productionconfig/service/order/DB write;
+sharedreviewer rows/header/boards preserved.
