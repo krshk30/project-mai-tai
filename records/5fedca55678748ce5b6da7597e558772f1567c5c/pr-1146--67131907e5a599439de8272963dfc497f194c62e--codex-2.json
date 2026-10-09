@@ -1,0 +1,9 @@
+{
+  "pr_number": 1146,
+  "range_base": "67131907e5a599439de8272963dfc497f194c62e",
+  "range_head": "5fedca55678748ce5b6da7597e558772f1567c5c",
+  "reviewed_at": "2026-10-09T19:47:31Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Codex-2 independent source assessment: clean inactive/dead Result=success code0/1 status0 is EXPECTED only outside scheduled window; failed/nonzero/killed/start-limit/missing remain RED, restart storm and LIVE_MONEY/pager unchanged. D6 failures retain RED with metrics; retired polygon paper check removed. Focused fleet/cron/healthlatch/bar-continuity83 PASS; prior failed/failed repro now covered. No production action or full-CI claim."
+}
