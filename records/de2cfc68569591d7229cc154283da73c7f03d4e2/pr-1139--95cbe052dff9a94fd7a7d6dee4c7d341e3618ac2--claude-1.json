@@ -1,0 +1,9 @@
+{
+  "pr_number": 1139,
+  "range_base": "95cbe052dff9a94fd7a7d6dee4c7d341e3618ac2",
+  "range_head": "de2cfc68569591d7229cc154283da73c7f03d4e2",
+  "reviewed_at": "2026-10-09T00:53:56Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "FALSEFLIP1 trail-guard hotfix (bug found by codex's #1123 review: GRAN 18:19-18:36 ET, 22 ValueError 'resting buy price must be positive and finite' from on_quote/on_stream_trade when atr_trail was absent). Source: 3 guards (on_stream_trade, on_quote, _falseflip_cross) skip the false-flip cross logic when atr_trail is None / non-finite / <= 0, before any trigger is computed; no skip spent, nothing persisted. With no line no rest or reactive entry is possible, so 'not blocking' is safe. Mine: 169 falseflip tests pass; mutation (on_quote guard removed) -> 6F; 272 owner/retry neighbour tests pass. Deploy: v2 restart only."
+}
