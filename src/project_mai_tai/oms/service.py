@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
 from sqlalchemy import desc, or_, select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
@@ -1076,10 +1077,33 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         last_heartbeat = asyncio.get_running_loop().time()
         last_broker_sync = 0.0
         last_orb_watch = 0.0
+        hold_db_retries: dict[str, tuple[float, int]] = {}
         while not stop_event.is_set():
             loop_now = asyncio.get_running_loop().time()
-            await self._evaluate_nfq_holds()  # expiry/segment retirement also runs without ticks
-            await self._evaluate_nfq2_holds()
+            # Periodic expiry/retirement only: never replay intent dispatch or a broker wire.
+            # Deadlines, rather than sleeping here, keep other control-loop duties running.
+            for task, evaluate in (
+                ("nfq_holds", self._evaluate_nfq_holds),
+                ("nfq2_holds", self._evaluate_nfq2_holds),
+            ):
+                retry_at, failures = hold_db_retries.get(task, (0.0, 0))
+                if loop_now < retry_at:
+                    continue
+                try:
+                    await evaluate()
+                except asyncio.CancelledError:
+                    raise
+                except OperationalError:
+                    failures += 1
+                    delay = min(30.0, 2.0 ** min(failures - 1, 5))
+                    hold_db_retries[task] = (asyncio.get_running_loop().time() + delay, failures)
+                    self.logger.exception(
+                        "[OMS-PERIODIC-DB] task=%s phase=backoff failures=%s retry_seconds=%s",
+                        task, failures, delay,
+                    )
+                else:
+                    if hold_db_retries.pop(task, None) is not None:
+                        self.logger.info("[OMS-PERIODIC-DB] task=%s phase=recovered", task)
             try:
                 broker_sync_interval_secs = await self._broker_sync_interval_seconds()
             except asyncio.CancelledError:
@@ -1231,6 +1255,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     "adapter": self.settings.oms_adapter_label,
                     "providers": ",".join(self.settings.active_broker_providers),
                 }
+                if hold_db_retries:
+                    heartbeat_details["periodic_db_recovering"] = ",".join(sorted(hold_db_retries))
                 try:
                     await self._publish_heartbeat("healthy", heartbeat_details)
                 except asyncio.CancelledError:
