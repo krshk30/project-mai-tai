@@ -165,8 +165,8 @@ class OmsStore:
         symbol: str,
         include_native_stop_guard: bool = True,
     ) -> BrokerOrder | None:
-        orders = session.scalars(
-            select(BrokerOrder)
+        orders = session.execute(
+            select(BrokerOrder.__table__.c.id, BrokerOrder.__table__.c.payload)
             .where(
                 BrokerOrder.strategy_id == strategy_id,
                 BrokerOrder.broker_account_id == broker_account_id,
@@ -176,11 +176,11 @@ class OmsStore:
             )
             .order_by(desc(BrokerOrder.updated_at))
         ).all()
-        for order in orders:
-            payload = order.payload or {}
+        for order_id, order_payload in orders:
+            payload = order_payload or {}
             if not include_native_stop_guard and str(payload.get("native_stop_guard", "")).strip().lower() == "true":
                 continue
-            return order
+            return session.get(BrokerOrder, order_id)
         return None
 
     def find_open_native_stop_guard_order(
@@ -191,8 +191,9 @@ class OmsStore:
         broker_account_id: UUID,
         symbol: str,
     ) -> BrokerOrder | None:
-        orders = session.scalars(
-            select(BrokerOrder)
+        # Inspect the discriminator before hydrating an order on the exit path.
+        orders = session.execute(
+            select(BrokerOrder.__table__.c.id, BrokerOrder.__table__.c.payload)
             .where(
                 BrokerOrder.strategy_id == strategy_id,
                 BrokerOrder.broker_account_id == broker_account_id,
@@ -202,10 +203,10 @@ class OmsStore:
             )
             .order_by(desc(BrokerOrder.updated_at))
         ).all()
-        for order in orders:
-            payload = order.payload or {}
+        for order_id, order_payload in orders:
+            payload = order_payload or {}
             if str(payload.get("native_stop_guard", "")).strip().lower() == "true":
-                return order
+                return session.get(BrokerOrder, order_id)
         return None
 
     # NOTE (2026-07-22): a `find_open_native_oco_bracket_legs` DB query was removed here. OCO
