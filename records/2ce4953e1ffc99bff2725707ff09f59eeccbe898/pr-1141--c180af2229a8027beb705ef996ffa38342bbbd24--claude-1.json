@@ -1,0 +1,9 @@
+{
+  "pr_number": 1141,
+  "range_base": "c180af2229a8027beb705ef996ffa38342bbbd24",
+  "range_head": "2ce4953e1ffc99bff2725707ff09f59eeccbe898",
+  "reviewed_at": "2026-10-09T11:14:17Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "ORB display fix, reviewed against all three ORB-display blocks: home card live symbols / data flow / bar age + /api/bots watchlist from the orb-schwab heartbeat; /bot/orb Last Bot Tick and Last Market Data from heartbeat last_bar_at in ET; Schwab Data Health derived (fresh heartbeat <=60 s + bar <=180 s = HEALTHY, stale/unhealthy heartbeat = STOPPED, old/missing bar or non-LIVE = WARN); Healthy since in ET; home card data date; Bars cached 'not reported'; /health excludes retired paper orb. Changes are scoped to strategy_code orb_schwab; other bots' cards untouched. Mine: 181 tests pass (home-card + control-plane + ORB page files); mutation (stale-bar rule disabled) RED. Control restart only."
+}
