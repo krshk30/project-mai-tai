@@ -151,7 +151,7 @@ async def test_actual_ordinary_oms_crash_rolls_back_intent_not_durable_attempt(s
     event = TradeIntentEvent(source_service="test", payload=TradeIntentPayload(
         strategy_code="schwab_1m_v2", broker_account_name="schwab", symbol="DKI", side="buy",
         quantity=Decimal(1), intent_type="open", reason="ENTRY",
-        metadata={"reference_price": "2", "fanout_segment_id": GENERATION}))
+        metadata={"reference_price": "2", "entry_size_price": "2", "fanout_segment_id": GENERATION}))
     with pytest.raises(RuntimeError, match="controlled crash"):
         await service.process_trade_intent(event)
     assert reached
@@ -317,9 +317,10 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
             stall_duration.append(monotonic() - begin)
     client.on_read = stall
     leaf = broker.broker_binding(routed, "live:orb")[0]
-    wires = []
+    wires, wire_times = [], {}
     async def wire(req):
         wires.append((req.side, req.intent_type))
+        wire_times[req.symbol] = monotonic()
         return [ExecutionReport("accepted", req.client_order_id, broker_order_id="controlled-" + req.client_order_id,
             symbol=req.symbol, side=req.side, intent_type=req.intent_type,
             quantity=req.quantity, metadata=req.metadata)]
@@ -354,7 +355,7 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
             await service.process_trade_intent(intent("buy", index))
             await asyncio.sleep(0.4)
     buys = asyncio.create_task(concurrent_buys())
-    quote_ms, close_ms = [], []
+    quote_ms, close_ms, close_before_wire_ms, close_after_wire_ms, slow_closes = [], [], [], [], []
     baseline = monotonic()
     try:
         for index in range(200):
@@ -366,7 +367,14 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
                 quote_ms.append((monotonic() - begin) * 1000)
             else:
                 result = await service.process_trade_intent(intent("sell", index))
-                close_ms.append((monotonic() - begin) * 1000)
+                finished = monotonic()
+                elapsed = (finished - begin) * 1000
+                wire_at = wire_times[f"EXIT{index}"]
+                close_ms.append(elapsed)
+                close_before_wire_ms.append((wire_at - begin) * 1000)
+                close_after_wire_ms.append((finished - wire_at) * 1000)
+                if elapsed >= 50:
+                    slow_closes.append((index, round(begin - baseline, 3), round(elapsed, 3)))
                 assert result and result[0].payload.status == "accepted"
         await asyncio.sleep(max(0, baseline + 60 - monotonic()))
         await buys
@@ -380,7 +388,9 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
     metrics = (f"[CANCEL-TOKEN-PG-LATENCY] events=200 seconds={monotonic()-baseline:.3f} buys=25 "
                f"stall_s={stall_duration[0]:.3f} feedback_ms={feedback_ms:.3f} "
                f"quote_max_ms={max(quote_ms):.3f} protective_close_max_ms={max(close_ms):.3f} "
-               f"proof_raw_gets={len(client.calls)}")
+               f"close_before_wire_max_ms={max(close_before_wire_ms):.3f} "
+               f"close_after_wire_max_ms={max(close_after_wire_ms):.3f} "
+               f"slow_closes_index_seconds_ms={slow_closes} proof_raw_gets={len(client.calls)}")
     with capsys.disabled():
         print(metrics, flush=True)
     assert feedback_ms < 50 and max(quote_ms) < 50 and max(close_ms) < 50, metrics
