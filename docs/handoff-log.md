@@ -8630,3 +8630,23 @@ has no retired-orb consumer rows; audit153/155, mismatch0, two expected
 momentum-paper UNKNOWN. Preopen retirement/newORB identity re-pin in progress,
 no completed bookkeeping receipt or tomorrow acceptance invented. Shared/F/I
 continue durable-token source work, no token schema installed tonight.
+
+2026-10-08 20:15 ET codex-2 C70 closeout update: Descartes applied only
+authorized preopen identity/retirement bookkeeping at00:15:05.703646Z.
+Source/receipt commit061da3e12b266a66959d60d531400edd1d768625; preopen.sh
+sha885cbe8b714ee72cab7c8726e77fe74a641235f61ea9a6ca3e69167b07e3b83c,
+mode700. New ORB PID/start pinned, retired paper identity removed, daily
+date/paper shape preserved, timer unchanged NEXT Friday10-09 06:20ET.
+Daily runtime rc0; official preopen rc1, NOT GREEN: evening2015ET clock,
+inactive momentum-paper admission,22 pre-existing v2 traceback headers in
+/var/log/project-mai-tai/schwab-1m-v2.log-20261009, and REST backfill
+continuity UNKNOWN for AIXI/FLYE/GRAN/SAIQ. Actual new ORB errors0; OMS/
+strategy/control collectors also0. Full report at
+/home/trader/known_defect_regression_watch/v2-restart-evidence-20261008.md;
+checks-only.json sha7285fd10df30d215fc71088d89cc4dc14549aa14198067c5e7b8bc23681802cb
+under /home/trader/restart_evidence/orb-completion-bookkeeping-06b5e388.
+Original failed install receipt/ABORT retained, no global COMPLETE claim.
+Historical paper heartbeat remains visible in /health; /api/bots has no
+paper ORB row. No heartbeat DB deletion/masking. Tomorrow07:00 universe,
+09:27 evaluating/working and no-paper-anywhere remain unverified rather
+than promised. No further production action on v2 errors under ORB scope.
