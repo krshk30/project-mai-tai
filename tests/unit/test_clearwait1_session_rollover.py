@@ -13,7 +13,6 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from project_mai_tai.cancel_terminal_proof import (
     CancelReceipt, CancelScope, CancelTerminalEvidence, CompleteWorkingBook,
@@ -46,13 +45,15 @@ def request(purpose="scanner_removal"):
 
 
 @pytest.fixture
-def db(monkeypatch):
+def db(monkeypatch, tmp_path):
     import project_mai_tai.services.schwab_1m_v2_bot as service_module
     retire = RemovedWaitStore.retire_prior_sessions
     monkeypatch.setattr(RemovedWaitStore, "retire_prior_sessions",
         lambda self, *args, **kw: retire(self, *args, **{"now": NOW, **kw}))
     monkeypatch.setattr(service_module, "current_session_anchor", lambda: current_session_anchor(NOW))
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    # Background proof and ordinary poll each own a connection, as production does.
+    engine = create_engine(f"sqlite:///{tmp_path / 'clearwait_consumer.sqlite'}",
+                           connect_args={"check_same_thread": False})
     columns = (BrokerOrder.__table__.c.status, TradeIntent.__table__.c.status)
     nullable = [c.nullable for c in columns]
     try:
