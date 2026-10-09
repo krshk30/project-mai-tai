@@ -1,6 +1,7 @@
 """Required real PostgreSQL pre-wire, crash and admission-race controls."""
 
 import asyncio
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -10,7 +11,7 @@ from time import monotonic, sleep
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import event as sql_event, select, text
 
 from project_mai_tai.broker_adapters import cancel_terminal as broker
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
@@ -293,6 +294,27 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
         return int(datetime.now(UTC).timestamp() * 1000)
     monkeypatch.setattr(broker, "now_ms", real_now)
     monkeypatch.setattr(journal, "now_ms", real_now)
+    close_index = ContextVar("controlled_close_index", default=None)
+    slow_db = []
+    def before_sql(conn, cursor, statement, parameters, context, many):
+        context._controlled_close_start = monotonic(), close_index.get()
+    def after_sql(conn, cursor, statement, parameters, context, many):
+        began, index = context._controlled_close_start
+        elapsed = (monotonic() - began) * 1000
+        if index is not None and elapsed >= 10:
+            slow_db.append((index, "sql", round(elapsed, 3), " ".join(statement.split())[:180]))
+    def before_commit(session):
+        session.info["controlled_commit"] = monotonic(), close_index.get()
+    def after_commit(session):
+        began, index = session.info.pop("controlled_commit", (monotonic(), None))
+        elapsed = (monotonic() - began) * 1000
+        if index is not None and elapsed >= 10:
+            slow_db.append((index, "commit", round(elapsed, 3)))
+    engine = sessions.kw["bind"]
+    for target, name, callback in ((engine, "before_cursor_execute", before_sql),
+            (engine, "after_cursor_execute", after_sql),
+            (sessions, "before_commit", before_commit), (sessions, "after_commit", after_commit)):
+        sql_event.listen(target, name, callback)
     client = runtime.Client(detail=runtime.EMPTY_DETAIL)
     routed = runtime.adapter(client)
     service = OmsRiskService(settings=Settings(oms_adapter="simulated", broker_default_provider="webull",
@@ -366,7 +388,11 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
                     payload=QuoteTickPayload(symbol="DKI", bid_price=Decimal(2), ask_price=Decimal("2.01"))))
                 quote_ms.append((monotonic() - begin) * 1000)
             else:
-                result = await service.process_trade_intent(intent("sell", index))
+                marker = close_index.set(index)
+                try:
+                    result = await service.process_trade_intent(intent("sell", index))
+                finally:
+                    close_index.reset(marker)
                 finished = monotonic()
                 elapsed = (finished - begin) * 1000
                 wire_at = wire_times[f"EXIT{index}"]
@@ -390,7 +416,8 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
                f"quote_max_ms={max(quote_ms):.3f} protective_close_max_ms={max(close_ms):.3f} "
                f"close_before_wire_max_ms={max(close_before_wire_ms):.3f} "
                f"close_after_wire_max_ms={max(close_after_wire_ms):.3f} "
-               f"slow_closes_index_seconds_ms={slow_closes} proof_raw_gets={len(client.calls)}")
+               f"slow_closes_index_seconds_ms={slow_closes} slow_db={slow_db} "
+               f"proof_raw_gets={len(client.calls)}")
     with capsys.disabled():
         print(metrics, flush=True)
     assert feedback_ms < 50 and max(quote_ms) < 50 and max(close_ms) < 50, metrics
