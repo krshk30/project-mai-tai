@@ -2607,6 +2607,7 @@ class SchwabV2Strategy:
         proof = self.__dict__.get("_closed_owner_terminal_receipts", {}).get(
             (state.symbol, state.flip_owner_opportunity_id))
         if (proof is None or proof.request != request or not self._closed_owned_row_witness(state, proof)
+                or not 0 <= self._now_ms() - proof.observed_at_ms <= 15_000
                 or not state.retry_one_budget_readable
                 or not 0 < state.flip_owner_retry_segment_id < state.retry_one_segment_id
                 or not self._flip_owner_evidence_fresh(state) or state.flip_owner_open_positions):
