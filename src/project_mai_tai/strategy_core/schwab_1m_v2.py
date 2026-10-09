@@ -1435,6 +1435,7 @@ class SchwabV2Strategy:
     def _queue_removed_wait_barriers(self, state: SymbolState, request: RemovedWait) -> None:
         symbol = state.symbol
         md = {"clearwait_removal_token": request.token,
+              "clearwait_purpose": request.purpose,
               "clearwait_opportunity_id": str(request.opportunity_id),
               "resting_entry_cancel": "true", "reason": (
                   "false_flip_restore" if request.purpose == "false_flip_restore" else
