@@ -8,6 +8,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -48,6 +49,32 @@ CASES = {
         "observed_ms": 1791569822327, "close": "5.52", "trail": "5.56773693106012",
         "exit_ms": 1791569912000, "high": 5.63, "low": 5.49},
 }
+
+# Read-only VPS strategy_bar_history, Oct9 18:24 ET. No future candles added.
+VEEA_BARS = [
+    (12, 5.47, 5.5292, 5.45, 5.515, 37314),
+    (13, 5.5188, 5.53, 5.48, 5.5198, 19611),
+    (14, 5.50, 5.57, 5.4901, 5.509, 39799),
+    (15, 5.505, 5.54, 5.471, 5.531, 25165),
+    (16, 5.5312, 5.63, 5.49, 5.52, 87207),
+    (17, 5.515, 5.59, 5.5001, 5.56, 37079),
+    (18, 5.56, 5.57, 5.50, 5.55, 39708),
+    (19, 5.53, 5.55, 5.51, 5.5476, 34079),
+    (20, 5.53, 5.55, 5.51, 5.5299, 20296),
+    (21, 5.53, 5.5474, 5.48, 5.50, 30075),
+    (22, 5.50, 5.57, 5.50, 5.5601, 38282),
+    (23, 5.569, 5.62, 5.56, 5.61, 45974),
+]
+
+
+def recorded_bars(symbol):
+    if symbol == "VEEA":
+        return [OHLCVBar(1791568800000 + minute * 60000, *values)
+                for minute, *values in VEEA_BARS]
+    raw = json.loads((Path(__file__).parents[1] / "fixtures/falseflip1/flye-bars-20261008.json").read_text())
+    return [OHLCVBar(int(datetime.fromisoformat(row["bar_time"]).timestamp() * 1000),
+            *(float(row[key]) for key in ("open_price", "high_price", "low_price", "close_price")),
+            row["volume"]) for row in raw["bars"]]
 
 
 @pytest.mark.asyncio
@@ -209,9 +236,10 @@ async def test_recorded_false_close_current_token_runtime_restores_actual_order(
     assert len(drafts) == 2 and all(draft.side == "buy" and draft.intent_type == "open" for draft in drafts)
     for account, draft in zip((PRIMARY, WEBULL), drafts, strict=True):
         async def accept(order):
-            return [ExecutionReport("accepted", order.client_order_id,
-                broker_order_id="controlled-rest-" + order.broker_account_name,
-                symbol=symbol, quantity=order.quantity, origin="broker", reported_at=Clock.now(UTC))]
+            return [ExecutionReport("cancelled" if order.intent_type == "cancel" else "accepted", order.client_order_id,
+                broker_order_id="controlled-rest-" + order.client_order_id,
+                symbol=symbol, quantity=order.quantity, intent_type=order.intent_type,
+                metadata=order.metadata, origin="broker", reported_at=Clock.now(UTC))]
         routing._adapter_for_account(account).submit_order = accept
         emitter = bot.intent_emitter if account == PRIMARY else bot.webull_intent_emitter
         assert bot._apply_extended_hours_routing(draft, Clock.now(UTC))
@@ -224,4 +252,54 @@ async def test_recorded_false_close_current_token_runtime_restores_actual_order(
         placed = list(session.scalars(select(BrokerOrder).where(
             BrokerOrder.symbol == symbol, BrokerOrder.status == "accepted")))
         assert len(placed) == 2 and all(order.side == "buy" for order in placed)
+    if not pm:
+        bars = recorded_bars(symbol)
+        entry_bar = next(bar for bar in bars if bar.timestamp_ms == facts["bar_ms"])
+        state.bars.clear()
+        state.bars.append(entry_bar)
+        state.atr_session_anchor_ms = int(datetime.fromtimestamp(facts["bar_ms"] / 1000, UTC)
+                                          .replace(hour=8, minute=0, second=0).timestamp() * 1000)
+        state.atr_prev_bar = entry_bar
+        state.atr_prev_state = state.atr_state = "short"
+        state.atr_prev_trail = state.atr_trail = float(facts["trail"])
+        state.atr_state_age = 26 if symbol == "FLYE" else 98
+        state.atr_wilders = (.600184 if symbol == "FLYE" else .292418) / strategy._atr_factor
+        state.atr_hl.clear()
+        state.atr_hl.extend(bar.high - bar.low for bar in bars if bar.timestamp_ms <= entry_bar.timestamp_ms)
+        end = 1791472020000 if symbol == "FLYE" else 1791570180000
+        flips = []
+        for bar in bars:
+            if not entry_bar.timestamp_ms < bar.timestamp_ms <= end:
+                continue
+            clock[0] = max(clock[0], bar.timestamp_ms + 62000)
+            strategy.apply_flip_position_book(bot._fetch_flip_position_book())
+            await oms._handle_quote_tick_event(QuoteTickEvent(source_service="recorded-replay-quote",
+                produced_at=Clock.now(UTC), payload=QuoteTickPayload(symbol=symbol,
+                    bid_price=Decimal(str(bar.close)), ask_price=Decimal(str(bar.close)))))
+            state.bars.append(bar)
+            signal = strategy._update_atr_state(state, bar, state_only=True)
+            strategy._cw_v2_track(state, signal)
+            strategy._cw_v2_resting_track(state, signal)
+            await bot._drain_direct_strategy_intents()
+            await drain_workers(oms)
+            await bot._falseflip_poll()
+            await poll(bot)
+            await drain_workers(oms)
+            if signal and signal["flip"]:
+                flips.append((bar.timestamp_ms, signal["flip"]))
+        assert flips == [(end, "BUY")]
+        assert state.atr_state == "long"
+        with factory() as session:
+            live = list(session.scalars(select(BrokerOrder).where(BrokerOrder.symbol == symbol,
+                BrokerOrder.side == "buy", BrokerOrder.status == "accepted")))
+            assert {order.broker_account_id for order in live} == set(ids.values())
+            for order in live:
+                flip_bar = next(item for item in bars if item.timestamp_ms == end)
+                assert Decimal(order.payload["stop_price"]) <= Decimal(str(flip_bar.high))
+                print(json.dumps({"case": symbol + " false flip -> next REAL BUY", "session": "rth",
+                    "broker": next(account for account, ident in ids.items() if ident == order.broker_account_id),
+                    "order_result": order.status, "side": order.side, "price": order.payload["stop_price"],
+                    "submitted_at": order.submitted_at.isoformat(),
+                    "first_real_flip": Clock.fromtimestamp(end / 1000, UTC).isoformat(),
+                    "evidence_type": "recorded bars/classification; controlled ACCEPTED"}))
     await oms._drain_cancel_terminal_evidence()
