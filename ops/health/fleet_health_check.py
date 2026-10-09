@@ -183,6 +183,10 @@ class ServiceRuntime(NamedTuple):
     n_restarts: int
     active_state: str
     sub_state: str
+    # HEALTHNOISE1: how the main process last ended. None = not read, which never counts as clean.
+    result: str | None = None
+    exec_main_code: str | None = None
+    exec_main_status: str | None = None
 
 
 class MaintenanceWindow(NamedTuple):
@@ -377,6 +381,29 @@ def scheduled_service_expected_running(service: str, now: datetime) -> bool:
     return start <= local.time() < end
 
 
+# ExecMainCode is the siginfo si_code of the last main-process exit: 0 = never started since boot,
+# 1 = CLD_EXITED (normal exit). 2 killed / 3 dumped / anything else is a signal death.
+_CLEAN_EXEC_MAIN_CODES = frozenset({"0", "1"})
+
+
+def is_clean_scheduled_stop(runtime: ServiceRuntime) -> bool:
+    """A positively observed normal stop: inactive/dead, Result=success, exit status 0, no signal.
+
+    failed/*, activating/deactivating, start-limit-hit, non-zero exit, killed or dumped by a signal,
+    or any property that was not read all return False, so they stay RED at any hour.
+    Box 2026-10-09 after the 09:40 guard stop: inactive/dead Result=success ExecMainCode=1
+    ExecMainStatus=0.
+    """
+
+    return (
+        runtime.active_state == "inactive"
+        and runtime.sub_state == "dead"
+        and runtime.result == "success"
+        and runtime.exec_main_code in _CLEAN_EXEC_MAIN_CODES
+        and runtime.exec_main_status == "0"
+    )
+
+
 def _service_slug(service: str) -> str:
     return service.removeprefix("project-mai-tai-").removesuffix(".service")
 
@@ -483,8 +510,15 @@ def classify_service_runtime_rows(
         state_detail = f"unit={service} state={runtime.active_state}/{runtime.sub_state}"
         if active:
             inactive_level = "GREEN"
-        elif scheduled_service_expected_running(service, now):
+        elif scheduled_service_expected_running(service, now) or not is_clean_scheduled_stop(
+            runtime
+        ):
             inactive_level = "RED"
+            if service in SCHEDULED_SERVICE_WINDOWS:
+                state_detail += (
+                    f" result={runtime.result} exec_main_code={runtime.exec_main_code} "
+                    f"exec_main_status={runtime.exec_main_status}"
+                )
         else:
             start, end = SCHEDULED_SERVICE_WINDOWS[service]
             inactive_level = "EXPECTED"
@@ -632,6 +666,12 @@ def _read_service_runtimes(
                 "ActiveState",
                 "-p",
                 "SubState",
+                "-p",
+                "Result",
+                "-p",
+                "ExecMainCode",
+                "-p",
+                "ExecMainStatus",
                 "--no-pager",
             ],
             capture_output=True,
@@ -654,6 +694,9 @@ def _read_service_runtimes(
                 n_restarts=int(fields["NRestarts"]),
                 active_state=fields["ActiveState"],
                 sub_state=fields["SubState"],
+                result=fields.get("Result"),
+                exec_main_code=fields.get("ExecMainCode"),
+                exec_main_status=fields.get("ExecMainStatus"),
             )
         except (KeyError, ValueError):
             return

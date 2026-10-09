@@ -324,11 +324,14 @@ def test_inactive_expected_service_is_red_even_without_a_prior_sample() -> None:
 _MOMENTUM = "project-mai-tai-momentum-paper.service"
 
 
-def _momentum_inactive_rows(now: datetime, *, restarts: int = 0):
-    current = _service_states(
-        restart_overrides={_MOMENTUM: restarts},
-        state_overrides={_MOMENTUM: ("inactive", "dead")},
-    )
+_CLEAN_STOP = fhc.ServiceRuntime(0, "inactive", "dead", "success", "1", "0")
+
+
+def _momentum_inactive_rows(
+    now: datetime, *, restarts: int = 0, runtime: fhc.ServiceRuntime | None = None
+):
+    current = _service_states(restart_overrides={_MOMENTUM: restarts})
+    current[_MOMENTUM] = (runtime or _CLEAN_STOP)._replace(n_restarts=restarts)
     rows = fhc.classify_service_runtime_rows(
         current,
         {service: 0 for service in fhc.RUNTIME_SERVICES},
@@ -364,6 +367,79 @@ def test_momentum_inactive_outside_its_window_is_expected_not_red() -> None:
         assert level == "EXPECTED", now
         assert "scheduled_stop=1 window_et=03:45-09:40" in detail
         assert all(level != "RED" for level, _ in rows.values()), now
+
+
+_OFF_HOURS = datetime(2026, 10, 9, 19, 20, tzinfo=UTC)  # Fri 15:20 ET
+
+
+def test_momentum_failed_outside_its_window_is_red() -> None:
+    # Codex P1 on 8ef9fa99: failed/failed off-hours was EXPECTED and never paged.
+    rows = _momentum_inactive_rows(
+        _OFF_HOURS, runtime=fhc.ServiceRuntime(1, "failed", "failed", "exit-code", "1", "1")
+    )
+    level, detail = rows["service-runtime:momentum-paper:inactive"]
+    assert level == "RED"
+    assert "state=failed/failed result=exit-code" in detail
+
+
+def test_momentum_abnormal_stops_outside_its_window_stay_red() -> None:
+    abnormal = (
+        fhc.ServiceRuntime(0, "inactive", "dead", "exit-code", "1", "1"),  # non-zero exit
+        fhc.ServiceRuntime(0, "inactive", "dead", "signal", "2", "9"),  # SIGKILL
+        fhc.ServiceRuntime(0, "inactive", "dead", "success", "2", "15"),  # killed by signal
+        fhc.ServiceRuntime(0, "inactive", "dead", "core-dump", "3", "11"),
+        fhc.ServiceRuntime(0, "failed", "failed", "start-limit-hit", "1", "1"),
+        fhc.ServiceRuntime(0, "activating", "auto-restart", "exit-code", "1", "1"),
+        fhc.ServiceRuntime(0, "deactivating", "stop-sigterm", "success", "1", "0"),
+        fhc.ServiceRuntime(0, "inactive", "dead"),  # Result/ExecMain* not read
+    )
+    for runtime in abnormal:
+        level, _detail = _momentum_inactive_rows(_OFF_HOURS, runtime=runtime)[
+            "service-runtime:momentum-paper:inactive"
+        ]
+        assert level == "RED", runtime
+
+
+def test_momentum_clean_stop_outside_window_is_expected_and_never_started_too() -> None:
+    for runtime in (_CLEAN_STOP, fhc.ServiceRuntime(0, "inactive", "dead", "success", "0", "0")):
+        level, _detail = _momentum_inactive_rows(_OFF_HOURS, runtime=runtime)[
+            "service-runtime:momentum-paper:inactive"
+        ]
+        assert level == "EXPECTED", runtime
+
+
+def test_momentum_clean_stop_inside_its_window_is_red() -> None:
+    level, _detail = _momentum_inactive_rows(
+        datetime(2026, 10, 8, 12, 0, tzinfo=UTC), runtime=_CLEAN_STOP
+    )["service-runtime:momentum-paper:inactive"]
+    assert level == "RED"
+
+
+def test_systemctl_parser_reads_exit_properties() -> None:
+    states = _service_states()
+    states[_MOMENTUM] = _CLEAN_STOP
+    text = "\n\n".join(
+        "\n".join(
+            (
+                f"Result={state.result or 'success'}",
+                f"NRestarts={state.n_restarts}",
+                f"ExecMainCode={state.exec_main_code or '1'}",
+                f"ExecMainStatus={state.exec_main_status or '0'}",
+                f"Id={service}",
+                f"ActiveState={state.active_state}",
+                f"SubState={state.sub_state}",
+            )
+        )
+        for service, state in states.items()
+    )
+
+    def runner(argv, **_kwargs):
+        assert {"Result", "ExecMainCode", "ExecMainStatus"} <= set(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout=text, stderr="")
+
+    parsed = fhc._read_service_runtimes(runner)
+    assert parsed[_MOMENTUM] == _CLEAN_STOP
+    assert fhc.is_clean_scheduled_stop(parsed[_MOMENTUM])
 
 
 def test_scheduled_window_covers_only_momentum_paper() -> None:
