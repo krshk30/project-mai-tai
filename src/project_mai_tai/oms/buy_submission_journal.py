@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from dataclasses import dataclass
 import logging
 from time import time_ns
 from uuid import UUID, uuid4
@@ -22,7 +23,7 @@ from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.cancel_terminal_proof import NeverSentScope, NeverSentWitness, TerminalSubmissionWitness
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, TradeIntent
 from project_mai_tai.fanout_segment_store import SNAPSHOT_TYPE, current_session_anchor
 
 PROTOCOL = "durable-buy-v1"
@@ -97,7 +98,99 @@ def opportunity_start_ms(session, symbol: str, generation: str, observed_at_ms: 
     return epoch if 0 < epoch <= observed_at_ms else 0
 
 
-def _token_terminal(session, token: BuySubmissionToken, observed_at_ms: int) -> bool:
+@dataclass(frozen=True)
+class NonworkingBuySubmissionWitness:
+    token_id: UUID
+    order_id: UUID
+    scope: NeverSentScope
+    client_order_id: str
+    broker_order_id: str
+    observed_at_ms: int
+
+
+def _day_nonworking_token(session, token, order, scope, observed_at_ms):
+    """Exact current request's typed absence, not a zero-fill/order-status receipt."""
+    from project_mai_tai.cancel_terminal_proof import evaluate_cancel_terminal
+    from project_mai_tai.oms.cancel_terminal import load_cancel_terminal_evidence, receipt_from_intent
+    from project_mai_tai.webull_day_cancel_proof import DayCancelAbsence
+
+    if (not isinstance(scope, NeverSentScope) or token.process_id != scope.coverage_process_id
+            or token.account_name != scope.account_name or token.account_id != scope.account_id
+            or token.symbol != scope.symbol
+            or token.generation != scope.generation
+            or token.opportunity_started_at_ms != scope.opportunity_started_at_ms):
+        return None
+    account = session.get(BrokerAccount, order.broker_account_id)
+    if account is None or account.provider != "webull":
+        return None
+    request_at = datetime.fromtimestamp(scope.requested_at_ms / 1000, UTC)
+    intent = session.scalar(select(TradeIntent).where(
+        TradeIntent.broker_account_id == account.id, TradeIntent.symbol == token.symbol,
+        TradeIntent.intent_type == "cancel", TradeIntent.created_at >= request_at,
+    ).order_by(TradeIntent.updated_at.desc(), TradeIntent.created_at.desc(), TradeIntent.id.desc()).limit(1))
+    if intent is None or not isinstance(intent.payload, dict):
+        return None
+    md = intent.payload.get("metadata")
+    if (not isinstance(md, dict) or intent.payload.get("source_service") != "schwab-1m-v2"
+            or md.get("clearwait_removal_token") != scope.request_token
+            or md.get("clearwait_opportunity_id") != scope.generation
+            or md.get("clearwait_buy_only") != "true"
+            or md.get("buy_submission_process_id") != str(token.process_id)
+            or md.get("target_client_order_id") != token.client_order_id):
+        return None
+    receipt = receipt_from_intent(intent, account)
+    evidence = load_cancel_terminal_evidence(session, [intent])
+    proof = evidence.get(receipt.scope.event_id) if receipt is not None else None
+    if (proof is None or not isinstance(proof.day_absence, DayCancelAbsence)
+            or proof.day_absence.bound.broker_order_id != order.broker_order_id
+            or proof.day_absence.bound.scope.client_order_id != token.client_order_id
+            or proof.day_absence.bound.submitted_at_ms < token.created_at_ms
+            or not evaluate_cancel_terminal(receipt, proof, now_ms=observed_at_ms).terminal):
+        return None
+    latest = session.scalar(select(BrokerOrderEvent).where(BrokerOrderEvent.order_id == order.id)
+        .order_by(BrokerOrderEvent.event_at.desc(), BrokerOrderEvent.id.desc()).limit(1))
+    if latest is None:
+        return None
+    at = latest.event_at.replace(tzinfo=UTC) if latest.event_at.tzinfo is None else latest.event_at
+    if int(at.timestamp() * 1000) > receipt.observed_at_ms:
+        return None
+    return NonworkingBuySubmissionWitness(token.id, order.id, scope, token.client_order_id,
+                                          order.broker_order_id, observed_at_ms)
+
+
+def nonworking_buy_submission_witnesses(session, scope: NeverSentScope, *, observed_at_ms: int):
+    """Read-only filter for F's working-row guard in its locked consumer unit.
+
+    This cannot close admission or refund fills; F must still execute its complete
+    owned-row, intent, request-CAS and all-attempt terminal admission checks.
+    """
+    if (not isinstance(scope, NeverSentScope) or type(observed_at_ms) is not int
+            or not 0 < scope.opportunity_started_at_ms <= scope.requested_at_ms <= observed_at_ms
+            or scope.session_key != current_session_anchor(datetime.fromtimestamp(
+                observed_at_ms / 1000, UTC)).isoformat()
+            or opportunity_start_ms(session, scope.symbol, scope.generation,
+                                    observed_at_ms) != scope.opportunity_started_at_ms):
+        return ()
+    attempts = session.scalars(select(BuySubmissionToken).where(
+        BuySubmissionToken.account_id == scope.account_id,
+        BuySubmissionToken.symbol == scope.symbol)).all()
+    witnesses = []
+    for token in attempts:
+        if not _token_terminal(session, token, observed_at_ms, scope=scope):
+            continue
+        order = session.scalar(select(BrokerOrder).join(BrokerAccount).where(
+            BrokerAccount.name == scope.account_name,
+            or_(BrokerAccount.external_account_id == scope.account_id,
+                BrokerAccount.external_account_id.is_(None)),
+            BrokerOrder.client_order_id == token.client_order_id,
+            BrokerOrder.symbol == scope.symbol, BrokerOrder.side == "buy"))
+        witness = _day_nonworking_token(session, token, order, scope, observed_at_ms) if order else None
+        if witness is not None:
+            witnesses.append(witness)
+    return tuple(witnesses)
+
+
+def _token_terminal(session, token: BuySubmissionToken, observed_at_ms: int, *, scope=None) -> bool:
     epoch = session.get(BuyCoverageEpoch, (token.process_id, token.account_id))
     if (epoch is None or epoch.protocol != PROTOCOL or epoch.account_name != token.account_name
             or not 0 < epoch.started_at_ms <= token.created_at_ms <= observed_at_ms):
@@ -122,8 +215,11 @@ def _token_terminal(session, token: BuySubmissionToken, observed_at_ms: int) -> 
         BrokerOrder.symbol == token.symbol, BrokerOrder.side == "buy",
     ).with_for_update(of=BrokerOrder))
     terminal = {"cancelled", "canceled", "rejected", "expired", "filled"}
-    if order is None or order.status not in terminal:
+    if order is None:
         return False
+    if order.status not in terminal:
+        return isinstance(_day_nonworking_token(session, token, order, scope, observed_at_ms),
+                          NonworkingBuySubmissionWitness)
     events = list(session.scalars(select(BrokerOrderEvent).where(
         BrokerOrderEvent.order_id == order.id,
     ).order_by(BrokerOrderEvent.event_at.desc(), BrokerOrderEvent.id.desc())))
@@ -183,7 +279,7 @@ def _close_buy_admission(session, scope: NeverSentScope, *, observed_at_ms: int,
         if (not current or any(t.account_name != scope.account_name for t in attempts)
                 or any(t.generation != scope.generation
                        or t.opportunity_started_at_ms != scope.opportunity_started_at_ms for t in current)
-                or any(not _token_terminal(session, t, observed_at_ms) for t in attempts)):
+                or any(not _token_terminal(session, t, observed_at_ms, scope=scope) for t in attempts)):
             return result("submission_terminal_unproven")
         coids = tuple(sorted({t.client_order_id for t in current}))
     elif any(t.created_at_ms >= scope.opportunity_started_at_ms or t.state != "broker_terminal"
