@@ -327,3 +327,10 @@ async def test_pg_positive_terminal_failed_f_transaction(pg_db, sdk, monkeypatch
 async def test_pg_explicit_assessment_signal_controls(pg_db, sdk, caller_clock, monkeypatch, control):
     from tests.unit import test_clearwait1_assessment_signal as controls
     await getattr(controls, f"test_{control}")(pg_db, monkeypatch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["request_raised", "boot", "fresh_sell"])
+async def test_pg_actual_assessment_transport_physically_refetches(pg_db, sdk, caller_clock, monkeypatch, trigger):
+    from tests.unit.test_clearwait1_assessment_transport import test_actual_assessment_transport_physically_refetches_inside_sharing_window
+    await test_actual_assessment_transport_physically_refetches_inside_sharing_window(pg_db, monkeypatch, trigger)
