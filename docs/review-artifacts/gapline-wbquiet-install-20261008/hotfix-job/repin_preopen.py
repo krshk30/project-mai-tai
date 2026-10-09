@@ -198,7 +198,36 @@ def validate_evidence(before, record, states, now, *, restarted=None):
              "new identity not proven: " + owner)
 
 
-def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, retirement=None, orb_restart=None):
+def validate_v2_followup(root, followup, app, old_binding, ack, observations, now, text):
+    value = json.loads(location(root, followup).read_bytes())
+    need(value.get('approved_sha') == app and value.get('previous_sha') == old_binding['approved_sha']
+         and value.get('service_actions') == {'schwab-1m-v2': 'restarted'}
+         and value.get('deploy_rc') == 0, 'v2-only followup application/action proof differs')
+    before = value['before']
+    need(set(before) == set(observations['states']) == DEFAULT_SERVICES | {'orb-schwab'},
+         'v2-only followup fleet incomplete')
+    for role, prior in before.items():
+        current = observations['states'][role]
+        if role != 'schwab-1m-v2':
+            need(current == prior, 'v2-only followup changed untouched identity: ' + role)
+    current = observations['states']['schwab-1m-v2']
+    need(current['MainPID'] != before['schwab-1m-v2']['MainPID']
+         and moment(value['captured_at_utc']) <= system_time(current['ExecMainStartTimestamp']) <= now,
+         'v2-only followup new identity not proven')
+    for role, label in (('oms', 'OMS_'), ('strategy', 'STRATEGY_'), ('control', 'CONTROL_'),
+                        ('schwab-1m-v2', ''), ('orb-schwab', 'ORB_SCHWAB_')):
+        for field, suffix in (('MainPID', 'PID'), ('ExecMainStartTimestamp', 'START')):
+            matches = re.findall(r'^EXPECTED_' + label + suffix + r'=(.*)$', text, re.M)
+            need(len(matches) == 1 and shlex.split(matches[0]) == [before[role][field]],
+                 'v2-only followup baseline differs from current pin: ' + role)
+    need(ack.get('active_for_current_install') is False and
+         ack['superseded_by_authorized_restart']['state'] == observations['upgrade_state'],
+         'v2-only followup must preserve retired upgrade acknowledgement')
+    return value
+
+
+def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, retirement=None, orb_restart=None,
+         v2_followup=None):
     need(sha(app) and observations["head"] == app and observations["clean"] is True
          and sha(observations["tree"]), "checkout not exact clean application")
     def read(name):
@@ -220,6 +249,9 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
              and transition['migration_receipt'].get('rc') == 0,
              'actual authorized migration transition receipt missing')
     inputs = (snapshot, record)
+    if v2_followup is not None:
+        need(orb_restart is not None, 'v2-only followup requires cumulative ORB evidence')
+        inputs += (v2_followup,)
     if retirement is not None:
         from orb_receipts import validate_retirement
         validate_retirement(json.loads(read(retirement)))
@@ -254,7 +286,15 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
              'untouched orb-schwab upgrade identity changed')
     else:
         from orb_receipts import validate_restart
-        validate_restart(json.loads(read(orb_restart)), app, ack['state'], observations['upgrade_state'],
+        receipt_app = app
+        if v2_followup is not None:
+            previous = old_binding['current_install']
+            need(previous['orb_restart'] == orb_restart and previous['retirement'] == retirement
+                 and all(previous['hashes'][path] == digest(read(path)) for path in (orb_restart, retirement)),
+                 'v2-only followup historical ORB proof changed')
+            validate_v2_followup(root, v2_followup, app, old_binding, ack, observations, now, read(GATE).decode())
+            receipt_app = json.loads(read(orb_restart))['approved_sha']
+        validate_restart(json.loads(read(orb_restart)), receipt_app, ack['state'], observations['upgrade_state'],
                          moment, system_time, now)
         need(all(observations['states']['orb-schwab'][key] == observations['upgrade_state'][key] for key in FIELDS),
              'ORB-Schwab process and receipt reads disagree')
@@ -298,7 +338,8 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
                    current_install=dict(snapshot=snapshot, install_record=record, source_journal=journal,
                                         retirement=retirement, orb_restart=orb_restart,
                                         hashes={path: digest(read(path)) for path in (*inputs, journal)},
-                                        restarted=sorted(restarted)))
+                                        restarted=sorted(restarted),
+                                        latest_service_actions={'schwab-1m-v2': 'restarted'} if v2_followup else None))
     result[DAILY + "/binding.json"] = canonical(binding)
     # APP and TREE already derive from binding.json; do not change historical installer policy constants.
     policy = read(DAILY + "/release_policy.py").decode()
@@ -383,8 +424,11 @@ def collect(*, orb_completed=False):
                    *["--property=" + name for name in FIELDS]])
         return dict(line.split("=", 1) for line in raw.splitlines())
     states, envs = {}, {}
-    for owner in sorted(RESTARTED | ({'orb-schwab'} if orb_completed else set())):
+    for owner in sorted((DEFAULT_SERVICES | {'orb-schwab'}) if orb_completed else RESTARTED):
         current = state(owner)
+        states[owner] = current
+        if owner not in RESTARTED | {'orb-schwab'}:
+            continue
         raw = Path("/proc/" + current["MainPID"] + "/environ").read_bytes()
         need(0 < len(raw) <= 262144, "process environment absent/overflow")
         pairs = [piece.decode().split("=", 1) for piece in raw.split(b"\0") if piece]
@@ -416,6 +460,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="read-only preview; default writes only the declared repins")
     parser.add_argument('--orb-restart', help='parent authorized restart receipt, paired with --retirement')
     parser.add_argument('--retirement', help='parent applied normal empty-owner retirement receipt')
+    parser.add_argument('--v2-followup', help='actual v2-only deployment receipt; keeps cumulative ORB proof')
     args = parser.parse_args()
     try:
         root = args.root.resolve()
@@ -430,7 +475,7 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             candidates = plan(root, args.approved_sha, args.snapshot, args.install_record, observations, now,
                               line_enabled=args.line_enabled == 'true', retirement=args.retirement,
-                              orb_restart=args.orb_restart)
+                              orb_restart=args.orb_restart, v2_followup=args.v2_followup)
             for name, raw in candidates.items():
                 if name.endswith(".py"):
                     ast.parse(raw)
