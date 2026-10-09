@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 from dataclasses import replace
 from types import SimpleNamespace
+import threading
 
 import pytest
 from sqlalchemy import select
@@ -138,4 +139,33 @@ async def test_new_explicit_receipt_refreshes_prior_book_once_not_its_timestamps
     assert all(book and book.started_at_ms == runtime.NOW + 10 for book in books)
     assert len(client.calls) == 2  # Actual get_response counts, no hidden retries.
     assert await broker.acquire_complete_working_book(routed, "live:orb", after_ms=runtime.NOW + 11) is None
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_new_receipt_during_prior_physical_flight_waits_then_coalesces(sdk, monkeypatch):
+    clock = [runtime.NOW]
+    monkeypatch.setattr(broker, "now_ms", lambda: clock[0])
+    started, release = threading.Event(), threading.Event()
+    client = runtime.Client(pages=[{"hasNext": False, "orders": []}] * 2)
+    def wait_first():
+        if len(client.calls) == 1:
+            started.set()
+            assert release.wait(3)
+    client.on_read = wait_first
+    routed = runtime.adapter(client)
+    first = asyncio.create_task(broker.acquire_complete_working_book(routed, "live:orb"))
+    assert await asyncio.to_thread(started.wait, 2)
+    clock[0] += 10
+    requests = [asyncio.create_task(broker.acquire_complete_working_book(routed, "live:orb",
+        after_ms=runtime.NOW + 1)) for _ in range(10)]
+    try:
+        await asyncio.sleep(0.01)
+        assert len(client.calls) == 1 and not any(task.done() for task in requests)
+    finally:
+        release.set()
+    prior = await first
+    books = await asyncio.gather(*requests)
+    assert prior.started_at_ms == runtime.NOW
+    assert all(book and book.started_at_ms == runtime.NOW + 10 for book in books)
     assert len(client.calls) == 2
