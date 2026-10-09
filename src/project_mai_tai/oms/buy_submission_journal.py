@@ -231,9 +231,10 @@ class DurableBuyAdapter:
 
     async def _wire(self, request, callback, kind):
         delegate = self.cancel_terminal_delegate
-        if not isinstance(delegate, (RoutingBrokerAdapter, SchwabBrokerAdapter, WebullBrokerAdapter)):
+        leaf = (delegate._adapter_for_account(request.broker_account_name)
+                if isinstance(delegate, RoutingBrokerAdapter) else delegate)
+        if not isinstance(leaf, (SchwabBrokerAdapter, WebullBrokerAdapter)):
             return await callback()  # Simulated/paper adapters do not wire these brokers.
-        leaf, account_id = broker_binding(delegate, request.broker_account_name)
         if request.intent_type == "cancel":
             return await callback()
         contains_buy = request.side == "buy"
@@ -243,6 +244,7 @@ class DurableBuyAdapter:
             contains_buy = not leaf._is_exit_only_pair(request)
         if not contains_buy:
             return await callback()
+        _leaf, account_id = broker_binding(delegate, request.broker_account_name)
         try:
             await self.ensure_coverage(request.broker_account_name)
             token_id = await self._db(self._prepare, request, account_id, kind)
