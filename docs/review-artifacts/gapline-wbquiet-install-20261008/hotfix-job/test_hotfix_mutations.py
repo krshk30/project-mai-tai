@@ -9,6 +9,17 @@ import pytest
 
 HERE = Path(__file__).parent
 CONTROLS = [
+    ('orb_upgrade_ack_kept_active', 'repin_preopen.py',
+     "ack['active_for_current_install'] = orb_restart is None", "ack['active_for_current_install'] = True",
+     'test_repin_preopen.py::test_authorized_orb_restart_retires_current_ack_but_keeps_history_and_dynamic_paper'),
+    ('orb_old_pid_kept', 'repin_preopen.py', 'if orb_completed:', 'if False:',
+     'test_repin_preopen.py::test_authorized_orb_restart_retires_current_ack_but_keeps_history_and_dynamic_paper'),
+    ('orb_retirement_cursor_ignored', 'orb_receipts.py',
+     "need(cursor(after['_last_applied_id']) >= cursor(receipt.get('request_id'))\n         and cursor(receipt['request_id']) > cursor(before['_last_applied_id']), 'retirement request not applied')",
+     "need(True, 'retirement request not applied')",
+     'test_repin_preopen.py::test_orb_completion_cannot_adopt_unknown_restart_or_false_retirement[cursor]'),
+    ('orb_restart_failure_ignored', 'orb_receipts.py', "if receipt.get('rc') != 0:", 'if False:',
+     'test_repin_preopen.py::test_orb_completion_cannot_adopt_unknown_restart_or_false_retirement[rc]'),
     ('repin_schema_read_removed', 'repin_preopen.py',
      "need(observations.get('alembic_revision') == INSTALLED_SCHEMA, 'installed schema unreadable or not 0023')",
      'pass', 'test_repin_preopen.py::test_schema_repin_never_invents_migration_or_uses_stale_head[revision]'),

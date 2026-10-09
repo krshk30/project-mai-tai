@@ -472,3 +472,152 @@ def test_four_service_repin_does_not_fabricate_or_require_orb_retirement(case):
     assert current['retirement'] is None
     assert RETIREMENT not in current['hashes']
     assert current['restarted'] == sorted(m.RESTARTED)
+
+
+ORB_RESTART = '/home/trader/attempt/parent-orb-restart.json'
+
+
+def orb_case(case):
+    root, obs, _ = case
+    old = obs['upgrade_state']
+    new = dict(MainPID='9991', NRestarts='0', ActiveState='active', SubState='running',
+               ExecMainStartTimestamp='Thu 2026-10-08 22:05:00 UTC', InvocationID='new-authorized-orb-invocation')
+    obs['upgrade_state'] = new
+    obs['states']['orb-schwab'] = new.copy()
+    obs['environments']['orb-schwab'] = {'MAI_TAI_ORB_ENABLED': 'true'}
+    for expression in re.findall(r"--expect-flag '([^']+)'", m.location(root, m.GATE).read_text()):
+        owner, pair = expression.split(':', 1)
+        if owner == 'orb-schwab':
+            key, value = pair.split('=', 1)
+            obs['environments'][owner][key] = value
+    restart = dict(approved_sha=APP, unit='project-mai-tai-orb-schwab.service',
+                   command_argv=['systemctl', 'restart', 'project-mai-tai-orb-schwab.service'],
+                   rc=0, at_utc='2026-10-08T22:05:00.100000+00:00', before=old, after=new)
+    put(root, ORB_RESTART, m.canonical(restart))
+    owners = {name: '["FLYE"]' if name == 'orb' else '[]'
+              for name in ('strategy-engine', 'schwab-1m-v2', 'orb', 'orb-schwab', 'momentum-paper')}
+    owners.update(_migration_complete='1', _last_applied_id='100-0')
+    retirement = dict(verdict='RETIRED', normal_replace_count=1, request_id='101-0',
+        before=dict(owners=owners), after=dict(owners={**owners, 'orb': '[]', '_last_applied_id': '101-0'},
+        state=dict(MainPID='0', ActiveState='inactive', UnitFileState='disabled')))
+    put(root, RETIREMENT, m.canonical(retirement))
+    record = json.loads(m.location(root, RECORD).read_bytes())
+    record['service_actions']['orb-schwab'] = 'restarted'
+    put(root, RECORD, m.canonical(record))
+    flags = json.loads(m.location(root, '/home/trader/restart_evidence/expected_flags.json').read_bytes())
+    flags['flags'].append(dict(name='orb_enabled', expected=True, owning_service='orb-schwab'))
+    put(root, '/home/trader/restart_evidence/expected_flags.json', m.canonical(flags))
+    return m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW, retirement=RETIREMENT, orb_restart=ORB_RESTART)
+
+
+def test_authorized_orb_restart_retires_current_ack_but_keeps_history_and_dynamic_paper(case):
+    root, _, _ = case
+    old_ack = json.loads(m.location(root, m.DAILY + '/upgrade-ack.json').read_bytes())
+    changes = orb_case(case)
+    gate = changes[m.GATE].decode()
+    assert 'upgrade_ack.py; then' not in gate
+    assert 'check_identity orb-schwab "$ORB_SCHWAB_UNIT"' in gate
+    assert 'EXPECTED_ORB_SCHWAB_PID=9991' in gate
+    assert 'check_identity orb "$ORB_UNIT"' not in gate
+    assert not any(line.startswith(('ORB_UNIT=', 'EXPECTED_ORB_PID=', 'EXPECTED_ORB_START=')) for line in gate.splitlines())
+    assert set(re.findall(r'--restarted ([\w-]+)', gate)) == m.RESTARTED | {'orb-schwab'}
+    assert "--expect-flag 'orb-schwab:MAI_TAI_ORB_ENABLED=true'" in gate
+    assert 'daily.py paper' in gate and '$(TZ=America/New_York date +%F)' in gate
+    ack = json.loads(changes[m.DAILY + '/upgrade-ack.json'])
+    assert ack['historical_receipt'] == old_ack and ack['active_for_current_install'] is False
+    assert ack['state'] == old_ack['state'] and ack['superseded_by_authorized_restart']['state']['NRestarts'] == '0'
+    binding = json.loads(changes[m.DAILY + '/binding.json'])['current_install']
+    assert {RETIREMENT, ORB_RESTART} <= binding['hashes'].keys()
+    assert binding['restarted'] == sorted(m.RESTARTED | {'orb-schwab'})
+    assert m.location(root, JOURNAL).read_bytes().startswith(b'{"actual_commands"')
+    subprocess.run(['bash', '-n'], input=changes[m.GATE], check=True, capture_output=True)
+
+
+@pytest.mark.parametrize('defect', ['pid', 'restarts', 'invocation', 'old_binding', 'command', 'rc',
+                                  'before_command', 'future_start', 'owner', 'cursor', 'malformed_cursor', 'active_orb'])
+def test_orb_completion_cannot_adopt_unknown_restart_or_false_retirement(case, defect):
+    # Generate the valid receipt population, then alter one independent proof.
+    orb_case(case)
+    root, obs, _ = case
+    restart = json.loads(m.location(root, ORB_RESTART).read_bytes())
+    retirement = json.loads(m.location(root, RETIREMENT).read_bytes())
+    if defect == 'pid':
+        obs['upgrade_state'] = {**obs['upgrade_state'], 'MainPID': '9992'}
+    elif defect == 'restarts':
+        restart['after']['NRestarts'] = obs['upgrade_state']['NRestarts'] = '1'
+    elif defect == 'invocation':
+        restart['after']['InvocationID'] = obs['upgrade_state']['InvocationID'] = restart['before']['InvocationID']
+    elif defect == 'old_binding':
+        restart['before']['MainPID'] = 'different'
+    elif defect == 'command':
+        restart['command_argv'][-1] = 'project-mai-tai-oms.service'
+    elif defect == 'rc':
+        restart['rc'] = 1
+    elif defect in {'before_command', 'future_start'}:
+        value = 'Thu 2026-10-08 22:04:59 UTC' if defect == 'before_command' else 'Thu 2026-10-08 23:00:00 UTC'
+        restart['after']['ExecMainStartTimestamp'] = obs['upgrade_state']['ExecMainStartTimestamp'] = value
+        obs['states']['orb-schwab']['ExecMainStartTimestamp'] = value
+    elif defect == 'owner':
+        retirement['after']['owners']['strategy-engine'] = '["OTHER"]'
+    elif defect == 'cursor':
+        retirement['after']['owners']['_last_applied_id'] = '100-1'
+    elif defect == 'malformed_cursor':
+        retirement['after']['owners']['_last_applied_id'] = 'malformed'
+    else:
+        retirement['after']['state']['MainPID'] = '1322003'
+    put(root, ORB_RESTART, m.canonical(restart))
+    put(root, RETIREMENT, m.canonical(retirement))
+    with pytest.raises((m.Refusal, ValueError)):
+        m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW, retirement=RETIREMENT, orb_restart=ORB_RESTART)
+
+
+def test_real_daily_runtime_accepts_five_service_repin_and_retired_upgrade_ack(case, monkeypatch):
+    root, _, _ = case
+    m.apply(root, orb_case(case), NOW)
+    policy = types.ModuleType('release_policy')
+    policy.__file__ = str(m.location(root, m.DAILY + '/release_policy.py'))
+    exec(compile(Path(policy.__file__).read_bytes(), policy.__file__, 'exec'), policy.__dict__)
+    monkeypatch.setitem(sys.modules, 'release_policy', policy)
+    daily = types.ModuleType('isolated_orb_daily')
+    exec(compile(m.location(root, m.DAILY + '/daily.py').read_bytes(), 'daily.py', 'exec'), daily.__dict__)
+    daily.ROOT, daily.GATE, daily.REPO = (m.location(root, path) for path in (m.DAILY, m.GATE, m.REPO))
+    original_stat = Path.stat
+    def root_owned(path, *args, **kwargs):
+        metadata = list(original_stat(path, *args, **kwargs))
+        if path != daily.GATE:
+            metadata[4] = 0
+        return os.stat_result(metadata)
+    with monkeypatch.context() as mock:
+        mock.setattr(Path, 'stat', root_owned)
+        mock.setattr(daily.os, 'geteuid', lambda: 0)
+        pin = json.loads((daily.ROOT / 'runtime.json').read_bytes())
+        pin['evidence_inputs'] = {str(m.location(root, path)): value for path, value in pin['evidence_inputs'].items()}
+        (daily.ROOT / 'runtime.json').write_bytes(m.canonical(pin))
+        assert daily.verify_runtime()['approved_sha'] == APP
+
+
+@pytest.mark.parametrize('defect', [None, 'journal_second', 'result', 'status', 'unmeasured_without_proof'])
+def test_parent_command_rc_unmeasured_is_not_fabricated_and_requires_actual_success(case, defect):
+    orb_case(case)
+    root, obs, _ = case
+    receipt = json.loads(m.location(root, ORB_RESTART).read_bytes())
+    receipt.update(rc=None, rc_observation='UNMEASURED', observation_basis='systemd_start_journal_and_live_identity',
+                   journal_started_at_utc='2026-10-08T22:05:00.477388+00:00')
+    obs['upgrade_state'].update(Result='success', ExecMainStatus='0')
+    if defect == 'journal_second':
+        receipt['journal_started_at_utc'] = '2026-10-08T22:04:59.477388+00:00'
+    elif defect == 'result':
+        obs['upgrade_state']['Result'] = 'exit-code'
+    elif defect == 'status':
+        obs['upgrade_state']['ExecMainStatus'] = '1'
+    elif defect == 'unmeasured_without_proof':
+        del receipt['observation_basis']
+    put(root, ORB_RESTART, m.canonical(receipt))
+    def call():
+        return m.plan(root, APP, SNAPSHOT, RECORD, obs, NOW, retirement=RETIREMENT, orb_restart=ORB_RESTART)
+    if defect is not None:
+        with pytest.raises(ValueError):
+            call()
+    else:
+        changes = call()
+        assert json.loads(changes[m.DAILY + '/upgrade-ack.json'])['active_for_current_install'] is False

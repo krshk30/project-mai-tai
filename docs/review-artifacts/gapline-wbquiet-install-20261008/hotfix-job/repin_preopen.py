@@ -104,7 +104,9 @@ def rebind_upgrade(source, old, new):
     return re.sub(pattern, 'APP = "' + new + '"', source, flags=re.M).encode()
 
 
-def gate_candidate(text, app, snapshot, record, states, environments, catalog, line_enabled=True):
+def gate_candidate(text, app, snapshot, record, states, environments, catalog, line_enabled=True,
+                   *, restarted=None, orb_completed=False):
+    restarted = RESTARTED if restarted is None else restarted
     need('EXPECTED_DATE="$(TZ=America/New_York date +%F)"' in text
          and 'v2-restart-evidence-${EXPECTED_DATE//-/}.md' in text
          and "/home/trader/preopen-daily/daily.py paper" in text,
@@ -123,6 +125,12 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog, l
         'else\n  fail "orb-schwab upgrade acknowledgement mismatch"\nfi\n')
     ordinary = 'check_identity orb-schwab "$ORB_SCHWAB_UNIT" "$EXPECTED_ORB_SCHWAB_PID" "$EXPECTED_ORB_SCHWAB_START"\n'
     need(result.count(acknowledgement) == 1 or result.count(ordinary) == 1, 'orb-schwab admission template ambiguous')
+    if orb_completed:
+        result = result.replace(acknowledgement, ordinary)
+        for field, suffix in (('MainPID', 'PID'), ('ExecMainStartTimestamp', 'START')):
+            result = replace_assignment(result, 'EXPECTED_ORB_SCHWAB_' + suffix, states['orb-schwab'][field])
+        result = re.sub(r'^(ORB_UNIT|EXPECTED_ORB_PID|EXPECTED_ORB_START)=.*\n', '', result, flags=re.M)
+        result = result.replace('check_identity orb "$ORB_UNIT" "$EXPECTED_ORB_PID" "$EXPECTED_ORB_START"\n', '')
     # orb-schwab is untouched across both authorized installs. Its exact
     # acknowledged upgrade identity must stay pinned; never adopt a new PID.
     overrides = {**OVERRIDES, PREFIX + 'LINE_CHART_RESTORATION_ENABLED': str(line_enabled).lower()}
@@ -132,7 +140,7 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog, l
     for expression in original:
         owner, pair = expression.split(":", 1)
         key, expected = pair.split("=", 1)
-        if owner not in RESTARTED:
+        if owner not in restarted:
             continue
         expected = overrides.get(key, expected)
         need(environments[owner].get(key) == expected, "process flag differs: " + owner + ":" + key)
@@ -146,7 +154,7 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog, l
     for row in catalog:
         key = "MAI_TAI_" + row["name"].upper()
         expected = str(row["expected"]).lower()
-        for owner in {row["owning_service"], *row.get("also_check_services", [])} & RESTARTED:
+        for owner in {row["owning_service"], *row.get("also_check_services", [])} & restarted:
             if key in environments[owner]:
                 need(environments[owner][key] == expected, "catalog/process mismatch: " + owner + ":" + key)
                 flags[(owner, key)] = expected
@@ -154,7 +162,7 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog, l
     result = re.sub(r"^  --expect-flag '[^']+' \\\n", "", result, flags=re.M)
     anchor = '  --install-record "$INSTALL_RECORD" \\\n'
     need(result.count(anchor) == 1, "report install-record argument ambiguous")
-    arguments = "".join("  --restarted " + owner + " \\\n" for owner in sorted(RESTARTED))
+    arguments = "".join("  --restarted " + owner + " \\\n" for owner in sorted(restarted))
     for (owner, key), value in sorted(flags.items()):
         expression = owner + ":" + key + "=" + value
         need(re.fullmatch(r"[A-Za-z0-9_:=.*\-]+", expression), "unsafe flag expression")
@@ -164,7 +172,8 @@ def gate_candidate(text, app, snapshot, record, states, environments, catalog, l
     return result.encode()
 
 
-def validate_evidence(before, record, states, now):
+def validate_evidence(before, record, states, now, *, restarted=None):
+    restarted = RESTARTED if restarted is None else restarted
     need(before.get("schema_version") in {2, 3} and isinstance(before.get("services"), dict), "snapshot shape")
     need(DEFAULT_SERVICES <= set(before["services"]) and 'orb' not in before['services']
          and before.get("alembic_version"), "snapshot fleet/schema incomplete or retired ORB adopted")
@@ -174,12 +183,12 @@ def validate_evidence(before, record, states, now):
     need(record.get("schema_version") == 1
          and record.get("snapshot_captured_at_utc") == before.get("captured_at_utc"), "record/snapshot mismatch")
     need(set(record.get("service_actions", {})) == set(before["services"]), "record fleet incomplete")
-    need(record["service_actions"] == {name: "restarted" if name in RESTARTED else "deliberately_untouched"
+    need(record["service_actions"] == {name: "restarted" if name in restarted else "deliberately_untouched"
                                        for name in before["services"]}, "record restart group differs")
-    need(RESTARTED <= set(before["services"]), "snapshot missing owning services")
+    need(restarted <= set(before["services"]), "snapshot missing owning services")
     captured = moment(before["captured_at_utc"])
     need(captured <= now, "snapshot in future")
-    for owner in RESTARTED:
+    for owner in restarted:
         state = states[owner]
         need(state["MainPID"].isdigit() and int(state["MainPID"]) > 0
              and state["NRestarts"] == "0" and state["ActiveState"] == "active"
@@ -189,14 +198,16 @@ def validate_evidence(before, record, states, now):
              "new identity not proven: " + owner)
 
 
-def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, retirement=None):
+def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, retirement=None, orb_restart=None):
     need(sha(app) and observations["head"] == app and observations["clean"] is True
          and sha(observations["tree"]), "checkout not exact clean application")
     def read(name):
         return location(root, name).read_bytes()
     before = json.loads(read(snapshot))
     actions = json.loads(read(record))
-    validate_evidence(before, actions, observations["states"], now)
+    need((retirement is None) == (orb_restart is None), 'ORB completion needs restart and retirement receipts together')
+    restarted = RESTARTED | {'orb-schwab'} if orb_restart is not None else RESTARTED
+    validate_evidence(before, actions, observations["states"], now, restarted=restarted)
     need(observations.get('alembic_revision') == INSTALLED_SCHEMA, 'installed schema unreadable or not 0023')
     schema_changed = before['alembic_version'] != INSTALLED_SCHEMA
     if schema_changed:
@@ -210,9 +221,9 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
              'actual authorized migration transition receipt missing')
     inputs = (snapshot, record)
     if retirement is not None:
-        from retire_orb import validate_receipt
-        validate_receipt(json.loads(read(retirement)))
-        inputs += (retirement,)
+        from orb_receipts import validate_retirement
+        validate_retirement(json.loads(read(retirement)))
+        inputs += (retirement, orb_restart)
     journal = actions.get("source_journal")
     need(isinstance(journal, str) and read(journal).strip(), "install source journal absent/empty")
     old_runtime = json.loads(read(DAILY + "/runtime.json"))
@@ -238,13 +249,25 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
     ack = json.loads(read(DAILY + "/upgrade-ack.json"))
     need(ack["application"] == old_app and ack["decision"] == "ACKNOWLEDGED_REDIS_UPGRADE_RESTART",
          "historical upgrade acknowledgement binding differs")
-    need(all(observations['upgrade_state'].get(key) == value for key, value in ack['state'].items()),
-         'untouched orb-schwab upgrade identity changed')
+    if orb_restart is None:
+        need(all(observations['upgrade_state'].get(key) == value for key, value in ack['state'].items()),
+             'untouched orb-schwab upgrade identity changed')
+    else:
+        from orb_receipts import validate_restart
+        validate_restart(json.loads(read(orb_restart)), app, ack['state'], observations['upgrade_state'],
+                         moment, system_time, now)
+        need(all(observations['states']['orb-schwab'][key] == observations['upgrade_state'][key] for key in FIELDS),
+             'ORB-Schwab process and receipt reads disagree')
     ack['historical_receipt'] = json.loads(read(DAILY + '/upgrade-ack.json'))
     ack["application"] = app
-    ack['active_for_current_install'] = True
-    ack['preserved_untouched_identity'] = dict(snapshot=snapshot, install_record=record,
-        source_journal=journal, reason='orb-schwab not restarted; exact historical acknowledgement preserved')
+    ack['active_for_current_install'] = orb_restart is None
+    if orb_restart is None:
+        ack['preserved_untouched_identity'] = dict(snapshot=snapshot, install_record=record,
+            source_journal=journal, reason='orb-schwab not restarted; exact historical acknowledgement preserved')
+    else:
+        ack.pop('preserved_untouched_identity', None)
+        ack['superseded_by_authorized_restart'] = dict(receipt=orb_restart, sha256=digest(read(orb_restart)),
+                                                     state=observations['upgrade_state'])
     flags = json.loads(read("/home/trader/restart_evidence/expected_flags.json"))["flags"]
     overrides = {**OVERRIDES, PREFIX + 'LINE_CHART_RESTORATION_ENABLED': str(line_enabled).lower()}
     for key, expected in {**overrides, GAP: "true"}.items():
@@ -252,7 +275,8 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
         need(len(rows) == 1 and rows[0]["expected"] is (expected == "true")
              and rows[0]["owning_service"] == "schwab-1m-v2", "required catalog row missing/drift: " + key)
     result = {GATE: gate_candidate(read(GATE).decode(), app, snapshot, record,
-                                   observations["states"], observations["environments"], flags, line_enabled)}
+                                   observations["states"], observations["environments"], flags, line_enabled,
+                                   restarted=restarted, orb_completed=orb_restart is not None)}
     gate = result[GATE].decode()
     need(len(re.findall(r'^  --expected-alembic-head [\w]+ \\\n', gate, re.M)) == 1,
          'schema expectation argument ambiguous')
@@ -272,9 +296,9 @@ def plan(root, app, snapshot, record, observations, now, *, line_enabled=True, r
     binding = dict(approved_sha=app, tree=observations["tree"], historical_binding=old_binding,
                    historical_binding_sha256=digest(read(DAILY + "/binding.json")),
                    current_install=dict(snapshot=snapshot, install_record=record, source_journal=journal,
-                                        retirement=retirement,
+                                        retirement=retirement, orb_restart=orb_restart,
                                         hashes={path: digest(read(path)) for path in (*inputs, journal)},
-                                        restarted=sorted(RESTARTED)))
+                                        restarted=sorted(restarted)))
     result[DAILY + "/binding.json"] = canonical(binding)
     # APP and TREE already derive from binding.json; do not change historical installer policy constants.
     policy = read(DAILY + "/release_policy.py").decode()
@@ -351,7 +375,7 @@ def apply(root, candidates, now):
     return receipt
 
 
-def collect():
+def collect(*, orb_completed=False):
     def run(command):
         return subprocess.run(command, check=True, capture_output=True, text=True, timeout=10).stdout.strip()
     def state(service):
@@ -359,7 +383,7 @@ def collect():
                    *["--property=" + name for name in FIELDS]])
         return dict(line.split("=", 1) for line in raw.splitlines())
     states, envs = {}, {}
-    for owner in sorted(RESTARTED):
+    for owner in sorted(RESTARTED | ({'orb-schwab'} if orb_completed else set())):
         current = state(owner)
         raw = Path("/proc/" + current["MainPID"] + "/environ").read_bytes()
         need(0 < len(raw) <= 262144, "process environment absent/overflow")
@@ -369,7 +393,7 @@ def collect():
         envs[owner] = dict(selected)
         need(state(owner) == current, "identity changed during process read")
         states[owner] = current
-    raw = run(["systemctl", "show", "project-mai-tai-orb-schwab.service", *["--property=" + name for name in (*FIELDS, "InvocationID")]])
+    raw = run(["systemctl", "show", "project-mai-tai-orb-schwab.service", *["--property=" + name for name in (*FIELDS, "InvocationID", "Result", "ExecMainStatus")]])
     from removed_wait_readonly import collect as schema_read
     schema = schema_read()['revision']
     need(schema == [INSTALLED_SCHEMA], 'installed schema not exactly 0023')
@@ -390,12 +414,14 @@ def main():
     parser.add_argument("--receipt", help="exclusive output path; the receipt never asserts the daily gate passed")
     parser.add_argument("--observations", type=Path, help="isolated fixture root only; never accepted for production")
     parser.add_argument("--dry-run", action="store_true", help="read-only preview; default writes only the declared repins")
+    parser.add_argument('--orb-restart', help='parent authorized restart receipt, paired with --retirement')
+    parser.add_argument('--retirement', help='parent applied normal empty-owner retirement receipt')
     args = parser.parse_args()
     try:
         root = args.root.resolve()
         need(root != Path("/") or os.geteuid() == 0, "production repin requires root")
         need((root == Path("/")) == (args.observations is None), "isolated root/observations pair required")
-        observations = collect() if args.observations is None else json.loads(args.observations.read_bytes())
+        observations = collect(orb_completed=args.orb_restart is not None) if args.observations is None else json.loads(args.observations.read_bytes())
         now = datetime.now(timezone.utc)
         if not args.dry_run:
             need(args.receipt is not None, "write requires --receipt")
@@ -403,7 +429,8 @@ def main():
         with location(root, DAILY + "/run.lock").open("r+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             candidates = plan(root, args.approved_sha, args.snapshot, args.install_record, observations, now,
-                              line_enabled=args.line_enabled == 'true', retirement=None)
+                              line_enabled=args.line_enabled == 'true', retirement=args.retirement,
+                              orb_restart=args.orb_restart)
             for name, raw in candidates.items():
                 if name.endswith(".py"):
                     ast.parse(raw)
