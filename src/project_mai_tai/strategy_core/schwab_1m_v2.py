@@ -1305,11 +1305,25 @@ class SchwabV2Strategy:
         for proof in proofs:
             request = proof.request
             state = self._symbol_states.get(request.symbol)
+            if (proof.clear and proof.reason == "unbound_symbol_terminal"
+                    and self._removed_wait_requests.get(request.symbol) == request
+                    and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+                self._removed_wait_terminal_proofs = tuple(
+                    p for p in getattr(self, "_removed_wait_terminal_proofs", ())
+                    if p.request.symbol != request.symbol) + (proof,)
+                if request.purpose == "retry_exhausted":
+                    continue  # Positive cancellation proof never refunds a same-session trade.
+                if request.purpose != "false_flip_restore":
+                    self._removed_wait_requests.pop(request.symbol, None)
+                    logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=CLEAR reason=%s",
+                                request.symbol, request.opportunity_id,
+                                "no_dispatch" if request.opportunity_id == 0 else proof.reason)
+                    continue
             if request.purpose in {"retry_exhausted", "false_flip_restore"}:
                 expected_reason = ("false_flip_leftovers_cancelled_owner_kept"
                                    if request.purpose == "false_flip_restore"
                                    else "retry_leftovers_cancelled_owner_kept")
-                if (proof.clear and proof.reason == expected_reason
+                if (proof.clear and proof.reason in {expected_reason, "unbound_symbol_terminal"}
                         and self._removed_wait_requests.get(request.symbol) == request
                         and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
                     try:
@@ -8316,6 +8330,7 @@ class SchwabV2IntentEmitter:
         draft: TradeIntentDraft,
         *,
         correlation_id: UUID | None = None,
+        event_id: UUID | None = None,
     ) -> UUID:
         payload = TradeIntentPayload(
             strategy_code=STRATEGY_CODE,
@@ -8328,6 +8343,7 @@ class SchwabV2IntentEmitter:
             metadata=dict(draft.metadata),
         )
         event = TradeIntentEvent(
+            event_id=event_id or uuid4(),
             source_service=SERVICE_NAME,
             correlation_id=correlation_id,
             payload=payload,

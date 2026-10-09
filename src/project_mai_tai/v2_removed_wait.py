@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Callable, Mapping, Sequence
+from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.cancel_terminal_proof import (
-    CancelTerminalProof, CompleteWorkingBook, UnboundCancelFences, UnboundCancelRequest,
+    CancelTerminalProof, CompleteWorkingBook, NeverSentScope, UnboundCancelFences, UnboundCancelRequest,
     evaluate_cancel_terminal, evaluate_unbound_cancel_terminal,
 )
 from project_mai_tai.db.models import (
@@ -31,6 +32,9 @@ from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear, replacement_terminal_zero
 from project_mai_tai.oms.cancel_terminal import load_cancel_terminal_evidence, receipt_from_intent
+from project_mai_tai.oms.buy_submission_journal import (
+    close_never_sent_admission, lock_buy_scope, opportunity_start_ms,
+)
 
 SNAPSHOT_TYPE = "v2_removed_wait"
 DISPATCH_SNAPSHOT_TYPE = "v2_wait_dispatch"
@@ -145,6 +149,8 @@ def rollover_retry_proven_terminal(row: DashboardSnapshot, account_names: set[st
         return bool(p.get("phase") in {"expired", "refused"} and typed_clear
             and old_buy_proven_clear(p)
             and (not p.get("replacement") or replacement_terminal_zero(p)))
+    if row.snapshot_type == "oms_v2_eh_price_hold":
+        return p.get("phase") == "retired" and p.get("token") == "" and p.get("dispatch") is None
     if row.snapshot_type == "oms_webull_mirror_price_hold":
         return p.get("phase") == "retired" and isinstance(p.get("token"), str)
     expected = [scoped["broker_account_name"], scoped["strategy_code"], scoped.get("symbol"),
@@ -584,7 +590,7 @@ class RemovedWaitStore:
     def _rollover_retry_unknown(session: Session, symbol: str, account_names: set[str]) -> bool:
         rows = session.scalars(select(DashboardSnapshot).where(
             DashboardSnapshot.snapshot_type.in_({"atr_reprice_handoff",
-                "oms_webull_mirror_price_hold", "oms_webull_mirror_retained_hold"}),
+                "oms_webull_mirror_price_hold", "oms_webull_mirror_retained_hold", "oms_v2_eh_price_hold"}),
             or_(DashboardSnapshot.payload["symbol"].as_string() == symbol,
                 DashboardSnapshot.payload["old"]["symbol"].as_string() == symbol,
                 DashboardSnapshot.payload["event"]["payload"]["symbol"].as_string() == symbol),
@@ -626,6 +632,7 @@ class RemovedWaitStore:
         books: Mapping[str, CompleteWorkingBook | None],
         publication_closed: Mapping[RemovedWait, bool], now: datetime | None = None,
         expected_bindings: Mapping[str, tuple[str, str]] | None = None,
+        publication_current: Callable[[RemovedWait], bool] | None = None,
     ) -> tuple[RemovedWaitProof, ...]:
         """Off-loop exact-request CAS; an empty DB is not a publication-drained witness."""
         observed = now or datetime.now(UTC)
@@ -648,6 +655,10 @@ class RemovedWaitStore:
                     and all(a.provider == configured[a.name][0]
                         and (a.external_account_id is None or a.external_account_id == configured[a.name][1])
                         for a in accounts))
+                if exact_accounts:
+                    # Serialize guard reads and the final request CAS with every physical BUY.
+                    for account_id in sorted(binding.values()):
+                        lock_buy_scope(session, account_id, request.symbol)
                 latest = session.scalar(select(DashboardSnapshot).where(
                     DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
                     DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
@@ -682,25 +693,73 @@ class RemovedWaitStore:
                         and_(request.opportunity_id > 0, OmsManagedPosition.entry_order_id.in_(episode_orders))),
                 ).limit(ROW_LIMIT + 1)).all()
                 bounded = len(intents) <= ROW_LIMIT and len(managed) <= ROW_LIMIT
-                pending = any(i.status not in TERMINAL | {"filled", "aborted"} for i in intents)
+                known_episode_buy = session.scalar(episode_orders.where(
+                    BrokerOrder.side == "buy").limit(1)) is not None
+                pending = (any(i.status not in TERMINAL | {"filled", "aborted"} for i in intents)
+                           or self._rollover_retry_unknown(session, request.symbol, account_names))
                 unanswered = any(i.intent_type == "cancel" and i.status not in TERMINAL
                                  for i in intents)
                 bound = any((i.payload or {}).get("metadata", {}).get("target_client_order_id")
                     for i in intents if (i.payload or {}).get("metadata", {}).get(
                         "clearwait_removal_token") == request.token)
                 rows_closed = all(m.status == "closed" and m.current_quantity == 0 for m in managed)
+                observed_ms = int(observed.timestamp() * 1000)
+                start_ms = opportunity_start_ms(session, request.symbol,
+                    str(request.opportunity_id), observed_ms) if request.opportunity_id > 0 else 0
+                process_ids = {}
+                for account in request.account_names:
+                    receipts = [i for i in intents if ids.get(i.broker_account_id) == account
+                        and i.intent_type == "cancel" and i.status in TERMINAL
+                        and (i.payload or {}).get("source_service") == "schwab-1m-v2"
+                        and (i.payload or {}).get("metadata", {}).get("clearwait_removal_token") == request.token]
+                    stamps = set()
+                    for receipt in receipts:
+                        md = receipt.payload.get("metadata", {})
+                        if (md.get("clearwait_opportunity_id") != str(request.opportunity_id)
+                                or md.get("clearwait_buy_only") != "true"
+                                or md.get("reason") != ("false_flip_restore" if request.purpose == "false_flip_restore"
+                                    else "retry_budget_exhausted" if request.purpose == "retry_exhausted"
+                                    else "watchlist-removed")
+                                or (request.opportunity_id > 0
+                                    and md.get("fanout_segment_id") != str(request.opportunity_id))
+                                or int(_utc(receipt.created_at).timestamp() * 1000) < request.requested_at_ms
+                                or int(_utc(receipt.updated_at).timestamp() * 1000) < request.requested_at_ms):
+                            stamps.add(None)
+                            continue
+                        try:
+                            stamps.add(str(UUID(md["buy_submission_process_id"])))
+                        except (KeyError, ValueError, TypeError, AttributeError):
+                            stamps.add(None)
+                    if len(stamps) == 1 and None not in stamps:
+                        process_ids[account] = stamps.pop()
                 scope = UnboundCancelRequest(request.symbol, request.token, request.token,
                     str(request.opportunity_id), request.purpose, request.requested_at_ms, binding,
-                    account_providers={a.name: a.provider for a in accounts})
-                current = latest is not None and active_request_matches(latest.payload, request)
+                    account_providers={a.name: a.provider for a in accounts},
+                    session_key=current_session_anchor(observed).isoformat(),
+                    opportunity_started_at_ms=start_ms, coverage_process_ids=process_ids)
+                current = (latest is not None and active_request_matches(latest.payload, request)
+                           and (publication_current is None or publication_current(request)))
+                safe = (exact_accounts and bounded and not pending and not orders
+                        and publication_closed.get(request) is True
+                        and not unanswered and not bound and rows_closed and current
+                        and set(process_ids) == set(request.account_names) and start_ms > 0
+                        and not known_episode_buy)
+                never_sent = {}
+                if safe and start_ms:
+                    for name in sorted(process_ids):
+                        never_sent[name] = close_never_sent_admission(session, NeverSentScope(
+                            name, binding[name], request.symbol, str(request.opportunity_id), start_ms,
+                            request.token, request.token, request.requested_at_ms,
+                            UUID(process_ids[name]), scope.session_key), observed_at_ms=observed_ms)
                 proof = evaluate_unbound_cancel_terminal(scope, books,
                     fences=UnboundCancelFences(scope,
                         exact_accounts and bounded and not pending and not orders
-                        and publication_closed.get(request) is True,
+                        and publication_closed.get(request) is True
+                        and set(process_ids) == set(request.account_names) and start_ms > 0,
                         not unanswered and not bound,
                         rows_closed,
                         current),
-                    now_ms=int(observed.timestamp() * 1000))
+                    never_sent_witnesses=never_sent, now_ms=observed_ms)
                 witnesses = []
                 for row in managed:
                     entry = session.get(BrokerOrder, row.entry_order_id) if row.entry_order_id else None
@@ -712,15 +771,101 @@ class RemovedWaitStore:
                         witnesses.append((row.broker_account_name, str(row.id)))
                 witnesses = tuple(sorted(witnesses))
                 if proof.terminal:
+                    # The thread's memory fence and durable token must still match after proof work.
+                    session.expire_all()
+                    final = session.scalar(select(DashboardSnapshot).where(
+                        DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                        DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+                    ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc()).limit(1))
+                    if (final is None or not active_request_matches(final.payload, request)
+                            or (publication_current is not None and not publication_current(request))):
+                        proof = evaluate_unbound_cancel_terminal(scope, books,
+                            fences=UnboundCancelFences(scope, False, False, False, False), now_ms=observed_ms)
+                if proof.terminal:
                     session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE,
-                        payload={**request.payload(active=request.purpose == "retry_exhausted"), "verdict": "TERMINAL",
+                        payload={**request.payload(active=request.purpose in {"retry_exhausted", "false_flip_restore"}), "verdict": "TERMINAL",
                             "reason": proof.reason, "closed_owned_rows": [list(w) for w in witnesses],
                             "terminal_observed_at_ms": proof.observed_at_ms},
                         created_at=max(observed, _utc(latest.created_at) + timedelta(microseconds=1))))
                     session.commit()
+                else:
+                    session.rollback()
                 results.append(RemovedWaitProof(request, proof.observed_at_ms, proof.terminal,
                                                 proof.reason, witnesses if proof.terminal else ()))
         return tuple(results)
+
+    def request_publication_closed(
+        self, request: RemovedWait, *, last_publications: Mapping[str, Sequence[str]],
+        no_dispatch: bool = False, now: datetime | None = None,
+    ) -> bool:
+        """Existing serial request barriers, not the OMS cursor or an empty intent table."""
+        observed = now or datetime.now(UTC)
+        publications = {event: account for account, events in last_publications.items() for event in events}
+        if (not set(last_publications) <= set(request.account_names)
+                or len(publications) != sum(map(len, last_publications.values()))):
+            return False
+        with self.session_factory() as session:
+            accounts = session.scalars(select(BrokerAccount).where(
+                BrokerAccount.name.in_(request.account_names))).all()
+            names = {a.id: a.name for a in accounts}
+            if len(accounts) != len(request.account_names) or set(names.values()) != set(request.account_names):
+                return False
+            rows = session.scalars(select(TradeIntent).where(
+                TradeIntent.broker_account_id.in_(names), TradeIntent.symbol == request.symbol,
+                TradeIntent.side == "buy",
+                or_(TradeIntent.payload["metadata"]["clearwait_removal_token"].as_string() == request.token,
+                    TradeIntent.payload["event_id"].as_string().in_(tuple(publications))),
+            ).limit(ROW_LIMIT + 1)).all()
+            if len(rows) > ROW_LIMIT:
+                return False
+            seen = set()
+            receipts = set()
+            for intent in rows:
+                payload = intent.payload or {}
+                md = payload.get("metadata", {})
+                account = names[intent.broker_account_id]
+                if (intent.status not in TERMINAL | {"filled", "aborted"}
+                        or payload.get("source_service") != "schwab-1m-v2"):
+                    return False
+                event = payload.get("event_id")
+                if event in publications:
+                    if publications[event] != account:
+                        return False
+                    seen.add(event)
+                if md.get("clearwait_removal_token") == request.token:
+                    if (intent.intent_type != "cancel" or intent.status not in TERMINAL
+                            or md.get("clearwait_buy_only") != "true"
+                            or md.get("clearwait_opportunity_id") != str(request.opportunity_id)
+                            or md.get("reason") != ("false_flip_restore" if request.purpose == "false_flip_restore"
+                                else "retry_budget_exhausted" if request.purpose == "retry_exhausted"
+                                else "watchlist-removed")
+                            or (request.opportunity_id > 0 and md.get("fanout_segment_id") != str(request.opportunity_id))
+                            or int(_utc(intent.created_at).timestamp() * 1000) < request.requested_at_ms
+                            or int(_utc(intent.updated_at).timestamp() * 1000) < request.requested_at_ms):
+                        return False
+                    receipts.add(account)
+            if seen != set(publications):
+                return False
+            if receipts == set(request.account_names):
+                return True
+            if not no_dispatch or publications or receipts or request.opportunity_id != 0:
+                return False
+            # A fresh zero-id raise may avoid spurious cancel publication, but historical
+            # current-session opens/orders/dispatch journals are positive disqualifiers.
+            anchor = current_session_anchor(observed)
+            if session.scalar(select(TradeIntent.id).where(
+                TradeIntent.broker_account_id.in_(names), TradeIntent.symbol == request.symbol,
+                TradeIntent.side == "buy", TradeIntent.created_at >= anchor).limit(1)) is not None:
+                return False
+            if session.scalar(select(BrokerOrder.id).where(
+                BrokerOrder.broker_account_id.in_(names), BrokerOrder.symbol == request.symbol,
+                BrokerOrder.side == "buy",
+                or_(BrokerOrder.submitted_at.is_(None), BrokerOrder.submitted_at >= anchor)).limit(1)) is not None:
+                return False
+            return session.scalar(select(DashboardSnapshot.id).where(
+                DashboardSnapshot.snapshot_type == DISPATCH_SNAPSHOT_TYPE,
+                DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+                DashboardSnapshot.created_at >= anchor).limit(1)) is None
 
     def restore_terminal_proofs(self) -> tuple[RemovedWaitProof, ...]:
         """Restore only the latest typed witness, retaining its actual observation time."""
