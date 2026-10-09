@@ -16308,17 +16308,36 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         the limit beyond tolerance, as plain snapshots (no ORM crosses the thread).
         Mirrors the prior in-line filter exactly: open-intent only; stop-guard / non-limit
         orders are excluded by ``_quote_drift_dollars_against`` returning None."""
-        query = select(BrokerOrder).where(BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES))
+        from sqlalchemy import func
+
+        # Column rows retain the cancellation payload without ORM identity-map hydration.
+        query = select(
+            BrokerOrder.id, BrokerOrder.intent_id, BrokerOrder.strategy_id,
+            BrokerOrder.broker_account_id, BrokerOrder.client_order_id,
+            BrokerOrder.broker_order_id, BrokerOrder.symbol, BrokerOrder.side,
+            BrokerOrder.quantity, BrokerOrder.order_type, BrokerOrder.time_in_force,
+            BrokerOrder.payload, TradeIntent.intent_type,
+            TradeIntent.created_at.label("intent_created_at"),
+        ).join(TradeIntent, TradeIntent.id == BrokerOrder.intent_id).where(
+            BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES),
+            func.lower(TradeIntent.intent_type) == "open",
+        )
         if symbol is not None:
             query = query.where(BrokerOrder.symbol == symbol)
-        orders = session.scalars(query).all()
+        orders = session.execute(query).all()
         if not orders:
             return []
         account_lookup = {
-            account.id: account for account in self.store.list_active_broker_accounts(session)
+            account.id: account for account in session.execute(
+                select(BrokerAccount.id, BrokerAccount.name)
+                .where(BrokerAccount.is_active.is_(True))
+                .order_by(BrokerAccount.name)
+            ).all()
         }
         strategy_lookup = {
-            strategy.id: strategy for strategy in session.scalars(select(Strategy)).all()
+            strategy.id: strategy for strategy in session.execute(
+                select(Strategy.id, Strategy.code)
+            ).all()
         }
         candidates: list[_DriftCancelCandidate] = []
         for order in orders:
@@ -16337,10 +16356,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 drift = self._quote_drift_dollars_against(order, quote)
                 if drift is None or drift <= tolerance_dollars:
                     continue
-            intent = session.get(TradeIntent, order.intent_id)
-            if intent is None:
-                continue
-            if str(intent.intent_type).lower() != "open":
+            if str(order.intent_type).lower() != "open":
                 continue  # don't auto-cancel close/scale chases here
             account = account_lookup.get(order.broker_account_id)
             if account is None:
@@ -16361,7 +16377,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     existing_metadata={str(k): str(v) for k, v in (order.payload or {}).items()},
                     broker_order_id=order.broker_order_id or "",
                     limit_price=str((order.payload or {}).get("limit_price", "")),
-                    intent_created_at=intent.created_at,
+                    intent_created_at=order.intent_created_at,
                     drift=drift,
                     terminal_cancel_reports=self.store.count_terminal_cancel_refusals(
                         session,
