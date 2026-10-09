@@ -167,7 +167,7 @@ def test_listening_phase_is_live_report_not_inferred_from_clock_or_decisions(mon
     assert result["subscribed"] == ["DKI"]
     assert result["universe"] == ["AIXI", "DKI"]
     if phase == "waiting_for_open":
-        assert "AIXI, DKI" in result["detail"] and NOW.isoformat() in result["detail"]
+        assert "AIXI, DKI" in result["detail"] and "10-08 06:27:00 AM ET" in result["detail"]
 
 
 @pytest.mark.parametrize("age", [None, 60.001, -1])
