@@ -15,7 +15,8 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.cancel_terminal_proof import (
-    CancelTerminalProof, CompleteWorkingBook, NeverSentScope, UnboundCancelFences, UnboundCancelRequest,
+    CancelTerminalProof, CompleteWorkingBook, NeverSentScope, TerminalSubmissionWitness,
+    UnboundCancelFences, UnboundCancelRequest,
     evaluate_cancel_terminal, evaluate_unbound_cancel_terminal,
 )
 from project_mai_tai.db.models import (
@@ -35,7 +36,8 @@ from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear, replacement_terminal_zero
 from project_mai_tai.oms.cancel_terminal import load_cancel_terminal_evidence, receipt_from_intent
 from project_mai_tai.oms.buy_submission_journal import (
-    close_never_sent_admission, lock_buy_scope, opportunity_start_ms,
+    BuyCoverageEpoch, PROTOCOL, close_never_sent_admission, close_terminal_buy_admission,
+    lock_buy_scope, opportunity_start_ms,
 )
 from project_mai_tai.oms.unbound_cancel_book import load_unbound_request_working_books
 
@@ -636,6 +638,7 @@ class RemovedWaitStore:
         publication_closed: Mapping[RemovedWait, bool], now: datetime | None = None,
         expected_bindings: Mapping[str, tuple[str, str]] | None = None,
         publication_current: Callable[[RemovedWait], bool] | None = None,
+        minimum_book_started_at_ms: int = 0,
     ) -> tuple[RemovedWaitProof, ...]:
         """Off-loop exact-request CAS; an empty DB is not a publication-drained witness."""
         observed = now or datetime.now(UTC)
@@ -695,17 +698,27 @@ class RemovedWaitStore:
                     or_(OmsManagedPosition.status != "closed", OmsManagedPosition.current_quantity != 0,
                         and_(request.opportunity_id > 0, OmsManagedPosition.entry_order_id.in_(episode_orders))),
                 ).limit(ROW_LIMIT + 1)).all()
-                bounded = len(intents) <= ROW_LIMIT and len(managed) <= ROW_LIMIT
-                known_episode_buy = session.scalar(episode_orders.where(
-                    BrokerOrder.side == "buy").limit(1)) is not None
+                episode_buys = session.scalars(select(BrokerOrder).where(
+                    BrokerOrder.id.in_(episode_orders), BrokerOrder.side == "buy",
+                ).limit(ROW_LIMIT + 1)).all()
+                bounded = (len(intents) <= ROW_LIMIT and len(managed) <= ROW_LIMIT
+                           and len(episode_buys) <= ROW_LIMIT)
                 pending = (any(i.status not in TERMINAL | {"filled", "aborted"} for i in intents)
                            or self._rollover_retry_unknown(session, request.symbol, account_names))
                 unanswered = any(i.intent_type == "cancel" and i.status not in TERMINAL
                                  for i in intents)
-                bound = any((i.payload or {}).get("metadata", {}).get("target_client_order_id")
-                    for i in intents if (i.payload or {}).get("metadata", {}).get(
-                        "clearwait_removal_token") == request.token)
+                bound_targets = {name: set() for name in request.account_names}
+                for intent in intents:
+                    md = (intent.payload or {}).get("metadata", {})
+                    if md.get("clearwait_removal_token") == request.token and md.get("target_client_order_id"):
+                        bound_targets[ids[intent.broker_account_id]].add(md["target_client_order_id"])
                 rows_closed = all(m.status == "closed" and m.current_quantity == 0 for m in managed)
+                filled_episode_ids = set(session.scalars(select(Fill.order_id).where(
+                    Fill.order_id.in_([order.id for order in episode_buys]))))
+                filled_owners_closed = all(any(m.entry_order_id == order.id
+                    and m.broker_account_name == ids[order.broker_account_id]
+                    and m.status == "closed" and m.current_quantity == 0 for m in managed)
+                    for order in episode_buys if order.status == "filled" or order.id in filled_episode_ids)
                 observed_ms = int(observed.timestamp() * 1000)
                 start_ms = opportunity_start_ms(session, request.symbol,
                     str(request.opportunity_id), observed_ms) if request.opportunity_id > 0 else 0
@@ -742,29 +755,49 @@ class RemovedWaitStore:
                     opportunity_started_at_ms=start_ms, coverage_process_ids=process_ids)
                 request_books = (books if books is not None else
                     load_unbound_request_working_books(session, intents, scope, now_ms=observed_ms))
+                assessment_book_current = (type(minimum_book_started_at_ms) is int
+                    and 0 <= minimum_book_started_at_ms <= observed_ms
+                    and all(book is not None and book.started_at_ms >= minimum_book_started_at_ms
+                        for name, book in request_books.items() if scope.account_providers.get(name) == "webull"))
                 current = (latest is not None and active_request_matches(latest.payload, request)
                            and (publication_current is None or publication_current(request)))
                 safe = (exact_accounts and bounded and not pending and not orders
                         and publication_closed.get(request) is True
-                        and not unanswered and not bound and rows_closed and current
-                        and set(process_ids) == set(request.account_names) and start_ms > 0
-                        and not known_episode_buy)
+                        and not unanswered and rows_closed and filled_owners_closed and current
+                        and set(process_ids) == set(request.account_names) and start_ms > 0)
                 never_sent = {}
+                terminal_submissions = {}
                 if safe and start_ms:
                     for name in sorted(process_ids):
-                        never_sent[name] = close_never_sent_admission(session, NeverSentScope(
+                        admission_scope = NeverSentScope(
                             name, binding[name], request.symbol, str(request.opportunity_id), start_ms,
                             request.token, request.token, request.requested_at_ms,
-                            UUID(process_ids[name]), scope.session_key), observed_at_ms=observed_ms)
+                            UUID(process_ids[name]), scope.session_key)
+                        witness = close_never_sent_admission(session, admission_scope, observed_at_ms=observed_ms)
+                        if witness.never_sent:
+                            never_sent[name] = witness
+                        else:
+                            terminal_submissions[name] = close_terminal_buy_admission(
+                                session, admission_scope, observed_at_ms=observed_ms)
+                terminal_ids = {name: set(w.client_order_ids) for name, w in terminal_submissions.items()
+                    if isinstance(w, TerminalSubmissionWitness) and w.terminal is True
+                    and w.reason == "broker_terminal_durable_admission_closed"}
+                episode_covered = all(order.client_order_id
+                    and order.client_order_id in terminal_ids.get(ids[order.broker_account_id], set())
+                    for order in episode_buys)
+                targets_covered = all(targets <= terminal_ids.get(name, set())
+                                      for name, targets in bound_targets.items())
                 proof = evaluate_unbound_cancel_terminal(scope, request_books,
                     fences=UnboundCancelFences(scope,
                         exact_accounts and bounded and not pending and not orders
                         and publication_closed.get(request) is True
-                        and set(process_ids) == set(request.account_names) and start_ms > 0,
-                        not unanswered and not bound,
-                        rows_closed,
+                        and set(process_ids) == set(request.account_names) and start_ms > 0
+                        and assessment_book_current,
+                        not unanswered and targets_covered and episode_covered,
+                        rows_closed and filled_owners_closed,
                         current),
-                    never_sent_witnesses=never_sent, now_ms=observed_ms)
+                    never_sent_witnesses=never_sent, terminal_submission_witnesses=terminal_submissions,
+                    now_ms=observed_ms)
                 witnesses = []
                 for row in managed:
                     entry = session.get(BrokerOrder, row.entry_order_id) if row.entry_order_id else None
@@ -777,6 +810,7 @@ class RemovedWaitStore:
                 witnesses = tuple(sorted(witnesses))
                 if proof.terminal:
                     # The thread's memory fence and durable token must still match after proof work.
+                    session.flush()
                     session.expire_all()
                     final = session.scalar(select(DashboardSnapshot).where(
                         DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
@@ -800,6 +834,71 @@ class RemovedWaitStore:
                 results.append(RemovedWaitProof(request, book_observed_ms if proof.terminal else proof.observed_at_ms, proof.terminal,
                                                 proof.reason, witnesses if proof.terminal else ()))
         return tuple(results)
+
+    def request_assessment_receipts(self, request: RemovedWait, *,
+        expected_bindings: Mapping[str, tuple[str, str]], now: datetime,
+    ) -> tuple[dict, ...] | None:
+        """Exact committed receipt revisions for an explicit non-trading OMS signal."""
+        with self.session_factory() as session:
+            latest = session.scalar(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+            ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc()).limit(1))
+            if latest is None or not active_request_matches(latest.payload, request):
+                return None
+            start_ms = opportunity_start_ms(session, request.symbol, str(request.opportunity_id),
+                                             int(now.timestamp() * 1000)) if request.opportunity_id > 0 else 0
+            if not start_ms:
+                return None
+            accounts = session.scalars(select(BrokerAccount).where(
+                BrokerAccount.name.in_(request.account_names))).all()
+            if (len(accounts) != len(request.account_names)
+                    or set(expected_bindings) != set(request.account_names)):
+                return None
+            receipts = []
+            for account in sorted(accounts, key=lambda a: a.name):
+                provider, account_id = expected_bindings[account.name]
+                if (account.provider != provider or not account_id
+                        or account.external_account_id not in {None, account_id}):
+                    return None
+                rows = session.scalars(select(TradeIntent).where(
+                    TradeIntent.broker_account_id == account.id, TradeIntent.symbol == request.symbol,
+                    TradeIntent.intent_type == "cancel",
+                    TradeIntent.payload["metadata"]["clearwait_removal_token"].as_string() == request.token,
+                ).order_by(TradeIntent.updated_at.desc(), TradeIntent.created_at.desc(),
+                           TradeIntent.id.desc()).limit(ROW_LIMIT + 1)).all()
+                if not rows or len(rows) > ROW_LIMIT:
+                    return None
+                row = rows[0]
+                md = (row.payload or {}).get("metadata", {})
+                reason = ("retry_budget_exhausted" if request.purpose == "retry_exhausted" else
+                          "false_flip_restore" if request.purpose == "false_flip_restore" else "watchlist-removed")
+                if (any(r.status not in TERMINAL for r in rows) or row.side != "buy"
+                        or (row.payload or {}).get("source_service") != "schwab-1m-v2"
+                        or md.get("clearwait_purpose") != request.purpose
+                        or md.get("clearwait_opportunity_id") != str(request.opportunity_id)
+                        or md.get("fanout_segment_id") != str(request.opportunity_id)
+                        or md.get("clearwait_buy_only") != "true" or md.get("reason") != reason
+                        or int(_utc(row.created_at).timestamp() * 1000) < request.requested_at_ms
+                        or not request.requested_at_ms <= int(_utc(row.updated_at).timestamp() * 1000)
+                            <= int(now.timestamp() * 1000)):
+                    return None
+                try:
+                    event_id = str(UUID(row.payload["event_id"]))
+                    process_id = str(UUID(md["buy_submission_process_id"]))
+                except (KeyError, ValueError, TypeError, AttributeError):
+                    return None
+                coverage = session.get(BuyCoverageEpoch, (UUID(process_id), account_id))
+                if (coverage is None or coverage.protocol != PROTOCOL
+                        or coverage.account_name != account.name
+                        or not 0 < coverage.started_at_ms <= start_ms <= request.requested_at_ms):
+                    return None
+                receipts.append({"intent_id": str(row.id), "event_id": event_id,
+                    "account_name": account.name, "account_id": account_id, "provider": provider,
+                    "created_at": _utc(row.created_at).isoformat(),
+                    "updated_at": _utc(row.updated_at).isoformat(), "status": row.status,
+                    "coverage_process_id": process_id})
+            return tuple(receipts)
 
     def request_publication_closed(
         self, request: RemovedWait, *, last_publications: Mapping[str, Sequence[str]],

@@ -253,3 +253,69 @@ async def test_pg_actual_journal_consumer_lifecycle(pg_db, sdk, caller_clock, mo
         await tests[case](pg_db, monkeypatch, receipt_clock)
     else:
         await tests[case](pg_db, monkeypatch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("evidence", ["fresh", "missing", "stale", "precoverage"])
+async def test_pg_postcoverage_boot_original_journal(pg_db, sdk, caller_clock, monkeypatch, evidence):
+    from tests.unit.test_clearwait1_never_sent_consumer import test_postcoverage_boot_consumes_only_original_fresh_journal
+    await test_postcoverage_boot_consumes_only_original_fresh_journal(pg_db, monkeypatch, evidence)
+
+
+@pytest.mark.asyncio
+async def test_pg_04_reset_stale_book_held(pg_db, sdk, caller_clock, monkeypatch):
+    from tests.unit.test_clearwait1_never_sent_consumer import test_04_reset_does_not_turn_stale_book_into_current_session_coverage
+    await test_04_reset_does_not_turn_stale_book_into_current_session_coverage(pg_db, monkeypatch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["token", "opportunity_id", "requested_at_ms", "purpose", "account_names"])
+async def test_pg_exact_request_changed_rolls_back_admissions(pg_db, monkeypatch, field):
+    from tests.unit.test_clearwait1_never_sent_consumer import test_exact_active_request_change_rolls_back_both_admissions
+    await test_exact_active_request_change_rolls_back_both_admissions(pg_db, monkeypatch, field)
+
+
+@pytest.mark.asyncio
+async def test_pg_clear_commit_failure_rolls_back_all(pg_db, monkeypatch):
+    from tests.unit.test_clearwait1_never_sent_consumer import test_clear_commit_failure_rolls_back_request_and_both_admissions
+    await test_clear_commit_failure_rolls_back_request_and_both_admissions(pg_db, monkeypatch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL, "both"])
+@pytest.mark.parametrize("status", ["cancelled", "rejected", "expired", "filled"])
+async def test_pg_mixed_terminal_and_never_sent_journal_clear(pg_db, sdk, caller_clock, monkeypatch, account, status):
+    from tests.unit.test_clearwait1_terminal_consumer import test_mixed_terminal_and_never_sent_actual_journal_clears
+    await test_mixed_terminal_and_never_sent_actual_journal_clears(pg_db, monkeypatch, account, status)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("fault", ["missing_event", "local_event", "pre_token_event", "crash", "lost_id",
+    "wrong_broker_id", "wrong_target", "missing_owner", "open_owner", "partial_fill_without_owner"])
+async def test_pg_terminal_unknown_rolls_back_state_and_closures(pg_db, sdk, monkeypatch, account, fault):
+    from tests.unit.test_clearwait1_terminal_consumer import test_terminal_unknown_rolls_back_mixed_closures_and_token_state
+    await test_terminal_unknown_rolls_back_mixed_closures_and_token_state(pg_db, monkeypatch, account, fault)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["memory_cas", "commit", "stale_book", "assessment_bound", "new_generation"])
+async def test_pg_positive_terminal_failed_f_transaction(pg_db, sdk, monkeypatch, failure):
+    from tests.unit.test_clearwait1_terminal_consumer import test_positive_terminal_witness_cannot_escape_failed_f_transaction
+    await test_positive_terminal_witness_cannot_escape_failed_f_transaction(pg_db, monkeypatch, failure)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", [
+    "request_signal_after_exact_receipts_then_actual_journal_clear",
+    "pending_signal_is_deduplicated_without_age_retry",
+    "boot_requests_resampling_without_recancelling_or_refreshing_old_book",
+    "new_receipt_revision_wakes_signal_but_journal_payload_does_not",
+    "changed_active_request_cannot_emit_old_assessment",
+    "signal_delivery_failure_keeps_bound_until_explicit_new_wake",
+    "fresh_sell_publication_triggers_exact_request_resampling",
+    "late_assessment_trigger_change_rolls_back_both_admissions",
+])
+async def test_pg_explicit_assessment_signal_controls(pg_db, sdk, caller_clock, monkeypatch, control):
+    from tests.unit import test_clearwait1_assessment_signal as controls
+    await getattr(controls, f"test_{control}")(pg_db, monkeypatch)
