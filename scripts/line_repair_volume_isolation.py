@@ -1,4 +1,4 @@
-"""[codex] Observe prefix-volume reachability without changing repair or trading code."""
+"""[codex] Verify the math-only prefix never reaches general volume readers."""
 from __future__ import annotations
 
 import asyncio
@@ -6,6 +6,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import sys
+from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "src"), str(ROOT)]
@@ -30,6 +31,7 @@ async def observe(row):
     decision = await replay(row)
     current = decision["reading_bar_ms"]
     case, _ = setup(row, current, admission_control=True)
+    case.bot._strategy_on_bar = Mock(wraps=case.bot._strategy_on_bar)
     await repair(row, case, current)
     state = case.strategy.watchlist_state(row["symbol"])
     prefix = [bar for bar in state.bars if bar.timestamp_ms < row["boundary_ms"]]
@@ -37,6 +39,9 @@ async def observe(row):
     last = state.bars[-1] if state.bars else None
     return {
         "decisions": {field: decision[field] for field in DECISION_FIELDS},
+        "general_callback_prefix_bars": sum(
+            call.args[1].timestamp_ms < row["boundary_ms"]
+            for call in case.bot._strategy_on_bar.call_args_list),
         "general_buffer_prefix_bars": len(prefix),
         "general_buffer_prefix_volume": sum(bar.volume for bar in prefix),
         "relative_volume_window_prefix_bars": sum(
@@ -58,10 +63,17 @@ async def audit(row):
     baseline = samples["1"]
     decision_equal = all(sample["decisions"] == baseline["decisions"]
                          for sample in samples.values())
-    leaked = baseline["general_buffer_prefix_bars"] > 0
+    inputs_equal = all(sample == baseline for sample in samples.values())
+    leaked = any(sample["general_buffer_prefix_bars"] > 0
+                 or sample["general_callback_prefix_bars"] > 0
+                 or sample["relative_volume_window_prefix_bars"] > 0
+                 or sample["seed_db_bar_writes"] > 0 for sample in samples.values())
+    verdict = "FAIL" if leaked or not inputs_equal else (
+        "PASS" if row["preopen"].get("results") else "NO_PREFIX_CONTROL")
     return {"day": row["day"], "symbol": row["symbol"],
             "prefix_volume_decisions_identical": decision_equal,
-            "volume_isolation": "FAIL" if leaked else "NO_PREFIX_CONTROL",
+            "volume_reader_inputs_identical": inputs_equal,
+            "volume_isolation": verdict,
             "samples": samples}
 
 

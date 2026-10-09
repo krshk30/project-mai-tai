@@ -1,4 +1,4 @@
-"""[codex] Characterize the unrepaired seed-volume leak, not an isolation approval."""
+"""[codex] Massive seed volume is isolated from every general callback reader."""
 from copy import deepcopy
 import importlib.util
 import json
@@ -27,24 +27,32 @@ def test_scaling_is_prefix_only_and_does_not_mutate_recording():
 
 
 @pytest.mark.asyncio
-async def test_mi_prefix_reaches_general_buffer_and_vwap_not_db_writer():
+async def test_mi_prefix_stays_in_math_ledger_not_general_buffer_or_vwap():
     row = next(row for row in ROWS if row["day"] == "2026-10-09" and row["symbol"] == "MI")
     baseline = await audit_module.observe(row)
     zero = await audit_module.observe(audit_module.scale_prefix(row, 0))
-    assert baseline["general_buffer_prefix_bars"] > 0
-    assert baseline["relative_volume_window_prefix_bars"] > 0
-    assert baseline["vwap_sum_v"] != zero["vwap_sum_v"]
-    assert baseline["relative_volume_window_mean"] != zero["relative_volume_window_mean"]
-    assert baseline["decisions"] == zero["decisions"]
+    assert baseline["general_callback_prefix_bars"] == 0
+    assert baseline["general_buffer_prefix_bars"] == 0
+    assert baseline["relative_volume_window_prefix_bars"] == 0
+    assert baseline == zero
+    assert baseline["decisions"]["state"] == "short"
+    assert round(baseline["decisions"]["level"], 4) == 1.3511
     assert baseline["liquidity_floor_input_volume"] == zero["liquidity_floor_input_volume"]
     assert baseline["seed_db_bar_writes"] == zero["seed_db_bar_writes"] == 0
 
 
 @pytest.mark.asyncio
-async def test_isolation_verdict_does_not_mistake_decision_parity_for_no_leak():
-    result = await audit_module.audit(ROWS[0])
+@pytest.mark.parametrize("row", ROWS, ids=lambda row: f'{row["day"]}-{row["symbol"]}')
+async def test_recorded_seed_volumes_x0_x100_do_not_reach_any_general_reader(row):
+    result = await audit_module.audit(row)
     assert result["prefix_volume_decisions_identical"]
-    assert result["volume_isolation"] == "FAIL"
+    assert result["volume_reader_inputs_identical"]
+    assert result["volume_isolation"] in {"PASS", "NO_PREFIX_CONTROL"}
+    for sample in result["samples"].values():
+        assert sample["general_callback_prefix_bars"] == 0
+        assert sample["general_buffer_prefix_bars"] == 0
+        assert sample["relative_volume_window_prefix_bars"] == 0
+        assert sample["seed_db_bar_writes"] == 0
 
 
 @pytest.mark.asyncio

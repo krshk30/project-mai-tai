@@ -5427,6 +5427,10 @@ class SchwabV2BotService:
         state = self.strategy.watchlist_state(symbol)
         for bar in bars:
             ledger.observe(bar)
+            # Massive's pre-07:00 seed belongs only to the ATR math ledger.
+            if (getattr(proof, "source", None) == "massive_preopen_schwab_session"
+                    and bar.timestamp_ms < ledger.anchor_ms + 3 * 3_600_000):
+                continue
             if not state.bars or bar.timestamp_ms > state.bars[-1].timestamp_ms:
                 phase = "live" if was_warmed and bar.timestamp_ms == bars[-1].timestamp_ms else "replay"
                 # Repair responses advance mathematics, never the live fallback's
