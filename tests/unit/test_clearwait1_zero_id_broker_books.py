@@ -36,7 +36,8 @@ def fixture(db):
 
 
 @pytest.mark.parametrize("fault", ["none", "working_webull", "working_schwab", "broker_error",
-    "unknown_side", "stale", "pre_request", "wrong_account", "incomplete", "dispatch",
+    "unknown_side", "stale", "pre_request", "wrong_account", "incomplete",
+    "recent_schwab_window", "full_schwab_page", "dispatch",
     "pending_buy", "working_db", "open_owner", "cas", "late_cas", "different_token"])
 def test_zero_id_complete_books_clear_only_exact_no_dispatch_request(db, fault):
     req, _, expected, books = fixture(db)
@@ -55,6 +56,13 @@ def test_zero_id_complete_books_clear_only_exact_no_dispatch_request(db, fault):
         books[PRIMARY] = replace(books[PRIMARY], account_id="not-configured")
     elif fault == "incomplete":
         books[PRIMARY] = replace(books[PRIMARY], complete=False)
+    elif fault == "recent_schwab_window":
+        # Exhausting an entered-time window does not cover older working GTCs.
+        books[PRIMARY] = replace(books[PRIMARY], coverage="entered_time_window")
+    elif fault == "full_schwab_page":
+        books[PRIMARY] = replace(books[PRIMARY], orders=tuple(
+            BookOrder("", "OTHER", "filled", "sell", str(index))
+            for index in range(3000)))
     elif fault == "dispatch":
         db[0].record_dispatch({"schema_version": 1, "symbol": "JZ", "kind": "attempt"})
     with db[1]() as session:
