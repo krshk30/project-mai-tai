@@ -132,6 +132,21 @@ class OmsStore:
             )
         )
 
+    def get_virtual_position_quantity(
+        self, session: Session, *, strategy_id: UUID, broker_account_id: UUID,
+        symbol: str,
+    ) -> Decimal | None:
+        # Preserve dirty identity-map semantics for explicit no-autoflush callers.
+        if not session.autoflush:
+            position = self.get_virtual_position(session, strategy_id=strategy_id,
+                broker_account_id=broker_account_id, symbol=symbol)
+            return position.quantity if position is not None else None
+        return session.scalar(select(VirtualPosition.quantity).where(
+            VirtualPosition.strategy_id == strategy_id,
+            VirtualPosition.broker_account_id == broker_account_id,
+            VirtualPosition.symbol == symbol,
+        ))
+
     def get_open_exit_reserved_quantity(
         self,
         session: Session,
@@ -408,7 +423,9 @@ class OmsStore:
         payload = dict(metadata)
         if reject_reason:
             payload["reject_reason"] = reject_reason
-        order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == client_order_id))
+        # A new coid needs no ORM row processor; hydrate only an existing order.
+        order_id = session.scalar(select(BrokerOrder.id).where(BrokerOrder.client_order_id == client_order_id))
+        order = session.get(BrokerOrder, order_id) if order_id is not None else None
         if order is None:
             order = BrokerOrder(
                 intent_id=intent.id,
