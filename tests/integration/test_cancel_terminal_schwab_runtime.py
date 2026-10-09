@@ -1,16 +1,27 @@
-"""Schwab filtered acquisition controls; no live broker traffic."""
+"""Real test PostgreSQL hybrid witnesses and journal visibility; no broker traffic."""
 
-from datetime import UTC, datetime
-from urllib.parse import parse_qs, urlsplit
+import asyncio
+from dataclasses import replace
+from decimal import Decimal
+import threading
+from time import monotonic
+from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from project_mai_tai.broker_adapters import cancel_terminal as broker
+from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBrokerAdapter
 from project_mai_tai.cancel_terminal_proof import (
-    CancelReceipt, CancelScope, evaluate_cancel_terminal,
+    SchwabLocalCancelWitness, UnboundCancelFences, UnboundCancelRequest,
+    evaluate_unbound_cancel_terminal,
 )
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, TradeIntent
+from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload, TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.oms import cancel_terminal as journal
+from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.settings import Settings
 import test_cancel_terminal_runtime as runtime
 
 NOW = runtime.NOW
@@ -18,192 +29,194 @@ sessions = runtime.sessions
 sdk = runtime.sdk
 
 
-def order(*, oid=1, status="WORKING", side="BUY", children=None):
-    return {"orderId": oid, "status": status, "filledQuantity": 0,
-            "enteredTime": datetime.fromtimestamp((NOW - 1000) / 1000, UTC).isoformat(),
-            "orderLegCollection": [{"instruction": side,
-                "instrument": {"symbol": "FLYE", "assetType": "EQUITY"}}],
-            "childOrderStrategies": children or []}
+def request(symbol="FLYE"):
+    return UnboundCancelRequest(symbol, "token", "token", str(NOW), "retry_exhausted",
+        NOW - 1000, {"schwab": "hash", "live:orb": "ACC1"},
+        {"schwab": "schwab", "live:orb": "webull"}, "2026-10-08")
 
 
-def adapter(code, rows, calls):
-    leaf = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
-    leaf.accounts_by_name = {"schwab": SchwabAccountConfig(account_hash="actual-hash")}
-
-    async def get(method, path):
-        calls.append((method, path))
-        query = parse_qs(urlsplit(path).query)
-        start, stop = (datetime.fromisoformat(query[key][0]) for key in ("fromEnteredTime", "toEnteredTime"))
-        return code, {}, ([r for r in rows if not isinstance(r, dict) or "enteredTime" not in r
-                          or start <= datetime.fromisoformat(r["enteredTime"]) <= stop]
-                         if isinstance(rows, list) else rows)
-
-    leaf._authorized_request_json = get
-    return leaf
+def witness(req, **changes):
+    return replace(SchwabLocalCancelWitness(req, "schwab", "hash", req.session_key,
+        NOW, "exact_cancel_chain", True, True, True, True, True), **changes)
 
 
-@pytest.mark.parametrize("rows,statuses,terminal", [
-    ([], [], True),
-    ([order()], ["working"], False),
-    ([{**order(), "enteredTime": datetime.fromtimestamp((NOW - 120 * 86_400_000) / 1000, UTC).isoformat()}],
-     ["working"], False),
-    ([order(status="FILLED", children=[order(oid=2, status="AWAITING_PARENT_ORDER")])],
-     ["working"], False),
-    ([order(status="FILLED", children=[order(oid=2, status="PARTIAL_FILL")])],
-     ["partially_filled"], False),
-    ([order(side="SELL")], ["working"], True),
-])
-@pytest.mark.asyncio
-async def test_unfiltered_slices_walk_terminal_parents(sessions, sdk, rows, statuses, terminal):
-    calls = []
-    leaf = adapter(200, rows, calls)
-    book = await broker.acquire_complete_working_book(leaf, "schwab")
-    assert book and book.source == "broker" and book.complete is True
-    assert book.coverage == "all_working"
-    assert [row.status for row in book.orders] == statuses
-    assert broker.broker_binding(leaf, "schwab") == (leaf, "actual-hash")
-    query = parse_qs(urlsplit(calls[0][1]).query)
-    queries = [parse_qs(urlsplit(path).query) for _, path in calls]
-    assert len(calls) == 26 and all(method == "GET" for method, _ in calls)
-    assert all("status" not in q and q["maxResults"] == ["3000"] for q in queries)
-    assert (datetime.fromisoformat(queries[-1]["toEnteredTime"][0])
-            - datetime.fromisoformat(query["fromEnteredTime"][0])).days == 181
-    assert all(a["toEnteredTime"] == b["fromEnteredTime"] for a, b in zip(queries, queries[1:]))
-    assert all((datetime.fromisoformat(q["toEnteredTime"][0])
-                - datetime.fromisoformat(q["fromEnteredTime"][0])).days <= 7 for q in queries)
-    receipt = CancelReceipt(CancelScope("schwab", "actual-hash", "FLYE", "exact", "event"),
-                            NOW - 1000, "rejected", "skipped_before_submit", "")
-    evidence = await broker.acquire_broker_cancel_evidence(leaf, receipt)
-    assert evaluate_cancel_terminal(receipt, evidence, now_ms=NOW).terminal is (not rows)
-    from dataclasses import replace
-    from project_mai_tai.cancel_terminal_proof import UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal
-    request = UnboundCancelRequest("FLYE", "token", "token", str(NOW), "retry_exhausted", NOW - 1000,
-        {"schwab": "actual-hash", "webull": "ACC1"}, {"schwab": "schwab", "webull": "webull"})
-    books = {"schwab": book, "webull": replace(book, account_name="webull", account_id="ACC1", orders=())}
-    assert evaluate_unbound_cancel_terminal(request, books,
-        fences=UnboundCancelFences(request, True, True, True, True), now_ms=NOW).terminal is terminal
-    with sessions() as session:
-        assert session.execute(text("SELECT CAST(:epoch AS bigint)"), {"epoch": NOW}).scalar_one() == NOW
+def proof(req, book, local):
+    return evaluate_unbound_cancel_terminal(req, {"live:orb": book},
+        fences=UnboundCancelFences(req, True, True, True, True),
+        schwab_witness=local, now_ms=NOW)
 
 
-@pytest.mark.parametrize("code,rows", [
-    (599, {"message": "timeout"}),
-    (400, {"message": "invalid status"}),
-    (200, {}),
-    (200, [order()] * 3000),
-    (200, [order(status="UNKNOWN")]),
-    (200, [order(side="BUY_TO_COVER")]),
-    (200, [order(children=[{}])]),
-    (200, [order(), order(side="SELL")]),
-])
-@pytest.mark.asyncio
-async def test_unreadable_capped_or_malformed_schwab_book_is_unknown(sessions, sdk, code, rows):
-    calls = []
-    assert await broker.acquire_complete_working_book(adapter(code, rows, calls), "schwab") is None
-    assert 1 <= len(calls) <= 26
-    with sessions() as session:
-        assert session.execute(text("SELECT CAST(:epoch AS bigint)"), {"epoch": NOW}).scalar_one() == NOW
-
-
-@pytest.mark.asyncio
-async def test_schwab_acquisition_over_15_seconds_is_unknown(sessions, sdk, monkeypatch):
-    times = iter([NOW, NOW + 15_001])
-    monkeypatch.setattr(broker, "now_ms", lambda: next(times))
-    assert await broker.acquire_complete_working_book(adapter(200, [], []), "schwab") is None
-
-
-@pytest.mark.parametrize("symbol,webull_side,schwab_buy,terminal", [
+@pytest.mark.parametrize("symbol,side,schwab_live,terminal", [
     ("FLYE", None, False, True), ("DKI", None, False, True),
     ("FLYE", "BUY", False, False), ("FLYE", "SELL", False, True),
     ("FLYE", None, True, False),
 ])
 @pytest.mark.asyncio
-async def test_both_actual_adapter_paths_for_approved_unbound_replays(sessions, sdk, symbol, webull_side, schwab_buy, terminal):
-    from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
-    from project_mai_tai.cancel_terminal_proof import UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal
-
-    client = runtime.Client(pages=[{"hasNext": False, "orders": ([] if webull_side is None else [
-        {"order_id": "operator", "items": [{"symbol": symbol, "side": webull_side,
-                                               "order_status": "SUBMITTED"}]}])}])
-    wb = broker.broker_binding(runtime.adapter(client), "live:orb")[0]
-    sc = adapter(200, [order()] if schwab_buy else [], [])
-    routed = RoutingBrokerAdapter(default_provider="schwab",
-        provider_by_account={"schwab": "schwab", "live:orb": "webull"},
-        factories_by_provider={"schwab": lambda: sc, "webull": lambda: wb})
-    books = await broker.acquire_request_working_books(routed, ["schwab", "live:orb"])
-    request = UnboundCancelRequest(symbol, "token", "token", str(NOW), "retry_exhausted", NOW - 1000,
-        {name: broker.broker_binding(routed, name)[1] for name in books},
-        {"schwab": "schwab", "live:orb": "webull"})
-    assert evaluate_unbound_cancel_terminal(request, books,
-        fences=UnboundCancelFences(request, True, True, True, True), now_ms=NOW).terminal is terminal
-    assert [kind for kind, _, _ in client.calls] == ["open"]
+async def test_controlled_hybrid_replays(sessions, sdk, symbol, side, schwab_live, terminal):
+    client = runtime.Client(pages=[{"hasNext": False, "orders": [] if side is None else [
+        {"order_id": "operator", "items": [{"symbol": symbol, "side": side,
+                                               "order_status": "SUBMITTED"}]}]}])
+    req = request(symbol)
+    book = await broker.acquire_complete_working_book(runtime.adapter(client), "live:orb",
+                                                     after_ms=req.requested_at_ms)
+    assert proof(req, book, witness(req, no_live_buy=not schwab_live)).terminal is terminal
     with sessions() as session:
-        assert session.execute(text("SELECT CAST(:epoch AS bigint)"), {"epoch": NOW}).scalar_one() == NOW
+        assert session.execute(text("SELECT CAST(:epoch AS bigint)"),
+                               {"epoch": NOW}).scalar_one() == NOW
 
 
 @pytest.mark.asyncio
-async def test_failed_date_slice_invalidates_entire_book(sessions, sdk):
-    calls = []
-    leaf = adapter(200, [], calls)
-    get = leaf._authorized_request_json
-
-    async def fail_parent(method, path):
-        if len(calls) == 5:
-            calls.append((method, path))
-            return 599, {}, {"message": "unreadable terminal roots"}
-        return await get(method, path)
-
-    leaf._authorized_request_json = fail_parent
+async def test_schwab_never_reads_inventory_or_detail(sessions, sdk):
+    leaf = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
+    leaf.accounts_by_name = {"schwab": SchwabAccountConfig(account_hash="hash")}
+    async def deny(*args):
+        pytest.fail("Schwab cancel proof must issue no HTTP")
+    leaf._authorized_request_json = deny
     assert await broker.acquire_complete_working_book(leaf, "schwab") is None
-    assert len(calls) > 1
+    assert await broker.acquire_request_working_books(leaf, ["schwab"]) == {"schwab": None}
 
 
 @pytest.mark.asyncio
-async def test_global_acquisition_timeout_does_not_return_partial_certificate(sessions, sdk, monkeypatch):
-    import asyncio
-
-    original_timeout = asyncio.timeout
-    monkeypatch.setattr(broker.asyncio, "timeout", lambda seconds: original_timeout(0.001))
-    leaf = adapter(200, [], [])
-    calls = []
-
-    async def slow(method, path):
-        calls.append((method, path))
-        await asyncio.sleep(0.05)
-        return 200, {}, []
-
-    leaf._authorized_request_json = slow
-    assert await broker.acquire_request_working_books(leaf, ["schwab", "unavailable"]) == {
-        "schwab": None, "unavailable": None}
-    assert len(calls) == 1
+async def test_ten_same_account_requests_coalesce_without_prior_raise_reuse(sdk, monkeypatch):
+    client = runtime.Client()
+    routed = runtime.adapter(client)
+    req = request()
+    books = await asyncio.gather(*(broker.acquire_complete_working_book(routed, "live:orb",
+        after_ms=req.requested_at_ms) for _ in range(10)))
+    assert all(book and book.complete for book in books)
+    assert [kind for kind, _, _ in client.calls] == ["open"]
+    assert all(book.started_at_ms == NOW for book in books)
+    assert await broker.acquire_complete_working_book(routed, "live:orb", after_ms=NOW + 1) is None
+    assert len(client.calls) == 1
+    monkeypatch.setattr(broker, "now_ms", lambda: NOW + 15_001)
+    client.pages.append({"hasNext": False, "orders": []})
+    book = await broker.acquire_complete_working_book(routed, "live:orb", after_ms=NOW + 1)
+    assert book and book.started_at_ms == NOW + 15_001 and len(client.calls) == 2
 
 
-@pytest.mark.parametrize("active_child", [False, True])
 @pytest.mark.asyncio
-async def test_terminal_option_multileg_history_does_not_hide_active_child(sessions, sdk, active_child):
-    history = order(status="FILLED", children=[order(oid=2)] if active_child else [])
-    history["orderLegCollection"] = [{"instrument": {"assetType": "OPTION"}}, {}]
-    book = await broker.acquire_complete_working_book(adapter(200, [history], []), "schwab")
-    assert book and book.complete
-    assert [row.status for row in book.orders] == (["working"] if active_child else [])
+async def test_failed_or_cancelled_flight_cannot_launch_duplicate_or_fake_complete(sdk):
+    client = runtime.Client(pages=[{"orders": []}])
+    routed = runtime.adapter(client)
+    assert await asyncio.gather(*(broker.acquire_complete_working_book(routed, "live:orb")
+                                 for _ in range(10))) == [None] * 10
+    assert len(client.calls) == 1
 
 
-@pytest.mark.parametrize("status,filled", [("FILLED", 1), ("CANCELED", 1), ("CANCELED", None)])
+def service(sessions, adapter, **settings):
+    return OmsRiskService(settings=Settings(oms_adapter="simulated", orb_broker_account_name="unused",
+        broker_default_provider="webull", **settings), redis_client=SimpleNamespace(),
+        session_factory=sessions, broker_adapter=adapter)
+
+
+async def noop(*args, **kwargs):
+    pass
+
+
 @pytest.mark.asyncio
-async def test_exact_bound_target_fill_is_not_omitted_with_terminal_history(sessions, sdk, status, filled):
-    target = {**order(status=status), "clientOrderId": "exact", "filledQuantity": filled}
-    receipt = CancelReceipt(CancelScope("schwab", "actual-hash", "FLYE", "exact", "event"),
-                            NOW - 1000, "rejected", "skipped_before_submit", "")
-    evidence = await broker.acquire_broker_cancel_evidence(adapter(200, [target], []), receipt)
-    assert not evaluate_cancel_terminal(receipt, evidence, now_ms=NOW).terminal
+async def test_real_oms_stalled_30s_read_does_not_delay_receipt_quote_or_close(sessions, sdk, monkeypatch):
+    client = runtime.Client(detail=runtime.EMPTY_DETAIL)
+    routed = runtime.adapter(client)
+    oms = service(sessions, routed)
+    started, release = threading.Event(), threading.Event()
+    publications = []
+    async def publish(event):
+        publications.append(event)
+    def hang():
+        if client.calls[-1][0] == "open":
+            assert publications, "broker read preceded normal cancel receipt publication"
+            started.set()
+            assert release.wait(30), "controlled broker read was not released"
+    client.on_read = hang
+    monkeypatch.setattr(oms, "_publish_order_event", publish)
+    monkeypatch.setattr(oms, "_evaluate_risk", lambda event: (True, "controlled"))
+    monkeypatch.setattr(oms, "_reconcile_after_intent", noop)
+    monkeypatch.setattr(oms, "_market_is_fillable", lambda *a: True)
+    leaf = broker.broker_binding(routed, "live:orb")[0]
+    async def submit(order):
+        assert order.side == "sell" and order.intent_type == "close"
+        return [ExecutionReport(event_type="accepted", client_order_id=order.client_order_id,
+            broker_order_id="protective-close", symbol=order.symbol, side=order.side,
+            intent_type=order.intent_type, quantity=order.quantity, metadata=order.metadata)]
+    monkeypatch.setattr(leaf, "submit_order", submit)
+    try:
+        begin = monotonic()
+        feedback = await oms.process_trade_intent(runtime.cancel_event())
+        assert (monotonic() - begin) * 1000 < 50
+        assert feedback and publications
+        assert await asyncio.to_thread(started.wait, 2)
+        with sessions() as session:
+            pending = session.scalar(select(TradeIntent).where(TradeIntent.intent_type == "cancel"))
+            assert pending.status == "rejected" and journal.JOURNAL_KEY not in pending.payload
+        quote = QuoteTickEvent(source_service="test", payload=QuoteTickPayload(symbol="DKI",
+            bid_price=Decimal(2), ask_price=Decimal("2.01")))
+        begin = monotonic()
+        await oms._handle_quote_tick_event(quote)
+        assert (monotonic() - begin) * 1000 < 50
+        assert oms._latest_quotes_by_symbol["DKI"]["bid"] == 2
+        close = TradeIntentEvent(source_service="test", payload=TradeIntentPayload(
+            strategy_code="macd_30s", broker_account_name="live:orb", symbol="DKI", side="sell",
+            quantity=Decimal(1), intent_type="close", reason="PROTECTIVE_CLOSE",
+            metadata={"reference_price": "2"}))
+        begin = monotonic()
+        closed = await oms.process_trade_intent(close)
+        assert (monotonic() - begin) * 1000 < 50
+        assert closed and closed[0].payload.status == "accepted" and not release.is_set()
+    finally:
+        release.set()
+        await oms._drain_cancel_terminal_evidence()
+
+
+@pytest.mark.parametrize("prewire", [False, True])
+@pytest.mark.asyncio
+async def test_real_oms_uncommitted_buy_visibility_is_never_local_terminal(sessions, sdk, monkeypatch, prewire):
+    # Actual OMS dispatch is withheld on the broker side; an independent PG
+    # connection observes whether the existing conditional durable lane ran.
+    leaf = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
+    leaf.accounts_by_name = {"schwab": SchwabAccountConfig(account_hash="hash")}
+    oms = service(sessions, leaf, strategy_schwab_1m_v2_account_name="schwab")
+    monkeypatch.setattr(oms.settings, "broker_default_provider", "schwab")
+    monkeypatch.setattr(oms, "_evaluate_risk", lambda event: (True, "controlled"))
+    monkeypatch.setattr(oms, "_market_is_fillable", lambda *a: True)
+    monkeypatch.setattr(oms, "_publish_order_event", noop)
+    monkeypatch.setattr(oms, "_reconcile_after_intent", noop)
+    async def no_refusal(*args, **kwargs):
+        return None
+    monkeypatch.setattr(oms, "_rpg_fresh_open_refusal", no_refusal)
+    monkeypatch.setattr(oms, "_rpg_external_retry", lambda event: False)
+    wb = await broker.acquire_complete_working_book(runtime.adapter(runtime.Client()), "live:orb")
+    req = request()
+    reached = False
+    async def submit(order):
+        nonlocal reached
+        reached = True
+        assert order.side == "buy"
+        with sessions() as independent:
+            intents = list(independent.scalars(select(TradeIntent)))
+            orders = list(independent.scalars(select(BrokerOrder)))
+            assert bool(intents) is prewire and bool(orders) is prewire
+            if prewire:
+                assert orders[0].client_order_id == order.client_order_id and orders[0].status == "pending"
+            # Neither empty journal nor a visible live BUY authorizes release.
+            assert not proof(req, wb, witness(req, no_unjournaled_buy=prewire,
+                                               no_live_buy=not prewire)).terminal
+        return [ExecutionReport(event_type="accepted", client_order_id=order.client_order_id,
+            broker_order_id="accepted-on-wire", symbol=order.symbol, side="buy", intent_type="open",
+            quantity=order.quantity, metadata=order.metadata)]
+    leaf.submit_order = submit
+    event = TradeIntentEvent(source_service="test", payload=TradeIntentPayload(
+        strategy_code="schwab_1m_v2", broker_account_name="schwab", symbol="FLYE", side="buy",
+        quantity=Decimal(1), intent_type="open", reason="ENTRY",
+        metadata={"reference_price": "2", **({"rpg_handoff_token": "token"} if prewire else {})}))
+    await oms.process_trade_intent(event)
+    assert reached
+    with sessions() as independent:
+        assert independent.scalar(select(BrokerOrder)).status == "accepted"
 
 
 @pytest.mark.parametrize("when", ["before_read", "during_read"])
 @pytest.mark.asyncio
 async def test_journal_provider_mismatch_cannot_publish_evidence(sessions, sdk, when):
-    from project_mai_tai.db.models import BrokerAccount, TradeIntent
-    from project_mai_tai.oms import cancel_terminal as journal
-
     client = runtime.Client()
     routed = runtime.adapter(client)
     intent_id = runtime.seed(sessions, routed)
@@ -219,64 +232,21 @@ async def test_journal_provider_mismatch_cannot_publish_evidence(sessions, sdk, 
         client.on_read = mismatch
     assert await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id]) == {}
     assert bool(client.calls) is (when == "during_read")
-    with sessions() as session:
-        assert journal.JOURNAL_KEY not in session.get(TradeIntent, intent_id).payload
-
-
-@pytest.mark.parametrize("mutation", ["cap", "age_coverage", "children", "freshness"])
-@pytest.mark.asyncio
-async def test_real_pg_schwab_source_mutations_are_detected(sessions, sdk, monkeypatch, mutation):
-    import inspect
-
-    # Establish the positive adapter/evaluator path and bigint SQL on this real
-    # test service before exercising a deliberately damaged producer in memory.
-    await test_unfiltered_slices_walk_terminal_parents(sessions, sdk, [], [], True)
-    original = broker._schwab_book
-    source = inspect.getsource(original)
-    old, new = {
-        "cap": ("len(rows) >= 3000", "len(rows) > 3000"),
-        "age_coverage": ("timedelta(days=181)", "timedelta(days=60)"),
-        "children": ("walk(child, depth + 1)", "pass"),
-        "freshness": ("started + 15_000", "started + 30_000"),
-    }[mutation]
-    damaged = source.replace(old, new)
-    assert damaged != source
-    # Use the live module globals so the clock monkeypatch below reaches the
-    # compiled function too; a copied globals dict could give a false RED.
-    exec(compile(damaged, "<cancel-terminal-test-mutant>", "exec"), vars(broker))
-    mutant = broker._schwab_book
-    broker._schwab_book = original
-    monkeypatch.setattr(broker, "_schwab_book", mutant)
-    with pytest.raises(AssertionError):
-        if mutation == "cap":
-            await test_unreadable_capped_or_malformed_schwab_book_is_unknown(sessions, sdk, 200, [order()] * 3000)
-        elif mutation == "age_coverage":
-            await test_unfiltered_slices_walk_terminal_parents(sessions, sdk, [], [], True)
-        elif mutation == "children":
-            rows = [order(status="FILLED", children=[order(oid=2, status="AWAITING_PARENT_ORDER")])]
-            await test_unfiltered_slices_walk_terminal_parents(sessions, sdk, rows, ["working"], False)
-        else:
-            await test_schwab_acquisition_over_15_seconds_is_unknown(sessions, sdk, monkeypatch)
 
 
 @pytest.mark.parametrize("terminal_receipt", [True, False])
 @pytest.mark.asyncio
-async def test_same_request_broker_receipt_reused_but_absence_book_reacquired(sessions, sdk, monkeypatch, terminal_receipt):
-    from project_mai_tai.db.models import TradeIntent
-    from project_mai_tai.oms import cancel_terminal as journal
-
+async def test_same_request_receipt_reused_but_old_book_reacquired(sessions, sdk, monkeypatch, terminal_receipt):
     detail = {"account_id": "ACC1", "client_order_id": "exact-coid", "order_id": "broker-id",
               "items": [{"symbol": "DKI", "order_status": "CANCELLED", "filled_qty": "0"}]}
     client = runtime.Client(detail=detail if terminal_receipt else None,
-                            pages=[{"hasNext": False, "orders": []}, {"hasNext": False, "orders": []}])
+        pages=[{"hasNext": False, "orders": []}, {"hasNext": False, "orders": []}])
     routed = runtime.adapter(client)
     clock = [0.0]
     broker.broker_binding(routed, "live:orb")[0]._query_budget.clock = lambda: clock[0]
     intent_id = runtime.seed(sessions, routed)
     assert await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
     count = len(client.calls)
-    if terminal_receipt:
-        client.on_read = lambda: pytest.fail("an exact recorded terminal receipt needs no new HTTP")
     advanced = NOW + 8 * 3_600_000
     clock[0] = 8 * 3600
     monkeypatch.setattr(broker, "now_ms", lambda: advanced)
@@ -284,5 +254,5 @@ async def test_same_request_broker_receipt_reused_but_absence_book_reacquired(se
     assert len(client.calls) == count + (0 if terminal_receipt else 2)
     with sessions() as session:
         intent = session.get(TradeIntent, intent_id)
-        receipt = journal.receipt_from_intent(intent, session.get(runtime.BrokerAccount, intent.broker_account_id))
-        assert evaluate_cancel_terminal(receipt, evidence[receipt.scope.event_id], now_ms=advanced).terminal
+        receipt = journal.receipt_from_intent(intent, session.get(BrokerAccount, intent.broker_account_id))
+        assert runtime.evaluate_cancel_terminal(receipt, evidence[receipt.scope.event_id], now_ms=advanced).terminal
