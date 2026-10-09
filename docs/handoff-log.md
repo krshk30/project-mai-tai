@@ -8804,3 +8804,19 @@ Raw pair artifact under/tmp/paired-close-latency-37939533918. New I
 Validate pair37939533861/37939542015 and LINE12042520 pair37939419211/
 37939425388 still running. No source fix, READY, waiver or production
 action. F/I remains excluded from tonight absent actual green+pin.
+
+2026-10-09 10:21 ET codex-2 C13: approved L5 ledger-only cut delivered
+on draft1143 cba513786c84e1dcb58a334cfa7bb89fe4aed236. Four source lines
+observe Massive pre07 prefix only in ledger; general callback retains
+Schwab>=07 suffix. Volume audit rc0/25 decision and reader-input pairs
+identical under prefix x0/x100;23 seededPASS and NXTS/HKIT unseeded
+controls. Prefix callback/buffer/relative-window bars and seedDBwrites0.
+All25 state/level/age/read-time/flips and runtime decisions unchanged
+versus12042520 baselines. L4 source equality still diagnosticrc1:
+1373 paired/1361 OHLCexact/0 volumeexact,21 exact07:09OHLCimpactPASS
+and4 no-minuteUNMEASURED. Volume differences operator-judged irrelevant
+after cut, not declared vendor equality. 162focusedPASS, Ruff/diffclean;
+remove boundary24F/2no-prefixPASS, mutationrestored. NewValidate pair
+37943276082/37943285925 running; prior120x2green not inherited. AgentA
+separateORBFILL1 O5proof/build, SingerF/Iattribution, no latencywaiver.
+LINEOFF/draft, no merge/pin/install/productionwrite/service/flagaction.
