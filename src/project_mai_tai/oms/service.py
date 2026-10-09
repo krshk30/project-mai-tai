@@ -2560,7 +2560,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     )
                 )
 
-            session.commit()
+            if isinstance(self.broker_adapter, DurableBuyAdapter):
+                await self.broker_adapter.commit_order_reports(session)
+            else:
+                session.commit()
 
         for order_event in published_events:
             await self._publish_order_event(order_event)
