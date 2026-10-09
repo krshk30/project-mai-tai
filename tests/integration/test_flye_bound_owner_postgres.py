@@ -229,9 +229,9 @@ def controlled_unbound_db(pg):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("active", [False, True])
 @pytest.mark.parametrize("fault", ["none", "stale", "open", "unknown"])
-async def test_pg_actual_boot_restores_scoped_witness_before_owner_state(pg, active, fault):
+async def test_pg_legacy_books_do_not_create_boot_witness(pg, active, fault):
     from tests.unit.test_flye_unbound_owner_release import (
-        test_actual_service_boot_delivers_closed_owner_witness_before_watch as boot_control,
+        test_legacy_books_do_not_create_closed_owner_boot_witness as boot_control,
     )
 
     # Real PG store and service loader; the reused books/drain remain explicit controls.
@@ -241,9 +241,22 @@ async def test_pg_actual_boot_restores_scoped_witness_before_owner_state(pg, act
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("fault", ["none", "schwab_buy", "webull_buy", "open_owned", "unknown_book",
                                   "same_segment", "operator_sell", "missing_config", "retained_id", "provider"])
-def test_pg_controlled_unbound_flye_sell_rest_buy_chronology(pg, pm, fault):
+def test_pg_legacy_unbound_books_never_clear_wired_owner(pg, pm, fault):
     from tests.unit.test_flye_unbound_owner_release import (
-        test_controlled_unbound_store_flye_sell_rest_buy_chronology as chronology_control,
+        test_legacy_unbound_store_books_never_clear_wired_owner as chronology_control,
     )
 
     chronology_control(controlled_unbound_db(pg), pm, fault)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("case", ["filled_target", "filled_stop", "operator_sell", "working_schwab",
+                                  "working_webull", "open_owned", "unknown_rows", "same_real_segment", "legacy"])
+async def test_pg_actual_wired_owner_cannot_be_certified_never_sent(pg, monkeypatch, pm, account, case):
+    from tests.unit.test_flye_prewire_runtime_caller import (
+        test_actual_wired_owner_cannot_be_certified_never_sent as caller_control,
+    )
+
+    await caller_control(controlled_unbound_db(pg), monkeypatch, pm, account, case)
