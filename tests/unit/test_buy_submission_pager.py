@@ -1,6 +1,8 @@
 """Actual failed token -> independent fleet verdict -> controlled notification wrapper."""
 
+import contextlib
 import importlib.util
+import io
 import logging
 from pathlib import Path
 
@@ -48,6 +50,7 @@ async def test_real_failed_commit_blocks_wire_and_pages_runtime_with_delivery_re
     health = checker()
     monkeypatch.setattr(health, "_BUY_TOKEN_LOG_PATH", log)
     monkeypatch.setattr(health, "_BUY_TOKEN_STATE_PATH", tmp_path / "offsets.json")
+    monkeypatch.setenv("FLEET_HEALTH_OUT", str(tmp_path / "state"))
     registered = [s for s in health.RUNTIME_CHECKS if s.check is health.check_buy_submission_commit_failures]
     assert len(registered) == 1 and registered[0].alert_class == health.FLEET_RUNTIME
     monkeypatch.setattr(health, "RUNTIME_CHECKS", tuple(registered))
@@ -103,3 +106,30 @@ def test_log_rotation_cannot_erase_an_active_commit_failure(tmp_path):
     log.rename(tmp_path / "oms.old")
     log.write_text("healthy\n")
     assert health.check_buy_submission_commit_failures(state_path=state, oms_log=log)[0][0] == "RED"
+
+
+def test_recovery_before_first_page_retains_actual_wrapper_delivery_retry(tmp_path, monkeypatch):
+    health = checker()
+    log, state = tmp_path / "oms.log", tmp_path / "offsets.json"
+    monkeypatch.setenv("FLEET_HEALTH_OUT", str(tmp_path / "state"))
+    log.write_text("[OMS-SUBMIT-TOKEN] sym=DKI acct=schwab result=commit_failed buy_blocked=1\n"
+                   "[OMS-SUBMIT-TOKEN] sym=DKI acct=schwab result=committed buy_blocked=0\n")
+    monkeypatch.setattr(health, "_BUY_TOKEN_LOG_PATH", log)
+    monkeypatch.setattr(health, "_BUY_TOKEN_STATE_PATH", state)
+    spec = next(s for s in health.RUNTIME_CHECKS if s.check is health.check_buy_submission_commit_failures)
+    monkeypatch.setattr(health, "RUNTIME_CHECKS", (spec,))
+    def run():
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = health.main(runtime_only=True)
+        return code, output.getvalue()
+    code, output = run()
+    assert code == 2 and "buy_blocked_scopes=-" in output
+    assert _run_wrapper(tmp_path, output, mode="runtime", curl_exit=22).returncode == 0
+    code, retry = run()
+    assert code == 2 and "notification_pending=1" in retry
+    assert _run_wrapper(tmp_path, retry, mode="runtime").returncode == 0
+    assert _call_log(tmp_path).count("CALL") == 2
+    code, recovered = run()
+    assert code == 0 and "notification_pending=0" in recovered
+    assert _run_wrapper(tmp_path, recovered, mode="runtime", check_exit=code).returncode == 0
