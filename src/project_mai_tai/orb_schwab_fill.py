@@ -101,7 +101,9 @@ class OrbSchwabMacdFill:
                             or any(payload.get(k) for k in ("next", "nextToken", "truncated"))):
                         raise ValueError("unproven_schwab_fill")
                     # Validate before caching. Never adopt a malformed response.
-                    merge_macd_fill([], payload["candles"], start, cutoff)
+                    if not merge_macd_fill([], payload["candles"], start, cutoff):
+                        warn_refusal(symbol, "empty_scoped_schwab_fill")
+                        raise ValueError("empty_scoped_schwab_fill")
                     self._attempts[key] = (cutoff, payload["candles"])
                 except Exception as exc:
                     warn_refusal(symbol, "fetch_timeout" if isinstance(exc, TimeoutError)

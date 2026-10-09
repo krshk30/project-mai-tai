@@ -394,3 +394,22 @@ def test_completed_old_day_tasks_cleaned_but_physical_work_not_cancelled():
         release.set()
         await pending
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("foreign_time", [START - timedelta(days=1), CUTOFF + timedelta(minutes=1)])
+def test_raw_nonempty_foreign_window_cannot_fill_from_saved_anchor(foreign_time, caplog):
+    sf, _ = factory(0)
+    with sf.begin() as session:
+        session.add(StrategyBarHistory(strategy_code="schwab_1m_v2", symbol="TEST", interval_secs=60,
+            bar_time=START - timedelta(minutes=1), open_price=2, high_price=2, low_price=2,
+            close_price=2, volume=100))
+    calls = []
+    def foreign(*args):
+        calls.append(args)
+        return {"symbol": "TEST", "empty": False, "candles": [candle(foreign_time, 99)]}
+    f = filler(fetch=foreign)
+    for _ in range(2):
+        assert schwab_completed_bar_macd_gate(sf, "TEST", NOW, fill=f) == (
+            MacdVerdict.BAR_NOT_YET, "schwab_fill_unavailable", None)
+    assert len(calls) == 1
+    assert "symbol=TEST result=skipped reason=empty_scoped_schwab_fill" in caplog.text
