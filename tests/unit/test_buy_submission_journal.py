@@ -1,5 +1,6 @@
 """Local journal contract controls; hosted integration tests supply real PostgreSQL."""
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -44,6 +45,56 @@ def adapter(sessions):
     leaf = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
     leaf.accounts_by_name = {"schwab": SchwabAccountConfig(account_hash="actual-hash")}
     return leaf, journal.DurableBuyAdapter(leaf, sessions)
+
+
+@pytest.mark.parametrize("outcome", ["ok", "cancel_twice", "failed"])
+@pytest.mark.asyncio
+async def test_report_commit_is_offloop_and_fenced_before_session_close(sessions, outcome):
+    _leaf, guard = adapter(sessions)
+    started, finish = threading.Event(), threading.Event()
+    loop_thread = threading.get_ident()
+    states = []
+    class ReportSession:
+        def commit(self):
+            assert threading.get_ident() != loop_thread
+            started.set()
+            assert finish.wait(3)
+            states.append("commit_finished")
+            if outcome == "failed":
+                raise RuntimeError("controlled report commit failed")
+        def close(self):
+            assert states in (["commit_finished"], ["commit_finished", "published"])
+            states.append("closed")
+    async def intent():
+        session = ReportSession()
+        try:
+            await guard.commit_order_reports(session)
+            states.append("published")
+        finally:
+            session.close()
+    task = asyncio.create_task(intent())
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        if outcome == "cancel_twice":
+            task.cancel()
+            await asyncio.sleep(0.01)
+            task.cancel()
+        await asyncio.sleep(0.02)
+        assert states == [] and not task.done()
+    finally:
+        finish.set()
+    if outcome == "cancel_twice":
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    elif outcome == "failed":
+        with pytest.raises(RuntimeError, match="controlled report commit failed"):
+            await task
+    else:
+        await task
+    assert states == (["commit_finished", "published", "closed"] if outcome == "ok"
+                      else ["commit_finished", "closed"])
+
+
 
 
 @pytest.mark.asyncio

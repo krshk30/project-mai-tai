@@ -64,6 +64,77 @@ def buy(symbol="DKI", **md):
         "ENTRY", {"fanout_segment_id": GENERATION, **md})
 
 
+
+@pytest.mark.parametrize("side", ["buy", "sell"])
+@pytest.mark.asyncio
+async def test_actual_oms_report_commit_does_not_block_quote_loop(sessions, sdk, monkeypatch, side):
+    _clock, leaf, _wb, guard = await setup_protocol(sessions, monkeypatch)
+    async def wire(req):
+        return [ExecutionReport("accepted", req.client_order_id, broker_order_id="actual-answer",
+            symbol=req.symbol, side=req.side, intent_type=req.intent_type,
+            quantity=req.quantity, metadata=req.metadata)]
+    leaf.submit_order = wire
+    async def noop(*args, **kwargs):
+        pass
+    service = OmsRiskService(settings=Settings(oms_adapter="simulated", broker_default_provider="schwab",
+        orb_broker_account_name="unused", strategy_schwab_1m_v2_account_name="schwab"),
+        redis_client=SimpleNamespace(), session_factory=sessions, broker_adapter=leaf)
+    service.broker_adapter = guard
+    monkeypatch.setattr(service, "_evaluate_risk", lambda event: (True, "controlled"))
+    monkeypatch.setattr(service, "_market_is_fillable", lambda *a: True)
+    monkeypatch.setattr(service, "_reconcile_after_intent", noop)
+    if side == "sell":
+        with sessions() as session:
+            strategy = Strategy(code="macd_30s", name="controlled", execution_mode="live")
+            account = BrokerAccount(name="schwab", provider="schwab", environment="test")
+            session.add_all([strategy, account])
+            session.flush()
+            session.add_all([VirtualPosition(strategy_id=strategy.id, broker_account_id=account.id,
+                symbol="DKI", quantity=Decimal(1), average_price=Decimal(2)),
+                AccountPosition(broker_account_id=account.id, symbol="DKI", quantity=Decimal(1),
+                    average_price=Decimal(2))])
+            session.commit()
+    original = service._record_order_reports
+    started = threading.Event()
+    commit = sessions.class_.commit
+    committed = []
+    async def record(**kwargs):
+        result = await original(**kwargs)
+        kwargs["session"].info["slow_reports"] = True
+        return result
+    def slow_commit(session):
+        if session.info.pop("slow_reports", False):
+            assert threading.get_ident() != loop_thread
+            started.set()
+            sleep(0.15)
+            result = commit(session)
+            committed.append(True)
+            return result
+        return commit(session)
+    async def publish(event):
+        assert committed == [True]
+        with sessions() as independent:
+            assert independent.scalar(select(BrokerOrder).where(
+                BrokerOrder.client_order_id == event.payload.client_order_id)).status == "accepted"
+    monkeypatch.setattr(service, "_record_order_reports", record)
+    monkeypatch.setattr(sessions.class_, "commit", slow_commit)
+    monkeypatch.setattr(service, "_publish_order_event", publish)
+    loop_thread = threading.get_ident()
+    event = TradeIntentEvent(source_service="test", payload=TradeIntentPayload(strategy_code="macd_30s",
+        broker_account_name="schwab", symbol="DKI", side=side, quantity=Decimal(1),
+        intent_type="open" if side == "buy" else "close", reason="CONTROLLED",
+        metadata={"reference_price": "2"}))
+    task = asyncio.create_task(service.process_trade_intent(event))
+    try:
+        assert await asyncio.to_thread(started.wait, 3)
+        await service._handle_quote_tick_event(QuoteTickEvent(source_service="test",
+            payload=QuoteTickPayload(symbol="OTHER", bid_price=Decimal(2), ask_price=Decimal("2.01"))))
+        await asyncio.sleep(0.01)
+        assert not task.done() and committed == []
+    finally:
+        result = await task
+    assert result and result[0].payload.status == "accepted" and committed == [True]
+
 async def noop(*args, **kwargs):
     pass
 
