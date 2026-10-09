@@ -8790,3 +8790,17 @@ remain NOTREADY with strict50ms failures; Singer owns causal attribution,
 no threshold waiver or original139 proof. LINEOFF/draft, historical
 orderparity and RTH-recorded-restart parity remain UNMEASURED. No box
 read/write, source cut, merge, installer, service or flag action this task.
+
+2026-10-09 09:56 ET codex-2 C12: actual pairedPGdiagnostic37939533918
+on I0ff1ac1b9d292d3c54485044e908c0749dc54358 completed FAILURE.
+Source unchanged Ica9930d6/F44a20472/shared6849. Floop51.422ms and
+protectiveclose74.690ms; Iloop61.037ms/close28.266ms. Both fail unchanged
+50ms loop gate; continue-on-error capture-step success is NOT green.
+F EXIT11 record: worker generation2GC54.627ms/CPU53.899ms during
+service._collect_drift_cancel_candidates16262/_unit1007, overlapping
+intent74.626ms. Imax61.037ms remains unattributed (61 records dropped),
+not proved by the F witness; original75.954ms has no captured cause.
+Raw pair artifact under/tmp/paired-close-latency-37939533918. New I
+Validate pair37939533861/37939542015 and LINE12042520 pair37939419211/
+37939425388 still running. No source fix, READY, waiver or production
+action. F/I remains excluded from tonight absent actual green+pin.
