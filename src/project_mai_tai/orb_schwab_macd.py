@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import StrategyBarHistory
+from project_mai_tai.orb_schwab_fill import warn_refusal
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar, completed_bar_macd_gate
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,8 @@ def last_closed_bar_close(evaluated_at: datetime) -> datetime:
 
 
 def schwab_completed_bar_macd_gate(
-    session_factory: sessionmaker[Session], symbol: str, evaluated_at: datetime
+    session_factory: sessionmaker[Session], symbol: str, evaluated_at: datetime,
+    *, fill=None,
 ) -> tuple[MacdVerdict, str, float | None]:
     """Use only today's persisted Schwab bars through the prior closed minute.
 
@@ -75,7 +77,7 @@ def schwab_completed_bar_macd_gate(
         logger.exception("[ORB-SCHWAB-MACD] bar read unavailable symbol=%s", ticker)
         return MacdVerdict.BAR_NOT_YET, "schwab_bar_read_error", None
 
-    if len(rows) < _MACD_BARS:
+    if len(rows) < _MACD_BARS and fill is None:
         return MacdVerdict.BAR_NOT_YET, "insufficient_schwab_history", None
     bars: list[OrbBar] = []
     for row in rows:
@@ -97,6 +99,19 @@ def schwab_completed_bar_macd_gate(
                 volume=float(row.volume),
             )
         )
+
+    if len(rows) < _MACD_BARS:
+        try:
+            bars = fill.supplement(ticker, bars, evaluated_utc)
+        except Exception as exc:
+            reason = str(exc) if isinstance(exc, ValueError) and str(exc) in {
+                "fill_deadline", "cached_cutoff_unproven"
+            } else "schwab_fill_unavailable"
+            warn_refusal(ticker, reason)
+            return MacdVerdict.BAR_NOT_YET, reason, None
+        if len(bars) < _MACD_BARS:
+            warn_refusal(ticker, "insufficient_schwab_history")
+            return MacdVerdict.BAR_NOT_YET, "insufficient_schwab_history", None
 
     if bars[-1].timestamp != last_minute:
         return MacdVerdict.BAR_NOT_YET, "missing_last_closed_schwab_bar", None

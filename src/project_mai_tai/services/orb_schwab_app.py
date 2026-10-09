@@ -22,6 +22,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_outcome_consumer import session_anchor
 from project_mai_tai.log import configure_logging
 from project_mai_tai.orb_schwab_atr_entry import schwab_atr_entry_gate
+from project_mai_tai.orb_schwab_fill import OrbSchwabMacdFill, fill_window, warn_refusal
 from project_mai_tai.orb_schwab_macd import (
     BAR_WAIT, MacdVerdict, last_closed_bar_close, schwab_completed_bar_macd_gate,
 )
@@ -78,6 +79,49 @@ class OrbSchwabService(OrbService):
         self._live_last_bar_at: datetime | None = None
         self._live_last_decision_at: datetime | None = None
         self._live_healthy_since: datetime | None = None
+        self._macd_fill = (
+            OrbSchwabMacdFill(self.settings, clock=self._processing_time)
+            if self.settings.orb_schwab_macd_fill_enabled else None
+        )
+        self._macd_fill_tasks: dict[tuple[str, datetime, datetime], asyncio.Task] = {}
+
+    async def _completed_macd_gate(self, symbol, now):
+        original = await asyncio.to_thread(
+            schwab_completed_bar_macd_gate, self.session_factory, symbol, now
+        )
+        if self._macd_fill is None:
+            return original
+        start, cutoff, deadline = fill_window(now)
+        key = symbol, start, cutoff
+        for prior_key, prior_task in list(self._macd_fill_tasks.items()):
+            if prior_key != key and prior_task.done():
+                if not prior_task.cancelled():
+                    prior_task.exception()
+                self._macd_fill_tasks.pop(prior_key)
+        if original[1] != "insufficient_schwab_history":
+            return original
+        remaining = (deadline - self._processing_time()).total_seconds()
+        if remaining <= 0:
+            warn_refusal(symbol, "fill_deadline")
+            return MacdVerdict.BAR_NOT_YET, "fill_deadline", None
+        task = self._macd_fill_tasks.get(key)
+        if task is None:
+            if any(k[:2] == key[:2] and not t.done() for k, t in self._macd_fill_tasks.items()):
+                warn_refusal(symbol, "fill_worker_pending")
+                return MacdVerdict.BAR_NOT_YET, "fill_worker_pending", None
+            task = asyncio.create_task(asyncio.to_thread(
+                schwab_completed_bar_macd_gate, self.session_factory, symbol, now, fill=self._macd_fill
+            ))
+            self._macd_fill_tasks[key] = task
+        try:
+            # Keep physical work retained after timeout/cancellation; no duplicate retry.
+            result = await asyncio.wait_for(asyncio.shield(task), timeout=min(2.0, remaining))
+        except TimeoutError:
+            warn_refusal(symbol, "decision_worker_timeout")
+            return MacdVerdict.BAR_NOT_YET, "decision_worker_timeout", None
+        if task.done():
+            self._macd_fill_tasks.pop(key, None)
+        return result
 
     def _live_phase(self, now: datetime) -> str:
         opening = self._session_open_utc()
@@ -314,9 +358,7 @@ class OrbSchwabService(OrbService):
                 if now >= opening + timedelta(minutes=30):
                     verdict, reason, histogram = MacdVerdict.NEGATIVE, "entry_window_ended", None
                 else:
-                    verdict, reason, histogram = await asyncio.to_thread(
-                        schwab_completed_bar_macd_gate, self.session_factory, symbol, now
-                    )
+                    verdict, reason, histogram = await self._completed_macd_gate(symbol, now)
                 if verdict == MacdVerdict.BAR_NOT_YET:
                     deadline = self._observe_pending_close.setdefault(
                         symbol, last_closed_bar_close(now)
@@ -461,12 +503,10 @@ class OrbSchwabService(OrbService):
                 deferred_symbols.add(symbol)
                 continue
             self._pending_macd_checked_at[key] = now
-            verdict, reason, histogram = await asyncio.to_thread(
-                schwab_completed_bar_macd_gate,
-                self.session_factory,
-                symbol,
-                now,
-            )
+            verdict, reason, histogram = await self._completed_macd_gate(symbol, now)
+            if self._macd_fill is not None:
+                # Recheck after the worker: a successful response cannot buy late.
+                now = self._processing_time()
             deadline = bar.timestamp + timedelta(minutes=1) + BAR_WAIT
             if (not order.placed and not order.cancelled
                     and self.settings.orb_schwab_atr_entry_gate_enabled
@@ -524,7 +564,11 @@ class OrbSchwabService(OrbService):
                     event = build_orb_schwab_cancel_intent(self.settings, symbol)
                     await publish_orb_schwab_intent(self.redis, self.settings, event, now)
                 continue
+            if self._macd_fill is not None:
+                now = self._processing_time()
             if not order.placed and now >= opening - timedelta(seconds=30):
+                if self._macd_fill is not None:
+                    warn_refusal(symbol, "entry_deadline")
                 order.cancelled = True
                 decision_reason = (
                     "macd_negative_no_entry"

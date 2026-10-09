@@ -246,6 +246,13 @@
       "ruling": "2026-10-06 operator: lane B ships default-ON at reviewed deployment, with its own rollback switch; paper ORB is unchanged. This catalog update does not authorize deployment."
     },
     {
+      "name": "orb_schwab_macd_fill_enabled",
+      "expected": true,
+      "owning_service": "orb-schwab",
+      "reason": "ORBFILL1 supplements fewer than 35 saved bars for ORB MACD only from same-day Schwab history; no ATR/v2 bar writes.",
+      "ruling": "2026-10-09 operator: code default OFF, catalog true, ON at reviewed installation. No production installation is authorized by this change."
+    },
+    {
       "name": "orb_schwab_observe_enabled",
       "expected": false,
       "owning_service": "orb-schwab",
