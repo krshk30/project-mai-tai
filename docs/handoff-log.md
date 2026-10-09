@@ -8768,3 +8768,25 @@ and strictlatency. Original native139 not reproduced/causally certified.
 No READY/waiver/merge/install/productionwrite/service/flag change. Latest
 operator narrow set preserves LINEOFF/draft; control1141 tonight only,
 F/I only if newly READY/pinned; nothing half-ready installs.
+
+2026-10-09 09:51 ET codex-2 C11: L4/L5 parallel assessment published on
+draft1143 head120425200965e6c63944ed0e64be2b45e181020c, source unchanged
+fromfa1595ea. Recorded25 symbol-days07-07:59:1373 paired/time-matched,
+only-M0/only-S0,1361 OHLCexact,0 volumeexact; Massive greater1373/1373.
+Max OHLC0.463768%, max volume89.316239% LGHL; differences unjudged.
+Odd-lot/fractional sale-condition rules documented by Massive, but cause
+of Schwab differences unproven without matched trade-condition evidence.
+Fixed prefix/same timestamps07:09 OHLC substitution21 unchanged and4
+UNMEASURED absent exact minute. General callback leaks Massive prefix
+volume into state.bars/VWAP and relative-volume inputs in23 of25; NXTS
+andHKIT no-prefix controls. Actual x0/x100 parser/rebuild/runtime run25
+sampled line/flip/entry/intent decisions identical, not isolation proof.
+Both diagnostic scripts rc1 truthfully. Complete reader inventory and
+proposed ledger/math-only prefix cut in PR body; cut NOT built pending
+review.138 focusedPASS,21 new parity plus4 reachability controls;
+two audit mutantsRED1F/1F and restored,Ruff/diffclean. Priorfa hosted
+Validatex2GREEN; newhead37939419211/37939425388 inprogress. Shared/F/I
+remain NOTREADY with strict50ms failures; Singer owns causal attribution,
+no threshold waiver or original139 proof. LINEOFF/draft, historical
+orderparity and RTH-recorded-restart parity remain UNMEASURED. No box
+read/write, source cut, merge, installer, service or flag action this task.
