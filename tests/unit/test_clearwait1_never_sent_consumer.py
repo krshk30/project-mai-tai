@@ -6,17 +6,21 @@ from datetime import UTC, datetime
 from uuid import uuid4
 from decimal import Decimal
 import threading
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import event, select, update
+from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, OmsManagedPosition, TradeIntent
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.oms import buy_submission_journal as journal
+from project_mai_tai.oms.cancel_terminal import acquire_cancel_terminal_evidence
 from project_mai_tai.v2_removed_wait import RemovedWait
 from project_mai_tai.cancel_terminal_proof import CompleteWorkingBook
 from tests.unit.test_clearwait1_runtime_caller import poll, runtime
-from tests.unit.test_clearwait1_runtime_caller import emitters
+from tests.unit.test_clearwait1_runtime_caller import barriers, emitters
 from tests.unit.test_clearwait1_runtime_caller import sdk as controlled_sdk
 from tests.unit.test_clearwait1_session_rollover import ACCOUNTS, PRIMARY, WEBULL, ms, seed
 from tests.unit.test_clearwait1_session_rollover import db as rollover_db
@@ -42,11 +46,11 @@ async def test_concurrent_offloop_reads_have_independent_connections(db):
     assert first[0] != second[0] and first[1] == second[1] == 2
 
 
-async def covered_request(database, monkeypatch, *, purpose="scanner_removal"):
+async def covered_request(database, monkeypatch, *, purpose="scanner_removal", guard=None, receipts=True):
     """Actual startup epoch API, original durable bind, controlled terminal cancel receipt."""
     epoch = ms(NOW) - 3000
     monkeypatch.setattr(journal, "now_ms", lambda: epoch)
-    guard = journal.DurableBuyAdapter(controlled_routing(), database[1])
+    guard = guard or journal.DurableBuyAdapter(controlled_routing(), database[1])
     await guard.start()
     req = RemovedWait("DKI", ms(NOW) + 1000000, "postcoverage-exact-request",
                       ms(NOW) - 1000, (PRIMARY, WEBULL), purpose)
@@ -55,11 +59,13 @@ async def covered_request(database, monkeypatch, *, purpose="scanner_removal"):
     seed(database, req, receipts=False)
     with database[1]() as session:
         session.execute(update(BrokerAccount).values(external_account_id=None))
-        for name in req.account_names:
+        for name in req.account_names if receipts else ():
             session.add(TradeIntent(strategy_id=database[3], broker_account_id=database[2][name],
                 symbol=req.symbol, side="buy", intent_type="cancel", quantity=0,
-                reason="controlled cancel feedback", status="rejected", created_at=NOW, updated_at=NOW,
-                payload={"source_service": "schwab-1m-v2", "metadata": {
+                reason="scanner removal cancellation barrier", status="rejected", created_at=NOW, updated_at=NOW,
+                payload={"event_id": str(uuid4()), "reason": "scanner removal cancellation barrier",
+                    "source_service": "schwab-1m-v2", "metadata": {
+                    "clearwait_purpose": req.purpose,
                     "clearwait_removal_token": req.token,
                     "clearwait_opportunity_id": str(req.opportunity_id),
                     "clearwait_buy_only": "true", "fanout_segment_id": str(req.opportunity_id),
@@ -72,6 +78,15 @@ async def covered_request(database, monkeypatch, *, purpose="scanner_removal"):
 def closures(database):
     with database[1]() as session:
         return list(session.scalars(select(journal.BuyAdmissionClosure)))
+
+
+async def produce_book(bot, database, req):
+    """Actual post-feedback producer on controlled upstream receipts, not live/history evidence."""
+    with database[1]() as session:
+        intent_ids = list(session.scalars(select(TradeIntent.id).where(
+            TradeIntent.broker_account_id == database[2][WEBULL],
+            TradeIntent.payload["metadata"]["clearwait_removal_token"].as_string() == req.token)))
+    await acquire_cancel_terminal_evidence(database[1], bot._removed_wait_adapter, intent_ids)
 
 
 def assess_covered(database, req, **kwargs):
@@ -100,6 +115,7 @@ async def test_positive_coverage_operator_position_and_sell_do_not_block(db, mon
 async def test_actual_caller_postcoverage_dki_requires_fresh_webull_book(db, monkeypatch):
     req, _ = await covered_request(db, monkeypatch)
     bot, strat, _, calls = runtime(db, monkeypatch, req=req)
+    await produce_book(bot, db, req)
     await poll(bot)
     assert not strat._removed_wait_requests and not db[0].restore()
     assert len(calls) == 1 and calls[0][0] == WEBULL and len(closures(db)) == 2
@@ -111,6 +127,7 @@ async def test_actual_caller_postcoverage_dki_requires_fresh_webull_book(db, mon
 async def test_postcoverage_generic_cancel_publication_gap_then_exact_receipt_clear(db, monkeypatch):
     req, _ = await covered_request(db, monkeypatch)
     bot, strat, _, calls = runtime(db, monkeypatch, req=req)
+    await produce_book(bot, db, req)
     redis = emitters(bot, db)
     persist = redis.persist
     redis.persist = lambda _event: None
@@ -133,6 +150,7 @@ async def test_postcoverage_generic_cancel_publication_gap_then_exact_receipt_cl
 async def test_same_session_retry_exhausted_witness_keeps_owner_request(db, monkeypatch):
     req, _ = await covered_request(db, monkeypatch, purpose="retry_exhausted")
     bot, strat, _, calls = runtime(db, monkeypatch, req=req)
+    await produce_book(bot, db, req)
     await poll(bot)
     assert strat._removed_wait_requests == {"DKI": req} and db[0].restore() == {"DKI": req}
     assert len(closures(db)) == 2 and len(calls) == 1
@@ -179,11 +197,15 @@ async def test_real_journal_or_existing_db_unknown_rolls_back_all_closures(db, m
         else:
             row = session.scalar(select(TradeIntent).where(TradeIntent.broker_account_id == db[2][account]))
             row.payload = {**row.payload, "metadata": {**row.payload["metadata"], "buy_submission_process_id": str(uuid4())}}
+            row.updated_at = NOW
+            flag_modified(row, "updated_at")
         session.commit()
     bot, strat, _, calls = runtime(db, monkeypatch, req=req)
+    # Complete the independent book witness so a missing book cannot mask a DB guard regression.
+    await produce_book(bot, db, req)
     await poll(bot)
     assert strat._removed_wait_requests == {"DKI": req} and db[0].restore() == {"DKI": req}
-    assert closures(db) == [] and calls == []
+    assert closures(db) == [] and len(calls) == 1
 
 
 @pytest.mark.asyncio
@@ -214,6 +236,7 @@ async def test_legacy_zero_id_is_not_rejuvenated_by_new_coverage(db, monkeypatch
 async def test_actual_webull_foreign_order_checked_even_with_both_never_sent_witnesses(db, monkeypatch, side, held):
     req, _ = await covered_request(db, monkeypatch)
     bot, strat, _, calls = runtime(db, monkeypatch, req=req, side=side, venue=WEBULL)
+    await produce_book(bot, db, req)
     await poll(bot)
     assert bool(db[0].restore()) is held and bool(strat._removed_wait_requests) is held
     assert len(calls) == 1 and len(closures(db)) == (0 if held else 2)
@@ -238,3 +261,101 @@ async def test_durable_witness_does_not_replace_authoritative_fresh_book(db, mon
         book = replace(book, account_id="not-configured")
     assert not assess_covered(db, req, books={WEBULL: book}).clear
     assert closures(db) == [] and db[0].restore() == {"DKI": req}
+
+
+@pytest.mark.asyncio
+async def test_journal_arrival_wakes_pending_request_without_consumer_http(db, monkeypatch):
+    req, _ = await covered_request(db, monkeypatch)
+    bot, strat, _, calls = runtime(db, monkeypatch, req=req)
+    await poll(bot)
+    assert db[0].restore() == {"DKI": req} and calls == []
+    await poll(bot)
+    assert calls == [] and closures(db) == []
+    await produce_book(bot, db, req)
+    assert len(calls) == 1
+    await poll(bot)
+    assert not db[0].restore() and not strat._removed_wait_requests and len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_reassessment_cannot_freshen_original_book_timestamp(db, monkeypatch):
+    req, _ = await covered_request(db, monkeypatch, purpose="retry_exhausted")
+    bot, strat, _, calls = runtime(db, monkeypatch, req=req)
+    await produce_book(bot, db, req)
+    await poll(bot)
+    first = strat._removed_wait_terminal_proofs[0]
+    strat._now_ms = lambda: ms(NOW) + 10000
+    strat.__dict__.setdefault("_removed_wait_evidence_wakes", set()).add(req)
+    await poll(bot)
+    assert strat._removed_wait_terminal_proofs[0].observed_at_ms == first.observed_at_ms == ms(NOW)
+    strat._now_ms = lambda: ms(NOW) + 16000
+    strat.__dict__.setdefault("_removed_wait_evidence_wakes", set()).add(req)
+    await poll(bot)
+    assert strat._removed_wait_requests == {"DKI": req} and len(calls) == 1
+    assert strat._removed_wait_terminal_proofs[0].observed_at_ms == ms(NOW)
+
+
+@pytest.fixture
+def receipt_clock():
+    # Mapper hooks survive compiled-default caching after earlier test inserts.
+    def pin_receipt(_mapper, _connection, intent):
+        intent.created_at = intent.updated_at = NOW
+        flag_modified(intent, "updated_at")
+    for name in ("before_insert", "before_update"):
+        event.listen(TradeIntent, name, pin_receipt)
+    yield
+    for name in ("before_insert", "before_update"):
+        event.remove(TradeIntent, name, pin_receipt)
+
+
+@pytest.mark.asyncio
+async def test_real_emitter_oms_after_feedback_journal_and_consumer_clear(db, monkeypatch, receipt_clock):
+    from project_mai_tai.oms.service import OmsRiskService
+    from project_mai_tai import settings
+    import project_mai_tai.oms.service as oms_module
+    # Controlled fixed clock; no recorded row or production clock is changed.
+    monkeypatch.setattr(oms_module, "utcnow", lambda: NOW)
+    req = RemovedWait("DKI", ms(NOW) + 1000000, "postcoverage-exact-request", ms(NOW) - 1000, (PRIMARY, WEBULL))
+    bot, strat, _, calls = runtime(db, monkeypatch, req=req)
+    monkeypatch.setattr(journal, "now_ms", lambda: ms(NOW) - 3000)
+    oms = OmsRiskService(settings.Settings(_env_file=None, oms_adapter="simulated",
+        broker_default_provider="schwab", strategy_schwab_1m_v2_broker_provider="schwab",
+        strategy_schwab_1m_v2_account_name=PRIMARY, strategy_schwab_1m_v2_webull_account_name=WEBULL,
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True),
+        session_factory=db[1], redis_client=SimpleNamespace(), broker_adapter=bot._removed_wait_adapter)
+    await oms.broker_adapter.start()
+    await covered_request(db, monkeypatch, guard=oms.broker_adapter, receipts=False)
+    published = []
+    async def publish(envelope):
+        published.append(envelope)
+    monkeypatch.setattr(oms, "_publish_order_event", publish)
+    monkeypatch.setattr(oms, "_evaluate_risk", lambda _event: (True, "controlled cancellation only"))
+    monkeypatch.setattr(oms, "_reconcile_after_intent", AsyncMock())
+    leaf = bot._removed_wait_adapter._adapter_for_account(WEBULL)
+    client = leaf._get_client()
+    response = client.get_response
+    def after_feedback(request):
+        assert any(e.payload.broker_account_name == WEBULL for e in published)
+        return response(request)
+    client.get_response = after_feedback
+    leaf._get_client = lambda: client
+    redis = emitters(bot, db)
+    async def actual_xadd(_stream, fields, **_kwargs):
+        from project_mai_tai.events import TradeIntentEvent
+        envelope = TradeIntentEvent.model_validate_json(fields["data"])
+        redis.events.append(envelope)
+        assert envelope.payload.metadata["clearwait_purpose"] == req.purpose
+        assert await oms.process_trade_intent(envelope)
+        return "controlled-redis-id"
+    redis.xadd = actual_xadd
+    await barriers(bot, strat, req)
+    await oms._drain_cancel_terminal_evidence()
+    with db[1]() as session:
+        rows = list(session.scalars(select(TradeIntent)))
+        assert len(rows) == 2 and all(r.payload["metadata"]["buy_submission_process_id"] == str(oms.broker_adapter.process_id) for r in rows)
+        from project_mai_tai.oms.unbound_cancel_book import JOURNAL_KEY
+        actual_book = next(r for r in rows if r.broker_account_id == db[2][WEBULL])
+        assert JOURNAL_KEY in actual_book.payload, (calls, actual_book.payload)
+    await poll(bot)
+    assert not db[0].restore() and not strat._removed_wait_requests
+    assert len(calls) == 1 and len(closures(db)) == 2

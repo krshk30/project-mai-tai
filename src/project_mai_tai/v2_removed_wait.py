@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import monotonic
@@ -35,6 +37,7 @@ from project_mai_tai.oms.cancel_terminal import load_cancel_terminal_evidence, r
 from project_mai_tai.oms.buy_submission_journal import (
     close_never_sent_admission, lock_buy_scope, opportunity_start_ms,
 )
+from project_mai_tai.oms.unbound_cancel_book import load_unbound_request_working_books
 
 SNAPSHOT_TYPE = "v2_removed_wait"
 DISPATCH_SNAPSHOT_TYPE = "v2_wait_dispatch"
@@ -629,7 +632,7 @@ class RemovedWaitStore:
 
     def retire_unbound(
         self, requests: Sequence[RemovedWait], account_names: set[str], *,
-        books: Mapping[str, CompleteWorkingBook | None],
+        books: Mapping[str, CompleteWorkingBook | None] | None = None,
         publication_closed: Mapping[RemovedWait, bool], now: datetime | None = None,
         expected_bindings: Mapping[str, tuple[str, str]] | None = None,
         publication_current: Callable[[RemovedWait], bool] | None = None,
@@ -737,6 +740,8 @@ class RemovedWaitStore:
                     account_providers={a.name: a.provider for a in accounts},
                     session_key=current_session_anchor(observed).isoformat(),
                     opportunity_started_at_ms=start_ms, coverage_process_ids=process_ids)
+                request_books = (books if books is not None else
+                    load_unbound_request_working_books(session, intents, scope, now_ms=observed_ms))
                 current = (latest is not None and active_request_matches(latest.payload, request)
                            and (publication_current is None or publication_current(request)))
                 safe = (exact_accounts and bounded and not pending and not orders
@@ -751,7 +756,7 @@ class RemovedWaitStore:
                             name, binding[name], request.symbol, str(request.opportunity_id), start_ms,
                             request.token, request.token, request.requested_at_ms,
                             UUID(process_ids[name]), scope.session_key), observed_at_ms=observed_ms)
-                proof = evaluate_unbound_cancel_terminal(scope, books,
+                proof = evaluate_unbound_cancel_terminal(scope, request_books,
                     fences=UnboundCancelFences(scope,
                         exact_accounts and bounded and not pending and not orders
                         and publication_closed.get(request) is True
@@ -779,25 +784,28 @@ class RemovedWaitStore:
                     ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc()).limit(1))
                     if (final is None or not active_request_matches(final.payload, request)
                             or (publication_current is not None and not publication_current(request))):
-                        proof = evaluate_unbound_cancel_terminal(scope, books,
+                        proof = evaluate_unbound_cancel_terminal(scope, request_books,
                             fences=UnboundCancelFences(scope, False, False, False, False), now_ms=observed_ms)
                 if proof.terminal:
+                    book_observed_ms = min(book.started_at_ms for name, book in request_books.items()
+                        if scope.account_providers.get(name) == "webull" and book is not None)
                     session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE,
                         payload={**request.payload(active=request.purpose in {"retry_exhausted", "false_flip_restore"}), "verdict": "TERMINAL",
                             "reason": proof.reason, "closed_owned_rows": [list(w) for w in witnesses],
-                            "terminal_observed_at_ms": proof.observed_at_ms},
+                            "terminal_observed_at_ms": book_observed_ms},
                         created_at=max(observed, _utc(latest.created_at) + timedelta(microseconds=1))))
                     session.commit()
                 else:
                     session.rollback()
-                results.append(RemovedWaitProof(request, proof.observed_at_ms, proof.terminal,
+                results.append(RemovedWaitProof(request, book_observed_ms if proof.terminal else proof.observed_at_ms, proof.terminal,
                                                 proof.reason, witnesses if proof.terminal else ()))
         return tuple(results)
 
     def request_publication_closed(
         self, request: RemovedWait, *, last_publications: Mapping[str, Sequence[str]],
         no_dispatch: bool = False, now: datetime | None = None,
-    ) -> bool:
+        include_revision: bool = False,
+    ) -> bool | tuple[bool, str]:
         """Existing serial request barriers, not the OMS cursor or an empty intent table."""
         observed = now or datetime.now(UTC)
         publications = {event: account for account, events in last_publications.items() for event in events}
@@ -847,6 +855,14 @@ class RemovedWaitStore:
             if seen != set(publications):
                 return False
             if receipts == set(request.account_names):
+                if include_revision:
+                    # Journal writes preserve receipt time, so observe the actual payload revision.
+                    exact = sorted((str(i.id), i.status, _utc(i.updated_at).isoformat(), i.payload)
+                        for i in rows if (i.payload or {}).get("metadata", {}).get(
+                            "clearwait_removal_token") == request.token)
+                    revision = hashlib.sha256(json.dumps(exact, sort_keys=True,
+                        separators=(",", ":")).encode("utf-8")).hexdigest()
+                    return True, revision
                 return True
             if not no_dispatch or publications or receipts or request.opportunity_id != 0:
                 return False

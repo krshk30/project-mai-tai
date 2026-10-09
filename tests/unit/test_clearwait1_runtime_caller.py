@@ -188,8 +188,10 @@ async def test_stalled_offloop_proof_quote_memory_only_unrelated_cancel_immediat
     task = asyncio.create_task(poll(bot))
     try:
         assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), 2.5)
+        quote_thread = threading.get_ident()
         def no_quote_sql(*_args):
-            pytest.fail("quote performed proof SQL")
+            if threading.get_ident() == quote_thread:
+                pytest.fail("quote performed proof SQL")
         engine = db[1].kw["bind"]
         event.listen(engine, "before_cursor_execute", no_quote_sql)
         try:
