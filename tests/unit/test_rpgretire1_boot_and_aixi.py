@@ -21,6 +21,15 @@ RECORDED = json.loads((Path(__file__).parents[1] / 'fixtures/rpgretire1_aixi_202
 
 
 @pytest.mark.asyncio
+async def test_off_boot_missing_factory_cannot_silently_skip_retirement(monkeypatch):
+    h = await startup_harness(monkeypatch, handoff_enabled=False)
+    h.bot.session_factory = None
+    with pytest.raises(RuntimeError, match='requires a readable session factory'):
+        h.bot._rpg_retire_disabled_at_boot()
+    assert not h.adapter.opens and not h.adapter.cancels and not h.adapter.reads
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('enabled', [False, True])
 @pytest.mark.parametrize('service', ['oms', 'v2'])
 async def test_boot_retirement_is_offloop_off_only_and_preserves_every_payload(monkeypatch, enabled, service):

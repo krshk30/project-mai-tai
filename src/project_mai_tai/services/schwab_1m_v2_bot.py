@@ -1507,7 +1507,7 @@ class SchwabV2BotService:
             return 0
         factory = getattr(self, "session_factory", None)
         if factory is None:
-            return 0
+            raise RuntimeError("RPGRETIRE1 boot retirement requires a readable session factory")
         count = HandoffJournal(factory).retire_disabled()
         self._rpg_known_jobs = {}
         self.strategy._rpg_handoffs = {}
