@@ -373,19 +373,23 @@ class DurableBuyAdapter:
         with self.session_factory() as session:
             lock_buy_scope(session, account_id, request.symbol)
             opportunity = opportunity_start_ms(session, request.symbol, generation, now_ms()) if generation else 0
-            closures = list(session.scalars(select(BuyAdmissionClosure).where(
+            closure = session.scalar(select(BuyAdmissionClosure.generation).where(
                 BuyAdmissionClosure.account_id == account_id,
-                BuyAdmissionClosure.symbol == request.symbol)))
-            if any(c.generation == generation or opportunity <= c.opportunity_started_at_ms for c in closures):
+                BuyAdmissionClosure.symbol == request.symbol,
+                or_(BuyAdmissionClosure.generation == generation,
+                    BuyAdmissionClosure.opportunity_started_at_ms >= opportunity),
+            ).limit(1))
+            if closure is not None:
                 raise BuyAdmissionClosed("BUY generation closed or unidentifiable after closure")
-            token = BuySubmissionToken(process_id=self.process_id, account_id=account_id,
+            token_id = uuid4()
+            token = BuySubmissionToken(id=token_id, process_id=self.process_id, account_id=account_id,
                 account_name=request.broker_account_name, symbol=request.symbol,
                 client_order_id=request.client_order_id, generation=generation,
                 opportunity_started_at_ms=opportunity, created_at_ms=now_ms(), state="submitting",
                 wire_kind=wire_kind, answers=[])
             session.add(token)
             session.commit()
-            return token.id
+            return token_id
 
     def _reported(self, token_id, reports):
         with self.session_factory() as session:
