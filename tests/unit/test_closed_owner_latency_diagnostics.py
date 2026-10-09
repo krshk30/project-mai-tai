@@ -2,6 +2,7 @@ import asyncio
 import gc
 from types import SimpleNamespace
 from time import sleep
+from time import monotonic
 
 import pytest
 
@@ -186,3 +187,52 @@ async def test_timer_lateness_is_separate_from_callback_execution_time(monkeypat
                and row["callback"] == "Event.set" for row in observer.records)
     assert any(row["kind"] == "loop_callback" and row["callback"] == "sleep"
                and row["wall_ms"] >= 60 for row in observer.records)
+
+
+def test_overflow_preserves_first_and_worst_gc_and_pump_records_with_fixed_total_capacity():
+    observer = Observer()
+    for kind, thread in (("gc", "worker"), ("pump_deadline", None)):
+        for score in (54, 80, 10):
+            observer.record(kind, score, thread=thread, wall_ms=score)
+    for index in range(3000):
+        observer.record("intent", index, wall_ms=20)
+    observer.start()
+    observer.stop()
+    receipt = observer.receipt()
+    assert len(receipt["records"]) == 512 and receipt["dropped"] == 2494
+    for kind in ("gc", "pump_deadline"):
+        assert sorted(row["wall_ms"] for row in receipt["records"] if row["kind"] == kind) == [54, 80]
+    assert receipt["protected"] <= 64
+
+
+@pytest.mark.asyncio
+async def test_quote_observer_copies_actual_deadline_without_changing_result_or_clock():
+    observer = Observer()
+    result = object()
+
+    async def original(_self, event):
+        assert event is result
+        return event
+
+    wrapped = observer.quote(original)
+    observer.start()
+
+    async def quote_pump():
+        due = monotonic() + 0.001
+        asyncio.get_running_loop().call_soon(sleep, 0.060)
+        await asyncio.sleep(max(0, due - monotonic()))
+        begin = monotonic()
+        assert await wrapped(None, result) is result
+        return due, begin
+
+    try:
+        due, begin = await quote_pump()
+    finally:
+        observer.stop()
+    receipt = observer.receipt()
+    assert receipt["pump_wakes"] == 1
+    assert receipt["pump_max_late_ms"] == (begin - due) * 1000 >= 50
+    row = next(row for row in receipt["records"] if row["kind"] == "pump_deadline")
+    assert row["due"] == due and row["actual"] == begin
+    assert row["frames"][0][1] == "quote_pump"
+    assert any(row["kind"] == "first_late_pump" for row in receipt["records"])
