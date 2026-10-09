@@ -18,6 +18,7 @@ from project_mai_tai.cancel_terminal_proof import (
     evaluate_cancel_terminal,
 )
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, TradeIntent
+from project_mai_tai.oms.unbound_cancel_book import acquire_unbound_request_working_book
 
 JOURNAL_KEY = "cancel_terminal_evidence"
 BINDING_KEY = "cancel_target_binding"
@@ -194,6 +195,7 @@ async def acquire_cancel_terminal_evidence(
     for intent_id in intent_ids:
         request = await asyncio.to_thread(_read_request, session_factory, intent_id, adapter)
         if request is None:
+            await acquire_unbound_request_working_book(session_factory, adapter, intent_id)
             continue
         try:
             prior = evidence_from_payload(request.payload)
