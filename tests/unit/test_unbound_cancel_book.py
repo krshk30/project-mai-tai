@@ -94,6 +94,25 @@ async def test_actual_unbound_cancel_source_publishes_before_book_and_preserves_
             assert not journal.load_unbound_request_working_books(session, [intent], request)
 
 
+@pytest.mark.asyncio
+async def test_fresh_sell_assessment_fetches_a_new_book_without_rewriting_cancel_receipt(sessions, sdk, monkeypatch):
+    client = runtime.Client(pages=[{"hasNext": False, "orders": []}] * 2)
+    service = await produce(sessions, monkeypatch, client)
+    with sessions() as session:
+        intent = session.scalar(select(TradeIntent))
+        id_, revision = intent.id, intent.updated_at
+        old = intent.payload[journal.JOURNAL_KEY]["book"]["started_at_ms"]
+    after = old + 1
+    monkeypatch.setattr(broker, "now_ms", lambda: after)
+    assert await journal.acquire_unbound_request_working_book(
+        sessions, service.broker_adapter, id_, minimum_started_at_ms=after)
+    assert [kind for kind, _, _ in client.calls] == ["open", "open"]
+    with sessions() as session:
+        intent = session.get(TradeIntent, id_)
+        assert intent.updated_at == revision
+        assert intent.payload[journal.JOURNAL_KEY]["book"]["started_at_ms"] >= after
+
+
 @pytest.mark.parametrize("change", ["token", "provider", "source", "pending", "newer_unanswered", "stale", "malformed"])
 @pytest.mark.asyncio
 async def test_changed_or_newer_receipt_cannot_reuse_unbound_journal(sessions, sdk, monkeypatch, change):
