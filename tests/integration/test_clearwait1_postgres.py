@@ -210,9 +210,9 @@ def caller_clock(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pg_actual_postcoverage_caller_nullable_ids(pg_db, caller_clock, monkeypatch):
-    from tests.unit.test_clearwait1_never_sent_consumer import test_actual_caller_postcoverage_dki_closes_both_admissions_without_http
-    await test_actual_caller_postcoverage_dki_closes_both_admissions_without_http(pg_db, monkeypatch)
+async def test_pg_actual_postcoverage_caller_nullable_ids(pg_db, sdk, caller_clock, monkeypatch):
+    from tests.unit.test_clearwait1_never_sent_consumer import test_actual_caller_postcoverage_dki_requires_fresh_webull_book
+    await test_actual_caller_postcoverage_dki_requires_fresh_webull_book(pg_db, monkeypatch)
 
 
 @pytest.mark.asyncio
