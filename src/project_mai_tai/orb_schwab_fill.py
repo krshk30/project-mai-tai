@@ -35,22 +35,29 @@ def merge_macd_fill(saved: list[OrbBar], candles: list[dict], start: datetime,
                     cutoff: datetime) -> list[OrbBar]:
     """Saved closes win; quiet minutes carry forward, never backward-fill a seed."""
     prices = {}
+    anchor_start = start - timedelta(minutes=90)
+    anchors = {}
     for candle in candles:
         stamp = candle["datetime"]
         close = float(candle["close"])
         if isinstance(stamp, bool) or not isinstance(stamp, int) or stamp % 60_000:
             raise ValueError("invalid Schwab minute")
         time = datetime.fromtimestamp(stamp / 1000, UTC)
-        if not start <= time <= cutoff:
+        if not anchor_start <= time <= cutoff:
             continue
-        if not isfinite(close) or close <= 0 or time in prices:
+        if not isfinite(close) or close <= 0 or time in prices or time in anchors:
             raise ValueError("invalid or duplicate Schwab close")
-        prices[time] = close
+        if time < start:
+            anchors[time] = close
+        else:
+            prices[time] = close
     for bar in saved:
         if start <= bar.timestamp <= cutoff:
             prices[bar.timestamp] = bar.close
+        elif anchor_start <= bar.timestamp < start:
+            anchors[bar.timestamp] = bar.close
     result = [bar for bar in saved if bar.timestamp < start]
-    last = result[-1].close if result else None
+    last = anchors[max(anchors)] if anchors else None
     time = start
     while time <= cutoff:
         if time in prices:
@@ -101,7 +108,10 @@ class OrbSchwabMacdFill:
                             or any(payload.get(k) for k in ("next", "nextToken", "truncated"))):
                         raise ValueError("unproven_schwab_fill")
                     # Validate before caching. Never adopt a malformed response.
-                    if not merge_macd_fill([], payload["candles"], start, cutoff):
+                    scoped = [c for c in payload["candles"]
+                              if int(start.timestamp() * 1000) <= c["datetime"]
+                              <= int(cutoff.timestamp() * 1000)]
+                    if not scoped or not merge_macd_fill([], payload["candles"], start, cutoff):
                         warn_refusal(symbol, "empty_scoped_schwab_fill")
                         raise ValueError("empty_scoped_schwab_fill")
                     self._attempts[key] = (cutoff, payload["candles"])
@@ -133,7 +143,8 @@ class OrbSchwabMacdFill:
         if not isinstance(token, str) or not token.strip():
             raise ValueError("missing_access_token")
         params = urlencode({"symbol": symbol, "periodType": "day", "frequencyType": "minute",
-                            "frequency": 1, "startDate": int(start.timestamp() * 1000),
+                            "frequency": 1,
+                            "startDate": int((start - timedelta(minutes=90)).timestamp() * 1000),
                             "endDate": int((cutoff + MINUTE).timestamp() * 1000) - 1,
                             "needExtendedHoursData": "true"})
         request = Request(self.settings.schwab_base_url.rstrip("/") +

@@ -188,7 +188,7 @@ def test_http_exact_bound_timeout_read_token_only(tmp_path, monkeypatch):
     from urllib.parse import parse_qs, urlparse
     url, method, timeout = calls[0]
     params = parse_qs(urlparse(url).query)
-    assert params["startDate"] == [str(int(START.timestamp() * 1000))]
+    assert params["startDate"] == [str(int((START - timedelta(minutes=90)).timestamp() * 1000))]
     assert params["endDate"] == [str(int((CUTOFF + timedelta(minutes=1)).timestamp() * 1000) - 1)]
     assert params["needExtendedHoursData"] == ["true"] and method == "GET" and timeout == 1.25
     assert token.read_bytes() == before
@@ -389,7 +389,7 @@ def test_completed_old_day_tasks_cleaned_but_physical_work_not_cancelled():
         service._macd_fill_tasks[("DONE", old_start, CUTOFF)] = completed
         service._macd_fill_tasks[("PENDING", old_start, CUTOFF)] = pending
         result = await service._completed_macd_gate("TEST", NOW)
-        assert result == schwab_completed_bar_macd_gate(sf, "TEST", NOW)
+        assert result == (MacdVerdict.ALLOWED, "nonnegative", 0.0)
         assert list(service._macd_fill_tasks.values()) == [pending] and not pending.cancelled()
         release.set()
         await pending
