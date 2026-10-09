@@ -291,7 +291,7 @@ def test_oms_service_builds_webull_provider_inside_mixed_router() -> None:
         session_factory=build_test_session_factory(),
     )
 
-    assert isinstance(service.broker_adapter, RoutingBrokerAdapter)
+    assert isinstance(service.broker_adapter.cancel_terminal_delegate, RoutingBrokerAdapter)
     assert isinstance(service._build_provider_adapter("webull"), WebullBrokerAdapter)
 
 
