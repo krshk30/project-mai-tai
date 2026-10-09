@@ -1,9 +1,0 @@
-{
-  "pr_number": 1128,
-  "range_base": "67131907e5a599439de8272963dfc497f194c62e",
-  "range_head": "d5a81bfec2e8e21c55b5eae9aa9ce46038a392fb",
-  "reviewed_at": "2026-10-09T21:01:06Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "RPGRETIRE1 (row 6). Read full src diff (5 files +68/-6): every hand-off create/obey path guarded by the in-memory RPG flag read (no tick-path SQL/HTTP); boot-only retirement = one UPDATE renaming atr_reprice_handoff -> atr_reprice_handoff__retired_flag_off via asyncio.to_thread in OMS and v2 (idempotent; same as my 10-08 hand archive); unreadable session factory fails startup closed. Done-check: original AIXI 10-08 07:50:22 Schwab open (270 @2.22, historically aborted rpg_old_buy_still_owned) reaches a durable BrokerOrder with the flag OFF, with and without boot retirement; ON reproduces the old refusal. 355 affected tests, 23/23 mutants RED, validate x2 green. RPG flag stays false."
-}
