@@ -8748,3 +8748,23 @@ headCIpending, no inheritedgreen claim. Shared6849 report-worker mutants
 3Fsync/1Foldcancelfence, restoredgitclean154PASS/7.49s. F44a20472/Ica9930d6
 consumeunchanged; strictnewPG/latencyCIpending, original139causalityowed.
 No READY/waiver/merge/install/boxwrite/order/flag/serviceaction.
+
+2026-10-09 09:24 ET codex-2 C10: LINE1143 fa1595ea remains draft and OFF.
+Missing readable unused retry identity is journaled from historical SELL
+off-loop, then fenced before publication. Consumed/unknown/bound owners
+not reset.191focusedPASS/62newcontrols;3newmutantsRED1F/2F/1F, restored.
+25 line/flip diagnostics now match (24seeded, NXTS measured-unseeded),
+0 historical buys. MI control arms before07:17; real-close budget retained.
+LGHL has0 missing-relative/extra/commonOHLC provider differences07-08;
+runner lacked real gap hold events; corrected existing hold/resume yields
+07:01SELL/07:31BUY/07:53SELL. Late IPDN/NXTS/FLYE/HKIT measured at first
+watched bar. Watchlist ledger refines25conservative to22actuallywatched,
+3pre07-only diagnostics. Four retained first-arm receipts captured; full
+historical rest/order parity remains UNMEASURED, not certified by flat
+controls. Prior e94 hostedValidatex2GREEN; currenthead pending. Shared6849
+push fails strictclose99.890ms while parallelPRpasses; slow spans worker
+commit86.961/51.327ms. F44a20472 bothred; Ica9930d6 bothred, unit timing
+and strictlatency. Original native139 not reproduced/causally certified.
+No READY/waiver/merge/install/productionwrite/service/flag change. Latest
+operator narrow set preserves LINEOFF/draft; control1141 tonight only,
+F/I only if newly READY/pinned; nothing half-ready installs.
