@@ -9031,3 +9031,22 @@ complete Schwab inventory producer is still absent and source stays UNKNOWN.
 Frozen raw F7b/I9901 CI37996371611 pending; first dispatch shortSHA cancelled
 before timing. ALERTS standalone/combined latency pending, R updated CI pending.
 No Wave2 deployment or F/I pin request. All unfinished asks retained in queue.
+
+### 2026-10-09 18:36 ET - Codex-2 RPGRETIRE1 deployed independently, FI acceptance remains incomplete
+
+#1128 exact2f9b8c12 validated and independently pinned, merged7807cbed22:18:10Z.
+Native OMS deploy restarted OMS2373370 at22:19:06Z and strategy2373380 at22:19:07Z;
+v22374172 started22:21:21Z. RPG false and env unchanged. Fresh direct gates before
+each step and after services/closeout rc0, flat/working0/managedvirtual0/inflight0.
+Both RPGRETIRE1 bootlines retired0; v2 restoration_complete1 with5/5warmed.
+Actualcloseout22:35:59Z rawTraceback0/ERROR0 in allthree logs since their own starts,
+live+rotatedsources retained, schema0023. OMSsync389-799ms,DB14.8tx/s;55v2probes.
+Preopen573ab936/bindingfdf2a582/runtimeafb579e6 published and538inputsverified;
+flagmismatches0 with two stoppedmomentum-paperUNKNOWN, Monday06:20ETtimerunchanged.
+Receipt/home/trader/after-hours/2026-10-09/rpgretire-7807cbed-20261009T221842Z.
+No removed-wait memory witness invented. FI remains blocked: raw37998609989
+finalFstrictFAIL/IstrictPASS; originalfiveacceptedorderendings/JZcompleteSchwabbook
+not delivered. Extended recordedFLYE nextrealBUYtest remainsRED despite initial
+controlled restoredrests accepted. ALERTS2598activewriterstrictproof stillowed;
+preparedcollector90be not pinned/deployed. Main andSinger own separatewrites;
+replacementworkercreationhit toolthreadlimit, not falsely described as running.
