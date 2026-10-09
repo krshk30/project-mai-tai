@@ -29,7 +29,7 @@ jobs:
       MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
       F_HEAD: 44a20472934c63118c3ec9956223a82a916e4676
       I_BASE_SOURCE_HEAD: ca9930d64e13958891d3c839f5fd5c3d46c7ae36
-      I_SOURCE_HEAD: e880a7647ede91a7239b54b070330dc694a4d7c3
+      I_SOURCE_HEAD: 1db1b87664932823734de350ba810c81183c1197
       SHARED_HEAD: 6849b52aa87af9fddf52fc65ce76f623bc2f7f19
     steps:
       - uses: actions/checkout@v4
