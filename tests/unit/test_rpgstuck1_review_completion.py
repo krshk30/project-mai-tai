@@ -90,7 +90,9 @@ async def test_b3_only_recorded_precheck_origin_and_code_prove_persisted_no_wire
     await h.service._rpg_advance(token)
     job = HandoffJournal(h.factory).read(token)
     assert old_buy_proven_clear(job) is clear
-    assert job["phase"] == ("clear" if clear else "held_unknown")
+    assert job["phase"] == ("refused" if clear else "held_unknown")
+    if clear:
+        assert job["release_reason"] == "old_local_no_wire_return_to_strategy"
     assert not h.adapter.opens and not h.adapter.cancels and not h.adapter.reads
 
 
@@ -203,7 +205,9 @@ async def test_b5_matching_committed_generation_wakes_once_and_deduplicates_dura
         assert journal.read(token)["revision"] == before["revision"]
         await h.service._handle_stream_message({"data": json.dumps(ticks[0])})
         job = journal.read(token)
-        assert job["phase"] == ("held_unknown" if wire_status else "clear")
+        assert job["phase"] == ("held_unknown" if wire_status else "refused")
+        if not wire_status:
+            assert job["release_reason"] == "old_local_no_wire_return_to_strategy"
         assert old_buy_proven_clear(job) is (wire_status is None)
         assert not h.adapter.opens and not h.adapter.cancels
     finally:
@@ -250,7 +254,9 @@ async def test_b5_startup_then180_empty_turns_never_reconciles_unknown_without_n
     assert scans == [(0, True), (181, True)]
     local = HandoffJournal(h.factory).read(UUID("ba108172-04f6-5659-892b-a0fc10d22b15"))
     assert old_buy_proven_clear(local) is late_evidence
-    assert local["phase"] == ("clear" if late_evidence else "held_unknown")
+    assert local["phase"] == ("refused" if late_evidence else "held_unknown")
+    if late_evidence:
+        assert local["release_reason"] == "old_local_no_wire_return_to_strategy"
     for token in ("faa55c1f-262b-52e2-adcc-280ab1e5e2ff", "ee3d0d07-abea-5fe2-98c9-cace5c08d135"):
         assert jobs[UUID(token)]["phase"] == "held_unknown" and not old_buy_proven_clear(jobs[UUID(token)])
     assert not h.adapter.opens and not h.adapter.cancels and len(h.adapter.reads) == 1

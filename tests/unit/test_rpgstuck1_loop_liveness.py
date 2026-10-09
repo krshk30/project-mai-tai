@@ -114,18 +114,15 @@ async def test_l7_recorded_four_local_unknown_jobs_real_loop_continues_after_cle
 
     monkeypatch.setattr(h.service, "_rpg_retry_pause", pump)
     await h.service._run_rpg_retry_loop(stop)
-    expected = "expired" if outside else "placed"
-    # A committed acceptance may wake one same-generation proof evaluation;
-    # it must not replay the opening or start a periodic terminal scan.
+    # Exact local proof returns to the normal v2 draft, never the saved BUY.
+    # The separate wired-terminal-zero test below retains the real L7 signal control.
     for token in tokens:
-        assert phases[token][:2] == ["clear", expected]
-        assert phases[token][2:] in ([], ["placed"] if not outside else [])
-    assert all(journal.read(token)["phase"] == expected and old_buy_proven_clear(journal.read(token))
+        assert phases[token] == ["refused"]
+        assert journal.read(token)["release_reason"] == "old_local_no_wire_return_to_strategy"
+    assert all(journal.read(token)["phase"] == "refused" and old_buy_proven_clear(journal.read(token))
                for token in tokens)
-    assert len(h.adapter.opens) == (0 if outside else 4)
-    assert len({request.metadata["fanout_slot_id"] for request in h.adapter.opens}) == len(h.adapter.opens)
-    assert all(request.broker_account_name == "live:orb" for request in h.adapter.opens)
-    assert ignored_bot_ticks and not h.adapter.cancels
+    assert not h.adapter.opens and not h.adapter.cancels
+    assert not ignored_bot_ticks
 
 
 @pytest.mark.asyncio
@@ -159,3 +156,61 @@ async def test_recorded_apus0932_distance_refusal_releases_then_later_same_segme
     assert h.webull_client.calls.get("place", 0) == 1 and not h.wires
     assert journal.read(token)["phase"] == "refused"
     assert journal.read(token)["authorization"] == refused["authorization"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outside", [False, True], ids=["wired-placed", "wired-expired"])
+async def test_l7_wired_terminal_zero_controlled_recovery_real_loop_keeps_advancing(monkeypatch, outside):
+    """Pin the loop guard, not a claim of a new production wired recovery path.
+
+    This base's wired rejection probe ends refused. The explicit controller seam
+    below supplies a positive terminal-zero -> clear transition; all subsequent
+    ticks, current authorization and placement use the real loop/runtime.
+    """
+    h = await runtime(monkeypatch, "schwab", notional=600, strategy_overrides=all_on_tests.ALL_ON)
+    all_on(h)
+    token, _ = await begin(h, "schwab")
+    journal = HandoffJournal(h.factory)
+    job = journal.read(token)
+    assert job["original_order_id"] and not job.get("local_no_wire")
+    journal.change(token, job["revision"], phase="held_unknown", cleared_at=None,
+        reason="exact_old_order_unproven", blocked_notice_at=None)
+    controller = h.service._rpg_controller()
+    advance = controller.advance
+    recovered = False
+
+    async def positive_terminal_zero(current_token):
+        nonlocal recovered
+        current = journal.read(current_token)
+        if current_token == token and not recovered:
+            recovered = True
+            from project_mai_tai.oms.atr_reprice_handoff import _request
+            answer = await h.adapter.read_atr_resting_buy_after_cancel(_request(current["old"]))
+            assert answer.can_replace and answer.cumulative_filled == 0
+            return journal.change(token, current["revision"], phase="clear", cleared_at=h.clock[0].timestamp())
+        return await advance(current_token)
+
+    monkeypatch.setattr(controller, "advance", positive_terminal_zero)
+    stop, phases, turns = asyncio.Event(), [], []
+
+    async def pump(stop_event, seconds):
+        turns.append(seconds)
+        rows, h.service.redis.entries = h.service.redis.entries, []
+        for _, data in rows:
+            if data.get("event_type") == "atr_reprice_tick":
+                await h.service._handle_stream_message({"data": json.dumps(data)})
+                phases.append(journal.read(token)["phase"])
+        h.clock[0] += timedelta(seconds=1)
+        if outside and len(turns) == 1:
+            h.clock[0] = datetime.fromisoformat("2026-10-02T00:05:00+00:00")
+        price(h, h.state, "2.95")
+        await h.bot._rpg_handoff_pass()
+        h.service.redis.entries = []  # The bot's xadd may not rescue loop liveness.
+        if len(turns) == 5:
+            stop_event.set()
+        await asyncio.sleep(.05)
+
+    monkeypatch.setattr(h.service, "_rpg_retry_pause", pump)
+    await h.service._run_rpg_retry_loop(stop)
+    assert phases[:2] == ["clear", "expired" if outside else "placed"]
+    assert len(h.adapter.opens) == int(not outside)

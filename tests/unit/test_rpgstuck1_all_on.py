@@ -107,10 +107,11 @@ async def test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_
         prefix = str(token)[:8]
         state = h.strategy.watchlist_state(job["old"]["symbol"])
         if prefix in LOCAL:
-            assert job["phase"] == ("held_unknown" if not proof else "expired" if outside else "placed")
+            assert job["phase"] == ("refused" if proof else "held_unknown")
+            if proof:
+                assert job["release_reason"] == "old_local_no_wire_return_to_strategy"
             assert old_buy_proven_clear(job) is proof
-            # An accepted replacement owns BUYs, not the serial cancel lane.
-            assert h.strategy._rpg_entry_owned(state, account="live:orb") is (not proof or job["phase"] == "placed")
+            assert h.strategy._rpg_entry_owned(state, account="live:orb") is (not proof)
             assert h.strategy._rpg_leg_owned(state, "live:orb") is (not proof)
         elif prefix == "ff6464ff":
             assert job["phase"] == ("refused" if proof else "held_unknown")
@@ -119,7 +120,7 @@ async def test_all_on_all14_startup_dispositions_one_buy_or_owned_no_saved_late_
             assert job["phase"] == "filled" and job["replacement_filled"]
         else:
             assert job["phase"] == "refused" and old_buy_proven_clear(job)
-    assert len(h.adapter.opens) == (4 if proof and not outside else 0)
+    assert not h.adapter.opens  # Even in-window startup must not send a saved no-wire BUY.
     assert len({request.metadata["fanout_slot_id"] for request in h.adapter.opens}) == len(h.adapter.opens)
     assert all(request.broker_account_name == "live:orb" for request in h.adapter.opens)
     assert not h.adapter.cancels and len(h.adapter.reads) == 1
@@ -211,7 +212,8 @@ async def stage(monkeypatch, row, auth_row, *, market=None):
     token = UUID(selected["id"])
     if job["phase"] == "held_unknown":
         await h.service._rpg_advance(token)
-        assert HandoffJournal(h.factory).read(token)["phase"] == "clear"
+        assert HandoffJournal(h.factory).read(token)["phase"] == "refused"
+        assert HandoffJournal(h.factory).read(token)["release_reason"] == "old_local_no_wire_return_to_strategy"
         assert old_buy_proven_clear(HandoffJournal(h.factory).read(token))
     return h, token, md
 
@@ -224,8 +226,25 @@ async def test_all_on_recorded_authorization_stage_actual_adapter_wire_once_with
     wire_adapters(monkeypatch, h)
     await feedback(h)
     job = HandoffJournal(h.factory).read(token)
-    assert job["phase"] == "placed"
-    actual = job["authorization"]["event"]["payload"]["metadata"]
+    local = job.get("release_reason") == "old_local_no_wire_return_to_strategy"
+    if local:
+        assert job["phase"] == "refused" and not h.strategy._rpg_entry_owned(h.state, account="live:orb")
+        assert not h.wires and not h.webull_client.calls.get("place", 0)
+        h.strategy._queue_resting_place(h.state, h.state.atr_trail, slot="first")
+        mirror, = h.strategy.drain_webull_direct_intents()
+        h.strategy.drain_pending_intents()
+        assert "rpg_handoff_token" not in mirror.metadata
+        from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+        event = TradeIntentEvent(source_service="schwab-1m-v2", produced_at=h.clock[0],
+            payload=TradeIntentPayload(strategy_code="schwab_1m_v2", broker_account_name="live:orb",
+                symbol=h.state.symbol, side="buy", intent_type="open", quantity=mirror.quantity,
+                reason=mirror.reason, metadata=mirror.metadata))
+        await h.service._handle_stream_message({"data": event.model_dump_json()})
+        actual, quantity = event.payload.metadata, event.payload.quantity
+    else:
+        assert job["phase"] == "placed"
+        actual = job["authorization"]["event"]["payload"]["metadata"]
+        quantity = Decimal(job["replacement"]["quantity"])
     assert (actual["stop_price"], actual["limit_price"], actual["cw_flip_level"]) == (
         md["stop_price"], md["limit_price"], md["cw_flip_level"])
     webull = row["payload"]["old"]["broker_account_name"] == "live:orb"
@@ -235,7 +254,7 @@ async def test_all_on_recorded_authorization_stage_actual_adapter_wire_once_with
     if webull:
         wire = h.webull_client.last["place"].values
         assert wire["side"] == "BUY"
-        assert Decimal(wire["qty"]) == Decimal(job["replacement"]["quantity"])
+        assert Decimal(wire["qty"]) == quantity
         assert (Decimal(wire["stop_price"]), Decimal(wire["limit_price"])) == tuple(
             Decimal(md[key]).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
             for key in ("stop_price", "limit_price"))
@@ -245,7 +264,7 @@ async def test_all_on_recorded_authorization_stage_actual_adapter_wire_once_with
             Decimal(md[key]).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
             for key in ("stop_price", "limit_price"))
         assert wire["orderLegCollection"][0]["instruction"] == "BUY"
-        assert Decimal(str(wire["orderLegCollection"][0]["quantity"])) == Decimal(job["replacement"]["quantity"])
+        assert Decimal(str(wire["orderLegCollection"][0]["quantity"])) == quantity
     for _ in range(4):
         await feedback(h)
         await h.service._rpg_advance(token)

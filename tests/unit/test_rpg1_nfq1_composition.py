@@ -255,8 +255,27 @@ async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monk
     service._latest_quotes_by_symbol.clear()
     await current_feedback()
     job = handoffs.read(token)
-    assert job["phase"] == "price_wait"
-    replacement_md = job["replacement"]["metadata"]
+    assert job["phase"] == "refused"
+    assert job["release_reason"] == "old_local_no_wire_return_to_strategy"
+    await current_feedback()
+    assert not strategy._rpg_entry_owned(state, account=ACCOUNT)
+    assert service._nfq_holds == {}
+    await service._handle_stream_message({"data": old_retry.model_dump_json()})
+    assert simulated_adapter.requests == []
+    # Only the next ordinary v2 placement may create a new generation.
+    clock[0] += timedelta(seconds=1)
+    state.last_quote.quote_time_ms = strategy._now_ms()
+    strategy._cw_v2_resting_track(state, None)
+    assert strategy.drain_pending_intents() == []  # The untouched primary latch is not waived.
+    mirror, = strategy.drain_webull_direct_intents()
+    assert mirror.intent_type == "open"
+    await emitter.emit(mirror)
+    fresh = TradeIntentEvent.model_validate(emitter.redis.entries[-1][1])
+    fresh.produced_at = clock[0]
+    assert "rpg_handoff_token" not in fresh.payload.metadata
+    await service._handle_stream_message({"data": fresh.model_dump_json()})
+    assert simulated_adapter.requests == []  # No fresh OMS quote yet: held by NFQ.
+    replacement_md = fresh.payload.metadata
     assert replacement_md["fanout_slot_id"] == slot
     assert replacement_md["fanout_segment_id"] == original_md["fanout_segment_id"]
     assert replacement_md["webull_mirror_generation_id"] != generation
@@ -276,21 +295,21 @@ async def test_shared_v2_reprice_retires_queued_nfq_generation_exactly_once(monk
     assert new_retry.payload.metadata["nfq_retry_token"] != old_retry.payload.metadata["nfq_retry_token"]
     for retry in (old_retry, new_retry, old_retry):
         await service._handle_stream_message({"data": retry.model_dump_json()})
-    assert simulated_adapter.requests == []  # Neither queued token can bypass RPG.
+    assert len(simulated_adapter.requests) == 1  # Only the fresh normal generation may dispatch.
 
-    await current_feedback()
     for retry in (old_retry, new_retry, new_retry):
         await service._handle_stream_message({"data": retry.model_dump_json()})
     strategy._cw_v2_resting_track(state, None)
     assert strategy.drain_pending_intents() == []
     assert strategy.drain_webull_direct_intents() == []
-    assert len(emitter.redis.entries) == 2  # original and real cancel; RPG owns replacement
+    assert len(emitter.redis.entries) == 3  # original, real cancel, normal v2 replacement
     assert service._nfq_holds == {}
     request, = simulated_adapter.requests
     assert request.intent_type == "open"
     assert request.metadata["webull_mirror_generation_id"] == replacement_md["webull_mirror_generation_id"]
     assert request.metadata["stop_price"] == replacement_md["stop_price"]
-    assert request.client_order_id == handoffs.read(token)["replacement"]["client_order_id"]
+    assert handoffs.read(token)["phase"] == "refused"
+    assert request.client_order_id != old_retry.payload.metadata.get("fanout_attempt_id")
     with factory() as session:
         order, = session.scalars(select(BrokerOrder)).all()
         fill, = session.scalars(select(Fill)).all()

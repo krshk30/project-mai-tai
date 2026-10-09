@@ -1,0 +1,13 @@
+BEGIN
+SET
+{"id":"69418353-9ba9-4c9c-bf30-0a9405c7286e","strategy_code":"schwab_1m_v2","symbol":"SXTC","interval_secs":60,"bar_time":"2026-10-07T14:11:00+00:00","open_price":2.20060000,"high_price":2.28000000,"low_price":2.20000000,"close_price":2.25900000,"volume":139604,"trade_count":1,"position_state":"flat","position_quantity":0,"decision_status":"","decision_reason":"","decision_path":"","decision_score":"","decision_score_details":"","indicators":{},"created_at":"2026-10-07T14:12:02.11735+00:00","updated_at":"2026-10-07T14:12:02.117356+00:00","source":"live"}
+COMMIT
+BEGIN
+SET
+{"id":3364119,"provider":"schwab","service":"LEVELONE_EQUITIES","symbol":"SXTC","event_ts":"2026-10-07T14:12:17.247+00:00","received_at":"2026-10-07T14:12:18.294084+00:00","cumulative_volume":53034472,"raw":{"1": 2.24, "2": 2.25, "3": 2.24, "4": 1700, "5": 600, "8": 53034472, "9": 254, "35": 1791382337146, "key": "SXTC"},"raw_hash":"a4ae4d5aa92d53d014059ed420e9cb48e4f1b242","bid_price":2.240000,"ask_price":2.250000,"last_price":2.240000,"bid_size":1700,"ask_size":600,"last_size":254}
+COMMIT
+BEGIN
+SET
+{"id":"08343fb8-2b8f-4c95-bd0f-76218828e293","strategy_code":"schwab_1m_v2","symbol":"SXTC","interval_secs":60,"bar_time":"2026-10-07T14:12:00+00:00","open_price":2.25000000,"high_price":2.26000000,"low_price":2.21000000,"close_price":2.22000000,"volume":74365,"trade_count":1,"position_state":"flat","position_quantity":0,"decision_status":"","decision_reason":"","decision_path":"","decision_score":"","decision_score_details":"","indicators":{},"created_at":"2026-10-07T14:13:02.997246+00:00","updated_at":"2026-10-07T14:13:02.997252+00:00","source":"live"}
+{"id":3364182,"provider":"schwab","service":"LEVELONE_EQUITIES","symbol":"SXTC","event_ts":"2026-10-07T14:13:10.662+00:00","received_at":"2026-10-07T14:13:10.8795+00:00","cumulative_volume":53105762,"raw":{"1": 2.24, "2": 2.25, "3": 2.235, "4": 1200, "5": 1100, "8": 53105762, "9": 100, "35": 1791382389752, "key": "SXTC"},"raw_hash":"5954772f2578182d85396cf61eb6da977ce21291","bid_price":2.240000,"ask_price":2.250000,"last_price":2.235000,"bid_size":1200,"ask_size":1100,"last_size":100}
+COMMIT

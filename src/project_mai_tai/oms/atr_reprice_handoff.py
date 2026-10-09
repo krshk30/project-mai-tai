@@ -31,7 +31,9 @@ READ_TIMEOUT_SECONDS = 2.0
 MAX_READS = 30
 PREWIRE_ABORT_CODES = {"rpg_stale_strategy_authorization", "rpg_current_price_size_or_identity_changed",
                       "rpg_strategy_reauthorization_unreadable", "rpg_old_buy_still_owned"}
-PREWIRE_NO_WIRE_CODES = PREWIRE_ABORT_CODES | {"webull_mirror_precheck_deferred"}
+PREWIRE_NO_WIRE_CODES = PREWIRE_ABORT_CODES | {
+    "webull_mirror_precheck_deferred", "webull_mirror_no_fresh_quote_held", "schwab_ineligible_cached",
+}
 
 
 def old_buy_proven_clear(job: dict) -> bool:
