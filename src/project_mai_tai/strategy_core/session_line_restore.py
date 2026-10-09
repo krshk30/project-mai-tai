@@ -228,7 +228,7 @@ class SessionLineRestoration:
     def prepare(self) -> RebuildInput | None:
         proof = self._coverage
         if (proof is None or not proof.complete
-                or proof.source != "schwab_rest_full_session"
+                or proof.source not in {"schwab_rest_full_session", "massive_preopen_schwab_session"}
                 or proof.start_ms != self.anchor_ms
                 or not proof.closed_ids or proof.end_ms < proof.closed_ids[-1] + 60_000):
             self.incomplete_reason = "coverage_unproven"

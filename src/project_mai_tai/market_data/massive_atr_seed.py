@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import json
 from typing import Iterable
 
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar
@@ -113,6 +114,44 @@ class MassiveAtrSeedClient:
 
             self._rest_client = RESTClient(api_key=self.api_key)
         return self._rest_client
+
+    def fetch_preopen(self, symbol: str, session_start_ms: int) -> tuple[ChartBar, ...]:
+        """One bounded gateway-provider REST request, exclusively 04:00–06:59 ET."""
+        from project_mai_tai.strategy_core.session_line_restore import SessionLineRestoration
+
+        if not self.api_key:
+            raise RuntimeError("MAI_TAI_MASSIVE_API_KEY is missing")
+        if self._rest_client is None:
+            from massive import RESTClient
+
+            self._rest_client = RESTClient(
+                api_key=self.api_key, retries=0, connect_timeout=1, read_timeout=2,
+            )
+        boundary = session_start_ms + 3 * 3_600_000
+        response = self._rest_client.get_aggs(
+            symbol.upper(), 1, "minute", from_=session_start_ms, to=boundary - 1,
+            adjusted=True, sort="asc", limit=50_000, raw=True,
+        )
+        payload = json.loads(response.data)
+        rows = payload.get("results", [])
+        if (payload.get("status") not in {"OK", "DELAYED"}
+                or payload.get("ticker") != symbol.upper() or payload.get("next_url")
+                or not isinstance(rows, list) or len(rows) > 180):
+            raise ValueError("Massive preopen response completeness unproven")
+        validator = SessionLineRestoration(symbol, session_start_ms, 0)
+        selected = {}
+        for row in rows:
+            stamp = int(row["t"])
+            # An over-returned Schwab-era candle never enters the seed.
+            if stamp >= boundary:
+                continue
+            if stamp < session_start_ms or stamp in selected:
+                raise ValueError("foreign or duplicate Massive preopen candle")
+            bar = ChartBar(symbol.upper(), *(float(row[key]) for key in ("o", "h", "l", "c")),
+                           int(row["v"]), stamp)
+            validator.observe(bar)
+            selected[stamp] = bar
+        return tuple(selected[stamp] for stamp in sorted(selected))
 
     @staticmethod
     def _timestamp_ms(value: object) -> int | None:

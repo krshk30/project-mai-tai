@@ -42,7 +42,7 @@ def _damage(payload, branch, current):
     elif branch == "duplicate":
         payload["candles"].append(deepcopy(payload["candles"][0]))
     elif branch == "foreign":
-        payload["candles"][0]["datetime"] = current + 60_000
+        payload["candles"][0]["datetime"] = _ms("2026-10-05T03:59:00-04:00")
     elif branch == "foreign_symbol":
         payload["symbol"] = "OTHER"
     elif branch == "incomplete":

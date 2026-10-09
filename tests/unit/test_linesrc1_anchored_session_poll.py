@@ -25,17 +25,21 @@ OWN_EMPTY_RECEIPT = json.loads((Path(__file__).parents[1] / "fixtures" /
 OWN_EMPTY_ROWS = {row["symbol"]: row for row in OWN_EMPTY_RECEIPT["rows"]}
 
 
-@pytest.mark.parametrize("day", ["2026-01-06", "2026-07-06", "2026-03-08", "2026-11-01"])
+@pytest.mark.parametrize("day,trading_day", [
+    ("2026-01-06", True), ("2026-07-06", True),
+    ("2026-03-06", True), ("2026-03-08", False), ("2026-03-09", True),
+    ("2026-10-30", True), ("2026-11-01", False), ("2026-11-02", True),
+])
 @pytest.mark.parametrize("clock,expected", [
     ("00:00:00", False), ("06:54:59.999", False), ("06:55:00", False),
     ("06:59:59.999", False), ("07:00:00", True),
     ("09:30:00", True), ("15:59:59.999", True), ("16:00:00", False),
     ("20:00:00", False), ("23:59:59", False),
 ])
-def test_exact_et_session_boundaries_and_dst(day, clock, expected):
+def test_exact_et_session_boundaries_and_dst(day, trading_day, clock, expected):
     local = datetime.fromisoformat(f"{day}T{clock}").replace(tzinfo=ZoneInfo("America/New_York"))
     now = int(local.astimezone(UTC).timestamp() * 1000)
-    assert anchored_session_poll_open(now) is expected
+    assert anchored_session_poll_open(now) is (expected and trading_day)
 
 
 def _client(bot=None):

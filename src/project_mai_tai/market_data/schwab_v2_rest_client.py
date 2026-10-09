@@ -47,9 +47,9 @@ logger = logging.getLogger(__name__)
 
 
 def anchored_session_poll_open(now_ms: int) -> bool:
-    """LINESRC1: only the anchored source lane polls from 07:00 through 15:59 ET."""
+    """Only the anchored source lane polls, weekdays 07:00 through 15:59 ET."""
     eastern = datetime.fromtimestamp(now_ms / 1000, UTC).astimezone(ZoneInfo("America/New_York"))
-    return 7 * 60 <= eastern.hour * 60 + eastern.minute < 16 * 60
+    return eastern.weekday() < 5 and 7 * 60 <= eastern.hour * 60 + eastern.minute < 16 * 60
 
 
 ChartBarCallback = Callable[[str, "ChartBar"], Awaitable[None]]
@@ -517,13 +517,15 @@ class SchwabV2RestClient:
                 float(candle["low"]), float(candle["close"]),
                 int(candle["volume"]), int(candle["datetime"]),
             )
+            if bar.timestamp_ms > current_bar_ms:
+                continue
             if not anchor_ms <= bar.timestamp_ms <= current_bar_ms or bar.timestamp_ms in ids:
                 raise ValueError("foreign or duplicate session candle")
             validator.observe(bar)
             ids.add(bar.timestamp_ms)
             bars.append(bar)
         bars.sort(key=lambda bar: bar.timestamp_ms)
-        if bars[-1].timestamp_ms != current_bar_ms:
+        if not bars or bars[-1].timestamp_ms != current_bar_ms:
             return bars, None
         return bars, SessionCoverage(
             "schwab_rest_full_session", anchor_ms, end_ms,
