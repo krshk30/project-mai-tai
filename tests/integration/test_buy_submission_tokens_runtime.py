@@ -254,7 +254,7 @@ async def test_ambiguous_answer_survives_new_opportunity_and_restart(sessions, s
 @pytest.mark.asyncio
 async def test_real_pg_current_source_mutations_detected(sessions, sdk, monkeypatch, mutation):
     import textwrap
-    target = journal.close_never_sent_admission if mutation == "epoch" else getattr(
+    target = journal._close_buy_admission if mutation == "epoch" else getattr(
         journal.DurableBuyAdapter, "_reported" if mutation == "reported" else "_prepare")
     source = textwrap.dedent(inspect.getsource(target))
     old, new = {
@@ -288,7 +288,7 @@ async def test_real_pg_current_source_mutations_detected(sessions, sdk, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_read(sessions, sdk, monkeypatch, capsys):
+async def test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read(sessions, sdk, monkeypatch, capsys):
     # Real OMS entry points + real PG, controlled broker/Redis endpoints only.
     def real_now():
         return int(datetime.now(UTC).timestamp() * 1000)
@@ -379,6 +379,18 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
     buys = asyncio.create_task(concurrent_buys())
     quote_ms, close_ms, close_before_wire_ms, close_after_wire_ms, slow_closes = [], [], [], [], []
     baseline = monotonic()
+    pump_quote_ms, pump_stall_ms = [], []
+    async def quote_pump():
+        # The separate 200-event exit sample is not a 200-events/second proof.
+        for index in range(14_400):
+            due = baseline + index / 240
+            await asyncio.sleep(max(0, due - monotonic()))
+            begin = monotonic()
+            pump_stall_ms.append(max(0, begin - due) * 1000)
+            await service._handle_quote_tick_event(QuoteTickEvent(source_service="test",
+                payload=QuoteTickPayload(symbol="DKI", bid_price=Decimal(2), ask_price=Decimal("2.01"))))
+            pump_quote_ms.append((monotonic() - begin) * 1000)
+    pump = asyncio.create_task(quote_pump())
     try:
         for index in range(200):
             await asyncio.sleep(max(0, baseline + index * 0.3 - monotonic()))
@@ -404,14 +416,18 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
                 assert result and result[0].payload.status == "accepted"
         await asyncio.sleep(max(0, baseline + 60 - monotonic()))
         await buys
+        await pump
     finally:
-        await asyncio.gather(buys, return_exceptions=True)
+        await asyncio.gather(buys, pump, return_exceptions=True)
         await service._drain_cancel_terminal_evidence()
     assert len(quote_ms) == len(close_ms) == 100
     assert len([w for w in wires if w == ("buy", "open")]) == 25
     assert len([w for w in wires if w == ("sell", "close")]) == 100
     assert stall_duration and stall_duration[0] >= 30
-    metrics = (f"[CANCEL-TOKEN-PG-LATENCY] events=200 seconds={monotonic()-baseline:.3f} buys=25 "
+    duration = monotonic() - baseline
+    metrics = (f"[CANCEL-TOKEN-PG-LATENCY] quote_events={len(pump_quote_ms)} "
+               f"seconds={duration:.3f} rate={len(pump_quote_ms)/duration:.3f} buys=25 "
+               f"loop_stall_ms={max(pump_stall_ms):.3f} "
                f"stall_s={stall_duration[0]:.3f} feedback_ms={feedback_ms:.3f} "
                f"quote_max_ms={max(quote_ms):.3f} protective_close_max_ms={max(close_ms):.3f} "
                f"close_before_wire_max_ms={max(close_before_wire_ms):.3f} "
@@ -420,6 +436,8 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
                f"proof_raw_gets={len(client.calls)}")
     with capsys.disabled():
         print(metrics, flush=True)
+    assert len(pump_quote_ms) == 14_400 and len(pump_quote_ms) / duration >= 200, metrics
+    assert max(pump_stall_ms) < 50 and max(pump_quote_ms) < 50, metrics
     assert feedback_ms < 50 and max(quote_ms) < 50 and max(close_ms) < 50, metrics
     assert len(client.calls) == 2  # Detail + list-open; no retry or per-tick proof read.
     with sessions() as session:
