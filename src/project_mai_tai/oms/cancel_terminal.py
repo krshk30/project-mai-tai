@@ -184,7 +184,7 @@ def _write_evidence(session_factory, request: _Request, evidence: CancelTerminal
 
 
 async def acquire_cancel_terminal_evidence(
-    session_factory, adapter, intent_ids,
+    session_factory, adapter, intent_ids, *, minimum_started_at_ms=None,
 ) -> dict[str, CancelTerminalEvidence]:
     """Acquire once for this request; no timer, order submit, retry, or expiry.
 
@@ -195,7 +195,10 @@ async def acquire_cancel_terminal_evidence(
     for intent_id in intent_ids:
         request = await asyncio.to_thread(_read_request, session_factory, intent_id, adapter)
         if request is None:
-            await acquire_unbound_request_working_book(session_factory, adapter, intent_id)
+            await acquire_unbound_request_working_book(
+                session_factory, adapter, intent_id,
+                minimum_started_at_ms=(minimum_started_at_ms or {}).get(intent_id, 0),
+            )
             continue
         try:
             prior = evidence_from_payload(request.payload)
@@ -206,6 +209,7 @@ async def acquire_cancel_terminal_evidence(
                 evidence = await acquire_broker_cancel_evidence(
                     adapter, request.receipt,
                     broker_order_id=request.payload[BINDING_KEY].get("broker_order_id", ""),
+                    minimum_started_at_ms=(minimum_started_at_ms or {}).get(intent_id, 0),
                 )
         except Exception:
             evidence = CancelTerminalEvidence(request.receipt, None)
