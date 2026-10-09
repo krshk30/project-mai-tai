@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Callable, Mapping, Sequence
@@ -15,7 +15,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.cancel_terminal_proof import (
-    CancelTerminalProof, CompleteWorkingBook, NeverSentScope, TerminalSubmissionWitness,
+    BookOrder, CancelTerminalProof, CompleteWorkingBook, NeverSentScope, TerminalSubmissionWitness, WORKING,
     UnboundCancelFences, UnboundCancelRequest,
     evaluate_cancel_terminal, evaluate_unbound_cancel_terminal,
 )
@@ -36,7 +36,7 @@ from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear, replacement_terminal_zero
 from project_mai_tai.oms.cancel_terminal import load_cancel_terminal_evidence, receipt_from_intent
 from project_mai_tai.oms.buy_submission_journal import (
-    BuyCoverageEpoch, NonworkingBuySubmissionWitness, PROTOCOL,
+    BuyCoverageEpoch, BuySubmissionToken, NonworkingBuySubmissionWitness, PROTOCOL,
     close_never_sent_admission, close_terminal_buy_admission, lock_buy_scope,
     nonworking_buy_submission_witnesses, opportunity_start_ms,
 )
@@ -635,6 +635,138 @@ class RemovedWaitStore:
                 )
             )
             session.commit()
+
+    def retire_zero_id_no_dispatch(
+        self, request: RemovedWait, account_names: set[str], *,
+        books: Mapping[str, CompleteWorkingBook | None],
+        expected_bindings: Mapping[str, tuple[str, str]],
+        publication_current: Callable[[RemovedWait], bool], now: datetime,
+    ) -> RemovedWaitProof:
+        """Approved zero-ID scanner rule; positive complete books, never token inference."""
+        observed_ms = int(now.timestamp() * 1000)
+        def unknown(reason):
+            return RemovedWaitProof(request, observed_ms, False, reason)
+        if (type(request.opportunity_id) is not int or request.opportunity_id != 0
+                or request.purpose != "scanner_removal"
+                or not 0 < request.requested_at_ms <= observed_ms
+                or set(request.account_names) != account_names
+                or len(account_names) != 2
+                or len(request.account_names) != len(account_names)
+                or set(books) != account_names or set(expected_bindings) != account_names
+                or not all(isinstance(value, tuple) and len(value) == 2
+                           and isinstance(value[0], str)
+                           and isinstance(value[1], str) and bool(value[1])
+                           for value in expected_bindings.values())
+                or {value[0] for value in expected_bindings.values()} != {"schwab", "webull"}):
+            return unknown("zero_id_scope_unknown")
+        book_started = []
+        for name in account_names:
+            book = books[name]
+            if (not isinstance(book, CompleteWorkingBook) or book.complete is not True
+                    or book.source != "broker" or book.coverage != "all_working"
+                    or (book.account_name, book.account_id) != (name, expected_bindings[name][1])
+                    or not isinstance(book.orders, tuple) or len(book.orders) > ROW_LIMIT
+                    or type(book.started_at_ms) is not int or type(book.finished_at_ms) is not int
+                    or not request.requested_at_ms <= book.started_at_ms <= book.finished_at_ms <= observed_ms
+                    or observed_ms - book.started_at_ms > SETTLE_MS):
+                return unknown("zero_id_complete_broker_book_unknown")
+            seen = set()
+            for order in book.orders:
+                if (not isinstance(order, BookOrder) or order.side not in {"buy", "sell"}
+                        or not isinstance(order.symbol, str) or not order.symbol
+                        or not isinstance(order.status, str)
+                        or not isinstance(order.client_order_id, str)
+                        or not isinstance(order.broker_order_id, str)
+                        or order.status not in WORKING | TERMINAL | {"filled"}
+                        or not (order.client_order_id or order.broker_order_id)
+                        or any((order.client_order_id and order.client_order_id == coid)
+                               or (order.broker_order_id and order.broker_order_id == broker_id)
+                               for coid, broker_id in seen)):
+                    return unknown("zero_id_broker_order_identity_unknown")
+                seen.add((order.client_order_id, order.broker_order_id))
+                if order.symbol == request.symbol and order.status in WORKING:
+                    return unknown("zero_id_symbol_working_order")
+            book_started.append(book.started_at_ms)
+        with self.session_factory() as session:
+            self._lock_request(session, request.symbol)
+            accounts = session.scalars(select(BrokerAccount).where(
+                BrokerAccount.name.in_(account_names))).all()
+            if (len(accounts) != len(account_names)
+                    or any(a.provider != expected_bindings[a.name][0]
+                           or not expected_bindings[a.name][1]
+                           or a.external_account_id not in {None, expected_bindings[a.name][1]}
+                           for a in accounts)):
+                return unknown("zero_id_account_binding_unknown")
+            for account_id in sorted(value[1] for value in expected_bindings.values()):
+                lock_buy_scope(session, account_id, request.symbol)
+            ids = {a.id for a in accounts}
+            latest = session.scalar(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+            ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc())
+              .limit(1).with_for_update())
+            if (latest is None or not active_request_matches(latest.payload, request)
+                    or not publication_current(request)):
+                return unknown("zero_id_request_cas_unknown")
+            request_at = datetime.fromtimestamp(request.requested_at_ms / 1000, UTC)
+            dispatch = session.scalar(select(DashboardSnapshot.id).where(
+                DashboardSnapshot.snapshot_type == DISPATCH_SNAPSHOT_TYPE,
+                DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+                DashboardSnapshot.created_at >= request_at).limit(1))
+            opens = session.scalar(select(TradeIntent.id).where(
+                TradeIntent.broker_account_id.in_(ids), TradeIntent.symbol == request.symbol,
+                TradeIntent.side == "buy", TradeIntent.intent_type.in_({"open", "scale"}),
+                or_(TradeIntent.created_at >= request_at, TradeIntent.status.is_(None),
+                    TradeIntent.status.not_in(TERMINAL | {"filled", "aborted"}))).limit(1))
+            orders = session.scalar(select(BrokerOrder.id).where(
+                BrokerOrder.broker_account_id.in_(ids), BrokerOrder.symbol == request.symbol,
+                or_(BrokerOrder.status.is_(None),
+                    BrokerOrder.status.not_in(TERMINAL | {"filled", "aborted"}),
+                    and_(BrokerOrder.side == "buy", or_(BrokerOrder.submitted_at.is_(None),
+                                                       BrokerOrder.submitted_at >= request_at)))).limit(1))
+            owners = session.scalar(select(OmsManagedPosition.id).where(
+                OmsManagedPosition.broker_account_name.in_(account_names),
+                OmsManagedPosition.strategy_code == "schwab_1m_v2",
+                OmsManagedPosition.symbol == request.symbol,
+                or_(OmsManagedPosition.status.is_(None), OmsManagedPosition.status != "closed",
+                    OmsManagedPosition.current_quantity.is_(None),
+                    OmsManagedPosition.current_quantity != 0)).limit(1))
+            cancels = session.scalar(select(TradeIntent.id).where(
+                TradeIntent.broker_account_id.in_(ids), TradeIntent.symbol == request.symbol,
+                TradeIntent.intent_type == "cancel",
+                or_(TradeIntent.status.is_(None), TradeIntent.status.not_in(TERMINAL))).limit(1))
+            tokens = session.scalar(select(BuySubmissionToken.id).where(
+                BuySubmissionToken.account_id.in_([value[1] for value in expected_bindings.values()]),
+                BuySubmissionToken.symbol == request.symbol,
+                or_(BuySubmissionToken.created_at_ms >= request.requested_at_ms,
+                    BuySubmissionToken.state == "submitting")).limit(1))
+            if dispatch is not None or opens is not None or tokens is not None:
+                return unknown("zero_id_dispatch_history_present")
+            if orders is not None or owners is not None or cancels is not None:
+                return unknown("zero_id_working_or_owned_unknown")
+            session.expire_all()
+            final = session.scalar(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+            ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc()).limit(1))
+            if (final is None or not active_request_matches(final.payload, request)
+                    or not publication_current(request)):
+                return unknown("zero_id_request_cas_unknown")
+            witnessed_at = min(book_started)
+            session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE,
+                payload={**request.payload(active=False), "verdict": "TERMINAL",
+                    "reason": "unbound_symbol_terminal", "closed_owned_rows": [],
+                    "terminal_observed_at_ms": witnessed_at},
+                created_at=max(now, _utc(latest.created_at) + timedelta(microseconds=1))))
+            session.add(DashboardSnapshot(snapshot_type="v2_zero_id_terminal_broker_books",
+                payload={"schema_version": 1, "request": request.payload(active=True),
+                    "observed_at_ms": observed_ms, "request_window_start_ms": request.requested_at_ms,
+                    "account_bindings": {name: list(value) for name, value in expected_bindings.items()},
+                    "books": {name: asdict(book) for name, book in books.items()},
+                    "no_dispatch": True, "no_working_order": True, "no_open_owned_row": True,
+                    "publication_current": True, "request_cas_current": True}, created_at=now))
+            session.commit()
+            return RemovedWaitProof(request, witnessed_at, True, "unbound_symbol_terminal")
 
     def retire_unbound(
         self, requests: Sequence[RemovedWait], account_names: set[str], *,

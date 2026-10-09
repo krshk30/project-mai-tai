@@ -923,6 +923,50 @@ class SchwabV2BotService:
             version = self.__dict__.get("_clearwait_emit_versions", {}).get(request.symbol, 0)
             try:
                 expected = configured_removed_wait_bindings(adapter, request.account_names)
+                zero_read = None
+                if request.opportunity_id == 0 and request.purpose == "scanner_removal":
+                    from project_mai_tai.broker_adapters.cancel_terminal import (
+                        acquire_complete_working_book, broker_binding,
+                    )
+                    for name, (provider, _account_id) in expected.items():
+                        if provider == "schwab":
+                            leaf, _ = broker_binding(adapter, name)
+                            zero_read = getattr(leaf, "acquire_complete_working_book", None)
+                if callable(zero_read):
+                    trigger = self._removed_wait_assessment_triggers.setdefault(
+                        request, ("request_raised", request.token))
+                    if attempts.get(request) == (version, trigger) and request not in wakes:
+                        continue
+                    attempts[request] = (version, trigger)
+                    wakes.discard(request)
+                    books = dict.fromkeys(request.account_names)
+                    async with asyncio.timeout(15):
+                        for name, (provider, _account_id) in expected.items():
+                            if provider == "webull":
+                                books[name] = await acquire_complete_working_book(
+                                    adapter, name, after_ms=request.requested_at_ms)
+                            else:
+                                # A capped Schwab account listing is not this contract.
+                                books[name] = await zero_read(name, after_ms=request.requested_at_ms)
+                    now = datetime.fromtimestamp(self.strategy._now_ms() / 1000, UTC)
+                    def zero_current(candidate):
+                        owner = self.strategy._symbol_states.get(candidate.symbol)
+                        return (candidate == request and self._removed_wait_request_quiet(candidate)
+                            and self.strategy._removed_wait_restore_readable
+                            and self.strategy._flip_owner_restore_readable
+                            and (owner is None or (owner.flip_owner_phase != "unknown"
+                                and not self.strategy._removed_wait_has_owner(owner)))
+                            and self.__dict__.get("_clearwait_emit_versions", {}).get(candidate.symbol, 0) == version)
+                    proof = await asyncio.to_thread(store.retire_zero_id_no_dispatch,
+                        request, accounts, books=books, expected_bindings=expected,
+                        publication_current=zero_current, now=now)
+                    if zero_current(request):
+                        self.strategy.apply_removed_wait_proofs((proof,))
+                    logger.info("[V2-CANCEL-TERMINAL] sym=%s request=%s bound=0 decision=%s reason=%s",
+                        request.symbol, request.token, "TERMINAL" if proof.clear else "UNKNOWN", proof.reason)
+                    if proof.clear:
+                        closed_barriers.add(request)
+                    continue
                 last = {name: tuple(events) for (symbol, name), events in
                         self.__dict__.get("_clearwait_last_publications", {}).items() if symbol == request.symbol}
                 now = datetime.fromtimestamp(self.strategy._now_ms() / 1000, UTC)
