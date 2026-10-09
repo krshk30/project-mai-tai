@@ -8843,3 +8843,31 @@ loop95.940/70.216 andclose123.707/97.870ms,436goldenPASS/1FAIL/1xfail.
 No50mswaiver ornative139causalproof. F/I staysOUT. Source/head/test
 andrawrecordings/ghlogs checked; no productionwrite, merge,pin,deploy,
 LINE/service/flag/orderaction. Sharedhandoffheader/reviewerrowsuntouched.
+
+2026-10-09 13:40 ET codex-2 C15/C16: conditional LINE live approval
+requires all G1-G7 and exact reviewer pin. Draft1143 final16f9e624
+adds candidate97flag composition, fallback/quiet/load controls and
+weekday source fence; Sunday DST tests now expect no request and
+adjacent trading weekdays retain exact07/16 ET boundaries. Local
+G6 224.993ev/s60.002s,maxstall27.553ms;G3 threefailurecases held0
+after existing60sfallback;G4 3601minute weekend checks quiet. Volume
+isolationrc0/all25generalreaderinputs unchanged. NewCI pending;
+old23dd63fail vs exactbasec06556fail adds sixcorrectedDST failures
+and retained-on HOTFIX1 313.325ms, no performance waiver. Finalhead
+full pair running. G2 decisive Mondayclockshifted firstMIflip07:17:
+real hydrated opportunity0 request8373e311 survives, boot/fleet hold
+released, _removed_wait_gate_closedTrue,0buys. No future table or
+flat provider proof invented;actualVEEA twoacceptedbuys keptblocked.
+G7 expanded142liveARM/PLACE lines across13symbol-days; projection
+initializedbefore07:09responseavailability,all25causal comparisons
+UNMEASURED;7numericdifferences not evidenceofactualchanges. No
+sourceedit/retirement from proof workers. Two existing workers reused
+because agentcapacity full;parent sole LINEsourcewriter. Noactivation.
+Readonly ORBfinding: realdecisions logs-only/livepublisher missing;
+paper modeledtape previouslyfedbyheartbeatbridge, notdirecteventsSQL.
+ReadonlyWebullfinding: actualwarningdatesOct7=104/Oct8=111/Oct9=3,
+firstOct7beforeeveninginstall;adapterblobsidenticalacrossdeploys.
+List validation/proof can synthesize200None, warningsnotID-tagged.
+16DB-visibleordersenumerated/8knownfilledbooked;delaystoobservation
+10.802/29.332/17.721s withcausalityUNPROVEN,brokerwideunknown.
+No buildfor eitherfinding,no production action; reviewerFIX/PARKowed.
