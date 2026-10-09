@@ -168,25 +168,39 @@ class CompleteBookCycle:
         self.reads: dict[str, tuple[int, asyncio.Task]] = {}
 
     async def acquire(self, leaf, name, account_id, after_ms):
-        current = self.reads.get(account_id)
-        if current is None or (current[1].done() and now_ms() - current[0] > 15_000):
-            async def read():
-                try:
-                    return await asyncio.to_thread(_webull_book, leaf, name, account_id)
-                except Exception:
-                    return None
-            current = (now_ms(), asyncio.create_task(read()))
-            self.reads[account_id] = current
         try:
-            book = await asyncio.wait_for(asyncio.shield(current[1]), timeout=15)
+            async with asyncio.timeout(15):
+                return await self._acquire(leaf, name, account_id, after_ms)
         except TimeoutError:
             return None
-        if (not isinstance(book, CompleteWorkingBook) or book.complete is not True
-                or book.source != "broker" or book.coverage != "all_working"
-                or not after_ms <= book.started_at_ms <= book.finished_at_ms <= now_ms()
-                or now_ms() - book.started_at_ms > 15_000):
+
+    async def _acquire(self, leaf, name, account_id, after_ms):
+        if type(after_ms) is not int or after_ms > now_ms():
             return None
-        return replace(book, account_name=name)
+        while True:
+            current = self.reads.get(account_id)
+            if current is None or (current[1].done() and (
+                    now_ms() - current[0] > 15_000 or current[0] < after_ms)):
+                async def read():
+                    try:
+                        return await asyncio.to_thread(_webull_book, leaf, name, account_id)
+                    except Exception:
+                        return None
+                current = (now_ms(), asyncio.create_task(read()))
+                self.reads[account_id] = current
+            book = await asyncio.shield(current[1])
+            # A new explicit receipt may arrive during an older physical read.
+            # Wait for that flight before starting one new, coalesced read; never
+            # refresh timestamps or start a timer/sweep. Both waits share 15s.
+            if current[0] < after_ms and (
+                    not isinstance(book, CompleteWorkingBook) or book.started_at_ms < after_ms):
+                continue
+            if (not isinstance(book, CompleteWorkingBook) or book.complete is not True
+                    or book.source != "broker" or book.coverage != "all_working"
+                    or not after_ms <= book.started_at_ms <= book.finished_at_ms <= now_ms()
+                    or now_ms() - book.started_at_ms > 15_000):
+                return None
+            return replace(book, account_name=name)
 
     async def drain(self):
         await asyncio.gather(*(read for _start, read in self.reads.values()), return_exceptions=True)
