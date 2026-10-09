@@ -278,6 +278,7 @@ def _webull_target(leaf: WebullBrokerAdapter, receipt: CancelReceipt, broker_ord
 
 async def acquire_broker_cancel_evidence(
     adapter, receipt: CancelReceipt, *, broker_order_id: str = "", cycle: CompleteBookCycle | None = None,
+    minimum_started_at_ms: int = 0,
 ) -> CancelTerminalEvidence:
     leaf, account_id = broker_binding(adapter, receipt.scope.account_name)
     if account_id != receipt.scope.account_id:
@@ -301,7 +302,7 @@ async def acquire_broker_cancel_evidence(
         if not status:
             try:
                 book = await acquire_complete_working_book(adapter, receipt.scope.account_name,
-                    after_ms=receipt.observed_at_ms, cycle=cycle)
+                    after_ms=max(receipt.observed_at_ms, minimum_started_at_ms), cycle=cycle)
                 evidence = replace(evidence, book=book, source="broker" if book else "unknown")
             except Exception:
                 if not status:

@@ -94,14 +94,18 @@ def _write(session_factory, adapter, snapshot, book):
         return True
 
 
-async def acquire_unbound_request_working_book(session_factory, adapter, intent_id):
+async def acquire_unbound_request_working_book(
+    session_factory, adapter, intent_id, *, minimum_started_at_ms=0,
+):
     """Called only by the existing bounded, post-receipt OMS proof worker."""
     snapshot = await asyncio.to_thread(_read, session_factory, adapter, intent_id)
     if snapshot is None:
         return False
     binding = snapshot[0]
+    if type(minimum_started_at_ms) is not int or minimum_started_at_ms < 0:
+        return False
     book = await acquire_complete_working_book(adapter, binding["account_name"],
-        after_ms=binding["observed_at_ms"])
+        after_ms=max(binding["observed_at_ms"], minimum_started_at_ms))
     if book is None:
         return False
     return await asyncio.to_thread(_write, session_factory, adapter, snapshot, book)
