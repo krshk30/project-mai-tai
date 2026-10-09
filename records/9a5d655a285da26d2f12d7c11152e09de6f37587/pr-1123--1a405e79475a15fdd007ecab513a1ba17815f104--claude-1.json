@@ -1,0 +1,9 @@
+{
+  "pr_number": 1123,
+  "range_base": "1a405e79475a15fdd007ecab513a1ba17815f104",
+  "range_head": "9a5d655a285da26d2f12d7c11152e09de6f37587",
+  "reviewed_at": "2026-10-09T00:40:38Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Handoff PR #1123 (10-06..10-08 shared handoff + review artifacts). Codex-authored range reviewed by claude-1: documentation only (docs/ paths; no src, tests, ops or config), checked per range; content = handoff rows, receipts and review artifacts consistent with the day record; the two evidence corrections codex raised are applied at 14b62e96."
+}
