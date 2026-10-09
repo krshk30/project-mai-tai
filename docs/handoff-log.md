@@ -8608,3 +8608,25 @@ fences only, no fabricated complete Schwab book or unrelated prewire rewrite.
 Webullbook stays background/shared15s with postrequesttime and token/DBfences.
 Runtime/PG replays and <50ms exit/quote hanging-read proof still owed.
 No production action, revised hybrid head pending, Friday15 target unchanged.
+
+2026-10-08 20:13 ET codex-2 C70: operator-authorized ORBLIVE1 completion,
+not a second application installer. Exact live06b5e388 and clean checkout;
+fresh direct gate00:09:53-00:10:00Z rc0, both brokers flat and zero working
+orders/open managed or virtual rows/in-flight intents. Restarted only
+orb-schwab20:10:30ET, old765206 ->2121782/NRestarts0. Heartbeat00:10:32.222750Z
+LIVE/healthy in Redis and /health by00:10:45.561Z, no new-process ERROR or
+traceback in /var/log/project-mai-tai/orb-schwab.log. Actual phase is
+session_complete with empty after-hours universe; tomorrow waiting/universe,
+09:27 evaluation and first working order remain UNMEASURED.
+Paper ORB disable --now succeeded/PID0/disabled; exactly one normal
+OrbService._sync_gateway_subscription([]) COLDSTART replacement1791504678676-0
+applied. No HDEL, gateway restart or broker operation. Receipt
+/home/trader/restart_evidence/orblive-closeout-20261008/orb-retirement.json
+sha256 b670c1ff8ea62ef71506a3bcdae5957031b759c031d45d56388162c60c1473ab.
+Every other owner and marker identical; v2/strategy three symbols each,
+ORB-live/paper/momentum empty before/after, union3; gateway heartbeat healthy
+active_symbols3. OMS2094823/v22096131/gateway2907 untouched. Catalog already
+has no retired-orb consumer rows; audit153/155, mismatch0, two expected
+momentum-paper UNKNOWN. Preopen retirement/newORB identity re-pin in progress,
+no completed bookkeeping receipt or tomorrow acceptance invented. Shared/F/I
+continue durable-token source work, no token schema installed tonight.
