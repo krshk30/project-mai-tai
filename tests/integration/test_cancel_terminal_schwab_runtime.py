@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 import threading
 from time import monotonic
@@ -115,6 +116,9 @@ async def noop(*args, **kwargs):
 
 @pytest.mark.asyncio
 async def test_real_oms_stalled_30s_read_does_not_delay_receipt_quote_or_close(sessions, sdk, monkeypatch):
+    # OMS stamps actual receipt time; a fixed earlier SDK clock correctly denies
+    # acquisition and would never exercise the stalled-read control.
+    monkeypatch.setattr(broker, "now_ms", lambda: int(datetime.now(UTC).timestamp() * 1000))
     client = runtime.Client(detail=runtime.EMPTY_DETAIL)
     routed = runtime.adapter(client)
     oms = service(sessions, routed)
