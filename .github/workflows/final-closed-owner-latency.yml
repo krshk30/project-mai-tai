@@ -34,7 +34,7 @@ jobs:
           --health-interval 2s --health-timeout 5s --health-retries 10
     env:
       MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
-      F_HEAD: ${{ inputs.f_head || '457d89dcab409327df5679897b74c6206f3a6a13' }}
+      F_HEAD: ${{ inputs.f_head || '88ac2f631f54e7ad903d2a5ae9d7380df0fc7b80' }}
       I_HEAD: ${{ inputs.i_head || github.sha }}
     steps:
       - uses: actions/checkout@v4
@@ -65,6 +65,11 @@ jobs:
       - name: Install identical dependencies
         id: dependencies
         run: python -m pip install -e "$RUNNER_TEMP/i-final[dev]"
+      - name: PostgreSQL scalar-read and canonical DAY consumer controls
+        working-directory: ${{ runner.temp }}/i-final
+        env:
+          PYTHONPATH: ${{ runner.temp }}/i-final:${{ runner.temp }}/i-final/src
+        run: python -m pytest -p no:cacheprovider -q tests/integration/test_intent_order_scalar_reads_postgres.py tests/integration/test_clearwait1_day_nonworking_postgres.py
       - name: Twenty unchanged duplicate-quote timing controls per source
         env:
           PYTHONPATH: ${{ runner.temp }}/i-final:${{ runner.temp }}/i-final/src:${{ github.workspace }}/tests/support
