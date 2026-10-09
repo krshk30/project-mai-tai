@@ -8650,3 +8650,23 @@ Historical paper heartbeat remains visible in /health; /api/bots has no
 paper ORB row. No heartbeat DB deletion/masking. Tomorrow07:00 universe,
 09:27 evaluating/working and no-paper-anywhere remain unverified rather
 than promised. No further production action on v2 errors under ORB scope.
+
+2026-10-09 07:28 ET codex-2 C1-C3 checkpoint (own read-only sources):
+#1141 pinned2ce4953e mergedc065248e at07:21:28ET after both Validate and
+latest pin SUCCESS; whole tree c0366d24 equals pinned tree. Control deployment
+is after close, not performed. LINE Step0 uses actual current v2 log lines:
+ten MI/VEEA HTTP200 failures07:01-07:05 over-return a next-minute candle;
+the validator calls it foreign or duplicate. Fresh same-window serial reads
+returned22 candles per symbol, not original open-time OHLC. Removing
+periodType still returned25 unique MI timestamps through07:24. Diagnostic
+prefix clipping is local only. Step0 receipt on PR1127 comment6079910850;
+no build or switch activation, LINE staysOFF.
+Shared1138 f6ff295a both CI GREEN including realPG 14400quotes/60.001s,
+25BUY, physical30s stalled read, maximum loop21.713ms/protectiveclose34.818ms.
+F1133 b7 failed16 PG mixed-terminal fixture controls; tests-only78ae7653
+preserves the controlled timezone-aware timestamp explicitly and asserts
+it after commit.51 affected/307 F unit controls PASS; newPG/fullCI pending.
+I1136 actual owned lifecycle remains pending on its final head; historical
+precoverage FLYE/DKI are not retroactively certified. DB-resilience build
+is isolated, no application head or production maintenance policy yet.
+No production write, broker order, flag change or restart in this checkpoint.
