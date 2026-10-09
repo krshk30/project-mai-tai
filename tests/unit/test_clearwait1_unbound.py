@@ -72,7 +72,7 @@ def configured_control(database, req, account, case):
                                  "missing_config"])
 def test_configured_binding_not_book_or_nullable_db_identity(db, account, case):
     proof = configured_control(db, recorded_request("DKI"), account, case)
-    assert proof.clear is (case in {"null", "retained_match"})
+    assert not proof.clear  # Config identity alone cannot certify legacy zero-ID wire absence.
 
 
 def test_routing_binding_refuses_missing_duplicate_or_untyped_accounts():
@@ -96,15 +96,15 @@ def assess(database, req, *, books=None, drained=True, now=NOW):
         publication_closed={req: drained}, now=now)[0]
 
 
-def test_controlled_recorded_dki_identity_terminal_not_historical_book_claim(db):
+def test_recorded_zero_id_empty_books_are_not_a_coverage_certificate(db):
     req = recorded_request("DKI")
     seed(db, req, receipts=False)
     proof = assess(db, req)
-    assert proof.clear and proof.reason == "unbound_symbol_terminal"
-    assert not db[0].restore() and not proof.closed_owned_rows
+    assert not proof.clear and db[0].restore() == {"DKI": req}
+    assert not proof.closed_owned_rows
     with db[1]() as session:
         latest = session.scalar(select(DashboardSnapshot).order_by(DashboardSnapshot.created_at.desc()))
-        assert latest.payload["token"] == req.token and latest.payload["active"] is False
+        assert latest.payload["token"] == req.token and latest.payload["active"] is True
 
 
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL])
@@ -144,7 +144,7 @@ def test_operator_positions_and_sell_orders_do_not_block_unbound(db, account):
             side="sell", order_type="limit", time_in_force="day", quantity=1000,
             status="accepted", client_order_id="operator-sell"))
         session.commit()
-    assert assess(db, req, books=books).clear
+    assert not assess(db, req, books=books).clear  # Positions/SELL are not the missing coverage proof.
 
 
 @pytest.mark.parametrize("case", ["drain_unknown", "book_missing", "book_stale", "book_pre_request", "token_changed"])
@@ -164,19 +164,21 @@ def test_incomplete_scope_never_commits_terminal(db, case):
     assert not proof.clear and db[0].restore()
 
 
-def test_same_day_retry_terminal_witness_does_not_retire_request(db):
-    req = replace(recorded_request("DKI"), purpose="retry_exhausted")
-    seed(db, req, receipts=False)
-    proof = assess(db, req)
+@pytest.mark.asyncio
+async def test_same_day_retry_terminal_witness_does_not_retire_request(db, monkeypatch):
+    from tests.unit.test_clearwait1_never_sent_consumer import covered_request, assess_covered
+    req, _ = await covered_request(db, monkeypatch, purpose="retry_exhausted")
+    proof = assess_covered(db, req)
     assert proof.clear and proof.reason == "unbound_symbol_terminal"
     assert db[0].restore() == {"DKI": req}
-    assert assess(db, req).clear
+    assert assess_covered(db, req).clear
 
 
-def test_restore_witness_preserves_observation_and_new_token_supersedes(db):
-    req = recorded_request("DKI")
-    seed(db, req, receipts=False)
-    proof = assess(db, req)
+@pytest.mark.asyncio
+async def test_restore_witness_preserves_observation_and_new_token_supersedes(db, monkeypatch):
+    from tests.unit.test_clearwait1_never_sent_consumer import covered_request, assess_covered
+    req, _ = await covered_request(db, monkeypatch)
+    proof = assess_covered(db, req)
     assert db[0].restore_terminal_proofs() == (proof,)
     db[0].record(replace(req, token="newer"), True)
     assert not db[0].restore_terminal_proofs()
@@ -196,23 +198,21 @@ def test_owned_witness_is_exact_opportunity_account_and_row(db):
             current_quantity=0, status="closed")
         session.add(managed)
         session.flush()
-        ident = str(managed.id)
         session.commit()
     proof = assess(db, req)
-    assert proof.clear and proof.closed_owned_rows == ((PRIMARY, ident),)
-    assert db[0].restore_terminal_proofs() == (proof,) and db[0].restore() == {"DKI": req}
-    db[0].record(req, False)
-    assert not db[0].restore() and db[0].restore_terminal_proofs() == (proof,)
+    # Filled owner cannot be certified never-sent; the shared wired-chain path is still pending.
+    assert not proof.clear and not proof.closed_owned_rows
+    assert not db[0].restore_terminal_proofs() and db[0].restore() == {"DKI": req}
     db[0].record(replace(req, token="newer"), True)
     with pytest.raises(ValueError, match="active removal request changed"):
         db[0].record(req, False)
 
 
 @pytest.mark.asyncio
-async def test_real_boot_delivers_witness_without_rejuvenation_or_duplicate_barrier(db):
-    req = replace(recorded_request("DKI"), purpose="retry_exhausted")
-    seed(db, req, receipts=False)
-    proof = assess(db, req)
+async def test_real_boot_delivers_witness_without_rejuvenation_or_duplicate_barrier(db, monkeypatch):
+    from tests.unit.test_clearwait1_never_sent_consumer import covered_request, assess_covered
+    req, _ = await covered_request(db, monkeypatch, purpose="retry_exhausted")
+    proof = assess_covered(db, req)
     strat = strategy(req)
     strat._now_ms = lambda: ms(NOW) + 16000
     bot = service(strat, db[0])
@@ -240,4 +240,4 @@ def test_unbound_book_exact_clock_boundary(db, elapsed):
     req = recorded_request("DKI")
     seed(db, req, receipts=False)
     proof = assess(db, req, now=NOW + timedelta(seconds=elapsed))
-    assert proof.clear is (elapsed <= 15)
+    assert not proof.clear  # Even a fresh book cannot substitute for missing coverage.
