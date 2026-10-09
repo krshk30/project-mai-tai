@@ -34,7 +34,7 @@ jobs:
           --health-interval 2s --health-timeout 5s --health-retries 10
     env:
       MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
-      F_HEAD: ${{ inputs.f_head || 'ce8c97a22983c26033aa177bc465ca810f5a6abf' }}
+      F_HEAD: ${{ inputs.f_head || '457d89dcab409327df5679897b74c6206f3a6a13' }}
       I_HEAD: ${{ inputs.i_head || github.sha }}
     steps:
       - uses: actions/checkout@v4
