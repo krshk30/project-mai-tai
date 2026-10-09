@@ -28,13 +28,14 @@ def _heartbeat(name="orb-schwab", *, at=NOW, status="healthy", phase="entry_wind
                 "subscribed": '["LIVE_ONLY"]', "universe": '["LIVE_ONLY"]',
                 "last_bar_at": (NOW - timedelta(seconds=10)).isoformat(),
                 "last_decision_at": (NOW - timedelta(seconds=5)).isoformat(),
+                "healthy_since": "2026-10-09T00:10:32Z",
             },
         ),
     )
 
 
-def _app(monkeypatch, heartbeats, *, bar_counts=None):
-    monkeypatch.setattr(cp, "utcnow", lambda: NOW)
+def _app(monkeypatch, heartbeats, *, bar_counts=None, now=NOW):
+    monkeypatch.setattr(cp, "utcnow", lambda: now)
     factory = build_test_session_factory()
     with factory() as session:
         session.add_all([
@@ -88,20 +89,23 @@ def test_home_and_orb_page_use_live_heartbeat_over_stale_snapshot(monkeypatch, p
         assert live["watched_tickers"] == ["LIVE_ONLY"]
         assert live["bar_counts"] == {}
         assert live["last_tick_at"] == {}
-        assert live["data_health"] == {"status": "not reported"}
+        assert live["data_health"]["status"] == "healthy"
         listening = live["listening_status"]
         assert listening["state"] == state
-        assert listening["latest_bot_tick_at"] == ""
-        assert listening["data_health"] == {}
-        assert listening["last_bar_at"] == (NOW - timedelta(seconds=10)).isoformat()
+        assert listening["latest_bot_tick_at"] == "2026-10-09 09:44:50 AM ET"
+        assert listening["latest_market_data_at"] == "2026-10-09 09:44:50 AM ET"
+        assert listening["data_health"]["status"] == "healthy"
+        assert listening["last_bar_at"] == "2026-10-09 09:44:50 AM ET"
         assert listening["latest_decision_at"] == (NOW - timedelta(seconds=5)).isoformat()
         assert listening["tracked_bar_count"] is None
         page = client.get("/bot/orb").text
         assert f"<strong>Status:</strong> {state}" in page
         assert "Bars cached: not reported" in page
         assert "Bars cached: 987" not in page
-        assert "NOT REPORTED" in page
-        assert "ORB-Schwab heartbeat does not report data-path health." in page
+        assert '<span>Schwab Data Health</span><strong style="color:#5fff8d">HEALTHY</strong>' in page
+        assert "ORB-Schwab heartbeat is fresh and its last bar is within 3 minutes." in page
+        assert "Healthy since 10-08 08:10:32 PM ET" in page
+        assert "Data date: 2026-10-09 (TODAY ET)" in card
 
 
 def test_orb_listening_helper_does_not_borrow_snapshot_telemetry(monkeypatch):
@@ -120,8 +124,9 @@ def test_orb_listening_helper_does_not_borrow_snapshot_telemetry(monkeypatch):
     status = cp._build_bot_listening_status(data, bot, [])
     assert status["state"] == "EVALUATING"
     assert status["tracked_bar_count"] is None
-    assert status["latest_bot_tick_at"] == ""
-    assert status["data_health"] == {}
+    assert status["latest_bot_tick_at"] == "2026-10-09 09:44:50 AM ET"
+    assert status["latest_market_data_at"] == "2026-10-09 09:44:50 AM ET"
+    assert status["data_health"]["status"] == "healthy"
 
 
 @pytest.mark.parametrize("bar_counts", [{}, {"SNAPSHOT_ONLY": 0}, {"SNAPSHOT_ONLY": 987}])
@@ -171,3 +176,78 @@ def test_non_orb_snapshot_count_and_tick_still_render(monkeypatch):
     assert status["tracked_bar_count"] == 0
     assert status["latest_bot_tick_at"] == "2026-10-09 09:45:00 AM ET"
     assert status["data_health"] == {"status": "healthy"}
+
+
+def test_rendered_bar_rows_convert_zulu_to_eastern_and_healthy_since_is_compact(monkeypatch):
+    now = datetime(2026, 10, 9, 10, 5, 10, tzinfo=UTC)
+    event = _heartbeat(at=now, phase="waiting_for_open")
+    event.payload.details["last_bar_at"] = "2026-10-09T10:05:00Z"
+    with TestClient(_app(monkeypatch, [event], now=now)) as client:
+        page = client.get("/bot/orb").text
+        for label in ("Last Bot Tick", "Last Market Data"):
+            assert f'<span>{label}</span><strong>2026-10-09 06:05:00 AM ET</strong>' in page
+        assert "Healthy since 10-08 08:10:32 PM ET" in page
+        assert "Healthy since 2026-10-09T00:10:32Z" not in page
+        assert '<span>Schwab Data Health</span><strong style="color:#5fff8d">HEALTHY</strong>' in page
+        assert "Bars cached: not reported" in page
+
+
+@pytest.mark.parametrize("heartbeat_offset, bar_offset, expected", [
+    (0, 0, "HEALTHY"), (60, 180, "HEALTHY"),
+    (0, 180.001, "WARN"), (0, 600, "WARN"),
+    (60.001, 10, "STOPPED"), (61, 600, "STOPPED"),
+    (-1, 10, "STOPPED"), (0, -1, "WARN"),
+])
+def test_rendered_schwab_health_uses_heartbeat_and_three_minute_bar_bound(monkeypatch, heartbeat_offset, bar_offset, expected):
+    event = _heartbeat(at=NOW - timedelta(seconds=heartbeat_offset))
+    event.payload.details["last_bar_at"] = (NOW - timedelta(seconds=bar_offset)).isoformat()
+    with TestClient(_app(monkeypatch, [event], bar_counts={"SNAPSHOT_ONLY": 987})) as client:
+        page = client.get("/bot/orb").text
+        color = {"HEALTHY": "#5fff8d", "STOPPED": "#ff6b6b", "WARN": "#ffcc5b"}[expected]
+        assert f'<span>Schwab Data Health</span><strong style="color:{color}">{expected}</strong>' in page
+        assert client.get("/api/bot/orb-schwab").json()["data_health"]["status"] == expected.lower()
+        assert "Bars cached: not reported" in page
+
+
+@pytest.mark.parametrize("stamp", ["", "unreadable", "2026-10-09T13:44:50", "2026-10-09T13:45:01Z"])
+def test_invalid_bar_time_renders_warn_and_unreported_times_without_snapshot_fallback(monkeypatch, stamp):
+    event = _heartbeat()
+    event.payload.details["last_bar_at"] = stamp
+    with TestClient(_app(monkeypatch, [event])) as client:
+        page = client.get("/bot/orb").text
+        for label in ("Last Bot Tick", "Last Market Data"):
+            assert f'<span>{label}</span><strong>not reported</strong>' in page
+        assert '<span>Schwab Data Health</span><strong style="color:#ffcc5b">WARN</strong>' in page
+        assert "Bars cached: not reported" in page
+
+
+@pytest.mark.parametrize("stamp", ["unreadable", "2026-10-09T13:44:50", "2026-10-09T13:45:01Z"])
+def test_invalid_heartbeat_identity_is_stopped_not_healthy(monkeypatch, stamp):
+    monkeypatch.setattr(cp, "utcnow", lambda: NOW)
+    event = _heartbeat()
+    data = {"services": [{"service_name": "orb-schwab", "status": "healthy", "observed_at_raw": stamp,
+                           "details": event.payload.details}]}
+    status = cp._build_bot_listening_status(data, {"strategy_code": "orb_schwab"}, [])
+    assert status["state"] == "STOPPED"
+    assert status["data_health"]["status"] == "stopped"
+
+
+def test_home_data_date_is_today_eastern_not_utc_or_old_snapshot_date(monkeypatch):
+    now = datetime(2026, 10, 9, 0, 5, tzinfo=UTC)
+    event = _heartbeat(at=now)
+    event.payload.details["last_bar_at"] = (now - timedelta(seconds=10)).isoformat()
+    with TestClient(_app(monkeypatch, [event], now=now)) as client:
+        card = client.get("/").text.split('<a href="/bot/orb">', 1)[1].split("\n    </div>", 1)[0]
+        assert "Data date: 2026-10-08 (TODAY ET)" in card
+        assert "Data date: 2026-10-09" not in card
+
+
+@pytest.mark.parametrize("stamp", ["unreadable", "2026-10-09T13:44:50", "2026-10-09T13:45:01Z"])
+def test_invalid_healthy_since_is_unreported_not_raw_or_future(monkeypatch, stamp):
+    event = _heartbeat(phase="waiting_for_open")
+    event.payload.details["healthy_since"] = stamp
+    with TestClient(_app(monkeypatch, [event])) as client:
+        page = client.get("/bot/orb").text
+        assert "Healthy since not reported" in page
+        assert f"Healthy since {stamp}" not in page
+        assert "Bars cached: not reported" in page
