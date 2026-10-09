@@ -58,3 +58,57 @@ Local validation: 343 mechanics PASS, seven platform skips, twenty assertion
 mutations RED, Ruff clean. Real daily.verify_runtime is exercised on the isolated
 five-service cumulative binding/retired-ACK fixture. No global unit-suite parity
 claim. This package neither executes a restart nor repeats the parent retirement.
+
+## Actual execution receipt
+
+Source plan e064dc48438a5f0a26aa45c231174a0f8a7e1fb4 executed only the
+authorized bookkeeping at 2026-10-09 00:15:05.703646 UTC (Oct 8 20:15 ET).
+Separate package /home/trader/after-hours/2026-10-08/orb-completion-bookkeeping,
+manifest SHA256
+931840c3e1e43f842351314bf81a27acbdd1289c7ca78e0cfd8c7ad09a636576.
+No application, service, gateway, environment, catalog, schema, DB, Redis or
+timer action was performed by this sidecar.
+
+Evidence directory:
+/home/trader/restart_evidence/orb-completion-bookkeeping-06b5e388.
+
+- preopen-repin.json SHA256
+  2b5ace7555c0c53905a38cd31aaa82b464c6b0fb0aa07b9947912e643f129407;
+  verdict REPINNED_CHECKS_NOT_RUN, atomic six-file backup/runtime-last.
+- Current /home/trader/preopen.sh SHA256
+  885cbe8b714ee72cab7c8726e77fe74a641235f61ea9a6ca3e69167b07e3b83c.
+- install-record.json SHA256
+  aada6da8c2bb9d223e69f3ea5430dd4868adcb7e5f2b41ffee0fb4ea39e3f7bc.
+- sealed-actions.json SHA256
+  1e1f57bc41b4a4864af0a28c38de5ed5025c755872fbf20fad7e50fedc496d1c.
+- checks-only.json SHA256
+  7285fd10df30d215fc71088d89cc4dc14549aa14198067c5e7b8bc23681802cb.
+
+Real daily.verify_runtime rc0; shell syntax rc0. Official checks-only rc1.
+Official restart report: seven PASS, one FAIL, one UNKNOWN of nine checks.
+All five restarted identities and four untouched identities PASS; migration0023,
+REST warmup, BOOT-HOLD, flatness and process flags PASS. Bar continuity UNKNOWN
+because the official persisted-history warmup query cannot prove its window.
+Tracebacks FAIL: 22 v2 headers since the hotfix restart; new ORB-Schwab zero.
+The prior ORB process exit is correctly classified as before bounded startup,
+not attributed to the new invocation. Full preopen additionally fails the
+before-07:00 fence and inactive paper/guard admission at this evening run.
+Catalog 153/155, zero mismatches, two momentum-paper UNKNOWN; no waiver.
+Official stdout SHA256
+54b39769822c2ad9b3d1f5f7535fce068e761e556941b92bb55d30f70fd37785.
+
+Bounded read-only context confirms actual v2 exceptions, not old ORB shutdown
+or lexical timestamp artifacts. Source:
+/var/log/project-mai-tai/schwab-1m-v2.log-20261009, lines 45595-45622 and
+46135-46162: GRAN on_quote/on_stream_trade at 22:19:27/28 and 22:35:34 UTC
+calls _resting_trigger_for_line, then resting_buy_stop, raising
+ValueError: resting buy price must be positive and finite. No source fix,
+restart, error filtering or permission waiver is included in this mechanics lane.
+Retired orb's historical heartbeat is left intact; no DB purge or masking.
+
+All sixteen immutable r3 manifest artifacts and its ABORT/proof/seal were
+verified unchanged after this operation. Global install verdict remains FAIL,
+never COMPLETE. Current binding pins ORB-Schwab 2121782/NRestarts0 and leaves
+the old Redis upgrade ACK historical/inactive, with its original evidence kept.
+Future cumulative re-pins must retain this authorized restart/retirement proof;
+they must not adopt the old ACK or an arbitrary live identity.
