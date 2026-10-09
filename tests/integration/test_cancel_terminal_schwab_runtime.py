@@ -17,7 +17,7 @@ from project_mai_tai.cancel_terminal_proof import (
     SchwabLocalCancelWitness, UnboundCancelFences, UnboundCancelRequest,
     evaluate_unbound_cancel_terminal,
 )
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, TradeIntent
+from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, Strategy, TradeIntent, VirtualPosition
 from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload, TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms import cancel_terminal as journal
 from project_mai_tai.oms.service import OmsRiskService
@@ -139,6 +139,20 @@ async def test_real_oms_stalled_30s_read_does_not_delay_receipt_quote_or_close(s
             broker_order_id="protective-close", symbol=order.symbol, side=order.side,
             intent_type=order.intent_type, quantity=order.quantity, metadata=order.metadata)]
     monkeypatch.setattr(leaf, "submit_order", submit)
+    # Operational position only: exercise real close admission, not a terminal
+    # ownership certificate or a bypass of the no-position SELL refusal.
+    with sessions() as session:
+        strategy = Strategy(code="macd_30s", name="controlled", execution_mode="live")
+        account = BrokerAccount(name="live:orb", provider="webull", environment="test")
+        session.add_all([strategy, account])
+        session.flush()
+        session.add_all([
+            VirtualPosition(strategy_id=strategy.id, broker_account_id=account.id,
+                symbol="DKI", quantity=Decimal(1), average_price=Decimal(2)),
+            AccountPosition(broker_account_id=account.id, symbol="DKI",
+                quantity=Decimal(1), average_price=Decimal(2)),
+        ])
+        session.commit()
     try:
         begin = monotonic()
         feedback = await oms.process_trade_intent(runtime.cancel_event())
