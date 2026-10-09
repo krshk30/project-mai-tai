@@ -9012,3 +9012,22 @@ Docker container rate limit; bounded reruns. FI raw pair FAIL, updated mutation
 targets4PASS, original five endings incomplete; JZ runtime complete Schwab
 book capability absent. ALERTS31PASS, no source merge conflict, test map adapted
 locally only; combined strict PG62.090/69.017ms FAIL. No FI/ALERTS pin or Wave2.
+
+### 2026-10-09 17:58 ET - Codex-2 Wave1 closed, CI mirror merged, FI acceptance incomplete
+
+Reviewer disposed both old ORB CancelledError shutdown blocks and explicitly
+closed Wave1. Actual new-process raw traceback counts remained0 over13min;
+three historical VEEA warm-up exit warnings are not hidden. Final published
+binding check535/535PASS at21:34:02Z; preopen0d81edaa, catalog061a80f5,
+binding514b9c3c/runtime33b4da66, immutable backup212740427813Z.
+Collector shutdown classification is a separate narrow fix, no duplicate restart.
+No removed-wait process-memory witness is inferred from a missing log marker.
+#1148 bothValidate/pinPASS, reviewer merged3277ea9d at21:53:36Z.
+ECR PostgreSQL16 image fixes infra only, no test or trading threshold changed.
+Current combined I9901 has four PostgreSQL false-close transport controls PASS
+and RuffPASS, using recorded entry/bar facts and explicitly controlled broker
+answers. This is not completion of five historic original endings. JZ's real
+complete Schwab inventory producer is still absent and source stays UNKNOWN.
+Frozen raw F7b/I9901 CI37996371611 pending; first dispatch shortSHA cancelled
+before timing. ALERTS standalone/combined latency pending, R updated CI pending.
+No Wave2 deployment or F/I pin request. All unfinished asks retained in queue.
