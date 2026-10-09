@@ -24,14 +24,14 @@ from tests.unit.test_clearwait1_unbound import CONFIGURED_IDS, NOW, controlled_r
 db, sdk = rollover_db, controlled_sdk
 
 
-def runtime(database, monkeypatch, *, req=None, side=None, venue=None):
+def runtime(database, monkeypatch, *, req=None, side=None, venue=None, adapter=None):
     req = req or recorded_request("DKI")
     strat = strategy(req)
     strat._now_ms = lambda: ms(NOW)
     strat._removed_wait_persist = database[0].record
     bot = service(strat, database[0])
     bot._removed_wait_roll_anchor = current_session_anchor(NOW)
-    bot._removed_wait_adapter = controlled_routing()
+    bot._removed_wait_adapter = adapter if adapter is not None else controlled_routing()
     calls = []
     monkeypatch.setattr(broker, "now_ms", lambda: strat._now_ms())
     with database[1]() as session:

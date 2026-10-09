@@ -40,15 +40,14 @@ def receipt_state(database):
 @pytest.mark.parametrize("trigger", ["request_raised", "boot", "fresh_sell"])
 async def test_actual_assessment_transport_physically_refetches_inside_sharing_window(db, monkeypatch, trigger):
     purpose = "retry_exhausted" if trigger == "fresh_sell" else "scanner_removal"
-    req, _ = await covered_request(db, monkeypatch, purpose=purpose, receipts=False)
-    bot, strat, _, calls = runtime(db, monkeypatch, req=req)
+    req, guard = await covered_request(db, monkeypatch, purpose=purpose, receipts=False)
+    bot, strat, _, calls = runtime(db, monkeypatch, req=req, adapter=guard.cancel_terminal_delegate)
     redis = emitters(bot, db)
     oms = OmsRiskService(settings=Settings(_env_file=None, oms_adapter="simulated", broker_default_provider="webull",
         strategy_schwab_1m_v2_account_name=req.account_names[0],
         strategy_schwab_1m_v2_broker_provider="schwab", strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
         strategy_schwab_1m_v2_webull_account_name=WEBULL, orb_broker_account_name="unused"), session_factory=db[1],
-        broker_adapter=bot._removed_wait_adapter, redis_client=SimpleNamespace())
-    await oms.broker_adapter.start()
+        broker_adapter=guard, redis_client=SimpleNamespace())
     published = []
 
     async def publish(event):
