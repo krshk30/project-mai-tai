@@ -3250,6 +3250,9 @@ class ControlPlaneRepository:
             for event in heartbeats:
                 heartbeat = HeartbeatEvent.model_validate(event)
                 payload = heartbeat.payload
+                # The paper ORB service is retired; orb-schwab remains live evidence.
+                if payload.service_name == "orb":
+                    continue
                 if payload.service_name in latest_by_service:
                     continue
                 latest_by_service[payload.service_name] = {
@@ -4722,6 +4725,22 @@ def _compact_bot_card(
         stream_label = "streamer: connected" if streamer == "true" else "streamer: not exposed" if not streamer else f"streamer: {streamer}"
     exceptions = str(details.get("loop_exceptions_total") or details.get("exceptions_total") or "0")
     exception_tone = "warn" if exceptions not in {"", "0"} else ""
+    live_symbols = str(_safe_int(bot.get("watchlist_count")))
+    health_label = "loop_health"
+    exceptions_label = f"{exceptions} exceptions"
+    if code == "orb_schwab":
+        service = service_by_name.get("orb-schwab") or {}
+        orb_status = _build_orb_live_listening_status({"services": [service]}, bot)
+        data_flow = orb_status["state"]
+        flow_tone = "bad" if data_flow == "STOPPED" else "warn" if data_flow == "UNKNOWN" else "good"
+        live_symbols = str(orb_status["watchlist_count"])
+        lag_seconds = _seconds_since_datetime_value(orb_status["last_bar_at"])
+        lag_label = _format_lag(lag_seconds)
+        lag_tone = "warn" if lag_seconds is None else "good" if lag_seconds <= 20 else "warn" if lag_seconds <= 180 else "bad"
+        health_label, loop_health, loop_tone = "orb-schwab", data_flow.lower(), flow_tone
+        stream_label = f"subscribed: {live_symbols}"
+        stream_tone = flow_tone
+        exceptions_label, exception_tone = "exceptions: not reported", "warn"
     name = str(bot.get("display_name") or code.replace("_", " ").title())
     if code == "orb_schwab":
         name = "ORB Live"
@@ -4742,13 +4761,13 @@ def _compact_bot_card(
       </div>
       <div class="bot-metrics">
         <div class="metric"><div class="m-label">Data flow</div><div class="m-val {flow_tone}">{escape(_friendly_data_flow(data_flow))}</div></div>
-        <div class="metric"><div class="m-label">Live symbols</div><div class="m-val">{_safe_int(bot.get("watchlist_count"))}</div></div>
+        <div class="metric"><div class="m-label">Live symbols</div><div class="m-val">{escape(live_symbols)}</div></div>
         <div class="metric"><div class="m-label">Bar age</div><div class="m-val {lag_tone}">{escape(lag_label)}</div></div>
       </div>
       <div class="bot-health-row">
-        <span class="chip {loop_tone}">loop_health: {escape(loop_health)}</span>
+        <span class="chip {loop_tone}">{health_label}: {escape(loop_health)}</span>
         <span class="chip {stream_tone}">{escape(stream_label)}</span>
-        <span class="chip {exception_tone}">{escape(exceptions)} exceptions</span>
+        <span class="chip {exception_tone}">{escape(exceptions_label)}</span>
       </div>
     </div>
     """
@@ -5121,7 +5140,10 @@ def _find_bot_view(data: dict[str, Any], strategy_code: str) -> dict[str, Any] |
         None,
     )
     if bot is not None and normalized == "orb_schwab":
-        return {**bot, "watchlist": _orb_heartbeat_symbols(data, "subscribed")}
+        return {
+            **bot, "watchlist": _orb_heartbeat_symbols(data, "subscribed"),
+            "bar_counts": {}, "last_tick_at": {}, "data_health": {"status": "not reported"},
+        }
     return bot
 
 
@@ -5248,7 +5270,7 @@ def _orb_heartbeat_symbols(data: dict[str, Any], key: str) -> list[str]:
 
 
 def _build_orb_live_listening_status(
-    data: dict[str, Any], bot: dict[str, Any], latest_tick: str
+    data: dict[str, Any], bot: dict[str, Any]
 ) -> dict[str, Any]:
     service = _service_by_name(data, "orb-schwab") or {}
     details = service.get("details") or {}
@@ -5290,15 +5312,16 @@ def _build_orb_live_listening_status(
         state, detail, color = "EVALUATING", "ORB-Schwab is evaluating today's opening range.", "#5fff8d"
     return {
         "state": state, "detail": detail, "color": color,
-        "latest_decision_at": str(details.get("last_decision_at") or ""), "latest_bot_tick_at": latest_tick,
+        "latest_decision_at": str(details.get("last_decision_at") or ""), "latest_bot_tick_at": "",
         "latest_market_data_at": "", "latest_heartbeat_at": heartbeat_at,
         "last_bar_at": str(details.get("last_bar_at") or ""),
         "healthy_since": str(details.get("healthy_since") or ""),
         "universe": universe, "subscribed": subscribed,
         "watchlist_count": len(subscribed),
         "position_count": len(bot.get("positions", [])),
-        "tracked_bar_count": sum(int(value or 0) for value in bot.get("bar_counts", {}).values()),
-        "data_health": dict(bot.get("data_health", {}) or {}),
+        # The live heartbeat publishes bar time, not a cached-bar count or tick health.
+        "tracked_bar_count": None,
+        "data_health": {},
     }
 
 
@@ -5331,7 +5354,7 @@ def _build_bot_listening_status(
     latest_heartbeat_at = str(strategy_service.get("observed_at") or "")
 
     if bot.get("strategy_code") == "orb_schwab":
-        return _build_orb_live_listening_status(data, bot, latest_bot_tick_at)
+        return _build_orb_live_listening_status(data, bot)
 
     decision_age_seconds = _seconds_since_eastern_label(latest_decision_at)
     bot_tick_age_seconds = _seconds_since_eastern_label(latest_bot_tick_at)
@@ -6202,6 +6225,9 @@ def _render_bot_detail_page(
             for symbol in warning_symbols
         ]
         data_health_detail = " | ".join(reason_parts)
+    if strategy_code == "orb_schwab":
+        data_health_color = "#ffcc5b"
+        data_health_detail = "ORB-Schwab heartbeat does not report data-path health."
     current_position = bot["positions"][0] if strategy_code == "runner" and bot["positions"] else None
     available_codes = [str(item["strategy_code"]) for item in data.get("bots", [])]
     production_preview = int(bot.get("interval_secs") or 0) == 30 and strategy_code in {
@@ -6443,13 +6469,13 @@ def _render_bot_detail_page(
                     <div class="hero-card"><span>Last Bot Tick</span><strong>{escape(listening_status["latest_bot_tick_at"] or "-")}</strong><small>Latest tick that reached this bot</small></div>
                     <div class="hero-card"><span>Last Market Data</span><strong>{escape(listening_status["latest_market_data_at"] or "-")}</strong><small>Snapshot / subscription freshness</small></div>
                     <div class="hero-card"><span>Last Strategy Heartbeat</span><strong>{escape(listening_status["latest_heartbeat_at"] or "-")}</strong><small>{'orb-schwab' if strategy_code == 'orb_schwab' else 'strategy-engine'} heartbeat</small></div>
-                    <div class="hero-card"><span>{escape(data_health_card_label)}</span><strong style="color:{data_health_color}">{escape(data_health_status.upper())}</strong><small>{escape(", ".join(halted_symbols or warning_symbols) or "no halted symbols")}</small></div>
-                    <div class="hero-card"><span>Tracked Symbols</span><strong>{listening_status["watchlist_count"]}</strong><small>Open positions: {listening_status["position_count"]} · Bars cached: {listening_status["tracked_bar_count"]}</small></div>
+                    <div class="hero-card"><span>{escape(data_health_card_label)}</span><strong style="color:{data_health_color}">{escape(data_health_status.upper())}</strong><small>{escape(data_health_detail if strategy_code == 'orb_schwab' else ", ".join(halted_symbols or warning_symbols) or "no halted symbols")}</small></div>
+                    <div class="hero-card"><span>Tracked Symbols</span><strong>{listening_status["watchlist_count"]}</strong><small>Open positions: {listening_status["position_count"]} · Bars cached: {listening_status["tracked_bar_count"] if listening_status["tracked_bar_count"] is not None else 'not reported'}</small></div>
                 </div>
             </section>"""
 
     data_health_panel = ""
-    if data_health_status != "healthy":
+    if data_health_status != "healthy" and strategy_code != "orb_schwab":
         affected_symbols = halted_symbols or warning_symbols
         halted_since = ", ".join(
             f"{symbol} since {(data_health_since if halted_symbols else data_warning_since).get(symbol, '-')}"
