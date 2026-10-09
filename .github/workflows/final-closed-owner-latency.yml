@@ -1,0 +1,115 @@
+name: Final F I Strict PostgreSQL Latency Pair
+
+on:
+  push:
+    branches: ["codex/flye-bound-owner-target-close-1008"]
+    paths: [".github/workflows/final-closed-owner-latency.yml"]
+  workflow_dispatch:
+    inputs:
+      f_head:
+        description: Exact forty-character F commit
+        required: true
+        type: string
+      i_head:
+        description: Exact forty-character I commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  strict-final-pair:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: project_mai_tai_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d project_mai_tai_test"
+          --health-interval 2s --health-timeout 5s --health-retries 10
+    env:
+      MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
+      F_HEAD: ${{ inputs.f_head || 'ce8c97a22983c26033aa177bc465ca810f5a6abf' }}
+      I_HEAD: ${{ inputs.i_head || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Freeze and compare the two submitted sources
+        run: |
+          python - <<'PY'
+          import os, re, subprocess
+          for name in ("F_HEAD", "I_HEAD"):
+              sha = os.environ[name]
+              assert re.fullmatch("[0-9a-f]{40}", sha), name
+              subprocess.check_call(["git", "cat-file", "-e", sha + "^{commit}"])
+          for path in ("src/project_mai_tai/oms/buy_submission_journal.py",
+                       "tests/integration/test_buy_submission_tokens_runtime.py"):
+              subprocess.check_call(["git", "diff", "--exit-code", os.environ["F_HEAD"],
+                                     os.environ["I_HEAD"], "--", path])
+          PY
+          mkdir -p "$RUNNER_TEMP/f-final" "$RUNNER_TEMP/i-final" final-pair-logs
+          git archive "$F_HEAD" | tar -x -C "$RUNNER_TEMP/f-final"
+          git archive "$I_HEAD" | tar -x -C "$RUNNER_TEMP/i-final"
+          printf 'F=%s\nI=%s\nrunner=%s\n' "$F_HEAD" "$I_HEAD" "$RUNNER_NAME" | tee final-pair-logs/identity.log
+      - name: Install identical dependencies
+        run: python -m pip install -e "$RUNNER_TEMP/i-final[dev]"
+      - name: Twenty unchanged duplicate-quote timing controls per source
+        env:
+          PYTHONPATH: ${{ runner.temp }}/i-final:${{ runner.temp }}/i-final/src:${{ github.workspace }}/tests/support
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          failures = {}
+          node = "tests/unit/test_nfq2_tick_path.py::test_nfq2_slow_save_does_not_stall_loop_and_concurrent_quotes_queue_once"
+          for lane in ("f", "i"):
+              root = os.path.join(os.environ["RUNNER_TEMP"], lane + "-final")
+              env = dict(os.environ, PYTHONPATH=root + ":" + root + "/src:" + os.environ["GITHUB_WORKSPACE"] + "/tests/support")
+              failures[lane] = 0
+              for run in range(20):
+                  result = subprocess.run(["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", node],
+                                          cwd=root, env=env, capture_output=True, text=True)
+                  failures[lane] += result.returncode != 0
+                  with open(f"final-pair-logs/{lane}-duplicate-{run:02d}.log", "w") as log:
+                      log.write(result.stdout + result.stderr)
+              print(lane, "strict duplicate timing failures", failures[lane], "of20", flush=True)
+          assert not any(failures.values()), failures
+          PY
+      - name: F strict unchanged workload
+        id: f
+        if: ${{ !cancelled() }}
+        working-directory: ${{ runner.temp }}/f-final
+        env:
+          PYTHONPATH: ${{ runner.temp }}/f-final:${{ runner.temp }}/f-final/src:${{ github.workspace }}/tests/support
+        run: |
+          set -o pipefail
+          python -m pytest -p no:cacheprovider -p closed_owner_latency_diagnostics -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/final-pair-logs/f.log"
+      - name: I strict unchanged workload
+        id: i
+        if: ${{ !cancelled() && (steps.f.outcome == 'success' || steps.f.outcome == 'failure') }}
+        working-directory: ${{ runner.temp }}/i-final
+        env:
+          PYTHONPATH: ${{ runner.temp }}/i-final:${{ runner.temp }}/i-final/src:${{ github.workspace }}/tests/support
+        run: |
+          set -o pipefail
+          python -m pytest -p no:cacheprovider -p closed_owner_latency_diagnostics -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/final-pair-logs/i.log"
+      - name: Preserve exact identities and both receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-f-i-strict-latency-${{ github.run_id }}
+          path: final-pair-logs
+      - name: Require both strict passes
+        if: always()
+        env:
+          F_OUTCOME: ${{ steps.f.outcome }}
+          I_OUTCOME: ${{ steps.i.outcome }}
+        run: test "$F_OUTCOME" = success && test "$I_OUTCOME" = success
