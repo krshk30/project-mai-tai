@@ -293,8 +293,8 @@ def check_buy_submission_commit_failures(
 ) -> tuple[tuple[str, str, str], ...]:
     """All-hours operational evidence independent of the failed application DB.
 
-    Scan at most1 MiB per cron. Keep failed scopes RED across quiet scans and
-    failed notification delivery; only a positive same-scope commit resolves it.
+    Scan at most 1 MiB per cron. Recovery cannot erase an unacknowledged page;
+    the existing wrapper records its fingerprint only after accepted delivery.
     """
     path = _BUY_TOKEN_STATE_PATH if state_path is None else state_path
     log = _BUY_TOKEN_LOG_PATH if oms_log is None else oms_log
@@ -309,6 +309,17 @@ def check_buy_submission_commit_failures(
         active = set(prior["active"])
         if not all(isinstance(item, str) for item in active):
             raise ValueError("invalid submit-token active scopes")
+        pending = prior.get("notification_pending", bool(active))
+        if type(pending) is not bool:
+            raise ValueError("invalid submit-token notification state")
+        if pending:
+            acknowledged = Path(os.environ.get("FLEET_HEALTH_OUT", "/home/trader/fleet_health")) / "paged.active"
+            try:
+                accepted = acknowledged.read_text(encoding="utf-8").splitlines()
+            except FileNotFoundError:
+                accepted = []
+            if f"fleet-runtime:{name}" in accepted:
+                pending = False
         stat = log.stat()
         raw_cursor = prior.get("cursor")
         start = 0
@@ -330,10 +341,11 @@ def check_buy_submission_commit_failures(
             key = (account + b":" + symbol).decode("utf-8")
             if outcome == b"commit_failed" and blocked == b"1":
                 active.add(key)
+                pending = True
             elif outcome == b"committed" and blocked == b"0":
                 active.discard(key)
         end = start + len(payload)
-        state = {"active": sorted(active), "cursor": {
+        state = {"active": sorted(active), "notification_pending": pending, "cursor": {
             "device": stat.st_dev, "inode": stat.st_ino, "offset": end}}
         path.parent.mkdir(parents=True, exist_ok=True)
         handle, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".")
@@ -347,9 +359,9 @@ def check_buy_submission_commit_failures(
         finally:
             tmp.unlink(missing_ok=True)
         backlog = end < stat.st_size
-        return (("RED" if active or backlog else "GREEN", name,
+        return (("RED" if active or pending or backlog else "GREEN", name,
                  f"buy_blocked_scopes={','.join(sorted(active)) or '-'} "
-                 f"bytes_scanned={len(payload)} backlog={int(backlog)}"),)
+                 f"bytes_scanned={len(payload)} backlog={int(backlog)} notification_pending={int(pending)}"),)
     except (OSError, ValueError, TypeError, UnicodeError) as exc:
         return (("RED", name, f"submit-token evidence unreadable error={type(exc).__name__}"),)
 
