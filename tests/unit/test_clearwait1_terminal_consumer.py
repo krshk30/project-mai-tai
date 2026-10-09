@@ -21,7 +21,7 @@ db, sdk = rollover_db, controlled_sdk
 pytestmark = pytest.mark.usefixtures("sdk")
 
 
-def terminal_buy(database, req, guard, account, *, status="cancelled", fault=None, bound=False):
+def terminal_buy(database, req, guard, account, *, status="cancelled", fault=None, bound=False, order_generation=True):
     """Committed SDK answer identity/order/latest broker event; never a historical replay."""
     coid = f"controlled-terminal-{account}"
     broker_id = f"controlled-broker-{account}"
@@ -31,7 +31,7 @@ def terminal_buy(database, req, guard, account, *, status="cancelled", fault=Non
         order = BrokerOrder(strategy_id=database[3], broker_account_id=database[2][account],
             symbol=req.symbol, side="buy", client_order_id=coid, broker_order_id=broker_id,
             status=status, order_type="limit", time_in_force="day", quantity=1,
-            payload={"fanout_segment_id": str(req.opportunity_id)})
+            payload={"fanout_segment_id": str(req.opportunity_id)} if order_generation else {})
         session.add(order)
         session.flush()
         event_at = NOW if fault != "pre_token_event" else datetime.fromtimestamp((ms(NOW) - 2000) / 1000, UTC)
@@ -70,13 +70,14 @@ def token_states(database):
 
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL, "both"])
 @pytest.mark.parametrize("status", ["cancelled", "rejected", "expired", "filled"])
+@pytest.mark.parametrize("order_generation", [True, False])
 @pytest.mark.asyncio
-async def test_mixed_terminal_and_never_sent_actual_journal_clears(db, monkeypatch, account, status):
+async def test_mixed_terminal_and_never_sent_actual_journal_clears(db, monkeypatch, account, status, order_generation):
     req, guard = await covered_request(db, monkeypatch)
     bot, strat, _, calls = runtime(db, monkeypatch, req=req)
     names = ACCOUNTS if account == "both" else {account}
     for name in names:
-        terminal_buy(db, req, guard, name, status=status, bound=True)
+        terminal_buy(db, req, guard, name, status=status, bound=True, order_generation=order_generation)
     await produce_book(bot, db, req)
     await poll(bot)
     assert not db[0].restore() and not strat._removed_wait_requests
@@ -97,6 +98,15 @@ async def test_terminal_unknown_rolls_back_mixed_closures_and_token_state(db, mo
     assert not assess_covered(db, req).clear
     assert not closures(db) and db[0].restore() == {"DKI": req}
     assert token_states(db) == ["submitting" if fault == "crash" else "reported_ambiguous"]
+
+
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.asyncio
+async def test_terminal_filled_token_without_order_marker_still_requires_owner(db, monkeypatch, account):
+    req, guard = await covered_request(db, monkeypatch)
+    terminal_buy(db, req, guard, account, status="filled", fault="missing_owner", order_generation=False)
+    assert not assess_covered(db, req).clear
+    assert not closures(db) and token_states(db) == ["reported_ambiguous"]
 
 
 @pytest.mark.parametrize("failure", ["memory_cas", "commit", "stale_book", "assessment_bound", "new_generation"])
