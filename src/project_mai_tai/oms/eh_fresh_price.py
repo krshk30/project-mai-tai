@@ -358,14 +358,14 @@ class EhFreshPriceMixin:
             return
         symbol = symbol.upper()
         # Reject unrelated/stale ticks entirely in memory, before copying anything or opening a session.
+        busy = self.__dict__.setdefault("_eh_price_hold_inflight", set())
         matches = [(key, hold) for key, hold in self._nfq2_holds.items()
-                   if hold.event.payload.symbol == symbol and hold.phase == "held"]
+                   if key not in busy and hold.event.payload.symbol == symbol and hold.phase == "held"]
         if not matches:
             return
         reading = self._nfq2_reading(symbol)
         if not reading.fresh:
             return
-        busy = self.__dict__.setdefault("_eh_price_hold_inflight", set())
         for key, hold in matches:
             if key in busy or self._nfq2_holds.get(key) is not hold or hold.phase != "held":
                 continue
