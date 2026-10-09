@@ -159,6 +159,21 @@ def test_fourteen_working_rows_no_candidates_without_any_orm_hydration(lane):
     assert actual == [] and loaded.count(BrokerOrder) == 14
 
 
+def test_market_open_orders_skip_payload_materialization_and_lookup_reads(lane):
+    for _ in range(25):
+        seed_order(lane, payload={"order_type": "market", "limit_price": "2.55"})
+    actual, loaded = compare(lane, expected_query_count=1)
+    assert actual == [] and loaded.count(BrokerOrder) == 25
+
+
+@pytest.mark.parametrize("payload_type", ["limit", "LIMIT", "LiMiT", " LIMIT ", "\tlimit\n",
+                                         "market", None, 12, ["limit"], {"type": "limit"}])
+@pytest.mark.parametrize("quote", [None, {"ask": 3.0}])
+def test_cache_type_filter_preserves_python_string_and_whitespace_semantics(lane, payload_type, quote):
+    seed_order(lane, payload={"order_type": payload_type, "limit_price": "2.55"})
+    compare(lane, quote=quote)
+
+
 @pytest.mark.parametrize("quote", [None, {"ask": 3.0, "bid": 2.0}])
 def test_candidates_preserve_all_fields_metadata_and_exact_target_budget(lane, quote):
     first = seed_order(lane, payload={"order_type": "limit", "limit_price": "2.55",

@@ -16322,6 +16322,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES),
             func.lower(TradeIntent.intent_type) == "open",
         )
+        if quote is None:
+            # Cache refresh excludes these orders below; avoid decoding their payloads.
+            query = query.where(func.lower(BrokerOrder.payload["order_type"].as_string()) == "limit")
         if symbol is not None:
             query = query.where(BrokerOrder.symbol == symbol)
         orders = session.execute(query).all()
