@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 import threading
 from uuid import uuid4
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, event, select
@@ -42,6 +43,24 @@ def adapter(sessions):
     leaf = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
     leaf.accounts_by_name = {"schwab": SchwabAccountConfig(account_hash="actual-hash")}
     return leaf, journal.DurableBuyAdapter(leaf, sessions)
+
+
+@pytest.mark.asyncio
+async def test_routed_simulator_keeps_existing_behavior_without_physical_coverage(sessions):
+    calls = []
+    async def simulated(req):
+        calls.append(req)
+        return []
+    leaf = SimpleNamespace(submit_order=simulated)
+    routed = RoutingBrokerAdapter(default_provider="simulated",
+        provider_by_account={"schwab": "simulated"}, factories_by_provider={"simulated": lambda: leaf})
+    guard = journal.DurableBuyAdapter(routed, sessions)
+    await guard.start()
+    await guard.submit_order(request())
+    assert len(calls) == 1
+    with sessions() as session:
+        assert not list(session.scalars(select(journal.BuyCoverageEpoch)))
+        assert not list(session.scalars(select(journal.BuySubmissionToken)))
 
 
 def request(**metadata):
