@@ -8886,3 +8886,17 @@ receipts. No historicalquotes/owner/removalreplay,notcausalorderPASS.
 ActualG2MI previous-session waitstillblocksMondayfirstflip after
 explicitboot/fleetholdrelease; finalpostarchivetableproofstillowed.
 No productionaction; ownCrows/docs only,header/reviewerrowsunchanged.
+
+2026-10-09 14:00 ET codex-2 C18: MASTER received and governs scope.
+Scheduling failure acknowledged:10:50 ORBFILL asks received but parent
+concentrated on LINE gates and failed to maintain ORBFILL progress.
+Actual capacity two subagents plus parent; extra spawn refused, not
+five independent workers. Prefer one master with stable ask IDs.
+AgentA owns O1 anchor/source/tests,O2 historical Schwab reads,O3 retained
+poll search,O4 finalCI. Root failedCI37946657648:3F/8137P/55skip;
+two catalog153->154 literals plus expected-value production recompute.
+Singer resumes FI1 strict50ms attribution. Parent L1 waits reviewer
+post-archive receipt; L2/C3 wait G2+pin+flat. T1 design only until Ogreen;
+C1 after-close fresh gates,C2 wait Oreview/pin. Reviewer acceptedG7,
+remaining LINE gate G2; no reuse of failed pre-archive snapshot.
+Webull detail/DB resilience parked. No production change. Own docs only.
