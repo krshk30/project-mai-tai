@@ -1,0 +1,15 @@
+"""Same actual journal/source controls against required guarded real PostgreSQL."""
+
+from tests.unit import test_unbound_cancel_book as controls
+import test_cancel_terminal_runtime as runtime
+
+sessions = runtime.sessions
+sdk = runtime.sdk
+test_actual_unbound_cancel_source_publishes_before_book_and_preserves_receipt = (
+    controls.test_actual_unbound_cancel_source_publishes_before_book_and_preserves_receipt)
+test_changed_or_newer_receipt_cannot_reuse_unbound_journal = (
+    controls.test_changed_or_newer_receipt_cannot_reuse_unbound_journal)
+test_book_read_request_revision_cas_and_malformed_inventory_fail_closed = (
+    controls.test_book_read_request_revision_cas_and_malformed_inventory_fail_closed)
+test_new_explicit_receipt_refreshes_prior_book_once_not_its_timestamps = (
+    controls.test_new_explicit_receipt_refreshes_prior_book_once_not_its_timestamps)
