@@ -1,0 +1,43 @@
+{
+  "captured_at": "2026-10-09T19:31:41.007147+00:00",
+  "source": "bounded READ ONLY durable rows and schwab-1m-v2.log; no broker inventory",
+  "request": {
+    "id": "41e1ad75-6557-4a85-a5de-f626ba5d6516",
+    "snapshot_type": "v2_removed_wait__archived_20261009",
+    "created_at": "2026-10-09T18:17:44.255291+00:00",
+    "payload": {"schema_version": 1, "strategy_code": "schwab_1m_v2", "symbol": "JZ",
+      "opportunity_id": "0", "token": "5eb94204-f5aa-46b5-bb69-0910c1d88836",
+      "requested_at_ms": "1791569864253", "account_names": ["live:schwab_1m_v2", "live:orb"], "active": true}
+  },
+  "accounts": {
+    "eb8606c3-3b60-467b-984a-00a752aaf46a": "live:schwab_1m_v2",
+    "3bf71604-e975-4339-9ac1-6ce82117b1ea": "live:orb"
+  },
+  "receipts": [
+    {"id": "205b5238-5865-4f22-8438-c63527568980", "broker_account_id": "eb8606c3-3b60-467b-984a-00a752aaf46a",
+      "symbol": "JZ", "side": "buy", "intent_type": "cancel", "quantity": 2, "status": "rejected",
+      "created_at": "2026-10-09T18:17:45.853912+00:00", "updated_at": "2026-10-09T18:17:45.861175+00:00",
+      "payload": {"event_id": "157bda73-9a8f-46cd-9763-402ef21f3e37", "source_service": "schwab-1m-v2",
+        "metadata": {"clearwait_removal_token": "5eb94204-f5aa-46b5-bb69-0910c1d88836", "clearwait_opportunity_id": "0",
+          "resting_entry_cancel": "true", "reason": "watchlist-removed", "clearwait_buy_only": "true",
+          "source": "schwab_1m_v2", "strategy_version": "v1.32"},
+        "refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found"}},
+    {"id": "bfcac6d6-0b18-426f-94cf-a5877f307a3c", "broker_account_id": "3bf71604-e975-4339-9ac1-6ce82117b1ea",
+      "symbol": "JZ", "side": "buy", "intent_type": "cancel", "quantity": 1, "status": "rejected",
+      "created_at": "2026-10-09T18:17:45.896375+00:00", "updated_at": "2026-10-09T18:17:45.905092+00:00",
+      "payload": {"event_id": "af884d5e-1e2a-4221-a69c-592d71fcca5d", "source_service": "schwab-1m-v2",
+        "metadata": {"clearwait_removal_token": "5eb94204-f5aa-46b5-bb69-0910c1d88836", "clearwait_opportunity_id": "0",
+          "resting_entry_cancel": "true", "reason": "watchlist-removed", "clearwait_buy_only": "true",
+          "source": "schwab_1m_v2", "strategy_version": "v1.32", "fanout_leg": "webull", "fanout_source": "rth_resting_mirror"},
+        "refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found"}}
+  ],
+  "readded_at": "2026-10-09T18:19:51.846000+00:00",
+  "sell": {"bar_time_ms": 1791572640000, "observed_at_ms": 1791572703264,
+    "close": "1.165", "trail": "1.4008191118154911", "decision_id": "atr-sell:JZ:1791572640000"},
+  "current_session_oms_counts": {"open_intents": 0, "orders": 0, "fills": 0},
+  "dispatch_journal_retained": false,
+  "broker_inventory": "UNMEASURED",
+  "log_path": "/var/log/project-mai-tai/schwab-1m-v2.log",
+  "log_lines": {"removed": 39210, "dispatch_history_unknown": 39222, "readded": 39263,
+    "removal_not_durable": 39726, "sell_bar": 40088, "sell_observation": 40090}
+}
