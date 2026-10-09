@@ -221,7 +221,8 @@ async def test_real_oms_uncommitted_buy_visibility_is_never_local_terminal(sessi
     event = TradeIntentEvent(source_service="test", payload=TradeIntentPayload(
         strategy_code="schwab_1m_v2", broker_account_name="schwab", symbol="FLYE", side="buy",
         quantity=Decimal(1), intent_type="open", reason="ENTRY",
-        metadata={"reference_price": "2", **({"rpg_handoff_token": "token"} if prewire else {})}))
+        metadata={"reference_price": "2", "entry_size_price": "2",
+                  **({"rpg_handoff_token": "token"} if prewire else {})}))
     await oms.process_trade_intent(event)
     assert reached
     with sessions() as independent:
