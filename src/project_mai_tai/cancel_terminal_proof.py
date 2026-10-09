@@ -306,6 +306,8 @@ def evaluate_unbound_cancel_terminal(
             or any(v is not True for v in (fences.no_inflight_buy, fences.no_unanswered_cancel,
                                           fences.owned_rows_closed, fences.request_cas_current))):
         return result("unbound_request_db_or_cas_unknown")
+    if never_sent_witnesses is not None and set(never_sent_witnesses) != set(expected.account_ids):
+        return result("unbound_never_sent_account_coverage_unknown")
     for name, account_id in expected.account_ids.items():
         never_sent = (never_sent_witnesses or {}).get(name)
         if never_sent is not None:
@@ -329,7 +331,10 @@ def evaluate_unbound_cancel_terminal(
                     or not expected.requested_at_ms <= never_sent.observed_at_ms <= now_ms
                     or now_ms - never_sent.observed_at_ms > freshness_ms):
                 return result("unbound_never_sent_legacy_or_stale")
-            continue
+            # Durable admission proves only OMS never sent this generation. It
+            # cannot certify absence of an operator BUY in the Webull account.
+            if expected.account_providers[name] == "schwab":
+                continue
         if expected.account_providers[name] == "schwab":
             witness = schwab_witness
             if (not isinstance(witness, SchwabLocalCancelWitness)

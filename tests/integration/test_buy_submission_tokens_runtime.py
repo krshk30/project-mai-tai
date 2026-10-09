@@ -83,6 +83,10 @@ def oms(sessions, adapter, monkeypatch):
 async def test_actual_postcoverage_two_account_journal_never_dispatched_replays(sessions, sdk, monkeypatch, symbol):
     clock, _sc, _wb, guard = await setup_protocol(sessions, monkeypatch)
     sc, wb = scope(guard, symbol), scope(guard, symbol, "live:orb")
+    monkeypatch.setattr(broker, "now_ms", lambda: clock[0])
+    books = {"live:orb": await broker.acquire_complete_working_book(
+        guard, "live:orb", after_ms=sc.requested_at_ms)}
+    assert books["live:orb"] is not None
     expected = UnboundCancelRequest(symbol, sc.request_id, sc.request_token, sc.generation,
         "retry_exhausted", sc.requested_at_ms, {s.account_name: s.account_id for s in (sc, wb)},
         {"schwab": "schwab", "live:orb": "webull"}, sc.session_key, sc.opportunity_started_at_ms,
@@ -90,7 +94,10 @@ async def test_actual_postcoverage_two_account_journal_never_dispatched_replays(
     with sessions() as session:
         witnesses = {s.account_name: journal.close_never_sent_admission(session, s, observed_at_ms=clock[0])
                      for s in (sc, wb)}
-        assert evaluate_unbound_cancel_terminal(expected, {},
+        assert not evaluate_unbound_cancel_terminal(expected, {},
+            fences=UnboundCancelFences(expected, True, True, True, True),
+            never_sent_witnesses=witnesses, now_ms=clock[0]).terminal
+        assert evaluate_unbound_cancel_terminal(expected, books,
             fences=UnboundCancelFences(expected, True, True, True, True),
             never_sent_witnesses=witnesses, now_ms=clock[0]).terminal
         assert session.execute(text("SELECT CAST(:epoch AS bigint)"),
