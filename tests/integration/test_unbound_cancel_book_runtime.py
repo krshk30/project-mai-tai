@@ -13,3 +13,5 @@ test_book_read_request_revision_cas_and_malformed_inventory_fail_closed = (
     controls.test_book_read_request_revision_cas_and_malformed_inventory_fail_closed)
 test_new_explicit_receipt_refreshes_prior_book_once_not_its_timestamps = (
     controls.test_new_explicit_receipt_refreshes_prior_book_once_not_its_timestamps)
+test_new_receipt_during_prior_physical_flight_waits_then_coalesces = (
+    controls.test_new_receipt_during_prior_physical_flight_waits_then_coalesces)
