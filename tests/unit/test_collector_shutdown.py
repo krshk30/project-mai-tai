@@ -100,7 +100,7 @@ def test_other_or_incomplete_exception_is_unknown(exception):
         parse(block(exception=exception))
 
 
-@pytest.mark.parametrize("change", ["missing", "unit", "pid", "boot", "invocation",
+@pytest.mark.parametrize("change", ["missing", "unit", "pid", "boot", "empty_boot", "invocation",
     "duplicate", "reversed", "bad_time", "no_stop", "extra_line", "another_stack",
     "wrong_entrypoint", "wrong_marker"])
 def test_missing_or_ambiguous_identity_stays_unknown(change):
@@ -113,6 +113,9 @@ def test_missing_or_ambiguous_identity_stays_unknown(change):
         rows[2]["_PID"] = "2345"
     elif change == "boot":
         rows[2]["_BOOT_ID"] = "other"
+    elif change == "empty_boot":
+        for row in rows:
+            row["_BOOT_ID"] = ""
     elif change == "invocation":
         rows[2]["INVOCATION_ID"] = "old"
     elif change == "duplicate":
