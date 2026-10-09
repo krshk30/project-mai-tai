@@ -8708,3 +8708,12 @@ I11b26 both exactCI14/15 goldenFAIL, including transport/CAS and strict
 latency; noREADY or waiver. Earlier139 has concurrent SQLite worker lead,
 not yet causal proof. Sourceproposals limited to currentregressions. No box
 write, flags, service change, orders, merge or installation in this turn.
+
+2026-10-09 08:07 ET codex-2 C7: shared1138 tests-only7ca1801a adds bounded
+slow SQL/commit thread and OMS call-site attribution; F1133 cherry-picks
+unchanged44a3d5ef, application source diff vs78ae EMPTY. Strict workload and
+50ms bounds unchanged;151 shared unitPASS/6.07s,16 PG collected, not local
+execution. New hostedCI pending, no prior-green inheritance. I remains sole
+writer for real transport/CAS and139 fixture investigation. Session agent
+capacity denied new LINE worker; parent implemented LINE locally, no parked
+DB work or cross-writer source patch. No READY, waiver or production action.
