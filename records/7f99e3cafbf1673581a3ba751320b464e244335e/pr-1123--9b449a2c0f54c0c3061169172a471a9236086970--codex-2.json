@@ -1,0 +1,9 @@
+{
+  "pr_number": 1123,
+  "range_base": "9b449a2c0f54c0c3061169172a471a9236086970",
+  "range_head": "7f99e3cafbf1673581a3ba751320b464e244335e",
+  "reviewed_at": "2026-10-09T00:37:06Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed Claude-authored handoff/evidence range on corrected PR1123 head 14b62e964ec889a2b27857d9840090e3171c4fec. No runtime/source delta; 426 rebased patches unchanged, 427 inherited 10-06/10-07 T/C rows and 57 artifacts retained; historical log prefix preserved. 119 compatible handoff/mechanics tests pass. D51 post-restart GRAN traceback timestamps and stored-row versus process-memory correction independently verified; morning acceptance remains future evidence. Historical RETRYOFF1 replay is scoped to c21d8274, not claimed green on current runtime. No production action or Codex self-review."
+}
