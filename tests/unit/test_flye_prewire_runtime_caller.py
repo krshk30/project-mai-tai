@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from project_mai_tai.broker_adapters import cancel_terminal as broker
@@ -38,6 +38,7 @@ def at(milliseconds):
 @pytest.fixture
 def runtime_db(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'flye_caller.sqlite'}")
+    event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
     Base.metadata.create_all(engine)
     sessions = sessionmaker(engine, expire_on_commit=False)
     ids, strategy_id = {name: uuid4() for name in (PRIMARY, WEBULL)}, uuid4()
@@ -139,7 +140,10 @@ async def test_actual_wired_owner_cannot_be_certified_never_sent(runtime_db, mon
             status="open" if case == "open_owned" else "closed", entry_time=at(bind_time + 2)))
         if case in {"working_schwab", "working_webull", "operator_sell"}:
             venue = PRIMARY if case == "working_schwab" else WEBULL
-            session.add(BrokerOrder(strategy_id=uuid4(), broker_account_id=ids[venue], symbol="FLYE",
+            foreign = Strategy(code="operator_replay_fixture", name="controlled unrelated strategy")
+            session.add(foreign)
+            session.flush()
+            session.add(BrokerOrder(strategy_id=foreign.id, broker_account_id=ids[venue], symbol="FLYE",
                 side="sell" if case == "operator_sell" else "buy", order_type="limit", time_in_force="day",
                 quantity=1000, status="accepted", client_order_id="controlled-operator-order", payload={}))
         session.commit()
