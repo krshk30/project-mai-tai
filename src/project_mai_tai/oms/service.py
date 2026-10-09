@@ -1012,6 +1012,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             seed_summary["strategies"],
             seed_summary["broker_accounts"],
         )
+        await asyncio.to_thread(self._rpg_retire_disabled_at_boot)
         self._rehydrate_managed_v2_symbols()  # slice-3: re-arm quote eval for open v2 rows
         self._restore_nfq_holds()
         self._restore_nfq2_holds()
