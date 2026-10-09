@@ -64,7 +64,8 @@ from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms import wbquiet_shadow
 from project_mai_tai.positions_read_receipt import (
-    record_receipts as record_positions_read_receipts,
+    PositionsReadReceiptWriter,
+    receipt_session_factory,
 )
 from project_mai_tai.falseflip1_runtime import classify_managed_entries, record_bar
 from project_mai_tai.oms.mirror_fresh_price import MirrorFreshPriceMixin
@@ -1042,6 +1043,17 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # price, never a backlogged one.
         tick_task = asyncio.create_task(self._run_tick_consumer(stop_event))
         rpg_task = asyncio.create_task(self._run_rpg_retry_loop(stop_event))
+        # ALERTS1: bounded positions-read receipt writer on its own small pool. It can never
+        # stop the OMS from starting: without it no receipt is written, so the reconciler
+        # simply keeps every exposure incident open (the safe direction).
+        receipt_task = None
+        try:
+            self._positions_read_receipt_writer = PositionsReadReceiptWriter(
+                receipt_session_factory(self.settings)
+            )
+            receipt_task = asyncio.create_task(self._positions_read_receipt_writer.run())
+        except Exception:  # noqa: BLE001 - evidence bookkeeping is never load-bearing
+            self.logger.warning("[POSITIONS-READ-RECEIPT] writer_unavailable — no receipts")
         falseflip_task = (
             asyncio.create_task(self._run_falseflip_worker(stop_event))
             if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True
@@ -1053,9 +1065,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             stop_event.set()
             tick_task.cancel()
             rpg_task.cancel()
+            if receipt_task is not None:
+                receipt_task.cancel()
             if falseflip_task is not None:
                 falseflip_task.cancel()
-            await asyncio.gather(rpg_task, *([falseflip_task] if falseflip_task is not None else []),
+            await asyncio.gather(rpg_task, *([receipt_task] if receipt_task is not None else []),
+                                 *([falseflip_task] if falseflip_task is not None else []),
                                  return_exceptions=True)
             try:
                 await tick_task
@@ -10429,6 +10444,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     symbol, detail.get("broker_order_id"), detail.get("quantity"),
                 )
 
+    def _offer_positions_read_receipts(self, receipts: list[tuple[str, datetime, int]]) -> None:
+        writer = self.__dict__.get("_positions_read_receipt_writer")
+        if writer is None or not receipts:
+            return
+        try:
+            writer.offer(receipts)
+        except Exception:  # noqa: BLE001 - evidence bookkeeping is never load-bearing here
+            self.logger.warning("[POSITIONS-READ-RECEIPT] offer_failed")
+
     def _positions_wire_read_at(self, account_name: str) -> datetime:
         """Wall time of the real broker read behind the snapshot just returned (ALERTS1).
 
@@ -10572,13 +10596,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     [name for aid, name in accounts if aid == account_id],
                     "sync_account_positions",
                 )
-            # ALERTS1: one receipt per successfully read account, same transaction as the
-            # snapshot it vouches for. Savepoint: a receipt failure never costs the sync.
-            try:
-                with session.begin_nested():
-                    record_positions_read_receipts(session, read_receipts, recorded_at=utcnow())
-            except Exception:  # noqa: BLE001 - evidence bookkeeping is never load-bearing here
-                self.logger.warning("[POSITIONS-READ-RECEIPT-FAILED] receipts not recorded")
             # ⛔⭐ N3 — NEVER PUBLISH A FRESH FALSE ZERO. #714 made an erased row restorable, but
             # measured restores took 6.648s--19.119s while downstream consumers act inside 10s.
             # Restoration is therefore recovery, never permission to erase early. The measured
@@ -10663,6 +10680,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return synced_positions
 
         synced_positions = await self._run_db(_persist)
+        # ALERTS1: the save above COMMITTED (it raises otherwise), so hand the receipts of the
+        # accounts it saved to the bounded writer. put_nowait only: never awaited, never in
+        # this pass's transaction, and a writer failure cannot reach this path.
+        self._offer_positions_read_receipts(read_receipts)
 
         return {
             "accounts": len(accounts),

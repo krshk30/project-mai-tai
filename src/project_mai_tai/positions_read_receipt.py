@@ -1,10 +1,14 @@
 """ALERTS1: durable per-account receipt of the last COMPLETE, SUCCESSFUL broker positions read.
 
-Written ONLY by the OMS broker-sync pass (``OmsRiskService.sync_broker_positions`` ->
-``_persist``), off the event loop, inside the same transaction that applies the snapshot, and
-ONLY for accounts whose ``list_account_positions`` call returned (the adapters raise on a failed
-or incomplete read, and such an account is excluded from ``fetched``). A failed read writes
-nothing, so the previous receipt is retained and ages. Fills never touch it.
+Produced ONLY by the OMS broker-sync pass (``OmsRiskService.sync_broker_positions``) for
+accounts whose ``list_account_positions`` call returned (the adapters raise on a failed or
+incomplete read, and such an account is excluded from ``fetched``) AND only after that pass's
+snapshot save committed. It is then handed to ``PositionsReadReceiptWriter``: a bounded queue
+(put_nowait, drop-and-log when full) drained by one ``asyncio.to_thread`` worker on its own
+small pool (statement_timeout 1000 ms, lock_timeout 250 ms). The sync pass never awaits it and
+never shares its transaction; a write failure is logged once and not retried (the next pass
+offers a newer receipt). A failed read produces nothing, so the previous receipt is retained
+and ages. Fills never touch it.
 
 ``read_at`` is the time of the real broker (wire) read. When an adapter served a cached snapshot
 (Webull throttle / 429 backoff) it is the time that cached snapshot was actually read, so a cache
@@ -16,15 +20,21 @@ migration. Readers: the reconciler's ALERTS1 incident auto-resolve evidence fenc
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+import logging
 from typing import Any, Iterable
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import DashboardSnapshot
+from project_mai_tai.db.session import build_engine, build_session_factory
 
 SNAPSHOT_TYPE = "oms_positions_read_receipt"
+QUEUE_LIMIT = 8
+
+logger = logging.getLogger("oms-risk")
 
 
 def _aware(value: datetime) -> datetime:
@@ -82,3 +92,70 @@ def load_receipts(session: Session) -> dict[str, dict[str, Any]]:
             payload["read_at"] = None
         receipts[name] = payload
     return receipts
+
+
+def receipt_session_factory(settings) -> sessionmaker[Session]:
+    """Independent small pool: the OMS trading/sync sessions never wait for this writer."""
+    if not str(settings.database_url).startswith("postgresql"):
+        return build_session_factory(settings)
+    return sessionmaker(
+        bind=build_engine(
+            settings.database_url,
+            connect_timeout_s=2,
+            statement_timeout_ms=1000,
+            lock_timeout_ms=250,
+            pool_timeout_s=1,
+        ),
+        expire_on_commit=False,
+    )
+
+
+class PositionsReadReceiptWriter:
+    """Bounded, fire-and-forget receipt writer. ``offer`` never blocks and never raises."""
+
+    def __init__(self, session_factory: sessionmaker[Session] | None = None):
+        self.session_factory = session_factory
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_LIMIT)
+
+    def offer(self, receipts: list[tuple[str, datetime, int]]) -> bool:
+        if not receipts:
+            return False
+        try:
+            self.queue.put_nowait(list(receipts))
+            return True
+        except asyncio.QueueFull:
+            logger.warning(
+                "[POSITIONS-READ-RECEIPT] dropped reason=queue_full accounts=%s",
+                ",".join(name for name, _, _ in receipts),
+            )
+            return False
+
+    def _persist(self, batches: list[list[tuple[str, datetime, int]]]) -> None:
+        latest: dict[str, tuple[str, datetime, int]] = {}
+        for batch in batches:
+            for receipt in batch:
+                previous = latest.get(receipt[0])
+                if previous is None or receipt[1] >= previous[1]:
+                    latest[receipt[0]] = receipt
+        with self.session_factory() as session:
+            record_receipts(session, latest.values(), recorded_at=datetime.now(UTC))
+            session.commit()
+
+    async def run(self) -> None:
+        while True:
+            first = await self.queue.get()
+            batches = [first]
+            while not self.queue.empty():
+                batches.append(self.queue.get_nowait())
+            try:
+                # One physical worker at a time, even when the database is slow.
+                await asyncio.to_thread(self._persist, batches)
+            except Exception as exc:  # noqa: BLE001 - evidence only; logged, never retried
+                logger.warning(
+                    "[POSITIONS-READ-RECEIPT] write_failed batches=%s error=%s",
+                    len(batches),
+                    type(exc).__name__,
+                )
+            finally:
+                for _ in batches:
+                    self.queue.task_done()

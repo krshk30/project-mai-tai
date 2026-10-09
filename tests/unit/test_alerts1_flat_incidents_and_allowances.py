@@ -26,7 +26,13 @@ from project_mai_tai.db.models import (
 )
 from project_mai_tai.oms import service as oms_service
 from project_mai_tai.oms.store import OmsStore
-from project_mai_tai.positions_read_receipt import SNAPSHOT_TYPE, load_receipts, record_receipts
+from project_mai_tai.positions_read_receipt import (
+    QUEUE_LIMIT,
+    SNAPSHOT_TYPE,
+    PositionsReadReceiptWriter,
+    load_receipts,
+    record_receipts,
+)
 from project_mai_tai.reconciliation.flat_incidents import resolve_flat_exposure_incidents
 from project_mai_tai.reconciliation.service import ReconciliationService
 from project_mai_tai.settings import Settings
@@ -458,16 +464,22 @@ class _SyncAdapter:
         return self.wire_age.get(name)
 
 
-def _oms(session_factory, adapter):
+def _oms(session_factory, adapter, *, writer=FRESH, persist_fails=False):
     s = object.__new__(oms_service.OmsRiskService)
     s.store = _SyncStore()
     s.broker_adapter = adapter
     s.logger = logging.getLogger("test-alerts1-receipt")
     s.settings = SimpleNamespace()
+    if writer is FRESH:
+        writer = PositionsReadReceiptWriter(session_factory)
+    if writer is not None:
+        s._positions_read_receipt_writer = writer
 
     async def _run_db(fn, *, commit=True):
         with session_factory() as session:
             result = fn(session)
+            if persist_fails:
+                raise RuntimeError("sync save failed")
             if commit:
                 session.commit()
             return result
@@ -475,6 +487,20 @@ def _oms(session_factory, adapter):
     s._run_db = _run_db
     s._observe_settlement = lambda *a, **k: None
     return s
+
+
+def _sync_and_drain(oms):
+    """One sync pass, then let the writer drain exactly what was offered (as its worker would)."""
+
+    async def go():
+        result = await oms.sync_broker_positions()
+        writer = oms._positions_read_receipt_writer
+        worker = asyncio.create_task(writer.run())
+        await writer.queue.join()
+        worker.cancel()
+        return result
+
+    return asyncio.run(go())
 
 
 def _receipts(session_factory):
@@ -485,9 +511,11 @@ def _receipts(session_factory):
 def test_successful_sync_writes_one_receipt_per_account_and_upserts() -> None:
     session_factory = build_test_session_factory()
     oms = _oms(session_factory, _SyncAdapter())
-    asyncio.run(oms.sync_broker_positions())
+    _sync_and_drain(oms)
     first = _receipts(session_factory)
-    asyncio.run(oms.sync_broker_positions())
+    # asyncio.Queue binds to its event loop; production has one loop, each asyncio.run is new.
+    oms._positions_read_receipt_writer = PositionsReadReceiptWriter(session_factory)
+    _sync_and_drain(oms)
     second = _receipts(session_factory)
     assert set(second) == {"live:schwab_1m_v2", "live:orb"}
     assert second["live:orb"]["read_at"] >= first["live:orb"]["read_at"]
@@ -503,8 +531,76 @@ def test_successful_sync_writes_one_receipt_per_account_and_upserts() -> None:
 
 def test_partial_read_writes_no_receipt_for_the_failed_account() -> None:
     session_factory = build_test_session_factory()
-    asyncio.run(_oms(session_factory, _SyncAdapter(failing={"live:orb"})).sync_broker_positions())
+    _sync_and_drain(_oms(session_factory, _SyncAdapter(failing={"live:orb"})))
     assert set(_receipts(session_factory)) == {"live:schwab_1m_v2"}
+
+
+def test_all_reads_failed_offers_nothing() -> None:
+    session_factory = build_test_session_factory()
+    oms = _oms(session_factory, _SyncAdapter(failing={"live:orb", "live:schwab_1m_v2"}))
+    asyncio.run(oms.sync_broker_positions())
+    assert oms._positions_read_receipt_writer.queue.empty()
+    assert _receipts(session_factory) == {}
+
+
+def test_failed_sync_save_offers_no_receipt() -> None:
+    """A receipt requires the read AND the snapshot save to have committed."""
+    session_factory = build_test_session_factory()
+    oms = _oms(session_factory, _SyncAdapter(), persist_fails=True)
+    with pytest.raises(RuntimeError):
+        asyncio.run(oms.sync_broker_positions())
+    assert oms._positions_read_receipt_writer.queue.empty()
+
+
+def test_sync_pass_does_not_await_the_writer() -> None:
+    """No worker running and a writer that would block: the sync pass still returns at once,
+    the receipt sits in the bounded queue, and nothing was written in the sync transaction."""
+    session_factory = build_test_session_factory()
+    writer = PositionsReadReceiptWriter(session_factory)
+    writer._persist = lambda batches: time.sleep(30)  # would block if it were awaited
+    oms = _oms(session_factory, _SyncAdapter(), writer=writer)
+    started = time.monotonic()
+    summary = asyncio.run(oms.sync_broker_positions())
+    assert time.monotonic() - started < 2.0
+    assert summary == {"accounts": 2, "positions": 2}
+    assert writer.queue.qsize() == 1
+    assert _receipts(session_factory) == {}, "receipt must not ride the sync-pass transaction"
+
+
+def test_writer_failure_does_not_affect_the_sync_pass(caplog) -> None:
+    session_factory = build_test_session_factory()
+
+    class _ExplodingWriter:
+        def offer(self, receipts):
+            raise RuntimeError("writer exploded")
+
+    oms = _oms(session_factory, _SyncAdapter(), writer=_ExplodingWriter())
+    assert asyncio.run(oms.sync_broker_positions()) == {"accounts": 2, "positions": 2}
+
+    failing = PositionsReadReceiptWriter(session_factory)
+
+    def boom(batches):
+        raise RuntimeError("db down")
+
+    failing._persist = boom
+    oms = _oms(session_factory, _SyncAdapter(), writer=failing)
+    with caplog.at_level("WARNING", logger="oms-risk"):
+        assert _sync_and_drain(oms) == {"accounts": 2, "positions": 2}
+    assert "write_failed" in caplog.text
+    assert _receipts(session_factory) == {}
+
+
+def test_full_queue_drops_and_logs_without_blocking(caplog) -> None:
+    writer = PositionsReadReceiptWriter(None)
+
+    async def go():
+        with caplog.at_level("WARNING", logger="oms-risk"):
+            results = [writer.offer([("live:orb", NOW, 0)]) for _ in range(QUEUE_LIMIT + 3)]
+        return results
+
+    results = asyncio.run(go())
+    assert results.count(True) == QUEUE_LIMIT and results.count(False) == 3
+    assert "queue_full" in caplog.text
 
 
 def test_failed_sync_after_an_old_good_receipt_retains_it_and_incident_stays_open() -> None:
@@ -514,8 +610,7 @@ def test_failed_sync_after_an_old_good_receipt_retains_it_and_incident_stays_ope
         _accounts(session, schwab_stamp=old, webull_stamp=old, now=datetime.now(UTC))
         session.add(_refused_incident())
         session.commit()
-    adapter = _SyncAdapter(failing={"live:orb"})
-    asyncio.run(_oms(session_factory, adapter).sync_broker_positions())
+    _sync_and_drain(_oms(session_factory, _SyncAdapter(failing={"live:orb"})))
     receipts = _receipts(session_factory)
     assert receipts["live:orb"]["read_at"] == old, "a failed read must leave the receipt unchanged"
     assert datetime.now(UTC) - receipts["live:schwab_1m_v2"]["read_at"] < timedelta(seconds=30)
@@ -526,8 +621,7 @@ def test_failed_sync_after_an_old_good_receipt_retains_it_and_incident_stays_ope
 def test_cached_webull_snapshot_carries_its_real_read_time() -> None:
     """Webull throttle/429 backoff serves a cache; the receipt must not look fresh."""
     session_factory = build_test_session_factory()
-    adapter = _SyncAdapter(wire_age={"live:orb": 600.0})
-    asyncio.run(_oms(session_factory, adapter).sync_broker_positions())
+    _sync_and_drain(_oms(session_factory, _SyncAdapter(wire_age={"live:orb": 600.0})))
     age = datetime.now(UTC) - _receipts(session_factory)["live:orb"]["read_at"]
     assert age >= timedelta(seconds=599)
 
