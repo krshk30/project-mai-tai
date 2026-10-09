@@ -650,10 +650,13 @@ def test_recorded_jagx_1006_provider_response_is_not_full_session_coverage():
     bot = _bot("JAGX", bars[-1].timestamp_ms)
     client = SchwabV2RestClient(bot.settings, on_chart_bar=AsyncMock(), on_quote=AsyncMock())
     client._authorized_get = lambda url: JAGX_TODAY["provider_response"]
-    # The real response also included ten candles beyond the requested cutoff.
-    with pytest.raises(ValueError, match="foreign or duplicate"):
-        client.fetch_session_history("JAGX", bot._line_sessions["JAGX"].anchor_ms,
-                                     bars[-1].timestamp_ms)
+    # Provider over-return does not make later candles part of the closed prefix.
+    response, proof = client.fetch_session_history(
+        "JAGX", bot._line_sessions["JAGX"].anchor_ms, bars[-1].timestamp_ms,
+    )
+    assert response and response[-1].timestamp_ms == bars[-1].timestamp_ms
+    assert all(bar.timestamp_ms <= bars[-1].timestamp_ms for bar in response)
+    assert proof is not None
     ledger = _ingest(bot, bars)
     ledger.attest(SessionCoverage(
         "schwab_rest_full_session", ledger.anchor_ms, bars[-1].timestamp_ms + 60_000,

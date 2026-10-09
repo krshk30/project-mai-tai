@@ -517,13 +517,15 @@ class SchwabV2RestClient:
                 float(candle["low"]), float(candle["close"]),
                 int(candle["volume"]), int(candle["datetime"]),
             )
+            if bar.timestamp_ms > current_bar_ms:
+                continue
             if not anchor_ms <= bar.timestamp_ms <= current_bar_ms or bar.timestamp_ms in ids:
                 raise ValueError("foreign or duplicate session candle")
             validator.observe(bar)
             ids.add(bar.timestamp_ms)
             bars.append(bar)
         bars.sort(key=lambda bar: bar.timestamp_ms)
-        if bars[-1].timestamp_ms != current_bar_ms:
+        if not bars or bars[-1].timestamp_ms != current_bar_ms:
             return bars, None
         return bars, SessionCoverage(
             "schwab_rest_full_session", anchor_ms, end_ms,
