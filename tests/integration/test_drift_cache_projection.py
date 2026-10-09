@@ -16,6 +16,17 @@ def test_pg_fourteen_close_orders_are_excluded_before_materialization(lane):
     control.test_fourteen_working_rows_no_candidates_without_any_orm_hydration(lane)
 
 
+def test_pg_market_open_orders_skip_payload_materialization_and_lookups(lane):
+    control.test_market_open_orders_skip_payload_materialization_and_lookup_reads(lane)
+
+
+@pytest.mark.parametrize("payload_type", ["limit", "LIMIT", "LiMiT", " LIMIT ", "\tlimit\n",
+                                         "market", None, 12, ["limit"], {"type": "limit"}])
+@pytest.mark.parametrize("quote", [None, {"ask": 3.0}])
+def test_pg_cache_type_filter_keeps_existing_python_semantics(lane, payload_type, quote):
+    control.test_cache_type_filter_preserves_python_string_and_whitespace_semantics(lane, payload_type, quote)
+
+
 @pytest.mark.parametrize("quote", [None, {"ask": 3.0, "bid": 2.0}])
 def test_pg_candidates_keep_metadata_and_budget(lane, quote):
     from project_mai_tai.db.models import BrokerOrderEvent
