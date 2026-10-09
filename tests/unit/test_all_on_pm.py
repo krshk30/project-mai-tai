@@ -359,7 +359,7 @@ def test_all_on_catalog_audit_committed_live_set_requires_both_consumers():
     mismatches = {key for key, expected in live_set.items()
                   if by_name[key]["expected"] is not expected}
     assert mismatches == set()
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 146
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 147
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["expected"] is True
     assert by_name["strategy_schwab_1m_v2_resting_buy_round_up_enabled"]["expected"] is True
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in numeric) == 8
@@ -426,6 +426,6 @@ def test_all_on_process_catalog_checker_refuses_three_dark_values_without_live_i
 
     rc, lines = audit(entries, environment_reader=controlled_proc)
     assert rc == 1
-    assert lines[-1] == "Final call: REAL FAILURE; checked=154/154 mismatches=6 unknown=0"
-    assert len(readers) == len(set(readers)) == 8
+    assert lines[-1] == "Final call: REAL FAILURE; checked=155/155 mismatches=6 unknown=0"
+    assert len(readers) == len(set(readers)) == 9  # ALERTS1 adds the reconciler
     assert len([line for line in lines if line.startswith("REAL FAILURE")]) == 6
