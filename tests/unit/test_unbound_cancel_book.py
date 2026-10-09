@@ -1,10 +1,11 @@
 """Actual source caller and journal controls; controlled SDK, no broker HTTP."""
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from dataclasses import replace
 from types import SimpleNamespace
 import threading
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
@@ -34,7 +35,7 @@ def expected(intent):
         {"schwab": "hash", "live:orb": "ACC1"}, {"schwab": "schwab", "live:orb": "webull"})
 
 
-async def produce(sessions, monkeypatch, client):
+async def produce(sessions, monkeypatch, client, *, include_purpose=True):
     routed = runtime.adapter(client)
     service = OmsRiskService(settings=Settings(oms_adapter="simulated", broker_default_provider="webull",
         orb_broker_account_name="unused"), session_factory=sessions, redis_client=SimpleNamespace(),
@@ -47,12 +48,25 @@ async def produce(sessions, monkeypatch, client):
     monkeypatch.setattr(service, "_reconcile_after_intent", noop)
     monkeypatch.setattr(broker, "now_ms", lambda: int(datetime.now(UTC).timestamp() * 1000))
     event = runtime.cancel_event(coid="").model_copy(update={"source_service": "schwab-1m-v2"})
+    event.payload.reason = "retry exhausted cancellation barrier (webull)"
     event.payload.metadata.update({"fanout_segment_id": str(runtime.NOW), "clearwait_buy_only": "true"})
+    if not include_purpose:
+        event.payload.metadata.pop("clearwait_purpose")
     client.on_read = lambda: publications or pytest.fail("read before receipt publication")
     feedback = await service.process_trade_intent(event)
     assert feedback and publications
     await service._drain_cancel_terminal_evidence()
     return service
+
+
+@pytest.mark.asyncio
+async def test_previous_emitter_missing_purpose_is_unknown_without_adopting_history(sessions, sdk, monkeypatch):
+    client = runtime.Client()
+    await produce(sessions, monkeypatch, client, include_purpose=False)
+    assert client.calls == []
+    with sessions() as session:
+        intent = session.scalar(select(TradeIntent))
+        assert intent.status == "rejected" and journal.JOURNAL_KEY not in intent.payload
 
 
 @pytest.mark.asyncio
@@ -66,8 +80,14 @@ async def test_actual_unbound_cancel_source_publishes_before_book_and_preserves_
         raw = intent.payload[journal.JOURNAL_KEY]
         assert raw["binding"]["observed_at_ms"] == journal._epoch(intent.updated_at)
         assert "client_order_id" not in raw["binding"]
+        assert raw["binding"]["intent_reason"] == "retry exhausted cancellation barrier (webull)"
+        assert raw["binding"]["metadata_reason"] == "retry_budget_exhausted"
         books = journal.load_unbound_request_working_books(session, [intent], expected(intent))
         assert set(books) == {"live:orb"} and books["live:orb"].complete
+        assert journal.load_unbound_request_working_books(session, [intent], expected(intent),
+            now_ms=books["live:orb"].finished_at_ms)
+        assert not journal.load_unbound_request_working_books(session, [intent], expected(intent),
+            now_ms=books["live:orb"].started_at_ms + 15_001)
         for request in (replace(expected(intent), token="foreign"), replace(expected(intent), generation="foreign"),
                         replace(expected(intent), purpose="foreign"),
                         replace(expected(intent), account_ids={"schwab": "hash", "live:orb": "foreign"})):
@@ -140,6 +160,32 @@ async def test_new_explicit_receipt_refreshes_prior_book_once_not_its_timestamps
     assert len(client.calls) == 2  # Actual get_response counts, no hidden retries.
     assert await broker.acquire_complete_working_book(routed, "live:orb", after_ms=runtime.NOW + 11) is None
     assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_latest_receipt_uses_submillisecond_precision_not_older_journal(sessions, sdk, monkeypatch):
+    from project_mai_tai.db.models import BrokerAccount
+    service = await produce(sessions, monkeypatch, runtime.Client())
+    with sessions() as session:
+        older = session.scalar(select(TradeIntent))
+        request = expected(older)
+        account = session.get(BrokerAccount, older.broker_account_id)
+        at = journal._utc(older.updated_at)
+        older.updated_at = at.replace(microsecond=(at.microsecond // 1000) * 1000 + 100)
+        old_raw = older.payload[journal.JOURNAL_KEY]
+        older.payload = {**older.payload, journal.JOURNAL_KEY: {
+            **old_raw, "binding": journal._binding(older, account, "ACC1")}}
+        newer = TradeIntent(strategy_id=older.strategy_id, broker_account_id=older.broker_account_id,
+            symbol=older.symbol, side="buy", intent_type="cancel", quantity=older.quantity,
+            reason=older.reason, status=older.status, created_at=older.created_at,
+            updated_at=older.updated_at + timedelta(microseconds=100),
+            payload={**older.payload, "event_id": str(uuid4())})
+        newer.payload = {key: value for key, value in newer.payload.items() if key != journal.JOURNAL_KEY}
+        session.add(newer)
+        session.flush()
+        assert journal._epoch(older.updated_at) == journal._epoch(newer.updated_at)
+        assert not journal.load_unbound_request_working_books(session, [older, newer], request)
+    await service._drain_cancel_terminal_evidence()
 
 
 @pytest.mark.asyncio
