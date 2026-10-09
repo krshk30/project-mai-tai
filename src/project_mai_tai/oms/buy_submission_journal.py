@@ -229,11 +229,21 @@ class DurableBuyAdapter:
 
     async def _db(self, function, *args):
         task = asyncio.create_task(asyncio.to_thread(function, *args))
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            await task
-            raise
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        result = task.result()
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
+
+    async def commit_order_reports(self, session):
+        # The intent owns this session exclusively until its commit finishes.
+        # Cancellation must not close it while the worker is still using it.
+        await self._db(session.commit)
 
     def _coverage(self, name, account_id):
         with self.session_factory() as session:
