@@ -24,7 +24,7 @@ from tests.integration.test_cancel_terminal_runtime import (
     Client, adapter, sdk, sessions,  # noqa: F401
 )
 from tests.unit.test_flye_bound_owner_target_close import (
-    FLYE, PRIMARY, WEBULL, book, confirm_controlled_next_entry, replay, sell,
+    FLYE, PRIMARY, WEBULL, book, replay, sell,
 )
 
 
@@ -104,7 +104,7 @@ async def journal_proof(factory, routed, ids, store, request, now_ms):
 @pytest.mark.usefixtures("sdk")
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("fault", ["none", "working", "partial", "unbound", "stale", "open", "unknown", "held"])
-async def test_pg_fresh_sell_requires_bound_broker_proof_and_all_rows_closed(pg, monkeypatch, pm, fault):
+async def test_pg_bound_ids_without_schwab_dispatch_proof_stay_unknown(pg, monkeypatch, pm, fault):
     strategy, state, record, clock, _ = replay(pm=pm)
     store = RemovedWaitStore(pg)
     strategy._removed_wait_persist = store.record
@@ -127,38 +127,26 @@ async def test_pg_fresh_sell_requires_bound_broker_proof_and_all_rows_closed(pg,
     assert not strategy._strict_first_rest_admitted(state, slot="first")
     monkeypatch.setattr(broker, "now_ms", lambda: clock[0] - (15_001 if fault == "stale" else 0))
     proof = await journal_proof(pg, routed, ids, store, request, clock[0])
-    assert proof.clear is (fault in {"none", "open", "unknown", "held"})
+    # Exact future IDs do not replace the missing actual Schwab dispatch witness.
+    assert not proof.clear
     strategy.apply_removed_wait_proofs((proof,))
     legs = (FlipPositionLeg(WEBULL, "test-open-sibling", clock[0], 1),) if fault == "open" else ()
     if fault == "held":
         state.position_qty_held = 1
     book(strategy, record, clock, legs=legs, readable=fault != "unknown")
-    released = fault == "none"
-    assert (state.flip_owner_phase == "idle") is released
-    assert strategy._strict_first_rest_admitted(state, slot="first") is released
+    assert state.flip_owner_phase != "idle"
+    assert not strategy._strict_first_rest_admitted(state, slot="first")
     assert state.retry_one_closes_in_segment == 0
-    if not released:
-        assert not strategy.drain_pending_intents()
-        assert not strategy.drain_webull_direct_intents()
-        return
-    assert calls == [("GET", "/trader/v1/accounts/TEST-SCHWAB/orders/test-schwab-target", get_ident())]
-    assert all(thread != get_ident() for _, _, thread in client.calls)
-    strategy._queue_resting_place(state, 2.52, slot="first")
-    if pm:
-        assert state.resting_active and not state.resting_is_broker_order
-    else:
-        entry, = strategy.drain_pending_intents()
-        assert entry.intent_type == "open"
-        assert int(entry.metadata["fanout_segment_id"]) > record.opportunity_id
-        assert strategy.drain_webull_direct_intents()[0].intent_type == "open"
-    assert not store.restore()
-    confirm_controlled_next_entry(strategy, state, clock)
+    assert not strategy.drain_pending_intents()
+    assert not strategy.drain_webull_direct_intents()
+    assert calls == []
+    assert store.restore() == {state.symbol: request}
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("sdk")
 @pytest.mark.parametrize("pm", [False, True])
-async def test_pg_same_real_segment_terminal_proof_does_not_grant_second_buy(pg, monkeypatch, pm):
+async def test_pg_same_real_segment_unsupported_bound_cancel_never_grants_second_buy(pg, monkeypatch, pm):
     strategy, state, record, clock, _ = replay(pm=pm)
     store = RemovedWaitStore(pg)
     strategy._removed_wait_persist = store.record
@@ -170,12 +158,12 @@ async def test_pg_same_real_segment_terminal_proof_does_not_grant_second_buy(pg,
     clock[0] += 1_000
     monkeypatch.setattr(broker, "now_ms", lambda: clock[0])
     proof = await journal_proof(pg, routed, ids, store, request, clock[0])
-    assert proof.clear
+    assert not proof.clear and proof.reason == "cancel_source_unknown"
     strategy.apply_removed_wait_proofs((proof,))
     book(strategy, record, clock)
     assert state.flip_owner_phase == "bound"
     assert not strategy._strict_first_rest_admitted(state, slot="first")
-    assert not store.restore()
+    assert store.restore() == {state.symbol: request}
     with pg() as session:
         assert all(i.intent_type == "cancel" for i in session.scalars(select(TradeIntent)))
 
