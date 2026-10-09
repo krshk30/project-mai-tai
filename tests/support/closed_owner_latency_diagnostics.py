@@ -31,6 +31,11 @@ class Observer:
         self.operation = ContextVar("i_close_observer_operation", default=None)
         self.records = deque(maxlen=512)
         self.total = 0
+        self.first = {}
+        self.worst = {}
+        self.pump_wakes = 0
+        self.pump_max_late = float("-inf")
+        self.first_late_pump = False
         self.active = None
         self.stop_event = threading.Event()
         self.sampler = None
@@ -39,7 +44,39 @@ class Observer:
 
     def record(self, kind, begin, **data):
         self.total += 1
-        self.records.append(dict(kind=kind, begin=begin, end=monotonic(), **data))
+        row = dict(sequence=self.total, kind=kind, begin=begin, end=monotonic(), **data)
+        self.records.append(row)
+        key = (kind, data.get("thread"))
+        if key in self.first or len(self.first) < 32:
+            self.first.setdefault(key, row)
+            previous = self.worst.get(key)
+            if previous is None or self.score(row) > self.score(previous):
+                self.worst[key] = row
+
+    @staticmethod
+    def score(row):
+        return max(row.get("wall_ms", 0), row.get("late_ms", 0))
+
+    def quote(self, original):
+        @wraps(original)
+        async def call(instance, *args, **kwargs):
+            caller = sys._getframe(1)
+            if caller.f_code.co_name == "quote_pump":
+                due, actual = caller.f_locals["due"], caller.f_locals["begin"]
+                late = (actual - due) * 1000
+                self.pump_wakes += 1
+                if self.pump_wakes == 1 or late > self.pump_max_late or late >= 10:
+                    data = dict(due=due, actual=actual, late_ms=late,
+                                site=(caller.f_code.co_filename, caller.f_lineno),
+                                frames=frames(caller, 8) if late >= 10 else [])
+                    self.record("pump_deadline", actual, **data)
+                    if late >= 10 and not self.first_late_pump:
+                        self.record("first_late_pump", actual, **data)
+                        self.first_late_pump = True
+                self.pump_max_late = max(self.pump_max_late, late)
+            del caller
+            return await original(instance, *args, **kwargs)
+        return call
 
     def callback(self, original):
         @wraps(original)
@@ -152,10 +189,21 @@ class Observer:
         gc.callbacks.remove(self.gc_event)
 
     def receipt(self):
+        # Protect first/worst records before spending the remaining budget on the tail.
+        protected = {row["sequence"]: row for row in (*self.first.values(), *self.worst.values())}
+        selected = dict(protected)
+        for row in reversed(list(self.records)):
+            if len(selected) >= self.records.maxlen:
+                break
+            selected.setdefault(row["sequence"], row)
+        records = sorted(selected.values(), key=lambda row: row["sequence"])
         return dict(observer="I bounded diagnostic, not a threshold waiver", clock="monotonic",
                     sample_interval_ms=5, span_floor_ms=10, capacity=self.records.maxlen,
-                    records_total=self.total, dropped=max(0, self.total - len(self.records)),
-                    sampler_joined=not self.sampler.is_alive(), records=list(self.records))
+                    records_total=self.total, dropped=max(0, self.total - len(records)),
+                    protected=len(protected), protected_group_limit=32,
+                    pump_wakes=self.pump_wakes,
+                    pump_max_late_ms=self.pump_max_late if self.pump_wakes else None,
+                    sampler_joined=not self.sampler.is_alive(), records=records)
 
 
 @pytest.fixture(autouse=True)
@@ -172,6 +220,8 @@ def closed_owner_latency_observer(request, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(asyncio.Handle, "_run", observer.callback(asyncio.Handle._run))
         patch.setattr(Session, "commit", observer.commit(Session.commit))
+        patch.setattr(OmsRiskService, "_handle_quote_tick_event",
+                      observer.quote(OmsRiskService._handle_quote_tick_event))
         patch.setattr(OmsRiskService, "process_trade_intent",
                       observer.async_span("intent", OmsRiskService.process_trade_intent, intent=True))
         patch.setattr(DurableBuyAdapter, "commit_order_reports", observer.async_span(

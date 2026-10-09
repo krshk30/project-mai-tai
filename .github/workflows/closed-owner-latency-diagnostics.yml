@@ -52,7 +52,6 @@ jobs:
           python -m ruff check src tests
       - name: F reference with the identical I observer
         id: f
-        continue-on-error: true
         env:
           PYTHONPATH: ${{ runner.temp }}/f-baseline:${{ runner.temp }}/f-baseline/src:${{ github.workspace }}/tests/support
         working-directory: ${{ runner.temp }}/f-baseline
@@ -61,7 +60,7 @@ jobs:
           python -m pytest -p no:cacheprovider -p closed_owner_latency_diagnostics -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/diagnostic-logs/f.log"
       - name: I with the identical observer and unchanged strict workload
         id: i
-        continue-on-error: true
+        if: ${{ !cancelled() && (steps.f.outcome == 'success' || steps.f.outcome == 'failure') }}
         env:
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src:${{ github.workspace }}/tests/support
         run: |
