@@ -36,8 +36,9 @@ from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear, replacement_terminal_zero
 from project_mai_tai.oms.cancel_terminal import load_cancel_terminal_evidence, receipt_from_intent
 from project_mai_tai.oms.buy_submission_journal import (
-    BuyCoverageEpoch, PROTOCOL, close_never_sent_admission, close_terminal_buy_admission,
-    lock_buy_scope, opportunity_start_ms,
+    BuyCoverageEpoch, NonworkingBuySubmissionWitness, PROTOCOL,
+    close_never_sent_admission, close_terminal_buy_admission, lock_buy_scope,
+    nonworking_buy_submission_witnesses, opportunity_start_ms,
 )
 from project_mai_tai.oms.unbound_cancel_book import load_unbound_request_working_books
 
@@ -684,7 +685,7 @@ class RemovedWaitStore:
                     or_(BrokerOrder.side == "buy", BrokerOrder.side.is_(None), BrokerOrder.side == ""),
                     or_(BrokerOrder.status.is_(None),
                         BrokerOrder.status.not_in(TERMINAL | {"filled", "aborted"})),
-                ).limit(1)).all()
+                ).limit(ROW_LIMIT + 1)).all()
                 episode_orders = select(BrokerOrder.id).where(
                     BrokerOrder.broker_account_id.in_(ids), BrokerOrder.symbol == request.symbol,
                     or_(BrokerOrder.payload["metadata"]["fanout_segment_id"].as_string()
@@ -701,7 +702,7 @@ class RemovedWaitStore:
                 episode_buys = session.scalars(select(BrokerOrder).where(
                     BrokerOrder.id.in_(episode_orders), BrokerOrder.side == "buy",
                 ).limit(ROW_LIMIT + 1)).all()
-                bounded = (len(intents) <= ROW_LIMIT and len(managed) <= ROW_LIMIT
+                bounded = (len(intents) <= ROW_LIMIT and len(orders) <= ROW_LIMIT and len(managed) <= ROW_LIMIT
                            and len(episode_buys) <= ROW_LIMIT)
                 pending = (any(i.status not in TERMINAL | {"filled", "aborted"} for i in intents)
                            or self._rollover_retry_unknown(session, request.symbol, account_names))
@@ -753,26 +754,53 @@ class RemovedWaitStore:
                     account_providers={a.name: a.provider for a in accounts},
                     session_key=current_session_anchor(observed).isoformat(),
                     opportunity_started_at_ms=start_ms, coverage_process_ids=process_ids)
-                request_books = (books if books is not None else
+                current = (latest is not None and active_request_matches(latest.payload, request)
+                           and (publication_current is None or publication_current(request)))
+                admission_scopes = {name: NeverSentScope(
+                    name, binding[name], request.symbol, str(request.opportunity_id), start_ms,
+                    request.token, request.token, request.requested_at_ms,
+                    UUID(process_ids[name]), scope.session_key) for name in process_ids} if exact_accounts else {}
+                eligible = (exact_accounts and bounded and not pending
+                    and publication_closed.get(request) is True and not unanswered
+                    and rows_closed and filled_owners_closed and current
+                    and set(process_ids) == set(request.account_names) and start_ms > 0)
+                nonworking = {}
+                if eligible:
+                    for name, admission_scope in admission_scopes.items():
+                        nonworking[name] = tuple(w for w in nonworking_buy_submission_witnesses(
+                            session, admission_scope, observed_at_ms=observed_ms)
+                            if isinstance(w, NonworkingBuySubmissionWitness) and w.scope == admission_scope)
+                nonworking_ids = {(name, witness.order_id) for name, witnesses in nonworking.items()
+                                  for witness in witnesses}
+                no_working_orders = all((ids[order.broker_account_id], order.id) in nonworking_ids for order in orders)
+                request_books = dict(books if books is not None else
                     load_unbound_request_working_books(session, intents, scope, now_ms=observed_ms))
+                if books is None and nonworking_ids:
+                    # A bound DAY absence owns its committed physical book; no
+                    # consumer HTTP, invented timestamp or blanket status waiver.
+                    evidence = load_cancel_terminal_evidence(session, intents)
+                    for name, witnesses in nonworking.items():
+                        receipts = [i for i in intents if ids.get(i.broker_account_id) == name
+                            and i.intent_type == "cancel"
+                            and (i.payload or {}).get("metadata", {}).get("clearwait_removal_token") == request.token]
+                        if not witnesses or not receipts:
+                            continue
+                        latest_receipt = max(receipts, key=lambda i: (_utc(i.updated_at), _utc(i.created_at), str(i.id)))
+                        proof = evidence.get((latest_receipt.payload or {}).get("event_id"))
+                        if (proof is not None and proof.day_absence is not None
+                                and any(w.client_order_id == proof.receipt.scope.client_order_id
+                                    and w.broker_order_id == proof.day_absence.bound.broker_order_id for w in witnesses)):
+                            request_books.setdefault(name, proof.book)
                 assessment_book_current = (type(minimum_book_started_at_ms) is int
                     and 0 <= minimum_book_started_at_ms <= observed_ms
                     and all(book is not None and book.started_at_ms >= minimum_book_started_at_ms
                         for name, book in request_books.items() if scope.account_providers.get(name) == "webull"))
-                current = (latest is not None and active_request_matches(latest.payload, request)
-                           and (publication_current is None or publication_current(request)))
-                safe = (exact_accounts and bounded and not pending and not orders
-                        and publication_closed.get(request) is True
-                        and not unanswered and rows_closed and filled_owners_closed and current
-                        and set(process_ids) == set(request.account_names) and start_ms > 0)
+                safe = eligible and no_working_orders
                 never_sent = {}
                 terminal_submissions = {}
                 if safe and start_ms:
                     for name in sorted(process_ids):
-                        admission_scope = NeverSentScope(
-                            name, binding[name], request.symbol, str(request.opportunity_id), start_ms,
-                            request.token, request.token, request.requested_at_ms,
-                            UUID(process_ids[name]), scope.session_key)
+                        admission_scope = admission_scopes[name]
                         witness = close_never_sent_admission(session, admission_scope, observed_at_ms=observed_ms)
                         if witness.never_sent:
                             never_sent[name] = witness
@@ -810,7 +838,7 @@ class RemovedWaitStore:
                                       for name, targets in bound_targets.items())
                 proof = evaluate_unbound_cancel_terminal(scope, request_books,
                     fences=UnboundCancelFences(scope,
-                        exact_accounts and bounded and not pending and not orders
+                        exact_accounts and bounded and not pending and no_working_orders
                         and publication_closed.get(request) is True
                         and set(process_ids) == set(request.account_names) and start_ms > 0
                         and assessment_book_current,
