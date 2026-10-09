@@ -56,31 +56,11 @@ def _systemctl_output(states: dict[str, fhc.ServiceRuntime]) -> str:
     )
 
 
-def test_fresh_bars_with_live_feed_is_green():
-    level, _ = fhc.classify_bar_freshness(30, 3)
-    assert level == "GREEN"
-
-
-def test_stale_bars_with_LIVE_feed_is_red_frozen_loop():
-    level, detail = fhc.classify_bar_freshness(300, 5)
-    assert level == "RED"
-    assert "FROZEN" in detail
-
-
-def test_stale_bars_with_QUIET_feed_is_green_no_false_alarm():
-    # THE no-false-alarm guarantee: bars stale but the upstream feed is quiet/stale is a
-    # quiet market or a feed outage — NOT a strategy fault. Must never RED.
-    assert fhc.classify_bar_freshness(600, 400)[0] == "GREEN"  # feed stale
-    assert fhc.classify_bar_freshness(600, None)[0] == "GREEN"  # no recent trades at all
-
-
-def test_slowing_bars_with_live_feed_is_amber():
-    assert fhc.classify_bar_freshness(150, 5)[0] == "AMBER"
-
-
-def test_no_bars_is_amber_not_red():
-    # Can't assess (no data) is AMBER (look), never RED (don't cry wolf).
-    assert fhc.classify_bar_freshness(None, 5)[0] == "AMBER"
+def test_retired_strategy_bar_freshness_check_is_absent() -> None:
+    # HEALTHNOISE1: polygon_30s is off on the box (last bar 2026-09-02); its check is retired.
+    assert not hasattr(fhc, "check_strategy_bar_freshness")
+    assert not hasattr(fhc, "classify_bar_freshness")
+    assert "check_strategy_bar_freshness" not in {spec.check.__name__ for spec in fhc.CHECKS}
 
 
 # --- service runtime: every expected unit, around the clock ----------------------------- #
@@ -339,6 +319,157 @@ def test_inactive_expected_service_is_red_even_without_a_prior_sample() -> None:
     assert f"{momentum}(inactive/dead)" in detail
 
 
+# --- HEALTHNOISE1: momentum-paper runs 03:40-09:40 ET on session days by its own schedule ---- #
+
+_MOMENTUM = "project-mai-tai-momentum-paper.service"
+
+
+_CLEAN_STOP = fhc.ServiceRuntime(0, "inactive", "dead", "success", "1", "0")
+
+
+def _momentum_inactive_rows(
+    now: datetime, *, restarts: int = 0, runtime: fhc.ServiceRuntime | None = None
+):
+    current = _service_states(restart_overrides={_MOMENTUM: restarts})
+    current[_MOMENTUM] = (runtime or _CLEAN_STOP)._replace(n_restarts=restarts)
+    rows = fhc.classify_service_runtime_rows(
+        current,
+        {service: 0 for service in fhc.RUNTIME_SERVICES},
+        elapsed_s=300,
+        now=now,
+        maintenance={},
+    )
+    return {name: (level, detail) for level, name, detail in rows}
+
+
+def test_momentum_inactive_inside_its_window_is_red() -> None:
+    # Thu 2026-10-08 08:00 EDT = 12:00 UTC; also both window edges.
+    for now in (
+        datetime(2026, 10, 8, 12, 0, tzinfo=UTC),
+        datetime(2026, 10, 8, 7, 45, tzinfo=UTC),  # 03:45 ET, first run that must see it up
+        datetime(2026, 10, 8, 13, 35, tzinfo=UTC),  # 09:35 ET, last run inside
+    ):
+        level, _detail = _momentum_inactive_rows(now)["service-runtime:momentum-paper:inactive"]
+        assert level == "RED", now
+
+
+def test_momentum_inactive_outside_its_window_is_expected_not_red() -> None:
+    for now in (
+        datetime(2026, 10, 9, 19, 20, tzinfo=UTC),  # Fri 15:20 ET: the live false RED
+        datetime(2026, 10, 8, 13, 40, tzinfo=UTC),  # 09:40 ET stop instant
+        datetime(2026, 10, 8, 7, 40, tzinfo=UTC),  # 03:40 ET start instant
+        datetime(2026, 10, 8, 2, 0, tzinfo=UTC),  # 22:00 ET previous evening
+        datetime(2026, 10, 10, 12, 0, tzinfo=UTC),  # Saturday 08:00 ET
+        datetime(2026, 11, 26, 13, 0, tzinfo=UTC),  # Thanksgiving 08:00 EST
+    ):
+        rows = _momentum_inactive_rows(now)
+        level, detail = rows["service-runtime:momentum-paper:inactive"]
+        assert level == "EXPECTED", now
+        assert "scheduled_stop=1 window_et=03:45-09:40" in detail
+        assert all(level != "RED" for level, _ in rows.values()), now
+
+
+_OFF_HOURS = datetime(2026, 10, 9, 19, 20, tzinfo=UTC)  # Fri 15:20 ET
+
+
+def test_momentum_failed_outside_its_window_is_red() -> None:
+    # Codex P1 on 8ef9fa99: failed/failed off-hours was EXPECTED and never paged.
+    rows = _momentum_inactive_rows(
+        _OFF_HOURS, runtime=fhc.ServiceRuntime(1, "failed", "failed", "exit-code", "1", "1")
+    )
+    level, detail = rows["service-runtime:momentum-paper:inactive"]
+    assert level == "RED"
+    assert "state=failed/failed result=exit-code" in detail
+
+
+def test_momentum_abnormal_stops_outside_its_window_stay_red() -> None:
+    abnormal = (
+        fhc.ServiceRuntime(0, "inactive", "dead", "exit-code", "1", "1"),  # non-zero exit
+        fhc.ServiceRuntime(0, "inactive", "dead", "signal", "2", "9"),  # SIGKILL
+        fhc.ServiceRuntime(0, "inactive", "dead", "success", "2", "15"),  # killed by signal
+        fhc.ServiceRuntime(0, "inactive", "dead", "core-dump", "3", "11"),
+        fhc.ServiceRuntime(0, "failed", "failed", "start-limit-hit", "1", "1"),
+        fhc.ServiceRuntime(0, "activating", "auto-restart", "exit-code", "1", "1"),
+        fhc.ServiceRuntime(0, "deactivating", "stop-sigterm", "success", "1", "0"),
+        fhc.ServiceRuntime(0, "inactive", "dead"),  # Result/ExecMain* not read
+    )
+    for runtime in abnormal:
+        level, _detail = _momentum_inactive_rows(_OFF_HOURS, runtime=runtime)[
+            "service-runtime:momentum-paper:inactive"
+        ]
+        assert level == "RED", runtime
+
+
+def test_momentum_clean_stop_outside_window_is_expected_and_never_started_too() -> None:
+    for runtime in (_CLEAN_STOP, fhc.ServiceRuntime(0, "inactive", "dead", "success", "0", "0")):
+        level, _detail = _momentum_inactive_rows(_OFF_HOURS, runtime=runtime)[
+            "service-runtime:momentum-paper:inactive"
+        ]
+        assert level == "EXPECTED", runtime
+
+
+def test_momentum_clean_stop_inside_its_window_is_red() -> None:
+    level, _detail = _momentum_inactive_rows(
+        datetime(2026, 10, 8, 12, 0, tzinfo=UTC), runtime=_CLEAN_STOP
+    )["service-runtime:momentum-paper:inactive"]
+    assert level == "RED"
+
+
+def test_systemctl_parser_reads_exit_properties() -> None:
+    states = _service_states()
+    states[_MOMENTUM] = _CLEAN_STOP
+    text = "\n\n".join(
+        "\n".join(
+            (
+                f"Result={state.result or 'success'}",
+                f"NRestarts={state.n_restarts}",
+                f"ExecMainCode={state.exec_main_code or '1'}",
+                f"ExecMainStatus={state.exec_main_status or '0'}",
+                f"Id={service}",
+                f"ActiveState={state.active_state}",
+                f"SubState={state.sub_state}",
+            )
+        )
+        for service, state in states.items()
+    )
+
+    def runner(argv, **_kwargs):
+        assert {"Result", "ExecMainCode", "ExecMainStatus"} <= set(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout=text, stderr="")
+
+    parsed = fhc._read_service_runtimes(runner)
+    assert parsed[_MOMENTUM] == _CLEAN_STOP
+    assert fhc.is_clean_scheduled_stop(parsed[_MOMENTUM])
+
+
+def test_scheduled_window_covers_only_momentum_paper() -> None:
+    assert set(fhc.SCHEDULED_SERVICE_WINDOWS) == {_MOMENTUM}
+    off_hours = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+    for service in fhc.RUNTIME_SERVICES:
+        if service == _MOMENTUM:
+            continue
+        assert fhc.scheduled_service_expected_running(service, off_hours)
+        current = _service_states(state_overrides={service: ("inactive", "dead")})
+        rows = fhc.classify_service_runtime_rows(
+            current, None, elapsed_s=None, now=off_hours, maintenance={}
+        )
+        slug = fhc._service_slug(service)
+        assert (("RED", f"service-runtime:{slug}:inactive") in {(r[0], r[1]) for r in rows})
+
+
+def test_momentum_restart_storm_stays_red_outside_its_window() -> None:
+    rows = _momentum_inactive_rows(datetime(2026, 10, 9, 19, 20, tzinfo=UTC), restarts=5)
+    assert rows["service-runtime:momentum-paper:restart-storm"][0] == "RED"
+
+
+def test_expected_level_never_raises_the_summary_or_pages(monkeypatch, capsys) -> None:
+    rows = (("EXPECTED", "service-runtime:momentum-paper:inactive", "scheduled_stop=1"),)
+    monkeypatch.setattr(fhc, "RUNTIME_CHECKS", (fhc.CheckSpec(lambda: rows, fhc.FLEET_RUNTIME),))
+    assert fhc.main(runtime_only=True) == 0
+    out = capsys.readouterr().out
+    assert "SUMMARY: GREEN" in out and "fleet_runtime_red=0" in out
+
+
 def test_runtime_rows_are_independent_per_service_and_condition() -> None:
     momentum = "project-mai-tai-momentum-paper.service"
     oms = "project-mai-tai-oms.service"
@@ -557,6 +688,42 @@ def test_d6_other_oserror_is_red_and_names_the_io_failure(monkeypatch) -> None:
     assert "missing" not in detail
 
 
+_D6_STATUS_1008 = """[D6-OUTCOME-ACCEPTANCE-NONPASS] session=2026-10-08 window=[2026-10-08T00:00:00-04:00, 2026-10-09T00:00:00-04:00) verdict=FAIL denominators=present
+denominator_contract=all four metric denominators present
+metric=paired_legs verdict=PASS paired_legs=1 usable=2 of 2 webull_only=1 could_not_tell=0 coverage=100.0%
+metric=fill_rate verdict=FAIL fill_rate mirror=1/9=11.1% schwab=4/18=22.2% gap_pp=11.1 matched_symbols=1 baseline=18/292=6.2% vs 34/368=9.2% gap_pp=3.1
+metric=duplicate_legs verdict=PASS duplicate_legs=0 of 2 filled Webull fan-out legs could_not_tell=0
+metric=refused_exits verdict=PASS refused_exits=0 post_exit_episodes=2 denominator=confirmed Webull SELL fill orders
+verdict=FAIL
+"""
+
+
+def test_d6_graded_fail_stays_red_and_names_the_failing_metric() -> None:
+    # HEALTHNOISE1: the 10-08 FAIL is a real outcome (Webull mirror fill rate below Schwab by more
+    # than the known-bad gap); it stays RED and the detail says exactly what failed.
+    level, detail = fhc.classify_d6_status(_D6_STATUS_1008, expected_session=date(2026, 10, 8))
+    assert level == "RED"
+    assert "run_verdict=FAIL" in detail
+    assert "failing=[fill_rate fill_rate mirror=1/9=11.1% schwab=4/18=22.2% gap_pp=11.1" in detail
+    assert "paired_legs" not in detail
+
+
+def test_d6_could_not_tell_and_notification_failure_are_red_and_labelled() -> None:
+    status = (
+        "[D6-OUTCOME-ACCEPTANCE-NONPASS] session=2026-10-08 verdict=COULD_NOT_TELL "
+        "denominators=invalid\nnotification=FAILED session_not_marked=1\n"
+    )
+    level, detail = fhc.classify_d6_status(status, expected_session=date(2026, 10, 8))
+    assert level == "RED"
+    assert "run_verdict=COULD_NOT_TELL" in detail and "notification=FAILED" in detail
+
+
+def test_d6_crashed_mid_run_is_red_in_progress() -> None:
+    status = "[D6-OUTCOME-ACCEPTANCE-STARTED] session=2026-10-08 verdict=IN_PROGRESS\n"
+    level, detail = fhc.classify_d6_status(status, expected_session=date(2026, 10, 8))
+    assert level == "RED" and "run_verdict=IN_PROGRESS" in detail
+
+
 def test_d6_freshness_check_is_registered_in_the_executed_check_list() -> None:
     assert fhc.check_d6_status_freshness in [spec.check for spec in fhc.CHECKS]
 
@@ -566,7 +733,6 @@ def test_every_fleet_check_has_an_explicit_alert_class() -> None:
         "check_orb_schwab_heartbeat": fhc.FLEET_RUNTIME,
         "check_service_restart_storms": fhc.FLEET_RUNTIME,
         "check_massive_socket_policy_violations": fhc.FLEET_RUNTIME,
-        "check_strategy_bar_freshness": fhc.PAPER,
         "check_oms_order_lifecycle": fhc.LIVE_MONEY,
         "check_stops_armed": fhc.LIVE_MONEY,
         "check_bar_continuity": fhc.DIAGNOSTIC,

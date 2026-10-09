@@ -94,14 +94,18 @@ broken infrastructure regardless of whether its account is paper. Recovery is lo
   outage. Each run stores an atomic restart-count snapshot; a service gaining more than three
   `NRestarts` within the next bounded five-minute sample is RED.
 
+  Scheduled units (HEALTHNOISE1, `SCHEDULED_SERVICE_WINDOWS`): `momentum-paper` is started by
+  `project-mai-tai-option-a-daily-guard.timer` at 03:40 ET and stopped by the guard at 09:40 ET on
+  session days. Its `inactive` row is RED only from 03:45 to 09:40 ET on session days; outside that
+  window it reports `EXPECTED` (rank of GREEN, never pages). Its restart-storm row is judged 24/7.
+
   Planned stops require `/home/trader/fleet_health/maintenance.txt` rows in the exact form
   `<unit> <until-ISO8601-UTC> <reason>`. While the expiry is in the future that unit's runtime rows
   report `MAINTENANCE`, not GREEN, and do not page. Missing/invalid expiries fail closed; an expired
   row pages until it is removed or replaced. Maintenance never applies fleet-wide.
-- **#1 strategy-bar-freshness** (`PAPER`, log-only) — polygon_30s must keep persisting 30s bars. RED only
-  when the bars are stale AND the independent Polygon capture (`market_capture_trades`) is
-  SIMULTANEOUSLY live → a frozen loop (the "reports healthy while dead" class). A quiet
-  market / feed outage → GREEN (staleness not attributable to the strategy).
+- **#1 strategy-bar-freshness** — RETIRED 2026-10-09 (HEALTHNOISE1). It watched polygon_30s bars;
+  that paper bot is disabled (`MAI_TAI_STRATEGY_POLYGON_30S_ENABLED=false`, last bar 2026-09-02),
+  so the check was a permanent RED about a loop that no longer exists.
 - **#2 oms-order-lifecycle** (`LIVE_MONEY`, planned) — intents-in-but-no-orders/fills-out for >N min (the
   07-01 zombie signature); keyed on relative progress, never absolute counts (no-quiet-alarm).
 - **#3 stops-armed** (`LIVE_MONEY`, planned) — every OMS-OWNED open position (`oms_managed_positions` +
@@ -109,7 +113,9 @@ broken infrastructure regardless of whether its account is paper. Recovery is lo
   position must never trip "unprotected").
 
 `v2-bar-continuity` is `DIAGNOSTIC` and D6 outcome acceptance is `SCOREBOARD`; both are log-only
-even when their local result is RED. A check's class is explicit output, not inferred from its
+even when their local result is RED. A D6 graded `FAIL` stays RED (it is a real fan-out outcome
+finding); the detail line carries `run_verdict=` and each failing metric with its denominators, so a
+graded FAIL is distinguishable from a D6 run that crashed (`IN_PROGRESS`) or could not tell. A check's class is explicit output, not inferred from its
 name or from the aggregate exit code.
 
 ## Deploy (F3 = updating a cron, no service restart)

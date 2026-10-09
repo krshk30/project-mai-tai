@@ -24,7 +24,8 @@ def _state_and_logs(tmp_path):
     return state, market, paper
 
 
-@pytest.mark.parametrize("runtime_only,expected", [(True, 19), (False, 24)])
+# 23 function+runtime verdicts: strategy-bar-freshness retired (HEALTHNOISE1).
+@pytest.mark.parametrize("runtime_only,expected", [(True, 19), (False, 23)])
 def test_today_exact_stale_state_and_paper_log_summary_green(
     tmp_path, monkeypatch, capsys, runtime_only, expected,
 ):
