@@ -329,8 +329,8 @@ async def test_real_pg_current_source_mutations_detected(sessions, sdk, monkeypa
         journal.DurableBuyAdapter, "_reported" if mutation == "reported" else "_prepare")
     source = textwrap.dedent(inspect.getsource(target))
     old, new = {
-        "precommit": ("session.commit()\n        return token.id", "session.flush()\n        return token.id"),
-        "closure": ("if any(c.generation == generation or opportunity <= c.opportunity_started_at_ms for c in closures):", "if False:"),
+        "precommit": ("session.commit()\n        return token_id", "session.flush()\n        return token_id"),
+        "closure": ("if closure is not None:", "if False:"),
         "epoch": ("not 0 < coverage <= scope.opportunity_started_at_ms", "False"),
         "reported": ('token.state = "reported_ambiguous"', 'token.state = "broker_terminal"'),
     }[mutation]
