@@ -12,13 +12,18 @@ import pytest
 
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBrokerAdapter
+from sqlalchemy import select, update
+
 from project_mai_tai.db.models import BrokerAccount, DashboardSnapshot, Strategy, TradeIntent
 from project_mai_tai.oms import cancel_terminal_assessment as assessment
+from project_mai_tai.oms import cancel_feedback
 from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.settings import Settings
 from tests.integration import test_cancel_terminal_runtime as runtime
 from tests.unit import test_buy_submission_journal as tokens
 
 sessions = tokens.sessions
+sdk = runtime.sdk
 
 
 def seed(sessions):
@@ -50,6 +55,8 @@ def seed(sessions):
                         "clearwait_purpose": "retry_exhausted", "reason": "retry_budget_exhausted",
                         "buy_submission_process_id": process}})
             session.add(row)
+            row.payload = {**row.payload, cancel_feedback.KEY: {
+                "receipt": cancel_feedback._binding(row), "feedback_event_ids": [str(uuid4())]}}
             session.flush()
             receipts.append({"intent_id": str(row.id), "event_id": event_id, "account_name": name,
                 "provider": provider, "account_id": external, "status": "rejected",
@@ -103,10 +110,9 @@ def test_changed_or_incomplete_assessment_has_no_read_authority(sessions, field)
     assert not assessment.read_assessment_receipts(sessions, adapter, changed, at)
 
 
-@pytest.mark.parametrize("change", ["request_replaced", "latest_receipt", "receipt_working"])
+@pytest.mark.parametrize("change", ["request_replaced", "latest_receipt", "receipt_working", "not_published"])
 def test_signal_does_not_adopt_a_new_request_or_a_new_receipt_revision(sessions, change):
     payload, adapter, at = seed(sessions)
-    from sqlalchemy import select
     with sessions() as session:
         if change == "request_replaced":
             row = session.scalar(select(DashboardSnapshot))
@@ -115,10 +121,79 @@ def test_signal_does_not_adopt_a_new_request_or_a_new_receipt_revision(sessions,
             row = session.get(TradeIntent, UUID(payload["receipts"][0]["intent_id"]))
             if change == "latest_receipt":
                 row.updated_at = datetime.fromtimestamp(at / 1000, UTC)
+            elif change == "not_published":
+                session.execute(update(TradeIntent).where(TradeIntent.id == row.id).values(
+                    payload={k: v for k, v in row.payload.items() if k != cancel_feedback.KEY},
+                    updated_at=row.updated_at))
             else:
                 row.status = "pending"
         session.commit()
     assert not assessment.read_assessment_receipts(sessions, adapter, payload, at)
+
+
+@pytest.mark.parametrize("publish_fails", [False, True])
+@pytest.mark.asyncio
+async def test_actual_source_defers_new_assessment_until_normal_feedback_is_published(
+    sessions, sdk, monkeypatch, publish_fails,
+):
+    payload, adapter, _ = seed(sessions)
+    from project_mai_tai.broker_adapters.cancel_terminal import broker_binding
+    leaf, _ = broker_binding(adapter, "live:orb")
+    client = runtime.Client()
+    leaf._get_client = lambda: client
+    service = OmsRiskService(settings=Settings(oms_adapter="simulated", broker_default_provider="webull",
+        orb_broker_account_name="unused"), session_factory=sessions,
+        broker_adapter=adapter, redis_client=SimpleNamespace())
+    entered, release = asyncio.Event(), asyncio.Event()
+    published = []
+    async def publish(event):
+        entered.set()
+        await release.wait()
+        if publish_fails:
+            raise RuntimeError("controlled feedback publication failure")
+        published.append(event)
+    async def noop(*args):
+        pass
+    monkeypatch.setattr(service, "_publish_order_event", publish)
+    monkeypatch.setattr(service, "_evaluate_risk", lambda event: (True, "controlled"))
+    monkeypatch.setattr(service, "_reconcile_after_intent", noop)
+    monkeypatch.setattr("project_mai_tai.broker_adapters.cancel_terminal.now_ms",
+                        lambda: int(datetime.now(UTC).timestamp() * 1000))
+    event = runtime.cancel_event(coid="", symbol="FLYE")
+    event.payload.metadata.update({"clearwait_removal_token": payload["request"]["token"],
+        "clearwait_opportunity_id": payload["request"]["opportunity_id"],
+        "fanout_segment_id": payload["request"]["opportunity_id"], "clearwait_buy_only": "true"})
+    cancel = asyncio.create_task(service.process_trade_intent(event))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        with sessions() as session:
+            row = session.scalar(select(TradeIntent).where(
+                TradeIntent.payload["event_id"].as_string() == str(event.event_id)))
+            at = row.updated_at.replace(tzinfo=UTC) if row.updated_at.tzinfo is None else row.updated_at
+            created = row.created_at.replace(tzinfo=UTC) if row.created_at.tzinfo is None else row.created_at
+            payload["receipts"][1] = {"intent_id": str(row.id), "event_id": str(event.event_id),
+                "account_name": "live:orb", "account_id": "ACC1", "provider": "webull",
+                "created_at": created.isoformat(), "updated_at": at.isoformat(), "status": row.status,
+                "coverage_process_id": row.payload["metadata"]["buy_submission_process_id"]}
+            assert not cancel_feedback.feedback_published(row)
+        payload["assessment_at_ms"] = int(datetime.now(UTC).timestamp() * 1000)
+        await asyncio.wait_for(service._handle_stream_message({"data": json.dumps(payload)}), .05)
+        await asyncio.sleep(.01)
+        assert client.calls == []  # The new receipt is committed but feedback is still blocked.
+    finally:
+        release.set()
+        if publish_fails:
+            with pytest.raises(RuntimeError, match="feedback publication failure"):
+                await cancel
+        else:
+            await cancel
+        await service._drain_cancel_terminal_evidence()
+    assert bool(published) is (not publish_fails)
+    assert [kind for kind, _, _ in client.calls] == ([] if publish_fails else ["open"])
+    with sessions() as session:
+        row = session.scalar(select(TradeIntent).where(
+            TradeIntent.payload["event_id"].as_string() == str(event.event_id)))
+        assert cancel_feedback.feedback_published(row) is (not publish_fails)
 
 
 @pytest.mark.asyncio

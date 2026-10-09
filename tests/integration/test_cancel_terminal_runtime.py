@@ -139,7 +139,7 @@ def cancel_event(*, coid="exact-coid", symbol="DKI"):
           "clearwait_purpose": "retry_exhausted", "reason": "retry_budget_exhausted"}
     if coid:
         md["target_client_order_id"] = coid
-    return TradeIntentEvent(source_service="test", payload=TradeIntentPayload(
+    return TradeIntentEvent(source_service="schwab-1m-v2", payload=TradeIntentPayload(
         strategy_code="schwab_1m_v2", broker_account_name="live:orb", symbol=symbol,
         side="buy", intent_type="cancel", quantity=Decimal(1), reason="retry_budget_exhausted",
         metadata=md,
