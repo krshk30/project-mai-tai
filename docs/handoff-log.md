@@ -8957,3 +8957,20 @@ not certify finalcombinedLinuxhead. SharedWebullproof withAgentA,
 FcallerSinger,mainlatency; finalcomposition/CI owed. LINE/RPG
 remainfalse live. No productionconfig/service/order/DB write;
 sharedreviewer rows/header/boards preserved.
+
+### 2026-10-09 15:59 ET - Codex-2 latest master continuation
+
+The 15:45 ONLY list stays active: main and Singer own FI; AgentA owns
+the Monday rerun then RPGRETIRE. Current published F457d89dc and
+Ie97dd9fe are frozen into Linux pair37983559886 with unchanged tests.
+The earlier pair37983131802 failed setup on an unpublished F checkpoint,
+not latency. NFQ busy-return source2dda1913 has88focusedPASS and RuffPASS;
+final strict timing and five original order endings remain incomplete.
+HEALTHNOISE1146 corrected5fedca55 reviewed83PASS, independent pin3e96ae74,
+hosted pin and ValidatePASS, merged d451edf8 at15:55:31ET; no deployment.
+ALERTS1147 current16e41c75 reviewed104PASS but held on a reproduced
+fill-only freshness counterexample: an incident closes without a complete
+broker positions sync. Account-level complete-read receipt requested in
+comment6088106740. Review results are reported immediately in boxed
+callouts; all unfinished asks persist in the task queue. No production
+config, service, order or DB write by Codex in this checkpoint.
