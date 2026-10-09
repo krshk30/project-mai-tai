@@ -6,17 +6,17 @@ Controlled broker/Redis endpoints are not retained historical or live evidence.
 import asyncio
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from project_mai_tai.broker_adapters import cancel_terminal as broker
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
-from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, Strategy, TradeIntent
+from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, OmsManagedPosition, Strategy, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore, current_session_anchor
 from project_mai_tai.oms import buy_submission_journal as journal
@@ -41,6 +41,17 @@ sdk, sessions = controlled_sdk, pg_sessions
 @pytest.fixture
 def db(sessions):
     return controlled_unbound_db(sessions)
+
+
+@pytest.fixture
+def snapshot_timestamp(request):
+    def bind(now):
+        def timestamp(_mapper, _connection, row):
+            if row.created_at is None:
+                row.created_at = now(UTC)
+        event.listen(DashboardSnapshot, "before_insert", timestamp)
+        request.addfinalizer(lambda: event.remove(DashboardSnapshot, "before_insert", timestamp))
+    return bind
 
 
 class Transport:
@@ -87,7 +98,7 @@ def snapshot(sessions):
 @pytest.mark.parametrize("case", ["terminal_target", "terminal_stop", "operator_sell", "working_schwab",
     "working_webull", "unknown_side", "open_owned", "unknown_rows", "same_real_segment", "nullable_binding",
     "conflicting_binding"])
-async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch, pm, account, case):
+async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch, snapshot_timestamp, pm, account, case):
     store, sessions, ids, strategy_id = db
     strategy, state, record, clock, _ = synthetic_opportunity(account, pm)
     settings = strategy.settings.model_copy(update={"environment": "test",
@@ -110,9 +121,20 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
         def now(cls, tz=None):
             return datetime.fromtimestamp(clock[0] / 1000, tz or UTC)
 
+    class StorageClock(Clock):
+        last = None
+
+        @classmethod
+        def now(cls, tz=None):
+            value = super().now(tz)
+            # Transactions advance even while the physical-book clock stays in one millisecond.
+            cls.last = value if cls.last is None else max(value, cls.last + timedelta(microseconds=1))
+            return cls.last
+
     monkeypatch.setattr("project_mai_tai.oms.service.datetime", Clock)
     monkeypatch.setattr("project_mai_tai.services.schwab_1m_v2_bot.datetime", Clock)
     monkeypatch.setattr("project_mai_tai.db.models.datetime", Clock)
+    snapshot_timestamp(StorageClock.now)
     monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: at(clock[0]))
     monkeypatch.setattr("project_mai_tai.oms.store.utcnow", lambda: at(clock[0]))
     wires, reads = [], []
@@ -205,9 +227,9 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
 
     owner_store = FlipEntryOwnershipStore(sessions)
     strategy._flip_owner_persist = lambda owner, active, reason: owner_store.record(
-        owner, active=active, reason=reason, now=at(clock[0]))
+        owner, active=active, reason=reason, now=StorageClock.now(UTC))
     strategy._retry_one_budget_persist = lambda symbol, segment, count: owner_store.record_retry_budget(
-        symbol, segment, count, now=at(clock[0]))
+        symbol, segment, count, now=StorageClock.now(UTC))
     bot = service(strategy, store)
 
     def owner_book(*, unreadable=False):
@@ -264,7 +286,7 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
     released = case in {"terminal_target", "terminal_stop", "operator_sell", "nullable_binding"}
     assert (state.flip_owner_phase == "idle") is released
     assert (not store.restore()) is released
-    assert strategy._strict_first_rest_admitted(state, slot="first") is released
+    assert strategy._strict_first_rest_admitted(state, slot="first") is (released and case != "operator_sell")
     assert len(wires) == (1 if case == "open_owned" else 2)
     assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
     if case == "operator_sell":
