@@ -19,13 +19,13 @@ the worst level (0=GREEN, 1=AMBER, 2=RED) so the cron routes to ntfy.
 
 DESIGN CONSTRAINT (load-bearing): alert only on a signal that is RED *only* when genuinely
 broken. A check that false-alarms on normal quiet gets ignored, which defeats the purpose.
-So "strategy bars are stale" is RED only when the upstream feed is SIMULTANEOUSLY LIVE
-(trades flowing) — i.e. it cannot be a quiet market or a feed outage; it's a frozen loop.
+So a unit that is stopped by its own schedule is EXPECTED outside that schedule, and a check
+whose subject has been retired is removed rather than left permanently RED (HEALTHNOISE1).
 """
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time as clock_time, timedelta
 import json
 import os
 from pathlib import Path
@@ -43,6 +43,7 @@ _DSN_CACHE: list[str | None] = []
 _EASTERN_TZ = ZoneInfo("America/New_York")
 _D6_STATUS_PATH = Path("/home/trader/fanout_outcome_acceptance/STATUS.txt")
 _SESSION_RE = re.compile(r"\bsession=(\d{4}-\d{2}-\d{2})\b")
+_D6_VERDICT_RE = re.compile(r"^\[D6-OUTCOME-ACCEPTANCE-[A-Z]+\][^\n]*\bverdict=([A-Z_]+)", re.M)
 _RESTART_STATE_PATH = Path(
     os.environ.get(
         "FLEET_HEALTH_RESTART_STATE",
@@ -83,6 +84,18 @@ RUNTIME_SERVICES = (
     "project-mai-tai-schwab-1m-v2.service",
     "project-mai-tai-strategy.service",
 )
+# HEALTHNOISE1 (2026-10-09): units that run on a schedule, not continuously. Inside the window an
+# inactive unit is RED (and pages as FLEET_RUNTIME); outside it the stop is the schedule's own
+# doing and reports EXPECTED, which never pages. Restart storms are judged around the clock.
+#
+# momentum-paper: project-mai-tai-option-a-daily-guard.timer starts it Mon..Fri 03:40 ET
+# (OnCalendar=Mon..Fri *-*-* 03:40:00 America/New_York; daily_guard.py skips closed days) and the
+# guard stops it at 09:40 ET (`[MOMENTUM-PAPER-STOP] signal received`). Box journal 10-05..10-09:
+# started 07:40 UTC, stopped 13:40 UTC every session. The expected-running window starts at 03:45 so
+# the 03:40 cron run cannot race the start, and ends at 09:40 so the 09:40 run cannot race the stop.
+SCHEDULED_SERVICE_WINDOWS: dict[str, tuple[clock_time, clock_time]] = {
+    "project-mai-tai-momentum-paper.service": (clock_time(3, 45), clock_time(9, 40)),
+}
 _RESTART_STORM_LIMIT = 3
 _RESTART_SAMPLE_MAX_AGE_S = 360
 # This check deliberately imports no application code. Keep these full closures in step with the
@@ -351,6 +364,19 @@ def check_massive_socket_policy_violations(
     return tuple(rows)
 
 
+def scheduled_service_expected_running(service: str, now: datetime) -> bool:
+    """True when `service` must be running at `now`; continuous units are always expected."""
+
+    window = SCHEDULED_SERVICE_WINDOWS.get(service)
+    if window is None:
+        return True
+    local = now.astimezone(_EASTERN_TZ)
+    if local.weekday() >= 5 or local.date() in _FULL_CLOSURES:
+        return False
+    start, end = window
+    return start <= local.time() < end
+
+
 def _service_slug(service: str) -> str:
     return service.removeprefix("project-mai-tai-").removesuffix(".service")
 
@@ -454,13 +480,19 @@ def classify_service_runtime_rows(
             continue
 
         active = runtime.active_state == "active" and runtime.sub_state == "running"
-        rows.append(
-            (
-                "GREEN" if active else "RED",
-                f"service-runtime:{slug}:inactive",
-                f"unit={service} state={runtime.active_state}/{runtime.sub_state}",
+        state_detail = f"unit={service} state={runtime.active_state}/{runtime.sub_state}"
+        if active:
+            inactive_level = "GREEN"
+        elif scheduled_service_expected_running(service, now):
+            inactive_level = "RED"
+        else:
+            start, end = SCHEDULED_SERVICE_WINDOWS[service]
+            inactive_level = "EXPECTED"
+            state_detail += (
+                f" scheduled_stop=1 window_et={start.strftime('%H:%M')}-{end.strftime('%H:%M')} "
+                "session days only"
             )
-        )
+        rows.append((inactive_level, f"service-runtime:{slug}:inactive", state_detail))
         before = previous.get(service) if previous is not None else None
         delta = runtime.n_restarts - before if before is not None else None
         storm = comparison_valid and delta is not None and delta > _RESTART_STORM_LIMIT
@@ -716,44 +748,6 @@ def check_service_restart_storms(
 # --- pure decision logic (unit-tested; no I/O) -------------------------------- #
 
 
-def classify_bar_freshness(
-    bar_age_s: int | None,
-    feed_age_s: int | None,
-    *,
-    stale_amber_s: int = 120,
-    stale_red_s: int = 240,
-    feed_fresh_max_s: int = 120,
-) -> tuple[str, str]:
-    """Strategy-engine bar-freshness verdict — the frozen-loop detector.
-
-    polygon_30s persists a 30s bar per interval from the live Polygon feed. If the
-    upstream feed is LIVE (market_capture_trades fresh) but bars have stopped advancing,
-    the strategy loop is frozen (the exact 'reports healthy while dead' class). If the
-    feed is quiet/stale, bars legitimately don't advance — NOT a strategy fault → GREEN
-    (this is the no-false-alarm guard: a quiet market never reds)."""
-    if bar_age_s is None:
-        return ("AMBER", "no polygon_30s bars in strategy_bar_history (cannot assess)")
-    if feed_age_s is None or feed_age_s > feed_fresh_max_s:
-        return (
-            "GREEN",
-            f"bars {bar_age_s}s old but upstream feed quiet/stale "
-            f"(feed_age={feed_age_s}s) — staleness not attributable to the strategy",
-        )
-    # Feed is LIVE → any bar staleness IS attributable to the strategy loop.
-    if bar_age_s < stale_amber_s:
-        return ("GREEN", f"strategy bars fresh ({bar_age_s}s) with live feed")
-    if bar_age_s < stale_red_s:
-        return (
-            "AMBER",
-            f"strategy bars slowing ({bar_age_s}s) while feed live (feed_age={feed_age_s}s)",
-        )
-    return (
-        "RED",
-        f"strategy bars STALE {bar_age_s}s while upstream feed LIVE "
-        f"(feed_age={feed_age_s}s) — polygon_30s loop likely FROZEN",
-    )
-
-
 # --- checks (I/O + decision) -------------------------------------------------- #
 
 
@@ -819,7 +813,27 @@ def classify_d6_status(contents: str | None, *, expected_session: date) -> tuple
             f"D6 STATUS future session={observed.isoformat()} expected={expected_session.isoformat()}",
         )
     if "[D6-OUTCOME-ACCEPTANCE-SUCCESS]" not in contents:
-        return ("RED", f"D6 session={observed.isoformat()} completed without SUCCESS")
+        # HEALTHNOISE1: a graded FAIL stays RED by design (README "D6 outcome-acceptance install
+        # order": do not suppress). It is an outcome finding about the Webull fan-out mirror, not a
+        # monitor fault, so the detail names the run state and every failing metric instead of
+        # one opaque line. SCOREBOARD never pages; D6 notifies its own NONPASS.
+        verdict = _D6_VERDICT_RE.search(contents)
+        failing = [
+            line.split(" verdict=FAIL", 1)[0].removeprefix("metric=")
+            + " "
+            + line.split(" verdict=FAIL ", 1)[1].split(" baseline=", 1)[0]
+            for line in contents.splitlines()
+            if line.startswith("metric=") and " verdict=FAIL " in line
+        ]
+        parts = [
+            f"D6 session={observed.isoformat()} completed without SUCCESS",
+            f"run_verdict={verdict.group(1) if verdict else 'UNREADABLE'}",
+        ]
+        if "notification=FAILED" in contents:
+            parts.append("notification=FAILED")
+        if failing:
+            parts.append("failing=[" + "; ".join(failing) + "]")
+        return ("RED", " ".join(parts))
     return ("GREEN", f"D6 SUCCESS current for session={observed.isoformat()}")
 
 
@@ -982,21 +996,6 @@ def check_stops_armed() -> tuple[str, str, str]:
     )
 
 
-def check_strategy_bar_freshness() -> tuple[str, str, str]:
-    """Check #1: strategy-engine is actually producing bars (function), cross-checked
-    against the independent Polygon capture (ground truth), not its own snapshot."""
-    bar_age = _scalar_int(
-        "SELECT round(extract(epoch FROM (now()-max(bar_time))))::int "
-        "FROM strategy_bar_history WHERE strategy_code='polygon_30s'"
-    )
-    feed_age = _scalar_int(
-        "SELECT round(extract(epoch FROM (now()-max(received_at))))::int "
-        "FROM market_capture_trades WHERE received_at > now() - interval '10 min'"
-    )
-    level, detail = classify_bar_freshness(bar_age, feed_age)
-    return (level, "strategy-bar-freshness", detail)
-
-
 def classify_bar_continuity(
     worst_gap_min: int | None,
     gap_symbols: int | None,
@@ -1085,8 +1084,11 @@ RUNTIME_CHECKS = (
     CheckSpec(check_service_restart_storms, FLEET_RUNTIME),
     CheckSpec(check_massive_socket_policy_violations, FLEET_RUNTIME),
 )
+# HEALTHNOISE1 (2026-10-09): `strategy-bar-freshness` is retired. It watched polygon_30s bars in
+# strategy_bar_history; that paper 30s bot is off (MAI_TAI_STRATEGY_POLYGON_30S_ENABLED=false on the
+# box) and its last bar is 2026-09-02 20:34 UTC, so the check reported a permanent RED "loop FROZEN"
+# about a loop that no longer exists. Live v2 bars are covered by `v2-bar-continuity`.
 FUNCTION_CHECKS = (
-    CheckSpec(check_strategy_bar_freshness, PAPER),
     CheckSpec(check_oms_order_lifecycle, LIVE_MONEY),
     CheckSpec(check_stops_armed, LIVE_MONEY),
     CheckSpec(check_bar_continuity, DIAGNOSTIC),
@@ -1094,8 +1096,8 @@ FUNCTION_CHECKS = (
 )
 CHECKS = RUNTIME_CHECKS + FUNCTION_CHECKS
 
-_RANK = {"GREEN": 0, "MAINTENANCE": 0, "AMBER": 1, "RED": 2}
-_EXIT = {"GREEN": 0, "MAINTENANCE": 0, "AMBER": 1, "RED": 2}
+_RANK = {"GREEN": 0, "MAINTENANCE": 0, "EXPECTED": 0, "AMBER": 1, "RED": 2}
+_EXIT = {"GREEN": 0, "MAINTENANCE": 0, "EXPECTED": 0, "AMBER": 1, "RED": 2}
 
 
 def _result_rows(
