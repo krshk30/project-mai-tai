@@ -1,5 +1,6 @@
 """Real F emitter/poll controls; legacy gaps remain UNKNOWN, never fake book proof."""
 import asyncio
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -58,9 +59,18 @@ class RedisReceipt:
     def __init__(self, database, now):
         self.database, self.now = database, now
         self.events, self.pause = [], False
+        self.assessments = []
+        self.observations = []
         self.entered, self.release = asyncio.Event(), asyncio.Event()
 
     async def xadd(self, _stream, fields, **_kw):
+        payload = json.loads(fields["data"])
+        if payload.get("event_type") == "v2_cancel_terminal_assessment":
+            self.assessments.append(payload)
+            return "controlled-assessment-id"
+        if payload.get("event_type") == "v2_atr_sell_observation":
+            self.observations.append(payload)
+            return "controlled-observation-id"
         envelope = TradeIntentEvent.model_validate_json(fields["data"])
         self.events.append(envelope)
         if self.pause:
