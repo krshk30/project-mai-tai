@@ -16808,8 +16808,17 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self._order_event_attempts += 1
         # This intent exclusively leases its Session until the shielded worker
         # finishes. Audit counters and all protection state stay on the loop.
-        error = await self.broker_adapter._db(
-            lambda: self._write_order_event_savepoint(session, order=order, report=report, payload=payload))
+        outcome = {}
+        def write():
+            outcome["error"] = self._write_order_event_savepoint(session, order=order, report=report, payload=payload)
+            return outcome["error"]
+        try:
+            error = await self.broker_adapter._db(write)
+        except asyncio.CancelledError:
+            # _db has finished the lease before propagating cancellation. A
+            # dropped audit must still be counted and logged during shutdown.
+            self._finish_order_event_write(outcome["error"], order=order, report=report)
+            raise
         return self._finish_order_event_write(error, order=order, report=report)
 
     def _finish_order_event_write(self, error, *, order, report):
