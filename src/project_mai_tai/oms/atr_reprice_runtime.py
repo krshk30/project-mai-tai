@@ -37,6 +37,13 @@ class AtrRepriceRuntimeMixin:
         return bool(getattr(getattr(self, "settings", None),
                             "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False))
 
+    def _rpg_retire_disabled_at_boot(self):
+        if self._rpg_enabled():
+            return 0
+        count = self._rpg_journal().retire_disabled()
+        self.logger.info("[RPGRETIRE1] service=oms phase=boot retired=%s reason=flag_off", count)
+        return count
+
     @staticmethod
     def _rpg_matches_local_open(opening, event):
         md = event.payload.metadata

@@ -902,6 +902,7 @@ class SchwabV2BotService:
                     "disabled: %s",
                     exc,
                 )
+        await asyncio.to_thread(self._rpg_retire_disabled_at_boot)
         active_segments = self._configure_fanout_identity_store()
         self._configure_flip_entry_ownership_store(active_segments)
         self._configure_removed_wait_store()
@@ -1500,6 +1501,18 @@ class SchwabV2BotService:
             backoff_secs=self._loop_backoff_secs, logger=logger,
             idle=lambda: sleep_or_stop(self._stop_event, 1.0),
         )
+
+    def _rpg_retire_disabled_at_boot(self) -> int:
+        if getattr(self.settings, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False):
+            return 0
+        factory = getattr(self, "session_factory", None)
+        if factory is None:
+            return 0
+        count = HandoffJournal(factory).retire_disabled()
+        self._rpg_known_jobs = {}
+        self.strategy._rpg_handoffs = {}
+        logger.info("[RPGRETIRE1] service=v2 phase=boot retired=%s reason=flag_off", count)
+        return count
 
     async def _rpg_handoff_pass(self, *, refresh: bool = True) -> None:
         if not getattr(self.settings, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False):

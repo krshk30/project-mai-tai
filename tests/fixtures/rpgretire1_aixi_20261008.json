@@ -1,0 +1,59 @@
+{
+  "captured_at_utc": "2026-10-09T19:48:47.775258+00:00",
+  "provenance": "Bounded read-only trade_intents and dashboard_snapshots projection. Archived ticket replayed as active only in the local stale-ownership control; adapter acceptance is controlled, not historical.",
+  "intent": {
+    "id": "1019e8e9-8fde-4a49-9682-b4027d8c439c",
+    "event_id": "dd7571e4-ad3f-41aa-870c-094776940808",
+    "created_at": "2026-10-08T11:50:22.532419+00:00",
+    "source_service": "schwab-1m-v2",
+    "strategy_code": "schwab_1m_v2",
+    "broker_account_name": "live:schwab_1m_v2",
+    "symbol": "AIXI", "side": "buy", "intent_type": "open", "quantity": "270",
+    "reason": "schwab_1m_v2 ATR Flip CW-v2-resting",
+    "recorded_status": "aborted", "recorded_refusal": "rpg_old_buy_still_owned",
+    "metadata": {
+      "path": "ATR Flip", "source": "schwab_1m_v2", "session": "AM",
+      "eh_resting": "true", "order_type": "limit", "stop_price": "2.2200",
+      "atr_variant": "CW-v2-resting", "entry_price": "2.2200", "fanout_slot": "resting",
+      "limit_price": "2.22", "price_source": "ask", "cw_arm_bar_ts": "1791460080000",
+      "cw_entry_slot": "first", "cw_flip_level": "2.2004", "resting_entry": "true",
+      "resting_level": "2.2200", "time_in_force": "day", "extended_hours": "true",
+      "fanout_slot_id": "355bb1a0-e6e0-59b4-860c-dc7c9924aa93", "eh_cross_source": "stream_trade",
+      "nfq2_generation": "", "reference_price": "2.22", "entry_size_price": "2.22",
+      "resting_band_pct": "0.5", "strategy_version": "v1.32",
+      "fanout_attempt_id": "schwab_1m_v2-AIXI-open-dd7571e4ad3f",
+      "fanout_segment_id": "1791459182644", "pm_confirming_ask": "2.22",
+      "resting_offset_pct": "0.5", "eh_cross_print_ts_ms": "1791460222125",
+      "resting_buy_round_up": "true", "entry_computed_shares": "270",
+      "entry_size_price_basis": "limit_price", "fanout_identity_schema": "entry_opportunity_v2",
+      "resting_wire_stop_price": "2.2200", "clearwait_dispatch_token": "4c712bc3-e8c9-4037-a51c-585ebbcf6427",
+      "pm_confirming_ask_age_ms": "2016", "pm_confirming_ask_source": "stream_ask_cache",
+      "resting_wire_limit_price": "2.23", "entry_notional_target_usd": "600",
+      "pm_confirming_ask_decision_ms": "1791460222470"
+    }
+  },
+  "ticket": {
+    "id": "4e16a30c-3259-5a47-baf7-4b3d548ed082",
+    "snapshot_type": "atr_reprice_handoff__archived_20261008",
+    "created_at": "2026-10-06T13:31:03.279644+00:00",
+    "payload": {
+      "old": {
+        "side": "buy", "reason": "schwab_1m_v2 resting-entry cancel", "symbol": "AIXI",
+        "metadata": {
+          "reason": "reprice", "source": "schwab_1m_v2", "atr_reprice": "true", "cw_entry_slot": "first",
+          "rpg_generation": "504a0bf6-93ed-41a4-8285-a0bfcdb6082a", "strategy_version": "v1.32",
+          "fanout_segment_id": "1791293342368", "rpg_short_segment": "1791293100000",
+          "rpg_old_stop_price": "3.1529", "resting_entry_cancel": "true",
+          "rpg_resting_generation": "ad1b683c-0bbc-421d-abab-e852a0d8bf76"
+        },
+        "quantity": "189", "order_type": "STOP_LIMIT", "intent_type": "cancel",
+        "strategy_code": "schwab_1m_v2", "time_in_force": "day",
+        "client_order_id": "schwab_1m_v2-AIXI-cancel-8b34d93cd702", "broker_account_name": "live:schwab_1m_v2"
+      },
+      "slot": "first", "phase": "held_unknown", "reads": 0, "reason": "exact_old_order_unproven",
+      "revision": 1, "created_at": 1791293463.275603, "segment_id": 1791293342368,
+      "next_read_at": 1791293463.275603, "local_no_wire": false,
+      "cancel_event_id": "8b34d93c-d702-4762-8b09-357f978a81ea", "blocked_notice_at": 1791330551.952713
+    }
+  }
+}

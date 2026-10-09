@@ -14,7 +14,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Awaitable, Callable, Literal
 from uuid import UUID, uuid5, NAMESPACE_URL
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import sessionmaker
 
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback, scoped_request
@@ -26,6 +26,7 @@ from project_mai_tai.strategy_core.v2_entry_sizing import proven_resting_pair
 
 
 SNAPSHOT_TYPE = "atr_reprice_handoff"
+RETIRED_OFF_SNAPSHOT_TYPE = "atr_reprice_handoff__retired_flag_off"
 READ_INTERVAL_SECONDS = 1.0
 READ_TIMEOUT_SECONDS = 2.0
 MAX_READS = 30
@@ -396,6 +397,15 @@ class HandoffJournal:
 
     def __init__(self, session_factory: sessionmaker):
         self.session_factory = session_factory
+
+    def retire_disabled(self) -> int:
+        """Boot-only ownership retirement, not broker terminal or zero-fill proof."""
+        with self.session_factory() as session:
+            result = session.execute(update(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE
+            ).values(snapshot_type=RETIRED_OFF_SNAPSHOT_TYPE))
+            session.commit()
+            return result.rowcount
 
     def prepare(self, old: OrderRequest, *, slot: str, segment_id: int, now: float) -> UUID:
         if not scoped_request(old, allow_webull_client_identity=True) or slot not in {"first", "reclaim"} or segment_id <= 0:

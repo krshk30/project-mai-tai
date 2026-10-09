@@ -6,8 +6,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from project_mai_tai.db.models import BrokerOrder, TradeIntent
-from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal
+from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, TradeIntent
+from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, RETIRED_OFF_SNAPSHOT_TYPE
 from tests.unit.test_rpg1_runtime import runtime
 
 
@@ -168,7 +168,7 @@ async def test_running_retry_loop_stops_before_scan_after_switch_off(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_recorded_tickets_real_startup_off_leaves_journal_and_ownership_dormant(monkeypatch):
+async def test_recorded_tickets_real_startup_off_retires_ownership_preserving_payload(monkeypatch):
     from tests.unit.test_rpgstuck1_startup import (
         real_bot_startup, real_oms_startup, startup_harness,
     )
@@ -185,4 +185,8 @@ async def test_recorded_tickets_real_startup_off_leaves_journal_and_ownership_do
                for state in h.strategy._symbol_states.values())
     assert not h.adapter.opens and not h.adapter.cancels and not h.adapter.reads
     monkeypatch.undo()
-    assert journal.jobs() == before
+    assert journal.jobs() == []
+    with h.factory() as session:
+        retired = [(r.id, r.payload) for r in session.scalars(select(DashboardSnapshot).where(
+            DashboardSnapshot.snapshot_type == RETIRED_OFF_SNAPSHOT_TYPE))]
+    assert dict(retired) == dict(before)
