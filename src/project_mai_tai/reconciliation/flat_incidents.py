@@ -13,14 +13,13 @@ accounts below, there is nothing left to check and the incident is closed with a
 Any exposure keeps it open. Unknown order/intent statuses count as working (fail open = page).
 
 "No position" is only believed on FRESH, COMPLETE broker evidence for BOTH accounts (Codex
-review of #1147, P1): an absent ``account_positions`` row is not proof of flat. The OMS broker
-sync (``OmsStore.sync_account_positions``) re-stamps ``source_updated_at = utcnow()`` on EVERY
-zero-quantity row of an account on each successful positions read, and writes nothing for an
-account whose read failed (``[BROKER-SYNC-UNREADABLE]`` excludes it). So per account the OLDEST
-``source_updated_at`` among its zero-quantity rows is the time of the last complete successful
-read: a single fill can stamp one row, never all of them. Evidence is accepted only when that
-account has zero-quantity rows, none unstamped, and the oldest stamp is within
-``POSITION_EVIDENCE_MAX_AGE`` (box sync cadence is 15 s). Missing, stale, unstamped or errored
+review of #1147, P1 x2): neither an absent ``account_positions`` row nor its
+``source_updated_at`` (fills write it too) proves a read happened. The evidence is the positive
+per-account receipt in ``project_mai_tai.positions_read_receipt``, written ONLY by the OMS
+broker-sync pass for an account whose positions read returned successfully, carrying the time of
+the real broker read (a cached Webull snapshot carries its original read time). A failed read
+writes nothing, so the old receipt ages out. Both accounts need a receipt no older than
+``POSITION_EVIDENCE_MAX_AGE`` (box sync cadence is 15 s). Missing, stale, unparseable or errored
 evidence for either account keeps every incident OPEN and the reason is logged.
 
 Runs inside the reconciler cycle only (never the OMS order/tick path); reads are bounded by
@@ -45,6 +44,7 @@ from project_mai_tai.db.models import (
     TradeIntent,
     VirtualPosition,
 )
+from project_mai_tai.positions_read_receipt import load_receipts
 from project_mai_tai.strategy_core.time_utils import session_day_eastern_str
 
 AUTO_RESOLVE_SOURCES = ("schwab_opening_policy_reject", "orb_schwab_exit_evidence")
@@ -72,41 +72,29 @@ def _aware(value: datetime | None) -> datetime | None:
 
 
 def position_evidence(session: Session, *, now: datetime) -> dict[str, Any]:
-    """Per account: is the broker-position snapshot fresh and complete? Never raises."""
+    """Per account: is there a fresh positive complete-read receipt? Never raises."""
     evidence: dict[str, Any] = {"ok": False, "accounts": {}}
     try:
-        rows = session.execute(
-            select(
-                BrokerAccount.name,
-                func.count(AccountPosition.id),
-                func.count(AccountPosition.source_updated_at),
-                func.min(AccountPosition.source_updated_at),
-            )
-            .join(AccountPosition, AccountPosition.broker_account_id == BrokerAccount.id)
-            .where(BrokerAccount.name.in_(EXPOSURE_ACCOUNT_NAMES), AccountPosition.quantity == 0)
-            .group_by(BrokerAccount.name)
-        ).all()
+        receipts = load_receipts(session)
     except Exception as exc:  # noqa: BLE001 - unknown evidence is never flat
         evidence["reason"] = f"evidence_read_error:{type(exc).__name__}"
         return evidence
-    by_name = {name: (rows_, stamped, oldest) for name, rows_, stamped, oldest in rows}
     reasons: list[str] = []
     for name in EXPOSURE_ACCOUNT_NAMES:
-        zero_rows, stamped, oldest = by_name.get(name, (0, 0, None))
-        oldest = _aware(oldest)
-        entry: dict[str, Any] = {
-            "zero_rows": int(zero_rows or 0),
-            "oldest_sync_stamp": oldest.isoformat() if oldest else None,
-        }
-        if not zero_rows:
-            entry["reason"] = "no_position_snapshot"
-        elif stamped != zero_rows or oldest is None:
-            entry["reason"] = "incomplete_position_snapshot"
+        receipt = receipts.get(name)
+        entry: dict[str, Any] = {}
+        if receipt is None:
+            entry["reason"] = "no_positions_read_receipt"
+        elif receipt.get("read_at") is None:
+            entry["reason"] = "unparseable_positions_read_receipt"
         else:
-            age = now - oldest
+            read_at = receipt["read_at"]
+            age = now - read_at
+            entry["read_at"] = read_at.isoformat()
+            entry["position_count"] = receipt.get("position_count")
             entry["age_seconds"] = round(age.total_seconds(), 3)
             if age > POSITION_EVIDENCE_MAX_AGE:
-                entry["reason"] = "stale_position_snapshot"
+                entry["reason"] = "stale_positions_read_receipt"
         entry["ok"] = "reason" not in entry
         if not entry["ok"]:
             reasons.append(f"{name}:{entry['reason']}")

@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+import logging
+import threading
+import time
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
 
 from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    DashboardSnapshot,
     Fill,
     OmsManagedPosition,
     Strategy,
@@ -18,6 +24,9 @@ from project_mai_tai.db.models import (
     TradeIntent,
     VirtualPosition,
 )
+from project_mai_tai.oms import service as oms_service
+from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.positions_read_receipt import SNAPSHOT_TYPE, load_receipts, record_receipts
 from project_mai_tai.reconciliation.flat_incidents import resolve_flat_exposure_incidents
 from project_mai_tai.reconciliation.service import ReconciliationService
 from project_mai_tai.settings import Settings
@@ -29,21 +38,14 @@ NOW = datetime(2026, 10, 9, 20, 30, tzinfo=UTC)
 FRESH = object()
 
 
-def _zero_row(account, symbol, stamp):
-    return AccountPosition(
-        broker_account_id=account.id,
-        symbol=symbol,
-        quantity=Decimal("0"),
-        average_price=Decimal("0"),
-        market_value=Decimal("0"),
-        source_updated_at=stamp,
-    )
+def _receipt(session, account_name, read_at):
+    record_receipts(session, [(account_name, read_at, 0)], recorded_at=read_at)
 
 
 def _accounts(session, *, schwab_stamp=FRESH, webull_stamp=FRESH, now=NOW):
-    """Both live accounts; each gets two zero rows stamped like a broker-sync pass.
+    """Both live accounts, each with a positions-read receipt as the OMS sync writes it.
 
-    A stamp of None means "no snapshot rows at all" for that account.
+    A stamp of None means "no receipt" (no successful read was ever recorded) for that account.
     """
     strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live", metadata_json={})
     schwab = BrokerAccount(name="live:schwab_1m_v2", provider="schwab", environment="production")
@@ -53,8 +55,7 @@ def _accounts(session, *, schwab_stamp=FRESH, webull_stamp=FRESH, now=NOW):
     for account, stamp in ((schwab, schwab_stamp), (webull, webull_stamp)):
         if stamp is None:
             continue
-        stamp = now - timedelta(seconds=5) if stamp is FRESH else stamp
-        session.add_all([_zero_row(account, "OLD1", stamp), _zero_row(account, "OLD2", stamp)])
+        _receipt(session, account.name, now - timedelta(seconds=5) if stamp is FRESH else stamp)
     return strategy, schwab, webull
 
 
@@ -116,7 +117,7 @@ def test_flat_symbol_resolves_both_incident_kinds_with_a_reason() -> None:
         assert row.closed_at is not None
         assert row.payload["resolution"]["reason"] == "auto_resolved_flat_both_brokers"
         assert row.payload["resolution"]["checked_accounts"] == ["live:schwab_1m_v2", "live:orb"]
-        evidence = row.payload["resolution"]["position_evidence"]
+        evidence = row.payload["resolution"]["position_evidence"]  # receipts
         assert evidence["live:schwab_1m_v2"]["ok"] and evidence["live:orb"]["ok"]
         assert row.payload["source"] in {"schwab_opening_policy_reject", "orb_schwab_exit_evidence"}
 
@@ -310,8 +311,8 @@ def test_reconciler_cycle_resolves_and_flag_off_leaves_it_open() -> None:
 # ------------------------------------------- A1 evidence gate (Codex #1147 review, P1)
 
 
-def test_missing_schwab_snapshot_keeps_the_incident_open() -> None:
-    """Codex repro: both accounts configured, ZERO account_positions rows -> not flat."""
+def test_missing_schwab_receipt_keeps_the_incident_open() -> None:
+    """Codex repro #1: both accounts configured, ZERO account_positions rows, no read receipt."""
     resolved, rows = _run(build_test_session_factory(), _refused_incident(), schwab_stamp=None)
     assert resolved == []
     assert rows[0].status == "open"
@@ -322,7 +323,7 @@ def test_missing_schwab_snapshot_keeps_the_incident_open() -> None:
     assert rows[0].status == "open"
 
 
-def test_stale_webull_snapshot_keeps_the_incident_open() -> None:
+def test_stale_webull_receipt_keeps_the_incident_open() -> None:
     resolved, rows = _run(
         build_test_session_factory(),
         _refused_incident(),
@@ -332,25 +333,52 @@ def test_stale_webull_snapshot_keeps_the_incident_open() -> None:
     assert rows[0].status == "open"
 
 
-def test_one_fresh_row_from_a_fill_does_not_make_a_stale_account_fresh() -> None:
-    """A fill stamps one row; a failed sync leaves the others stale -> still not evidence."""
+def test_fill_only_fresh_stamps_without_a_sync_keep_the_incident_open() -> None:
+    """Codex repro #2 (16e41c75): old snapshot rows, then ONLY _apply_position_fill(sell) makes
+    them zero with fresh source_updated_at; no positions sync ran. Must stay OPEN."""
 
     def seed(session, strategy, schwab, webull):
-        session.add(_zero_row(webull, "FILLED", NOW - timedelta(seconds=1)))
+        store = OmsStore()
+        for account in (schwab, webull):
+            row = AccountPosition(
+                broker_account_id=account.id,
+                symbol="SOLD",
+                quantity=Decimal("5"),
+                average_price=Decimal("1"),
+                market_value=Decimal("5"),
+                source_updated_at=NOW - timedelta(minutes=10),
+            )
+            session.add(row)
+            session.flush()
+            store._apply_position_fill(
+                quantity=Decimal("5"),
+                price=Decimal("1"),
+                side="sell",
+                position=row,
+                track_realized_pnl=False,
+                reported_at=NOW,
+            )
+            assert row.quantity == 0 and row.source_updated_at == NOW
 
-    resolved, rows = _run(
-        build_test_session_factory(),
-        _refused_incident(),
-        seed=seed,
-        webull_stamp=NOW - timedelta(minutes=10),
-    )
-    assert resolved == []
-    assert rows[0].status == "open"
+    for stamp in (NOW - timedelta(minutes=10), None):
+        resolved, rows = _run(
+            build_test_session_factory(),
+            _refused_incident(),
+            seed=seed,
+            schwab_stamp=stamp,
+            webull_stamp=stamp,
+        )
+        assert resolved == [], stamp
+        assert rows[0].status == "open", stamp
 
 
-def test_unstamped_snapshot_row_is_incomplete_and_keeps_it_open() -> None:
+def test_unparseable_receipt_keeps_the_incident_open() -> None:
     def seed(session, strategy, schwab, webull):
-        session.add(_zero_row(schwab, "NEWROW", None))
+        for row in session.scalars(
+            select(DashboardSnapshot).where(DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE)
+        ).all():
+            if row.payload["broker_account_name"] == "live:orb":
+                row.payload = {**row.payload, "read_at": "garbage"}
 
     resolved, rows = _run(build_test_session_factory(), _refused_incident(), seed=seed)
     assert resolved == []
@@ -368,24 +396,19 @@ def test_evidence_read_error_keeps_the_incident_open(monkeypatch, caplog) -> Non
         session.commit()
         incident_id = incident.id
 
-    real_execute = Session.execute
+    def failing_load(session):
+        raise RuntimeError("receipt read failed")
 
-    def failing_execute(self, statement, *args, **kwargs):
-        if "account_positions" in str(statement) and "min(" in str(statement).lower():
-            raise RuntimeError("broker evidence read failed")
-        return real_execute(self, statement, *args, **kwargs)
-
-    monkeypatch.setattr(Session, "execute", failing_execute)
+    monkeypatch.setattr(flat_incidents, "load_receipts", failing_load)
     with caplog.at_level("INFO", logger="reconciler"), session_factory() as session:
         assert flat_incidents.resolve_flat_exposure_incidents(session, now=NOW) == []
         session.commit()
-    monkeypatch.undo()
     assert "evidence_read_error" in caplog.text
     with session_factory() as session:
         assert session.get(SystemIncident, incident_id).status == "open"
 
 
-def test_both_snapshots_fresh_and_flat_closes() -> None:
+def test_both_receipts_fresh_and_flat_closes() -> None:
     resolved, rows = _run(
         build_test_session_factory(),
         _refused_incident(),
@@ -394,6 +417,130 @@ def test_both_snapshots_fresh_and_flat_closes() -> None:
     )
     assert len(resolved) == 1
     assert rows[0].status == "closed"
+
+
+# ------------------------------------------- OMS sync pass writes the receipt (and only there)
+
+SCHWAB_ID, WEBULL_ID = uuid4(), uuid4()
+
+
+class _SyncStore:
+    def list_active_broker_accounts(self, session):
+        return [
+            SimpleNamespace(id=SCHWAB_ID, name="live:schwab_1m_v2"),
+            SimpleNamespace(id=WEBULL_ID, name="live:orb"),
+        ]
+
+    def list_named_broker_accounts(self, session, names):
+        return [a for a in self.list_active_broker_accounts(session) if a.name in names]
+
+    def sync_account_positions(self, session, *, broker_account_id, snapshots):
+        return len(snapshots)
+
+    def clear_virtual_positions_without_account_backing(self, session, **kwargs):
+        return []
+
+    def restore_virtual_positions_from_managed(self, session, **kwargs):
+        return []
+
+
+class _SyncAdapter:
+    def __init__(self, *, failing=(), wire_age=None):
+        self.failing = set(failing)
+        self.wire_age = dict(wire_age or {})
+
+    async def list_account_positions(self, name):
+        if name in self.failing:
+            raise RuntimeError("positions read failed / incomplete")
+        return [SimpleNamespace(symbol="X", quantity=1)]
+
+    def positions_wire_read_age_seconds(self, name):
+        return self.wire_age.get(name)
+
+
+def _oms(session_factory, adapter):
+    s = object.__new__(oms_service.OmsRiskService)
+    s.store = _SyncStore()
+    s.broker_adapter = adapter
+    s.logger = logging.getLogger("test-alerts1-receipt")
+    s.settings = SimpleNamespace()
+
+    async def _run_db(fn, *, commit=True):
+        with session_factory() as session:
+            result = fn(session)
+            if commit:
+                session.commit()
+            return result
+
+    s._run_db = _run_db
+    s._observe_settlement = lambda *a, **k: None
+    return s
+
+
+def _receipts(session_factory):
+    with session_factory() as session:
+        return load_receipts(session)
+
+
+def test_successful_sync_writes_one_receipt_per_account_and_upserts() -> None:
+    session_factory = build_test_session_factory()
+    oms = _oms(session_factory, _SyncAdapter())
+    asyncio.run(oms.sync_broker_positions())
+    first = _receipts(session_factory)
+    asyncio.run(oms.sync_broker_positions())
+    second = _receipts(session_factory)
+    assert set(second) == {"live:schwab_1m_v2", "live:orb"}
+    assert second["live:orb"]["read_at"] >= first["live:orb"]["read_at"]
+    assert second["live:orb"]["writer"] == "oms.sync_broker_positions"
+    with session_factory() as session:
+        count = session.scalar(
+            select(func.count()).select_from(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE
+            )
+        )
+    assert count == 2, "one upserted row per account, not one per pass"
+
+
+def test_partial_read_writes_no_receipt_for_the_failed_account() -> None:
+    session_factory = build_test_session_factory()
+    asyncio.run(_oms(session_factory, _SyncAdapter(failing={"live:orb"})).sync_broker_positions())
+    assert set(_receipts(session_factory)) == {"live:schwab_1m_v2"}
+
+
+def test_failed_sync_after_an_old_good_receipt_retains_it_and_incident_stays_open() -> None:
+    session_factory = build_test_session_factory()
+    old = datetime.now(UTC) - timedelta(minutes=10)
+    with session_factory() as session:
+        _accounts(session, schwab_stamp=old, webull_stamp=old, now=datetime.now(UTC))
+        session.add(_refused_incident())
+        session.commit()
+    adapter = _SyncAdapter(failing={"live:orb"})
+    asyncio.run(_oms(session_factory, adapter).sync_broker_positions())
+    receipts = _receipts(session_factory)
+    assert receipts["live:orb"]["read_at"] == old, "a failed read must leave the receipt unchanged"
+    assert datetime.now(UTC) - receipts["live:schwab_1m_v2"]["read_at"] < timedelta(seconds=30)
+    with session_factory() as session:
+        assert resolve_flat_exposure_incidents(session, now=datetime.now(UTC)) == []
+
+
+def test_cached_webull_snapshot_carries_its_real_read_time() -> None:
+    """Webull throttle/429 backoff serves a cache; the receipt must not look fresh."""
+    session_factory = build_test_session_factory()
+    adapter = _SyncAdapter(wire_age={"live:orb": 600.0})
+    asyncio.run(_oms(session_factory, adapter).sync_broker_positions())
+    age = datetime.now(UTC) - _receipts(session_factory)["live:orb"]["read_at"]
+    assert age >= timedelta(seconds=599)
+
+
+def test_webull_adapter_reports_the_age_of_its_last_real_read() -> None:
+    from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+
+    adapter = object.__new__(WebullBrokerAdapter)
+    adapter._positions_lock = threading.Lock()
+    adapter._positions_cache = {}
+    assert adapter.positions_wire_read_age_seconds("live:orb") is None
+    adapter._positions_cache["live:orb"] = (time.monotonic() - 42.0, [])
+    assert 41.0 <= adapter.positions_wire_read_age_seconds("live:orb") < 60.0
 
 
 # ---------------------------------------------------------------- A2: operator-closed allowance

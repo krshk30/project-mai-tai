@@ -63,6 +63,9 @@ from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms import wbquiet_shadow
+from project_mai_tai.positions_read_receipt import (
+    record_receipts as record_positions_read_receipts,
+)
 from project_mai_tai.falseflip1_runtime import classify_managed_entries, record_bar
 from project_mai_tai.oms.mirror_fresh_price import MirrorFreshPriceMixin
 from project_mai_tai.oms.eh_fresh_price import EhFreshPriceMixin
@@ -10426,6 +10429,20 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     symbol, detail.get("broker_order_id"), detail.get("quantity"),
                 )
 
+    def _positions_wire_read_at(self, account_name: str) -> datetime:
+        """Wall time of the real broker read behind the snapshot just returned (ALERTS1).
+
+        Adapters with a positions cache (Webull) report the cached read's age; an adapter
+        without one returned a real read just now. Pure in-memory; never raises."""
+        now = utcnow()
+        try:
+            age = self.broker_adapter.positions_wire_read_age_seconds(account_name)
+        except Exception:  # noqa: BLE001 - absent/duck-typed adapter: the call just returned
+            return now
+        if isinstance(age, (int, float)) and not isinstance(age, bool) and age >= 0:
+            return now - timedelta(seconds=float(age))
+        return now
+
     async def sync_broker_positions(self, *, account_names: list[str] | None = None) -> dict[str, int]:
         # SPOF fix (Fix 2): this is the method BOTH 2026-07-01/02 zombies hung in
         # — `sync_account_positions -> session.flush()` ran on the event loop and
@@ -10459,6 +10476,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # the sync for EVERY account. Webull has raised since 2026-07-24, so a Webull 429 with no
         # cached snapshot was already able to stop Schwab's sync too.
         fetched: list[tuple[UUID, list]] = []
+        read_receipts: list[tuple[str, datetime, int]] = []
         unreadable: list[str] = []
         for account_id, account_name in accounts:
             try:
@@ -10522,6 +10540,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             except Exception:  # noqa: BLE001 - a counter must never cost us the sync
                 pass
             fetched.append((account_id, snapshots))
+            # ALERTS1: positive receipt of this COMPLETE successful read (no broker call; an
+            # in-memory cache-age lookup). A cached snapshot carries its real wire-read time.
+            read_receipts.append(
+                (account_name, self._positions_wire_read_at(account_name), len(snapshots))
+            )
             # P0.2: read-only settlement probe on the read we ALREADY made (no extra call).
             # Wrapped: a probe must never be able to break broker-sync.
             try:
@@ -10549,6 +10572,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     [name for aid, name in accounts if aid == account_id],
                     "sync_account_positions",
                 )
+            # ALERTS1: one receipt per successfully read account, same transaction as the
+            # snapshot it vouches for. Savepoint: a receipt failure never costs the sync.
+            try:
+                with session.begin_nested():
+                    record_positions_read_receipts(session, read_receipts, recorded_at=utcnow())
+            except Exception:  # noqa: BLE001 - evidence bookkeeping is never load-bearing here
+                self.logger.warning("[POSITIONS-READ-RECEIPT-FAILED] receipts not recorded")
             # ⛔⭐ N3 — NEVER PUBLISH A FRESH FALSE ZERO. #714 made an erased row restorable, but
             # measured restores took 6.648s--19.119s while downstream consumers act inside 10s.
             # Restoration is therefore recovery, never permission to erase early. The measured
