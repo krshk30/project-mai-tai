@@ -63,6 +63,7 @@ class CancelTerminalEvidence:
     target_symbol: str = ""
     target_account_id: str = ""
     target_filled_quantity: str = ""
+    day_absence: object = None
 
 
 @dataclass(frozen=True)
@@ -122,9 +123,12 @@ def evaluate_cancel_terminal(
         if evidence.target_filled_quantity != "0":
             return result("broker_target_fills_unknown_or_present")
     else:
+        from project_mai_tai.webull_day_cancel_proof import day_cancel_absence_proven
+        day_absence = day_cancel_absence_proven(evidence.day_absence, expected, now_ms)
         if expected.status != "rejected" or not (
             expected.refusal_code == "cancel_target_not_found"
             or expected.refusal_origin == "skipped_before_submit"
+            or day_absence
         ):
             return result("cancel_result_not_positive")
         if evidence.book is None:
@@ -163,6 +167,7 @@ def evaluate_cancel_terminal(
             if order.symbol == scope.symbol and order.status in WORKING:
                 return result("book_symbol_working")
     return result("cancel_terminal_broker_receipt" if evidence.target_status
+                  else "cancel_terminal_webull_day_absence" if day_absence
                   else "cancel_terminal_complete_book", True)
 
 
