@@ -15,9 +15,9 @@ from project_mai_tai.broker_adapters.cancel_terminal import (
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.cancel_terminal_proof import (
     BookOrder, CancelReceipt, CancelScope, CancelTerminalEvidence, CompleteWorkingBook,
-    evaluate_cancel_terminal,
+    TERMINAL, WORKING, evaluate_cancel_terminal,
 )
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, TradeIntent
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill, TradeIntent
 from project_mai_tai.oms.unbound_cancel_book import acquire_unbound_request_working_book
 
 JOURNAL_KEY = "cancel_terminal_evidence"
@@ -96,6 +96,9 @@ def evidence_from_payload(payload: dict) -> CancelTerminalEvidence | None:
             book = dict(book)
             book["orders"] = tuple(BookOrder(**row) for row in book["orders"])
             book = CompleteWorkingBook(**book)
+        if data.get("day_absence") is not None:
+            from project_mai_tai.broker_adapters.webull_day_cancel import decode_day_absence
+            data["day_absence"] = decode_day_absence(data["day_absence"])
         return CancelTerminalEvidence(CancelReceipt(**receipt), book, **data)
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
@@ -111,6 +114,10 @@ def load_cancel_terminal_evidence(session, intents) -> dict[str, CancelTerminalE
         receipt = receipt_from_intent(intent, account)
         evidence = evidence_from_payload(intent.payload or {})
         if receipt is not None and evidence is not None and evidence.receipt == receipt:
+            if evidence.day_absence is not None and _bound_day_cancel(
+                    session, intent, receipt, account,
+                    intent.payload[BINDING_KEY].get("broker_order_id", "")) != evidence.day_absence.bound:
+                continue
             result[receipt.scope.event_id] = evidence
     return result
 
@@ -121,6 +128,43 @@ class _Request:
     receipt: CancelReceipt
     payload: dict
     updated_at: datetime
+    bound_day_cancel: object = None
+
+
+def _bound_day_cancel(session, intent, receipt, account, broker_id):
+    from project_mai_tai.webull_day_cancel_proof import BoundDayCancel
+
+    if account.provider != "webull" or not broker_id:
+        return None
+    target = session.scalar(select(BrokerOrder).where(
+        BrokerOrder.broker_account_id == account.id, BrokerOrder.symbol == receipt.scope.symbol,
+        BrokerOrder.client_order_id == receipt.scope.client_order_id,
+        BrokerOrder.broker_order_id == broker_id, BrokerOrder.side == "buy"))
+    if (target is None or not isinstance(target.status, str)
+            or target.status not in (TERMINAL | WORKING | {"submitted"}) - {"partially_filled"}
+            or not isinstance(target.submitted_at, datetime)):
+        return None
+    if session.scalar(select(Fill.id).where(Fill.order_id == target.id).limit(1)) is not None:
+        return None
+    audit = session.scalar(select(BrokerOrderEvent).where(
+        BrokerOrderEvent.order_id == target.id,
+        BrokerOrderEvent.event_at >= intent.created_at,
+        BrokerOrderEvent.event_at <= intent.updated_at,
+    ).order_by(BrokerOrderEvent.event_at.desc(), BrokerOrderEvent.id.desc()).limit(1))
+    if (audit is None or not isinstance(audit.payload, dict)
+            or audit.event_type != "rejected" or audit.event_source != "broker"
+            or audit.payload.get("client_order_id") != receipt.scope.client_order_id
+            or audit.payload.get("reason") != receipt.refusal_code):
+        return None
+    md = audit.payload.get("metadata", {})
+    if not isinstance(md, dict):
+        return None
+    at = target.submitted_at
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    return BoundDayCancel(receipt.scope, broker_id, int(at.timestamp() * 1000), target.time_in_force,
+                          target.side, md.get("webull_error_code", ""),
+                          md.get("webull_http_status", ""), audit.payload["reason"])
 
 
 def _read_request(session_factory, intent_id, adapter) -> _Request | None:
@@ -151,7 +195,8 @@ def _read_request(session_factory, intent_id, adapter) -> _Request | None:
             ))
             if target is None:
                 return None
-        return _Request(intent.id, receipt, dict(intent.payload), intent.updated_at)
+        return _Request(intent.id, receipt, dict(intent.payload), intent.updated_at,
+                        _bound_day_cancel(session, intent, receipt, account, broker_id))
 
 
 def _write_evidence(session_factory, request: _Request, evidence: CancelTerminalEvidence, adapter) -> bool:
@@ -164,6 +209,10 @@ def _write_evidence(session_factory, request: _Request, evidence: CancelTerminal
             return False
         account = session.get(BrokerAccount, current.broker_account_id)
         if account is None or receipt_from_intent(current, account) != request.receipt:
+            return False
+        if request.bound_day_cancel is not None and _bound_day_cancel(
+                session, current, request.receipt, account,
+                current.payload[BINDING_KEY].get("broker_order_id", "")) != request.bound_day_cancel:
             return False
         try:
             leaf, account_id = broker_binding(adapter, account.name)
@@ -210,6 +259,7 @@ async def acquire_cancel_terminal_evidence(
                     adapter, request.receipt,
                     broker_order_id=request.payload[BINDING_KEY].get("broker_order_id", ""),
                     minimum_started_at_ms=(minimum_started_at_ms or {}).get(intent_id, 0),
+                    bound_day_cancel=request.bound_day_cancel,
                 )
         except Exception:
             evidence = CancelTerminalEvidence(request.receipt, None)

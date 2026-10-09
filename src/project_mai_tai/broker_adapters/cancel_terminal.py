@@ -279,6 +279,7 @@ def _webull_target(leaf: WebullBrokerAdapter, receipt: CancelReceipt, broker_ord
 async def acquire_broker_cancel_evidence(
     adapter, receipt: CancelReceipt, *, broker_order_id: str = "", cycle: CompleteBookCycle | None = None,
     minimum_started_at_ms: int = 0,
+    bound_day_cancel=None,
 ) -> CancelTerminalEvidence:
     leaf, account_id = broker_binding(adapter, receipt.scope.account_name)
     if account_id != receipt.scope.account_id:
@@ -291,9 +292,11 @@ async def acquire_broker_cancel_evidence(
         except _TargetNotFound:
             pass
         except _TargetEmpty:
+            from project_mai_tai.webull_day_cancel_proof import eligible_bound_day_cancel
             if receipt.status != "rejected" or not (
                 receipt.refusal_code == "cancel_target_not_found"
                 or receipt.refusal_origin == "skipped_before_submit"
+                or eligible_bound_day_cancel(bound_day_cancel, receipt, now_ms())
             ):
                 return evidence
         except Exception:
@@ -304,6 +307,14 @@ async def acquire_broker_cancel_evidence(
                 book = await acquire_complete_working_book(adapter, receipt.scope.account_name,
                     after_ms=max(receipt.observed_at_ms, minimum_started_at_ms), cycle=cycle)
                 evidence = replace(evidence, book=book, source="broker" if book else "unknown")
+                from project_mai_tai.webull_day_cancel_proof import eligible_bound_day_cancel
+                if book and eligible_bound_day_cancel(bound_day_cancel, receipt, now_ms()):
+                    from project_mai_tai.broker_adapters.webull_day_cancel import acquire_day_absence
+                    # Retain the shared 2/2s query ceiling, without retries or a
+                    # recurring sweep. This explicit request is already off feedback.
+                    await asyncio.sleep(2)
+                    witness = await asyncio.to_thread(acquire_day_absence, leaf, bound_day_cancel)
+                    evidence = replace(evidence, day_absence=witness)
             except Exception:
                 if not status:
                     return evidence
