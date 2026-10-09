@@ -8692,3 +8692,19 @@ green loop19.110ms/close33.136ms does not erase failure or explain cause.
 The16 PG timestamp controls now pass. F/I remain NOTREADY. Shared-callchain
 attribution investigation is read-only; no blind rerun/waiver/infrastructure
 claim. I99fab761 and DB9641bdc6 exact CI pending. No production action.
+
+2026-10-09 08:02 ET codex-2 C6: operator scope limited to regressions/P1s;
+DB1142 PARKED unchanged, no more build/install. LINE1143 e6a978b5 delivered
+on c065248e: future-cutoff skip and empty-filter guard only,226 focusPASS,
+old rejection mutant19 assertionFAIL/0errors, final restored27PASS/Ruffclean.
+Fresh serial read-only Schwab/Massive04:00-07:20 responses captured07:54-07:55;
+original07:01 payload not retained. Real parser/bot atomic07:09 rebuild vs
+Massive04:00: MI LONG1.2482/SHORT1.3511; VEEA LONG5.157982/LONG5.1712;
+AIXI LONG2.001056/SHORT2.2511; DKI LONG4.0543/LONG5.0616: allFAIL.
+FLYE no07:09 source/chart candle:UNMEASURED. Four Schwab prefixes10 bars
+from07:00 versus190 chart bars from04:00. Zero rebuild buys, preMIflip rest
+and historical other-symbol trace parity not certified; gate exits1,LINEOFF.
+I11b26 both exactCI14/15 goldenFAIL, including transport/CAS and strict
+latency; noREADY or waiver. Earlier139 has concurrent SQLite worker lead,
+not yet causal proof. Sourceproposals limited to currentregressions. No box
+write, flags, service change, orders, merge or installation in this turn.
