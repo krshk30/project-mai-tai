@@ -1,4 +1,4 @@
-"""Exit order projection equivalence on real PostgreSQL."""
+"""Exit order projection equivalence on real PostgreSQL (distinct pytest module)."""
 import pytest
 
 import test_cancel_terminal_runtime as runtime

@@ -72,7 +72,7 @@ jobs:
           done
       - name: Validate observer and SQLite PostgreSQL equivalence plus Ruff
         run: |
-          python -m pytest -p no:cacheprovider tests/unit/test_closed_owner_latency_diagnostics.py tests/unit/test_drift_cache_projection_equivalence.py tests/integration/test_drift_cache_projection.py tests/unit/test_exit_order_projection.py tests/integration/test_exit_order_projection.py
+          python -m pytest -p no:cacheprovider tests/unit/test_closed_owner_latency_diagnostics.py tests/unit/test_drift_cache_projection_equivalence.py tests/integration/test_drift_cache_projection.py tests/unit/test_exit_order_projection.py tests/integration/test_exit_order_projection_postgres.py
           python -m ruff check src tests
       - name: F reference with the identical I observer
         id: f
