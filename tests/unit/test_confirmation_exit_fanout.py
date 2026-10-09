@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import weakref
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from tempfile import TemporaryDirectory
 
 import pytest
 from tests.unit.managed_entry_fixtures import bind_managed_entry, set_protect_base
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 
 from project_mai_tai.broker_adapters.protocols import (
     BrokerPositionSnapshot,
@@ -213,20 +215,31 @@ class _DelayedFillAdapter(_FanoutAdapter):
         )
 
 
+def _dispose_test_database(engine, directory) -> None:
+    engine.dispose()
+    directory.cleanup()
+
+
 def _make_sf() -> sessionmaker:
+    directory = TemporaryDirectory(prefix="mai-tai-fanout-")
     engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
+        f"sqlite+pysqlite:///{directory.name}/fanout.sqlite",
         future=True,
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+        poolclass=NullPool,
     )
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA journal_mode=WAL")
     tables = [
         table
         for table in Base.metadata.sorted_tables
         if table.name not in ("market_trade_ticks", "market_quote_ticks")
     ]
     Base.metadata.create_all(engine, tables=tables)
-    return sessionmaker(bind=engine, expire_on_commit=False)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    # Worker closures retain the factory; never delete its DB while a read is still running.
+    weakref.finalize(factory, _dispose_test_database, engine, directory)
+    return factory
 
 
 def _service(*, fanout: bool, adapter: _FanoutAdapter) -> tuple[OmsRiskService, sessionmaker]:

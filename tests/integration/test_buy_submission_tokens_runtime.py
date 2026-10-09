@@ -296,20 +296,37 @@ async def test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_re
     monkeypatch.setattr(journal, "now_ms", real_now)
     close_index = ContextVar("controlled_close_index", default=None)
     slow_db = []
+    loop_thread = threading.get_ident()
+    def db_site():
+        frame = inspect.currentframe()
+        try:
+            for _ in range(32):
+                if frame is None:
+                    break
+                if "/project_mai_tai/oms/" in frame.f_code.co_filename:
+                    return frame.f_code.co_name, frame.f_lineno
+                frame = frame.f_back
+            return "unknown", 0
+        finally:
+            del frame
     def before_sql(conn, cursor, statement, parameters, context, many):
-        context._controlled_close_start = monotonic(), close_index.get()
+        context._controlled_close_start = (monotonic(), close_index.get(),
+            "loop" if threading.get_ident() == loop_thread else "worker")
     def after_sql(conn, cursor, statement, parameters, context, many):
-        began, index = context._controlled_close_start
+        began, index, thread = context._controlled_close_start
         elapsed = (monotonic() - began) * 1000
         if index is not None and elapsed >= 10:
-            slow_db.append((index, "sql", round(elapsed, 3), " ".join(statement.split())[:180]))
+            slow_db.append((index, "sql", round(elapsed, 3), thread,
+                            " ".join(statement.split())[:180]))
     def before_commit(session):
-        session.info["controlled_commit"] = monotonic(), close_index.get()
+        session.info["controlled_commit"] = (monotonic(), close_index.get(),
+            "loop" if threading.get_ident() == loop_thread else "worker", db_site())
     def after_commit(session):
-        began, index = session.info.pop("controlled_commit", (monotonic(), None))
+        began, index, thread, site = session.info.pop("controlled_commit",
+                                                     (monotonic(), None, "unknown", ("unknown", 0)))
         elapsed = (monotonic() - began) * 1000
         if index is not None and elapsed >= 10:
-            slow_db.append((index, "commit", round(elapsed, 3)))
+            slow_db.append((index, "commit", round(elapsed, 3), thread, site))
     engine = sessions.kw["bind"]
     for target, name, callback in ((engine, "before_cursor_execute", before_sql),
             (engine, "after_cursor_execute", after_sql),
