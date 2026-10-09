@@ -1,0 +1,113 @@
+name: F I Caller Latency Attribution Only
+
+on:
+  push:
+    branches: ["codex/clearwait1-session-rollover-1008"]
+    paths:
+      - "tests/support/f_caller_latency_attribution.py"
+      - "tests/unit/test_f_caller_latency_attribution.py"
+      - ".github/workflows/f-caller-latency-attribution.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attribution-only:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: public.ecr.aws/docker/library/postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: project_mai_tai_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d project_mai_tai_test"
+          --health-interval 2s --health-timeout 5s --health-retries 10
+    env:
+      MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
+      F_HEAD: 7b658787f16f0aab454c39b59e2fa23aa436a8c8
+      I_HEAD: 9901f2f2a94354c7c5f8dbf197e76e4534ad03b7
+      F_REBASE_HEAD: 324a06c44649b8e91a938b69fd3b20af41a2b679
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Freeze the raw failing pair without trading source or canonical test changes
+        id: freeze
+        run: |
+          git fetch origin "$F_HEAD" "$I_HEAD" "$F_REBASE_HEAD"
+          git diff --exit-code "$F_REBASE_HEAD" HEAD -- src tests/integration/test_buy_submission_tokens_runtime.py
+          git diff --exit-code "$F_HEAD" "$I_HEAD" -- src/project_mai_tai/oms src/project_mai_tai/db src/project_mai_tai/broker_adapters tests/integration/test_buy_submission_tokens_runtime.py
+          mkdir -p "$RUNNER_TEMP/f-frozen" "$RUNNER_TEMP/i-frozen" attribution-logs
+          git archive "$F_HEAD" | tar -x -C "$RUNNER_TEMP/f-frozen"
+          git archive "$I_HEAD" | tar -x -C "$RUNNER_TEMP/i-frozen"
+          printf 'purpose=attribution ONLY, not raw acceptance\nF=%s\nI=%s\nobserver=%s\nrunner=%s\norder=F then I; independent processes and PG schemas; GC policy unchanged\n' "$F_HEAD" "$I_HEAD" "$GITHUB_SHA" "$RUNNER_NAME" | tee attribution-logs/identity.log
+          for ref in "$F_HEAD" "$I_HEAD"; do
+            printf '%s token_blob=%s runtime_blob=%s\n' "$ref" "$(git rev-parse "$ref:src/project_mai_tai/oms/buy_submission_journal.py")" "$(git rev-parse "$ref:tests/integration/test_buy_submission_tokens_runtime.py")" | tee -a attribution-logs/identity.log
+          done
+      - name: Install one dependency environment
+        id: dependencies
+        run: python -m pip install -e "$RUNNER_TEMP/i-frozen[dev]"
+      - name: Verify observer retention and unchanged GC policy
+        id: observer
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
+        run: |
+          python -m pytest -p no:cacheprovider -q tests/unit/test_f_caller_latency_attribution.py
+          python -m ruff check tests/support/f_caller_latency_attribution.py tests/unit/test_f_caller_latency_attribution.py
+      - name: Same original PostgreSQL precontrols
+        id: pg_controls
+        working-directory: ${{ runner.temp }}/i-frozen
+        env:
+          PYTHONPATH: ${{ runner.temp }}/i-frozen:${{ runner.temp }}/i-frozen/src
+        run: python -m pytest -p no:cacheprovider -q tests/integration/test_intent_order_scalar_reads_postgres.py tests/integration/test_clearwait1_day_nonworking_postgres.py
+      - name: Same original twenty duplicate controls per frozen source
+        id: duplicates
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          failures = {}
+          node = "tests/unit/test_nfq2_tick_path.py::test_nfq2_slow_save_does_not_stall_loop_and_concurrent_quotes_queue_once"
+          for lane in ("f", "i"):
+              root = os.path.join(os.environ["RUNNER_TEMP"], lane + "-frozen")
+              env = dict(os.environ, PYTHONPATH=root + ":" + root + "/src")
+              failures[lane] = 0
+              for index in range(20):
+                  result = subprocess.run(["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", node],
+                                          cwd=root, env=env, capture_output=True, text=True)
+                  failures[lane] += result.returncode != 0
+                  with open(f"attribution-logs/{lane}-duplicate-{index:02d}.log", "w") as log:
+                      log.write(result.stdout + result.stderr)
+              print(lane, "duplicate failures", failures[lane], "of20", flush=True)
+          assert not any(failures.values()), failures
+          PY
+      - name: F observed unchanged workload, not a raw gate
+        id: f
+        if: ${{ !cancelled() && steps.freeze.outcome == 'success' && steps.dependencies.outcome == 'success' && steps.observer.outcome == 'success' && steps.pg_controls.outcome == 'success' && steps.duplicates.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/f-frozen
+        env:
+          PYTHONPATH: ${{ runner.temp }}/f-frozen:${{ runner.temp }}/f-frozen/src:${{ github.workspace }}/tests/support
+        run: |
+          set -o pipefail
+          python -m pytest -p no:cacheprovider -p f_caller_latency_attribution -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/attribution-logs/f.log"
+      - name: I observed unchanged workload, not a raw gate
+        id: i
+        if: ${{ !cancelled() && (steps.f.outcome == 'success' || steps.f.outcome == 'failure') }}
+        working-directory: ${{ runner.temp }}/i-frozen
+        env:
+          PYTHONPATH: ${{ runner.temp }}/i-frozen:${{ runner.temp }}/i-frozen/src:${{ github.workspace }}/tests/support
+        run: |
+          set -o pipefail
+          python -m pytest -p no:cacheprovider -p f_caller_latency_attribution -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/attribution-logs/i.log"
+      - name: Retain both captures including setup or workload failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: f-i-attribution-${{ github.run_id }}
+          path: attribution-logs
