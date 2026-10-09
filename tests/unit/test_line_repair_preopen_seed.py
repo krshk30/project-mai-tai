@@ -197,7 +197,7 @@ async def test_mi_matching_line_does_not_waive_missing_owner_and_budget_evidence
     from scripts.line_repair_preopen_replay import replay
 
     row = next(r for r in POPULATION["rows"] if r["day"] == "2026-10-09" and r["symbol"] == "MI")
-    result = await replay(row)
+    result = await replay(row, admission_control=False)
     assert result["line_result"] == "PASS"
     assert result["result"] == "FAIL"  # Acceptance is not green on math alone.
     assert result["waiting_buy_bar_ms"] is None
@@ -206,14 +206,14 @@ async def test_mi_matching_line_does_not_waive_missing_owner_and_budget_evidence
 
 
 @pytest.mark.asyncio
-async def test_mi_readable_flat_control_cannot_invent_a_preopen_retry_segment(monkeypatch):
+async def test_mi_readable_flat_control_seeds_restored_sell_without_emitting_historical_buy(monkeypatch):
     from scripts import line_repair_preopen_replay as replay
     from project_mai_tai.v2_flip_entry_ownership import FlipPositionBook
 
     original = replay.setup
     cases = []
-    def setup(row, current):
-        case, provider = original(row, current)
+    def setup(row, current, **kwargs):
+        case, provider = original(row, current, **kwargs)
         strategy = case.strategy
         strategy.configure_fanout_identity_persistence(lambda *_: None)
         strategy.configure_flip_entry_ownership(lambda *_a, **_k: None,
@@ -232,7 +232,126 @@ async def test_mi_readable_flat_control_cannot_invent_a_preopen_retry_segment(mo
     result = await replay.replay(row)
     restored = cases[0].strategy.watchlist_state("MI")
     assert restored.atr_short_flip_bar_ts == 1791543240000  # Historical SELL at06:54, not a live flip.
-    assert restored.retry_one_segment_id == 0
-    assert result["line_result"] == "PASS" and result["waiting_buy_bar_ms"] is None
-    assert result["result"] == "FAIL"
-    assert all(case.strategy.watchlist_state("MI").flip_owner_phase == "idle" for case in cases)
+    assert restored.retry_one_segment_id == 1791543240000
+    assert result["line_result"] == "PASS"
+    assert result["waiting_buy_bar_ms"] is not None
+    assert result["waiting_buy_bar_ms"] < row["boundary_ms"] + 17 * 60000
+    assert result["rebuild_buys"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [
+    ("retry_one_segment_id", 1791543240000), ("retry_one_closes_in_segment", 1),
+    ("retry_one_budget_readable", False), ("flip_owner_phase", "bound"),
+    ("flip_owner_opportunity_id", 123), ("flip_owner_fill_accounts", {"schwab"}),
+    ("cw_resting_taken", True),
+])
+async def test_restored_sell_identity_never_resets_a_budget_or_owner(field, value):
+    from scripts.line_repair_preopen_replay import setup
+    row = next(r for r in POPULATION["rows"] if r["day"] == "2026-10-09" and r["symbol"] == "MI")
+    case, _ = setup(row, row["boundary_ms"] + 9 * 60000, admission_control=True)
+    state = case.strategy.watchlist_state("MI")
+    setattr(state, field, value)
+    persist = Mock()
+    case.strategy._retry_one_budget_persist = persist
+    indicator = {"atr_state": "short", "atr_short_flip_bar_ts": 1791543240000}
+    assert await case.bot._persist_line_retry_seed(state, indicator) == 0
+    persist.assert_not_called()
+    assert getattr(state, field) == value
+
+
+@pytest.mark.asyncio
+async def test_restored_sell_seed_persistence_is_offloop_and_failure_holds_entries():
+    import threading
+    from scripts.line_repair_preopen_replay import setup
+    row = next(r for r in POPULATION["rows"] if r["day"] == "2026-10-09" and r["symbol"] == "MI")
+    case, _ = setup(row, row["boundary_ms"] + 9 * 60000, admission_control=True)
+    state = case.strategy.watchlist_state("MI")
+    loop_thread = threading.get_ident()
+    worker_threads = []
+    def fail(*_):
+        worker_threads.append(threading.get_ident())
+        raise RuntimeError("journal unavailable")
+    case.strategy._retry_one_budget_persist = fail
+    assert await case.bot._persist_line_retry_seed(state, {
+        "atr_state": "short", "atr_short_flip_bar_ts": 1791543240000,
+    }) == 0
+    assert state.retry_one_segment_id == 0 and not state.retry_one_budget_readable
+    assert len(worker_threads) == 1 and worker_threads[0] != loop_thread
+
+
+@pytest.mark.asyncio
+async def test_restored_sell_seed_rechecks_concurrent_close_after_worker():
+    from scripts.line_repair_preopen_replay import setup
+    row = next(r for r in POPULATION["rows"] if r["day"] == "2026-10-09" and r["symbol"] == "MI")
+    case, _ = setup(row, row["boundary_ms"] + 9 * 60000, admission_control=True)
+    state = case.strategy.watchlist_state("MI")
+    def persist(*_):
+        state.retry_one_closes_in_segment = 1
+    case.strategy._retry_one_budget_persist = persist
+    assert await case.bot._persist_line_retry_seed(state, {
+        "atr_state": "short", "atr_short_flip_bar_ts": 1791543240000,
+    }) == 0
+    assert state.retry_one_closes_in_segment == 1 and state.retry_one_segment_id == 0
+
+
+@pytest.mark.asyncio
+async def test_line_off_does_not_seed_or_write_a_restored_retry_segment():
+    from scripts.line_repair_preopen_replay import setup
+    row = next(r for r in POPULATION["rows"] if r["day"] == "2026-10-09" and r["symbol"] == "MI")
+    case, _ = setup(row, row["boundary_ms"] + 9 * 60000, admission_control=True)
+    case.settings.strategy_schwab_1m_v2_line_chart_restoration_enabled = False
+    persist = Mock()
+    case.strategy._retry_one_budget_persist = persist
+    state = case.strategy.watchlist_state("MI")
+    assert await case.bot._persist_line_retry_seed(state, {
+        "atr_state": "short", "atr_short_flip_bar_ts": 1791543240000,
+    }) == 0
+    persist.assert_not_called()
+    assert state.retry_one_segment_id == 0
+
+
+@pytest.mark.asyncio
+async def test_mi_real_close_still_exhausts_the_restored_sell_segment():
+    from scripts.line_repair_preopen_replay import repair, setup
+    row = next(r for r in POPULATION["rows"] if r["day"] == "2026-10-09" and r["symbol"] == "MI")
+    current = row["boundary_ms"] + 9 * 60000
+    case, _ = setup(row, current, admission_control=True)
+    assert await repair(row, case, current)
+    state = case.strategy.watchlist_state("MI")
+    assert state.retry_one_segment_id == 1791543240000
+    state.retry_one_closes_in_segment = 1
+    assert not case.strategy._strict_first_rest_admitted(state, slot="first")
+    assert await repair(row, case, current + 60000)
+    assert state.retry_one_segment_id == 1791543240000 and state.retry_one_closes_in_segment == 1
+    assert not case.strategy._strict_first_rest_admitted(state, slot="first")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("day,symbol", [
+    ("2026-10-06", "IPDN"), ("2026-10-07", "NXTS"),
+    ("2026-10-08", "FLYE"), ("2026-10-08", "HKIT"), ("2026-10-06", "LGHL"),
+])
+async def test_late_watch_and_sparse_tail_are_measured_without_foreign_provider_bars(day, symbol):
+    from scripts.line_repair_preopen_replay import replay
+    row = next(r for r in POPULATION["rows"] if r["day"] == day and r["symbol"] == symbol)
+    result = await replay(row)
+    assert result["result"] == "PASS"
+    assert result["runtime_chart_flip_parity"]
+    assert result["rebuild_buys"] == 0
+    assert result["runtime_seed_requests"] == 1
+    if symbol == "NXTS":
+        assert result["reading_status"] == "HELD_UNSEEDED"
+    if symbol == "LGHL":
+        assert result["runtime_flips_ms"] == [
+            (1791284460000, "SELL"), (1791286260000, "BUY"), (1791287580000, "SELL"),
+        ]
+
+
+def test_retained_watch_receipts_keep_extra_diagnostic_names_out_of_the_live_population():
+    from scripts.line_repair_preopen_replay import REST_RECEIPTS
+    absent = {(day, symbol) for (day, symbol), r in REST_RECEIPTS.items()
+              if not r["watch_intervals_ms"]}
+    assert absent == {("2026-10-06", "LGHL"), ("2026-10-08", "IPW"), ("2026-10-08", "MEDS")}
+    assert sum(bool(r["watch_intervals_ms"]) for r in REST_RECEIPTS.values()) == 22
+    assert sum(r["first_rest"] is not None for r in REST_RECEIPTS.values()) == 4

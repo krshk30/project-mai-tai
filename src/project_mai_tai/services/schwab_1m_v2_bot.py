@@ -5453,6 +5453,40 @@ class SchwabV2BotService:
         self._line_source_waiting.pop(symbol, None)
         return True
 
+    def _line_retry_seed_candidate(self, state, indicator: dict) -> int:
+        segment = int(indicator.get("atr_short_flip_bar_ts") or 0)
+        if (not self.settings.strategy_schwab_1m_v2_line_chart_restoration_enabled
+                or not self.strategy._retry_one_enabled or indicator.get("atr_state") != "short"
+                or not session_start_ts_ms(self.strategy._now_ms()) <= segment <= self.strategy._now_ms()
+                or not self.strategy._flip_owner_restore_readable
+                or not state.retry_one_budget_readable or state.retry_one_segment_id != 0
+                or state.retry_one_closes_in_segment != 0
+                or self.strategy._retry_one_budget_persist is None
+                or state.flip_owner_phase != "idle" or state.flip_owner_opportunity_id
+                or state.flip_owner_fill_accounts or state.flip_owner_position_ids
+                or state.flip_owner_open_positions or state.cw_resting_taken
+                or state.resting_active or state.webull_resting_active
+                or self.strategy._removed_wait_gate_closed(state.symbol)):
+            return 0
+        return segment
+
+    async def _persist_line_retry_seed(self, state, indicator: dict) -> int:
+        segment = self._line_retry_seed_candidate(state, indicator)
+        if not segment:
+            return 0
+        try:
+            # Append-only budgets restore the greatest SELL and close count, so
+            # a late zero cannot overwrite a concurrent live SELL or close.
+            await asyncio.wait_for(asyncio.to_thread(
+                self.strategy._retry_one_budget_persist, state.symbol, segment, 0,
+            ), 3.0)
+        except Exception:
+            state.retry_one_budget_readable = False
+            logger.exception("[V2-LINE-RESTORE] sym=%s reason=retry_budget_persist_failed entry_allowed=0",
+                             state.symbol)
+            return 0
+        return segment if self._line_retry_seed_candidate(state, indicator) == segment else 0
+
     async def _rebuild_session_line(self, symbol: str, ledger: SessionLineRestoration) -> bool:
         if symbol in self._line_readd_needs_live:
             return False
@@ -5531,6 +5565,13 @@ class SchwabV2BotService:
                 or state.bars[-1].timestamp_ms != result.request.current_bar_ms
                 or state.line_restore_reset_after_ms != reset_fence):
             return False
+        seed_segment = await self._persist_line_retry_seed(state, dict(result.snapshot.indicator))
+        if (self._line_sessions.get(symbol) is not ledger
+                or self.strategy._symbol_states.get(symbol) is not state
+                or session_start_ts_ms(self.strategy._now_ms()) != ledger.anchor_ms
+                or state.bars[-1].timestamp_ms != result.request.current_bar_ms
+                or state.line_restore_reset_after_ms != reset_fence):
+            return False
         snapshot = ledger.admit(result)
         if snapshot is None:
             return False
@@ -5561,6 +5602,10 @@ class SchwabV2BotService:
             current_bar.low, current_bar.close, current_bar.volume,
         )
         self.strategy._restore_atr_indicator_snapshot(state, indicator)
+        if seed_segment and self._line_retry_seed_candidate(state, indicator) == seed_segment:
+            state.retry_one_segment_id = seed_segment
+            logger.info("[V2-LINE-RESTORE] sym=%s segment_id=%d closes_in_segment=0 "
+                        "reason=restored_sell_identity", symbol, seed_segment)
         if not state.gap_hold_active:
             state.gap_line_carry_pending = False
         # The hold/cancellation and ten clean-bar wait remain intact. Only
