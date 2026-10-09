@@ -252,7 +252,7 @@ def closed_owner_latency_observer(request, monkeypatch):
     if request.node.name != TARGET:
         yield
         return
-    from sqlalchemy.engine import ScalarResult
+    from sqlalchemy.engine import Result, ScalarResult
     from sqlalchemy.orm import Session
     from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
     from project_mai_tai.oms.service import OmsRiskService
@@ -262,6 +262,7 @@ def closed_owner_latency_observer(request, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(asyncio.Handle, "_run", observer.callback(asyncio.Handle._run))
         patch.setattr(Session, "commit", observer.commit(Session.commit))
+        patch.setattr(Result, "all", observer.materialize(Result.all))
         patch.setattr(ScalarResult, "all", observer.materialize(ScalarResult.all))
         patch.setattr(OmsRiskService, "_collect_drift_cancel_candidates", observer.collect_drift(
             OmsRiskService._collect_drift_cancel_candidates))

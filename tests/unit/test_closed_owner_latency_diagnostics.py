@@ -282,3 +282,27 @@ def test_materialization_outside_close_drift_scope_is_not_recorded():
     collect = observer.collect_drift(lambda _self: wrapped(result))
     assert collect(None) is result
     assert not observer.records and observer.drift_read.get() is False
+
+
+def test_actual_column_rows_are_observed_without_hydrating_or_changing_values(monkeypatch):
+    from sqlalchemy import create_engine, literal, select
+    from sqlalchemy.engine import Result
+
+    observer = Observer()
+    monkeypatch.setattr(Result, "all", observer.materialize(Result.all))
+    engine = create_engine("sqlite://")
+
+    def collect(_self):
+        with engine.connect() as connection:
+            return connection.execute(select(literal("open").label("intent_type"))).all()
+
+    token = observer.operation.set("EXIT11")
+    try:
+        rows = observer.collect_drift(collect)(None)
+    finally:
+        observer.operation.reset(token)
+        engine.dispose()
+    assert len(rows) == 1 and rows[0].intent_type == "open"
+    spans = [row for row in observer.records if row["kind"] == "drift_materialize"]
+    assert len(spans) == 1 and spans[0]["row_count"] == 1 and spans[0]["row_type"] == "Row"
+    assert spans[0]["site"][1] == "collect" and spans[0]["operation"] == "EXIT11"
