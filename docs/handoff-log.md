@@ -8920,3 +8920,19 @@ NOTREADY/latestLinuxpairFAIL. C no finalized/staged runner and no
 fresh after-close gatePASS, existing exactSHA deploy path inspected.
 Two actualworkers+parent, notfive. No production/service/flag/DB
 write,merge,pin,deploy. OwnC-row/docs only, reviewer rows preserved.
+
+2026-10-09 14:22 ET codex-2 C20: combined1145 exact1c91d05b
+Validate37970875315/37970881523 bothSUCCESS,8157unitPASS/55SKIP,
+95PG/goldenPASS/1xfail each,RuffPASS/newtapePG roundtripPASS.
+Oadd40418 alsoGREENx2. Historical split-basis mismatch and missing
+raw O3 telemetry disclosed; no READY/pin/install claimed. Singer
+correctedpair37969709238:loop48.195/42.668ms but protectiveclose
+67.443/61.729ms FAIL; captured workerGC48.815/42.701ms, separate
+NFQunitfailure notattributed. Samewriter tests narrow driftcollector
+equivalent projection/open-intent SQL, not certified finalhead.
+FreedOworker nowCprep isolatedc065 worktree,51currentgatecontrols
+PASS/58olderrepincontrols inspected only; no runner/staging yet.
+FinalSHA/pins/postarchiveG2 owed; currentpreopen cumulativeOMS/
+strategy group not reusable as control/ORB/v2 binding. Actual
+after-close gateproof stillpending. No productionwrite,merge,pin,
+restart,flag/order/DB action; ownC-row and narrative only.
