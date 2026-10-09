@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, TradeIntent
 from project_mai_tai.oms import buy_submission_journal as journal
@@ -59,7 +60,12 @@ def terminal_buy(database, req, guard, account, *, status="cancelled", fault=Non
             intent.payload = {**intent.payload, "metadata": {**intent.payload["metadata"],
                 "target_client_order_id": "unproven-target" if fault == "wrong_target" else coid}}
             intent.updated_at = NOW
+            # PostgreSQL retains timezone awareness, so an equal assignment
+            # must still override the model's wall-clock onupdate default.
+            flag_modified(intent, "updated_at")
         session.commit()
+        if bound:
+            assert intent.updated_at.replace(tzinfo=UTC) == NOW
     return token_id
 
 
