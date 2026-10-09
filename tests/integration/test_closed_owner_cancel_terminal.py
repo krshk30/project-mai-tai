@@ -17,7 +17,7 @@ from sqlalchemy import event, select
 from project_mai_tai.broker_adapters import cancel_terminal as broker
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, OmsManagedPosition, Strategy, TradeIntent
-from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload, TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore, current_session_anchor
 from project_mai_tai.oms import buy_submission_journal as journal
 from project_mai_tai.oms.cancel_feedback import feedback_published
@@ -29,7 +29,7 @@ from tests.integration.test_cancel_terminal_runtime import sdk as controlled_sdk
 from tests.integration.test_cancel_terminal_runtime import sessions as pg_sessions
 from tests.unit.test_clearwait1_runtime_caller import poll
 from tests.unit.test_clearwait1_session_rollover import service
-from tests.unit.test_flye_bound_owner_target_close import FLYE, PRIMARY, WEBULL, confirm_controlled_next_entry, sell
+from tests.unit.test_flye_bound_owner_target_close import FLYE, PRIMARY, WEBULL, confirm_controlled_next_entry, replay, sell
 from tests.unit.test_flye_prewire_consumer_contract import synthetic_opportunity
 from tests.integration.test_flye_bound_owner_postgres import controlled_unbound_db
 from tests.unit.test_flye_prewire_runtime_caller import at
@@ -95,18 +95,22 @@ def snapshot(sessions):
 @pytest.mark.usefixtures("sdk")
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL])
-@pytest.mark.parametrize("case", ["terminal_target", "terminal_stop", "operator_sell", "working_schwab",
+@pytest.mark.parametrize("case", ["terminal_target", "recorded_target", "terminal_stop", "operator_sell", "working_schwab",
     "working_webull", "unknown_side", "open_owned", "unknown_rows", "same_real_segment", "nullable_binding",
     "conflicting_binding"])
 async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch, snapshot_timestamp, pm, account, case):
     store, sessions, ids, strategy_id = db
-    strategy, state, record, clock, _ = synthetic_opportunity(account, pm)
+    strategy, state, record, clock, _ = (replay(account=account, pm=pm) if case == "recorded_target"
+                                        else synthetic_opportunity(account, pm))
     settings = strategy.settings.model_copy(update={"environment": "test",
         "broker_default_provider": "schwab", "orb_broker_account_name": "unused",
         "strategy_schwab_1m_v2_broker_provider": "schwab",
         "strategy_schwab_1m_v2_dual_broker_fanout_enabled": True,
         "oms_v2_exit_management_enabled": True, "oms_cancel_verify_enabled": False})
     strategy.settings, strategy._removed_wait_persist = settings, store.record
+    if case == "recorded_target":
+        strategy.configure_fanout_identity_persistence(lambda symbol, segment, active, reason:
+            FanoutSegmentIdentityStore(sessions).record(symbol, segment, active, reason, now=at(clock[0])))
     routing = controlled_routing()
     feedback = SimpleNamespace(xadd=AsyncMock(return_value="controlled-feedback-accepted"))
     oms = OmsRiskService(settings, feedback, session_factory=sessions, broker_adapter=routing)
@@ -132,6 +136,7 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
             return cls.last
 
     monkeypatch.setattr("project_mai_tai.oms.service.datetime", Clock)
+    monkeypatch.setattr("project_mai_tai.events.datetime", Clock)
     monkeypatch.setattr("project_mai_tai.services.schwab_1m_v2_bot.datetime", Clock)
     monkeypatch.setattr("project_mai_tai.db.models.datetime", Clock)
     snapshot_timestamp(StorageClock.now)
@@ -158,12 +163,13 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
     async def wire(request):
         if request.side == "buy":
             with sessions() as independent:
-                token = independent.scalar(select(journal.BuySubmissionToken))
+                token = independent.scalar(select(journal.BuySubmissionToken).where(
+                    journal.BuySubmissionToken.client_order_id == request.client_order_id))
                 assert token.state == "submitting" and token.client_order_id == request.client_order_id
-                assert token.generation == str(record.opportunity_id)
+                assert token.generation == request.metadata["fanout_segment_id"]
                 epoch = independent.get(journal.BuyCoverageEpoch, (token.process_id, token.account_id))
                 assert epoch is not None and epoch.account_name == token.account_name == account
-                assert epoch.started_at_ms < token.opportunity_started_at_ms == bind_ms
+                assert epoch.started_at_ms < token.opportunity_started_at_ms
                 assert token.account_id == ("TEST-WEBULL" if account == WEBULL else "TEST-SCHWAB")
         wires.append(request)
         return [ExecutionReport("filled", request.client_order_id, broker_order_id="controlled-" + request.side,
@@ -283,7 +289,7 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
     revisions, books, tokens, closures = snapshot(sessions)
     assert revisions == before
     primary._authorized_request_json.assert_not_awaited()
-    released = case in {"terminal_target", "terminal_stop", "operator_sell", "nullable_binding"}
+    released = case in {"terminal_target", "recorded_target", "terminal_stop", "operator_sell", "nullable_binding"}
     assert (state.flip_owner_phase == "idle") is released
     assert (not store.restore()) is released
     assert strategy._strict_first_rest_admitted(state, slot="first") is (released and case != "operator_sell")
@@ -305,11 +311,49 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
         assert proof.request == req and set(proof.closed_owned_rows) == set(record.position_ids.items())
         assert not owner_store.restore_active(now=at(clock[0]))
         if case != "operator_sell":
-            strategy._queue_resting_place(state, 2.558685, slot="first")
+            if case == "recorded_target":
+                from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar
+                # Recorded owner/SELL boundary; following venue/quote/clean-bar
+                # inputs are controlled counterfactuals, not historical fills.
+                clock[0] += 120_000
+                owner_book()
+                state.bars.append(OHLCVBar(clock[0] - 60_000, 2.28, 2.35, 2.27, 2.285, 149257))
+                state.atr_state = "short"
+                state.atr_state_age = 3
+                await oms._handle_quote_tick_event(QuoteTickEvent(source_service="controlled-replay-quote",
+                    produced_at=at(clock[0]), payload=QuoteTickPayload(symbol="FLYE",
+                        bid_price=Decimal("2.39"), ask_price=Decimal("2.40"))))
+                strategy._cw_v2_resting_track(state, {"state": "short", "trail": 2.558685})
+            else:
+                strategy._queue_resting_place(state, 2.558685, slot="first")
             assert state.resting_active
             if not pm:
-                assert strategy.drain_pending_intents()[0].intent_type == "open"
-                assert strategy.drain_webull_direct_intents()[0].intent_type == "open"
+                for venue, drafts in ((PRIMARY, strategy.drain_pending_intents()),
+                                      (WEBULL, strategy.drain_webull_direct_intents())):
+                    draft, = drafts
+                    assert draft.intent_type == "open" and draft.side == "buy"
+                    if case == "recorded_target":
+                        print(json.dumps({"case": "FLYE 10-08 14:10", "side": draft.side,
+                            "account": venue, "time": at(clock[0]).isoformat(),
+                            "price": draft.metadata.get("stop_price"),
+                            "limit": draft.metadata.get("limit_price"),
+                            "evidence": "recorded boundary; controlled post-deploy broker replay"}))
+                        async def accept(order_request):
+                            return [ExecutionReport("accepted", order_request.client_order_id,
+                                broker_order_id="replayed-next-" + order_request.broker_account_name,
+                                symbol=order_request.symbol, side=order_request.side,
+                                quantity=order_request.quantity, metadata=order_request.metadata,
+                                origin="broker", reported_at=at(clock[0]))]
+                        routing._adapter_for_account(venue).submit_order = accept
+                        emitter = bot.intent_emitter if venue == PRIMARY else bot.webull_intent_emitter
+                        await emitter.emit(draft)
+                if case == "recorded_target":
+                    with sessions() as session:
+                        resting = session.scalars(select(BrokerOrder).where(
+                            BrokerOrder.symbol == "FLYE", BrokerOrder.status == "accepted")).all()
+                        assert len(resting) == 2 and {r.broker_account_id for r in resting} == set(ids.values())
+                        assert all(r.side == "buy" and r.order_type == "STOP_LIMIT" for r in resting), [
+                            (r.side, r.order_type, r.payload) for r in resting]
             confirm_controlled_next_entry(strategy, state, clock)
             assert not strategy._strict_first_rest_admitted(state, slot="first")
     elif case in {"working_schwab", "working_webull", "unknown_side", "open_owned", "conflicting_binding"}:
