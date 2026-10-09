@@ -117,9 +117,11 @@ from project_mai_tai.strategy_core.order_routing import (
 from project_mai_tai.strategy_core import entry_gate
 from project_mai_tai.strategy_core.session_line_restore import (
     RebuildResult,
+    SessionCoverage,
     SessionLineRestoration,
     SessionLineSnapshot,
     build_session_line,
+    history_fingerprint,
 )
 from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, local_rpg_abort_proof
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
@@ -496,6 +498,7 @@ class SchwabV2BotService:
         self._atr_massive_seed_locks: dict[tuple[str, int], asyncio.Lock] = {}
         self._atr_massive_seed_census_anchor = 0
         self._atr_massive_seed_census_signature: tuple[object, ...] | None = None
+        self._line_preopen_seeds: dict[tuple[str, int], tuple[ChartBar, ...] | Exception] = {}
         # ⛔⭐ Counter for [V2-DB-SEED-GAP]. A refusal that only logs per-occurrence cannot be
         # distinguished from a refusal that stopped happening — see the census discipline on
         # `evaluated=0`. Reported on the session roll so a ZERO is a MEASUREMENT, not a silence.
@@ -5206,6 +5209,8 @@ class SchwabV2BotService:
                 bars, proof = await asyncio.to_thread(
                     self.rest_client.fetch_session_history, symbol, anchor, current,
                 )
+                if proof is not None:
+                    bars, proof = await self._join_line_preopen(symbol, anchor, bars, proof)
                 if not self._line_event_current(symbol, epoch, identity, allow_exit=allow_exit):
                     continue
                 accepted = self._accept_line_source(symbol, epoch, bars, proof)
@@ -5233,6 +5238,34 @@ class SchwabV2BotService:
                                    anchor, current)
             finally:
                 self._line_source_inflight.discard(symbol)
+
+    async def _join_line_preopen(self, symbol: str, anchor: int, bars, proof):
+        if not self._line_restoration_enabled or not anchored_session_poll_open(self.strategy._now_ms()):
+            return bars, proof
+        key = (symbol, anchor)
+        self._line_preopen_seeds = {k: v for k, v in self._line_preopen_seeds.items() if k[1] == anchor}
+        if key not in self._line_preopen_seeds:
+            # Failure is cached too: provider retries must not multiply open requests.
+            self._line_preopen_seeds[key] = RuntimeError("Massive preopen request unfinished")
+            try:
+                self._line_preopen_seeds[key] = await asyncio.wait_for(asyncio.to_thread(
+                    self._atr_massive_seed_client.fetch_preopen, symbol, anchor,
+                ), self._atr_massive_seed_timeout_seconds)
+            except Exception as exc:
+                self._line_preopen_seeds[key] = exc
+        seed = self._line_preopen_seeds[key]
+        if isinstance(seed, Exception):
+            raise RuntimeError("Massive preopen seed unavailable") from seed
+        boundary = anchor + 3 * 3_600_000
+        joined = [bar for bar in seed if anchor <= bar.timestamp_ms < boundary]
+        joined.extend(bar for bar in bars if bar.timestamp_ms >= boundary)
+        if not joined or joined[-1].timestamp_ms != proof.closed_ids[-1]:
+            raise ValueError("joined session current candle unproven")
+        return joined, SessionCoverage(
+            "massive_preopen_schwab_session", anchor, proof.end_ms,
+            tuple(bar.timestamp_ms for bar in joined), proof.complete,
+            history_fingerprint(joined), prefix_complete=True,
+        )
 
     def _line_event_current(
         self, symbol: str, epoch: int, identity: int, *, allow_exit: bool = False,

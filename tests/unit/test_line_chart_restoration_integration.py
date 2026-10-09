@@ -12,7 +12,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
@@ -78,6 +78,7 @@ def _bot(symbol, current, **overrides):
     )
     options.update(overrides)
     bot = SchwabV2BotService(Settings(**options))
+    bot._atr_massive_seed_client = Mock(fetch_preopen=Mock(return_value=()))
     bot.strategy._now_ms = lambda: current + 61_000
     bot._watchlist = {symbol}
     bot._sync_line_epochs()
