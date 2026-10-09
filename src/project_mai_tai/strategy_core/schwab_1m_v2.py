@@ -2164,7 +2164,8 @@ class SchwabV2Strategy:
 
     def _falseflip_cross(self, state: SymbolState, price: float, *, confirming: bool) -> bool:
         """An owed skip observes a cross in memory; persistence happens on the poll task."""
-        if not self._falseflip_enabled():
+        if (not self._falseflip_enabled() or state.atr_trail is None
+                or not math.isfinite(state.atr_trail) or state.atr_trail <= 0):
             return False
         key = (state.symbol, int(state.retry_one_segment_id))
         budget = self._falseflip_budget(state)
@@ -3848,7 +3849,8 @@ class SchwabV2Strategy:
         `_fanout_rth_resting_cross`, never writes `state.last_quote`, and never creates a symbol state
         (a print for a name we are not watching is ignored)."""
         skip_state = self._symbol_states.get(str(symbol).upper())
-        if self._falseflip_enabled() and skip_state is not None:
+        if (self._falseflip_enabled() and skip_state is not None and skip_state.atr_trail is not None
+                and math.isfinite(skip_state.atr_trail) and skip_state.atr_trail > 0):
             fresh = 0 <= self._now_ms() - event_ts_ms <= self._eh_stream_print_max_age_ms
             trigger = self._resting_trigger_for_line(float(skip_state.atr_trail or 0))
             if self._resting_session_is_eh():
@@ -3939,7 +3941,8 @@ class SchwabV2Strategy:
         # touch). See docs/intrabar-hold-confirmation-design.md.
         state = self.watchlist_state(symbol)
         state.last_quote = quote
-        if self._falseflip_enabled():
+        if (self._falseflip_enabled() and state.atr_trail is not None
+                and math.isfinite(state.atr_trail) and state.atr_trail > 0):
             ask = self._fresh_resting_ask(quote)
             trigger = self._resting_trigger_for_line(float(state.atr_trail or 0))
             confirming = ask is not None and (not self._resting_session_is_eh()
