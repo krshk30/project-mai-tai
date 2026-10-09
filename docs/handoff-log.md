@@ -8871,3 +8871,18 @@ List validation/proof can synthesize200None, warningsnotID-tagged.
 16DB-visibleordersenumerated/8knownfilledbooked;delaystoobservation
 10.802/29.332/17.721s withcausalityUNPROVEN,brokerwideunknown.
 No buildfor eitherfinding,no production action; reviewerFIX/PARKowed.
+
+2026-10-09 13:48 ET codex-2 C17: final16f9 LINE validation bothGREEN
+37966531055/37966537287,8313unitPASS/55skip,94PG/integrationPASS/1xfail
+each/RuffPASS. Local56FAIL/8257PASS/55skip vs exactc06556FAIL/8048PASS:
+failednames identical0added/removed; old23dd timing failure not waived.
+Requested G1 undraft completed, PRtitle/body explicitly G2/G7NOTREADY,
+no pin/merge/installrequest. Exacthead60s seedbenchmark13500events,
+224.992/s,maxloop31.193ms/maxquote21.465ms/1seedrequest/0buys PASS;
+same strictcontrolpassedbothLinuxruns. CorrectedG7 clocks forward:
+repair07:09:01 throughclosed07:08,lateadd firstclosedwatchedbar;
+25rows16projectedarms0intents,7numericdifferences6horizon12missing
+receipts. No historicalquotes/owner/removalreplay,notcausalorderPASS.
+ActualG2MI previous-session waitstillblocksMondayfirstflip after
+explicitboot/fleetholdrelease; finalpostarchivetableproofstillowed.
+No productionaction; ownCrows/docs only,header/reviewerrowsunchanged.
