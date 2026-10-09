@@ -15689,7 +15689,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 report=report,
                 payload=payload,
             )
-            self._append_order_event_isolated(
+            await self._append_order_event_isolated_awaited(
                 session, order=order, report=report, payload=payload
             )
             if fill is not None:
@@ -16791,11 +16791,29 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         want to note the degradation, never a gate on recording what happened.
         """
         self._order_event_attempts += 1
+        error = self._write_order_event_savepoint(session, order=order, report=report, payload=payload)
+        return self._finish_order_event_write(error, order=order, report=report)
+
+    def _write_order_event_savepoint(self, session, *, order, report, payload):
         try:
             with session.begin_nested():
                 self.store.append_order_event(session, order=order, report=report, payload=payload)
-            return True
-        except Exception:  # noqa: BLE001 - an audit row must never cost a fill
+            return None
+        except Exception as error:  # noqa: BLE001 - an audit row must never cost a fill
+            return error
+
+    async def _append_order_event_isolated_awaited(self, session, *, order, report, payload):
+        if not isinstance(self.broker_adapter, DurableBuyAdapter):
+            return self._append_order_event_isolated(session, order=order, report=report, payload=payload)
+        self._order_event_attempts += 1
+        # This intent exclusively leases its Session until the shielded worker
+        # finishes. Audit counters and all protection state stay on the loop.
+        error = await self.broker_adapter._db(
+            lambda: self._write_order_event_savepoint(session, order=order, report=report, payload=payload))
+        return self._finish_order_event_write(error, order=order, report=report)
+
+    def _finish_order_event_write(self, error, *, order, report):
+        if error is not None:
             self._order_event_failures += 1
             self.logger.error(
                 "[OMS-ORDER-EVENT-DROPPED] %s %s coid=%s status=%s — the audit row was NOT "
@@ -16810,9 +16828,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 getattr(report, "event_type", "?"),
                 self._order_event_failures,
                 self._order_event_attempts,
-                exc_info=True,
+                exc_info=(type(error), error, error.__traceback__),
             )
             return False
+        return True
 
     def _maybe_emit_order_event_census(self, *, interval_seconds: float = 300.0) -> None:
         """Periodic rollup of audit-row writes. Emits at ZERO failures, deliberately.
