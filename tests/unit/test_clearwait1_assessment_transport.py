@@ -3,18 +3,21 @@
 import asyncio
 from datetime import UTC, datetime
 import json
-import logging
 import threading
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 
 from project_mai_tai.db.models import TradeIntent
+from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.oms.unbound_cancel_book import JOURNAL_KEY
+from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import ATRSellObservation
 from tests.integration.test_cancel_terminal_runtime import sdk as controlled_sdk
-from tests.unit.test_clearwait1_never_sent_consumer import closures, covered_request, produce_book
+from tests.unit.test_clearwait1_never_sent_consumer import closures, covered_request
 from tests.unit.test_clearwait1_runtime_caller import emitters, poll, runtime
 from tests.unit.test_clearwait1_session_rollover import WEBULL, ms
 from tests.unit.test_clearwait1_session_rollover import db as rollover_db
@@ -37,12 +40,26 @@ def receipt_state(database):
 @pytest.mark.parametrize("trigger", ["request_raised", "boot", "fresh_sell"])
 async def test_actual_assessment_transport_physically_refetches_inside_sharing_window(db, monkeypatch, trigger):
     purpose = "retry_exhausted" if trigger == "fresh_sell" else "scanner_removal"
-    req, _ = await covered_request(db, monkeypatch, purpose=purpose)
+    req, _ = await covered_request(db, monkeypatch, purpose=purpose, receipts=False)
     bot, strat, _, calls = runtime(db, monkeypatch, req=req)
     redis = emitters(bot, db)
-    oms = OmsRiskService.__new__(OmsRiskService)
-    oms.session_factory, oms.broker_adapter = db[1], bot._removed_wait_adapter
-    oms.logger = logging.getLogger("controlled-assessment-source")
+    oms = OmsRiskService(settings=Settings(_env_file=None, oms_adapter="simulated", broker_default_provider="webull",
+        strategy_schwab_1m_v2_account_name=req.account_names[0],
+        strategy_schwab_1m_v2_broker_provider="schwab", strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_webull_account_name=WEBULL, orb_broker_account_name="unused"), session_factory=db[1],
+        broker_adapter=bot._removed_wait_adapter, redis_client=SimpleNamespace())
+    await oms.broker_adapter.start()
+    published = []
+
+    async def publish(event):
+        published.append(event)
+
+    async def noop(*args):
+        pass
+
+    monkeypatch.setattr(oms, "_publish_order_event", publish)
+    monkeypatch.setattr(oms, "_evaluate_risk", lambda event: (True, "controlled"))
+    monkeypatch.setattr(oms, "_reconcile_after_intent", noop)
 
     class Clock(datetime):
         @classmethod
@@ -51,6 +68,7 @@ async def test_actual_assessment_transport_physically_refetches_inside_sharing_w
 
     monkeypatch.setattr("project_mai_tai.oms.service.datetime", Clock)
     monkeypatch.setattr("project_mai_tai.services.schwab_1m_v2_bot.datetime", Clock)
+    monkeypatch.setattr("project_mai_tai.db.models.datetime", Clock)
     original_xadd = redis.xadd
 
     async def routed_xadd(stream, fields, **kwargs):
@@ -60,7 +78,19 @@ async def test_actual_assessment_transport_physically_refetches_inside_sharing_w
         return result
 
     redis.xadd = routed_xadd
-    await produce_book(bot, db, req)
+    for account in req.account_names:
+        source = TradeIntentEvent(event_id=uuid4(), source_service="schwab-1m-v2",
+            payload=TradeIntentPayload(strategy_code="schwab_1m_v2", broker_account_name=account,
+                symbol=req.symbol, side="buy", intent_type="cancel", quantity=1,
+                reason="controlled cancellation barrier", metadata={
+                    "clearwait_purpose": req.purpose, "clearwait_removal_token": req.token,
+                    "clearwait_opportunity_id": str(req.opportunity_id),
+                    "clearwait_buy_only": "true", "fanout_segment_id": str(req.opportunity_id),
+                    "reason": "retry_budget_exhausted" if purpose == "retry_exhausted" else "watchlist-removed"}))
+        await oms.process_trade_intent(source)
+    await asyncio.gather(*oms.__dict__.get("_cancel_feedback_tasks", set()))
+    await asyncio.gather(*oms.__dict__.get("_cancel_terminal_tasks", {}).values())
+    assert len(published) == 2
     original_revisions, original_book = receipt_state(db)
     assert len(calls) == 1 and original_book["started_at_ms"] == ms(NOW)
     if trigger == "fresh_sell":
