@@ -10,20 +10,25 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
+from project_mai_tai.broker_adapters import cancel_terminal as broker
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
 from project_mai_tai.db.models import Base, BrokerAccount, BrokerOrder, OmsManagedPosition, Strategy, TradeIntent
 from project_mai_tai.events import TradeIntentEvent
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore, current_session_anchor
 from project_mai_tai.oms import buy_submission_journal as journal
 from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.oms.unbound_cancel_book import JOURNAL_KEY
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2IntentEmitter
 from project_mai_tai.v2_flip_entry_ownership import FlipPositionLeg
 from project_mai_tai.v2_removed_wait import RemovedWaitStore
+from tests.integration.test_cancel_terminal_runtime import sdk as controlled_sdk
 from tests.unit.test_clearwait1_runtime_caller import poll
 from tests.unit.test_clearwait1_session_rollover import service
 from tests.unit.test_flye_bound_owner_target_close import FLYE, PRIMARY, WEBULL, book, sell
 from tests.unit.test_flye_prewire_consumer_contract import synthetic_opportunity
 from tests.unit.test_flye_unbound_owner_release import controlled_routing
+
+sdk = controlled_sdk
 
 
 def at(milliseconds):
@@ -59,6 +64,7 @@ class OmsReceipt:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("sdk")
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL])
 @pytest.mark.parametrize("case", ["filled_target", "filled_stop", "operator_sell", "working_schwab",
@@ -72,7 +78,28 @@ async def test_actual_wired_owner_cannot_be_certified_never_sent(runtime_db, mon
     })
     strategy._removed_wait_persist = store.record
     monkeypatch.setattr(journal, "now_ms", lambda: clock[0])
+    # The imported SDK fixture freezes an older bound-request clock. This actual
+    # OMS receipt uses wall time; the physical book must start after that receipt.
+    monkeypatch.setattr(broker, "now_ms", lambda: int(datetime.now(UTC).timestamp() * 1000))
     routing = controlled_routing()
+    book_calls = []
+    webull = routing._adapter_for_account(WEBULL)
+
+    def controlled_book(request):
+        assert request.values == {"account_id": "TEST-WEBULL", "page_size": 100}
+        book_calls.append(request.values)
+        orders = []
+        if case in {"working_webull", "operator_sell"}:
+            orders = [{"client_order_id": "controlled-operator-order", "order_id": "controlled-working",
+                "symbol": "FLYE", "order_status": "SUBMITTED",
+                "side": "SELL" if case == "operator_sell" else "BUY"}]
+        return SimpleNamespace(status_code=200, body={"hasNext": False, "orders": orders})
+
+    webull._get_client = lambda: SimpleNamespace(_auto_retry=False, get_response=controlled_book)
+    webull._body = lambda response: response.body
+    webull._query_budget = SimpleNamespace(claim=lambda *_args, **_kwargs: None)
+    primary = routing._adapter_for_account(PRIMARY)
+    primary._authorized_request_json = AsyncMock(side_effect=AssertionError("Schwab book is not permitted"))
     oms = OmsRiskService(strategy.settings, SimpleNamespace(xadd=AsyncMock()),
                          session_factory=sessions, broker_adapter=routing)
     assert isinstance(oms.broker_adapter, journal.DurableBuyAdapter)
@@ -127,17 +154,23 @@ async def test_actual_wired_owner_cannot_be_certified_never_sent(runtime_db, mon
     redis = OmsReceipt(oms)
     bot.intent_emitter = SchwabV2IntentEmitter(strategy.settings, redis, broker_account_name=PRIMARY)
     bot.webull_intent_emitter = SchwabV2IntentEmitter(strategy.settings, redis, broker_account_name=WEBULL)
+    assert not book_calls
     await bot._drain_direct_strategy_intents()
     await oms._drain_cancel_terminal_evidence()
+    primary._authorized_request_json.assert_not_awaited()
     assert len(redis.events) == 2 and all(e.payload.intent_type == "cancel" for e in redis.events)
     with sessions() as session:
         receipts = list(session.scalars(select(TradeIntent)))
         assert len(receipts) == 2
+        assert len(book_calls) == 1, [(row.reason, row.payload) for row in receipts]
         assert all(row.payload["metadata"]["buy_submission_process_id"] == str(oms.broker_adapter.process_id)
                    for row in receipts)
         assert all(row.status == "rejected" and row.payload["refusal_code"] == "cancel_target_not_found"
                    for row in receipts)
         assert all(row.external_account_id is None for row in session.scalars(select(BrokerAccount)))
+        webull_receipt, = [row for row in receipts if row.broker_account_id == ids[WEBULL]]
+        assert JOURNAL_KEY in webull_receipt.payload
+        assert webull_receipt.payload[JOURNAL_KEY]["binding"]["event_id"] == webull_receipt.payload["event_id"]
         token, = session.scalars(select(journal.BuySubmissionToken)).all()
         assert token.state == "reported_ambiguous" and token.answers[0]["status"] == "filled"
     assert store.request_publication_closed(request, last_publications={
