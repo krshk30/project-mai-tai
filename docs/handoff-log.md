@@ -8974,3 +8974,21 @@ broker positions sync. Account-level complete-read receipt requested in
 comment6088106740. Review results are reported immediately in boxed
 callouts; all unfinished asks persist in the task queue. No production
 config, service, order or DB write by Codex in this checkpoint.
+
+### 2026-10-09 16:22 ET - Codex-2 Wave1/FI checkpoint
+
+Wave1 is independently owned by AgentA: LINE8eda has the reviewer re-pin;
+Validate and actual restart receipts are pending. FI remains NOT READY.
+Run37985595121 measured raw unchanged strict PG passes at240ev/s for60s:
+Floop14.955/close28.888ms, Iloop14.447/close25.167ms. The instrumented I
+failure52.325/77.448ms remains recorded and is not waived. The requested
+main d451/Faffd/I70 same-runner baseline and isolated freeze/memory
+assessment37986251741 is running. Main lacks the full token runtime/test,
+so the common unchanged-source OMS workload is explicitly not a main
+token-proof certificate. Original five order endings and trial-source
+conflicts remain open. ALERTS8cbffe3d receipt correction has86independent
+focused passes, but its new OMS scope still needs strict/trial latency;
+R1128 has4CI failures. All asks persist in the durable queue. No production
+GC policy change, source pause respected after reviewer ruling; token
+optimizationfc735 was committed immediately before that ruling and is
+not deployed. Main made no production write; Wave1 evidence not received.
