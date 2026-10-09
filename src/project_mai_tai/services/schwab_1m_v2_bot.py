@@ -863,7 +863,6 @@ class SchwabV2BotService:
                             and d.intent_type in {"open", "cancel"} for d in queued))
 
     async def _removed_wait_unbound_pass(self, requests, store, accounts) -> None:
-        from project_mai_tai.broker_adapters.cancel_terminal import acquire_request_working_books
         from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
         from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
         from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
@@ -875,7 +874,6 @@ class SchwabV2BotService:
                 factories_by_provider={"schwab": lambda: SchwabBrokerAdapter(self.settings),
                                        "webull": lambda: WebullBrokerAdapter(self.settings)})
             self._removed_wait_adapter = adapter
-        candidates = []
         wakes = self.strategy.__dict__.setdefault("_removed_wait_evidence_wakes", set())
         attempts = self.__dict__.setdefault("_removed_wait_book_attempts", {})
         active = set(self.strategy._removed_wait_requests.values())
@@ -886,38 +884,32 @@ class SchwabV2BotService:
             if not self._removed_wait_request_quiet(request):
                 continue
             version = self.__dict__.get("_clearwait_emit_versions", {}).get(request.symbol, 0)
-            if attempts.get(request) == version and request not in wakes:
-                continue
             try:
                 expected = configured_removed_wait_bindings(adapter, request.account_names)
                 last = {name: tuple(events) for (symbol, name), events in
                         self.__dict__.get("_clearwait_last_publications", {}).items() if symbol == request.symbol}
                 now = datetime.fromtimestamp(self.strategy._now_ms() / 1000, UTC)
-                # The approved prewire contract will supply never_sent evidence.
-                # Until then, no broker GET precedes actual cancellation feedback.
-                closed = await asyncio.to_thread(store.request_publication_closed, request,
-                    last_publications=last, no_dispatch=False, now=now)
+                state = await asyncio.to_thread(store.request_publication_closed, request,
+                    last_publications=last, no_dispatch=False, now=now, include_revision=True)
+                closed, revision = state if isinstance(state, tuple) else (state, "")
                 if closed:
                     for name, events in last.items():
                         self._clearwait_last_publications[request.symbol, name].difference_update(events)
                         if not self._clearwait_last_publications[request.symbol, name]:
                             self._clearwait_last_publications.pop((request.symbol, name))
-                    attempts[request] = version
+                    if attempts.get(request) == (version, revision) and request not in wakes:
+                        continue
+                    attempts[request] = (version, revision)
                     wakes.discard(request)
                     def still_current(candidate):
                         return (candidate == request and self._removed_wait_request_quiet(candidate)
                             and self.__dict__.get("_clearwait_emit_versions", {}).get(candidate.symbol, 0) == version)
 
                     proofs = await asyncio.to_thread(store.retire_unbound, (request,), accounts,
-                        books={}, expected_bindings=expected, publication_closed={request: True},
+                        expected_bindings=expected, publication_closed={request: True},
                         publication_current=still_current, now=now)
                     if still_current(request):
                         self.strategy.apply_removed_wait_proofs(proofs)
-                    if proofs[0].clear:
-                        continue
-                    if proofs[0].reason != "unbound_complete_book_unknown":
-                        continue
-                    candidates.append((request, version, expected))
                     continue
                 await asyncio.to_thread(store.retire_unbound, (request,), accounts,
                     books=dict.fromkeys(request.account_names), expected_bindings=expected,
@@ -926,30 +918,7 @@ class SchwabV2BotService:
                 logger.exception("[V2-CANCEL-TERMINAL] sym=%s request=%s bound=0 decision=UNKNOWN "
                                  "reason=runtime_evidence_unreadable books=schwab:?,webull:?",
                                  request.symbol, request.token)
-        if not candidates:
-            return
-        # One Webull book set for the frozen requests. Schwab has no complete-book
-        # contract here; missing typed local evidence must remain UNKNOWN.
-        webull_accounts = {name for _, _, expected in candidates
-                           for name, (provider, _) in expected.items() if provider == "webull"}
-        books = await acquire_request_working_books(adapter, webull_accounts,
-            after_ms=max(request.requested_at_ms for request, _, _ in candidates))
-        for request, version, expected in candidates:
-            try:
-                def current(candidate):
-                    return (candidate == request and self._removed_wait_request_quiet(candidate)
-                        and self.__dict__.get("_clearwait_emit_versions", {}).get(candidate.symbol, 0) == version)
 
-                proofs = await asyncio.to_thread(store.retire_unbound, (request,), accounts,
-                    books=books, expected_bindings=expected, publication_closed={request: True},
-                    publication_current=current,
-                    now=datetime.fromtimestamp(self.strategy._now_ms() / 1000, UTC))
-                if current(request):
-                    self.strategy.apply_removed_wait_proofs(proofs)
-            except Exception:  # noqa: BLE001 - missing bindings/receipts never imply flat
-                logger.exception("[V2-CANCEL-TERMINAL] sym=%s request=%s bound=0 decision=UNKNOWN "
-                                 "reason=runtime_evidence_unreadable books=schwab:?,webull:?",
-                                 request.symbol, request.token)
     def _schedule_removed_wait_books(self, requests, store, accounts) -> None:
         task = getattr(self, "_removed_wait_book_task", None)
         if task is not None and not task.done():

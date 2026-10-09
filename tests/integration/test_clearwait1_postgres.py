@@ -20,8 +20,10 @@ from tests.unit.test_clearwait1_session_rollover import (
 )
 from tests.unit.test_clearwait1_unbound import NOW as UNBOUND_NOW, configured_control, controlled_books
 from tests.integration.test_cancel_terminal_runtime import sdk as caller_sdk
+from tests.unit.test_clearwait1_never_sent_consumer import receipt_clock as fixed_receipt_clock
 
 sdk = caller_sdk
+receipt_clock = fixed_receipt_clock
 
 
 @pytest.fixture
@@ -238,3 +240,16 @@ async def test_pg_actual_caller_receipts_and_bounded_acquisition(pg_db, sdk, cal
 async def test_pg_late_memory_cas_rolls_back_both_admissions(pg_db, monkeypatch):
     from tests.unit.test_clearwait1_never_sent_consumer import test_memory_changes_during_proof_roll_back_admission_and_request_together
     await test_memory_changes_during_proof_roll_back_admission_and_request_together(pg_db, monkeypatch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["actual_publisher", "journal_arrival", "original_freshness"])
+async def test_pg_actual_journal_consumer_lifecycle(pg_db, sdk, caller_clock, monkeypatch, receipt_clock, case):
+    from tests.unit import test_clearwait1_never_sent_consumer as controls
+    tests = {"actual_publisher": controls.test_real_emitter_oms_after_feedback_journal_and_consumer_clear,
+        "journal_arrival": controls.test_journal_arrival_wakes_pending_request_without_consumer_http,
+        "original_freshness": controls.test_explicit_reassessment_cannot_freshen_original_book_timestamp}
+    if case == "actual_publisher":
+        await tests[case](pg_db, monkeypatch, receipt_clock)
+    else:
+        await tests[case](pg_db, monkeypatch)
