@@ -8670,3 +8670,15 @@ I1136 actual owned lifecycle remains pending on its final head; historical
 precoverage FLYE/DKI are not retroactively certified. DB-resilience build
 is isolated, no application head or production maintenance policy yet.
 No production write, broker order, flag change or restart in this checkpoint.
+
+2026-10-09 07:41 ET codex-2 C4: DB-resilience draft PR1142 exact9641bdc6,
+basec065248e published. Periodic hold SQLOperationalError backoff is independent
+per sweep,1/2/4/8/16/30s with no control-loop sleep, non-DB/cancel propagation
+and no intent/wire replay. Needrestart app/PG protection retains security
+installs and pending warnings; live operator config backup/hash/diff is a
+mandatory after-close deployment prerequisite, not already applied.
+Writer216 focusedPASS/1SKIP/1DESELECTED and15 assertion mutantsRED; parent
+independent new-controls31PASS/1Linux-only installerSKIP1.49s. LinuxCI and
+independent review pending, NOTREADY. Sharedf6ff has both exactCI green.
+F78ae clock-fix CI reachedPG/golden, final result pending; I99fab761 integrates
+that same tests-only fix, exact full/PG pending. No production action.
