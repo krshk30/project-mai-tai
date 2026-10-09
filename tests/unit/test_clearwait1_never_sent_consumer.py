@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 from decimal import Decimal
+import threading
 
 import pytest
 from sqlalchemy import select, update
@@ -21,6 +22,20 @@ from tests.unit.test_clearwait1_unbound import CONFIGURED_IDS, NOW, controlled_r
 from project_mai_tai.strategy_core.schwab_1m_v2 import TradeIntentDraft
 
 db = rollover_db
+
+
+@pytest.mark.asyncio
+async def test_concurrent_offloop_reads_have_independent_connections(db):
+    barrier = threading.Barrier(2)
+    def read():
+        with db[1]() as session:
+            connection = session.connection().connection.dbapi_connection
+            rows = list(session.scalars(select(BrokerAccount.id)))
+            barrier.wait(2)
+            return id(connection), len(rows)
+    first, second = await asyncio.wait_for(asyncio.gather(
+        asyncio.to_thread(read), asyncio.to_thread(read)), 3)
+    assert first[0] != second[0] and first[1] == second[1] == 2
 
 
 async def covered_request(database, monkeypatch, *, purpose="scanner_removal"):
