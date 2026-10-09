@@ -181,6 +181,11 @@ async def replay(row, *, admission_control=True):
             "waiting_buy_bar_ms": waiting_at,
             "waiting_buy_trigger": waiting_trigger,
             "rebuild_buys": actual["buy_count"], "massive_seed_requests": provider.get_aggs.call_count,
+            "reading_entry_allowed": actual["entry_allowed"],
+            "runtime_intents": [{"symbol": draft.symbol, "side": draft.side,
+                "intent_type": draft.intent_type, "quantity": str(draft.quantity),
+                "reason": draft.reason, "metadata": draft.metadata}
+                for draft in runtime.snapshot()["intents"]],
             "runtime_seed_requests": runtime_provider.get_aggs.call_count,
             "runtime_flips_ms": runtime_flips,
             "runtime_chart_flip_parity": runtime_match,
