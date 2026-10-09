@@ -621,6 +621,9 @@ class RemovedWaitStore:
                 ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc())
                   .limit(1).with_for_update())
                 if latest is not None and latest.payload.get("reason") == "unbound_symbol_terminal":
+                    if (latest.payload.get("active") is False
+                            and active_request_matches({**latest.payload, "active": True}, request)):
+                        return  # Exact atomic retirement is already durable; keep its receipt time.
                     if not active_request_matches(latest.payload, request):
                         raise ValueError("terminal witness active request changed")
                     payload = {**latest.payload, "active": False}

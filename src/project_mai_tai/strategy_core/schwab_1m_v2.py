@@ -1318,11 +1318,21 @@ class SchwabV2Strategy:
                 if request.purpose == "retry_exhausted":
                     continue  # Positive cancellation proof never refunds a same-session trade.
                 if request.purpose != "false_flip_restore":
-                    self._removed_wait_requests.pop(request.symbol, None)
-                    logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=CLEAR reason=%s",
-                                request.symbol, request.opportunity_id,
-                                "no_dispatch" if request.opportunity_id == 0 else proof.reason)
-                    continue
+                    if state is not None and state.flip_owner_phase == "unknown":
+                        continue
+                    unfilled_identity = (state is not None and request.opportunity_id > 0
+                        and state.flip_owner_phase in {"idle", "resting", "awaiting_fill"}
+                        and not self._removed_wait_has_owner(state)
+                        and int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+                            == request.opportunity_id)
+                    if not unfilled_identity:
+                        self._removed_wait_requests.pop(request.symbol, None)
+                        logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=CLEAR reason=%s",
+                                    request.symbol, request.opportunity_id,
+                                    "no_dispatch" if request.opportunity_id == 0 else proof.reason)
+                        continue
+                    # Admission closed this generation. Retire its unfilled
+                    # identity below before allowing a new physical BUY.
             if request.purpose in {"retry_exhausted", "false_flip_restore"}:
                 expected_reason = ("false_flip_leftovers_cancelled_owner_kept"
                                    if request.purpose == "false_flip_restore"
@@ -1405,6 +1415,18 @@ class SchwabV2Strategy:
                         or any(d.intent_type == "open" and d.symbol == symbol
                                for queue in (self._pending_intents, self._pending_webull_direct_intents,
                                              self._pending_webull_fanout_intents) for d in queue))
+        if (state.cw_armed and not state.resting_active and not state.webull_resting_active
+                and state.flip_owner_phase == "idle"
+                and not state.flip_owner_first_rest_placed
+                and self._flip_owner_restore_readable and self._removed_wait_restore_readable
+                and self._fanout_identity_persist is not None
+                and self._removed_wait_dispatch_persist is not None
+                and not (state.flip_owner_opportunity_id or state.fanout_segment_id)
+                and not self._removed_wait_has_owner(state)
+                and symbol not in self._removed_wait_requests):
+            # Bind only this new software wait before its removal barriers. A
+            # restored zero-ID request remains unknown; no legacy proof is adopted.
+            self._ensure_flip_owner_opportunity(state)
         self._finish_first_rest_quote_wait(state, action="gave_up", reason=reason)
         for name in ("_pending_intents", "_pending_webull_direct_intents", "_pending_webull_fanout_intents"):
             setattr(self, name, self._drop_queued_open_intents_for_symbol(getattr(self, name), symbol))
