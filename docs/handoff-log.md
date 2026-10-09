@@ -8992,3 +8992,23 @@ R1128 has4CI failures. All asks persist in the durable queue. No production
 GC policy change, source pause respected after reviewer ruling; token
 optimizationfc735 was committed immediately before that ruling and is
 not deployed. Main made no production write; Wave1 evidence not received.
+
+### 2026-10-09 17:15 ET - Codex-2 Wave1 processes installed, closeout pending
+
+Main took the urgent production sequence after explicit AgentA handoff.
+bf8ca5ec is live: ORB2356722/start21:11:07Z, control2357094/start21:11:28Z,
+v22357360/start21:11:48Z; each active/NRestarts0/native health PASS.
+Both approved switches true in all three /proc, RPG false; OMS/strategy untouched.
+Fresh gates before env/every service/after sequence rc0, flat both brokers,
+no working orders/open managed or virtual rows/inflight. Env backup and raw
+stdout/stderr retained in wave1-bf8ca5ec-20261009T211035Z. Initial root Git
+key and missing new ORB assignment mechanics stopped before mutation, fixed.
+Boot5/5 warm/restored, streamer5 names, ORB fresh LIVE/session_complete.
+Zero raw tracebacks so far is not the ten-minute proof. Three historical
+VEEA confirmation-exit ERRORs disclosed; removed-wait memory count unmeasured.
+AgentA continues closeout only. Main resumes FI; completed reviews do not
+discard the queue. R exact re-pin passes, new CI blocked before testing on
+Docker container rate limit; bounded reruns. FI raw pair FAIL, updated mutation
+targets4PASS, original five endings incomplete; JZ runtime complete Schwab
+book capability absent. ALERTS31PASS, no source merge conflict, test map adapted
+locally only; combined strict PG62.090/69.017ms FAIL. No FI/ALERTS pin or Wave2.
