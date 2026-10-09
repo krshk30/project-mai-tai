@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from project_mai_tai.oms import buy_submission_journal as journal
 from test_buy_submission_journal import adapter, request
@@ -35,14 +36,18 @@ async def test_real_failed_commit_blocks_wire_and_pages_runtime_with_delivery_re
         calls.append(req)
         return []
     leaf.submit_order = wire
-    prepare = guard._prepare
-    def fail(*args):
-        raise RuntimeError("controlled durable commit failure")
-    monkeypatch.setattr(guard, "_prepare", fail)
+    commit = Session.commit
+    def fail_token_commit(session):
+        if any(isinstance(row, journal.BuySubmissionToken) for row in session.new):
+            raise RuntimeError("controlled durable commit failure")
+        return commit(session)
+    monkeypatch.setattr(Session, "commit", fail_token_commit)
     with caplog.at_level(logging.INFO):
         with pytest.raises(RuntimeError, match="commit failure"):
             await guard.submit_order(request())
     assert calls == []
+    with sessions() as session:
+        assert session.scalar(select(journal.BuySubmissionToken)) is None
     expected = "[OMS-SUBMIT-TOKEN] sym=DKI acct=schwab result=commit_failed buy_blocked=1"
     assert any(r.levelno == logging.ERROR and r.getMessage() == expected for r in caplog.records)
     log = tmp_path / "oms.log"
@@ -70,7 +75,7 @@ async def test_real_failed_commit_blocks_wire_and_pages_runtime_with_delivery_re
     assert calls == []  # Pager failure and acknowledgement cannot resume a BUY.
     assert _run_wrapper(tmp_path, retry, mode="runtime").returncode == 0
     assert _call_log(tmp_path).count("CALL") == 2
-    monkeypatch.setattr(guard, "_prepare", prepare)
+    monkeypatch.setattr(Session, "commit", commit)
     caplog.clear()
     with caplog.at_level(logging.INFO):
         await guard.submit_order(request())

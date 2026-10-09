@@ -775,7 +775,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self.settings = settings or get_settings()
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
         self.session_factory = session_factory or build_oms_session_factory(self.settings)
-        self.broker_adapter = DurableBuyAdapter(broker_adapter or self._build_broker_adapter(), self.session_factory)
+        adapter = broker_adapter or self._build_broker_adapter()
+        self.broker_adapter = (
+            DurableBuyAdapter(adapter, self.session_factory)
+            if isinstance(adapter, (RoutingBrokerAdapter, SchwabBrokerAdapter, WebullBrokerAdapter))
+            else adapter
+        )
         self.store = store or OmsStore()
         self.strategy_registrations = strategy_registration_map(self.settings)
         self.instance_name = socket.gethostname()
@@ -1011,7 +1016,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     async def run(self) -> None:
         stop_event = asyncio.Event()
         _install_signal_handlers(stop_event)
-        await self.broker_adapter.start()
+        adapter = getattr(self, "broker_adapter", None)
+        if isinstance(adapter, DurableBuyAdapter):
+            await adapter.start()
 
         seed_summary = self.seed_runtime_metadata()
         self.logger.info(

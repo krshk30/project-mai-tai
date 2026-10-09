@@ -19,7 +19,7 @@ from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBr
 from project_mai_tai.cancel_terminal_proof import (
     UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal,
 )
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, TradeIntent
+from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, Strategy, TradeIntent, VirtualPosition
 from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload, TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore, current_session_anchor
 from project_mai_tai.oms import buy_submission_journal as journal
@@ -313,15 +313,25 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
     wires = []
     async def wire(req):
         wires.append((req.side, req.intent_type))
-        return [ExecutionReport("accepted", req.client_order_id, broker_order_id="controlled-id",
+        return [ExecutionReport("accepted", req.client_order_id, broker_order_id="controlled-" + req.client_order_id,
             symbol=req.symbol, side=req.side, intent_type=req.intent_type,
             quantity=req.quantity, metadata=req.metadata)]
     leaf.submit_order = wire
-    # Seed routing metadata before timing; no owned/fill row is manufactured.
+    # Distinct operational positions exercise actual SELL guards, not never-sent
+    # ownership certificates. Never fabricate a filled generation for release.
     with sessions() as session:
-        session.add_all([Strategy(code="macd_30s", name="controlled", execution_mode="live"),
-            Strategy(code="schwab_1m_v2", name="v2", execution_mode="live"),
-            BrokerAccount(name="live:orb", provider="webull", environment="test")])
+        strategy = Strategy(code="macd_30s", name="controlled", execution_mode="live")
+        account = BrokerAccount(name="live:orb", provider="webull", environment="test")
+        session.add_all([strategy, account, Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")])
+        session.flush()
+        for index in range(1, 200, 2):
+            symbol = f"EXIT{index}"
+            session.add_all([
+                VirtualPosition(strategy_id=strategy.id, broker_account_id=account.id,
+                    symbol=symbol, quantity=Decimal(1), average_price=Decimal(2)),
+                AccountPosition(broker_account_id=account.id, symbol=symbol,
+                    quantity=Decimal(1), average_price=Decimal(2)),
+            ])
         session.commit()
     feedback_start = monotonic()
     await service.process_trade_intent(runtime.cancel_event())
@@ -329,7 +339,7 @@ async def test_actual_oms_200_events_60_seconds_concurrent_buys_and_30_second_re
     assert await asyncio.to_thread(started.wait, 3)
     def intent(side, index):
         return TradeIntentEvent(source_service="test", payload=TradeIntentPayload(strategy_code="macd_30s",
-            broker_account_name="live:orb", symbol="BUYTOKEN" if side == "buy" else "DKI", side=side,
+            broker_account_name="live:orb", symbol=f"BUY{index}" if side == "buy" else f"EXIT{index}", side=side,
             quantity=Decimal(1), intent_type="open" if side == "buy" else "close",
             reason=f"CONTROLLED_{index}", metadata={"reference_price": "2"}))
     async def concurrent_buys():
