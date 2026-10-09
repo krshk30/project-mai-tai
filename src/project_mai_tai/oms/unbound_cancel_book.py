@@ -17,10 +17,14 @@ REASONS = {"scanner_removal": "watchlist-removed", "retry_exhausted": "retry_bud
            "false_flip_restore": "false_flip_restore"}
 
 
-def _epoch(value):
+def _utc(value):
     if not isinstance(value, datetime):
         raise ValueError("receipt time missing")
-    return int((value.replace(tzinfo=UTC) if value.tzinfo is None else value).timestamp() * 1000)
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _epoch(value):
+    return int(_utc(value).timestamp() * 1000)
 
 
 def _binding(intent, account, actual_id):
@@ -38,12 +42,15 @@ def _binding(intent, account, actual_id):
             or not isinstance(token, str) or not token or token.strip() != token
             or not isinstance(generation, str) or not generation.isdigit() or int(generation) <= 0
             or str(md.get("fanout_segment_id")) != generation or md.get("clearwait_buy_only") != "true"
-            or purpose not in REASONS or intent.reason != REASONS[purpose]):
+            or purpose not in REASONS or md.get("reason") != REASONS[purpose]
+            or not isinstance(intent.reason, str) or not intent.reason):
         raise ValueError("unbound receipt binding unknown")
     return {"intent_id": str(intent.id), "event_id": payload["event_id"],
             "account_name": account.name, "account_id": actual_id, "provider": account.provider,
             "symbol": intent.symbol, "token": token, "generation": generation, "purpose": purpose,
+            "intent_reason": intent.reason, "metadata_reason": md["reason"],
             "created_at_ms": _epoch(intent.created_at), "observed_at_ms": _epoch(intent.updated_at),
+            "created_at": _utc(intent.created_at).isoformat(), "observed_at": _utc(intent.updated_at).isoformat(),
             "status": intent.status, "refusal_origin": payload.get("refusal_origin", ""),
             "refusal_code": payload.get("refusal_code", "")}
 
@@ -100,7 +107,7 @@ async def acquire_unbound_request_working_book(session_factory, adapter, intent_
     return await asyncio.to_thread(_write, session_factory, adapter, snapshot, book)
 
 
-def load_unbound_request_working_books(session, intents, expected):
+def load_unbound_request_working_books(session, intents, expected, *, now_ms=None):
     """Read inside F's existing locked transaction; never read HTTP or commit.
 
     Match the exact request, then require the latest relevant receipt's journal.
@@ -124,7 +131,9 @@ def load_unbound_request_working_books(session, intents, expected):
         elif md.get("clearwait_removal_token") == expected.token:
             groups.setdefault(account.name, []).append((intent, account))
     result = {}
-    now = int(datetime.now(UTC).timestamp() * 1000)
+    now = int(datetime.now(UTC).timestamp() * 1000) if now_ms is None else now_ms
+    if type(now) is not int or not 0 < expected.requested_at_ms <= now:
+        return {}
     for name, rows in groups.items():
         if name in unreadable:
             continue
@@ -134,7 +143,8 @@ def load_unbound_request_working_books(session, intents, expected):
                    or b["created_at_ms"] < expected.requested_at_ms
                    or b["observed_at_ms"] < expected.requested_at_ms for b, _ in bindings):
                 continue
-            binding, intent = max(bindings, key=lambda pair: pair[0]["observed_at_ms"])
+            binding, intent = max(bindings, key=lambda pair: (
+                _utc(pair[1].updated_at), _utc(pair[1].created_at), str(pair[1].id)))
             raw = intent.payload[JOURNAL_KEY]
             if raw["binding"] != binding:
                 continue

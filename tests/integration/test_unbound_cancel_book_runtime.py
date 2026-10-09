@@ -15,3 +15,7 @@ test_new_explicit_receipt_refreshes_prior_book_once_not_its_timestamps = (
     controls.test_new_explicit_receipt_refreshes_prior_book_once_not_its_timestamps)
 test_new_receipt_during_prior_physical_flight_waits_then_coalesces = (
     controls.test_new_receipt_during_prior_physical_flight_waits_then_coalesces)
+test_latest_receipt_uses_submillisecond_precision_not_older_journal = (
+    controls.test_latest_receipt_uses_submillisecond_precision_not_older_journal)
+test_previous_emitter_missing_purpose_is_unknown_without_adopting_history = (
+    controls.test_previous_emitter_missing_purpose_is_unknown_without_adopting_history)
