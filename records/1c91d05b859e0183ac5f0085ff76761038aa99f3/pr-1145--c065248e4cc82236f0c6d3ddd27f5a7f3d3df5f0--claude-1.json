@@ -1,0 +1,9 @@
+{
+  "pr_number": 1145,
+  "range_base": "c065248e4cc82236f0c6d3ddd27f5a7f3d3df5f0",
+  "range_head": "1c91d05b859e0183ac5f0085ff76761038aa99f3",
+  "reviewed_at": "2026-10-09T18:24:35Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "ORBFILL1+ORB live tape combined. Read full diff (15 files). Fill: in-memory only (orb_schwab_fill reads, macd select-only on strategy_bar_history; no write), anchor = last Schwab candle in 90 min before 08:30, one bounded fetch, skip on failure. Tape: dashboard_snapshots type orb_schwab_live_decision, bounded queue 128 put_nowait, separate pool 1s statement timeout, to_thread, prune scoped by snapshot_type. Control-plane 9 lines read-only. Focused 108 pass locally. My mutations: anchor removed (last=None) -> 4F; tape prune unscoped by snapshot_type -> 1F. O2 11/12 sign (VIVK 09-02 split-adjusted provider vs saved = historical artifact, not same-day); O3 not provable from history, fails safe to today's skip; live exercise Mon 09:27. No durable gating state -> next-day boot replay N/A. Off OMS path. Validate green x2."
+}
