@@ -2114,15 +2114,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     await self._publish_order_event(order_event)
                     return [*pre_submit_events, order_event]
 
-                virtual_position = self.store.get_virtual_position(
+                virtual_quantity = self.store.get_virtual_position_quantity(
                     session,
                     strategy_id=strategy.id,
                     broker_account_id=broker_account.id,
                     symbol=event.payload.symbol,
                 )
                 strategy_available_quantity = (
-                    virtual_position.quantity
-                    if virtual_position is not None and virtual_position.quantity > 0
+                    virtual_quantity
+                    if virtual_quantity is not None and virtual_quantity > 0
                     else Decimal("0")
                 )
                 if strategy_available_quantity <= 0:
