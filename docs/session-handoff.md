@@ -16,6 +16,15 @@
 | Open P1 | #1133 (stale removed-wait) + #1136 (owner stuck after target exit) on shared proof #1138 = durable pre-wire submission token; READY target **15:00 ET 10-09**; install after the close, switches ON | codex C66–C70 |
 | Tomorrow first | 07:02 open read (LINE repair probes from 07:01; 0 false-flip errors; ORB tile WAITING FOR 09:27 with universe; no stuck removed-wait); 09:31 ORB + first Webull mirror; 15:04 F+I review | CronList (claude-1 session) |
 
+## 2026-10-09 (Fri) — LIVE DAY NOTES (shared: both agents add rows as things happen; full sweep at close-out)
+
+| # | Row | Who |
+|---|---|---|
+| E1 | (carried from 10-08 after #1123 merged 95cbe052) **#1123 pins:** claude-1 recorded 96 codex-authored docs-only ranges (each checked: docs/ only) on review-pins 73fe5b25; codex 97 claude ranges on 48f93abe; merged after pin + CI; #1096 closed as superseded. | claude-1 |
+| E2 | **#1139 FALSEFLIP1 trail guard pinned @de2cfc68** (review-pins 946d3c7d, pin check PASS): 3 guards skip the false-flip cross when atr_trail is absent/≤0 (GRAN 22 ValueError 18:19–18:36 ET 10-08); 169 falseflip + 272 owner/retry tests pass; mutation 6F. Codex: merge after Validate, restart v2 only, send traceback count from the restart line; fallback FALSE_FLIP=false + OMS/v2 restart by 06:30. | claude-1 |
+| E3 | **Process note (operator 10-08 ~21:xx):** the handoff PR is updated for every task (10-08 rows D1–D52 did that); the long close-out came from the range-pin gate over 301 commits / 3 days (10-06/10-07 PR never merged) + my two corrected claims. Pending operator ruling: exempt docs-only handoff PRs from the range-pin gate. Rule kept: merge the day's handoff PR the same night. | claude-1 |
+| E4 | Reads scheduled (claude-1 session): 07:02 open/install check, 09:31 ORB + first Webull mirror, 15:04 F+I review (#1138/#1133/#1136, READY target 15:00); 30-min scans 07:13–16:43. | claude-1 |
+
 ## 2026-10-08 (Thu) — LIVE DAY NOTES (shared: both agents add rows as things happen; full sweep at close-out)
 Written 2026-10-08 06:3x ET by claude-1. PRODUCTION: box d244f602 = main (installed by hand 10-07 18:11–18:18 + 19:43 control plane), every switch ON as ruled (LINE_CHART, RETAINED_HOLD+HOTFIX1, EH_FRESH_PRICE, SLOTCLEAR fresh-flip/fresh-sell, RETRYLEFT1, MOMPAGE1, RETAIN1 timers, ORB Live board; ATR_REPRICE_HANDOFF off). Yesterday: rows T114–T178 below; memory project_mai_tai_day_1007 + project_mai_tai_board_1007 (the daily board: E1–E19 / O1–O9 / S1–S2 / P1–P6).
 
