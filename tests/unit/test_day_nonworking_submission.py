@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
 from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, Fill, TradeIntent
@@ -130,9 +131,15 @@ async def test_nonworking_wire_admission_exact_and_rollback_safe(sessions, sdk, 
                 reason="new unanswered cancellation", status="pending", created_at=at(NOW), updated_at=at(NOW)))
         payload["metadata"] = md
         intent.payload = payload
+        # Keep the controlled receipt clock when payload mutation causes UPDATE.
+        intent.updated_at = at(NOW - 1000)
+        flag_modified(intent, "updated_at")
         session.commit()
     with sessions() as session:
         observed = NOW + 15_001 if fault == "stale" else NOW
+        if fault == "valid_other_request":
+            intent = session.get(TradeIntent, intent_id)
+            assert journal.load_cancel_terminal_evidence(session, [intent])
         working_filter = tokens.nonworking_buy_submission_witnesses(session, scope, observed_at_ms=observed)
         assert bool(working_filter) is (fault == "none")
         witness = tokens.close_terminal_buy_admission(session, scope, observed_at_ms=observed)
