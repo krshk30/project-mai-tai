@@ -220,7 +220,7 @@ async def test_pg_actual_postcoverage_caller_nullable_ids(pg_db, sdk, caller_clo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("venue", [PRIMARY, WEBULL])
 @pytest.mark.parametrize("case", ["working", "token", "old_unresolved", "stamp"])
-async def test_pg_actual_journal_unknown_holds(pg_db, caller_clock, monkeypatch, venue, case):
+async def test_pg_actual_journal_unknown_holds(pg_db, sdk, caller_clock, monkeypatch, venue, case):
     from tests.unit.test_clearwait1_never_sent_consumer import test_real_journal_or_existing_db_unknown_rolls_back_all_closures
     await test_real_journal_or_existing_db_unknown_rolls_back_all_closures(pg_db, monkeypatch, venue, case)
 
