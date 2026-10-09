@@ -338,7 +338,8 @@ async def test_real_oms_cancel_caller_produces_committed_book(sessions, sdk, mon
     # Exercise the real source caller, not a test-only invocation of the producer.
     monkeypatch.setattr(broker, "now_ms", lambda: int(datetime.now(UTC).timestamp() * 1000))
     client = Client()
-    service = OmsRiskService(settings=Settings(oms_adapter="simulated", webull_account_id="ACC1"),
+    service = OmsRiskService(settings=Settings(oms_adapter="simulated", broker_default_provider="webull",
+        orb_broker_account_name="unused", webull_account_id="ACC1"),
         redis_client=SimpleNamespace(), session_factory=sessions, broker_adapter=adapter(client))
 
     async def publish(_event):
@@ -346,6 +347,7 @@ async def test_real_oms_cancel_caller_produces_committed_book(sessions, sdk, mon
 
     monkeypatch.setattr(service, "_publish_order_event", publish)
     await service.process_trade_intent(cancel_event())
+    await service._drain_cancel_terminal_evidence()
     with sessions() as session:
         intent = session.scalar(select(TradeIntent).where(TradeIntent.intent_type == "cancel"))
         assert intent.status == "rejected"
@@ -387,9 +389,9 @@ async def test_schwab_exact_target_receipt_without_relabelled_account_list(sessi
             updated_at=datetime.fromtimestamp((NOW - 20_000) / 1000, UTC)))
         session.commit()
     await journal.acquire_cancel_terminal_evidence(sessions, leaf, [intent_id])
-    assert read(sessions, intent_id)[1].terminal
+    assert not read(sessions, intent_id)[1].terminal
     request = await asyncio.to_thread(journal._read_request, sessions, intent_id, leaf)
-    assert calls == [("GET", "/trader/v1/accounts/ACC1/orders/broker-id")]
+    assert calls == []
     unknown = await broker.acquire_broker_cancel_evidence(leaf, request.receipt)
     assert not evaluate_cancel_terminal(request.receipt, unknown, now_ms=NOW).terminal
     assert await broker.acquire_complete_working_book(leaf, "live:orb") is None
@@ -425,26 +427,27 @@ async def test_ten_request_burst_uses_actual_aggregate_two_per_two_second_budget
     assert len(budget.attempts["detail"]) == len(budget.attempts["list-open"]) == 1
     clock[0] = 2.0
     await broker.acquire_broker_cancel_evidence(routed, receipt)
-    assert len(client.calls) == 4
+    assert len(client.calls) == 3  # Same fresh book; no duplicate list-open.
 
 
 @pytest.mark.parametrize("side,coid,terminal", [("BUY", "operator", False), ("SELL", "operator", True),
                                               ("SELL", "", True), (None, "operator", False)])
 @pytest.mark.asyncio
 async def test_offloop_v2_nested_items_book_for_approved_unbound_rule(sessions, sdk, side, coid, terminal):
-    from dataclasses import replace
-    from project_mai_tai.cancel_terminal_proof import UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal
+    from project_mai_tai.cancel_terminal_proof import SchwabLocalCancelWitness, UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal
 
     client = Client(pages=[{"hasNext": False, "orders": [{"account_id": "ACC1",
         "client_order_id": coid, "order_id": "actual-operator-broker-id", "items": [
             {"symbol": "FLYE", "order_status": "SUBMITTED", "side": side}]}]}])
     book = await broker.acquire_complete_working_book(adapter(client), "live:orb")
     request = UnboundCancelRequest("FLYE", "token", "token", str(NOW), "retry_exhausted", NOW - 1000,
-        {"live:orb": "ACC1", "schwab": "hash"}, {"live:orb": "webull", "schwab": "schwab"})
+        {"live:orb": "ACC1", "schwab": "hash"}, {"live:orb": "webull", "schwab": "schwab"}, "2026-10-08")
     assert book and book.orders[0].client_order_id == coid
-    # A controlled second book tests the evaluator, NOT actual Schwab completeness.
-    books = {"live:orb": book, "schwab": replace(book, account_name="schwab", account_id="hash", orders=())}
-    proof = evaluate_unbound_cancel_terminal(request, books, fences=UnboundCancelFences(request, True, True, True, True), now_ms=NOW)
+    # Controlled local closure, never a fabricated Schwab broker book.
+    witness = SchwabLocalCancelWitness(request, "schwab", "hash", request.session_key,
+        NOW, "exact_cancel_chain", True, True, True, True, True)
+    proof = evaluate_unbound_cancel_terminal(request, {"live:orb": book},
+        fences=UnboundCancelFences(request, True, True, True, True), schwab_witness=witness, now_ms=NOW)
     assert proof.terminal is terminal
     assert all(t != threading.get_ident() for _, _, t in client.calls)
     with sessions() as session:
