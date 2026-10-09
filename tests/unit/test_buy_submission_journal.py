@@ -15,7 +15,7 @@ from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBr
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullAccountConfig, WebullBrokerAdapter
 from project_mai_tai.cancel_terminal_proof import (
-    UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal,
+    BookOrder, CompleteWorkingBook, UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal,
 )
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import DashboardSnapshot
@@ -226,15 +226,30 @@ async def test_canonical_two_account_never_sent_uses_actual_journal_not_fake_boo
         {"schwab": "schwab", "webull": "webull"}, sc.session_key,
         sc.opportunity_started_at_ms, {name: str(guard.process_id) for name in ("schwab", "webull")})
     fences = UnboundCancelFences(req, True, True, True, True)
+    book = CompleteWorkingBook("webull", "actual-webull", NOW - 25, NOW - 10, True,
+        "all_working", (), "broker")
+    books = {"webull": book}
     with sessions() as session:
         witnesses = {s.account_name: journal.close_never_sent_admission(session, s, observed_at_ms=NOW)
                      for s in (sc, wb)}
-        assert evaluate_unbound_cancel_terminal(req, {}, fences=fences,
+        assert not evaluate_unbound_cancel_terminal(req, {}, fences=fences,
+            never_sent_witnesses=witnesses, now_ms=NOW).terminal
+        assert evaluate_unbound_cancel_terminal(req, books, fences=fences,
+            never_sent_witnesses=witnesses, now_ms=NOW).terminal
+        # Operator orders need not have an OMS token. Their book still governs.
+        for bad in (None, replace(book, complete=False), replace(book, started_at_ms=NOW - 100),
+                    replace(book, account_id="foreign"),
+                    replace(book, orders=(BookOrder("manual", "DKI", "working", "buy"),)),
+                    replace(book, orders=(BookOrder("manual", "DKI", "working", "unknown"),))):
+            assert not evaluate_unbound_cancel_terminal(req, {"webull": bad}, fences=fences,
+                never_sent_witnesses=witnesses, now_ms=NOW).terminal
+        assert evaluate_unbound_cancel_terminal(req, {"webull": replace(book,
+            orders=(BookOrder("manual-sell", "DKI", "working", "sell"),))}, fences=fences,
             never_sent_witnesses=witnesses, now_ms=NOW).terminal
         for changed in (replace(req, token="other"), replace(req, generation="other"),
                         replace(req, session_key="yesterday"), replace(req, opportunity_started_at_ms=NOW - 300)):
-            assert not evaluate_unbound_cancel_terminal(changed, {},
+            assert not evaluate_unbound_cancel_terminal(changed, books,
                 fences=replace(fences, request=changed), never_sent_witnesses=witnesses, now_ms=NOW).terminal
-        assert not evaluate_unbound_cancel_terminal(req, {}, fences=fences,
+        assert not evaluate_unbound_cancel_terminal(req, books, fences=fences,
             never_sent_witnesses={"schwab": witnesses["schwab"]}, now_ms=NOW).terminal
         session.commit()
