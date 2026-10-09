@@ -19,6 +19,9 @@ from tests.unit.test_clearwait1_session_rollover import (
     ACCOUNTS, NOW, PRIMARY, RAW, WEBULL, ms, recorded_request, request, seed, service, strategy,
 )
 from tests.unit.test_clearwait1_unbound import NOW as UNBOUND_NOW, configured_control, controlled_books
+from tests.integration.test_cancel_terminal_runtime import sdk as caller_sdk
+
+sdk = caller_sdk
 
 
 @pytest.fixture
@@ -136,12 +139,12 @@ def unbound_control(database, req, drained=True):
         publication_closed={req: drained}, now=UNBOUND_NOW)[0]
 
 
-def test_pg_unbound_dki_control_commits_exact_inactive_token(pg_db):
+def test_pg_legacy_zero_id_without_coverage_stays_active(pg_db):
     req = recorded_request("DKI")
     seed(pg_db, req, receipts=False)
     proof = unbound_control(pg_db, req)
-    assert proof.clear and proof.reason == "unbound_symbol_terminal"
-    assert not pg_db[0].restore() and pg_db[0].restore_terminal_proofs() == (proof,)
+    assert not proof.clear and pg_db[0].restore() == {"DKI": req}
+    assert not pg_db[0].restore_terminal_proofs()
 
 
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL])
@@ -149,7 +152,7 @@ def test_pg_unbound_dki_control_commits_exact_inactive_token(pg_db):
                                  "configured_provider_mismatch", "book_identity_mismatch"])
 def test_pg_nullable_config_binding_and_mismatch_controls(pg_db, account, case):
     proof = configured_control(pg_db, recorded_request("DKI"), account, case)
-    assert proof.clear is (case == "null")
+    assert not proof.clear
 
 
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL])
@@ -184,8 +187,8 @@ def test_pg_unbound_same_day_retry_retains_active_request(pg_db):
     req = replace(recorded_request("DKI"), purpose="retry_exhausted")
     seed(pg_db, req, receipts=False)
     proof = unbound_control(pg_db, req)
-    assert proof.clear and pg_db[0].restore() == {"DKI": req}
-    assert pg_db[0].restore_terminal_proofs() == (proof,)
+    assert not proof.clear and pg_db[0].restore() == {"DKI": req}
+    assert not pg_db[0].restore_terminal_proofs()
 
 
 def test_pg_unrelated_closed_history_does_not_exhaust_current_proof(pg_db):
@@ -196,4 +199,42 @@ def test_pg_unrelated_closed_history_does_not_exhaust_current_proof(pg_db):
             symbol="DKI", entry_price=1, original_quantity=1, current_quantity=0, status="closed")
             for _ in range(2049))
         session.commit()
-    assert unbound_control(pg_db, req).clear
+    assert not unbound_control(pg_db, req).clear
+
+
+@pytest.fixture
+def caller_clock(monkeypatch):
+    import project_mai_tai.services.schwab_1m_v2_bot as module
+    from project_mai_tai.fanout_segment_store import current_session_anchor
+    monkeypatch.setattr(module, "current_session_anchor", lambda: current_session_anchor(UNBOUND_NOW))
+
+
+@pytest.mark.asyncio
+async def test_pg_actual_postcoverage_caller_nullable_ids(pg_db, caller_clock, monkeypatch):
+    from tests.unit.test_clearwait1_never_sent_consumer import test_actual_caller_postcoverage_dki_closes_both_admissions_without_http
+    await test_actual_caller_postcoverage_dki_closes_both_admissions_without_http(pg_db, monkeypatch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("venue", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("case", ["working", "token", "old_unresolved", "stamp"])
+async def test_pg_actual_journal_unknown_holds(pg_db, caller_clock, monkeypatch, venue, case):
+    from tests.unit.test_clearwait1_never_sent_consumer import test_real_journal_or_existing_db_unknown_rolls_back_all_closures
+    await test_real_journal_or_existing_db_unknown_rolls_back_all_closures(pg_db, monkeypatch, venue, case)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["boot", "missing_event", "quote", "raise"])
+async def test_pg_actual_caller_receipts_and_bounded_acquisition(pg_db, sdk, caller_clock, monkeypatch, case):
+    from tests.unit import test_clearwait1_runtime_caller as controls
+    tests = {"boot": controls.test_recorded_dki_boot_zero_one_two_receipts_all_legacy_unknown,
+        "missing_event": controls.test_missing_db_event_after_emit_returns_is_not_absence,
+        "quote": controls.test_stalled_offloop_proof_quote_memory_only_unrelated_cancel_immediate,
+        "raise": controls.test_fresh_raise_has_no_broker_get_before_cancel_feedback}
+    await tests[case](pg_db, sdk, monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_pg_late_memory_cas_rolls_back_both_admissions(pg_db, monkeypatch):
+    from tests.unit.test_clearwait1_never_sent_consumer import test_memory_changes_during_proof_roll_back_admission_and_request_together
+    await test_memory_changes_during_proof_roll_back_admission_and_request_together(pg_db, monkeypatch)
