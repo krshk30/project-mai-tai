@@ -8900,3 +8900,23 @@ post-archive receipt; L2/C3 wait G2+pin+flat. T1 design only until Ogreen;
 C1 after-close fresh gates,C2 wait Oreview/pin. Reviewer acceptedG7,
 remaining LINE gate G2; no reuse of failed pre-archive snapshot.
 Webull detail/DB resilience parked. No production change. Own docs only.
+
+2026-10-09 14:14 ET codex-2 C19: latestMASTER scopes O+T parallel.
+One combined draft1145 head1c91d05b on Oadd40418; trial987b1e35
+tree-identical, two app conflicts preserve fill/deadline then tape.
+347combinedaffectedPASS; isolatedT202PASS/writerremovedRED1F;
+T-only8058PASS/56FAIL/55SKIP vs c0658048PASS/56FAIL/55SKIP,
+failednames identical0introduced/resolved in actual XML pair.
+O336focusPASS/15RED;12laterSchwabHTTP200 payloads fill57minutes
+at09:27:15;105>=35 unchanged. Matched09:28 sign11/12 not12/12;
+Sep2VIVK provider15x stored prices, no normalization/waiver shipped.
+O3 raw request/candle availability UNKNOWN;85warmup summaries are
+not HTTP telemetry. Combined Validate37970875315/37970881523
+pending and unpinned. Bounded live tape own snapshot50/day7days,
+memoryqueue128/onephysical off-loop writer/isolatedpool; actual11
+logs replayed offline, no retrospective production insertion.
+L waits reviewer archive then fresh Monday G2; FI50ms remains
+NOTREADY/latestLinuxpairFAIL. C no finalized/staged runner and no
+fresh after-close gatePASS, existing exactSHA deploy path inspected.
+Two actualworkers+parent, notfive. No production/service/flag/DB
+write,merge,pin,deploy. OwnC-row/docs only, reviewer rows preserved.
