@@ -46,13 +46,17 @@ async def test_audit_writer_offloop_and_counter_accounting_on_loop(fails, caplog
 
 
 @pytest.mark.asyncio
-async def test_cancel_waits_for_exclusive_audit_worker_before_session_can_close():
+@pytest.mark.parametrize("fails", [False, True])
+async def test_cancel_waits_for_exclusive_audit_worker_before_session_can_close(fails, caplog):
     entered, release = threading.Event(), threading.Event()
     service = OmsRiskService.__new__(OmsRiskService)
     def write(*args, **kwargs):
         entered.set()
         assert release.wait(2)
+        if fails:
+            raise RuntimeError("controlled cancelled audit failure")
     service.store = SimpleNamespace(append_order_event=write)
+    service.logger = logging.getLogger("controlled-cancelled-audit")
     service.broker_adapter = DurableBuyAdapter(SimpleNamespace(), None)
     service._order_event_attempts = service._order_event_failures = 0
     task = asyncio.create_task(service._append_order_event_isolated_awaited(
@@ -70,3 +74,5 @@ async def test_cancel_waits_for_exclusive_audit_worker_before_session_can_close(
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await task
+    assert service._order_event_failures == int(fails)
+    assert ("OMS-ORDER-EVENT-DROPPED" in caplog.text) is fails
