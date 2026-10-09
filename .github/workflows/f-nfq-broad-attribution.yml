@@ -1,0 +1,78 @@
+name: F NFQ Frozen Broad Unit Attribution Only
+
+on:
+  push:
+    branches: ["codex/clearwait1-session-rollover-1008"]
+    paths:
+      - "tests/support/f_nfq_latency_attribution.py"
+      - "tests/unit/test_f_nfq_latency_attribution.py"
+      - ".github/workflows/f-nfq-broad-attribution.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nfq-attribution-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: public.ecr.aws/docker/library/postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: project_mai_tai_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d project_mai_tai_test"
+          --health-interval 2s --health-timeout 5s --health-retries 10
+    env:
+      F_SOURCE: c30b5113a17437e2f3b6d0a9829dcd88d8308d0c
+      I_SOURCE: 9901f2f2a94354c7c5f8dbf197e76e4534ad03b7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Freeze unchanged source and full original I unit population
+        run: |
+          git fetch origin "$F_SOURCE" "$I_SOURCE"
+          git diff --exit-code "$F_SOURCE" HEAD -- src tests/unit/test_nfq2_tick_path.py tests/unit/test_nfq2_hotfix1_combined_proof.py tests/integration/test_buy_submission_tokens_runtime.py
+          git diff --exit-code "$F_SOURCE" "$I_SOURCE" -- src/project_mai_tai/oms tests/unit/test_nfq2_tick_path.py tests/unit/test_nfq2_hotfix1_combined_proof.py
+          mkdir -p "$RUNNER_TEMP/i-nfq-frozen" nfq-attribution-logs
+          git archive "$I_SOURCE" | tar -x -C "$RUNNER_TEMP/i-nfq-frozen"
+          printf 'purpose=observed broad-suite attribution ONLY\nI=%s\nF=%s\nobserver=%s\nrunner=%s\nno source/assertion/GC policy change; no isolated rerun gate\n' "$I_SOURCE" "$F_SOURCE" "$GITHUB_SHA" "$RUNNER_NAME" | tee nfq-attribution-logs/identity.log
+      - name: Install the frozen dependency environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "$RUNNER_TEMP/i-nfq-frozen[dev]"
+      - name: Observer equivalence and retention controls in a separate process
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
+        run: |
+          python -m pytest -p no:cacheprovider -q tests/unit/test_f_caller_latency_attribution.py tests/unit/test_f_nfq_latency_attribution.py
+          python -m ruff check tests/support/f_nfq_latency_attribution.py tests/unit/test_f_nfq_latency_attribution.py
+      - name: Same PostgreSQL migration precondition
+        working-directory: ${{ runner.temp }}/i-nfq-frozen
+        env:
+          MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+          alembic upgrade head
+      - name: Full frozen I unit suite, observing only the two original NFQ timing nodes
+        working-directory: ${{ runner.temp }}/i-nfq-frozen
+        env:
+          PYTHONPATH: ${{ runner.temp }}/i-nfq-frozen:${{ runner.temp }}/i-nfq-frozen/src:${{ github.workspace }}/tests/support
+        run: |
+          set -o pipefail
+          python -m pytest -p no:cacheprovider -p f_nfq_latency_attribution tests/unit 2>&1 | tee "$GITHUB_WORKSPACE/nfq-attribution-logs/i-unit.log"
+      - name: Retain outcome and bounded captures even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: f-nfq-attribution-${{ github.run_id }}
+          path: nfq-attribution-logs
