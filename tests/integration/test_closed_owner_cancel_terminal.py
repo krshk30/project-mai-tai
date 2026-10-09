@@ -63,8 +63,11 @@ class Transport:
 
 
 async def drain_workers(oms):
+    # Keep the runtime open across the explicit fresh-SELL assessment.
+    await asyncio.gather(*oms.__dict__.get("_cancel_feedback_tasks", set()))
     await asyncio.gather(*oms.__dict__.get("_cancel_terminal_assessment_tasks", set()))
-    await oms._drain_cancel_terminal_evidence()
+    await asyncio.gather(*oms.__dict__.get("_cancel_terminal_tasks", {}).values())
+    assert not getattr(oms, "_cancel_terminal_closing", False)
 
 
 def snapshot(sessions):
@@ -292,4 +295,4 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
     if case == "same_real_segment":
         assert state.flip_owner_phase == "bound" and store.restore() == {"FLYE": req}
         assert state.retry_one_segment_id == record.retry_segment_id
-    await drain_workers(oms)
+    await oms._drain_cancel_terminal_evidence()
