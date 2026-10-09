@@ -123,6 +123,22 @@ def test_same_segment_unbound_receipt_never_releases_bound_real_owner():
     assert not strategy._strict_first_rest_admitted(state, slot="first")
 
 
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("quantity", [0, 1000])
+@pytest.mark.parametrize("age", [-1, 0, 15_000, 15_001])
+def test_cached_terminal_witness_age_checked_at_final_owner_retirement(pm, quantity, age):
+    strategy, state, record, clock, _, proof = setup(pm=pm)
+    state.position_qty = state.position_qty_held = quantity
+    strategy.apply_removed_wait_proofs((proof,))
+    assert state.flip_owner_phase == "awaiting_close"
+    clock[0] += age
+    book(strategy, record, clock)
+    fresh = 0 <= age <= 15_000
+    assert (state.flip_owner_phase == "idle") is fresh
+    assert (state.symbol in strategy._removed_wait_requests) is not fresh
+    assert state.position_qty == state.position_qty_held == quantity
+
+
 @pytest.mark.parametrize("fresh", [False, True])
 def test_durable_terminal_witness_restart_does_not_rejuvenate_old_books(fresh):
     strategy, state, record, clock, _, proof = setup()

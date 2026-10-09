@@ -250,6 +250,7 @@ def test_pg_legacy_unbound_books_never_clear_wired_owner(pg, pm, fault):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("sdk")
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL])
 @pytest.mark.parametrize("case", ["filled_target", "filled_stop", "operator_sell", "working_schwab",
