@@ -1,0 +1,9 @@
+{
+  "pr_number": 1143,
+  "range_base": "d451edf80fbe752794988bd6fc8a368d62032267",
+  "range_head": "8edae6aa3b89bd33e7b785589e451ec000ef30ae",
+  "reviewed_at": "2026-10-09T20:13:45Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after rebase onto main d451edf8: patch-id 713f37277a37 identical to my 16:05 pin of 16f9e624 (diff of +/- lines identical). Same review as before: LINE v3 Massive pre-07:00 seed, G1-G7 + G2 post-archive 25/25 boots 0 gates."
+}
