@@ -932,7 +932,8 @@ class SchwabV2BotService:
         # contract here; missing typed local evidence must remain UNKNOWN.
         webull_accounts = {name for _, _, expected in candidates
                            for name, (provider, _) in expected.items() if provider == "webull"}
-        books = await acquire_request_working_books(adapter, webull_accounts)
+        books = await acquire_request_working_books(adapter, webull_accounts,
+            after_ms=max(request.requested_at_ms for request, _, _ in candidates))
         for request, version, expected in candidates:
             try:
                 def current(candidate):

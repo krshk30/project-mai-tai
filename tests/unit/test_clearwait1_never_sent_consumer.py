@@ -14,14 +14,18 @@ from project_mai_tai.db.models import BrokerAccount, BrokerOrder, OmsManagedPosi
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.oms import buy_submission_journal as journal
 from project_mai_tai.v2_removed_wait import RemovedWait
+from project_mai_tai.cancel_terminal_proof import CompleteWorkingBook
 from tests.unit.test_clearwait1_runtime_caller import poll, runtime
 from tests.unit.test_clearwait1_runtime_caller import emitters
+from tests.unit.test_clearwait1_runtime_caller import sdk as controlled_sdk
 from tests.unit.test_clearwait1_session_rollover import ACCOUNTS, PRIMARY, WEBULL, ms, seed
 from tests.unit.test_clearwait1_session_rollover import db as rollover_db
 from tests.unit.test_clearwait1_unbound import CONFIGURED_IDS, NOW, controlled_routing
 from project_mai_tai.strategy_core.schwab_1m_v2 import TradeIntentDraft
 
 db = rollover_db
+sdk = controlled_sdk
+pytestmark = pytest.mark.usefixtures("sdk")
 
 
 @pytest.mark.asyncio
@@ -71,7 +75,9 @@ def closures(database):
 
 
 def assess_covered(database, req, **kwargs):
-    return database[0].retire_unbound((req,), ACCOUNTS, books={}, publication_closed={req: True},
+    books = kwargs.pop("books", {WEBULL: CompleteWorkingBook(WEBULL, CONFIGURED_IDS[WEBULL],
+        ms(NOW), ms(NOW), True, "all_working", (), "broker")})
+    return database[0].retire_unbound((req,), ACCOUNTS, books=books, publication_closed={req: True},
         expected_bindings={PRIMARY: ("schwab", CONFIGURED_IDS[PRIMARY]), WEBULL: ("webull", CONFIGURED_IDS[WEBULL])},
         now=NOW, **kwargs)[0]
 
@@ -91,14 +97,14 @@ async def test_positive_coverage_operator_position_and_sell_do_not_block(db, mon
 
 
 @pytest.mark.asyncio
-async def test_actual_caller_postcoverage_dki_closes_both_admissions_without_http(db, monkeypatch):
+async def test_actual_caller_postcoverage_dki_requires_fresh_webull_book(db, monkeypatch):
     req, _ = await covered_request(db, monkeypatch)
     bot, strat, _, calls = runtime(db, monkeypatch, req=req)
     await poll(bot)
     assert not strat._removed_wait_requests and not db[0].restore()
-    assert calls == [] and len(closures(db)) == 2
+    assert len(calls) == 1 and calls[0][0] == WEBULL and len(closures(db)) == 2
     await poll(bot)
-    assert calls == [] and not strat._pending_intents
+    assert len(calls) == 1 and not strat._pending_intents
 
 
 @pytest.mark.asyncio
@@ -120,7 +126,7 @@ async def test_postcoverage_generic_cancel_publication_gap_then_exact_receipt_cl
     persist(missing)
     await poll(bot)
     assert not db[0].restore() and not strat._removed_wait_requests
-    assert len(closures(db)) == 2 and calls == []
+    assert len(closures(db)) == 2 and len(calls) == 1 and calls[0][0] == WEBULL
 
 
 @pytest.mark.asyncio
@@ -129,9 +135,9 @@ async def test_same_session_retry_exhausted_witness_keeps_owner_request(db, monk
     bot, strat, _, calls = runtime(db, monkeypatch, req=req)
     await poll(bot)
     assert strat._removed_wait_requests == {"DKI": req} and db[0].restore() == {"DKI": req}
-    assert len(closures(db)) == 2 and calls == []
+    assert len(closures(db)) == 2 and len(calls) == 1
     await poll(bot)
-    assert calls == []
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL])
@@ -188,9 +194,7 @@ async def test_memory_changes_during_proof_roll_back_admission_and_request_toget
         nonlocal count
         count += 1
         return count == 1
-    proof, = db[0].retire_unbound((req,), ACCOUNTS, books={}, publication_closed={req: True},
-        expected_bindings={PRIMARY: ("schwab", CONFIGURED_IDS[PRIMARY]), WEBULL: ("webull", CONFIGURED_IDS[WEBULL])},
-        publication_current=current, now=NOW)
+    proof = assess_covered(db, req, publication_current=current)
     assert not proof.clear and closures(db) == [] and db[0].restore() == {"DKI": req}
 
 
@@ -203,3 +207,34 @@ async def test_legacy_zero_id_is_not_rejuvenated_by_new_coverage(db, monkeypatch
     await poll(bot)
     assert strat._removed_wait_requests == {"DKI": legacy}
     assert closures(db) == [] and calls == []
+
+
+@pytest.mark.parametrize("side,held", [("buy", True), ("sell", False), ("unknown", True)])
+@pytest.mark.asyncio
+async def test_actual_webull_foreign_order_checked_even_with_both_never_sent_witnesses(db, monkeypatch, side, held):
+    req, _ = await covered_request(db, monkeypatch)
+    bot, strat, _, calls = runtime(db, monkeypatch, req=req, side=side, venue=WEBULL)
+    await poll(bot)
+    assert bool(db[0].restore()) is held and bool(strat._removed_wait_requests) is held
+    assert len(calls) == 1 and len(closures(db)) == (0 if held else 2)
+    await poll(bot)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("case", ["missing", "incomplete", "stale", "pre_request", "foreign_account"])
+@pytest.mark.asyncio
+async def test_durable_witness_does_not_replace_authoritative_fresh_book(db, monkeypatch, case):
+    req, _ = await covered_request(db, monkeypatch)
+    book = CompleteWorkingBook(WEBULL, CONFIGURED_IDS[WEBULL], ms(NOW), ms(NOW), True, "all_working", (), "broker")
+    if case == "missing":
+        book = None
+    elif case == "incomplete":
+        book = replace(book, complete=False)
+    elif case == "stale":
+        book = replace(book, started_at_ms=ms(NOW) - 15001)
+    elif case == "pre_request":
+        book = replace(book, started_at_ms=req.requested_at_ms - 1)
+    else:
+        book = replace(book, account_id="not-configured")
+    assert not assess_covered(db, req, books={WEBULL: book}).clear
+    assert closures(db) == [] and db[0].restore() == {"DKI": req}
