@@ -985,7 +985,7 @@ def test_oms_service_builds_routing_adapter_for_mixed_brokers() -> None:
         session_factory=build_test_session_factory(),
     )
 
-    assert isinstance(service.broker_adapter, RoutingBrokerAdapter)
+    assert isinstance(service.broker_adapter.cancel_terminal_delegate, RoutingBrokerAdapter)
 
 
 def test_runtime_registry_can_route_tos_to_schwab_only() -> None:

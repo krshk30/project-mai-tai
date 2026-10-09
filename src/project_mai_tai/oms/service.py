@@ -63,6 +63,7 @@ from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.cancel_terminal import acquire_cancel_terminal_evidence, bind_cancel_target
+from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
 from project_mai_tai.oms import wbquiet_shadow
 from project_mai_tai.positions_read_receipt import (
     PositionsReadReceiptWriter,
@@ -774,7 +775,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self.settings = settings or get_settings()
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
         self.session_factory = session_factory or build_oms_session_factory(self.settings)
-        self.broker_adapter = broker_adapter or self._build_broker_adapter()
+        self.broker_adapter = DurableBuyAdapter(broker_adapter or self._build_broker_adapter(), self.session_factory)
         self.store = store or OmsStore()
         self.strategy_registrations = strategy_registration_map(self.settings)
         self.instance_name = socket.gethostname()
@@ -1010,6 +1011,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     async def run(self) -> None:
         stop_event = asyncio.Event()
         _install_signal_handlers(stop_event)
+        await self.broker_adapter.start()
 
         seed_summary = self.seed_runtime_metadata()
         self.logger.info(
@@ -1078,6 +1080,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             except asyncio.CancelledError:
                 pass
             await self._shutdown_symbol_tick_work()
+            await self._drain_cancel_terminal_evidence()
 
         await self._publish_heartbeat(
             "stopping",
@@ -1632,6 +1635,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if self._rpg_external_retry(event):
             return []
         strategy_code = str(event.payload.strategy_code).strip().lower()
+        if event.payload.intent_type == "cancel" and isinstance(self.broker_adapter, DurableBuyAdapter):
+            # Stamp the actual writer, never enroll a late epoch or await a new
+            # proof DB/HTTP operation ahead of normal cancel feedback.
+            event.payload.metadata = {**event.payload.metadata,
+                "buy_submission_process_id": str(self.broker_adapter.process_id)}
         reserve1_dispatch = self.__dict__.get("_reserve1_hard_stop_dispatch", {}).pop(
             event.event_id, None,
         ) == event.model_dump_json()
@@ -1884,17 +1892,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     event=event,
                 )
                 session.commit()
-                if (strategy_code == "schwab_1m_v2"
-                        and event.payload.metadata.get("clearwait_removal_token")):
-                    try:
-                        await acquire_cancel_terminal_evidence(
-                            self.session_factory, self.broker_adapter, [intent.id],
-                        )
-                    except Exception:
-                        self.logger.warning("Cancel evidence unavailable for intent %s", intent.id,
-                                            exc_info=True)
                 for order_event in published_events:
                     await self._publish_order_event(order_event)
+                if (strategy_code == "schwab_1m_v2"
+                        and event.payload.metadata.get("clearwait_removal_token")
+                        and broker_account.provider == "webull"):
+                    self._schedule_cancel_terminal_evidence(broker_account.name, intent.id)
                 return published_events
 
             if (
@@ -3103,6 +3106,57 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         tasks.add(task)
         task.add_done_callback(tasks.discard)
         return task
+
+    def _schedule_cancel_terminal_evidence(self, account_name: str, intent_id: UUID) -> None:
+        """Retain one bounded batch per account, after normal cancel feedback.
+
+        Capture IDs only, never the caller's session or its transaction/locks.
+        Evidence is UNKNOWN until the private off-loop journal write commits.
+        """
+        if getattr(self, "_cancel_terminal_closing", False):
+            return
+        tasks = self.__dict__.setdefault("_cancel_terminal_tasks", {})
+        self.__dict__.setdefault("_cancel_terminal_accounts", set()).add(account_name)
+        pending = self.__dict__.setdefault("_cancel_terminal_pending", {})
+        ids = pending.setdefault(account_name, set())
+        if len(ids) >= 256:
+            self.logger.warning("Cancel evidence batch full account=%s", account_name)
+            return
+        ids.add(intent_id)
+        if account_name in tasks:
+            return
+
+        async def run():
+            try:
+                while ids:
+                    batch = list(ids)
+                    ids.clear()
+                    try:
+                        await acquire_cancel_terminal_evidence(
+                            self.session_factory, self.broker_adapter, batch)
+                    except Exception:
+                        self.logger.warning("Cancel evidence unavailable account=%s", account_name,
+                                            exc_info=True)
+            finally:
+                tasks.pop(account_name, None)
+                pending.pop(account_name, None)
+
+        tasks[account_name] = asyncio.create_task(run())
+
+    async def _drain_cancel_terminal_evidence(self) -> None:
+        self._cancel_terminal_closing = True
+        await asyncio.gather(*self.__dict__.get("_cancel_terminal_tasks", {}).values(),
+                             return_exceptions=True)
+        # A timed-out assessment must not abandon its still-running SDK thread.
+        for account_name in self.__dict__.get("_cancel_terminal_accounts", set()):
+            try:
+                from project_mai_tai.broker_adapters.cancel_terminal import broker_binding
+                leaf, _account_id = broker_binding(self.broker_adapter, account_name)
+                cycle = getattr(leaf, "_cancel_terminal_book_cycle", None)
+                if cycle is not None:
+                    await cycle.drain()
+            except (ValueError, AttributeError):
+                pass
 
     async def _verify_cancel_landed(
         self,
@@ -17257,8 +17311,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if callable(fetcher):
             quotes = await fetcher([symbol])
             return dict(quotes.get(symbol.upper(), {}))
-        if isinstance(self.broker_adapter, RoutingBrokerAdapter):
-            adapter = self.broker_adapter._adapter_for_account(broker_account_name)
+        delegate = getattr(self.broker_adapter, "cancel_terminal_delegate", self.broker_adapter)
+        if isinstance(delegate, RoutingBrokerAdapter):
+            adapter = delegate._adapter_for_account(broker_account_name)
             fetcher = getattr(adapter, "fetch_quotes", None)
             if callable(fetcher):
                 quotes = await fetcher([symbol])
