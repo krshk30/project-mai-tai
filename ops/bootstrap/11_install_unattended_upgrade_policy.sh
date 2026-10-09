@@ -19,6 +19,7 @@ fi
 
 required=(
   52-project-mai-tai-unattended-upgrades
+  99-project-mai-tai-no-autorestart.conf
   apt-daily.timer.override.conf
   apt-daily-upgrade.timer.override.conf
   apt-daily-upgrade.service.notify.conf
@@ -32,6 +33,7 @@ for file in "${required[@]}"; do
 done
 
 bash -n "$SOURCE_DIR/project-mai-tai-unattended-upgrade-notify"
+perl -c "$SOURCE_DIR/99-project-mai-tai-no-autorestart.conf"
 "$SYSTEMD_ANALYZE_BIN" calendar '*-*-* 01:30:00 America/New_York' >/dev/null
 "$SYSTEMD_ANALYZE_BIN" calendar '*-*-* 02:30:00 America/New_York' >/dev/null
 
@@ -72,6 +74,9 @@ install_atomic() {
 install_atomic \
   "$SOURCE_DIR/52-project-mai-tai-unattended-upgrades" \
   "$ETC_DIR/apt/apt.conf.d/52-project-mai-tai-unattended-upgrades" 0644
+install_atomic \
+  "$SOURCE_DIR/99-project-mai-tai-no-autorestart.conf" \
+  "$ETC_DIR/needrestart/conf.d/99-project-mai-tai-no-autorestart.conf" 0644
 install_atomic \
   "$SOURCE_DIR/apt-daily.timer.override.conf" \
   "$ETC_DIR/systemd/system/apt-daily.timer.d/override.conf" 0644
