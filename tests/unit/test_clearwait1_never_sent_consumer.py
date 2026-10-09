@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import event, select, update
+from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, OmsManagedPosition, TradeIntent
@@ -295,6 +296,79 @@ async def test_explicit_reassessment_cannot_freshen_original_book_timestamp(db, 
     assert strat._removed_wait_terminal_proofs[0].observed_at_ms == ms(NOW)
 
 
+@pytest.mark.parametrize("evidence", ["fresh", "missing", "stale", "precoverage"])
+@pytest.mark.asyncio
+async def test_postcoverage_boot_consumes_only_original_fresh_journal(db, monkeypatch, evidence):
+    req, guard = await covered_request(db, monkeypatch)
+    bot, strat, _, calls = runtime(db, monkeypatch, req=req)
+    if evidence != "missing":
+        await produce_book(bot, db, req)
+    if evidence == "stale":
+        strat._now_ms = lambda: ms(NOW) + 15001
+    if evidence == "precoverage":
+        with db[1]() as session:
+            session.get(journal.BuyCoverageEpoch,
+                (guard.process_id, CONFIGURED_IDS[PRIMARY])).started_at_ms = ms(NOW)
+            session.commit()
+    await bot._configure_removed_wait_store()
+    held = evidence != "fresh"
+    assert bool(strat._removed_wait_requests) is held and bool(db[0].restore()) is held
+    assert len(closures(db)) == (0 if held else 2)
+    assert len(calls) == (0 if evidence == "missing" else 1)
+    if not held:
+        assert not strat._pending_intents and not strat._pending_webull_direct_intents
+        assert strat._removed_wait_terminal_proofs[0].observed_at_ms == ms(NOW)
+
+
+@pytest.mark.asyncio
+async def test_04_reset_does_not_turn_stale_book_into_current_session_coverage(db, monkeypatch):
+    from datetime import timedelta
+    from project_mai_tai.fanout_segment_store import current_session_anchor
+    import project_mai_tai.services.schwab_1m_v2_bot as service_module
+    req, _ = await covered_request(db, monkeypatch, purpose="retry_exhausted")
+    bot, strat, _, calls = runtime(db, monkeypatch, req=req)
+    await produce_book(bot, db, req)
+    await poll(bot)
+    next_anchor = current_session_anchor(NOW) + timedelta(days=1)
+    strat._now_ms = lambda: ms(next_anchor)
+    monkeypatch.setattr(service_module, "current_session_anchor", lambda: next_anchor)
+    retire = type(db[0]).retire_prior_sessions
+    monkeypatch.setattr(type(db[0]), "retire_prior_sessions",
+        lambda self, *args, **kwargs: retire(self, *args, **{**kwargs, "now": next_anchor}))
+    await poll(bot)
+    assert strat._removed_wait_requests == {"DKI": req} and db[0].restore() == {"DKI": req}
+    assert len(calls) == 1 and len(closures(db)) == 2
+    assert strat._removed_wait_terminal_proofs[0].observed_at_ms == ms(NOW)
+    assert bot._removed_wait_roll_anchor == next_anchor
+
+
+@pytest.mark.parametrize("field", ["token", "opportunity_id", "requested_at_ms", "purpose", "account_names"])
+@pytest.mark.asyncio
+async def test_exact_active_request_change_rolls_back_both_admissions(db, monkeypatch, field):
+    req, _ = await covered_request(db, monkeypatch)
+    values = {"token": "new-request-token", "opportunity_id": req.opportunity_id + 1,
+        "requested_at_ms": req.requested_at_ms + 1, "purpose": "retry_exhausted",
+        "account_names": (PRIMARY,)}
+    newer = replace(req, **{field: values[field]})
+    db[0].record(newer, True)
+    assert not assess_covered(db, req).clear
+    assert closures(db) == [] and db[0].restore() == {"DKI": newer}
+    assert not db[0].restore_terminal_proofs()
+
+
+@pytest.mark.asyncio
+async def test_clear_commit_failure_rolls_back_request_and_both_admissions(db, monkeypatch):
+    req, _ = await covered_request(db, monkeypatch)
+    def fail_commit(_session):
+        raise RuntimeError("controlled F CLEAR commit failure")
+    with monkeypatch.context() as fault:
+        fault.setattr(Session, "commit", fail_commit)
+        with pytest.raises(RuntimeError, match="controlled F CLEAR commit failure"):
+            assess_covered(db, req)
+    assert closures(db) == [] and db[0].restore() == {"DKI": req}
+    assert not db[0].restore_terminal_proofs()
+
+
 @pytest.fixture
 def receipt_clock():
     # Mapper hooks survive compiled-default caching after earlier test inserts.
@@ -341,7 +415,11 @@ async def test_real_emitter_oms_after_feedback_journal_and_consumer_clear(db, mo
     leaf._get_client = lambda: client
     redis = emitters(bot, db)
     async def actual_xadd(_stream, fields, **_kwargs):
+        import json
         from project_mai_tai.events import TradeIntentEvent
+        if json.loads(fields["data"]).get("event_type") == "v2_cancel_terminal_assessment":
+            redis.assessments.append(json.loads(fields["data"]))
+            return "controlled-assessment-id"
         envelope = TradeIntentEvent.model_validate_json(fields["data"])
         redis.events.append(envelope)
         assert envelope.payload.metadata["clearwait_purpose"] == req.purpose

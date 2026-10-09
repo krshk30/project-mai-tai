@@ -1195,16 +1195,20 @@ class SchwabV2Strategy:
         readable: bool,
         dispatch_persist: Callable[[dict], None] | None = None,
         terminal_proofs: Iterable[RemovedWaitProof] = (),
+        closed_barrier_requests: Iterable[RemovedWait] = (),
     ) -> None:
         self._removed_wait_persist = persist
         self._removed_wait_restore_readable = readable
         self._removed_wait_requests = dict(restored)
         self._removed_wait_dispatch_persist = dispatch_persist
         self._removed_wait_terminal_proofs = tuple(terminal_proofs)
+        closed_barriers = set(closed_barrier_requests)
         self._removed_scanner_symbols.update(
             symbol for symbol, request in restored.items() if request.purpose == "scanner_removal")
         for symbol, request in restored.items():
             state = self.watchlist_state(symbol)
+            if request in closed_barriers:
+                continue
             if any(p.clear and p.reason == "unbound_symbol_terminal" and p.request == request
                    for p in self._removed_wait_terminal_proofs):
                 continue
@@ -8369,6 +8373,10 @@ class SchwabV2IntentEmitter:
     async def emit_entry_bar_close(self, payload: dict) -> None:
         await self.redis.xadd(self.stream, {"data": json.dumps({**payload, "event_type": "v2_entry_bar_close"})},
                               maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)
+
+    async def emit_cancel_terminal_assessment(self, payload: dict) -> None:
+        await self.redis.xadd(self.stream, {"data": json.dumps(payload)},
+            maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)
 
     async def emit_atr_sell_observation(self, observation: ATRSellObservation) -> None:
         """Publish an account-neutral ATR SELL observation, never an order instruction."""
