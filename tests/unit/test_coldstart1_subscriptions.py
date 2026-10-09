@@ -537,14 +537,19 @@ async def test_lost_ack_never_debounces_return_to_previous_acknowledged_set(name
 
 
 @pytest.mark.asyncio
-async def test_v2_run_finishes_ownership_hydration_before_starting_scanner_and_poll(monkeypatch):
+async def test_v2_run_finishes_ownership_hydration_before_starting_scanner_and_poll(monkeypatch, tmp_path):
     from project_mai_tai.services import schwab_1m_v2_bot as module
+    from project_mai_tai.db.models import Base
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
 
     redis = RedisReplay()
     service = consumer("schwab-1m-v2", redis, monkeypatch)
     service.settings.strategy_schwab_1m_v2_enabled = True
     service.settings.strategy_schwab_1m_v2_tick_capture_enabled = False
-    service.session_factory = lambda: None
+    engine = create_engine(f"sqlite:///{tmp_path / 'boot.db'}")
+    Base.metadata.create_all(engine)
+    service.session_factory = sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(module.Redis, "from_url", lambda *_a, **_kw: redis)
     monkeypatch.setattr(module, "SchwabV2RestClient", lambda *_a, **_kw: object())
     monkeypatch.setattr(module, "SchwabV2Streamer", lambda *_a, **_kw: object())
@@ -561,8 +566,11 @@ async def test_v2_run_finishes_ownership_hydration_before_starting_scanner_and_p
         raise BootComplete()
 
     monkeypatch.setattr(service, "_publish_heartbeat", before_tasks)
-    with pytest.raises(BootComplete):
-        await service.run()
+    try:
+        with pytest.raises(BootComplete):
+            await service.run()
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.asyncio

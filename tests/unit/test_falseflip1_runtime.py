@@ -663,7 +663,9 @@ async def test_stalled_classification_worker_never_delays_later_protective_inten
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [False, True, "mock"], ids=["default-off", "enabled", "unconfigured-mock"])
 async def test_oms_run_creates_falseflip_worker_only_for_explicit_on(monkeypatch, enabled):
+    engine, factory = database()
     service = OmsRiskService.__new__(OmsRiskService)
+    service.session_factory = factory
     service.settings = SimpleNamespace(strategy_schwab_1m_v2_false_flip_enabled=(
         MagicMock() if enabled == "mock" else enabled), oms_adapter_label="test", active_broker_providers=())
     service.logger = logging.getLogger("falseflip-run-test")
@@ -684,9 +686,12 @@ async def test_oms_run_creates_falseflip_worker_only_for_explicit_on(monkeypatch
         stop.set()
 
     service._run_control_loop = control
-    await asyncio.wait_for(service.run(), 1)
-    assert service._run_falseflip_worker.await_count == int(enabled is True)
-    service.redis.aclose.assert_awaited_once()
+    try:
+        await asyncio.wait_for(service.run(), 1)
+        assert service._run_falseflip_worker.await_count == int(enabled is True)
+        service.redis.aclose.assert_awaited_once()
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.asyncio
