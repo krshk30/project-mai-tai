@@ -203,3 +203,36 @@ async def test_mi_matching_line_does_not_waive_missing_owner_and_budget_evidence
     assert result["waiting_buy_bar_ms"] is None
     assert result["first_flip_until_0800"] == ("07:17", "BUY")
     assert result["runtime_seed_requests"] == 1
+
+
+@pytest.mark.asyncio
+async def test_mi_readable_flat_control_cannot_invent_a_preopen_retry_segment(monkeypatch):
+    from scripts import line_repair_preopen_replay as replay
+    from project_mai_tai.v2_flip_entry_ownership import FlipPositionBook
+
+    original = replay.setup
+    cases = []
+    def setup(row, current):
+        case, provider = original(row, current)
+        strategy = case.strategy
+        strategy.configure_fanout_identity_persistence(lambda *_: None)
+        strategy.configure_flip_entry_ownership(lambda *_a, **_k: None,
+            retry_budget_persist=lambda *_: None)
+        strategy.configure_removed_wait(lambda *_: None, restored={}, readable=True)
+        strategy.apply_flip_position_book(FlipPositionBook(case.now_ms, True, {}))
+        feed = case.feed_bar
+        async def fresh_flat_feed(*args, **kwargs):
+            strategy.apply_flip_position_book(FlipPositionBook(case.now_ms, True, {}))
+            return await feed(*args, **kwargs)
+        case.feed_bar = fresh_flat_feed
+        cases.append(case)
+        return case, provider
+    monkeypatch.setattr(replay, "setup", setup)
+    row = next(r for r in POPULATION["rows"] if r["day"] == "2026-10-09" and r["symbol"] == "MI")
+    result = await replay.replay(row)
+    restored = cases[0].strategy.watchlist_state("MI")
+    assert restored.atr_short_flip_bar_ts == 1791543240000  # Historical SELL at06:54, not a live flip.
+    assert restored.retry_one_segment_id == 0
+    assert result["line_result"] == "PASS" and result["waiting_buy_bar_ms"] is None
+    assert result["result"] == "FAIL"
+    assert all(case.strategy.watchlist_state("MI").flip_owner_phase == "idle" for case in cases)
