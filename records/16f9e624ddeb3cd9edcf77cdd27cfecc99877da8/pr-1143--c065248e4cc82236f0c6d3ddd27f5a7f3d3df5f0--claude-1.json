@@ -1,0 +1,9 @@
+{
+  "pr_number": 1143,
+  "range_base": "c065248e4cc82236f0c6d3ddd27f5a7f3d3df5f0",
+  "range_head": "16f9e624ddeb3cd9edcf77cdd27cfecc99877da8",
+  "reviewed_at": "2026-10-09T20:01:33Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "LINE v3 (operator approved go-live when green 10-09 12:4x). Read full src diff (4 files +127/-4): Massive 04:00-06:59 seed fetched once per symbol/session via to_thread + wait_for timeout, failure cached and raised -> existing live-line fallback; over-returned >=07:00 candles dropped; seed bars only into the ATR ledger, never general on_bar/VWAP/volume (L5 isolation rc0); weekday guard on the anchored poll; retry-identity seed persisted off-loop (3 s), fenced. Gates: G1+G5 CI 8313 unit/94 PG + all-on 26; G3 seed failure 0 held; G4 weekend 0 tracebacks; G6 225 ev/s max stall 31 ms; G7 accepted after my 16-arm outcome replay; G2 post-archive Monday boot 25/25, 0 prior-session gates (codex 19:46Z). Operator validated 4/4 TOS screens. Not covered: intraday halt gap-clamp class (WFF 10-09 15:29) - separate item."
+}
