@@ -236,3 +236,49 @@ async def test_quote_observer_copies_actual_deadline_without_changing_result_or_
     assert row["due"] == due and row["actual"] == begin
     assert row["frames"][0][1] == "quote_pump"
     assert any(row["kind"] == "first_late_pump" for row in receipt["records"])
+
+
+@pytest.mark.asyncio
+async def test_drift_materialization_keeps_result_identity_count_thread_and_failure():
+    observer = Observer()
+    rows = [object(), object()]
+    calls = []
+
+    def all_rows(result):
+        calls.append(result)
+        sleep(0.015)
+        if result.fail:
+            raise ValueError("controlled fetch failure")
+        return rows
+
+    materialize = observer.materialize(all_rows)
+
+    def collect(_self, result):
+        return materialize(result)
+
+    wrapped = observer.collect_drift(collect)
+    token = observer.operation.set("EXIT11")
+    try:
+        success = SimpleNamespace(fail=False)
+        assert await asyncio.to_thread(wrapped, None, success) is rows
+        with pytest.raises(ValueError, match="controlled fetch failure"):
+            await asyncio.to_thread(wrapped, None, SimpleNamespace(fail=True))
+    finally:
+        observer.operation.reset(token)
+    assert len(calls) == 2
+    spans = [r for r in observer.records if r["kind"] == "drift_materialize"]
+    assert [r["row_count"] for r in spans] == [2, None]
+    assert all(r["operation"] == "EXIT11" and r["thread"] == "worker"
+               and r["wall_ms"] >= 15 and r["site"][1] == "collect" for r in spans)
+    assert [r["candidate_count"] for r in observer.records if r["kind"] == "drift_read"] == [2, None]
+    assert observer.drift_read.get() is False
+
+
+def test_materialization_outside_close_drift_scope_is_not_recorded():
+    observer = Observer()
+    result = object()
+    wrapped = observer.materialize(lambda value: value)
+    assert wrapped(result) is result
+    collect = observer.collect_drift(lambda _self: wrapped(result))
+    assert collect(None) is result
+    assert not observer.records and observer.drift_read.get() is False

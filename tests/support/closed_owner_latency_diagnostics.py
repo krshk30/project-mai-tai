@@ -29,6 +29,7 @@ class Observer:
     def __init__(self):
         self.loop_thread = threading.get_ident()
         self.operation = ContextVar("i_close_observer_operation", default=None)
+        self.drift_read = ContextVar("i_close_observer_drift_read", default=False)
         self.records = deque(maxlen=512)
         self.total = 0
         self.first = {}
@@ -178,6 +179,46 @@ class Observer:
                             thread="loop" if thread == self.loop_thread else "worker")
         return call
 
+    def collect_drift(self, original):
+        @wraps(original)
+        def call(instance, *args, **kwargs):
+            if self.operation.get() is None:
+                return original(instance, *args, **kwargs)
+            token = self.drift_read.set(True)
+            begin, cpu = monotonic(), thread_time()
+            result = None
+            try:
+                result = original(instance, *args, **kwargs)
+                return result
+            finally:
+                self.drift_read.reset(token)
+                self.record("drift_read", begin, wall_ms=(monotonic() - begin) * 1000,
+                            cpu_ms=(thread_time() - cpu) * 1000, operation=self.operation.get(),
+                            thread="loop" if threading.get_ident() == self.loop_thread else "worker",
+                            candidate_count=len(result) if result is not None else None)
+        return call
+
+    def materialize(self, original):
+        @wraps(original)
+        def call(result, *args, **kwargs):
+            if not self.drift_read.get():
+                return original(result, *args, **kwargs)
+            caller = sys._getframe(1)
+            site = (caller.f_code.co_filename, caller.f_code.co_name, caller.f_lineno)
+            del caller
+            begin, cpu = monotonic(), thread_time()
+            rows = None
+            try:
+                rows = original(result, *args, **kwargs)
+                return rows
+            finally:
+                self.record("drift_materialize", begin, wall_ms=(monotonic() - begin) * 1000,
+                            cpu_ms=(thread_time() - cpu) * 1000, operation=self.operation.get(),
+                            thread="loop" if threading.get_ident() == self.loop_thread else "worker",
+                            site=site, row_count=len(rows) if rows is not None else None,
+                            row_type=type(rows[0]).__name__ if rows else None)
+        return call
+
     def start(self):
         gc.callbacks.append(self.gc_event)
         self.sampler = threading.Thread(target=self.sample, name="i-loop-observer", daemon=True)
@@ -211,6 +252,7 @@ def closed_owner_latency_observer(request, monkeypatch):
     if request.node.name != TARGET:
         yield
         return
+    from sqlalchemy.engine import ScalarResult
     from sqlalchemy.orm import Session
     from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
     from project_mai_tai.oms.service import OmsRiskService
@@ -220,6 +262,9 @@ def closed_owner_latency_observer(request, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(asyncio.Handle, "_run", observer.callback(asyncio.Handle._run))
         patch.setattr(Session, "commit", observer.commit(Session.commit))
+        patch.setattr(ScalarResult, "all", observer.materialize(ScalarResult.all))
+        patch.setattr(OmsRiskService, "_collect_drift_cancel_candidates", observer.collect_drift(
+            OmsRiskService._collect_drift_cancel_candidates))
         patch.setattr(OmsRiskService, "_handle_quote_tick_event",
                       observer.quote(OmsRiskService._handle_quote_tick_event))
         patch.setattr(OmsRiskService, "process_trade_intent",
