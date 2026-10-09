@@ -34,7 +34,7 @@ jobs:
           --health-interval 2s --health-timeout 5s --health-retries 10
     env:
       MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
-      F_HEAD: ${{ inputs.f_head || '88ac2f631f54e7ad903d2a5ae9d7380df0fc7b80' }}
+      F_HEAD: ${{ inputs.f_head || 'affd81cfde92321f3a5ca181302f88db8ff607ca' }}
       I_HEAD: ${{ inputs.i_head || github.sha }}
     steps:
       - uses: actions/checkout@v4
@@ -99,16 +99,7 @@ jobs:
           PYTHONPATH: ${{ runner.temp }}/f-final:${{ runner.temp }}/f-final/src:${{ github.workspace }}/tests/support
         run: |
           set -o pipefail
-          python -m pytest -p no:cacheprovider -p closed_owner_latency_diagnostics -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/final-pair-logs/f.log"
-      - name: F original workload without diagnostic observer
-        id: f_original
-        if: ${{ !cancelled() && (steps.f.outcome == 'success' || steps.f.outcome == 'failure') }}
-        working-directory: ${{ runner.temp }}/f-final
-        env:
-          PYTHONPATH: ${{ runner.temp }}/f-final:${{ runner.temp }}/f-final/src
-        run: |
-          set -o pipefail
-          python -m pytest -p no:cacheprovider -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/final-pair-logs/f-original.log"
+          python -m pytest -p no:cacheprovider -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/final-pair-logs/f.log"
       - name: I strict unchanged workload
         id: i
         if: ${{ !cancelled() && (steps.f.outcome == 'success' || steps.f.outcome == 'failure') }}
@@ -117,16 +108,7 @@ jobs:
           PYTHONPATH: ${{ runner.temp }}/i-final:${{ runner.temp }}/i-final/src:${{ github.workspace }}/tests/support
         run: |
           set -o pipefail
-          python -m pytest -p no:cacheprovider -p closed_owner_latency_diagnostics -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/final-pair-logs/i.log"
-      - name: I original workload without diagnostic observer
-        id: i_original
-        if: ${{ !cancelled() && (steps.i.outcome == 'success' || steps.i.outcome == 'failure') }}
-        working-directory: ${{ runner.temp }}/i-final
-        env:
-          PYTHONPATH: ${{ runner.temp }}/i-final:${{ runner.temp }}/i-final/src
-        run: |
-          set -o pipefail
-          python -m pytest -p no:cacheprovider -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/final-pair-logs/i-original.log"
+          python -m pytest -p no:cacheprovider -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/final-pair-logs/i.log"
       - name: Preserve exact identities and both receipts
         if: always()
         uses: actions/upload-artifact@v4
@@ -138,6 +120,4 @@ jobs:
         env:
           F_OUTCOME: ${{ steps.f.outcome }}
           I_OUTCOME: ${{ steps.i.outcome }}
-          F_ORIGINAL_OUTCOME: ${{ steps.f_original.outcome }}
-          I_ORIGINAL_OUTCOME: ${{ steps.i_original.outcome }}
-        run: test "$F_OUTCOME" = success && test "$I_OUTCOME" = success && test "$F_ORIGINAL_OUTCOME" = success && test "$I_ORIGINAL_OUTCOME" = success
+        run: test "$F_OUTCOME" = success && test "$I_OUTCOME" = success
