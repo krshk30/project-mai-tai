@@ -69,7 +69,7 @@ def main() -> int:
             symbol = _symbol(incident)
             if not symbol:
                 continue
-            exposure = symbol_exposure(session, symbol)
+            exposure = symbol_exposure(session, symbol, now=now)
             eligible = source in AUTO_RESOLVE_SOURCES
             rows.append(
                 {
@@ -97,7 +97,7 @@ def main() -> int:
         print(
             f"\n{row['opened_at']}  {row['symbol']:<6} {row['service']}  {row['title']}\n"
             f"  id={row['incident_id']} source={row['source']} session_date={row['session_date']}\n"
-            f"  FLAT={exp['flat']}  would_auto_resolve={row['would_auto_resolve']}\n"
+            f"  FLAT={exp['flat']}  would_auto_resolve={row['would_auto_resolve']}  evidence={exp['position_evidence']}\n"
             f"  broker_positions={exp['broker_positions']}\n"
             f"  virtual={exp['virtual_positions']} managed={exp['managed_positions']}\n"
             f"  working_orders={exp['working_orders']}\n"

@@ -5,6 +5,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from project_mai_tai.db.models import (
     AccountPosition,
@@ -25,12 +26,35 @@ from tests.unit.test_reconciliation_service import FakeRedis, build_test_session
 NOW = datetime(2026, 10, 9, 20, 30, tzinfo=UTC)
 
 
-def _accounts(session):
+FRESH = object()
+
+
+def _zero_row(account, symbol, stamp):
+    return AccountPosition(
+        broker_account_id=account.id,
+        symbol=symbol,
+        quantity=Decimal("0"),
+        average_price=Decimal("0"),
+        market_value=Decimal("0"),
+        source_updated_at=stamp,
+    )
+
+
+def _accounts(session, *, schwab_stamp=FRESH, webull_stamp=FRESH, now=NOW):
+    """Both live accounts; each gets two zero rows stamped like a broker-sync pass.
+
+    A stamp of None means "no snapshot rows at all" for that account.
+    """
     strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live", metadata_json={})
     schwab = BrokerAccount(name="live:schwab_1m_v2", provider="schwab", environment="production")
     webull = BrokerAccount(name="live:orb", provider="webull", environment="production")
     session.add_all([strategy, schwab, webull])
     session.flush()
+    for account, stamp in ((schwab, schwab_stamp), (webull, webull_stamp)):
+        if stamp is None:
+            continue
+        stamp = now - timedelta(seconds=5) if stamp is FRESH else stamp
+        session.add_all([_zero_row(account, "OLD1", stamp), _zero_row(account, "OLD2", stamp)])
     return strategy, schwab, webull
 
 
@@ -68,9 +92,9 @@ def _orb_incident(symbol="MI"):
     )
 
 
-def _run(session_factory, *incidents, seed=None):
+def _run(session_factory, *incidents, seed=None, **account_kwargs):
     with session_factory() as session:
-        strategy, schwab, webull = _accounts(session)
+        strategy, schwab, webull = _accounts(session, **account_kwargs)
         session.add_all(list(incidents))
         if seed is not None:
             seed(session, strategy, schwab, webull)
@@ -92,6 +116,8 @@ def test_flat_symbol_resolves_both_incident_kinds_with_a_reason() -> None:
         assert row.closed_at is not None
         assert row.payload["resolution"]["reason"] == "auto_resolved_flat_both_brokers"
         assert row.payload["resolution"]["checked_accounts"] == ["live:schwab_1m_v2", "live:orb"]
+        evidence = row.payload["resolution"]["position_evidence"]
+        assert evidence["live:schwab_1m_v2"]["ok"] and evidence["live:orb"]["ok"]
         assert row.payload["source"] in {"schwab_opening_policy_reject", "orb_schwab_exit_evidence"}
 
 
@@ -267,7 +293,7 @@ def test_reconciler_cycle_resolves_and_flag_off_leaves_it_open() -> None:
     for enabled, expected in ((True, "closed"), (False, "open")):
         session_factory = build_test_session_factory()
         with session_factory() as session:
-            _accounts(session)
+            _accounts(session, now=datetime.now(UTC))
             session.add(_refused_incident())
             session.commit()
         settings = Settings(reconciliation_auto_resolve_flat_exposure_incidents=enabled)
@@ -279,6 +305,95 @@ def test_reconciler_cycle_resolves_and_flag_off_leaves_it_open() -> None:
                 select(SystemIncident).where(SystemIncident.service_name == "oms-risk")
             )
             assert incident.status == expected
+
+
+# ------------------------------------------- A1 evidence gate (Codex #1147 review, P1)
+
+
+def test_missing_schwab_snapshot_keeps_the_incident_open() -> None:
+    """Codex repro: both accounts configured, ZERO account_positions rows -> not flat."""
+    resolved, rows = _run(build_test_session_factory(), _refused_incident(), schwab_stamp=None)
+    assert resolved == []
+    assert rows[0].status == "open"
+    resolved, rows = _run(
+        build_test_session_factory(), _refused_incident(), schwab_stamp=None, webull_stamp=None
+    )
+    assert resolved == []
+    assert rows[0].status == "open"
+
+
+def test_stale_webull_snapshot_keeps_the_incident_open() -> None:
+    resolved, rows = _run(
+        build_test_session_factory(),
+        _refused_incident(),
+        webull_stamp=NOW - timedelta(minutes=10),
+    )
+    assert resolved == []
+    assert rows[0].status == "open"
+
+
+def test_one_fresh_row_from_a_fill_does_not_make_a_stale_account_fresh() -> None:
+    """A fill stamps one row; a failed sync leaves the others stale -> still not evidence."""
+
+    def seed(session, strategy, schwab, webull):
+        session.add(_zero_row(webull, "FILLED", NOW - timedelta(seconds=1)))
+
+    resolved, rows = _run(
+        build_test_session_factory(),
+        _refused_incident(),
+        seed=seed,
+        webull_stamp=NOW - timedelta(minutes=10),
+    )
+    assert resolved == []
+    assert rows[0].status == "open"
+
+
+def test_unstamped_snapshot_row_is_incomplete_and_keeps_it_open() -> None:
+    def seed(session, strategy, schwab, webull):
+        session.add(_zero_row(schwab, "NEWROW", None))
+
+    resolved, rows = _run(build_test_session_factory(), _refused_incident(), seed=seed)
+    assert resolved == []
+    assert rows[0].status == "open"
+
+
+def test_evidence_read_error_keeps_the_incident_open(monkeypatch, caplog) -> None:
+    from project_mai_tai.reconciliation import flat_incidents
+
+    session_factory = build_test_session_factory()
+    with session_factory() as session:
+        _accounts(session)
+        incident = _refused_incident()
+        session.add(incident)
+        session.commit()
+        incident_id = incident.id
+
+    real_execute = Session.execute
+
+    def failing_execute(self, statement, *args, **kwargs):
+        if "account_positions" in str(statement) and "min(" in str(statement).lower():
+            raise RuntimeError("broker evidence read failed")
+        return real_execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "execute", failing_execute)
+    with caplog.at_level("INFO", logger="reconciler"), session_factory() as session:
+        assert flat_incidents.resolve_flat_exposure_incidents(session, now=NOW) == []
+        session.commit()
+    monkeypatch.undo()
+    assert "evidence_read_error" in caplog.text
+    with session_factory() as session:
+        assert session.get(SystemIncident, incident_id).status == "open"
+
+
+def test_both_snapshots_fresh_and_flat_closes() -> None:
+    resolved, rows = _run(
+        build_test_session_factory(),
+        _refused_incident(),
+        schwab_stamp=NOW - timedelta(seconds=119),
+        webull_stamp=NOW - timedelta(seconds=3),
+    )
+    assert len(resolved) == 1
+    assert rows[0].status == "closed"
 
 
 # ---------------------------------------------------------------- A2: operator-closed allowance

@@ -12,6 +12,17 @@ live-book row (virtual or OMS-managed), NO working order and NO active intent on
 accounts below, there is nothing left to check and the incident is closed with a recorded reason.
 Any exposure keeps it open. Unknown order/intent statuses count as working (fail open = page).
 
+"No position" is only believed on FRESH, COMPLETE broker evidence for BOTH accounts (Codex
+review of #1147, P1): an absent ``account_positions`` row is not proof of flat. The OMS broker
+sync (``OmsStore.sync_account_positions``) re-stamps ``source_updated_at = utcnow()`` on EVERY
+zero-quantity row of an account on each successful positions read, and writes nothing for an
+account whose read failed (``[BROKER-SYNC-UNREADABLE]`` excludes it). So per account the OLDEST
+``source_updated_at`` among its zero-quantity rows is the time of the last complete successful
+read: a single fill can stamp one row, never all of them. Evidence is accepted only when that
+account has zero-quantity rows, none unstamped, and the oldest stamp is within
+``POSITION_EVIDENCE_MAX_AGE`` (box sync cadence is 15 s). Missing, stale, unstamped or errored
+evidence for either account keeps every incident OPEN and the reason is logged.
+
 Runs inside the reconciler cycle only (never the OMS order/tick path); reads are bounded by
 ``MAX_INCIDENTS_PER_CYCLE`` and one indexed query per table per incident.
 """
@@ -19,6 +30,7 @@ Runs inside the reconciler cycle only (never the OMS order/tick path); reads are
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import logging
 from typing import Any
 
 from sqlalchemy import func, select
@@ -47,6 +59,10 @@ TERMINAL_INTENT_STATUSES = ("filled", "cancelled", "canceled", "rejected", "abor
 SAME_DAY_MIN_AGE = timedelta(minutes=30)
 MAX_INCIDENTS_PER_CYCLE = 100
 RESOLUTION_REASON = "auto_resolved_flat_both_brokers"
+# Eight 15 s OMS broker-sync passes. Older than this, a zero is not current evidence.
+POSITION_EVIDENCE_MAX_AGE = timedelta(seconds=120)
+
+logger = logging.getLogger("reconciler")
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -55,8 +71,62 @@ def _aware(value: datetime | None) -> datetime | None:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
-def symbol_exposure(session: Session, symbol: str) -> dict[str, Any]:
+def position_evidence(session: Session, *, now: datetime) -> dict[str, Any]:
+    """Per account: is the broker-position snapshot fresh and complete? Never raises."""
+    evidence: dict[str, Any] = {"ok": False, "accounts": {}}
+    try:
+        rows = session.execute(
+            select(
+                BrokerAccount.name,
+                func.count(AccountPosition.id),
+                func.count(AccountPosition.source_updated_at),
+                func.min(AccountPosition.source_updated_at),
+            )
+            .join(AccountPosition, AccountPosition.broker_account_id == BrokerAccount.id)
+            .where(BrokerAccount.name.in_(EXPOSURE_ACCOUNT_NAMES), AccountPosition.quantity == 0)
+            .group_by(BrokerAccount.name)
+        ).all()
+    except Exception as exc:  # noqa: BLE001 - unknown evidence is never flat
+        evidence["reason"] = f"evidence_read_error:{type(exc).__name__}"
+        return evidence
+    by_name = {name: (rows_, stamped, oldest) for name, rows_, stamped, oldest in rows}
+    reasons: list[str] = []
+    for name in EXPOSURE_ACCOUNT_NAMES:
+        zero_rows, stamped, oldest = by_name.get(name, (0, 0, None))
+        oldest = _aware(oldest)
+        entry: dict[str, Any] = {
+            "zero_rows": int(zero_rows or 0),
+            "oldest_sync_stamp": oldest.isoformat() if oldest else None,
+        }
+        if not zero_rows:
+            entry["reason"] = "no_position_snapshot"
+        elif stamped != zero_rows or oldest is None:
+            entry["reason"] = "incomplete_position_snapshot"
+        else:
+            age = now - oldest
+            entry["age_seconds"] = round(age.total_seconds(), 3)
+            if age > POSITION_EVIDENCE_MAX_AGE:
+                entry["reason"] = "stale_position_snapshot"
+        entry["ok"] = "reason" not in entry
+        if not entry["ok"]:
+            reasons.append(f"{name}:{entry['reason']}")
+        evidence["accounts"][name] = entry
+    evidence["ok"] = not reasons
+    if reasons:
+        evidence["reason"] = ",".join(reasons)
+    return evidence
+
+
+def symbol_exposure(
+    session: Session,
+    symbol: str,
+    *,
+    now: datetime | None = None,
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Return every source of exposure for ``symbol`` across the live exposure accounts."""
+    if evidence is None:
+        evidence = position_evidence(session, now=now or datetime.now(UTC))
     accounts = session.execute(
         select(BrokerAccount.id, BrokerAccount.name).where(
             BrokerAccount.name.in_(EXPOSURE_ACCOUNT_NAMES)
@@ -71,6 +141,7 @@ def symbol_exposure(session: Session, symbol: str) -> dict[str, Any]:
         "managed_positions": [],
         "working_orders": [],
         "active_intents": [],
+        "position_evidence": evidence,
     }
     if account_ids:
         for account_id, quantity in session.execute(
@@ -138,7 +209,8 @@ def symbol_exposure(session: Session, symbol: str) -> dict[str, Any]:
     ).all():
         exposure["managed_positions"].append({"account": account_name, "quantity": str(quantity)})
     exposure["flat"] = (
-        len(exposure["accounts_found"]) == len(EXPOSURE_ACCOUNT_NAMES)
+        bool(evidence.get("ok"))
+        and len(exposure["accounts_found"]) == len(EXPOSURE_ACCOUNT_NAMES)
         and not exposure["broker_positions"]
         and not exposure["virtual_positions"]
         and not exposure["managed_positions"]
@@ -173,14 +245,28 @@ def candidate_incidents(session: Session, *, limit: int = MAX_INCIDENTS_PER_CYCL
 def resolve_flat_exposure_incidents(session: Session, *, now: datetime) -> list[str]:
     """Close each eligible incident whose symbol is flat; return the closed incident ids."""
     resolved: list[str] = []
+    candidates = candidate_incidents(session)
+    if not candidates:
+        return resolved
+    evidence = position_evidence(session, now=now)
+    if not evidence["ok"]:
+        logger.info(
+            "[RECONCILER-INCIDENT-AUTO-RESOLVE-HELD] incidents=%s reason=%s — broker position "
+            "evidence is not fresh and complete for both accounts; nothing closed",
+            len(candidates),
+            evidence.get("reason"),
+        )
+        return resolved
     exposure_by_symbol: dict[str, dict[str, Any]] = {}
-    for incident in candidate_incidents(session):
+    for incident in candidates:
         payload = dict(incident.payload or {})
         symbol = str(payload.get("symbol") or "").strip().upper()
         if not symbol or not _old_enough(incident, now):
             continue
         if symbol not in exposure_by_symbol:
-            exposure_by_symbol[symbol] = symbol_exposure(session, symbol)
+            exposure_by_symbol[symbol] = symbol_exposure(
+                session, symbol, now=now, evidence=evidence
+            )
         exposure = exposure_by_symbol[symbol]
         if not exposure["flat"]:
             continue
@@ -189,6 +275,7 @@ def resolve_flat_exposure_incidents(session: Session, *, now: datetime) -> list[
             "resolved_by": "reconciler",
             "resolved_at": now.isoformat(),
             "checked_accounts": list(EXPOSURE_ACCOUNT_NAMES),
+            "position_evidence": evidence["accounts"],
         }
         incident.payload = payload
         incident.status = "closed"
