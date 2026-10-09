@@ -16,10 +16,11 @@ from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBr
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.broker_adapters.webull import WebullAccountConfig, WebullBrokerAdapter
 from project_mai_tai.cancel_terminal_proof import (
-    BookOrder, CompleteWorkingBook, UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal,
+    BookOrder, CompleteWorkingBook, NeverSentWitness, TerminalSubmissionWitness,
+    UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal,
 )
 from project_mai_tai.db.base import Base
-from project_mai_tai.db.models import DashboardSnapshot
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Strategy
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore, current_session_anchor
 from project_mai_tai.oms import buy_submission_journal as journal
 
@@ -77,6 +78,92 @@ def scope(guard, **changes):
     return replace(journal.NeverSentScope("schwab", "actual-hash", "DKI", GENERATION,
         NOW - 100, "request-id", "request-token", NOW - 50, guard.process_id,
         current_session_anchor(datetime.fromtimestamp(NOW / 1000, UTC)).isoformat()), **changes)
+
+
+@pytest.mark.parametrize("case", ["closed", "open_rows", "wrong_token", "stale", "empty_attempts",
+    "ambiguous", "working_buy", "working_sell", "missing_book", "overlap", "missing_account"])
+def test_mixed_terminal_submission_witness_preserves_all_unbound_guards(case):
+    process_id = uuid4()
+    guard = SimpleNamespace(process_id=process_id)
+    sc = scope(guard)
+    wb = replace(sc, account_name="webull", account_id="wb-account")
+    request = UnboundCancelRequest("DKI", sc.request_id, sc.request_token, sc.generation, "retry_exhausted",
+        sc.requested_at_ms, {"schwab": sc.account_id, "webull": wb.account_id},
+        {"schwab": "schwab", "webull": "webull"}, sc.session_key, sc.opportunity_started_at_ms,
+        {n: str(process_id) for n in ("schwab", "webull")})
+    wired = TerminalSubmissionWitness(sc, NOW, NOW - 200, True,
+        ("exact-coid",), "broker_terminal_durable_admission_closed")
+    if case == "wrong_token":
+        wired = replace(wired, scope=replace(sc, request_token="other"))
+    if case == "stale":
+        wired = replace(wired, observed_at_ms=NOW - 16_000)
+    if case == "empty_attempts":
+        wired = replace(wired, client_order_ids=())
+    if case == "ambiguous":
+        wired = replace(wired, terminal=False)
+    never = {"webull": NeverSentWitness(wb, NOW, NOW - 200, True, "never_sent_durable_admission_closed")}
+    terminal = {"schwab": wired}
+    if case == "overlap":
+        never["schwab"] = NeverSentWitness(sc, NOW, NOW - 200, True, "never_sent_durable_admission_closed")
+    if case == "missing_account":
+        never.clear()
+    book = CompleteWorkingBook("webull", "wb-account", NOW, NOW, True, "all_working", (), "broker")
+    if case in {"working_buy", "working_sell"}:
+        book = replace(book, orders=(BookOrder("operator", "DKI", "working",
+            "buy" if case == "working_buy" else "sell"),))
+    proof = evaluate_unbound_cancel_terminal(request, {} if case == "missing_book" else {"webull": book},
+        fences=UnboundCancelFences(request, True, True, case != "open_rows", True),
+        never_sent_witnesses=never, terminal_submission_witnesses=terminal, now_ms=NOW)
+    assert proof.terminal is (case in {"closed", "working_sell"})
+
+
+@pytest.mark.parametrize("case", ["cancelled", "filled", "client_origin", "working", "lost_id",
+    "other_account", "other_symbol", "other_coid", "wrong_broker_id", "pre_submit", "future", "no_event", "submitting"])
+@pytest.mark.asyncio
+async def test_terminal_submission_requires_exact_broker_journal_and_rolls_back(sessions, case):
+    leaf, guard = adapter(sessions)
+    await guard.ensure_coverage("schwab")
+    bind(sessions)
+    with sessions() as session:
+        session.get(journal.BuyCoverageEpoch, (guard.process_id, "actual-hash")).started_at_ms = NOW - 200
+        session.commit()
+    async def wire(req):
+        return [ExecutionReport("accepted", req.client_order_id, origin="broker",
+                                broker_order_id=None if case == "lost_id" else "exact-broker-id")]
+    leaf.submit_order = wire
+    await guard.submit_order(request())
+    with sessions() as session:
+        account = BrokerAccount(name="schwab", provider="schwab", environment="live",
+                                external_account_id="other" if case == "other_account" else "actual-hash")
+        strategy = Strategy(code="schwab_1m_v2", name="v2")
+        session.add_all([account, strategy])
+        session.flush()
+        status = "accepted" if case == "working" else "filled" if case == "filled" else "cancelled"
+        order = BrokerOrder(strategy_id=strategy.id, broker_account_id=account.id,
+            client_order_id="other" if case == "other_coid" else "exact-coid",
+            broker_order_id="other" if case == "wrong_broker_id" else "exact-broker-id",
+            symbol="FLYE" if case == "other_symbol" else "DKI", side="buy", order_type="limit",
+            time_in_force="day", quantity=Decimal(1), status=status)
+        session.add(order)
+        session.flush()
+        if case != "no_event":
+            session.add(BrokerOrderEvent(order_id=order.id, event_type=status,
+                event_source="client" if case == "client_origin" else "broker",
+                event_at=datetime.fromtimestamp((NOW - 1 if case == "pre_submit" else
+                    NOW + 1 if case == "future" else NOW) / 1000, UTC), payload={}))
+        if case == "submitting":
+            session.scalar(select(journal.BuySubmissionToken)).state = "submitting"
+        session.commit()
+    with sessions() as session:
+        assert not journal.close_never_sent_admission(session, scope(guard), observed_at_ms=NOW).never_sent
+        witness = journal.close_terminal_buy_admission(session, scope(guard), observed_at_ms=NOW)
+        assert witness.terminal is (case in {"cancelled", "filled"})
+        assert witness.client_order_ids == (("exact-coid",) if witness.terminal else ())
+        session.rollback()  # A failed consumer request CAS also undoes token resolution.
+    with sessions() as session:
+        assert not list(session.scalars(select(journal.BuyAdmissionClosure)))
+        assert session.scalar(select(journal.BuySubmissionToken)).state == (
+            "reported_ambiguous" if case != "submitting" else "submitting")
 
 
 @pytest.mark.parametrize("kind", ["submit", "replace"])

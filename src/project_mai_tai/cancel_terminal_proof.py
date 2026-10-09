@@ -229,6 +229,17 @@ class NeverSentWitness:
 
 
 @dataclass(frozen=True)
+class TerminalSubmissionWitness:
+    """Exact broker-terminal attempts with the same durable admission fence."""
+    scope: NeverSentScope
+    observed_at_ms: int
+    coverage_started_at_ms: int
+    terminal: bool
+    client_order_ids: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
 class SchwabLocalCancelWitness:
     """Consumer-owned causal closure, NOT broker inventory or SQL-absence alone.
 
@@ -272,6 +283,7 @@ def evaluate_unbound_cancel_terminal(
     fences: UnboundCancelFences | None,
     schwab_witness: SchwabLocalCancelWitness | None = None,
     never_sent_witnesses: Mapping[str, NeverSentWitness] | None = None,
+    terminal_submission_witnesses: Mapping[str, TerminalSubmissionWitness] | None = None,
     now_ms: int,
     freshness_ms: int = FRESHNESS_MS,
 ) -> UnboundCancelTerminalProof:
@@ -306,16 +318,30 @@ def evaluate_unbound_cancel_terminal(
             or any(v is not True for v in (fences.no_inflight_buy, fences.no_unanswered_cancel,
                                           fences.owned_rows_closed, fences.request_cas_current))):
         return result("unbound_request_db_or_cas_unknown")
-    if never_sent_witnesses is not None and set(never_sent_witnesses) != set(expected.account_ids):
+    supplied = set(never_sent_witnesses or {}) | set(terminal_submission_witnesses or {})
+    if (never_sent_witnesses is not None or terminal_submission_witnesses is not None) and (
+            supplied != set(expected.account_ids)
+            or set(never_sent_witnesses or {}) & set(terminal_submission_witnesses or {})):
         return result("unbound_never_sent_account_coverage_unknown")
     for name, account_id in expected.account_ids.items():
         never_sent = (never_sent_witnesses or {}).get(name)
-        if never_sent is not None:
-            if (not isinstance(never_sent, NeverSentWitness) or never_sent.never_sent is not True
+        terminal = (terminal_submission_witnesses or {}).get(name)
+        if terminal is not None:
+            if (not isinstance(terminal, TerminalSubmissionWitness) or terminal.terminal is not True
+                    or terminal.reason != "broker_terminal_durable_admission_closed"
+                    or not isinstance(terminal.client_order_ids, tuple) or not terminal.client_order_ids
+                    or not all(_identity(coid) for coid in terminal.client_order_ids)
+                    or len(set(terminal.client_order_ids)) != len(terminal.client_order_ids)):
+                return result("unbound_submission_terminal_unknown")
+        if never_sent is not None or terminal is not None:
+            if never_sent is not None and (not isinstance(never_sent, NeverSentWitness) or never_sent.never_sent is not True
                     or never_sent.reason != "never_sent_durable_admission_closed"
                     or not isinstance(never_sent.scope, NeverSentScope)):
                 return result("unbound_never_sent_unknown")
-            scope = never_sent.scope
+            witness = never_sent if never_sent is not None else terminal
+            scope = witness.scope
+            if not isinstance(scope, NeverSentScope):
+                return result("unbound_never_sent_scope_changed")
             if (scope.account_name, scope.account_id, scope.symbol, scope.generation,
                     scope.opportunity_started_at_ms, scope.request_id, scope.request_token,
                     scope.requested_at_ms, str(scope.coverage_process_id), scope.session_key) != (
@@ -323,13 +349,13 @@ def evaluate_unbound_cancel_terminal(
                     expected.opportunity_started_at_ms, expected.request_id, expected.token,
                     expected.requested_at_ms, expected.coverage_process_ids.get(name), expected.session_key):
                 return result("unbound_never_sent_scope_changed")
-            if (type(never_sent.coverage_started_at_ms) is not int
+            if (type(witness.coverage_started_at_ms) is not int
                     or type(expected.opportunity_started_at_ms) is not int
                     or not _identity(expected.session_key)
-                    or not 0 < never_sent.coverage_started_at_ms <= expected.opportunity_started_at_ms
-                    or type(never_sent.observed_at_ms) is not int
-                    or not expected.requested_at_ms <= never_sent.observed_at_ms <= now_ms
-                    or now_ms - never_sent.observed_at_ms > freshness_ms):
+                    or not 0 < witness.coverage_started_at_ms <= expected.opportunity_started_at_ms
+                    or type(witness.observed_at_ms) is not int
+                    or not expected.requested_at_ms <= witness.observed_at_ms <= now_ms
+                    or now_ms - witness.observed_at_ms > freshness_ms):
                 return result("unbound_never_sent_legacy_or_stale")
             # Durable admission proves only OMS never sent this generation. It
             # cannot certify absence of an operator BUY in the Webull account.
