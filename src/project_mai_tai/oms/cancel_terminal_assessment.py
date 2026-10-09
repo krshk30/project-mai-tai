@@ -9,6 +9,7 @@ from project_mai_tai.broker_adapters.cancel_terminal import broker_binding
 from project_mai_tai.cancel_terminal_proof import FRESHNESS_MS, TERMINAL
 from project_mai_tai.db.models import BrokerAccount, DashboardSnapshot, TradeIntent
 from project_mai_tai.oms.unbound_cancel_book import REASONS
+from project_mai_tai.oms.cancel_feedback import feedback_published
 
 
 def _utc(value):
@@ -68,7 +69,8 @@ def read_assessment_receipts(session_factory, adapter, payload, now_ms):
                     TradeIntent.payload["metadata"]["clearwait_removal_token"].as_string() == request["token"],
                 ).order_by(TradeIntent.updated_at.desc(), TradeIntent.created_at.desc(),
                            TradeIntent.id.desc()).limit(1))
-                if row is None or row.id != UUID(receipt["intent_id"]) or row.side != "buy":
+                if (row is None or row.id != UUID(receipt["intent_id"]) or row.side != "buy"
+                        or not feedback_published(row)):
                     return ()
                 md = (row.payload or {}).get("metadata", {})
                 if (row.status not in TERMINAL or row.status != receipt["status"]
