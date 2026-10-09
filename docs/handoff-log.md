@@ -8682,3 +8682,13 @@ independent new-controls31PASS/1Linux-only installerSKIP1.49s. LinuxCI and
 independent review pending, NOTREADY. Sharedf6ff has both exactCI green.
 F78ae clock-fix CI reachedPG/golden, final result pending; I99fab761 integrates
 that same tests-only fix, exact full/PG pending. No production action.
+
+2026-10-09 07:45 ET codex-2 C5: actual F78ae CI pair now final. Push37923536721
+SUCCESS:8439 unitPASS/55skip,305 goldenPASS/1xfail. PR37923542111 FAILED:
+304 goldenPASS/1FAIL/1xfail, only strict concurrent-BUY/30s-read latency.
+14400 events/60.001s and25BUY: loop66.163ms, protective close73.616ms against
+unchanged50ms; scoped close3 commit47.715ms, after-wire59.177ms. Parallel
+green loop19.110ms/close33.136ms does not erase failure or explain cause.
+The16 PG timestamp controls now pass. F/I remain NOTREADY. Shared-callchain
+attribution investigation is read-only; no blind rerun/waiver/infrastructure
+claim. I99fab761 and DB9641bdc6 exact CI pending. No production action.
