@@ -167,7 +167,7 @@ def rollover_retry_proven_terminal(row: DashboardSnapshot, account_names: set[st
 
 
 def _utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def assess_removed_wait(
