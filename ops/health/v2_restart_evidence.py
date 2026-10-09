@@ -169,7 +169,7 @@ def _verified_shutdown_start(service: str, marker_at: datetime, runner: Runner) 
     stopping, stopped, started = events
     return (
         stopping[1] <= stopped[1] <= started[1]
-        and stopping[2] == stopped[2] == started[2]
+        and bool(stopping[2]) and stopping[2] == stopped[2] == started[2]
         and bool(stopping[3]) and stopping[3] == stopped[3]
         and bool(started[3]) and started[3] != stopped[3]
     )
