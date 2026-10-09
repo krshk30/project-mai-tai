@@ -1,0 +1,9 @@
+{
+  "pr_number": 1148,
+  "range_base": "bf8ca5ecbf3836cb7ebe1eaa7d8d110951b69ba6",
+  "range_head": "765797eb12e2e1d999a44793fbffb7ddb6cba4db",
+  "reviewed_at": "2026-10-09T21:33:50Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "CI-only, one line: .github/workflows/validate.yml service image postgres:16 -> public.ecr.aws/docker/library/postgres:16 (official Docker library image on AWS public mirror; same image, no auth needed). Fixes the Docker Hub unauthenticated pull rate limit that stopped validate at Initialize containers on #1128/#1133/#1136/#1147. No src/ops/runtime change."
+}
