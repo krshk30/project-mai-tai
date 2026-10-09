@@ -12,7 +12,7 @@ import logging
 from time import time_ns
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, JSON, String, select, text
+from sqlalchemy import BigInteger, JSON, String, or_, select, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import Uuid
 
@@ -98,6 +98,10 @@ def opportunity_start_ms(session, symbol: str, generation: str, observed_at_ms: 
 
 
 def _token_terminal(session, token: BuySubmissionToken, observed_at_ms: int) -> bool:
+    epoch = session.get(BuyCoverageEpoch, (token.process_id, token.account_id))
+    if (epoch is None or epoch.protocol != PROTOCOL or epoch.account_name != token.account_name
+            or not 0 < epoch.started_at_ms <= token.created_at_ms <= observed_at_ms):
+        return False
     if token.state not in {"reported_ambiguous", "broker_terminal"} or not isinstance(token.answers, list):
         return False
     answers = [a for a in token.answers if isinstance(a, dict)
@@ -109,7 +113,10 @@ def _token_terminal(session, token: BuySubmissionToken, observed_at_ms: int) -> 
         return False  # Lost acknowledgement/replacement identity cannot be guessed.
     order = session.scalar(select(BrokerOrder).join(BrokerAccount).where(
         BrokerAccount.name == token.account_name,
-        BrokerAccount.external_account_id == token.account_id,
+        # The durable writer epoch is bound to the actual configured broker ID.
+        # A missing display/account-table ID cannot contradict that binding.
+        or_(BrokerAccount.external_account_id == token.account_id,
+            BrokerAccount.external_account_id.is_(None)),
         BrokerOrder.client_order_id == token.client_order_id,
         BrokerOrder.broker_order_id == next(iter(broker_ids)),
         BrokerOrder.symbol == token.symbol, BrokerOrder.side == "buy",
@@ -173,7 +180,10 @@ def _close_buy_admission(session, scope: NeverSentScope, *, observed_at_ms: int,
         BuySubmissionToken.symbol == scope.symbol)))
     if terminal:
         current = [t for t in attempts if t.created_at_ms >= scope.opportunity_started_at_ms]
-        if not current or any(not _token_terminal(session, t, observed_at_ms) for t in attempts):
+        if (not current or any(t.account_name != scope.account_name for t in attempts)
+                or any(t.generation != scope.generation
+                       or t.opportunity_started_at_ms != scope.opportunity_started_at_ms for t in current)
+                or any(not _token_terminal(session, t, observed_at_ms) for t in attempts)):
             return result("submission_terminal_unproven")
         coids = tuple(sorted({t.client_order_id for t in current}))
     elif any(t.created_at_ms >= scope.opportunity_started_at_ms or t.state != "broker_terminal"

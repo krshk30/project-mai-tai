@@ -64,6 +64,7 @@ from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.cancel_terminal import acquire_cancel_terminal_evidence, bind_cancel_target
 from project_mai_tai.oms.cancel_terminal_assessment import read_assessment_receipts
+from project_mai_tai.oms.cancel_feedback import mark_feedback_published
 from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
 from project_mai_tai.oms import wbquiet_shadow
 from project_mai_tai.positions_read_receipt import (
@@ -1895,21 +1896,28 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         for order_event in published_events:
                             await self._publish_order_event(order_event)
                         return published_events
-                published_events = await self._process_cancel_intent(
-                    session=session,
-                    strategy_id=strategy.id,
-                    broker_account_id=broker_account.id,
-                    intent=intent,
-                    event=event,
-                )
-                session.commit()
-                for order_event in published_events:
-                    await self._publish_order_event(order_event)
-                if (strategy_code == "schwab_1m_v2"
-                        and event.payload.metadata.get("clearwait_removal_token")
-                        and broker_account.provider == "webull"):
-                    self._schedule_cancel_terminal_evidence(broker_account.name, intent.id)
-                return published_events
+                publication = None
+                if strategy_code == "schwab_1m_v2" and event.payload.metadata.get("clearwait_removal_token"):
+                    publication = asyncio.Event()
+                    self.__dict__.setdefault("_cancel_feedback_pending", {})[intent.id] = publication
+                try:
+                    published_events = await self._process_cancel_intent(
+                        session=session, strategy_id=strategy.id,
+                        broker_account_id=broker_account.id, intent=intent, event=event,
+                    )
+                    session.commit()
+                    for order_event in published_events:
+                        await self._publish_order_event(order_event)
+                    if publication is not None:
+                        self._schedule_cancel_feedback(
+                            broker_account.name, broker_account.provider, intent.id,
+                            intent.updated_at, dict(intent.payload), published_events, publication)
+                        publication = None  # The retained worker now owns completion.
+                    return published_events
+                finally:
+                    if publication is not None:
+                        publication.set()
+                        self._cancel_feedback_pending.pop(intent.id, None)
 
             if (
                 broker_account.provider == "schwab"
@@ -3118,6 +3126,32 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         task.add_done_callback(tasks.discard)
         return task
 
+    def _schedule_cancel_feedback(self, account, provider, intent_id, revision, payload, feedback, signal):
+        tasks = self.__dict__.setdefault("_cancel_feedback_tasks", set())
+        if len(tasks) >= 64:
+            self.logger.warning("Cancel feedback journal full; request stays UNKNOWN")
+            signal.set()
+            self._cancel_feedback_pending.pop(intent_id, None)
+            return
+
+        async def run():
+            try:
+                marked = await asyncio.to_thread(
+                    mark_feedback_published, self.session_factory, intent_id, revision, payload, feedback)
+                if marked and provider == "webull":
+                    self._schedule_cancel_terminal_evidence(account, intent_id)
+                elif not marked:
+                    self.logger.warning("Cancel feedback journal unavailable; request stays UNKNOWN")
+            except Exception:
+                self.logger.warning("Cancel feedback journal failed; request stays UNKNOWN", exc_info=True)
+            finally:
+                signal.set()
+                self._cancel_feedback_pending.pop(intent_id, None)
+
+        task = asyncio.create_task(run())
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
     def _schedule_cancel_terminal_assessment(self, payload: dict) -> None:
         if getattr(self, "_cancel_terminal_closing", False):
             return
@@ -3138,6 +3172,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
         async def run():
             try:
+                publications = self.__dict__.get("_cancel_feedback_pending", {})
+                waits = [publications.get(UUID(r["intent_id"])) for r in payload.get("receipts", [])[:2]]
+                await asyncio.gather(*(event.wait() for event in waits if event is not None))
                 receipts = await asyncio.to_thread(
                     read_assessment_receipts, self.session_factory, self.broker_adapter,
                     payload, int(datetime.now(UTC).timestamp() * 1000),
@@ -3192,6 +3229,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         tasks[account_name] = asyncio.create_task(run())
 
     async def _drain_cancel_terminal_evidence(self) -> None:
+        await asyncio.gather(*self.__dict__.get("_cancel_feedback_tasks", set()),
+                             return_exceptions=True)
         await asyncio.gather(*self.__dict__.get("_cancel_terminal_assessment_tasks", set()),
                              return_exceptions=True)
         self._cancel_terminal_closing = True

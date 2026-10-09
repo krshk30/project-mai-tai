@@ -118,7 +118,8 @@ def test_mixed_terminal_submission_witness_preserves_all_unbound_guards(case):
 
 
 @pytest.mark.parametrize("case", ["cancelled", "filled", "client_origin", "working", "lost_id",
-    "other_account", "other_symbol", "other_coid", "wrong_broker_id", "pre_submit", "future", "no_event", "submitting"])
+    "other_account", "nullable_account", "other_symbol", "other_coid", "wrong_broker_id", "pre_submit", "future",
+    "no_event", "submitting", "other_generation", "other_start", "other_token_account", "missing_token_epoch"])
 @pytest.mark.asyncio
 async def test_terminal_submission_requires_exact_broker_journal_and_rolls_back(sessions, case):
     leaf, guard = adapter(sessions)
@@ -134,7 +135,7 @@ async def test_terminal_submission_requires_exact_broker_journal_and_rolls_back(
     await guard.submit_order(request())
     with sessions() as session:
         account = BrokerAccount(name="schwab", provider="schwab", environment="live",
-                                external_account_id="other" if case == "other_account" else "actual-hash")
+            external_account_id="other" if case == "other_account" else None if case == "nullable_account" else "actual-hash")
         strategy = Strategy(code="schwab_1m_v2", name="v2")
         session.add_all([account, strategy])
         session.flush()
@@ -153,11 +154,20 @@ async def test_terminal_submission_requires_exact_broker_journal_and_rolls_back(
                     NOW + 1 if case == "future" else NOW) / 1000, UTC), payload={}))
         if case == "submitting":
             session.scalar(select(journal.BuySubmissionToken)).state = "submitting"
+        token = session.scalar(select(journal.BuySubmissionToken))
+        if case == "other_generation":
+            token.generation = "foreign"
+        elif case == "other_start":
+            token.opportunity_started_at_ms -= 1
+        elif case == "other_token_account":
+            token.account_name = "foreign"
+        elif case == "missing_token_epoch":
+            token.process_id = uuid4()
         session.commit()
     with sessions() as session:
         assert not journal.close_never_sent_admission(session, scope(guard), observed_at_ms=NOW).never_sent
         witness = journal.close_terminal_buy_admission(session, scope(guard), observed_at_ms=NOW)
-        assert witness.terminal is (case in {"cancelled", "filled"})
+        assert witness.terminal is (case in {"cancelled", "filled", "nullable_account"})
         assert witness.client_order_ids == (("exact-coid",) if witness.terminal else ())
         session.rollback()  # A failed consumer request CAS also undoes token resolution.
     with sessions() as session:
