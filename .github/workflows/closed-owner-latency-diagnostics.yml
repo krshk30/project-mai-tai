@@ -28,7 +28,8 @@ jobs:
     env:
       MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
       F_HEAD: 44a20472934c63118c3ec9956223a82a916e4676
-      I_SOURCE_HEAD: ca9930d64e13958891d3c839f5fd5c3d46c7ae36
+      I_BASE_SOURCE_HEAD: ca9930d64e13958891d3c839f5fd5c3d46c7ae36
+      I_SOURCE_HEAD: e880a7647ede91a7239b54b070330dc694a4d7c3
       SHARED_HEAD: 6849b52aa87af9fddf52fc65ce76f623bc2f7f19
     steps:
       - uses: actions/checkout@v4
@@ -42,13 +43,32 @@ jobs:
       - name: Verify frozen source and prepare immutable F reference
         run: |
           git diff --exit-code "$I_SOURCE_HEAD" HEAD -- src
-          git diff --exit-code "$F_HEAD" HEAD -- src/project_mai_tai/oms tests/integration/test_buy_submission_tokens_runtime.py
+          git diff --exit-code "$F_HEAD" "$I_BASE_SOURCE_HEAD" -- src/project_mai_tai/oms tests/integration/test_buy_submission_tokens_runtime.py
+          git diff --exit-code "$SHARED_HEAD" HEAD -- src/project_mai_tai/oms/buy_submission_journal.py tests/integration/test_buy_submission_tokens_runtime.py
+          test "$(git diff --name-only "$I_BASE_SOURCE_HEAD" "$I_SOURCE_HEAD" -- src)" = src/project_mai_tai/oms/service.py
+          python - <<'PY'
+          import ast
+          import os
+          import subprocess
+          path = "src/project_mai_tai/oms/service.py"
+          trees = [ast.parse(subprocess.check_output(["git", "show", os.environ[ref] + ":" + path], text=True))
+                   for ref in ("I_BASE_SOURCE_HEAD", "I_SOURCE_HEAD")]
+          for tree in trees:
+              matches = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                         and node.name == "_collect_drift_cancel_candidates"]
+              assert len(matches) == 1
+              matches[0].body = [ast.Pass()]
+          assert ast.dump(trees[0]) == ast.dump(trees[1]), "change outside collector body"
+          PY
           mkdir -p "$RUNNER_TEMP/f-baseline" diagnostic-logs
           git archive "$F_HEAD" | tar -x -C "$RUNNER_TEMP/f-baseline"
-          printf 'runner=%s\nI=%s\nI_source=%s\nF=%s\nshared=%s\norder=F then I; same runner/dependencies/PG, independent schemas\n' "$RUNNER_NAME" "$GITHUB_SHA" "$I_SOURCE_HEAD" "$F_HEAD" "$SHARED_HEAD" | tee diagnostic-logs/identity.log
-      - name: Validate observer behavior and Ruff
+          printf 'runner=%s\nI=%s\nI_source=%s\nI_baseline_source=%s\nF=%s\nshared=%s\norder=F then I; same runner/dependencies/PG, independent schemas; only collector body differs in OMS\n' "$RUNNER_NAME" "$GITHUB_SHA" "$I_SOURCE_HEAD" "$I_BASE_SOURCE_HEAD" "$F_HEAD" "$SHARED_HEAD" | tee diagnostic-logs/identity.log
+          for ref in "$F_HEAD" "$I_SOURCE_HEAD" "$SHARED_HEAD"; do
+            printf '%s token_blob=%s runtime_test_blob=%s\n' "$ref" "$(git rev-parse "$ref:src/project_mai_tai/oms/buy_submission_journal.py")" "$(git rev-parse "$ref:tests/integration/test_buy_submission_tokens_runtime.py")" | tee -a diagnostic-logs/identity.log
+          done
+      - name: Validate observer and SQLite PostgreSQL equivalence plus Ruff
         run: |
-          python -m pytest -p no:cacheprovider tests/unit/test_closed_owner_latency_diagnostics.py
+          python -m pytest -p no:cacheprovider tests/unit/test_closed_owner_latency_diagnostics.py tests/unit/test_drift_cache_projection_equivalence.py tests/integration/test_drift_cache_projection.py
           python -m ruff check src tests
       - name: F reference with the identical I observer
         id: f
