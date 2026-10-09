@@ -1,9 +1,0 @@
-{
-  "pr_number": 1128,
-  "range_base": "bf8ca5ecbf3836cb7ebe1eaa7d8d110951b69ba6",
-  "range_head": "c3ce4a80dae482654e305afdc749eb6933aab487",
-  "reviewed_at": "2026-10-09T21:14:26Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "Re-pin after rebase onto main bf8ca5ec: patch-id d00160f06007 identical to my 17:0x pin of d5a81bfe. Same review: RPGRETIRE1 in-memory flag guards + boot-only idempotent retire via to_thread; AIXI 10-08 07:50 done-check. CI red on this head = Docker Hub pull rate limit at 'Initialize containers' (infra), rerun requested."
-}

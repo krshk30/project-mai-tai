@@ -1,0 +1,9 @@
+{
+  "pr_number": 1128,
+  "range_base": "3277ea9da53b01bbbb25f7ab6142deb2691fc7e8",
+  "range_head": "2f9b8c12f7d52b489f99d7406f80d77606a368da",
+  "reviewed_at": "2026-10-09T22:14:44Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after rebase onto main 3277ea9d (CI mirror): patch-id d00160f06007 identical to my pins of d5a81bfe and c3ce4a80. Same review: RPGRETIRE1 flag guards + boot-only idempotent retire; AIXI 10-08 07:50 done-check."
+}
