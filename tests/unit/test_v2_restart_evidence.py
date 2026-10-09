@@ -115,16 +115,13 @@ def test_real_orb_exit_traceback_needs_a_timestamped_bounded_startup() -> None:
         )
 
 
-def test_real_orb_exit_traceback_before_bounded_timestamped_startup_is_prior_process() -> None:
+def test_real_orb_exit_traceback_needs_independent_shutdown_start_proof() -> None:
     since = datetime(2026, 10, 2, 0, 1, tzinfo=UTC)
     lines = (REAL_LOG_FIXTURES / "orb-schwab.log-20261002").read_text().splitlines()
     lines[-1] = "2026-10-02 00:01:30,000 INFO [orb-schwab] [ORB-SCHWAB] mode=LIVE live_sending=True"
 
-    evidence = vre.parse_log_files([("orb-schwab.log", lines)], since=since, service="orb-schwab")
-
-    assert evidence.prior_process_exit_tracebacks == 1
-    assert evidence.timestamped_records == 1
-    assert evidence.traceback_times_utc == ()
+    with pytest.raises(vre.EvidenceUnknown, match="before any timestamp"):
+        vre.parse_log_files([("orb-schwab.log", lines)], since=since, service="orb-schwab")
 
 
 def test_process_exit_marker_outside_start_bound_is_unknown() -> None:
