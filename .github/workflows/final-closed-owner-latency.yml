@@ -44,7 +44,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Freeze and compare the two submitted sources
+        id: freeze
         run: |
+          git fetch origin "$F_HEAD" "$I_HEAD"
           python - <<'PY'
           import os, re, subprocess
           for name in ("F_HEAD", "I_HEAD"):
@@ -61,6 +63,7 @@ jobs:
           git archive "$I_HEAD" | tar -x -C "$RUNNER_TEMP/i-final"
           printf 'F=%s\nI=%s\nrunner=%s\n' "$F_HEAD" "$I_HEAD" "$RUNNER_NAME" | tee final-pair-logs/identity.log
       - name: Install identical dependencies
+        id: dependencies
         run: python -m pip install -e "$RUNNER_TEMP/i-final[dev]"
       - name: Twenty unchanged duplicate-quote timing controls per source
         env:
@@ -85,7 +88,7 @@ jobs:
           PY
       - name: F strict unchanged workload
         id: f
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.freeze.outcome == 'success' && steps.dependencies.outcome == 'success' }}
         working-directory: ${{ runner.temp }}/f-final
         env:
           PYTHONPATH: ${{ runner.temp }}/f-final:${{ runner.temp }}/f-final/src:${{ github.workspace }}/tests/support
