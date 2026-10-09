@@ -333,6 +333,27 @@ async def test_admission_closure_rejects_new_stale_or_missing_generation_wire(se
             await guard.submit_order(req)
 
 
+def test_prepare_commits_token_without_expired_identity_reload(sessions):
+    _leaf, guard = adapter(sessions)
+    sessions.configure(expire_on_commit=True)
+    statements = []
+    engine = sessions.kw["bind"]
+
+    def observe(_conn, _cursor, statement, _params, _context, _many):
+        statements.append(statement.lower())
+
+    event.listen(engine, "before_cursor_execute", observe)
+    try:
+        token_id = guard._prepare(request(), "actual-hash", "submit")
+    finally:
+        event.remove(engine, "before_cursor_execute", observe)
+    assert not any("select" in sql and "oms_buy_submission_tokens" in sql for sql in statements)
+    with sessions() as session:
+        token = session.get(journal.BuySubmissionToken, token_id)
+        assert token.state == "submitting"
+        assert token.client_order_id == request().client_order_id
+
+
 @pytest.mark.asyncio
 async def test_failed_consumer_cas_rolls_back_admission_closure(sessions):
     _leaf, guard = adapter(sessions)
