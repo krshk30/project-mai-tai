@@ -1,0 +1,11 @@
+=== OMS RESTART PRE-FLIGHT — 2026-10-06 16:18:26 EDT ===
+  [ok]    database reachable
+  [info]  session=EXTENDED HOURS (PM) — ⛔ NO broker-side stop is possible; the
+          in-process software ladder is the ONLY cover for anything held right now.
+  [info]  strict all-account-position flatness enabled; no symbols are excluded
+  [ok]    zero open managed rows
+  [ok]    live:schwab_1m_v2 flat [10s old]
+  [ok]    live:orb flat [10s old]
+
+  ===> GO. Flat on every real-money account, zero managed rows, all sources fresh.
+       Safe to restart the OMS.

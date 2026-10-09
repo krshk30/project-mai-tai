@@ -5780,3 +5780,2873 @@ UNMEASURED, not retroactivelyPASS. No tradingcode/mainmerge/additionalrestart.
 ## 2026-10-05 21:31 ET - claude-1 close-out narrative (full day)
 
 Day summary: 13 buy flips missed (9 reprice bug RPGSTUCK1, 3 line reset after a pause / missing bar, 1 pre-market flip drop), 2 traded (MI 09:34, SCKT 12:55), 3 skipped by rule; real P&L -$121.60 (MI -$106.20 incl. the unrecorded 180-share Schwab sale, SCKT -$15.40). Defects found and fixed the same day: OWNMIX1 (#1094), RPGSTUCK1 (#1093), PMPRINT1 + PMFLIP1 (#1092), PMREST1 (#1091); found and card-confirmed: ROUNDUP1 (#1095, draft, next install), LINE=CHART (building). Operator rulings: change nothing live during the day; merge every reviewed PR; deploy everything with every switch ON; decided matters (MI +180, NXL +2) are closed and never a blocker; install mechanics never round-trip through him. Install: three pre-write stops (Webull read without retry; runner TZ vs UTC-only parser; v2 off-hours "degraded" state), fourth attempt installed 20:53 ET, verified by claude-1, COMPLETE per codex (FLAGGATE 147 / 147, numeric 8 / 8). Momentum paper restarted under a daily guard 21:11 ET. Selection study: drop-from-high not supported (91 days); pre-registered swing call failed as a whole; only volume separates, and the per-bar floor already captures it. Rows M1-M99 in session-handoff.md carry the evidence.
+
+## 2026-10-06 06:23 ET - Codex lanes resumed
+
+ROUNDUP1 #1095 at 6b47c461 is already based on 7823a6fa; the eight no-ticket
+restart diagnostics and five account-local integration assertions remain honest
+blockers, not hidden baseline failures. Parent owns this branch; restoration has
+a separate writer and remains default OFF and not service-wired at checkpoint
+25c31d39. No new passing suite or review-ready claim yet.
+
+Own 06:22:24 ET read observes daily guard timer running with NEXT empty and
+guard366236/paper366242 active. A one-time Codex follow-up is scheduled for
+09:42 ET to verify NEXT Wed10-07 03:40 after the normal09:40 stop. It is not a
+box install or a new production timer. No service, flag, database or preopen
+change; claude-1 owns the manual06:22 gate. Installed #1093/#1094 proofs remain
+in yesterday's COMPLETE receipt; new-session live behaviour is not assumed PASS.
+
+## 2026-10-06 06:27 ET - ROUNDUP1 account-local tests
+
+Own local tests/unit/test_roundup1.py run: 403 passed in 2.91 seconds. Five
+obsolete cross-account assertions now preserve the installed RPGSTUCK1 rule:
+an unproven Webull leg blocks Webull, not a separately clear Schwab leg. Three
+mirror cases prove an unproven primary leg leaves a clear Webull leg placeable.
+Blocked-leg generation and quantities remain unchanged. This is a working-tree
+milestone on base 6b47c461, not a new reviewed head. Generic no-ticket startup
+restoration and the full-suite pair are still required before review readiness.
+No production touch.
+
+## 2026-10-06 06:29 ET - ROUNDUP1 mutation controls refreshed
+
+All nine existing in-memory mutation probes are RED against the clean403test
+control: nearest106fail, floor202fail, wrong-subdollar-tick1fail, raw-limit
+sizing2fail, pair-lift removal2fail, PM raw-trigger8fail, restored-price
+recalculation2fail, legacy-exit-reference1fail, unproven-restore-release8fail.
+Raw logs /tmp/roundup1-20261006-mutation-*.log; pytest rc1 for each. No on-disk
+source mutation. This verifies the existing ROUNDUP behavior only, not the
+in-progress generic no-ticket restoration or full-suite pair.
+
+## 2026-10-06 06:31 ET - Preopen mechanics corrected, root run green
+
+Own read reproduced T3: two ORB-Schwab flag expectations were incorrectly in
+the restart-only checker although ORB-Schwab was deliberately untouched.
+Backed up preopen, removed exactly those two arguments, bash-n PASS; identities,
+declarations, catalog/checker paths, routing and mode0700/trader unchanged.
+ORB-Schwab remains directly identity-pinned and in the full live-flag catalog.
+New sha2568cdafcded0f748b6779696953cc8a101409b6bc0ce9a2314938d7f4fa82cf15a.
+Backup /home/trader/after-hours/2026-10-06/preopen-mechanics-0630/preopen.sh.before;
+two-line preopen.diff and gate-root-0631.txt alongside it. Root read at06:31:10
+finished06:31:16 rc0, restart evidence9/9 and FLAGGATE147/147; dated report exists.
+N/A_OFF_SESSION remains N/A, not live-bar delivery PASS. No process/flag/catalog
+change. Initial staging permission refusals preceded any script install.
+An additional trader invocation exposed root-only isolated-helper permissions;
+it returned UNKNOWN and is not called green. No permissions relaxed. Deployment
+journal deployments-20261006.md records the correction and actual root receipt.
+Today Claude owns the manual gate. Proposal only: root-run named06:20dailytimer,
+dated-pin fail-closed and explicit repin ownership; no timer installed here.
+
+## 2026-10-06 06:34 ET - ROUNDUP1 eight startup diagnostics now pass locally
+
+Own combined working-tree run:496passed/6.62s, raw
+/tmp/roundup1-legacy-working-20261006.log. Includes all eight formerly failing
+outside-discovery no-ticket startup diagnostics, the new discovery-time85cases
+and403ROUNDUPcases. Controlled fixture uses recorded prices with unfilled,
+no-ticket permutations; it is not proof of a historical duplicate or live restart.
+Accepted wire/quantity preserved; partial/fill consumption, exact zero terminal
+proof, unreadable/conflicting evidence, blocked-leg independence and flagOFF
+covered. Still no review-ready head: source review, recovery-specific mutations
+and completed same-environment main/head pair remain required. Initial full-main
+run56fail/5885pass included the systemPython subprocess mismatch;16sync tests
+pass with the virtualenv on PATH, so the controlled full pair uses that PATH.
+Nothing merged or installed.
+
+## 2026-10-06 06:37 ET - ROUNDUP1 readiness held on two safety findings
+
+Source review found the generic book scans all historical STOP_LIMIT rows,
+their events and all open intents each position poll: seven SELECTs with rows,
+five without, unbounded row/cache volume and unmeasured latency. Missing exact
+terminal proof can keep old episodes unknown indefinitely on a re-add. No
+clearance by age/status/latest-buy is substituted. Separately, actual
+OmsStore.find_open_order_for_cancel falls through to the latest updated open
+strategy/account/symbol order if an exact target is no longer open; actual
+_process_cancel_intent uses that lookup. Exact target metadata on hydrated
+cancels alone does not prevent a wrong-target race. No OMS change was silently
+folded into rounding, and no broker cancel was sent. Report keeps #1095DRAFT,
+defaultOFF, not pin-ready. Corrected-PATH full-main control47fail/5894pass,
+238.49s is complete; full-head pair remains running, no equivalence claim yet.
+
+## 2026-10-06 06:45 ET - ROUNDUP1 recovery controls and archive census
+
+Own focused set543PASS/8.75s includes default-OFF coverage, ALL_ON catalog,
+87legacy cases,403ROUNDUP cases and eight explicit startup diagnostics.
+Seven new in-memory recovery mutations RED: refresh omission, unreadable
+clearance, unknown clearance, filled-slot reuse, wire-stop recalculation,
+segment bypass and row-status-only terminal clearance. Existing nine remain
+RED. Frozen final full-head test is still running; no complete paired claim yet.
+Own low-priority read-only box aggregate06:40:43ET, five-second timeout and
+LIMIT20 grouped rows:5978STOP_LIMIT buys (3864cancelled,622filled,1492rejected),
+all intent-linked but5157 missing a newer segment/attempt/slot field. This
+measures the archive encountered by the draft scan; it is not broker-terminal
+proof. First trader env permission refusal preceded SQL; root read made no
+writes. Exact-target cancel fallback and bounded recovery remain real readiness
+blockers. Asked whether fixes belong in a separate prerequisite or explicitly
+expanded #1095 scope; no OMS trading change hidden in rounding. DRAFT/defaultOFF.
+
+## 2026-10-06 06:48 ET - ROUNDUP1 draft checkpoint published
+
+Published #1095 head980a65a59e6dbeec4b1556d183479101ddafdf59; DRAFT retained.
+Exact frozen full pair: main47FAILED/5894PASS238.49s, head47FAILED/6384PASS258.23s.
+Failed node sets identical after removing one interleaved absolute-path stderr
+suffix after a parameter's closing bracket, not changing test identities.
+Three provisional regressions (two catalog counts/default-OFF refresh call)
+fixed, not baseline-waived. Raw main sha e2ec7223de97e8047441b551017c401850ce364d17f787ae77d970067c2c22d8;
+head sha bea9a56429580aafeaa4535fd4ea12fb7e8b75b4966d8e985aba4cd19bdd5d2a.
+543focus/9existing+7newmutationsRED. Updated REPORT/PRbody prominently retain
+unbounded historical recovery and wrong-target OMS cancel fallback blockers.
+No historical accepted/unfilled restart or complete all-flags ROUNDUP-ON proof;
+controlled fixtures remain disclosed. No ready/pin/CI-green/install claim.
+
+## 2026-10-06 06:51 ET - LINE=CHART integration checkpoint, parent handover
+
+Restoration writer released clean checkpoint9e75a78c on exactmain03b26293;
+five primitive commits range-equal, no rebase conflicts. Source wiring remains
+defaultOFF:04:00anchored provider manifest, late-bar retention, off-callback
+rebuild and epoch/revision/current-bar atomic publication. RETO11:18/11:21
+trail2.0639; corrected no-historic-SELL/rest controls retain recorded values.
+Prior sourcefull53FAILED/5944PASS vs exact03b47FAILED/5894PASS; six addednodes.
+Two catalogcounts fixed before handover. Parent corrected four residualnodes:
+providerfingerprint now pinned independently to retained255-rowliteral; another
+147->148 catalogcount; OFF emitter paths skip new readiness method calls.
+Focused212PASS8.16s, Ruff/diffchecksPASS; frozenfinalfullnowrunning, no final
+no-regression claim yet. Parent sole writer, no further concurrent edits.
+Persistence callbacks still gate the next fetchcycle, and shared confirmation
+delivery can delay later symbols: concrete activation blockers. Live provider
+completeness/quota/latency and seven September decision-time coverage controls
+remain UNMEASURED. Thirteen recorded entry-line controls prove math/state, not
+full order lifecycle. No PR, push, readyclaim, merge or production action.
+
+## 2026-10-06 06:53 ET - ROUNDUP1 raw proof and prerequisite recommendation
+
+Evidence-only headb198689683b623ae9caf9a06aa647f0555ff599b retains byte-identical
+full-suite main/head logs; source unchanged from980a65a5. #1095 stays DRAFT,
+defaultOFF. Read-only independent review recommends separate safety prerequisites:
+bounded candidate discovery plus complete persistent archive resolution, and
+authoritative exact-target cancellation. Filtering active statuses alone cannot
+hide an incorrectly terminal row; old-schema closed episodes need exact lifecycle
+proof, not modern metadata or age. Deterministic pages/overflow/read failures keep
+an account unproven; submitted orders clear only on exact zero-fill terminal proof.
+Explicit client/broker cancel ids must not fall through to a newer same-symbol
+order. No code written for these prerequisites pending scope clarification.
+Two validate jobs pending; draft has no independent pin. No production action.
+
+## 2026-10-06 06:54 ET - Restoration checkpoint published, no activation
+
+Final branchhead3f89496dc6bcea65d11fab1638e4ea3696ae3943 defaultOFF. Five
+primitive commits range-equal after rebase onto03b26293, zero conflicts;
+published with exact lease on own25c31d39 remote, no main force/update/merge.
+Final full47FAILED/5950PASS237.78s vs exact03b47FAILED/5894PASS249.60s,
+failed nodes identical. All six addedregressions corrected, not waived.
+212focusedPASS, Ruff/diffPASS. Raw mainsha5b199708b8c44f20ff0e848f9f0921d9c67f8c214e8f396070ab1194b8380836;
+headsha dec3393454431b84aab770c1cd0eb25383d2061b45c49217dda2ec8402b70666;
+committed byte-identical rawpair and BUILD_STATUS. Callback next-cycle and
+shared-delivery blockers remain; real completeness/quota/latency, seven September
+coverage controls and full ON order-lifecycle composition not yet proven.
+No ready PR, pin, merge, flag edit, install or service restart.
+
+Installed application7823a6fa #1093/#1094 startup recovery/ownership follow-ups
+are in yesterday's COMPLETE and today9/9restart receipt. No additional residual
+source finding is asserted. Live bar/scanner/first-reprice latency are distinct
+next-session measurements, not implied PASS by local tests. Claude owns07:11
+bar and07:16scanner reads. Guard NEXT follow-up remains09:42; no preopen timer
+has been installed or silently assumed scheduled.
+
+## 2026-10-06 06:55 ET - Preopen correction re-confirmed, owner proposal
+
+Reviewer request repeated the olddc334e44 pin. Own fresh SSHread confirms the
+06:31correction remains exact: two orb-schwab expect-flag removals, all identity
+and routing/catalog lines preserved; mode0700trader/bash-nPASS. Hash
+8cdafcded0f748b6779696953cc8a101409b6bc0ce9a2314938d7f4fa82cf15a;
+backup preopen-mechanics-0630/preopen.sh.before retainsdc334e44, with exactdiff.
+Dated5253B report exists, generated06:31:15ET, PASS9/9zeroUNKNOWN;
+rootreceipt06:31:16rc0/FLAGGATE147/147. Offsessionbarcontinuity stays N/A.
+Already journaled PREOPEN_MECHANICS and PREOPEN_MECHANICS_GATE; no duplicate
+edit/run, service action or new production journal write for this confirmation.
+Dailyownerproposal: Codex performs reviewed day/date/SHA/PID repin, never autoheal;
+root-run named project-mai-tai-preopen.service/.timer at06:20ET tradingdays,
+retain each receipt/report, refuse stale/date/hash/identity drift; Claude verifies
+at06:22. Root invocation preserves isolated helper permissions, not a chmod
+workaround. No timer installed today; today's gate ownership remains Claude.
+Both agents retain09:42guard next-elapse verification after the09:40normalstop.
+
+## 2026-10-06 07:08 ET - Daily preopen timer accepted, design only in session
+
+Reviewer GO accepted dailyroot06:20Mon..Fri/checks-only/ntfy nonzero adapter,
+Codex reviewed install-closeout pins and Claude06:22verification. Literal
+service/timer/failure-unit text plus mock-test/installation/Wednesday rehearsal
+recipe added in docs/review-artifacts/preopen-daily/PLAN_2026-10-06.md.
+Build and box installation deferred until after20:00tonight as explicitly ruled;
+no generated wrapper/unit installed or built during this session. Ownread07:08
+no preopenunits; gate8cdafcde; existingadaptera9f24076 at repo ops/health/preopen_alert.sh.
+Independent dependency found: paper366242/date10-06 hard-pinned, dailyguard
+stops09:40/restarts03:40tomorrow. TomorrowPID cannot be pinned tonight; date
+does not roll automatically. Requested explicit verified03:50repin ownership
+versus Claude manual pre06:20repin; no automatic live identity adoption/bypass.
+First realWed06:20run remains rehearsal, hand06:22retained untilgreen.
+No application, flag, gatepolicy, process, database or box file action.
+
+## 2026-10-06 07:11 ET - Evening preopen follow-up active, not a box job
+
+Codex automation oct-6-evening-preopen-timer-build-and-install ACTIVE at20:05ET
+tonightonly, bound to design8361b095. This is a threadwake-up, not an installed
+production unit/timer. It defers all build/tests/staging/boxwrites to after20:00,
+requires fake-input controls and unit/calendar validation, then enables only
+the recurring preopen timer with actual Wed06:20NEXT. No real futuregate tonight,
+no tradingservice action, no pinadoption or waiver. Explicit paper/date repin
+disposition still needed. Installation receipt will name actual systemd units
+and hashes, and read-only Wednesday first-run verification follows success.
+No frozen/promoted handoff edit is authorized by that later wake-up.09:42guard
+check unchanged. #1095 remains DRAFT, no review request while C8/C12 unresolved.
+
+## 2026-10-06 07:16 ET - Daily gate date/paper disposition resolved
+
+Reviewer T10/current block resolves the earlier manual paper/date re-pin
+dependency under mechanics authority, without another operator question.
+PLAN_2026-10-06.md now specifies today's ET clock and report date plus paper
+active/NRestarts0/start at or after today's03:40ET and the active daily guard's
+own start. Missing or malformed identity evidence and any failed shape is FAIL.
+This check belongs in preopen.sh, including the hand invocation, not a wrapper
+waiver; no observed PID becomes a new pin. Application SHA and every non-paper
+PID/start remain fixed install-closeout pins. Literal unit descriptions and
+mock test/backup/hash recipe updated accordingly. Build/test/install remains
+after20:00tonight only; no in-session box or source action. Existing20:05wake-up
+will be updated to this design; actual recurring box timer NEXTWed06:20 and
+hashes are installation evidence still owed, not claimed now. First real
+Wednesday run remains rehearsal with Claude's06:22check.09:42guard follow-up
+unchanged; #1095 blockers and Restoration priority unchanged.
+
+## 2026-10-06 07:19 ET - Existing evening follow-up updated
+
+Automation update returned ACTIVE for the existing20:05ET preopen build/install
+wake-up, now bound to design8a117dad. Removed the superseded manual-repin and
+operator-question dependency; retained after20:00-only build/test/install and
+exact shape checks in the gate, static non-paper pins, first real Wednesday
+rehearsal and Claude06:22verification. No duplicate automation or box unit
+created. Actual installed hashes and Wed06:20NEXT remain owed tonight.
+
+Timestamp correction: the automation receipt was recorded at07:17ET (clock
+11:17:03UTC), not07:19ET as the preceding heading says. C19 corrected; narrative
+heading retained under the append-only rule.
+
+## 2026-10-06 07:35 ET - LINE=CHART steering, independent JAGX coverage blocker
+
+CLAIM continuing codex/line-chart-restoration as sole source writer; two
+read-only evidence/audit agents made no source changes. Own bounded read-only
+JAGX captures07:22-07:26 show the late07:03/07:04 rows written07:10:10, but
+stored history begins07:01. One Schwab pricehistory GET0400-0716 returns27
+candles:17 in scope07:00-07:16 and10 after the requested cutoff. All16
+overlapping stored/provider candles match exactly. Independent capture proves
+trades04:00 and06:10-06:12; neither candle series covers that prefix. Conditional
+07:16 line from stored16 bars5.7955/long-age7; provider17 bars5.7804/age8;
+installed5.883980/age3. Full0400 chart acceptance is UNMEASURED, not a match
+obtained by assuming the missing prefix silent.
+
+Added fail-closed prefix/interior coverage controls and actual JAGX fixture;
+stored-session reread is off-callback,961-row bound, no250-row truncation.
+Rebuild uses full admitted history rather than post-reset cutoff, retaining
+the existing clean-bar wait and no-late-flip/version/consumed-slot fences.
+Provider proof is immutable: DB additions/conflicts cannot silently rewrite
+its IDs/hash. Controlled coverage in unit fixtures is explicitly not historical
+proof. Focus180 PASS; five assertion mutations RED including completeness,
+post-reset truncation,250-row cap and replayed-flip emission. Full head suite
+running; no current PR-ready or activation claim. Pause classifier, complete
+anchor provenance, exit continuity and bounded delivery remain blockers.
+No broker order, subscription, service, flag, DB/Redis or box file changed.
+
+### 2026-10-06 07:36 ET - ROUNDUP1 scope decision and separate findings (codex-2)
+
+Reviewer/operator ruling narrows #1095 to rounding only. Removed the added
+historical archive discovery/classifier and generic restart recovery tests from
+the ROUNDUP worktree; existing exact RPG-order wire proof is retained. C21
+records the archive scan and unprovable terminal retention as a separate finding.
+Its own 06:40:43 READ ONLY aggregate found 5978 historical STOP_LIMIT rows,
+5157 lacking a newer identity field; these are archive counts, not live orders.
+
+C22 records the separate OMS exact-target cancel fallback, confirmed by own
+source read at application base 7823a6fa: a target that is absent or non-open
+can fall through to the newest open symbol order. No measured race count or
+production cancellation is claimed. No OMS dispatcher patch is part of ROUNDUP1.
+The rounding-only tests pass; final frozen suite comparison and review-ready
+head are still being prepared. No production, ledger, service or main change.
+
+### 2026-10-06 07:46 ET - LINE=CHART default-OFF draft and paired suites (codex-2)
+
+Published draft #1097 at 49e9be4b1b6fc55bbf5f26db2e729f75a9cec585 on
+codex/line-chart-restoration. This is visibility of an incomplete build, NOT
+a pin request or install candidate. Off-callback stored-session read retains
+the 04:00/current window with a 961-row refusal bound; late DB additions cannot
+rewrite provider coverage. An admitted rebuild uses full history instead of
+the reset cutoff, with clean-bar wait, epoch/current fences and no late flip.
+
+Focused 180 pass and five isolated assertion mutations red. Final Python3.12
+full pair against exact main03b26293: main47failed/5894passed, draft47failed/
+5958passed, failed-name added0/removed0. Earlier run omitted venv from the
+subprocess PATH and both sides had56 failures; both final full runs use the
+same corrected PATH. Committed FULL_SUITE_PAIR_2026-10-06.json retains exact
+names, source/log hashes and command; MUTATIONS_2026-10-06.json retains the
+five assertion failures. Baseline equality is not full-suite or chart PASS.
+
+JAGX full-anchor coverage remains UNMEASURED: both candle sources omit a
+positively traded prefix. Conditional stored line5.7955/long-age7 is not the
+chart. RETO controlled complete-series replay reaches2.0639 without emitting
+the historical SELL. APUS and MI pause/no-reset checks await the separate
+Pause lane; no two-flag composition is claimed. Prefix/source recovery,
+delivery bounds and exit-reading timing remain activation blockers. Only
+repository source/tests/docs and this shared docs row changed; no service,
+broker order, env/flag, production file, Redis, database or main change.
+
+### 2026-10-06 08:11 ET - ROUNDUP1 exact-head merge and composition blockers (codex-2)
+
+User/reviewer instructed exact6727fff5 merge and tonight flag ON on OMS/v2.
+Verified committed pin at review-pinsd874fe5d, hosted PASS and Validate x2PASS.
+The matched-head non-admin rebase merge refused as behind main03b26293;
+its three-path base delta is docs only. No admin bypass or mutation of the
+pinned branch, no merge and no candidate application SHA was fabricated.
+
+Pinned source ordinary ROUNDUP+ALL_ON unit files456PASS. The shared ALL_ON
+dictionary has only six keys, ROUND_UP absent. Process-only pytest injection
+enables the seventh key before fixtures without modifying files. Actual
+composed result34PASS/2FAIL: PMREST first/reclaim old assertion expects
+8.2792905 but actual rounded trigger8.28. The remaining accounting, no-emission
+and no-handoff invariants need to remain pinned with a flag-aware price check;
+not weakening the feature or hiding the failed composed run. A fresh exact
+head review/pin is necessary if rebase/test refresh is performed.
+
+Added combined install draft and cross-reference to the amended daily preopen
+plan, v2/OMS only, one env key, 148catalog/8numeric, one final date/paper-shape
+repin and daily timer after20:00. This is neither a literal staged runner nor
+an installed/listable application job. Production and pinned branch unchanged.
+
+### 2026-10-06 08:16 ET - ROUNDUP1 reviewed rebase/fixture refresh ready for fresh pin (codex-2)
+
+Under the explicit reviewer follow-up, rebased #1095 onto main03b26293 with
+all ten commits patch-equal. New tests-only commit adds ROUND_UP=true to the
+six-key ALL_ON fixture and changes the shared first/reclaim PMREST check to
+exact8.28/8.01 for its two recorded moves; requested one-line ceiling comment,
+no tolerance or weakened accounting/no-handoff/no-emission assertions. Source,
+ops and scripts diff versus reviewed6727fff5 is empty.
+
+Pushed fa54579b4794d5fc6b275ab3233c0161d51110c7 using an exact-old-head lease.
+Composed36/36PASS,2.45s; composed+ROUNDUP456/456PASS,5.31s; Ruff and whitespace
+PASS. Hosted head confirmed and CI newly started, not called green. Old pin
+does not carry over. Head frozen for reviewer's eight mutations/new pin, then
+authorized exact-head merge and candidate-SHA binding. Plan remains v2/OMS
+only, flag ON both,148catalog,8numeric, one preopen final identity/date/paper
+shape repin and daily timer after20:00. No merge or production action yet.
+
+### 2026-10-06 08:31 ET - ROUNDUP1 merged; after-close readiness replaces fixed evening time (codex-2)
+
+Fresh pin a024c810 / latest hosted pin PASS and both Validate PASS checked at
+exactfa54579b/base03b26293. Non-admin matched-head rebase merge completed;
+main a7fed34d97732e1c1379ec77d89fd83f886ce2d8 whole tree
+7ff6dcce8d225bdf45e87a9eeb8bcd3042573117 equals the pinned tree. Seven-live-key
+composition rerun36/36PASS,2.41s on that identical source tree. No box checkout,
+flag, catalog or service was changed.
+
+Amended combined ROUNDUP1/daily-preopen plan: first stop strictly after16:00
+today whenever flat/working-order/zero-armed gates pass, no fixed rotation wait.
+The gate's documented clock-only override before18:00 names the operator's
+after-close ruling; never an armed-set override. At16-20 the exact bot session
+is afterhours with elapsed-since16+300s bound; after20 retains closed and
+elapsed-since20+300s. All published health/freshness/detail controls remain,
+MI/NXL exact allowance unchanged, only in-memory input adjusted. Local116 tests
+PASS and eleven independent in-memory policy mutations assertion-RED. Native
+systemd TZ remains unchanged; retries are rc2-only/three60s reads. The full
+two-service release and dynamic-paper daily gate are not yet staged; the new
+shell component is not a runnable install, and the old Oct5 migration/three-
+service runner must never be substituted. Local input hashes in the plan.
+
+Production preopen read at08:24:22 still pins7823a6fa/oldOMS-v2 identities;
+this is expected until the actual install close-out. Position/order/gate reads
+will be fresh at admission, not carried from today's morning evidence. Record
+real bar-hole minutes for16-20 restarts and both live/rotated log source paths.
+Existing20:05 Codex wake-up is being moved to after16 readiness; this is not a
+claim that a box unit/timer is installed. No production action this session.
+
+### 2026-10-06 08:31 ET - After-close readiness wake-up active (codex-2)
+
+Automation tool updated the existing oct-6-evening-preopen-timer-build-and-install
+to ACTIVE after-close readiness; persisted schedule checks every15min16:00-23:45
+today, not a fixed deployment time and not a box timer. Applicationa7fed34d /
+tree7ff6dcce, plan/mechanicsb53494b2; expires tonight. It explicitly requires
+full runner/dynamic-gate assembly, local tests, committed manifest and on-box
+checksums before any write. It cannot call the old Oct5 migration/three-service
+runner or turn a incomplete release into a claimed schedule. All fresh gates,
+only OMS/v2 changes, ROUND_UP=true, single final repin/dailytimer and strict
+abort/no-recovery discipline retained. Position waits for its actual close,
+not an assumed timer slot. Corrected plan merge time to the authoritative
+GitHub mergedAt12:26:03Z (08:26ET). No production write performed.
+
+### 2026-10-06 08:43 ET - Restoration scope cut and dated deadline (codex-2)
+
+#1097 review-ready target Tuesday2026-10-06 21:00ET, not a current ready/pin
+claim; review Wednesdaymorning and separate afterclose install only after
+pin/GO. Own read49e9be4b confirms prefix fence and unbounded stored/math/
+confirmation-delivery waits still need changes. Deadline/scope/count doc
+c0b74eddd24ebf4ced692c853bea4b43568d295d and PRmetadata published.
+
+Remaining count5 is defined by review-readiness work groups: first-stored-bar
+admission, fixed fail-closed work bounds, recorded JAGX/RETO/MI/lifecycle
+replays, six installed-path no-buy/unchanged-exit composition controls, and
+final rebase/mutations/full-unit failed-name pair/CI. Prefix beforefirstbar
+is parkedrow32, Pause/APUS separatePR, not blocked requirements silently
+declared PASS. Proposed bounds6s stored wall/5sSQL/500ms lock,3s mathematics,
+3s delivery remain unimplemented/unmeasured until tests; timeouts must never
+discard exit evaluations or release an incomplete line. Reviewer remaining
+must-not-break and source/current/revision fences stay intact.
+
+Requested12:00/16:00ET C-row checkpoint automation created ACTIVE
+line-chart-noon-and-16-00-review-readiness, actualhead/evidence/count/revised
+date-hour ETA required, quietchat unless materialblocker/deadlinechange/ready.
+It writes only active/unfrozenhand-off docs, preserving Trows/Boards; deletes
+after verified review-ready delivery. No production/write/merge/activation.
+
+### 2026-10-06 08:56 ET - Reviewer acceptance factory published (codex-2)
+
+Latest08:46 operator/reviewer instruction supersedes C28's Wednesday review
+and install target. Review is tonight21:00ET; green reviewer runner and
+mutations, exact-head pin/merge and install authorization are still required
+for installation tonight. Five remaining work groups B1-B5 are not reduced
+by publishing the interface or by the passage of time.
+
+#1097 published head d120b3a328c2e72eff82bcb8676bad1398b9bcc6 exposes
+tests.line_restore_acceptance_factory.make_line_restore_case(symbol=...,
+now_ms=..., settings_overrides=...). Real strategy and bot service, Restoration
+ON, recorded bar/add/remove/hold feeding, explicit caller coverage, scoped
+historical clock, both-leg recording emitters and in-memory confirmation
+outbox boundary. Real rebuild, buy gates, confirmation evaluation/publication
+and acknowledgment are not replaced. No connection or live service started.
+Caller cannot manufacture coverage from candle count; settings typos, dark
+Restoration, future/unclosed bars and foreign symbols refuse.
+
+Own Python3.12 tests: ten adapter controls PASS; combined restoration/boot set
+114/114 PASS in2.13s; Ruff and whitespace PASS. Recorded RETO11:18 trail2.0639
+long reproduced under explicitly controlled coverage, not historical coverage
+proof. Positive control records two permitted buys, while incomplete real
+direct drains drop both buys but deliver a protective close. Real confirmation
+path evaluates and publishes once. These controls are not the reviewer's
+45-symbol-day /18-hold /8-attempt population PASS. Source admission/bounds,
+remaining replays/installed-path exit invariants and final integration stay
+open; PR remains DRAFT/defaultOFF.
+
+Claude owns scripts/line_restore_acceptance.py; no edit to it. Runner target
+and contract posted before12:00; pass mark100% re-add/bars-missing with nine
+real pauses reported/excluded from Restoration. Existing noon/16:00 checkpoint
+automation updated ACTIVE with tonight's21:00 target and stable factory.
+Shared handoff pulled/rebased before docs-only C29 update; T rows, reads,
+Boards and open decisions unchanged. No production action.
+
+### 2026-10-06 09:18 ET - R6 own assessment and comparison conflict (codex-2)
+
+#1097 head dfb719950d9a072114ec1dadf21caf607d057478 includes reviewer-owned
+runner64b00b9d cherry-picked unchanged as84712fb0, plus evidence-only diagnostic
+tests/report/23-row fixture. Own correct-import-path runner replay reproduces
+123events,64HELD at+10,0ERROR/0MISMATCH/0buys while incomplete;34+10MATCH and
+25missing+10readings. First attempt lacked repository-root PYTHONPATH and
+had123ERROR despite rc0; excluded, not green. Valid raw local log67d53adf...
+and JSONe44f780b... are named/hash-pinned in R6_ASSESSMENT_2026-10-06.md.
+
+AGREE availability is broken. DISAGREE with claim existing#620 clamp changes
+only trail, never colour: own production carry-math versus spanning oracle
+over identical stored bars gives104 equal states/105 sparse first/+10
+comparisons, one unequal PMI10-02readd16:36:07 at17:15: clampedLONG/trail
+5.727122541190053 versus spanningSHORT/5.8432. First difference at16:45 is
+clampedSHORT/5.852338786738176 versus spanningLONG/5.7027. This is a proposed
+R6-math counterexample, not a current admitted wrong-line claim. PMI's11
+observed post-event arrivals end in just1contiguous live bar, so entry must
+remain held; no replacement of ten-contiguous wait by arrival count.
+
+Own fresh box READ ONLY source confirmation09:15:23ET: nice10, SQL5s/lock500ms,
+LIMIT24/refuse>23, PMI14:46-17:15 only.23rows/5977B, source/bar time/OHLCV
+match23/23; direct capture sha17003fa5953a26e01d897bc76c0cc063184b78b1b6dfeab94a3c038ea14c89e5.
+Reviewer CSV arrival stamps truncate subseconds; original precision retained
+in direct raw output, not silently called byte-identical. First trader read
+refused root-only env permissions before DB query; root READ ONLY succeeded,
+no permission change, token, broker, service, ledger or Redis action.
+
+Recorded counterexample tests3PASS plus factory10PASS=13/13; Ruff/diff PASS.
+No new full-suite or ready claim. Requested explicit reviewer disposition:
+independent clamp-aware oracle for sparseR6, exact oracle for repairedseries,
+retain#620andcontiguoushold. No trading source, allowance, flag, runner or
+oracle edited to hide failure. R6 admission stopped pending that comparison
+disposition, B1-B5 remain,21:00targetnotmoved. T rows/Boards/readstable intact.
+
+### 2026-10-06 09:41 ET - Codex R6 spanning ruling checkpoint
+
+C31 supersedes C30's open comparison request without changing that historical
+row or any Claude row. #1097 draft now80c633c965bbf6294b7cac3994b3223ee7f1cbcb,
+rebased on a7fed34d. Source conflict at _reprice_resting resolved by keeping
+the completeness guard BEFORE ROUNDUP's unchanged-wire shortcut. Two catalog
+test conflicts keep both live ROUNDUP and default-OFF restoration. The dark
+restoration check adds one catalog row:149 including8numeric, not148.
+
+New R6 private reconstruction spans only immutable full-provider authorized
+pairs; positive tape inside a missing minute holds until candles arrive.
+No bulk tape payload read: at most480 EXISTS-result pairs, SQL5s/lock500ms,
+caller6s; math3s fails closed. Ten consecutive fresh live closes, not ten
+arrivals; first fresh streamer warm-up bar counts, duplicates do not shorten.
+PMI17:15 SHORT/trail5.8432 restored, held with zero buys due sparse live suffix.
+
+195 focusedPASS at rebased bytes, six targeted assertionmutationsRED/reverted.
+Own identical-input spanning math audit90symbol-days/19,175bars/0mismatch is
+NOT the real-service acceptance. Unchanged reviewer runner64b00b9d:123cases,
+0error,0incompletebuys; first48MATCH42MISMATCH33HELD,+10=83MATCH15MISMATCH25n/a.
+Measured availability diagnostic57/57mismatches equal the oracle on the exact
+supplied prefix, while57/57full-runner comparisons include unarrived candles.
+Do not edit/waive the reviewer runner or call this green.
+
+Inflation source population mapped27permanent re-adds, vs reviewer28;18full
+post-resume ten-bar windows,9UNMEASURED. Six>0.5% flagged for individual
+disposition:CLRO09-28/14:22:42=1.8710%;CMCT09-30/12:26:45and13:28:35=.7766%;
+SORA10-01/17:14:29=.7759%;ZNB10-02/14:13:54and14:59:01=.6525%. Complete
+per-bar states/trails/counterfactual implied rests in R6_INFLATION JSON/MD.
+No waiver or fabricated28th case. Full suites on exact maina7and head80 are
+RUNNING; pending B1-B5/exit/composition receipts not declared passed. Target
+21:00 tonight retained; no production writes, source merge, pin or activation.
+Noon/16:00 checkpoint automation updated to accepted SPANNING disposition;
+it no longer treats the resolved clamp comparison as a standing block.
+
+### 2026-10-06 09:52 ET - codex-2 R6 final paired receipt, still DRAFT
+
+#1097 head4b803f08a450fa40f460464c6b60bde7ec839971 pushed; source defaultOFF,
+production untouched. Full normal-PATH pair: maina7fed34d 6314pass/47fail,
+draft6409pass/47fail, exact failed-name diff added0/removed0. This is baseline
+parity, not an all-green suite. Initial shortened-PATH pair54/56failed exposed
+missing sha256sum plus two stale draft fixtures. Catalog count129 and real
+default-OFF quote-observer binding corrected without weakening both-leg emits.
+Old-head hosted failure is exactly those two; new-head CI pending.
+
+Final focused287/287PASS in8.79s. All six R6 assertionmutations repeated after
+rebase, RED, reverted individually; ledger ee6adf94... and bot12be0b4e...
+SHA256 identical before/after. Receipt includes exact commands, full raw-log
+hashes, failed IDs, mutation assertions, and unchanged acceptance runner64b00.
+Runner rerun still123events/0errors/0incompletebuys/57input-mismatches; every
+one matches oracle on suppliedprefix, not the future late bars in comparison.
+This is NOT a waived acceptance or permission to edit the reviewer runner.
+
+Inflation clarification: every sample >0.5% is LONG in both spanning/clamp
+lines. Six flagged cases are counterfactual trail/price comparisons, not live
+resting-price moves. Across six SHORT/SHORT samples observedmax0.1859%; nine
+incomplete ten-bar windows remain UNMEASURED, denominator27vs28 unresolved.
+Next ten stored bars can contain a later hole (CLRO); per-bar interval and
+post-resume contiguous metadata now recorded, never asserted entry-eligible.
+Target21:00review remains contingent on acceptance/lifecycle/exit evidence;
+no pin, merge, activation, production write or install.
+
+### 2026-10-06 09:54 ET - codex-2 daily guard NEXT follow-up COMPLETE
+
+Own bounded read-only SSH: project-mai-tai-option-a-daily-guard.timer enabled,
+active/waiting, LastTrigger07:40UTC10-06, NEXT07:40UTC10-07 = Wed03:40ET.
+Daily guard and momentum-paper both inactive/dead, MainPID0, NRestarts0,
+Result=success. Root-readable journal confirms paper stopped13:40:01UTC and
+guard exited13:40:07UTC, no failure. The former emptyNEXT was the running
+service state, not a timer fault. No box write/reload/restart or repair.
+
+Original evidence: /home/trader/after-hours/2026-10-06/option-a-daily/
+run-20261006T011059600358Z/option-a-guard.jsonl and option-a-1008.jsonl.
+Guard complete13:40:00.422944UTC expected/load/sampler=9600/9600/9600;
+scheduled_session_close13:40:01.243957UTC rc0; owner_release_confirmed attempt0;
+page_delivery13:40:07.596273UTC deliveredtrue. Final3sampler rows13:39:57-59UTC
+statusOK,new_1008_lines0. This last-row read does not claim an independently
+recounted whole-session zero-kick total. Load warnings are labelled warning
+only in the existing guard; no threshold or policy was changed.
+
+Local raw captures prefix /tmp/codex-daily-guard-20261006-0953- and SHA256:
+- identities.txt c3c2119ea5b2ab2c3f321ae4eed6e200edaf4c5e65e15f7fdb7bef0a403df095
+- timers.txt b32a11ae0f198521fca3e488ae32ae6919b5a2517aafe14f67fe0fdc47018a70
+- guard.txt 27d0df6b3256977cefbe042004277a212e472647bf868242abf0f4d4f0a5be04
+- sampler.txt f54a3d095eef2a1163f9b060596cb7c49a40d93a8311aed9884a940cf7a6ad67
+- journal.txt 667b6fa433fd745db8287a78d37070935bc4cde4646b8da69ec2848922a0df00
+- enabled.txt e056a35db086947e2f5969d747f0a7517bff00c7ffff1f9e7b47b72bfac9d948
+
+C3closed, independently agrees T35without editing any reviewer row. The
+Wednesday03:40fresh unattended run remains future proof. Retire only Codex
+automation oct-6-daily-guard-next-elapse-check after this completion receipt;
+existing box daily timer remains enabled and unchanged.
+
+### 2026-10-06 10:17 ET - codex-2 C34: corrected acceptance and eight-switch controls
+
+Reviewer acknowledged the corrected runner was previously uncommitted; exact
+ed871725 taken unchanged as91b02e5e, sole claude-1 marker retained. Own normal
+and eight-ON real-factory replays:123 cases,0 wrong lines/errors,0 incomplete
+buys/permissions,+10=98 MATCH0 HELD25 n/a; chart83 same15 late-input differences.
+Restoration catalog true under exact operator10-06 ruling,149 denominator;
+runtime default remains false until reviewed install. Legacy composition uses
+explicit controlled completed-worker output, not fabricated history proof;
+the population replay uses the actual service/factory without readiness patches.
+Composed41/real factory12/current catalog group69 PASS; focused258 PASS.
+Always-ready mutation4 RED; missing draft-version comparison1 RED.
+
+Full unit is RUNNING; ready and CI claims withheld. Prior4b pushValidategreen,
+PRValidateexit139 with SQLite/SQLAlchemy worker stack, not an assertion failure
+and not proved infrastructure. Final exact head still needs bothValidategreen.
+No production write/restart/flag/merge; scope is only reviewer blockers.
+
+### 2026-10-06 10:21 ET - codex-2 C35: final delivery65010dff, CI pending
+
+Pushed #1097 exact head65010dffffaa28c5f6ae22df0c48cf9358a6bdbf.
+Runtime diff vs4b803f08 EMPTY. Reviewer runner ed871725 bytes unchanged;
+141 boolean+8 numeric=149 catalog, restorationtrue at approved install,
+runtime defaultfalse. Composed41, realfactory12, grouped69, focused258 PASS.
+Both123-case population runs have0 mismatches/errors/incomplete buys or
+permissions,+10 98 MATCH0 HELD25 n/a, chart83 same15 late-input differences.
+Final full unit6416 PASS47 FAIL vs same-base6314 PASS47 FAIL; namesdelta0/0.
+Raw head log SHA2565e8e678a22ed04228fe4b643bd4eb1cbe7aa58baa1ce985c3289e12d24744a73;
+baseline SHA256a834f282ba73b9468be6a2af9b1180ba592b39f7c77f306ce7eb84fff7ad9124.
+Full failed names committed FINAL_UNIT_RECEIPT_2026-10-06.json, PRbodyupdated.
+BothValidate running on delivery; PR staysdraft until green. Independent pin
+expectedFAIL until reviewer source coverage; records-only d5788159 independently
+covers claude-1's b3e90344 and91b02e5e runner/evidence commits, no self-pin.
+No merge/install/production action. Current task does not build ORB-purple.
+
+### 2026-10-06 10:33 ET - codex-2 C36: #1097 READY, exact head65010dff
+
+BothValidateSUCCESS on65010dffffaa28c5f6ae22df0c48cf9358a6bdbf:
+push37478141100 and pull_request37478145270, unit/integration/golden/Ruffgreen.
+Marked #1097 ready only after both concluded; exacthead and basea7fed34d verified.
+Receipt https://github.com/krshk30/project-mai-tai/pull/1097#issuecomment-6018563094.
+Same123-case acceptance normal/eightON,41composed/12realfactory/69grouped/
+258focusedPASS; full local6416PASS47FAIL vs6314PASS47FAIL, namesdelta0/0.
+Full-unit completion10:20ET is distinct from initial10:17acceptance timestamp.
+Runtime source unchanged from4b; code defaultOFF, catalogON149 at reviewedinstall.
+Independent pin remains expectedFAIL awaiting reviewer Codex-source ranges;
+our d5788159 records cover only claude-owned runner/evidence commits.
+No merge/flag/production/install action. Joint after-close installation awaits
+exactheadpin, merge and final plan/GO; no separate restart or ORB-purple build.
+
+### 2026-10-06 10:49 ET - codex-2 C37 one-leg CLAIM
+
+T43/T44 OLOX requested replay assigned to isolated
+codex/rpg-one-leg-rest-recovery, base a7fed34d. Own code read and bounded
+read-only pull precede the build. Missing refused/rejected leg must return
+through ordinary next-bar admission, without touching its surviving sibling.
+Reject-text recording stays bundled. No production write, restart or ledger
+adjustment; no change to manual-cancel, policy refusal or unknown-buy proof.
+
+### 2026-10-06 10:51 ET - codex-2 C38 T43 cause correction / build STOP
+
+Own bounded read-only PostgreSQL confirms order ...-b95fc559b0a2 is rejected,
+brokerid null, reject_reason null, audit events0. Its intent explicitly records
+client_abort/rpg_stale_strategy_authorization; c9b13cc4 ticket independently
+records that same replacement reason. Authorization age0.822s at submit-start,
+1.085s at completion vs unchanged1s admission. service.py's second pre-wire
+check writes this exact incomplete order-audit shape and returns before wire.
+Thus T43 missing-leg/shared-latch defect AGREED, claimed Schwab market-price
+rejection DISAGREED. No fabricated broker reason, no relaxation of freshness.
+Standing own-assessment rule requires STOP on cause disagreement; assessment
+only pushed at1cbc40c7c861e67ba28305703f2a45d424adc790 on the C37branch.
+Next-bar one-leg-only card remains sound with exact terminal/no-wire generation
+proof and current gates; venue acceptance/profit remains counterfactual.
+Report contains own raw paths/hashes, bounds and pre-market scope distinction.
+No PR/build/pin/merge/install claimed; no production action or ledger edit.
+
+### 2026-10-06 10:55 ET - codex-2 C39 #1097 merged / three-item plan
+
+Merged #1097 without admin bypass or head edits at exact65010dffffaa28c5f6ae22df0c48cf9358a6bdbf
+under standing yes. Hosted pin37482211551 and push/PR Validate37478141100/
+37478145270 wereSUCCESS before merge. Initial local pin attempts used an
+archived non-Git ledger and could not verify record-commit provenance; this
+was a local verifier invocation issue, NOT missing hosted coverage. Re-read
+actual committed ledger93988101 in the existing own detached pin checkout:
+PASS five committed records. Application main3ebde364d4634fdad45992e2ab1cbdf43ffeb221,
+tree972271218693e095f99257e0e39ab525090fd0ef exactly equals pinnedwhole tree.
+No production action. Reran eight-ON composition41PASS2.53s on same tree;
+raw /tmp/codex-1097-merged-eight-switch-20261006.log,
+SHAd37059c4e19a2869c60bb805af9d662a743e11956149e0ecc885bcb245c24eb4.
+Amended combined plan to ROUNDUP1+LINE=CHART+daily preopen,149catalog,
+two named true env edits, OMS/v2 only, no migration/extra service action;
+first stop after16:00 when fresh flat/orders/rows/armed gates clear.
+Literal release/gate/timer still requires assembly/testing; NOT staged/listable
+yet. Current production7823 unchanged. No false COMPLETE receipt.
+T43excluded until its own exact pin and reviewed release rebind. T47 accepts
+client-abort correction; its assigned next-bar/reason lane remains separate.
+
+### 2026-10-06 10:57 ET - codex-2 C40 after-close wake-up rebound
+
+Updated existing ACTIVE Codex readiness wake-up to exact application3ebde364/
+tree97227121 and immutable three-item plan633f39d59ae0d24d8d88f5dc0f339d9262113ace.
+Schedule unchanged15min after16:00 through tonight, no carried GO. Explicit
+ROUNDUP+Restoration+daily preopen,149catalog,eightON,OMS/v2-only sequence;
+T43excluded absent own pin and reviewed candidate rebind. Saved fields re-read.
+This is not a production systemd job or a staged literal runner. No box changes,
+no false scheduled/staged/COMPLETE claim; full release and timer/gate assembly
+still required before any production call. Reviewer owns independent close-out
+and tomorrow07:00-07:15 scanner validation; no forced paper start for green.
+
+### 2026-10-06 11:03 ET - codex-2 C41/C42 four-lane claim and KEEPREST1 stop
+
+Read the operator relay attachment e828a471 in full. T43 local-refusal cause
+correction accepted; parent resumes its sole-writer branch. Three independent
+worktrees started Step 0 for KEEPREST1, ORBPURPLE1 and CLEARWAIT1. No production
+action, no addition to tonight's three-item install without a fresh exact pin.
+KEEPREST1 Step0 6a84c3b2 reproduced 18 take-downs but found the named IMCC08:17
+case still SHORT/flip=none; BUY flip08:25. DISAGREE on that acceptance timing,
+one blocker, no build/PR. Asked for corrected08:26 case, card unchanged. Other
+lanes continue; dates/hours reported only when independently supportable.
+
+### 2026-10-06 11:10 ET - codex-2 C43/C44/C45 independent outcomes
+
+CLEARWAIT1 Step0 e7562201 found prior sent orders in both named pure-wait
+cases: AIXI/Webull09:57:42, XHG/Schwab10:32:03. Strict never-sent card agrees,
+acceptance cases disagree; stopped, one scope blocker, no build or ready ETA.
+T43 Step0 correction237e4646 accepts local-abort cause. Own11:05 pull2/78 token
+OPENs; mutable authorization/completion proxies do not measure final-check
+p99. Bounded nonce refresh requests actual current v2 gates, keeps1s and exact
+identity checks. Early focused221PASS before later negatives; full verification
+ongoing, target2026-10-06 15:00ET, no PR/ready yet.
+ORBPURPLE1 Step000a54644 agrees with gate. Six placement candidates,559 real
+bars, two filled entries both above line, so no claimed profit improvement.
+Target2026-10-06 13:00ET, source8f591809 and verification underway. Separate
+writers/PRs, no shared trading edits and no production action. Tonight's
+ROUNDUP+Restoration+preopen remains unchanged unless separately pinned/rebound.
+
+### 2026-10-06 11:20 ET - codex-2 C46 pre-deploy safety findings
+
+Independent audit of the uninstalled T43 draft found a shared-account collision
+window during nonce refresh and a local-abort crash-recovery gap. Parent corrected
+both without widening authorization age or releasing ambiguous orders. Regression
+and final failed-name/mutation proofs are pending; no ready or install claim.
+The first safety run was19PASS plus one wrong test-method keyword; corrected before
+the final run, not treated as a code pass. Target15:00ET remains.
+
+### 2026-10-06 11:40 ET - codex-2 C47 draft PR verification
+
+Separate drafts #1099 T43 (053a7179) and #1098 ORBPURPLE1 (ed7c2c81) are open,
+not pinned/ready/installed. ORB's fresh UNIT baseline47FAIL/6416PASS vs
+head47FAIL/6447PASS has identical failed names; seven mutations are assertion-RED,
+both Validate runs pending. Its measured table prevents neither of the two filled
+losses (MI/JAGX were above ATR); no profitability claim.
+T43's follow-up makes ordinary no-token local abort terminal only for the exact
+new audited never-wired intent; the old owned ticket stays blocking. Order and
+audit no-wire marker both false is the new negative control. Its new28cases passed
+before that strengthened negative; final frozen suites and16mutation receipts are
+running. Older interrupted runs are not final evidence. No production change;
+tonight's reviewed three-item set is unchanged until an independent pin/rebind.
+
+### 2026-10-06 11:42 ET - codex-2 C48 ORBPURPLE1 ready
+
+#1098 is ready for review at ed7c2c81da28b1bf46eff70362dfd47a9f79337d.
+Parent independently verified both Validate SUCCESS and isDraft=false via GitHub.
+Local full UNIT pair and seven assertion-RED mutations are in C47/C48 raw paths.
+Independent pin remains absent, as expected before the review; this is not merge
+or install authorization. No production action.
+
+Receipt timestamp correction: the C48 GitHub read occurred at11:40ET, not the
+mistyped11:42ET; corrected only codex's own receipt label, no evidence changed.
+
+### 2026-10-06 11:45 ET - codex-2 C49 T43 audited-refusal follow-up
+
+Draft #1099 pushed96b5b1a70bee51a8b4b0dbb6ae8ad0aefc51c144. New43tests PASS,
+20mutations:19 assertion-RED; the order-origin-only mutation is dominated by
+the linked intent and matching audit and is not claimed RED. Missing event id
+or affirmative no-wire marker stays blocked. Ordinary local abort terminalizes
+only its new intent, never the separately owned old ticket.
+Independent audit reproduced the crash-after-broker-rejection repair omission;
+the follow-up requires positive broker audit, exact identity, no fill and cleared
+old order. Cancellation/expiry stay non-repairable. Actual submit/report path
+with simulated venue answers and controlled crash/next bar gives14PASS; no
+production crash, dispatch or fill outcome claim. Final full/CI pending; no ready
+claim yet. Target15:00ET. Tonight's set not changed.
+Append-only handling: restored the original C48 narrative heading; the timestamp
+correction remains as the appended receipt note above and corrected own C48 row.
+
+### 2026-10-06 11:49 ET - codex-2 C50 T43 final local pair
+
+Candidate96b5b1a7 local final UNIT47FAIL/6459PASS/0ERROR (290.66s), versus fresh
+main3eb47FAIL/6416PASS/0ERROR. Failed-name diff empty after separating one warning
+appended onto the last failed-name summary line; warning remains in raw log and
+no failure is omitted. Raw/hashes are now in #1099's body. Final focused968PASS,
+new43PASS, mutations19assertionRED/20 with dominated origin guard disclosed.
+Both Validate runs are still running; draft retained, not ready/pinned/installed.
+No source/test edits during this frozen final run. Tonight's set unchanged.
+
+### 2026-10-06 11:55 ET - codex-2 C51 T43 ready with both CI receipts
+
+#1099 READY at96b5b1a70bee51a8b4b0dbb6ae8ad0aefc51c144, both Validate SUCCESS,
+each exact headSha verified. Linux6506UNIT passed +86golden/1expected xfail;
+migration, markers and Ruff passed. Raw paths/hashes in C51 and PR body. No
+independent pin yet; no merge/install. The final source head is unchanged from
+C49/C50. Local47failed names match main, no new failures; full quantities and
+the19RED/20 mutation disclosure remain in the PR. Target15:00ET met early.
+ORBPURPLE1 #1098 is also ready, ed7c2c81. KEEPREST1 and CLEARWAIT1 assessment
+disagreements remain genuine stops, no build/PR claimed. Tonight's three-item
+approved set remains unchanged until a separate pin and reviewed plan binding.
+
+### 2026-10-06 12:15 ET - codex-2 C52 IPDN acceptance correction
+
+Independent expanded T43 Step0 agrees on the lost PA1 hold and disagrees with
+the proposed10:40 in-band acceptance. Own quote capture10:40:05-08 asks4.45-4.50,
+currentstop5.0585, stilloutside8%. Currentpaper/OMS cache delivery is not proven
+by capture timing; the tape itself also cannot support a10:40 placement. The
+first named recorded reprice with an in-band price proxy is10:48(4.38/4.73).
+All71 forgottenevents before11:30 reproduced,75by the later pull; events not
+independentpositions. Threeattempts occurafter10:28reprice, notimmediately10:27.
+Experimentaluncommittedsource patch removed; source diffemptyversus96b5b1a.
+#1099 returnedtodraft andassessment158d6879pushed. Expandedbuildstoppedonthis
+standingStep0DISAGREE, asyncacceptancecorrectionasked, notwaitingforinstall.
+No source/switch/ledger/production change. C51 remains a true earlier receipt,
+not a readiness claim for this expanded card. Tonight's reviewed set unchanged.
+
+### 2026-10-06 12:18 ET - codex-2 C53 operator-only holding rule assessment
+
+Own independent source/DB/directbroker assessment agrees with zeroordersAND
+zerofills, and reproduces the existing net-zero shortcut's misclassification
+of cancelledbotorder/roundtrip cases. An unownedSELL remainscritical. IPDNhad
+14Schwaborders and127buy/127selltoday; it cannot receive an operator-only
+symbolwaiver. The directbrokerreadat12:00wasflat; earlier1000holdingunknown.
+MI/NXLcurrent-sessionactivityzero does not retire their historicalbroker-flat
+ledgerdiscrepancies: those are not holdings. Kept existing allowance unchanged
+andaskedforhistoricaldisposition. No rule/gate/source build claimed; noledger,
+incident, service or production write. STEP0.md retains rawrecordhashes and
+distinguishes fourin-memoryexperiments from pytest/full-suite evidence.
+
+### 2026-10-06 12:11 ET - codex-2 C54 OLOX clearance cause control
+
+Fresh c9b13cc4 read and the earlier fixture both contain cleared_at at
+10:15:05.636983, with no no_rebuy. The installed old_buy_proven_clear returns
+true. Direct control on the17 persisted OLOX jobs returns entry_owned=false;
+removing proof from a controlled copy returns true. The11:06 logs and DB
+agree on primary absence despite both placement messages. Live synthetic
+requested jobs and per-leg callback state are unmeasured, so the stated
+clearance cause is disputed, not replaced with another unproven cause.
+Assessment a2ad9423 on #1099 is docs-only; candidate source unchanged from
+96b. Latest IPDN re-attempt wording can retain the hold outside8%, not promise
+10:40 wire placement. Expanded replay/build is not ready. No source, ledger,
+service, install or gate write.
+
+Child attribution watch, limited recorded population: OLOX native child
+NQJA8HO167UPC6IMNNRTIJO24B venue14:29:10.781Z, durable log14:29:12.619Z,
+lag1.838s. Four today WebullSELLfills, one native child; no>60s lag observed
+in that one case. Unreported venue fills remain unmeasured. No child-lag
+anomaly C-row or intervention claimed.
+
+Timestamp correction: my preceding C52/C53 narrative headings mistakenly
+said12:15/12:18 before those times. Their actual recorded commit timestamps
+are12:04:58 (74e1b4b) and12:05:57 (6ae3619e). Own table as-of labels corrected
+to those timestamps; prior narrative retained append-only. T/Mrows, reads,
+boards and decisions untouched.
+
+### 2026-10-06 12:54:54 ET - codex-2 C55 exact ORBPURPLE1 merge
+
+Independently verified the one committed claude-1 pin in607318ab for exact
+ed7c2c81/base3ebde364. Hosted latest independent-review-pin and both Validate
+PASS. Non-admin rebase merge with matched head completed12:54:52ET:
+c21d8274fcd1d3129d61207a33dd7b002a7c9e8c. Main tree
+e01851ac630ebf425de655c5c09dc11ae3c0304e equals pinned head's whole tree.
+No source edits, additional PR commits, flags, restart or production action.
+Four-item after-close install candidate requires a revised literal release;
+ORBPURPLE1's service gate lives in orb-schwab as well as OMS. The earlier
+v2/OMS-only149 draft is not represented as ready for this expanded set.
+Parent remains the C-row writer; sole T43 writer is replaying the recorded
+10:13placed/10:15refused in-memory generation gate. MIRRORHOLD1 has its own
+read-only Step0 lane, not folded into1099. No pin/readiness claim for either.
+
+### 2026-10-06 13:03 ET - codex-2 C56 MIRRORHOLD1 independent denominator
+
+Own frozen12:55:51.850465ET OMS prefix reproduces76forgotten decisions:
+47reauthorization,15proven-no-wire,13caps,1resubmit_accepted. Problem75events
+span7slots/symbol-segments and4names; four requested acceptance segments
+contain66. The76/4/3 reviewer denominator has no stated cutoff and is not
+silently adopted. Parent independently hashed agent's rawrecord845 including
+newline,347178d8; exact lines/sourceprefixhash retained in STEP0.md.
+Lost hold and retry amplification AGREE. Whole-slot three-real-reprice cap
+would exhaust IPDN10:34 before the accepted10:48 firstinband placement;
+proposed scope DISAGREE and clarification asked, no cap waiver/reset/build.
+Counterfactual future Webull fill is not an observed fill. MIRRORHOLD1 remains
+separate from1099, with crash/retirement/perleg isolation still required.
+No database/order/service/production action. T/Board/decision rows untouched.
+
+### 2026-10-06 13:11 ET - codex-2 C57 OLOX generation counter-control
+
+Independent parent process-local replay loads baseline aaac903e's actual
+authorization, ownership and queue methods. The recorded 10:13 primary placed
+job48c765e5 and 10:15 c9b13cc4 refusal are fed into a reconstructed strategy
+cache at10:16:03. Primary generation equals the prior replacement generation,
+resting_active=true, primaryquantity=0, _rpg_entry_owned=false, but the separate
+placed-generation predicate=true: zero primary and zero mirror drafts. Breaking
+ONLY the primary generation equality produces one primary and zero mirror
+drafts. Counter-control passes; this identifies the gate within that replay,
+not the uncaptured live cache or an observed re-placement. The surviving mirror,
+quote continuation and cache retention are controlled and explicitly disclosed.
+Raw /tmp/codex-t43-parent-generation-countercontrol.log sha256
+c7ca71a7ef9aca97cc1b7a7f4525daeaa15566098d678319198390c5f0210913;
+script /tmp/codex-t43-parent-generation-replay.py sha256
+a9e9fa40392adc2d609760adfa9d3a38d69c6b22ed8afc394f39b9c7af6cdb3b.
+The candidate is NOT READY: focused314pass/1cancelled-restartfailure, plus an
+inactive/different-generation ownership safety blocker. Complete baseline3eb
+47fail6416pass receipt retained; interrupted candidatefull1452pass receipt is
+excluded, no final paired result. Zeno remains sole source/test writer and
+resumes the narrow proof fix. Parent edits only this C-row and append-only log;
+no production, ledger, M/T/Board/decision change, no MIRROR expansion.
+
+### 2026-10-06 13:13 ET - codex-2 C58 four-item policy checkpoint
+
+Pushed plan d125cbeb10e0731ea0a639126d8d18b7348ad675 on
+codex/1006-after-close-install-plan binds c21d8274/e01851ac and151checks,
+three true env additions, v2/OMS/orb-schwab only. Parent independently reran
+197 policy/contract tests PASS0.70s; agent retains8new+11existing assertion-RED
+mutations and source hashes in BUILD_STATUS_2026-10-06.md. Exact dated
+operatorIPDN1000 is not inferred from netzero and MI/NXL are unchanged.
+Actual12:59:25ET132/66 bot books and OLOX pending rows still block, and positive
+live1000 activation is UNMEASURED. No full literal runner, immutable release,
+tested row47 exception, installed daily timer or remote staging receipt is
+claimed. Kant continues sole mechanics writer. Existing after-close Codex
+wake-up now names the four-item exact candidate and checkpoint, preserving
+same scheduling/notification intent; it is NOT a box job. No production write,
+restart, ledger change or trade. #1099/MIRROR/#1100/RETRYOFF remain excluded.
+
+### 2026-10-06 13:25 ET - codex-2 C59 legacy recovery blocker
+
+Own counter-control confirms the OLOX placed-generation gate, not live cache
+causation. A second safety read finds the proposed marker guard has no recovery
+for recorded SCKTrefused/terminal_accounted6fb89c93/889889cd. Journalfeedback
+rejectsrefused, activephase retry rejectsrefused, and OMSadmission does not
+mirror the v2 marker guard. Solewriter independently agrees: historical SCKT
+assertion now expecting blocking is not a completed recovery solution.
+STOP before source commit/push; preserved work is not ready despite1077focused
+and35assertion-RED. Actualfinalmainc21 baseline47FAIL6447PASS completed;
+candidatefullincomplete/excluded. OLOX_IN_MEMORY_ASSESSMENT_2026-10-06.md holds
+raw hashes, source delta7262df5e and a boundedproof-only disposition for review:
+exactclient/generation/account/CAS, terminalzero or auditednowire, consistent
+OMS/v2, no historicalBUYreplay/timer/ageclear/purge/ledgerwrite. Parent C-row
+and append-onlylog only; no production or T/Board/decision edits.
+
+### 2026-10-06 13:34 ET - codex-2 C60 RETRYOFF1 counterexample and parallel claims
+
+Operator no-second-buy card accepted; requested env-only mechanism independently
+fails. Exact-main false flag preserves confirmation-only reset at source1907:
+recorded OLOX row/opportunity/slot and stored12:20bar yield idle owner and a
+primary/mirror draft on the12:21 offline decision. Recorded live log shows the
+same close/release/next placement but is not substituted for a false-flag run.
+27 exact-main retry tests pass, including explicit legacy OFF confirmation
+reset assertion. STEP0_2026-10-06.md records all raw hashes and controlled-gate
+boundaries. Plan writer warned: removal remains blocked on acceptance, no
+production write or trading-source workaround. Separate reviewed fix question
+asked. CLEARWAIT widened own Step0/build, WEBULL429 readonly Step0 and #1100
+display correction proceed under distinct sole writers. #1099/MIRROR blockers
+remain; no T rows, Boards or open decisions changed.
+
+### 2026-10-06 13:41 ET - codex-2 C61 widened CLEARWAIT1 evidence
+
+Released Step0 a2de4ec0 on its own branch: six removal markers today belong to
+three episodes; full retained63markers/11sessions/43episodes versus requested62.
+Raw bounded capture13:30:13.519782ET/hash09de1528 verified. XHG's one rejected
+row does not settle its exact_old_order_unproven ticket. AIFA later cancel
+generations end11:22:09, so11:22:11 is not a settled15second proof. Card agrees
+when unknown remains blocked; six clean re-adds are not promised by hiding
+these controls. Solewriter now proceeds safe implementation, target17:00
+conditional on immutable baseline/fullpair/CI; evidence-only head is not PR
+ready. Parent corrects RETRYOFF report method name to
+_apply_flip_position_evidence; result unchanged. No production write.
+
+Clock correction, recorded from UTC tool 2026-10-06 17:33:30 UTC: the C61
+heading above accidentally said13:41ET; it was published by13:33ET, not a
+future receipt. Its actual raw capture is13:30:13.519782ET as printed in C61.
+C60 assessment as-of corrected to13:33ET. Append-only history retained.
+
+### 2026-10-06 13:40 ET - codex-2 C62 ORBPAGE1 follow-up pushed
+
+#1100 at9201a0b7, follow-up above02c52769/no rebase, only control-plane display,
+display tests and scoped receipts. Owned virtual book retains accepted
+strategy+account attribution. HOLDING refresh continues to16, then pauses
+without falselyclaimingSESSIONCOMPLETE; flat after10 iscomplete. Tape permits
+today's16:00:00 and rejects later/fractional labels. Fresh102focusedPASS;
+untouchedbase3eb47FAIL6416PASS vshead47FAIL6447PASS, parent independently
+compared all47failednames with added/removed empty. CI at13:40:05ET remains
+inprogress on both Validate runs, PR stilldraft; no ready/pin/install claim.
+Solewriter freezesexacthead and marksready onlywithgreenCI. No production
+action, realcron, tradingcode, exitlogic, env or ledger change.
+
+### 2026-10-06 13:40 ET - codex-2 C63 WEBULL429 independent assessment
+
+Pushed docs-only2db8eb1f, no PR/runtimebuild. Parent independently verifies
+rawcompanionhashddfdb153 and freshOMS362892 /proc ordersync15s; native30 uses
+unchangedsource-default. Retained SDKrequest-ID3039detail429; today's13:15
+count101matches. Fresh frozen13:34:21.700322ET prefix131detail429 partitions
+128exact-clientmatchedfallback, oneAIFAnormalfetchhardfail and twoRPGstrict
+unknowns. All-code attack changes the causal claims: zeroSDKcancel429 in
+retainedcoverage, threecancel417today; Sep22rotation871isallSDKerrors, not
+detail429, andOct3rotation408includes two417cancelerrors. Dates reflectevent
+time separatelyfromrotatedfilenames. AIXI09:36softwareclose2.800s vs OLOX
+10:29existingchildfillresolved0.733s; no softwareexitwire claimforOLOX, no
+afterlatency withoutbuild. Readplan retains exactownership/2scache/firstFILLED/
+partialfills/strictRPG/EOD and budgets pagination plus durable terminalproof.
+DISAGREE cancelcause means no cancelbuild; seek correctedscope/disposition,
+not a rate-limit workaround for417. No source/prod/ledger/Redis changes.
+
+### 2026-10-06 13:47 ET - codex-2 C64 released recovery and mirror builds CLAIM
+
+Newest reviewer disposition releases #1099 bounded proof-only recovery and
+MIRRORHOLD1 submission counter. Zeno remains sole #1099 writer on the existing
+codex/rpg-one-leg-rest-recovery worktree, with all dirty work preserved;
+Archimedes takes a separate MIRROR build after completing WEBULL Step0. Parent
+independent source read confirms the second placed-generation gate, both RPG
+forget paths, the same-slot new_mirror_attempt retirement and queue-time
+attempt increment. Tests must cover all of those, not merely remove two calls.
+Current/legacy recovery consumes one OMS proof policy with exact-order and
+generation CAS; fill evidence remains owned, no age/absence or marker waiver.
+Outside8% is a free hold; only actual Webull submissions count toward the
+retained resubmit cap. Unknown queue/dispatch and cancellation must remain
+fenced. Recorded counterfactual placement is not an actual Webull fill receipt.
+No production, database, service, flag, ledger or installation change. Existing
+RETRYOFF acceptance disagreement and WEBULL cancel-cause disagreement remain
+unresolved; this release does not authorize either unrelated source change.
+
+### 2026-10-06 13:48 ET - codex-2 C65 ORBPAGE1 ready for review
+
+Parent GitHub read13:48:16ET confirms head9201a0b7, draftfalse, pushValidate
+37505243181SUCCESS17:46:54Z and PRValidate37505251346SUCCESS17:45:36Z.
+Hosted golden gates86PASS1xfailed; local fresh pair retains47failednames
+unchanged,6416base/6447headpasses. Parent explicitly imports the isolated
+worktree source and runs all control-plane tests99PASS5.21s. Earlier two-test
+probe lacked PYTHONPATH and is excluded from source verification. Frozen
+follow-up scope is display/tests/receipts only; current independent-review-pin
+failure is missing fresh reviewer record. No self-pin, merge or deployment.
+
+### 2026-10-06 13:54 ET - codex-2 C66 MIRRORHOLD1 plan receipt and proof controls
+
+Parent read of committed PLAN.md and origin confirms plan-only629703f8 on
+codex/mirrorhold1/basec21, solewriter Archimedes. Subsequent cap ruling resolves
+old whole-slot contradiction only. Initial submission plus three actual
+resubmissions, distance/auth/queue/localrisk free; no price/nonce budget reset.
+No new runtime proof, counterfactual venue fill or PM recovery claim. Historical
+AIXI09:57 terminal cancellation remains UNMEASURED: recorded earlier cancels
+are reprices, not terminal segment retirement. Build resumes in isolation,
+without production actions or holding tonight's reviewed install. Parent
+readonly #1099 draft review requires exact identity, same-phase/new-revision
+callback and terminal-proof/current-fill atomicity tests; filling between proof
+read and CAS must not release a buy. These are development controls, not a
+finding about an already frozen ready head or installed code.
+
+### 2026-10-06 14:09 ET - codex-2 C67 strict proof checkpoint, no ready head
+
+Parent independently verifies completed strict-focus log12FAIL/160PASS54.32s,
+sha3a155fab09d6d1e2a37a4a61b3e398b08f0a41d75ba519006040f250ee2b7f77.
+The12 failed cases include OLOX chain/same-phase receipt, first-slot/sibling
+ROUNDUP isolation, bounded replacement read, four AIXI/OLOX absent-leg replays
+and both all14 startup windows. Writer recovered exact c9/AIXI audits via
+bounded read-only reads, but their new integration is not yet rerun. Three
+validation groups remain: B1 coherent focused/census proof; B2 current-source
+assertion mutations and safety controls; B3 frozen full pair/failed names/new
+CI. Prior119PASS/35RED do not validate this newer source. No defensible ready
+ETA or new head is claimed. Writer resumed released work after checkpoint,
+sole branch owner; parent will not overwrite or weaken its tests. Live-cache
+causation and PostgreSQL concurrency remain UNMEASURED. Production untouched;
+no source merge or install is authorized by this checkpoint.
+
+### 2026-10-06 14:48 ET - codex-2 C68 corrected retry budget and read build CLAIM
+
+Reviewer corrects RETRYOFF1 to enabled=true/max_retries=0; parent owns recorded
+OLOX/IPDN replays and fresh-SELL reset control before plan adoption. The prior
+flag-OFF counterexample remains historical and is not overwritten. Avicenna is
+solewriter for the content-equal #1100 rebase onto c21; no self-pin or merge.
+Sagan is solewriter for WEBULL429 list-primary ordinary reads, after cancel429
+claim withdrawal; cancel path stays unchanged. Kant owns install mechanics and
+awaits actual retry replay evidence. No production, broker-wire or ledger action.
+
+### 2026-10-06 14:49 ET - codex-2 C69/C70 completed replay and pure rebase
+
+Corrected enabled=true/max0 offline replay passes33checks on mainc21 with
+verified isolated source import. OLOX12:21 and IPDN12:17 block both second
+drafts; budget1 emits both and the setting mutation fails both assertions.
+FreshIPDNSELL11:41 clears prior consumed episode and resets0; first11:44rest
+drafts both. Own IPDN11:5x label correction: it was waiting in a freshcycle,
+not an oldcycle retry. Real forbidden retry followed12:16confirmationclose.
+Bundled recorded receipts and executable docs replay preserve controlled-gate
+limitations; no live-cache, fullsession or brokerwire claim. Kant informed.
+#1100 pure rebase56c9357b onto c21 has3equal commits/empty scoped contentdiff,
+102focusedPASS; fresh exacthead pin and newValidatepending. No production action.
+
+### 2026-10-06 15:00 ET - codex-2 C71 pin verified, crash not bypassed, bracket CLAIM
+
+Parent reads committed exacthead #1100 record and hosted latest pinPASS.
+OneValidate passes; otherattempt1 actually crashes with139 in SQLiteORMworker
+threads, not an assertion failure and not proven infrastructure. Sameheadfailed
+job rerun authorized by ordinarymechanics, no source/pin/head change. No merge
+before green. Parent reads correctedzero-budget localplan11082f4: includedtrue
+enabled/max0; runnerintegrationpending and oldmanifesthistorical. Solewriter
+asked to publishaccessiblecheckpoint. Bracketparity Step0 is read-only: direct
+exact IPDN child plus MOBX parent/child, owningrule/history and retainedbuying-
+powerrefusalcount. No tradingbuild, production/env/order/ledger action.
+
+### 2026-10-06 14:59:11 ET - codex-2 C71 time-label correction
+
+The preceding C71 heading15:00 was rounded ahead, not an observed as-of time.
+Actual toolclock/read receipt was14:58:58ET; Crow corrected to that value.
+Evidence, result and no-production disposition unchanged. This note preserves
+the original append-only narrative rather than rewriting its heading.
+
+### 2026-10-06 15:01:14 ET - codex-2 C72 zero catalog published, scope surfaced
+
+Parent independently verifies remoteplan4e8d7ee2 and committed catalog/tests.
+Retainsall151previouschecks plus two explicitmax0processchecks, total153;
+enabledtrueunchanged. Agent484PASS/19specificchecks; independentparentrerun
+running, not reportedcomplete. Literalintegration/newimmutablemanifestpending.
+#1100needscontrolprocessrestart toload displaycode (reloadFalse/noExecReload),
+outside prior three-owner runner; useraskedone extra restart vs lateractivation.
+No silent restartadoption. SameheadValidatecrash rerun stillactive; mergepending.
+No productionwrite, serviceaction or broker/ledger change.
+
+### 2026-10-06 15:04:24 ET - codex-2 C73 exact-head ORBPAGE merge
+
+#1100 rebase-merged4805ddc8 only after fresh56c9357b/c21 identities, independent
+local/hostedpinPASS and both hostedValidateSUCCESS. PriorPRattempt139SQLitecrash
+rerunpassedonunchangedhead, no assertion/source/pin bypass. MainwholeTREE
+4248057079864f93066a69f355e2607840c701b9 equals pinnedtree. Parentindependent
+plan4e8d mechanics/catalogsuite484PASS18.37s, WTcleanatcompletion; laterdirty
+runnerchangesdo notborrowthisreceipt. LiteralplanwriterinformedactualAPP/tree,
+controlactivationquestionpending. Productionremains7823; noinstallrestart/env.
+
+### 2026-10-06 15:08:09 ET - codex-2 C74 read-only bracket target parity
+
+Parent reads sanitized exact broker trees/receipt and deployed7823 source.
+IPDN final target LIMIT4.55, executed4.56; original4.63 ->4.61 at14:34:25 ->
+4.55 at14:37:59. Same effective5/8 settings do not mean same actual-fill
+targets: Schwab uses reference4.4101 cent-rounded, Webull actualfill4.42.
+MOBX reference1.1315 gives target1.19 vs Webull actualfill1.13 target1.1865.
+Replacement actor/rule is UNMEASURED. Only adapterPUT pathfound requiresORB;
+this negative source evidence does not prove manual action. Codeformula dates
+July22/Aug13 are not firstproductionoverride dates, which remainunmeasured.
+Three serialized2s exactGETs, readonlyboundedDB and lowpriorityboundedlogs;
+no broker order/token/service/env/Redis/ledger write or exitbuild. Preserved
+sanitizedrawfiles and Step0 in docs/review-artifacts/bracket-target-parity.
+MOBX-only powercount one dedupattempt is not globalfour; allsymbolcensusrequested.
+
+### 2026-10-06 15:08:52 ET - codex-2 C75 all-symbol buying-power count
+
+AllsymbolreadonlyretainedOMSscan completed15:08:19ET,31files117930344B,
+6.12seconds within128MiB/15s. Threeuniqueclientids todayMOBX1/OLOX2;
+zeroearlierretainedmatches. Sixunidentifiedtracebacklines remainunattributed,
+not a fourthorder; user'sfourglobal isUNMEASURED, not disproven. Parent source
+sweep finds no live buying-power reader; proposes onlyfreshaccountread/serial
+pendingreservation shape. No buildlane/sizingchange/releaseinclusion authorized.
+Rawscan preserved with sanitizedlines/hash besidebracketassessment.
+
+### 2026-10-06 15:12:42 ET - codex-2 C76 immutable retry-zero runner verified
+
+Planwriter publishes a69sourceplan/fce metadatareceipt, cleanremoteverified.
+APP4805/tree4248 bound; eightPMswitches plusORBPURPLEON, maxretry0/trueenabled
+retained, isolated153catalog. Parentindependentjobdir568PASS29.58seconds;
+regeneratesmanifest froma69committedblobs exacta62e2799 and independentlychecks
+24artifact/18apphashes. Agent14inmemorycontrolmutantsassertionRED. No fake
+systemd/process fixtures claimedlive. Controlactionnotauthorized: displaycode
+incheckoutonly; pendinguserdisposition. Onlyv2/OMS/orb-schwab scopedonce.
+Actualaftercloseadmission/newticketcensus/holdings remainmandatory; paper
+151/153UNKNOWN2 notgreen. No boxstage/approval/service/env/DB/Redis/ledger action.
+
+### 2026-10-06 15:26 ET - codex-2 C77 released lanes and control disposition
+
+CLAIM KEEPREST1 on codex/keeprest1-frozen-buy-after-flip and operator holdings on
+codex/operator-holdings-classifier. WBPOWER1 assigned to existing worker on
+codex/wbpower1; all six workers active, two additional spawn requests refused
+by the agent limit and no extra workers claimed. Reviewer explicitly approves
+one control restart for Install 1; the sole plan writer is updating the literal
+runner, page proof and hashes. Current bounded DB read at 15:22:35 ET has APUS78
+and MOBX504 with bot activity, not operator-only. Fresh direct flat checks still
+required. CLEARWAIT's absent-row/unknown-submit edge is a real safety finding;
+the writer is building positive-proof handling, not weakening ownership.
+
+### 2026-10-06 15:31 ET - codex-2 C78 bracket source remains unmeasured
+
+Own two exact-child GET receipts at15:21 confirm replacement4.61 andfilled4.55,
+but expose venues ratherthan API/manualorigin. Tag present/uninterpreted;
+no inference of manual action or software action. Reference/fillbase PARKED
+perreviewer. WBPOWER3distinctcount accepted andlane released, but no retained
+availablepowerresponse proves safe fundsfield; worker verifying read-only.
+No productionwrite. KEEPREST sole-writer implementation transferred to existing
+worker after its WBPOWER assessment; parent remains holdings/production/handoff
+owner. No parallel edits on the KEEPREST checkout.
+
+### 2026-10-06 15:33 ET - codex-2 C79 tag follow-up and mutation correction
+
+Broker tag measured15:32:48-51 asAPI_TOS:TraderAPI onbothreplacementorders;
+no proofwhichclient/person, notattributedtooursoftware. Parent auditsMIRRORHOLD
+mutationraw: lastcontrol isRuntimeError missingclasscell, notsemanticRED.
+11/11claimwithdrawn publiclyandinPRcomment6023938890; worker fixingharness
+withouttradingcodechange. Fullpair/Validate evidence remainsseparate.
+Clock clarification: preceding C78 narrative heading15:31 was a display-label
+error; the original broker receiptas-of15:21:25-28 and its hash are authoritative.
+No productionwrite; holds/incompleteproof remainblocking.
+
+### 2026-10-06 15:46 ET - codex-2 C80/C81 real admission and lifecycle blockers
+
+Install1 source121f8e09 binds application4805ddc8 and its exact tree; parent
+committed-blob package regeneration matches manifestb36f1238, all26 artifact
+and20 app hashes, and672 job tests pass. This is local mechanics evidence,
+not runtime admission. Read-only PG census15:42ET has102 tickets, not the
+reviewed14, and exceedsMAX_ROWS64. No phase/date filter may hide them.
+Correct15:44 projection uses old.broker_account_name and old.metadata for
+generation/target identity; the earlier projection's null old.account fields
+are NOT evidence of malformed live tickets. Payload footprint551968bytes.
+Unknown AIXI/XHG and placed OLOX require proof, not age or journal edits.
+STOP before staging/approval/production writes; expanded census review needed.
+
+Independent WEBULL429 fakeSDK/SQLite integration probe drives existing adapter
+report through real OMS store functions: cancelled partial-fill report records
+fill1 but retains an open partially_filled order and intent. The terminal
+metadata is not consumed by OMS. PRcomment6024079645 records this real blocker;
+worker owns a source correction and end-to-end idempotence tests before ready.
+No live broker submit, service action, persistence write or ledger adjustment.
+
+### 2026-10-06 15:48 ET - codex-2 C82 exact frozen census refusal
+
+Executed only committed121f census helper over SSH stdin/nice19 with bytecode
+disabled. Receipt at15:47:29: source7823 exact module checked; read-only
+repeatable-read SQL; all-datecount103; rc2 with exact line
+"all-date journal exceeds 64-row bound". No broker reads reached, no disk
+staging/approval/service/source/env/ledger/token writes. Keep UNKNOWN/bound
+disposition rather than label ownership or individual tickets measured clear.
+Expanded population requires review; no live-state adoption or omitted phases.
+
+### 2026-10-06 15:49 ET - codex-2 C83/C84 exact heads and semantic proof
+
+1099 source-review ready atf4e2d4ed, pure8commit rebase onto4805, bothCIgreen.
+Own current50raw mutation log audit: each named assertion/FAILED test, no
+runtime/setup errors. Same-environment currentunitpair47failednames identical;
+do not call an earlier56baseline resolved. Two mark-ready GraphQL calls failed
+server-side; reread confirmsdrafttrue. No branch write or pin bypass to fix it.
+
+1102 e1cf2164 independently reproduced11semantic assertion kills with GREEN
+controls, no harness/runtime errors. Only harness/report changed over107252ac;
+the original __class__ closure retained so super calls are real. Exacthead
+hostedValidatex2 green, pin absent. This restores semantic evidence, not live
+counterfactual IPDN fill or combinedT43 source proof. No production action.
+
+### 2026-10-06 15:52 ET - codex-2 C85 terminal-partial fix controls
+
+78ee3503 follows the real parent false-live-remainder finding. Parent read
+adapter/store/service changes and independently ran145focused adapter/store/
+OWNMIX controls, PASS11.52s. Broker terminal order/intent remains terminal,
+cumulative executions land once, and exact owned managed row retains its fill;
+repeated poll and completed sell do not reopen an old remainder. These fakeSDK/
+SQLite controls are not invented historical execution evidence. FreshheadCI
+and finalunitpair/pin pending; oldcfe results cannot certify78ee. No production
+write. Expanded103ticketcensus still blocksInstall1 before staging.
+
+### 2026-10-06 15:54 ET - codex-2 C86 WBPOWER exact contract blocker
+
+WBPOWER evidenceheadde30fc63, no runtime source or PR. Reused previousowner's
+completed15:27ET USDGET, not a second independently issued broker request:
+HTTP200/488bytes, legacy margin_power451.405 and cash_power0. Parent verified
+official Webull account-balance reference/Markdown: different supported route
+/trading/assets/balances/get has day_buying_power and reserved-order margin
+fields; this does not certify a legacy alias or reservation subtraction.
+Do not treat a presentbalance as historical MOBX/IPDN funds or an exitprice as
+a MARKET wire bound. AGREE bug/card, UNMEASURED exact availablepower/reservation
+and finalMARKETbasis; building a permit from those guesses is unsafe.
+Parent authorized one bounded documented-route assessment only after previous
+GETcomplete, if SDK/signing supported, no authrefresh/hiddenretry. No codebuild,
+unitpair, CI, ALLON or mutation receipt claimed for this evidence-only lane.
+
+### 2026-10-06 16:00 ET - codex-2 C87 after-close wake-up refusal
+
+Exact121f frozen census helper run read-only afterclose: completed16:00:45ET,
+source7823 verified, count103, rc2 with "all-date journal exceeds 64-row bound".
+No broker calls reached, no production staging/source/env/service/ledger write.
+Saved wake-up names an older c21 three-service scope and forbids the later
+explicit control/retry-zero additions; neither version bypasses this real
+population blocker. No conflicting-scope deployment or moving-main adoption.
+Deleted only Codex one-shot oct-6-evening-preopen-timer-build-and-install after
+verifiedrefusal as instructed. App deletion confirmed; no rootdailytimer or
+boxjob created/changed and no installCOMPLETE claim. Expanded review remains
+required before any executable census enlargement or ticket clearance.
+
+### 2026-10-06 16:24 ET - codex-2 C88 updated phase gate and retained proof stop
+
+Latest human ruling replaces the14-ticket/64-row semantic gate. Own read
+16:13:31ET captures103 rows:80refused,11expired,10filled,2held_unknown; zero
+requested/price_wait/submitting. Full payload/phase evidence is on sourceplan
+327a2faef665cfe42094cbd6833499cb27ce5746. Two unknowns remain unknown; no
+ticket row is edited. New capture validates bytes/count/IDs and rejects an
+immutable binding/replacement change or terminal revival while allowing existing
+accounting transitions. No new buy activity after install start is permitted.
+Job693PASS46.62s; exactAPP4805 combined allON+ORBPURPLE72PASS4.16s under tested
+retryenabledtrue/max0. Both raw restart gates GO16:18; v2 uses the already
+reviewed clock-only override, armed0, managed0. Own strict-flat16:15 both
+direct accounts empty, all managed/virtual/account books empty, exactMI/NXL
+allowances unchanged. Expanded SQL95linked parents/170intents/nonterminal0.
+Direct historical parent audit stops after24proofs: OLOXb95fc559 and MOBX07bc532a
+rejected rows lack brokerid. They are not called terminal-proven. Asked for
+exact-item disposition with fresh complete working-order/zero-fill/open-row
+proofs; no answer assumed. Local27-artifact manifestc2463262798d3817e4dc9c9654bf33db225dd7747f5b4c5a4ab5249eafd39e95,
+no production stage/approval/source/env/service/timer/ledger action.
+Schema0022 unchanged; literal collector/daily command now explicitly declares
+no-schema-change. Historical Webull read budget600s/2sspacing; fresh direct
+flatness repeated last before actions. This is not an install-start orCOMPLETE
+receipt. EarlierC87 refusal remains historical evidence, not currentphase rule.
+
+### 2026-10-06 16:28 ET - codex-2 C89 ready Install2 heads
+
+Parent hosted reads confirm KEEPREST1 #1104 exact030df3d2 and both Validate
+SUCCESS; own53PASS1.04s in recorded-replay+mutation files. Worker unitpair
+6478/47 vs6531/same47, not prior56resolved. #1099 markready succeeds now,
+unchangedf4e2d4e and isDraft=false confirmed; priorGraphQL errors preserved.
+#1102 e1cf2164 remainsready, bothValidategreen, independentpinabsent.
+Holdings #1103 da187b75 draft has greenValidatepair and controlled31semantic
+mutations workerreported, but actual Install2 typed-gate caller still missing.
+Assigned a separate solewriter branch for that caller/draftplan only; current
+Install1 source/production remain parentowned. WEBULL429 andCLEARWAIT inherited
+after-close clock-sensitive SCKT tests require exact recorded in-window test
+clocks; authorized tests-only corrections, no assertions loosened/sourcegate
+changed. All Install2 lanes remain unpinned/unmerged/uninstalled.
+
+### 2026-10-06 16:21 ET - codex-2 C90 MOBX exact child read
+
+Own readonly DB identifies504-share late exit1008197739975 at15:34:46ET,
+fill1.185, owned entryb985974f44f8/parent1008196842877 bought504@1.18 at14:59:50.
+Persisted bracket target1.24/stop1.09/reference1.1834. Exact broker GET16:19:31
+returns FILLED/limit1.18/tagAPI_TOS:TraderAPI. Initial comparison526-share
+child1008195341839 limit1.19/tagTA_ prefix. No refresh, order mutation or token
+write. Replacement history collections are absent from these exact responses;
+no complete chain or client/person identity claimed. Same measured channel tag
+as the IPDN replacements is not proof of who made the change. Exit behaviour
+not built; reference/fill base difference remains parked per disposition.
+
+### 2026-10-06 16:29 ET - codex-2 C91 WBPOWER1 parked with prior read disclosed
+
+Latest human ruling parks WBPOWER1. Worker confirmed no outstanding GET and
+no further reads today. Parent verified5c5cf215 receipt for the one previously
+authorized GET completed15:57:20ET, before the park: documented route
+/trading/assets/balances/get/x-versionv3 HTTP200/actual595response bytes,
+selectedUSDday_buying_power750.93. Signed query configuredaccount identity
+checked; responseaccountidentity field absent, not invented. No refresh/retry,
+file/env/service/order write. This measures current field presence, not the
+14:47/14:32 power or reservation semantics, so no placement-rule build. No
+alias/subtraction inference. Tomorrow's known-reject proof remains required;
+do not repeat the already completed read under an obsolete today authorization.
+
+### 2026-10-06 17:07 ET - codex-2 C92 terminal reject proof source discrepancy
+
+Latest narrow terminal-no-broker-ID disposition independently checked. Three
+Webull HTTP417 submit rejections have matching events and zero fills. Complete
+bounded list-today returned86 orders over two pages, no working OLOX/MOBX.
+Schwab OLOXb95fc559 has no matching broker_order_events by either exact order
+or client ID; the exact linked rejected intent instead records client_abort
+and rpg_stale_strategy_authorization. This differs from the specified evidence
+source, not a broker holding. Clarification requested before admitting it;
+no fabricated event or status-only waiver. Install1 not started; production
+unchanged. Install2 merges held until completion. MIRRORHOLD1 catalog-only
+expectedtrue change delegated to its solewriter under latest condition.
+
+### 2026-10-06 17:09 ET - codex-2 C93 MIRRORHOLD1 requested catalog delta
+
+Solewriter pushed63ae33d009fd6e29b862667e4142bf4e31b33a93 atopreviewede1cf2164,
+onlyexpected_flags.json expectedtrue and operatorruling. Parent verifiedstat.
+Catalogvalidation/ON-OFF checks pass; test_expected_flags_check.py:60 still
+expectsfalse, so catalogsuite55PASS/1FAIL, not greenCI. One-change-only request
+preserved; no source/rebase/production write. Exacthead sent for disposition.
+
+### 2026-10-06 17:25 ET - codex-2 C94-C96 attended Install1 and ready heads
+
+Clarification admits exact client-abort intent; own fullbroker rehearsal103
+tickets/zeroinflight/95terminal linkedparents and4no-ID proofsrc0 at17:18.
+Initial-only mechanics stops retained, no service action: fetchcandidate objects,
+prove omitted Redis/Postgres EnvironmentFiles as typedemptyD-Bus arrays,
+normalize literal localhost::1/128 to exacthostidentity. Materialize protected
+append-only hashreceipt journal and COMPLETE marker. Current frozen source
+2012b090/manifest09dae897 staged27hashesPASS; attendedinitial OMS/strategy
+checks rc0 at17:24:52/17:25:17. Not COMPLETE. All4scope owners plus control
+only; no newtradingcode, migration or otherrestart. Tests-only complete-harness
+fixture lacked plan_commit after journal addition; refresh fullmanifestfield,
+not runtime fallback or weakened production binding. Actual release remains
+2012b090. Sideworkers#1102 requestedassertions97PASS new97e2ba74; WEBULL429
+e624ed13 andCLEARWAIT6c1846a4 have bothValidategreen and are readyforreview.
+RESERVE34b6bb5b pinPASS butValidatex2FAIL on inheritedSCKT hostclock; no bypass
+or pinnedbranchrewrite. Install2 merges remain behind Install1reportedCOMPLETE.
+
+### 2026-10-06 17:29 ET - codex-2 C97 real unreadable-source stop
+
+Attended2012b090 initialonly STOP17:28:08ET after three strategy strict-flat
+TimeoutError/rc2 reads,60s between completedattempt and nextread. OMScheck
+passed; exact source of timeout not proved. No fourthread or recovery under
+the stop condition. Abortadapterrc0/confirmedtrue. All4targets remain oldactive
+PIDs/NRestarts0; ownpostcheck7823clean andenvunchanged. No app/catalog/preopen/
+dailyunitwrite, noCOMPLETE. Runtime release09dae897/runner4b3728d9 retained;
+actualartifact harness734PASS, tests-only requiredplanfixture refreshcb6d54cc,
+no deployedsourcechange. Earlier terminal-reject/fullbroker proof not reused
+as currentflatness. #1102 exact97e2ba74 authorizedassertions97PASS but both
+ValidateFAIL on same inheritedSCKT wallclockcase as pinned#1106. No bypass,
+branchrewrite or Install2merge. Receipt lists fullpaths andhashes.
+
+### 2026-10-06 17:36 ET - codex-2 C98 authorized attended rerun
+
+Reviewer17:32 fresh strategy/OMS rc0 reads authorize a new exclusive attempt.
+Started17:35ET at roundup1-install1-20261006-2012b090-retry1736 after all27
+artifact hashes matched unchanged2012 manifest09dae897. Initial gates only,
+not a completion claim. Previous STOP remains preserved. Real.command already
+captures stdout/stderr independently on every helper attempt; prior stderr
+states TimeoutError, not the source of that timeout. No diagnosis substituted.
+#1102 solewriter now pins inherited SCKT replay clock to recordedRTH per user;
+no source change, no rebase, no main merge during Install1. After COMPLETE,
+reviewer pins#1102 first, then three other pinned patches rebase for freshpins.
+
+### 2026-10-06 17:38 ET - codex-2 C99 clock fix and raw receipt tests
+
+#1102 b67ca775257604f670c19164476c1afcccc81283 pushed directly atop97e2ba74,
+test-only recordedSCKT RTH clock420PASS; both Validate running/freshpin owed.
+Parent actualReal.reader receipt tests cover rc2then0, rc2three times and rc1
+immediate refusal, retaining every stdout/stderr/exitcode. Full runner737PASS
+41.30s; plan4c4faf13 tests-only, staged2012runtime unchanged. Currentattended
+attempt OMS/strategy rc0, census pending, no service action/COMPLETE claim.
+
+### 2026-10-06 17:44 ET - codex-2 C100 shared-state mechanical correction
+
+Fresh authorized attempt passed flat/census/Redis/OMSgate, recovered one flat
+UNKNOWN with the 60s retry, then STOPPED17:41 initial0 on newestsharedstate
+being ORB. Exact own read/source confirms expected shared publisher. No app
+write/action; oldidentities/env retained. Only boundedhelper selection changed,
+25COUNT1/read-only/262144Bperentry, strictv2zeroarmed identity/freshness remains.
+35focused/full744PASS; exactb763/manifest2bd128 staged27hashverified and new
+exclusiveattended attempt begun. PriorSTOP preserved, no COMPLETEclaim.
+#1102b67 bothValidategreen; reviewerfreshpin awaited; mainhold duringInstall1.
+
+### 2026-10-06 18:36 ET - codex-2 C101 bounded control proof mechanics
+
+b763attempt stopped17:48 initial0actions; originalPIDs/7823clean/envretained.
+Controlproof concealed Stopmessage; no recovery/action occurred. Ownhealth
+read proves DB/Redis connected/errorsnone/control-plane, solecontrol2916 and
+OMSrefreshdisabled. BoundedoverviewHTTP2001538579B17.84s/healthyrefresher makes
+old512KB/10s read envelope invalid. 465c0a76 onlyraises overview to2MB/30s,
+preserves otherendpoint512KB/10s and everyhealth/identity/freshnesscheck,
+distinguishes measuredStop1 fromunreadable2 anduses3reads60s on2only.
+Freshread-onlycontrolrehearsalPASS/f67b1b15, focused105PASS. Fullharnessstill
+running controlledfailure60s pauses; no staging/executionclaim beforePASS.
+Manifest0b7238c1/approvalf391dc3d exactcommittedblobs regenerated locally;
+same4805candidate/env/sequence, no application/MI-NXL changes.
+
+2026-10-06 18:57 ET codex-2 C102: reviewer18:47 withdrew control owner/page
+admission. Current runner proves three application services before the one
+control restart, then GET /bot/orb LIVE/SCHWAB only. No overview/token/owner
+or exactJAGX-count gate runs. Full753PASS, focused198PASS; new runtime725e4045
+and tests-only01ed2458 published. Manifestb1b81166 bound to app4805 and all27
+artifacts verified on box; approval75b4a125 under standing mechanics authority.
+Attended runner started18:56; /home/trader/roundup1-install1-20261006-01ed2458/
+runner.log and numbered rawstdout/stderr receipts retained. NOT COMPLETE;
+no Install2 merge or source trading change, no rollback/recovery authority.
+
+2026-10-06 19:14 ET codex-2 C103: attended Install1 STOP19:11:44 at
+stop-orb-schwab/rc1 exact CancelledError missing. Source4805clean/envadvanced,
+v2 stopped19:09:01; orb-schwab stopped19:11:43 exit1; OMS362892/control2916
+active unchanged. All measured trading gates passed, one TimeoutError retried
+to rc0. Abort page rc0/confirmed. Unit stdout/stderr append to app log; known
+CancelledError exists there, not in captured journal. No reset/start/recovery,
+no control action, no COMPLETE claim. Requested same-attempt continuation.
+Raw STOP, states, runner hash/last30 and gate receipts recorded in
+docs/review-artifacts/roundup1/INSTALL1_ROW47_STOP_2026-10-06.md.
+
+2026-10-06 19:56:32 ET codex-2 C104: reviewer19:43 continuation executed:
+start v2 at19:48:01; restart OMS19:49:08, strategy19:49:27, control19:49:45.
+Original pending orb-schwab start completed19:50:33 after recording its
+already-stopped row47 disposition/reset; no duplicate application restart.
+PIDs611572/611906/612007/612101/612486 respectively, all active/NRestarts0.
+Control page initially unreadable during startup; subsequent actual receipt
+23:56:31Z proves LIVE/SCHWAB. Two simultaneous continuation readers collided
+on exclusive receipt numbering; no original receipt overwritten. This is OUR
+runner defect, recorded rather than attributed to the service. Later proofs
+serialized under the deploy lock. Mechanical strategy re-pin scope tested,
+754PASS; f4a61ea8 release5e09dee1 staged27/27, not closeout execution.
+Fresh directflat/working/openrows/inflight/new-buy proofs remain green,
+schema0022 verified read-only; Redis0->0 evictions, five owners+marker,
+used_memory809628864B at23:56:29Z. Actual candidate+reviewed numeric checker
+151/153 UNKNOWN2, exactly inactive-paper rows; no false total-PASS claim.
+Existing new-process-log proof FAILS: v2 anchored history poll has554
+tracebacks in captured tail after startup (526 foreign/duplicate session
+candle,28 current closed candle absent); OMS/strategy/orb-schwab0. This is
+an application fault, not missing shutdown evidence. Service downtime v2
+19:09:01->19:48:01 was39minutes; actual bar-continuity query still UNMEASURED,
+not after-hours N/A because scheduled bars flow until20:00. INCOMPLETE receipt
+and journal written, pageadapter rc0. Preopen/catalog/daily-timer closeout not
+executed, no rollback/source hotfix/extra restart or Install2 merge/deploy.
+Raw /home/trader/roundup1-install1-20261006-01ed2458/attempt-oct6-attended/
+CONTINUATION_INCOMPLETE.json and continuation-error-census.json; root
+poststart-error-closeout.log. Reviewer disposition needed for this real fault.
+
+2026-10-06 19:56 ET codex-2 C105: authorized marker-only rewrites pushed
+#1102 72983395df6450465b876860a528662f30c09e5d and #1101
+e1db2d14b69a2523be12f9baca265bba5022e137. Only docs commit trailers changed;
+all descendant patches equal, whole trees unchanged,13/13 markers PASS.
+Exact leases used, worktrees clean. Fresh CI/reviewer exact-head pins pending;
+no main merge, production change or Install2 claim.
+
+2026-10-06 20:12:34 ET codex-2 C106: reviewer verified Install1 and released
+Install2 six PRs plus preopen daily timer; LINESRC errors explicitly remain
+known open noise, not proof of zero errors. Existing incomplete/error receipt
+unchanged; journal appends REVIEWER_VERIFIED disposition. No restart of paper.
+Independent committed pins verified for all six. #1106 first could not merge:
+both Validate failures are inherited SCKT wall-clock test. Operator selected
+#1102 first to inherit reviewed fix. #1102 exact72983395 merged after hosted
+pin plus both Validate SUCCESS; main52659779 whole9dd97ad8 tree exactly pinned.
+#1106 clean rebase0ca05fc8 published; no hand conflicts, unified-zero additions/
+deletions/files identical; range-diff only inherited MRO context changes.
+Focused RESERVE1/ROUNDUP1/PA1 composition496PASS5.31s. Fresh CI running and
+exact-head re-pin requested at PRcomment6027906196; no self-pin or bypass.
+Fresh read-only strict-flat OMS rc0 at20:12:34, direct brokers flat, working/
+managed/virtual/inflight empty; exact MI/NXL and closed-session v2 admission
+only. Parent owns main and production, released isolated LINESRC1 source lane
+and Install2 runner assembly run independently. No Install2 source activation,
+service action or timer installation yet; do not call a local draft staged.
+
+2026-10-06 20:17 ET codex-2 C107: docs-only plan9ed1371f published, adding
+an isolated final-Install2 settings overlay for the retained ALL-ON replay.
+Four new switches ON, retry enabled retained true and max retries0; settings
+validated before strategy construction, no recorded clock/price/transport
+changes. Eight mechanics tests PASS0.06s, including all six missing-setting
+refusals. These are harness tests, NOT final replay/population PASS. Actual
+test_all_on_pm replay awaits complete merged candidate. #1106 new0ca05fc8
+CI still running and independent pin missing; no merge bypass. No Install2
+production action or daily timer installation. Separate runner and LINESRC1
+sole writers continue; parent alone owns main, deployment and shared C rows.
+
+2026-10-06 20:24 ET codex-2 C108: #1106 both Validate green, fresh committed
+pin479a468c locally PASS for0ca05fc8/base52659779. Hosted pin rerun37550617529
+fails rc3 before evaluating fresh coverage: stale reviewer-owned record for
+34b6bb5b cannot load that original head in CI. Local repo retains it, therefore
+local verifier warns/ignores old base instead. Exact superseded path is
+records/34b6bb5b9817f92d9c983d92bbcea34c44b1efe5/
+pr-1106--4805ddc81184c76b4d5cef5c483c809edb666fe6--claude-1.json.
+Cleanup requested in PR comment6028051703, no ledger/verifier mutation or check
+bypass. Main526 unchanged; one-at-a-time rule means #1104 is not rebased before
+#1106 merges. No Install2 service action or timer installation. Sole-writer
+runner and LINESRC1 lanes continue; they cannot replace missing hosted pin.
+
+2026-10-06 20:30 ET codex-2 C109: #1106 exact0ca merged after fresh hosted
+pin and both Validate green. Mainf80a9c4af5e79beaa214e99f448bfe408c596df1,
+whole0903ab670a7f22ab890aed60c80310c9ee3f4855 tree equals pinned0ca.
+#1104 alone rebased onto that main, published4343c9bd66a5c1c34a13bfe5b1978aec5be5d40a
+with exact lease. One conflict in ALL-ON catalog test retained upstream
+retained-hold expected=true assertion. Source/ops unified-zero additions and
+deletions byte-identical to original4805..030df3d2; tests range differs because
+upstream already carries former count increments. Fresh run153PASS5FAIL3.54s,
+all five failures exact catalog counts now145 boolean/153 total/132 entries.
+PRcomment6028130949 discloses all names and narrow test-only refresh needed;
+no silent assertion changes under byte-identical instruction. #1099/#1105/
+#1101 not rebased before #1104 merge. No Install2 production action or timer
+install; production4805 retained. Missing counts are integration bookkeeping,
+not an added install gate or trading blocker, but CI must be green for merge.
+
+2026-10-06 20:40 ET codex-2 C110: operator replaced sequential rebases with one
+reviewed batch. Draft1108 head aed1a358c0da4043ce248550c2b1d02cecdc76ff/basef80a
+contains original #1104/#1099/#1105/#1101 commits in that order. Original source/
+ops changed lines compare equal per stage; conflicting MIRRORHOLD reservation
+metadata and T43 abort paths both retained. One tests-only integration commit
+refreshes exact catalog counts and preserves both proven and unproven callback
+refusal controls. All28 commits have one recognized codex-2 marker. Focused527
+PASS58.88s; full pair running. Forced old ALL-ON experiment33PASS8FAIL: six old
+NFQ token/helper assumptions and two take-down policies cannot serve as controls
+for retained mirror ownership and KEEPREST. No claimed all-on PASS; meaningful
+replacement controls are being tested externally without application edits.
+Hosted Validate running, independent batch pin absent. Install2 has not started,
+no timer installation or production change. Source frozen for full-pair proof.
+
+2026-10-06 20:42 ET codex-2 C111: published PINHASH1 own Step0 docs-only at
+9cde6f3f3d4dfc346c57a88e44c2dfcb16b948aa, codex/pinhash1-step0. AGREE issue
+and reuse goal; DISAGREE bare +/- hash alone suffices. Own source read locates
+old-record commit loading before coverage selection, causing today's stale pin
+failure. Own diagnostic hashes show RESERVE1 same changed lines despite changed
+context; MIRRORHOLD marker repair same hash despite missing old marker; KEEPREST
+rebase whole patch changed because upstream absorbed tests. Metadata, binary,
+EOF, function-context and immutable ledger bytes need an explicit reviewed
+contract. Current-range marker/self-review checks stay mandatory. No PINHASH1
+implementation, generated tests, gate edit, record mutation or production touch.
+
+2026-10-06 20:43 ET codex-2 C112: assembled/published local literal Install2
+runner on parent plan239a8603 after importing sole sidecar's065a3fab/eb56c528.
+Own review corrected post-first-stop date fences; source and trading gates
+unchanged. Clock-boundary controls and all existing mechanics74PASS9.74s;
+four disposable semantic guard mutations RED with controls green. No APP/TREE
+binding, release approval, staging, service action or daily timer installation.
+Full application pair/CI and exact-set proof still pending, separate from runner
+mechanics. Original incomplete Install1 receipt stays truthful; builder requires
+derived human VERIFIED provenance rather than a fabricated COMPLETE baseline.
+
+2026-10-06 20:48 ET codex-2 C113: frozen #1108 aed1a358 full-unit pair
+complete, baseline56FAIL/6581PASS293.44s vshead56FAIL/6931PASS330.15s,
+zeroerrors/skips and identical56 failed names. Own XML comparison no additions/
+removals; sole proof lane attested91/93 imported modules byte-identical to own
+pinned checkouts, both clean. Raw paired receipt1324a9e5... in/tmp, not a green
+local full suite. Both hostedValidate green, full receipt posted PRcomment
+6028385878 and plan51fefc68. Independent batch pin absent; exact-set external
+composition running, old legacy33/8 result still disclosed. Parent reviewed
+actual Install1 journal instead of asserting invented stop/startOMS: six actual
+commands plus v2 start positively identity/human VERIFIED proven, its missing
+command receipt labelled UNAVAILABLE. Original incomplete/collision receipts
+unchanged,77 runner mechanicsPASS9.95s. No Install2 service action, staging or
+daily timer installation.
+
+2026-10-06 20:50 ET codex-2 C114: #1108 marked ready at unchanged frozen
+aed1a358, after bothValidateSUCCESS and same56names full pair. External exact
+Install2 settings102controlsPASS6.71s; parent independentlyreran102PASS6.73s,
+real collision guard and actual cachedlistprimaryON, allsettings construction
+asserted. Unmodified307normal and41legacyPASS; forced33/8 not relabelled,
+all eight mapped to current retained-hold and KEEP frozen-wait controls.
+Controlled completed-line/SDK fixtures explicitly not historical venue or
+restoration-math proof. Published plan9ae720d6 with receipts, PRcomment6028412498
+requests one union review/committed batch pin. Head/base/tree unchanged; no
+self-pin, no application merge, no Install2 staging/approval/service action or
+daily timer installation. PINHASH1 assessment published9cde6f3f, tomorrow only.
+
+2026-10-06 20:57 ET codex-2 C115: reviewer committed #1108 record09963b59
+for exactaed1a358/basef80a; parent froze ledger in own detached proofworktree
+and independently verified PASS one committed pin. Human reviewer holds label
+until his full failed-name diff, so no premature merge or label toggle. Both
+Validate green, old hostedpin failures predate record. Read-only currentfleet,
+raw command receipts and original incomplete/collision provenance captured;
+local derived humanreview8e02c0c5 positively checks five actualnew PID/starts,
+original_complete=false and explicitly unavailable v2 command receipt.
+No production write/serviceaction or staging. PINHASH1 revised proposal is
+git patch-id --stable of merge-base..head; assessment/build tomorrow after07:16,
+current canonical marker/committed-review constraints retained, not implemented.
+
+2026-10-06 21:04 ET codex-2 C116: reviewer label and fresh hosted pin PASS,
+both Validate green on aed1a358. Exact-head rebase merge1108 produced main
+5b8b4f642bbc3c312be436d0e92adbc22d9e9f95, treeb28df7b3 equal to pin.
+Bound literal plan9ae720d6 to actual three merge receipts and full-pair/exact
+composition evidence; local full suite still56 baseline failures, not green.
+Published release hash6f54cce9fe66985fdb2f32bc920e99826d246cc40a38162601660129948e9023,
+all32 artifact bytes checked root-owned on box. Attended driver started21:03:44;
+fresh gate admission running, no COMPLETE or new identity claim yet.
+Original Install1 INCOMPLETE/collision records unchanged; derived human VERIFIED
+receipt explicitly labels unavailable v2 command receipt. No migration, ledger,
+rollback, paper restart or PINHASH1 build. Timer not installed yet.
+
+2026-10-06 21:12 ET codex-2 C117: attended attempt stopped21:10:11 before
+checkout/env/service writes, archive40,673,280 exceeded literal40,000,000.
+Positive current identity/env checksum and clean4805 retained; page adapterrc0.
+Mechanics-only64MiB bound,79 testsPASS with measured-size prepare and overbound
+refusal. Published planece0eaf4/new release3a55a2ee;32artifactremoteverifyPASS.
+Fresh exclusive job-archive64 attempt began21:11:37; originalSTOP/INCOMPLETE
+preserved, recorded in deployments-20261006.md. No admission change, source
+patch, different APP, trading action, migration, rollback or recovery; no service
+stopped yet. Active supervision continues; no COMPLETE/timer claim.
+
+2026-10-06 21:18 ET codex-2 C118: tested bounded source backup completed,
+checkout advanced exactly5b8b4f64; env.diff contains four approvedtrue additions
+only. v2/OMS/strategy still on old active identities at direct21:18 read;
+the attended runner refreshes flat/order/103ticket gates before firststop.
+No migration, ledger write, rollback, other service action or timer yet.
+Source/environment applied is not COMPLETE; release3a55a2ee/planece0eaf4.
+
+2026-10-06 21:21 ET codex-2 C119: first scoped stopv2 at21:20:58 returnedrc0,
+systemd inactive/PID0/Resultsuccess, phase1 recorded. OMS611906/strategy612007
+active unchanged. Literal attended sequence continues with existing refresh
+before each step; no added gate, no CancelledError expectation, no recovery.
+No COMPLETE/continuity claim until actual final proofs. No scheduled bars after20.
+
+2026-10-06 21:33 ET codex-2 C120: Install2 STOP21:32:00 phase=start-oms,
+completed3, runner rc1; strict-flat rc2 on three bounded rereads60s apart.
+All three stderr files say live:orb stored positions stale/unreadable/future.
+OMS owns sync_account_positions; timestamps froze01:26:41UTC, OMSstop01:26:45.
+At21:29:50 fresh read-only SQL ages189.3s, over120s; intervening full95-parent
+census takes110s. This is a runner-quiesce/freshness coupling, not a measured
+holding. Three stopped services remain inactive/PID0/success/NRestarts0;
+control612101 and non-scoped units unchanged. Page adapterrc0, STOP journaled.
+Checkout5b8b and exactlyfour env additions applied; no migration/DBedit/recovery.
+Asked user for narrow proof-first continuation, no blanket freshness waiver or
+manual start. No COMPLETE, post-start flags/numeric, preopen re-pin or timer.
+Logsha c328dfd994a01236a00fd229ae68b8792baffc22cb077dff5d20c074110d84fd.
+
+2026-10-06 21:53 ET codex-2 C121: direct user approved OMS-first continuation,
+freshness only after OMS up and checkout4805 fallback only on failed start.
+Committed92aeec69, two tests PASS, staged87f8d622 hash verified. Original
+release3a55a2ee and all32 bytes verified; original STOP remains intact.
+OMS626190 active/start21:53:03ET/NRestarts0, live:orb syncok1/failed0.
+Freshness gates now run with their actual writer active. Attended sequence
+continues v2/strategy/control/proofs/preopen daily timer; no COMPLETE claim.
+
+2026-10-06 21:54 ET codex-2 C122: actual four scoped services active/NRestarts0:
+OMS626190/21:53:03, v2626439/21:53:49, strategy626773/21:54:13,
+control626835/21:54:15ET. Fresh strict-flat rc0 twice beforev2. No fallback.
+Control immediatepage readURLError after1second; existingbounded60s reread.
+Post-start/cumulative/catalog/preopen/timer proofs pending, not COMPLETE.
+
+2026-10-06 21:58 ET codex-2 C123: ORBpage LIVE/SCHWAB passed21:55:19;
+strategy120prefill21:55:55. Original live-bar restoration predicate timedout
+21:58:24 with allfourservicesup. Exact fresh seven-name BOOT-HOLD/RESTORE
+recorded as HELD_EXPECTED_NO_SCHEDULED_BARS, not restoration PASS; no barsafter20.
+Mechanics7c3da379 runner92PASS, finalreleasefcfaf016e205ed548b4bfb1553e018d159f131ad7af0f47194351928b02a540c,
+continuation2ef71cf5995ba129965a9020c8288adbea2e631a014f2e3747c80d7dc7fddf20.
+Phase7 closeout has no serviceaction; app5b8b/flags/policyunchanged. Original
+STOPs retained. Final proofs/timer running; Wedrelease/scannerUNMEASURED.
+
+2026-10-06 22:33 ET codex-2 C124: corrected C123 pending state by actual
+22:00:12.771ET v2 seeded fallback369s (elapsed373.1), evaluated/confirmed/released7,
+DBconfirmed and allslotsconsumed, reconstructed_uncapped0. BOOT-HOLDreleased
+literally; not fresh-source restoration. Existing code and officialcollector
+validatefallback. Exact ERROR-level shape recognized, anothererrorstillblocks.
+105runnerPASS; mechanics82461902, releasefc1c523e8a44eba554a517a0f01e05725797ddfc6d95420420fea7f26492aae5.
+Finalphase7 closeout has0 extraactions, originalSTOPs retained; allfourPIDs
+active/NRestarts0. Catalog/preopen/timer/COMPLETE stillpending, nextsessionproofunmeasured.
+
+2026-10-06 22:43 ET codex-2 C125: Install2 COMPLETE at22:41:31ET;
+APP5b8b4f642bbc3c312be436d0e92adbc22d9e9f95,
+treeb28df7b3d492d0be4e72e1233ce0fff55e43fca4, exact pinnedintegrationtree.
+OMS626190/start21:53:03, v2626439/21:53:49, strategy626773/21:54:13,
+control626835/21:54:15ET allactive/NRestarts0; no fallback/recovery used.
+Bothbrokerflat, working/managed/virtual/inflight0, SQLstartupbuys0;
+103tickets: refused82,filled10,expired9,held_unknown2, in-flight0.
+FLAGGATE155/157,0mismatch,2UNKNOWNinactivepaper; numeric8/8 and retry0extra2/2.
+Redis0evictionsbefore/after, memory809784728->809790192, fiveowners+marker1;
+officialrestart9/9,0tracebacks, barcontinuityN/Aoffsession. One exact existing
+seededfallback ERROR at22:00:12.771 (C124), not fresh-source restoration proof.
+ORBpage LIVE/SCHWAB. Finalplan82461902535d9cfafdbec87507b20d4c313dda55,
+releasefc1c523e8a44eba554a517a0f01e05725797ddfc6d95420420fea7f26492aae5;
+105runnerPASS. OriginalSTOPs retained; mechanics: OMSfirst authorizedcontinuation,
+declareactualcontrolrestart, immutableuniqueofficialreports, literalovernightheld
+state not PASS, exact369s/population/capped-slotfallback ERRORclassification.
+Runner=/home/trader/after-hours/2026-10-06/install2-5b8b4f64/continuation-seeded.log
+sha256edfa0fbd29cc5cd06631626cf2944de4a3da57eab36868b18eb11799df646123.
+Completionreceipt=/home/trader/after-hours/2026-10-06/install2-5b8b4f64/job-archive64/attempt-install2-oct6-attended/completion-receipt.json
+sha256d911ffb1c369debbdd5f6576b173f74a871404e011cada4374ed470a5428ff27;
+journal=/home/trader/fleet_health/deployments-20261006.md has COMPLETE.
+Preopen0700/trader hash0d35283299065cb29f28301b3e84af45f4bf938afd341775868e1f4f2cc40884;
+date/report dynamicET, paper requires today's activeguard/dailystartshape,
+otheridentities/SHA pinned. Actualroot project-mai-tai-preopen.timer NEXT
+Wed2026-10-07 10:20UTC/06:20ET; never ran tomorrowgateearly.
+Firstdailyrehearsal, fresh-line/scanner/live-delivery still UNMEASURED;
+Claude06:22 handcheck and07:00-07:15 scannercheck remain owners.
+
+### [codex] 2026-10-07 14:43 ET - C126 HOTFIX merge and paired release cut
+
+Merged #1114 by matched-head rebase at the reviewed5525739a after local committed
+review-pin verification and hosted checks. Main994f08aee2c35b3809b3c3384e0d8628807dcfb7
+has whole tree7d827a407825d1d93aae8c3946d8b55320b9680f identical to the pinned head.
+No application, environment, archived row or app service change from this merge.
+Fresh SSH14:35UTC18:35 proves OMS1051883/start14:12:15UTC and v21207761/start17:45:25UTC,
+both NRestarts0. Envsha40ec5bf52b1ffb2b37dc84399e6449a9b796a3897c0207b8939402985ddfe653.
+The previous v2-only plan is superseded by the operator's paired LINESRC1/HOTFIX1
+scope. Stopped only project-mai-tai-linesrc1-20261007.timer around14:41ET:
+timer inactive/NEXT empty, installer service inactive/MainPID0 before and after.
+This prevents an obsolete package from dispatching, not an application stop.
+The sole plan writer owns codex/1007-linesrc1-hotfix1-install-plan and is assembling
+and testing the literal v2+OMS release. No paired staging or COMPLETE claimed.
+Restoration and retained hold become true; hand-off remains false per13:45 ruling;
+archived rollback row remains archived. #1115 and RPGSTALE1 parked, no further work.
+Parallel NFQ2 proof must include one active hold with the HOTFIX drift path enabled;
+earlier drift-disabled throughput receipt is not whole OMS hot-path proof.
+
+### [codex] 2026-10-07 14:50 ET - C127 NFQ2 proof and fresh-SELL scope
+
+Published codex/nfq2-hotfix1-activehold-proof at
+e4578d44c8e48a1bbbe0f8b0185ae05908bafb1c; PR1112 comment6044574785.
+Exact runtime: main994f08ae plus clean NFQ-only0318ef84 sequence, source unchanged
+after composition; final test freeze a5479b42ac633f144d70930b44e99d5417c86d10.
+Three60s real elapsed active-hold/drift-ENABLED gates:14400events/run,240/s;
+maxstall48.385250/35.860500/29.370750ms. Each:0tickSQL/0loop-threadSQL,
+24 periodic ownership/cache transactions off-loop at5s cadence. Final exact UTC
+18:44:53.335307-18:45:53.336535. Nine new controls and361 focused regressions
+PASS;23/23mutation controls RED. Scopes/stubs/raw hashes/full commands and gaps
+in docs/review-artifacts/nfq2-hotfix1-proof/{RESULTS,PROOF_SCOPE}.md on that branch.
+No full NFQ2 readiness/CI/live OMS/exit certification inferred. Original source
+branch0318ef84 remains untouched; lifecycle/uncertain-wire/SLOT integration gaps remain.
+Parent exact994 six-file run:260PASS/1FAIL142.04s; retained-ON60s gate starts
+14:42:19, watchdog79.737304ms fails50ms while239.9988/s,SQL1firstturn/0after1s,
+handler20.515917ms,GC0. Isolated unmodified ON rerun14:46:25-14:47:26 PASS60.58s:
+14400/60.000593=239.997628/s,watchdog23.378119ms,handler16.293917ms,SQLsameflat.
+These parent metrics are from captured terminal output, not a retained raw-log file.
+No threshold weakened, initial failure unwaived, no concurrency cause asserted.
+Latest user releases #1113 fresh-SELL reconstruction control. CLAIM14:49ET
+comment6044589754 on clean original d68d25e0; one writer owns that branch, bounded
+SXTC13:45-14:44 and DKI14:21-14:32 log pulls/replay/tests in progress. No pin or
+production action. #1115/RPGSTALE remain parked; paired install is separate.
+
+### [codex] 2026-10-07 15:07 ET - C128 actual paired staging
+
+Root staging completed15:06:06.688186ET before user15:30deadline. Plan
+f2ed49e832a8e9415ee70824e51424b41ce7cd71; APP994f08aee2c35b3809b3c3384e0d8628807dcfb7;
+tree7d827a407825d1d93aae8c3946d8b55320b9680f. Manifest
+c8f096cd0ae29d2f9e42d5bb76d8f4d251e2264dd23e7f264578646cccd90091,
+approvalfa8e55df4ba1d93ded417c04ba30d402327e94de0c216485b1014e621c774209.
+All24artifact hashes verified against committed package, root approval verification
+PASS, systemd-analyze verify PASS. Parent independent rerun262PASS1.68s;
+stager12PASS0.07s. Initial parent test command named nonexistent test_release_policy.py
+and collected0; corrected complete job-directory invocation produced262PASS.
+Package /home/trader/after-hours/2026-10-07/linesrc1-hotfix1-994f08ae/job;
+staging-receipt.json SHA761164018955a89e6f9b5a48145651eb09fca6658938879f6a7e6056c51388b0.
+Backups inside staging-backups; unchanged old packages retained. Only metadata
+catalog/runtime and named installerunit updated; application actions0, env40ec/source5b
+unchanged, OMS1051883/v21207761 unchanged. Actual list-timers NEXT20:00UTC/16ET,
+project-mai-tai-linesrc1-20261007.timer enabledactive; installerPID0.
+Native gate remains>=18, no override/fixed dispatch time: before18 read-onlypending.
+Approved threeaction sequence stopv2/restartOMS/startv2 avoids running stored-freshness
+gate while OMS is deliberately down. NewOMS healthy/current-book proof still required.
+RPGhandoff remainsfalse, two flags become true only at actualrun; archivedrow preserved.
+Journal deployments-20261007.md records staging, NOT installationCOMPLETE.
+Actual newPIDs/proc/catalog157/Redis/dualpreopenpin/next07acceptance not yet measured.
+Heartbeat updated to supervise this exact box job, never a duplicate installer.
+
+### [codex] 2026-10-07 15:18 ET - C129 SLOTCLEAR fresh SELL draft delivery
+
+Origin now confirms #1113 draft95cfbae86c737b522051f6ff57c5b9e285cf55ef,
+on exact994f08ae after a clean four-equal-commit rebase. No new RPG patch.
+Both freshBUY and freshSELL reconstructed-slot paths implemented, separate
+default-OFF switches. Source frozen; later additions are supplemental evidence.
+Own independent freshBUY/freshSELL69PASS1.06s. Agent451focusedPASS, excluding
+two sustainedHOTFIXbenchmarks; candidate fullunit runs separately from completed
+main7114PASS56FAIL455.80s, actual failed-name comparison pending.
+Original7BUY+11SELL assertions-mutations RED; new restored-ticket-veto T1 RED.
+RecordedSXTC 19probes at14:26-14:44: controlled ownership/quote prerequisites,
+OFF16suppressions/zero drafts; ON slotsclear and first rest at short-age3,
+then normal reprices. These are strategy state-machine replays, not fills.
+DKI14:21-14:32 has11matchedprobes/12storedbars (last closes after logwindow),
+no freshflip and zero opens; no missing probe synthesized.
+Own currentdurable snapshot15:09:28ET retains2SXTC RPGtickets. Supplemental
+replay with those exact payloads releases slots but blocks bothlegs/zeroopens
+across19probes, handoffOFF and payloads unchanged. This is present-ticket
+control, not historical13:45 clear proof; no claimSLOTalonefixesallSXTCblocks.
+NFQ+SLOT scratch cherry-pick hit6conflicts (service, strategy, foursharedtests);
+aborted and clean. OriginalNFQ source/proof trees remain untouched. Joint
+integration, actual current-main pair and CI still gate pin-readiness.
+#1115/RPGSTALE remain PARKED; no production/pin/merge/activation.
+
+### [codex] 2026-10-07 15:30 ET - C130 final SLOTCLEAR draft receipt
+
+Published #1113 final draft9951b473f8203590f48c667770c07e1f9c3096b6. Parent
+independently verifies GitHub head, clean empty95cf..995 src/ops/scripts/tests
+diff and CURRENT_MAIN_PAIR.json: main9947114PASS56FAIL; standard candidate
+7183PASS56FAIL; added/removed failed names both empty. Candidate standard suite
+19:21:11.755-19:28:54.053UTC; source frozen95cf, final later receipt-only head.
+Initial timing-launcher run7181PASS58FAIL retained: two extra handoff failures
+caused by unguarded launcher multiprocessing re-entry. Corrected launcher
+supplement7PASS; standard full candidate uses exact main command with no timing
+launcher/plugin/tee capture. No source/threshold waiver. Original failure stays.
+FreshBUY+SELL69PASS,451focused,12supplemental,19mutationsRED. Latest995 Validate
+both still running; independent pin check fails on this unpinned draft. No green
+CI/pin/readiness claim. Common56 failures are baseline, not new SLOT failures.
+Remaining joint NFQ integration6conflicts and absent historical ticket proof
+are disclosed, not force-cleared. PresentSXTC payload control remains zeroopen
+with slots released; DKI nofreshflip stayscapped. Default-OFF switches unchanged.
+This draft is NOT the staged application: evening job stays exact994/f2ed/C128.
+#1115/RPGSTALE remain parked. No production/merge/pin/activation in SLOT lane.
+
+### [codex] 2026-10-07 15:57 ET - C131 RETRYLEFT claim / joint conflict writer
+
+CLAIM codex/retryleft1-segment-leftover from994f08ae. Parent read reviewer case
+first, then independently queried NCPL orders/fills/owner snapshots and retained
+v2 logs. Own pull confirms consumed retry at19:10:18UTC and Webull cancellation
+19:32:49; code has no sibling cancellation at budget exhaustion. Existing
+CLEARWAIT proof rejects fill history by design; new cancellation-only receipt
+must never retire consumed ownership or grant a buy. NCPL sanitized raw pull
+and SQL retained in isolated RETRYLEFT worktree. Class/APUS replication pending;
+no claimed population result or pin. OMS tick path remains untouched.
+Reviewer authorized resolving six #1112/#1113 conflicts with one writer.
+Halley owns NFQ2-onto-SLOTCLEAR integration; parent does not edit either source
+branch. Original heads remain preserved until joint evidence is verified.
+No stale atr_reprice_handoff write, RPG parked patches unchanged. Staged paired
+install staysAPP994/f2/C128; RETRYLEFT is not implicitly an install candidate.
+
+### [codex] 2026-10-07 16:03 ET - C132 RETRYLEFT assessment stop
+
+Historical read-only sidecar exposed an APUS acceptance contradiction. Parent
+independently checked the two exact broker order/fill ids at20:03:19.511UTC:
+Webull bought1@5.11 at19:54:58.742UTC Sep24, primary sold2@5.3486 at20:26:30.
+The alleged209-minute second fill is updated_at23:55:10.146963, not execution.
+APUS was both-filled, so cancelling a waiting sibling after that close is not
+a valid positive acceptance case. Assessment-only240bfee0 pushed; no source
+patch committed or published, no PR created. NCPL cause AGREE, APUS replay
+DISAGREE, actual-broker-live27 count UNMEASURED. Bounded extracted lots157 and
+2 lifecycle-inferred waiting cases have explicit scope/retention caveats.
+Before stop local32new/261combined controls and10assertion mutationsRED;
+full-unit interrupted on assessment stop, no suite-pair/readiness claim.
+RETRYLEFT publication stopped per standing rule pending corrected acceptance.
+NFQ2/SLOTCLEAR sole integration writer remains released separately; no stale
+RPG rows or parked patches touched. Staged application/approval994/f2 unchanged.
+
+2026-10-07 16:13 ET - C133, one-writer NFQ2 onto SLOTCLEAR integration published.
+NFQ2 #1112 is now c6004bd59f06fd856b1a8bb5a1ff6d96cbe094dc with the SLOT
+branch as its explicit dependency; SLOT #1113 remains9951b473. The initially
+merge-shaped internal proof is not published history: the actual PR range is
+linear, with no merge above9951 and one Codex marker on each commit. Own Git
+checks confirm src/tests/ops equal frozen5d77 exactly. Fresh SLOT admission
+keeps0.5%; a proven durable NFQ held retry keeps1%; no identity gate lost.
+Joint21 and restored-ticket2 pass;45/45 assertion mutations RED. Enabled-drift
+active-hold gate:14,400 events/60.000410s, maxstall29.0855ms, zero tick SQL,
+24 periodic off-loop transactions/60s. SQLite/fake-broker scope is explicit,
+not whole-OMS or production certification. SLOT's two Validate are green;
+NFQ's two fresh runs are underway. Complete integration suite still running;
+broader NFQ recovery/restart edges remain disclosed, no readiness claim.
+No stale RPG rows, parked source, production state or staged job changed.
+
+2026-10-07 16:13 ET - SLOTCLEAR1 #1113 marked ready for review at9951b473;
+both exact-head Validate succeeded and the six NFQ conflicts are resolved.
+PR comment records both stacked heads and the pending NFQ-only gates.
+NFQ #1112 remains draft, no pin/merge/activation or stale-row edit.
+
+2026-10-07 16:16 ET - C134, completed NFQ/SLOT integration full pair.
+Main9947114PASS56FAIL versus source-equivalent composed5d77/c6007247PASS56FAIL;
+own sorted failed-name diff is empty. Complete run20:04:11.630121-
+20:14:10.573913UTC, pytest593.36s, exit1 not timeout. Raw output hash
+840b28ee71c3e09fb8a2b970383bf4f1f2b4d3ee6324be01fde398615d3811a1;
+full raw output/result and pair/source receipts retained in isolated proof
+worktree. Evidence executed on5d77, not relabeled as execution on c600;
+src/tests/ops objects equal exactly. No source edit or avoidable head churn.
+Both new c600 Validate still running at20:16UTC. SLOT remains review-ready;
+NFQ broader recovery/restart coverage limits stay disclosed, draft retained.
+All56 main failures remain unwaived; no stale RPG or production edit.
+
+2026-10-07 16:27 ET - C135, corrected RETRYLEFT acceptance released.
+Reviewer accepts APUS's fill-before-close correction; NCPL positive and ARTL
+second cancellation case now govern the build. Parent resumes RETRYLEFT only,
+existing NFQ writer closes the two named remaining review items separately.
+Own source read preserves filled ownership and scanner-removal semantics;
+164 focused RETRYLEFT/CLEARWAIT/KEEPREST controls pass, no full readiness claim.
+ARTL raw replay and APUS negative control being completed, then mutations and
+the current-main full pair. SLOT9951 pin acknowledged, no merge performed.
+Tonight's staged exact APP994/planf2 and running ORB remain untouched.
+
+2026-10-07 16:45 ET codex-2: RETRYLEFT1 recorded controls complete locally:
+41 new tests, 246 focused combined pass in3.59s, 13/13 assertion mutations RED.
+NCPL cancel emission at recorded19:10:18.069UTC is8.069s after close;
+ARTL at recorded18:53:12.758UTC is3.647s, explicitly current zero-retry policy
+over recorded identities because the historical owner record is unavailable.
+APUS bothfilled remains negative; receipts never release the consumed owner.
+Full-unit run active, no full-pair readiness claim. Raw mutation outputs
+/tmp/retryleft1-mutation-*-20261007.txt and current full output
+/tmp/retryleft1-complete-unit-20261007.txt. Paired package hashes/PIDs unchanged
+on16:35ET read, clock-pending; no production writes or ORB action here.
+
+2026-10-07 16:38 ET codex-2: correction to the immediately preceding narrative
+and C136: its as-of clock was mistyped16:45ET; actual current UTC read
+2026-10-07T20:38:42Z confirms16:38ET. Results and raw sources unchanged.
+Narrative retained append-only; own C136 corrected, no reviewer row touched.
+
+2026-10-07 16:40 ET codex-2: published draft RETRYLEFT1 PR1118 at
+215d3853298204c43db756c264d7a938a26b412c. Two recorded positives and APUS
+both-filled negative, 41new/246focused pass,13mutationsRED. Complete unit
+run and bothValidate pending, no readiness/merge/install claim. Raw proof,
+roll-forward scope and older-code receipt compatibility risk documented.
+App attachment refused due to100-attachment limit; PR URL remains available.
+Tonight's staged package and all production services untouched here.
+
+2026-10-07 16:46 ET codex-2: RETRYLEFT1 draft1118 now cda4849c015a0221369194e856238bcb71b444dd,
+docs-only result update after tested source215d3853 (src/tests/ops diff empty).
+Complete unit7155PASS56FAIL460.41s vs current main9947114PASS56FAIL455.80s,
+exact failed-name added/removed bothempty, 13mutationsRED. Committed actual
+stdout/JUnit, baseline stdout/receipt and complete name table. Naive initial
+comparison preserved because baseline stderr was joined to one node id;
+existing exact-node parser confirms no changedfailure. BothValidate pending
+at publishedhead, no readiness/pin/merge/install. NFQ writer has released
+localCPU slot for final benchmark/full; pairedjob/ORB remain unchanged.
+
+2026-10-07 16:48 ET codex-2: NFQ2 follow-up pushed8ea8a824ce2f7c8ee3e0c0e0b62702b4fe6cebb3
+on1112's unchanged SLOT9951 stack, draft. Read source/REPRO: exact dispatch
+binding and broker terminal-zero proof, post-read CAS, no automatic resend;
+unknown/fill blocking; explicit unbound legacy refusal and exact local drain.
+504fastPASS12.40s/86newcases,37mutationsRED. Fresh60sactivehold run ongoing,
+full/current-main pair and freshCI pending. Priorc600/5d77 performance/full
+numbers not used as certification of this changedruntime. Source solewriter
+unchanged; no SLOT amendment, source merge or production/ORB action.
+
+2026-10-07 16:50 ET codex-2: independently read NFQ8ea8 final-source hot-path
+receipt:14400events60.001543s,239.9938/s, maxloop16.1874ms/maxhandler10.6465ms,
+tickSQL/sessions/tx0,24offloopperiodictx84SQL in60s, oneactivehold plusdrift.
+Actualgate20:47:23.516561-20:48:23.518256UTC, rawbenchmarkhashd3d4b241e716c0e5797b66abc4a0e57f8c3aa941d128d085efa8f51650671def.
+SQLite/faketransport, notliveperformance. Full/current-main pair and CIpending;
+no readiness/merge/deploy. PinnedSLOT and stagedjob/ORB untouched.
+
+2026-10-07 17:03 ET codex-2: RETRYLEFT1 PR1118 cda4849c local delivery
+complete:246focusedPASS,13assertionmutationsRED,7155PASS56FAIL vs main7114/56,
+exact failed names identical. PRValidate37684518722 PASS11m51s; push37684510555
+still on PostgreSQL provisioning/migration since20:46:23UTC; running logs404,
+cause unmeasured, no CI bypass or source change. Remains draft.
+NFQ2 final source8ea8 complete full run20:48:38.284406-20:58:54.487446UTC:
+7333PASS56FAIL610.17s, output13a7d7f3311e191998f0b255c296f7d428d4122d974781f25c5caedbc32b4d39.
+Existing ownmix1 exact-node parser confirms added/removed IDs both empty
+against main baseline1ea8b8fa. Both Validate pending; sole NFQ writer assesses
+typed opportunity-wide cancel/canonicalRECLAIM localhold composition. BIYA
+recorded slotRESTING is not a historic reproducer; no invented print claim.
+Pinned SLOT9951 for tomorrow and tonight's staged APP994 job/ORB unchanged.
+
+2026-10-07 17:08 ET codex-2: retained RETRYLEFT1 unchanged-head CI attempt1,
+37684510555, cancelled after18m35s apt-get update stall before migrations/tests.
+Rawlog /tmp/retryleft1-ci-push-cda4849c-attempt1.log sha256f5157da7bc912ad09420c30a57dbca1ca123ccf906bf3f6f1137290b033e7949:
+Ubuntu azure archive Ign lines and mirror downloads then no progress; exact
+network cause unmeasured. Same head PRValidate PASS; re-run attempt2 clears
+setup, unit step starts21:06:26UTC. No source/workflow change or check bypass.
+NFQ8ea8 both Validate PASS; new typed opportunity-wide localhold cancellation
+delta remains solely with NFQ writer and needs fresh final-source receipts.
+No new-head readiness or production action; SLOT and paired APP994 unchanged.
+
+2026-10-07 17:14 ET codex-2: NFQ sole writer publishes50264417 after preserved
+untouched8ea8 canonicalRECLAIM typedbarrier4assertionRED; actual BIYA RESTING
+not historicincident. Exact producer/barrier control, not invented prints.
+Typed same-opportunity cancel retires only durable no-order/no-dispatch local
+held/queued via locked reread/CAS; uncertain/wired/generation guards preserved.
+528focusedPASS,45named safetymutationsRED plus six tickcontrolsRED; original
+single-phase-guard Q3 survivor retained as dominated by durablephaseguard,
+dual-boundaryQ3RED disclosed. Fresh finalsource21:10:55.150388-21:11:55.150788UTC
+activehold benchmark14400events/60.000230s/239.999ev/s,maxloop20.433ms,
+maxhandler17.758ms,zeroSQL/transactions/sessions on ticks and zeroonloopSQL,
+24offloopperiodictx84SQL. New full and both CI still pending; prior8ea8 results
+not used to certify sourcea16b9d755450d22e75181b859be537a3116670232dd715629b3c2cc5673c68f9.
+SLOT9951/today's stagedAPP994/ORB untouched; no readiness/pin/merge/deploy.
+
+2026-10-07 17:18 ET codex-2: RETRYLEFT1 PR1118 marked READY at exact
+cda4849c015a0221369194e856238bcb71b444dd. Both Validate PASS: push37684510555
+attempt2 13m6s, pull_request37684518722 11m51s. Posted receipt in comment6047052437.
+Corrected Step0 NCPL/ARTL classAGREE, APUSbothfilled negative; emissions8.069s
+and3.647s withinonebar;246focusedPASS/13assertionmutationsRED; full7155/56
+vs main7114/56, identical failednames. Actual new brokerlatencyUNMEASURED.
+No pin/merge/install; NFQ502 finalfull/CI pending, pinned SLOT9951 tomorrow
+and tonight's exact APP994 paired package/ORB unchanged.
+
+2026-10-07 17:26 ET codex-2: NFQ502 NOT READY. Full7356PASS57FAIL600.73s;
+main7114/56, one added failednode retained-on HOTFIX60sgate, removednone.
+Observed maxloop64.971ms against unchanged50ms limit, handler10.885ms,
+14400events239.997/s and0ticktransactions afterfirstsecond; raw retained in
+/tmp/nfq2-segment-cancel-final-full-20261007/output.txt. Causes unmeasured.
+PRCI37687551177 exits139 at21:24:17UTC: sqlalchemy ORM loading on worker
+-> OMSstore.get_open_managed_position through _read_v2_managed_snapshot.
+Failed log/tmp/nfq2-50264417-pr-ci-failed.txt retained; pushValidatePASS.
+Sole writer reruns full and PRCIattempt2 on unchanged502; no threshold,
+assertion or source change/waiver. Await actual gates before readiness.
+RETRY1118 cda already ready; no SLOT amendment, production/ORB action or
+change to tonight's staged exact APP994 package.
+
+2026-10-07 17:39 ET codex-2: independently verified NFQ502 unchanged-head
+rerun7357PASS56FAIL602.35s vs exactmain9947114/56, failed-ID added/removed[]/[].
+Actualrerun21:24:46.865832-21:34:56.067617UTC; raw
+/tmp/nfq2-segment-cancel-final-full-rerun-01-20261007/output.txt sha256ebdd78175608a9dbe56dadec9c5abfdc0bff0bd1853d39a94eb0e3f4607e18a9.
+No source/assertion/50ms threshold change. Originalextra64.971ms timingfail
+and PRCI139segfault retained; causes unmeasured, no causal fix claim.
+PushCIgreen/PRattempt2 stilltesting; NFQdraftuntilactualCIclean. RETRYready;
+SLOT9951/today's stagedAPP994/ORB untouched.
+
+2026-10-07 17:42 ET codex-2: NFQ2 PR1112 READY for independent exact-head
+review at50264417343a321dce5f8852a46aaaaa06d66402; base9951unchanged.
+Both Validategreen:push37687543246 12m45s,PR37687551177 attempt2 14m28s.
+528focusedPASS/45named safetymutationsRED/six tickcontrolsRED; full7357/56
+vs currentmain7114/56, exact56failednames identical, pairhash044f4115798827a551ed72d61033c7304fc34b0fc4eb201ae0f84b5caf45a9c5.
+Freshactivehold240ev/s/60s maxloop20.433ms,zero tickSQL; precise terminal-zero
+recovery, legacy failclosed and localtypedbarrier controls published. Earlier
+64.971ms timing failure and CI139native crash retained, no root-cause/fix
+claim or safetythreshold change. Source remains exactly502.
+No pin/merge/deploy; RETRY1118cda ready, SLOT9951tomorrow, tonight's exact
+pairedAPP994 package/approval and ORB unchanged; no staleRPG/ledger action.
+
+2026-10-07 18:02 ET codex-2: accepted reviewer correction: SLOTCLEAR1113
+already merged a6f295e9, not held for tomorrow. Batch1120 is reviewer-owned;
+source PR1117/1119/1118/1112 receive no further pushes tonight. Job2 local
+mechanics prepared separately, no merged M yet and no staging/execution.
+Job1 reached native18:00 window and STOPPED before appwrites at18:00:06ET:
+installedbaseline drift ops/health/preopen_alert.sh. Actual SHAa9f2407612baf48ee4b0577e42ccd0c714be1c1315b8276f5f9638a2999a1aaa
+equals manifest; mode0775 violates its existing no-group-write guard.
+STOP receipt54879b9914262620c41a3f5da4b0fb53a7850a44f3947a3c7c07aebc80e88243
+in attempt-20261007T220001065520Z, claimedfalse/completed0. Alertdeliveryrc0;
+installer timerinactive/disabled. OMS1051883 andv21207761 activeunchanged,
+NRestarts0. Job2 gatePASS remainsUNMEASURED because job1COMPLETEabsent.
+No manualinstaller/serviceaction, unseal, rollback, archivedrow orledgerwrite.
+Supervision heartbeat removed afterverifiedABORT; rootdailyunitsunchanged.
+
+2026-10-08 07:15 ET codex-2: GAPLINE1 revised carry scope AGREE; draft
+PR #1126 at d694b85d084bdccdb36911e30a6d89329ff21217. Default-OFF carry
+preserves seeded math and consumed slots across initial/recovery gaps;
+existing detector, ten-bar wait and traded-gap source gate retained.
+Missing interior backfill wakes one off-loop proof refresh; exit-covered
+symbols can repair without acquiring buy permission. Own raw fixture
+registers 96 initial + 37 recovery events: 78 preservation controls measured,
+55 UNMEASURED. Fourteen retained colour readings agree with the oracle;
+eight named mathematical flips visible, seven absent originally and MEDS late.
+New-file focus 95 PASS / 55 SKIP. Frozen-source full unit and refreshed
+mutation receipts pending. No merge/pin, production read/write or service action.
+Shared handoff base retained: a local attempted origin/main rebase would
+replay old already-landed application commits; that local branch was not
+pushed. This docs-only update is based on the unchanged shared remote.
+
+2026-10-08 07:16 ET codex-2: WBQUIET1 DATA draft PR #1124 at
+ce3b51a3a14e406de52c76cbf74aaa357e0b6f91; 294 focused controls PASS.
+The off-loop bounded observer logs only the hypothetical cadence decision
+on actual periodic sync passes. No HTTP read, cancel, order or cadence
+behaviour change. Reader tags cover sync persistence, virtual clear and
+virtual restore; all other readers remain UNMEASURED. Historical cached
+day-list bodies/position versions were not retained, so exact saved-call,
+decision-minute and terminal-evidence claims are not manufactured.
+Final full-unit pair pending. Five-session wait withdrawn by today's ruling;
+after-close reviewed DATA deployment, Friday denominators, weekend decision.
+No production action performed and neither draft has been marked review-ready.
+
+2026-10-08 07:21 ET codex-2: GAPLINE1 #1126 final-source full unit paired:
+main d244f602 47 FAIL / 7491 PASS; source d694b85d 47 FAIL / 7586 PASS /
+55 UNMEASURED SKIP. Failed-name sets byte-identical (no added/missing),
+hash17d68105856e998ab629144135fd40b4ec5b3b4a53fe197c069a0cc1f25eb419.
+Receipt-only head00bd0c64325ec25c11642d913c4a0ae2b35aad0f pushed.
+Final-source resets/wait/seed-long/carry mutations RED65/22/6/28/2;
+focus230PASS/55SKIP, original gap controls34PASS, Ruff clean.
+CI/reviewer pin pending, population retention limits disclosed; no production action.
+
+2026-10-08 07:23 ET codex-2: WBQUIET1 DATA #1124 final docs head
+b40212e420ea3eb6312ab47df83aa6bb2042daf1 over frozen ce3b51a3 source.
+Main47FAIL/7491PASS versus head47FAIL/7535PASS, identical failed names;
+294focusedPASS/Ruff clean. The observer has three sync-call tags, not a
+60-second post-commit downstream-consumption window. Independent read-only
+audit confirms draft-only coverage; no zero-impact or exact saved-call claim.
+Source acquisition attribution and untagged/external readers require bounded
+generation instrumentation; historical absent bodies remain UNMEASURED.
+One hosted Validate pass; other rerun pending after existing NFQ2 duplicate
+quote benchmark744ms vs50ms failed, threshold unchanged and no CI-cause claim.
+Friday17:00ET one-shot wbquiet1-friday-evidence-report scheduled, no box job.
+No production read/write, service action, merge/pin/deploy or behavior change.
+
+2026-10-08 07:43 ET codex-2: reviewer ledger disposition accepted; #1126
+00bd0c64325ec25c11642d913c4a0ae2b35aad0f and #1124
+b40212e420ea3eb6312ab47df83aa6bb2042daf1 marked READY without head changes.
+GAP Validate x2GREEN. WB pushGREEN; PR red solely known NFQ2 duplicate-quote
+timing control0.969s/0.050s; accepted by reviewer, no threshold/gate bypass.
+Supplemental82hold/26day/16distinctflip/16of16+5%barproxy/13entry controls
+is claude-1 evidence closing the historical retention blocker, not own fills.
+WB reader coverage PARTIAL is accepted for this log-only install. Tomorrow
+morning note_consumed tri-state/snapshot/RESERVE1/ORB hooks are separately
+scheduled wbquiet1-morning-reader-follow-up, not represented in today's head.
+Tonight candidate afterclose: GAP(v2)/WB(OMS), ORB lane1 only if pinned.
+LINE_CHART remainsOFF. No source edit, pin/merge, staging, switch/service or
+production action performed by this READY update.
+
+2026-10-08 08:20 ET codex-2: GAPLINE1 #1126 exact pinned head merged by
+merge commit 1ed10831508e9a251aa3440a973f49c8bb2c18c9. WBQUIET1 #1124
+b40212e420ea3eb6312ab47df83aa6bb2042daf1 now has two green Validate runs
+(rerun37769566740 finished12:17:18UTC) and a green hosted pin. GitHub
+refuses the unchanged head as behind main; auto-merge is unavailable.
+No protection bypass or pinned-head rewrite. Asked for merge-policy
+disposition; preparation continues without an invented final application SHA.
+Plan checkpoint02653e08 pushed:24runner/36repin testsPASS. Isolated repin
+binds actual snapshot/install-record/new identities and refreshes daily hashes,
+preserving paper/date shape and the narrow Redis-upgrade acknowledgement.
+Read-only box08:04: d244f602 clean, OMS1408231/v21895743/strategy1408242.
+Box flag audit08:15:160/160 checked, one LINE expectation mismatch from the
+07:28 rollback; actualLINE/RPGfalse retained. Correct that box expectation,
+addGAPtrue row, do not alter unrelated flags. No job staged/timer installed,
+application/env/checkout/service/schema/token/ledger/archive action.
+
+2026-10-08 08:41 ET codex-2 C7: published final tested mechanics plan0036837f
+(runtime6d5cb93c), 200 isolated controls PASS, Ruff/bash-n PASS. Corrected
+second-install preopen flag quoting, UTC Schwab session bounds, required-both-
+pinned-head ancestry, private stdout/stderr retries and honest proof UNKNOWN
+in COMPLETE. Initial 08:17 AIXI135 blocker is retained as evidence; fresh
+native OMS fence08:38:16 GO and direct broker/book helper08:38:50 rc0 prove
+the position has closed. Morning reads are not permission for an early stop.
+Final helper raw local0839.json sha9ce0c8aaa51baca5920670de8ae21701ad0e194e534a664e588a2b06639627fe;
+stderr empty. Latest #1124 b40212e4 pin/Validatex2 green but protected merge
+still BEHIND. No invented final M/manifest, staging or actual timer NEXT.
+The local tested package will deploy OMS then v2 after16 with fresh reads,
+GAPtrue only newly added; LINE/RPGfalse retained; no migration/ledger/archive.
+RPGRETIRE1 same-writer draft #1128 333c8756: guard mutations15RED, corrected
+full-suite pair still pending, not a ready or independently reviewed candidate.
+No production application/config/service action occurred in this checkpoint.
+
+2026-10-08 09:02 ET codex-2 C8-C12: five lane CLAIMs dispatched in parallel,
+one sole writer each: A/Pasteur soft-rest boot ghost ownership; B/01a111b9
+LINESRC2 rebase; C/Descartes corrected complete after-close runner;
+D/Mencius WBQUIET consumer hooks; E/Banach Friday A/B/C data prep.
+Main1e15adb0 includes #1129's WB shadow and ORBLIVE1; the old #1124 behind
+blocker is superseded. Plan0036837f and its200PASS are old-scope evidence,
+not an approval or test receipt for the expanded job. LINE now requested ON
+only after LINESRC2 pin/merge; GAP ON, RPG OFF; operator can vetoLINE.
+No application, env, unit, broker, database, archive or service write before
+close. Parent retained exact-main baseline in /tmp/codex-1008-five-lane-baseline,
+unitXML /tmp/five-lane-main-1e15adb0-unit.xml (running, not PASS yet), so A/B/D
+compare one real base without three duplicate resource-heavy baseline suites.
+New branch heads/tests/mutations/replays will be reported separately per lane;
+CLAIM is not review-ready and the15:00 target is not a pin receipt.
+
+2026-10-08 09:09 ET codex-2 C13: user added LaneF CLEARWAIT1 rollover;
+sole agent01a112c4-1e22 dispatched to isolatedcodex/clearwait1-session-rollover-1008.
+A-Eunchanged. Latest17archivedrow/DKI/todayAIXI claims require ownreadonly
+replay. Newdesign is sessionmembership at04:00/boot plus positive absenceof
+workingorders/openmanagedrows, NOT hours/age; unknownsource keepsownership.
+Same-dayreceipt and retrybudgetgate untouched; per-ticklookup remainsmemory.
+Reviewer08:58 v2restart makes old stagingbaselineobsolete; LaneCmustobtain
+freshauthorized identities, never adoptanunexplainednewPID. No boxwrite.
+
+2026-10-08 09:11 ET codex-2 C14 LaneB: #1127 head709e826e pushedon1e15adb0,
+sourceeb461047. Four conflicts plus adjacentdispatchcompositionchangeexplicitly
+capturedin REBASE_2026-10-08.md; reviewer mustcheckboth, notonlyfourmarkers.
+462focusedPASS/55retention-limitedSKIP, 11semanticmutationsRED withbaseline
+greenandzeroharnesserrors. Fullheadpair/CIpending; historical35bar/11probe
+morningdataset cannotcertify60probeacceptance. Noactivationreadinessclaim.
+GAPexplicitreason/token/revisiondedupcoexistswithLINEretry/inflightbudget,
+04anchor/cleanbarwait/lateflipfencesretained. A/C/D/E/Fcontinueisolated.
+
+2026-10-08 09:14 ET codex-2 C15: exact-main1e15adb0 unit baseline finished
+48failed/7674passed/55skipped in606.61s in detached real Git worktree,
+XML /tmp/five-lane-main-1e15adb0-unit.xml. Failed-name hash
+e0b9fc7478ff484d88d9882194d3525632c0d2d43353d515b28f63a28464e9a9.
+Actual host timing failures retained, not assumed equivalent or waived.
+All six sole writers received the same receipt; head pairings remain pending.
+LaneF boot retirement must precede stale barrier publication, use durable
+exact-token proof/CAS and guard against in-flight emits/new same-symbol requests;
+session-rollover is not hours expiry. No production writes.
+
+2026-10-08 09:17 ET codex-2 C16 LaneF: independently pulled17archive
+transitions, twelve rawactive, nine latest symbols/seven latestactive.
+The user17active denominator is not reproduced; four latest requests have
+zero opportunity and cannot be called prior-session by segment proof.
+DKI/OLOX/BIYA positive identities and today's AIXI active/receipt bytes
+retained. Historical direct-flat freshness at the missed flips UNMEASURED.
+Source STEP0_RAW.json, read13:13:42UTC. Build uses session identity, not hours;
+retire request only, no unrelated consumed-owner/slot clearing, NULL order
+and intent status remains UNKNOWN. All six lanes continue, no box write.
+
+2026-10-08 09:24 ET codex-2 C17/C18: published D#1132 head6d38735b,
+259focusedPASS/19semanticRED, fullpairpending; log-onlyfollowing60s bounded
+committed-generation tags, empty/ambiguous/drop evidence UNMEASURED.
+E#1131 head09c1aaa7 offline prep51focusedPASS/sevenRED; retainedOMS
+Oct6cancel65/5 andOct7cancel25/10, SDK417distinct5/10, notnaivepartial
+counter sums12/23. Historicaldecision-time bodies absent, actualA/B/C
+savings/terminalimpact UNMEASURED. Todaypartialasof13:03:28UTC.
+EwilljoinDactualreadercontractwithoutrelabelinghistoricalimmediatetags.
+No live cadence/order/cancel/DB change or box write.
+
+2026-10-08 09:29 ET codex-2 C19: LaneF draft#1133 pushedb7ac33bd,
+186focusedPASS(58new/87CLEAR/41RETRY); retire-removal6RED andworkingguard
+removal10RED, bothassertions/noharnesserrors. Bootoffloopretire/rereadbefore
+cancelpublication;04passoffloop;exacttoken/freshness/inflightguards.
+WorkingNULL/managed/pendingBUYkept,slotandfilledowneruntouched,gate100lookup
+zeroSQL/logstatechangeonly. Presentproofthreecleared/fourzeroIDUNKNOWN.
+Fullheadpair/hostedValidatepending; draftnotREADY,pinabsent,noactivation.
+
+2026-10-08 09:36 ET codex-2 C20-C22: Lane C published plan9b9a207c,
+265 isolated mechanics PASS / 16 assertion mutations RED. Final APP/release
+hash still blocked on reviewed source landings; nothing staged or activated.
+Normal ORB empty replace requires its own applied cursor and preserves other
+owners; final five-service preopen evidence tested with the unchanged daily
+runtime verifier. Full unit timing swap is explicit, not failed-name parity.
+Lane A draft1130 head1f4a49e4 adds causal SELL segment transport for the real
+BUY callback:375 focused PASS/10RED, controlled ask2.03 drafts296/148 once.
+Historical quote/broker absence remains UNMEASURED; source delta needs review.
+Lane B exacthead709e826e full47FAIL/7699PASS/55SKIP, zero added failed names;
+only baseline HOTFIX retained-off timing failure absent. Fresh pin/CI still
+required. All six isolated lanes remain free of production writes.
+
+2026-10-08 09:42 ET codex-2 C23-C26: A final47FAIL/7736PASS/55SKIP,
+no added names; D full48FAIL/7700PASS/55SKIP with retained-on/off timing
+swap, hosted Validate x2 GREEN. E final9d8dd70d source6d4141fa has78
+focusPASS/13RED; full49FAIL/7751PASS/55SKIP retains all48 baseline names
+plus retained-on timing failure. No parity/host-flake waiver. F b7ac full
+49FAIL/7731PASS/55SKIP likewise plus retained-on; hosted push has one
+RESERVE1 TimeoutError, parallel PR green. Parent186 focused PASS and
+dedupe-removed mutation1 assertion RED (101vs2logs), source unchanged.
+New user DKI09:25/SBFM08:00 addendum assigned to the SAME F writer1133:
+current proven no-dispatch resolvesCLEAR, pending cancel barrier retained.
+Four replay outcomes will distinguish17transitions/three positive retirements,
+todayAIXI receipt, SBFM receipt, and DKI current removal; no zero-ID legacy
+blanket release or historical broker proof invented. Nothing on the box changed.
+
+2026-10-08 09:45 ET codex-2 C27: D published docs-onlydfdd1c06, source
+6d38735b unchanged. Both original48-name full sets retained with timing swap;
+independent selected delta controls3PASS on each separate checkout, unchanged
+thresholds. No causal host-contention or full-parity claim. Successor hosted
+checks/pin still pending. F continues the newly released DKI causal no-dispatch
+removal proof on its existing sole-writer branch; other lane source frozen.
+
+2026-10-08 10:08 ET codex-2 C28: Lane F published aa4f228b on draft1133,
+225 focused PASS/five assertion mutations RED. Same writer now covers the
+parent's publication gap: a cancelled envelope already sent but not yet in
+the intent table cannot be mistaken for no dispatch; exact per-account
+terminal receipts are required before clearing. Current-day recorded DKI
+boot recovery is tested separately from a new causal raise; prior-session
+zero-ID requests are not cleared by age or SQL absence. Own F1 read09:41:59
+ET keeps SBFM's20.17s receipt and AIXI's existing receipt semantics. Final
+full/CI and safety delta pending; draft is not ready. A-E source unchanged,
+no production action.
+
+2026-10-08 10:10 ET codex-2 C29/C30: current A/B/D/E heads each have
+two hosted Validate successes, independently read at10:09; pins absent and
+literal local failed-name sets remain unchanged. Seventh sole writer Newton
+CLAIMED LaneG on codex/mirrorhold1-session-duplicate-scan-1008 from1e15adb0,
+own worktree. Own Step0/replay first: AIXI09:35 versus FLYE09:55; constrain
+duplicate scan to current04session and preserve same-slot filled proof across
+age, unknown identity fail-closed, warning for every refusal. No tick-path
+SQL/HTTP, precheck/hold/resubmit/cache or production change. User79/214 is
+not yet independently measured. LaneF safety follow-up continues separately;
+A-E remain frozen, C plan remains unstaged.
+
+2026-10-08 10:15 ET codex-2 C31: F source frozen/pushed3f8120c7 on
+draft1133. Parent independent235 focused PASS3.86s, clean/head unchanged;
+six F1 mutants assertion RED/zero errors, writer's two rollover mutants make
+eight total. Cancellation publication is receipt-fenced; missing intent DB
+rows after xadd never clear. Independent10:07:53ET boot raw DKI includes
+six terminal cancels and old identity bytes: current saved request clears
+only with exact receipts for both accounts; zero/one blocked, historical
+identity/owner/budget values unchanged. New causal DKI clears before cancel
+publication; AIXI and SBFM use their original receipts, archive denominator
+remains17transitions/three retirements/four zero-ID UNKNOWN. Full and hosted
+checks pending on this exact head, not ready/pinned/installed. G independent
+read/replay continues, A-E unchanged, no production writes.
+
+2026-10-08 10:24 ET codex-2 C32: F full on frozen3f8120c7 completed
+47FAIL/7782PASS/55SKIP in605.17s; parent XML comparison zero added names,
+only baseline HOTFIX retained-off timing failure absent. Exact hosted runs
+still in progress; this is not identical-name parity or a timing waiver.
+G own bounded read10:22:58ET retains135orders/25currentintents/135historical
+intents/237audits/21fills, no truncated scope or missing strategy identity.
+Real AIXI earlier same-day fill is included in replay, not minted from status;
+user11 blockers are a subset of47prior AIXI buys. Source and final tests/mutants
+remain with Newton alone; intermediate130PASS receipt not final-ready claim.
+A-E frozen, C unstaged, all production untouched.
+
+2026-10-08 10:46 ET codex-2 C33: F exact3f8120c7 has both Validate
+SUCCESS and no added local full failures, but own controlled real-emitter
+counterexample shows an untagged BUY cancel can publish before OMS persists
+it and escape the exact-token receipt fence. NOT READY; same sole writer
+resumed narrow fix, no age expiry, global proof await or tick SQL. Final
+receipt issuecomment6062098636 retains this blocker and four recorded outcomes.
+G draft1134 published5a8b3208; parent independently134 focusedPASS19.20s,
+five writer assertion mutants RED and real read-only PostgreSQL predicate
+evidence. Exact-slot fill identity preserved, historical same-segment query
+does not authorize different-slot retirement. Hosted Validate x2 green;
+full still running. RTH dispatch acceptance is recorded-bar/real adapter with
+fake SDK; PM scope not certified because unchanged window requires RTH.
+Queue/restore old all-history behavior remains disclosed, not secretly fixed.
+All A-E unchanged; C plan unstaged; no production changes.
+
+2026-10-08 10:52 ET codex-2 C34: G frozen5a8b3208 full receipt
+/tmp/mirrorholdG-final-head-unit.xml completes49failed/7738passed/55skipped,
+612.50s. Baseline1e15adb0 failed-name comparison adds HOTFIX retained-on
+stall318.467ms against unchanged50ms limit and cron install plan length1003
+against1000; removes baseline HOTFIX retained-off timing failure. Not parity.
+Requested serial isolated baseline/head benchmark controls and equal-path
+cron geometry reproduction; do not relabel cron failure as a timing flake
+or weaken its limit. Both exact hosted Validate runs green, focused134pass
+and five semantic mutants RED retained. Queue/restore history residual and
+RTH-only production dispatch window remain disclosed. F remains NOT READY
+while same writer corrects generic cancel publication/receipt inventory.
+No source merge, pin, activation, staging or production action.
+
+2026-10-08 11:04 ET codex-2 C35: isolated unchanged HOTFIX retained-on
+benchmark passes serially on exact base1e15adb0 and head5a8b3208 (61.18s and
+60.72s); /tmp/mirrorholdG-two-delta-proof.json preserves receipts and hashes.
+Canonical87-character checkout paths on both base and head produce the same
+1003-character cron line failure against1000; /tmp/mirrorholdG-canonical-cron-proof.json
+preserves identical installer/test hashes and empty ops diff. This explains
+the local path-dependent addition without modifying unrelated code or
+claiming full failed-name parity. Actual PM eh_resting metadata bypasses the
+rth_resting_mirror scope; before04 synthetic controls are not PM dispatch
+proof. Queue/restore all-history residual remains explicit in draft1134.
+F same writer is correcting generic cancel inventory; not ready until its
+publication gap and restart recovery are both proven. All production unchanged.
+
+2026-10-08 11:22 ET codex-2 C36 CLAIM FALSEFLIP1: eighth sole writer
+Averroes01a11c18-679c-77a0-b5a3-009026853f05, own branch
+codex/falseflip1-entry-close-budget-1008 at exactbase1e15adb0; actual isolated
+worktree confirmed. Independent code/raw assessment first, then H1-H4 patch
+only when cause/card agree. FLYE's stop precedes entry-bar close, so require
+retrospective exact-row classification and no speculative slot refund.
+User17/62 not yet independently measured. Existing RETRYOFF1 ruling uses
+enabled=true/max_retries=0 rather than disabling the old always-release
+code path; H must preserve no second REAL trade, not casually change env.
+No source edits by parent, no shared writer, no production action; A-G
+continue independently, F receipt inventory remains under correction.
+
+2026-10-08 11:26 ET codex-2 C37: parent reviewed worker's provisional
+/tmp/falseflip1-step0-1008.json (raw cut11:20:37ET):90 buy-fill legs,
+61 distinct slots,24 false legs in17 false slots,64 real legs,2 unmeasured.
+Do not call this17of62 literal fills or final replay proof. FLYE canonical
+10:00 bar delivered10:01:02.866 isSHORT/close2.790100/trail3.006326,
+both exact filled legs included; no buy-restoration or livepage claim yet.
+Asked substantive H3 clarification: after the second false flip and one
+skipped cross, later cross in same segment allowed versus blocked untilSELL.
+No invented third-false waiver; continue classification/replay work while
+the post-skip rule is resolved. Follow-up real flip must be within same
+causal segment, not any future symbol BUY. No production action.
+
+2026-10-08 11:36 ET codex-2 C38: H sole-writer checkpoint published draft
+PR1135 exact6f8d10d9da4418cc5652348497c9e0e53dd9e15d; clean tree,
+Codex-only commit. Parent independently144 controlsPASS1.31s with explicit
+worktree PYTHONPATH in /tmp/falseflip1-parent-checkpoint.xml. Eight pure
+classifier/sibling/label semantic mutants assertionRED; not runtime budget
+mutants. CauseAGREE;17 false slots/24 legs in90legs/61slots,8 bound falselegs
+versus16 historical unknown for refund purposes. Table includes same-segment
+nextBUY transitions but restoration remainsUNMEASURED. No durable/page update,
+refund, counter or normal-place restoration implemented; no full parity claim.
+Unused-module check FAIL is actual incomplete integration, not a waiver.
+H3 post-second-false/one-skip wording outstanding; no partial installation.
+Attachment tool refused at existing100-artifact capacity; PRlink delivered.
+No production action; all other lane writers unchanged.
+
+2026-10-08 12:11 ET codex-2 C39: H3 post-second-false-flip ruling is now
+explicit: skip one cross only; next cross in the same segment may trade;
+fresh SELL resets. Resumed existing Averroes writer on PR1135 H1-H7 runtime,
+normal-path restoration, durable/page labels, exact ownership and UNKNOWN
+controls. Parent read hosted Validate37801996344:1 failed/7797 passed/55 skipped,
+778.88s, sole failure the unused falseflip1 module. Prior C38 full-suite
+UNMEASURED wording is superseded by this receipt, not by a green claim.
+Focused tests are76 new+68 existing; no inert-module exemption authorized.
+Newton G resumed PR1134 queue/restore session-bound ownership and wire cap;
+read Claude D28 directly: four accepted FLYE reprices exhausted lifetime
+wire count and11:38 legitimate reprice refused. Cap counts PRICE_AGGRESSIVE
+refusals only, not accepted reprices/free holds/re-authorization retries.
+Both same writers, no side patches, no production action. A-E deliveries
+unchanged; F's durable cancel-inventory correction remains independent.
+
+2026-10-08 12:18 ET codex-2 C40: F same-writer corrective source published
+b23520ba81a0d9e76dad440ab95cf7237a04dbc5 on draft1133; clean source.
+Parent independent three-file focused run288 PASS16.27s, raw immutable
+/tmp/lane-f-parent-b23520ba-focused.xml, explicit source PYTHONPATH.
+The formerly untagged generic cancel now journals exact publication UUID,
+account and target metadata before xadd; missing/ambiguous publication and
+receipt stay UNKNOWN. Memory generation fences a racing CLEAR and subsequent
+same-symbol OPEN; completed inventory retires only with exact terminal proof,
+not age. Writer16 F1 plus2 rollover mutants assertionRED in committed receipts.
+New full-suite/CI still pending; old3f8 results not reused. PostgreSQL runtime
+advisory-lock integration remains UNMEASURED. Sent H/F purpose-agnostic barrier
+integration contract; no cross-branch source edits or production action.
+
+2026-10-08 13:05 ET codex-2 C41: G follow-up906944bdd352ad9fdaabdaaa9581eb21885de3a5
+is clean/pushed; parent161 focusedPASS23.57s, raw
+/tmp/mirrorholdG-parent-906944bd-focused.xml. Hosted Validate37809113172 and
+37809113601 SUCCESS; no pin yet. Writer268 focused/neighbor PASS plus13/13
+green-baseline/assertion-RED mutants and actual READ ONLY PostgreSQL predicate.
+New full /tmp/mirrorholdG-queue-head-unit.xml49 failed/7765 passed/55 skipped;
+added cron portability and NFQ2 sustained-loop timing, baseline HOTFIX-off
+missing. Equal counts or isolated passes are not full failed-name parity.
+H first runtime focus378 PASS4.97s, but full candidate PID13322 exceeded26min;
+parent sampled it non-destructively at12:59 in
+/tmp/falseflip1-parent-full-process-sample.txt and directed ONLY its writer to
+inspect/stop the owned test. PartialXML6232 cases72 failures/55 skipped is not
+a full receipt. Files changed while the process had imported old line numbers;
+source-inspection failures must be reproduced frozen, not patched blindly.
+The exact hanging node and final three-false/manual-stop/outcome controls remain
+with H sole writer. F frozenb235 full47/7835/55 zero added local names; both
+hosted Validate fail NFQ2 concurrent-quotes timing982.53/798.41ms against50ms.
+Same F writer investigating/rerunning with no threshold or source waiver.
+No parent source edits, production writes, pin or install readiness claim.
+
+2026-10-08 13:23 ET codex-2 C42: F frozen b23520ba Validate reruns
+37807457025/37807465798 PASS at13:15 ET, unchanged source; original NFQ2
+982.53/798.41ms failures preserved. Parent exact H bdcba457 detached snapshot
+61 existing controls PASS1.58s, /tmp/falseflip1-parent-bdcba457-existing-controls.xml.
+This only resolves the moving-source inspection counterexamples, not full parity.
+Hosted frozen bdc push37814365975 measured16 failed/7840 passed/55 skipped,
+625.05s: nine db-seed truncation tests consume just one bar, six partial strategy
+fixtures lack settings, one poll harness lacks the new falseflip hook. Sent
+exact failures to Averroes sole H writer for default-OFF and callback-protocol
+correction; no fixture-count weakening. H dirty follow-up contains recorded
+17-slot controlled PM/RTH restore receipts and three-false/manual-stop controls;
+not a final head or readiness receipt. No production action, pin or merge.
+
+2026-10-08 13:26 ET codex-2 C43: operator P1-only cut applied. WBQUIET
+data/hooks stopped; Mencius now read-only G helper, Banach read-only A helper,
+parent verifies H, source remains one writer per branch. A/G have delivered
+source but need evidence packaging cut and readiness signal; F resumes same
+writer for narrowed rollover fix, preserving unknown/working/fill barriers.
+No recorded fixture over500 lines and no separate STEP0/VERIFICATION/receipt
+documents; exact numbers and limitations go in PR bodies. H current JSONs
+898/905/1250/3476 lines must be trimmed before readiness. G14:00, A/F14:30,
+H15:00; H readiness risk reported14:30, not waived. Runner writer notified
+only exact pinned P1 candidate; no staging or production action. Parked
+RPGRETIRE1/1115/1110/1103 not resumed; existing merged shadow code not reverted.
+
+2026-10-08 13:30 ET codex-2 C44: A marked ready at
+d170e765d910874e84c996c3f5e5af8fc5891336; source/unit-tests/ops unchanged from
+1f4a49e4, fixture122 lines. Banach independent61 boot+269 neighboring PASS,
+no code findings. Final Validate pending, missing pin expected before review.
+G trim3866153b96b8f4c037ef08314c48908ce78402d7 source/ops unchanged from906944bd;
+fixtures336/156 lines, all retained records match original projection; Mencius
+read-only review no behavioral findings. Final Validate pending, not reused
+old-head green. C published P1-only runner plan01d2369897d3d6bd829566cf4e3e2cf841aa1077,
+274 tests PASS/18 assertion mutants RED; no final reviewed APP, manifest,
+staging or production action. H additive0023 conditional only; F narrowed
+rollover source still being verified by its sole writer.
+
+2026-10-08 13:35 ET codex-2 C45: H frozenfa278ecd independently125 PASS2.50s,
+/tmp/falseflip1-parent-fa278ecd-runtime-regressions.xml, including runtime and
+all prior seed/partial-fixture failures. Mencius found skip-before-cancel proof
+window; same H writer now requires exact latest false episode cancellation
+before spending skip. Fixtures113/88 lines, receipt documents removed; full/CI
+and runtime mutations pending, not READY. F published conservative cut43eb58a0,
+171 focused PASS/three assertion mutants RED, but functionally0/7 latest active
+archived requests retired. Three prior positive opportunities lack canonical
+receipts, four have zero identities; current DKI no_dispatch remains blocked.
+Absence of DB rows is not proof that prior Redis publications drained. No
+existing complete certificate identified; F NOT READY early, not hidden until
+14:30. Runner writer instructed exclude F unless reviewer resolves scope/proof
+and a new reviewed head is ready. No production writes or ownership waiver.
+
+2026-10-08 14:10 ET codex-2 C46: G top P1 source3866153b marked ready for
+review14:09 ET; exact hosted Validate37816660862/37816668440 both SUCCESS.
+Remaining new temporal evidence explicitly listed in PR body, not hidden by
+READY metadata. Sole writer adding tests only; parent own-src import verified,
+uncommitted temporal tests4 PASS1.92s. AIXI outside-band prestage controlled,
+not an actual captured quote; parent requested outgoing FLYE09:55 price/quantity
+assertions. Prior161 PASS/13 mutants RED preserved, successor CI not inherited.
+H fa278ecd both hosted Validate SUCCESS, parent125 runtime/regression PASS;
+local full and final readiness pending. B pin/Validate PASS, A pin PASS with
+Validate reruns active. F functional blocker remains, no unsafe CLEAR or
+production action. No source writer displaced and no extra proof worker.
+
+2026-10-08 14:14 ET codex-2 C47: G pushed READY temporal successor031be633
+at14:13 ET, parent165 focused PASS25.08s with explicit own-src PYTHONPATH.
+Source/ops/scripts unchanged versus3866153b; fixtures340/160 lines. All three
+requested temporal positive flows and inverse four-refusal cap PASS. FLYE09:55
+outgoing stop/limit/quantity equals recorded target; five later accepted
+reprices all reach controlled SDK with actual cancellation evidence between.
+AIXI outside-band prestage synthetic, final confirming quote recorded; no
+new live ACK or fill claim. Exact successor hosted CI and mutation rerun/body
+update pending. Existing13 mutants RED on identical source retained. No pin,
+merge or production action. Reviewer response deadline met with live status.
+
+2026-10-08 14:16 ET codex-2 C48: G READY delivery complete locally031be633,
+165 focused PASS,17/17 green mutation baselines and17/17 assertion RED
+independently counted in /tmp/mirrorholdG-temporal-head-mutations.json.
+Three required positive temporal flows and inverted four-refusal cap PASS;
+updated PR body verified. New hosted Validate still pending. Prior local
+source-identical full failed-name residual remains NOT parity, unwaived.
+No source change, old CI substitution, pin/merge or production action.
+
+2026-10-08 14:53 ET codex-2 C49: G pin held after hosted combined duplicate
+quote proof0.912431s>0.05; Newton assigned Linux20x exact031/main1e15,
+slow-frame attribution and off-loop fix if caused. Parent static quote call
+chain remains memory schedule with queue to_thread. Separate new synchronous
+RPG price_wait budget SELECT/upgrade/commit flagged to sole writer; not yet
+claimed the cause of this fixture. New I sole writer Parfit assigned independent
+FLYE bound-owner freshSELL cause/sweep/fix, preserving same-segment real retry
+and open/UNKNOWN sibling ownership. H READY14:36 fa278ecd, hostedgreen x2,
+fresh full pair47 same failures/zeroaddedremoved; parent read pair JSON.
+F43eb misses14:30, four actual outcomes unchanged:0/7 old active retired,
+AIXI waits exact receipt, SBFMCLEAR20.173175s, DKIzerooppblocked. No proof
+invented; C runner informed exclude unpinned/blocked lanes. No production action.
+
+2026-10-08 15:03 ET codex-2 C50: exact G031/main1e15 Ubuntu pair completed
+in isolated Actions37828102474/evidence42dd2dcc:20/20 PASS each, original50ms
+test threshold, alternating fresh pytest subprocesses. Parent read40 logs:
+G24.040-25.812ms, main24.216-25.466ms. No failed slow frames; original912ms
+still UNMEASURED. Largest GC sample was outside the measured interval, not
+causality. Unchanged-head Validate37822520711 attempt2 running. C49 correction:
+RPG budget initial SELECT existed on main; additions are legacy-upgrade reads
+and commit, separate from the memory-only quote scheduling chain.
+I draft#1136 c6f44672 published:24-line production change preserves genuine
+fresh SELL awaiting_close through existing retry_exhausted cancellation barrier.
+254 focused/36 new controls,9/9 mutants RED, full pair pending. Read-only sweep
+98 resets/29names;15 reset-after-exit cases,14 all-sibling closures measured,
+13 later rest and1FLYE14:10 missing. Historical positive cancel completion
+UNMEASURED, controlled positive receipt explicitly labelled. Open/UNKNOWN
+siblings never released; same-segment real retry remains held. H frozen READY,
+F functional blocker unchanged. No production or candidate activation.
+
+2026-10-08 15:10 ET codex-2 C51: tonight exact user set B/A/G/H released,
+I conditional on pin beforeexecution,Fexplicitlyexcluded. Matched-headB709
+rebase-merged19:08:10UTC main4ec93308aab379894b69de0b84622d6ce3a7c756;
+whole treef11cd1722be40560593cc2e4be34bc30b76dbc92 equals pinnedBtree.
+Asolewriter clean rebase306d726f ontoactual4ec,4 equal range-diff commits,
+unchangedstablepatch554b4501af909fccd0a1b66b14de5be5f49ec4cf,61bootPASS.
+Newexactheadre-pinrequested; hostedValidatex2running. Csolewriteramends
+literalgate->0023once->OMS(strategy)->v2->control->audit->preopenrepin,
+LINE/GAP/FALSEtrue,MIRROR/SLOTtrue,RPGfalse. MigrationreadnullableJSON
+entry_classification down0022, automaticmigrationsdisabledperdeploy.
+No finalcandidate SHA,manifest,staging orproductionmutationclaim.
+
+2026-10-08 15:26 ET codex-2 C52: A306 exactpin/bothValidatePASS verified,
+matched-head rebase-merged19:25:03UTC to06336beb2340c6334ff4e6b0d64b23c1c2b96215,
+whole tree2b31eff3ab8c276acdba4d885ed465503efc1302 equals pinnedA.
+G27b3244364aa011eb8fd9b7991407f94894a66ac cleanrebasedonto063,
+4range-diffcommits equal,old/newstablepatch424bc875998b9a3b0ae0fd60333b408320c0dc7f.
+ExactGrepinrequested; HwaitsactualGmerge, noindependentdoublewriter.
+Cpublishedc10a5c50 runner316PASS/32RED. Fresh15:24directgate0/BOTflatboth,
+working/managed/virtual/inflight0,nativeOMS0; nativev2FLYEarmed andclock<18
+rc1,notPASS, nooverride. Parentreadrawstdout. Noapplicationwrites/staging.
+I sourceREADYc6f full47F/7711P/55S,base48F/7674P/55S:47shared,0added,
+onebaselineHOTFIXtimingfailurecleared. Notliteralidenticalfailedset.
+HostedbothNFQduplicate1F/7757P/55S,0.8907/0.9379s; parentreranonce
+unchangedhead,no thresholdwaiver. Iremainconditionalpin+Hcomposition;
+Fexcluded. FinalAPP andactualafterclosegate stillpending.
+
+2026-10-08 15:45 ET codex-2 C53: G27 exact re-pin accepted and latest hosted
+pinPASS. Both initial newValidate runs37831861522/37831856280 failed1F/7902P/55S
+on unchanged RESERVE1 concurrent-exit test, TimeoutError waiting firstadapterread.
+The test and oms/service.py have no diff vs exactbase063. Local alternating
+fresh processes0/10 failures perhead,50-60ms call; causality remainsUNMEASURED.
+Both CI rerun once unchangedhead, no bound/production edit or gate bypass.
+Separate existing evidencebranch a5e41c3c Linux20/20 unchangedtestcomparison
+run37834142179 inprogress; no extra source PR or receipt document.
+Main remains063, Hfa278 frozen awaitingactualGmerge. C adf401c0 runner330PASS,
+35RED; existing native clock-only override testedafter16, noarmedoverride,
+no live execution. I bothreruns failedunchangedNFQ timing0.911596901/0.956834248s;
+notpinned, notincluded. Cafter16 read-only passrequested; nofinalAPP/stagedpackage
+or production write. F remains excluded.
+
+2026-10-08 16:01 ET codex-2 C54: G27 bothunchangedheadValidate retriesPASS,
+7903unit/55skip plus86golden/1xfail andRuff. LinuxRESERVE1 exactpair0/20each;
+localG+RESERVE209PASS. Initialfull-suite timeoutcause stillUNMEASURED, no waiver.
+Matchedhead rebase merge19:59:47UTC maina447ea3dc2579714a9e2911a19693742a477ded7,
+whole treec6fb77e48d1cbc29f311af2872e270a4054f5674 equals Gpinned27tree.
+Hsolewriter rebasedfa278 withoutconflicts/edits to7d7034f0586691cbbf6a892166c42c3d47c3dc07,
+151controlsPASS. Range-diff=/!/=, middlecontext upstreamA changed
+int(state.atr_short_flip_bar_ts or0) toshort_segment. Parent ordered +/- lines
+comparisonempty across27files; stablepatch2677db4313c4623451dcfa9adebd66fb92830e0f
+nowb32f1c1e8663f1e6b596aaff1f7797715eef84ae. Notidenticalpatch-id; disclosed
+forreviewernewpin. NewCI37836252921/37836232309 underway. No finalapplication,
+stagedpackage, migration or productionwrite. Actualafter16gate receipt requested;
+mustrerunfreshagainbeforeeachrestartafterfinalmain/Hpinland.
+
+2026-10-08 16:02 ET codex-2 C54 gate supplement: actualRO afterclose pass
+20:00:14-20:00:25UTC independentlyread from /tmp/oct8-lane-c-gate-after1600.stdout
+(directrc0,bothflat,working/managed/virtual/inflight0,blockers/unknown0),
+/tmp/oct8-lane-c-native-oms-after1600.stdout(rc0,sources14/15sfresh),
+/tmp/oct8-lane-c-native-v2-after1600.stdout(rc0,armed0,state0.9sfresh).
+Existingclock-only override namedoperatorafter16ruling; noarmedoverride.
+Danglinglog-onlyARMs warnedDKI/FFR/LGCL/LPCN/MTEN; nativefreshpublishedstate
+decidedsafe. Receiptsnotinstallreadiness: Hnewpin/CI/finalmainpending,
+freshgatesmustreadagainatexecution. No staging orproductionwrite.
+
+2026-10-08 16:20 ET codex-2 C55: verified latestH7d exactpinPASS andbothValidate
+SUCCESS8054unit/55skip,86golden/1xfail,Ruff. Matchedheadrebase merge20:19:32UTC
+main eced4599d05e72adab77551f18df8050a94028e2 tree4ea8786cb490a6789c45c634ca2129bf16706a28
+equals reviewedH7d. FinalAPP supplied toCsoleinstallwriter: commit/bindexactrelease,
+freshactualbaseline andgates,stageONEpackage,0023only,LINE/GAP/FALSEtrue,
+MIRROR/SLOTtrue,RPGfalse,OMS(strategy)->v2->control,audit0mismatch/preopenrepin,
+10minactualjournals/loop/scanner/procproof. No packaging/firstwrite/COMPLETE yet.
+F1133+I1136explicitnextnight: sharedmodule/producerF,RemovedWaitProofconsumerI.
+Exactcancel-targetclientid andauthoritativecompletebook remainunproven,
+no fabricatedCLEAR. IunchangedLinuxpair37837201009 base19/20passed(77.96msfailure),
+I20/20passed,50msboundunchanged; full-suitecausalityunmeasured.
+
+2026-10-08 16:32 ET codex-2 C56: actual install applied on eced4599, migration
+20261008_0023, OMS2073383/strategy2073394 at20:22:58Z, v22074723 at20:25:04Z,
+control2075090 at20:25:35Z active/NRestarts0. Package plan a5e43efa55f0e6cf21111c4974f5f44cf91216df,
+manifest c053e0324221a01b89236da3b0d6396b55099dd9c265acc2a85ffb4f9cd38d21,
+runner /home/trader/after-hours/2026-10-08/gapline-wbquiet/job/attempt-20261008T202200963185Z/runner.log.
+First write20:22:25.838Z, migration rc0 20:22:36.708Z, post direct gate rc0.
+POST-INSTALL PROOF FAILED: independently read /var/log/project-mai-tai/oms.log
+NumericValueOutOfRange, JSON bar_ms1791491460000 CAST AS INTEGER in record_bar.
+Four epoch comparisons in falseflip1_runtime require bigint, including managed
+classification invalidation. Averroes sole source writer assigned isolated new
+hotfix PR and actual PostgreSQL integration regression; no SQLite-green claim.
+Services kept active, existing observation/collector only, no extra deployment
+before hotfix review/pin. User archived8removed-wait rows; next authorized v2
+restart must show0restored. FALSE=false fallback authorized only if fix remains
+uninstalled by06:30ET. F/I shared proof remains next evening, not tonight.
+
+2026-10-08 16:36 ET codex-2 C57: initialattempt sealed ABORT20:35:55.236Z,
+ten-minute-observation rc1, all four servicesactive. runner.log hash
+21802d9367527a4aec84c01e65db5c42c1b547b5c7577d95ea3e6f42488399a7.
+Postproof75OMSerror/tracebacklines (not75incidents),4v2ERRORlines from
+historicalFLYE3/AIXI1 confirmation-exit line_unproven, notv2tracebacks.
+Collectoralsoflags authorizedOMS SLOTreload values and controluntimestampedlog;
+no realfault waived, no cleanCOMPLETE, preopencloseout incomplete.
+HotfixPR1137 a02bb42bf107f69bcacc9a681f6fec94ae9cc45a: fourBigIntegercasts,
+133line actualPostgreSQLintegration controls for record/budget/classify/conflict,
+fourint4mutation probes. Existing151corePASS/RuffPASS; bothValidate stillrunning,
+actualPG notyetmeasured. Reviewed/pinnedhead andgreenCI before nextdeploy.
+Sealedoldjob mustnotrerun; serviceskeptup, newhotfixpackage isolated.
+
+2026-10-08 16:54 ET codex-2 C58: actual PostgreSQL16 run37840191505 on
+hotfixa02: four positive epoch paths PASS; golden93PASS/1xfail/1FAIL, units
+8054PASS/55skip. The classifier int4 mutant correctly raised NumericValueOutOfRange
+but PostgreSQL's message differed from the regex. Successor5d17199c changes
+tests only, requiring SQLSTATE22003 and exact psycopg NumericValueOutOfRange.
+Parent independently verified source unchanged; both successor Validate still
+running, all8PG controls not yet verified. No READY/pin/merge/deploy claim.
+Existing sealedABORT remains immutable and services remain active.
+Repo audit151/153,0mismatch,2paperUNKNOWN measured. StaleBOXcatalog has7removed
+Settings fields; normalize to reviewed132row boolean inventory with common
+expected values unchanged and preserveBOXnumeric10/retry0. Expected153/155
+checked plus2UNKNOWN after normalization, not a live receipt yet. New separate
+OMS/v2 package in preparation, no staging, no schema/env/archived-row writes.
+
+2026-10-08 17:06 ET codex-2 C59: #1137 READY exacthead
+5d17199caff81e2b9e232ac78091579aa3ff4334. Parent independently read both
+Validate logs: 37842097790 SUCCESS21:04:29Z, 37842106143 SUCCESS21:03:22Z.
+Each8054unitPASS/55skip, PostgreSQL8/8PASS, golden94PASS/1xfail, RuffPASS.
+Four int4 mutations assert exact22003/type; four positive epoch paths pass.
+Baseeced CI8054unitPASS/55skip/golden86PASS/1xfail; failed-name sets empty.
+Pin record still absent, hostedpinFAIL/mergeBLOCKED; no self-pin or deployment.
+Mechanicsb877108e302PASS/7skip/13mutationRED, unstaged isolatedOMS/v2package.
+No migration/env/control action. OriginalABORT preserved. Actual deployed-store
+restore counts and boot lines owed after authorizedrestart; directboot count
+not instrumented, never claim quietlogs prove0. F/I next evening unchanged.
+
+2026-10-08 17:13 ET codex-2 C60: #1137 matchedhead merge21:09:43Z,
+main06b5e388affb5f33e4edf80c6e635cf72dbc3f78 whole tree92a4d4456b401464df364c1c909e96298a4e3ab7
+equals pinned5d17199c. LatesthostedpinPASS andbothValidatePASS independentlyread.
+Hotfixfirstattempt sealsABORT21:12:11Z source-precheck128 beforeapplicationwrite:
+missingremoteimmutablecodex/install-2026-10-08-06b5e388affb. Tradinggatereadrc0,
+actual OMS2073383/v22074723/strategy2073394 active/NRestarts0 unchanged.
+Csolewriter correctspublish/verify immutable ref and tests before newactivation,
+preserves oldseal/receipt and issues fresh no-overlap package. No hotfix source
+change, no extra services/schema/env/archival action, no COMPLETE claim.
+
+2026-10-08 17:21 ET codex-2 C61: corrected isolatedr3package deploys approved
+06b5e388. OMS2094823/strategy2094834 start21:16:04Z, v22096131 start21:18:16Z,
+allactive/NRestarts0. Firstreceipt sentwithin10min: selectedprocflags unchanged,
+LINE/GAP/FALSE/MIRROR/SLOTtrue,RPGfalse; actualentrybarfacts8 sinceOMSstart,
+AIXI/FLYE realepochbar_ms1791494340000latest, classification_unreadable0.
+WholeDB18.7595tx/s over147.605s (includescollector),17syncends allok
+463.321-916.994ms. DeployedrestoreROroutineafterrestart returns0, noarchival
+byus; source hasnozero-countbootmarker, directmemorycountUNMEASURED.
+Auditactual153/155,0mismatch,2paperUNKNOWN, preservednumeric10/retry0.
+Plan10cbee223b685e6b908bd6e0ed5378d79b66cffc manifest
+fa606690a63575da03d3ddf7c388258d5a852856e728d916fca35f117b12c802;
+approval3968c72da5818cc31e6a18ab1394273178047449cac2b7c4b35bb8fa2498934f.
+Runnerfalseflip-pg-hotfix-r3/attempt20261008T211500954696Z observes600sec
+from21:18:32Z. FourhistoricalclosedFLYE/AIXIconfirmationline_unproven errors
+repeat21:18:21Z, nottracebacks/PGfault, retainednotwaived. NozeroerrorCOMPLETE
+orpreopencloseoutclaim; originalfailedreceipts preserved.
+
+2026-10-08 17:37 ET codex-2 C62: actual r3 ten-minute collector sealed
+ABORT21:28:36Z. Runner hash50e015024767114d591e209ed55a2c88d328b9eec4588382ef9205a7d254cddc.
+OMS/strategy zero errors; v2 four historical closed-episode line_unproven
+ERROR lines retained, not tracebacks. WholeDB18.086tx/s over795.645s,
+50sync passes allok,p95 772.594ms,max1075.423ms. Separate bar-continuity
+UNKNOWN is precision: coarse start21:18:16 versus stop21:18:16.443450;
+native systemd microsecond start21:18:16.959983 shows correct ordering.
+Mechanics sole writer fixes/tests readonly collector, preserves old seal;
+no extra restart, waived error, fabricated PASS, or uncovered bookkeeping write.
+Preopen remains pending. PostgreSQL hotfix live, classification fault absent.
+Latest operator correction releases F/I TONIGHT, READY20:00ET with PostgreSQL
+CI green. Shared Goodall firsthead42ef3486 on06b5e388 forwarded immediately
+to separate F/I consumers: exact broker terminal or fresh complete book<=15s,
+off-loop per request, all accounts required, unreadable/working/fill UNKNOWN.
+F rollover/boot/no-dispatch CLEAR; I freshSELL releases only closed bound owner.
+No source self-pin; later distinct OMS/v2 install needs reviewed exact heads.
+
+2026-10-08 18:07 ET codex-2 C63: separate bookkeeping helper92b4219b,
+receipt commit3b000435. Packagepreopen-bookkeeping-06b5e388 manifest
+cc6c6231937d3d27632d6dd82911a8131eaf56c4537082a786cea622e9c1e937;
+fresh gate22:01:15-23Z rc0, exact authorized4PIDs and untouchedidentities.
+Atomicrepin22:01:25.899260Z backsupsix targets, runtime-last publication;
+preopenSHA33fd632963a1da32bb7b65b348c8f3544304ab61773f1a5af155046986b3bb8c.
+Actual0023 migration receipt from originalrunner bound, no migrationrun.
+Official restart report8PASS/1UNKNOWN warmup query, flags120/120PASS;
+fullpreopenrc1 after07clock/paperinactive/guardinactive retainednotwaived.
+Attempt-scoped precision proof separatelymeasured no missingminutes.
+Originalr3manifest/artifact/seal hashes unchanged; originalFAILneverCOMPLETE.
+No extra service/source/env/catalog/schema/DB/Redis write.
+SharedPR1138 at1e4c82db latestValidatepending; prior42ef hosted37847848827
+SUCCESS independentlyread. Parent49unitcontrolsPASS onsharedc80.
+IntermediateFec43 unitgreen butPGgolden1FAIL103PASS1xfail, controlled receipt
+onupdate timestamp issue; intermediateIa9681FAIL8144PASS55skip, contract
+stillinert untilproducerintegrated. NeitherfinalreadinessnorPGreplayclaimed.
+Parent bounded single Webullv2list-openGET22:03:29.222-.350Z,128ms,
+HTTP200,dictkeys hasNext/orders/pageSize,hasNextfalse,orders0,SDKretryfalse.
+No DB/file/order action. Current empty-book shape measured; neverhistorical
+FLYE book or nonempty live pagination claimed. Exact legacyFLYEtargetcoid
+missing: UNKNOWN pending human ruling on stronger complete empty-symbol
+proof with closedownedrows/exacttoken. DKI genuinelyno-dispatch predicate
+alreadyreleased, separate from a fabricated target ID. F/I20ET remains target.
+
+2026-10-08 18:12 ET codex-2 C64: human option2 supersedes C63's pending
+unbound ruling. Every account needs a fresh complete working-order book,
+read after the request and within15s; any working BUY on the symbol blocks,
+including operator orders. Working SELL and operator shares do not block this
+cancel proof. DB no in-flight BUY/unanswered cancel, owned rows closed,
+exact token CAS all remain mandatory; install flatness not weakened.
+Shared0bb433eb published and forwarded F/I; parent54unitPASS independently.
+Producer readiness remains unproven: current Schwab capped listing explicitly
+does not establish completeness; Webull target_identity_unknown returns before
+book; QueryBudget counts per endpoint, so strict alone is not aggregate2/2s.
+Shared sole writer handles actual missing-target response and broker capability
+plus burst tests. No invented IDs, historical complete books or replay PASS.
+F/I continue consumers in parallel; no new production action.
+
+2026-10-08 18:43 ET codex-2 C65: shared6ef65ea1,Ffef85a72,Ie2d56c02
+hosted exact-head Validate pairs PASS; no end-to-end readiness inferred.
+Parent readonly Schwab no-filter60d/365d max3000 timed out as adapter599.
+Filtered180dWORKING HTTP200/0rows in442ms. Serial365d probe over16
+accepted working-state filters HTTP200/0rows22:42:23.725-28.047Z,4.322s;
+PARTIAL_FILL is invalid query HTTP400. Working older60d returned0 within
+accepted filters only. No excluded-order absence or cap completeness invented.
+Schwab primary stock-GTC guidance permits180days:
+https://www.schwab.com/content/how-to-place-trade-using-good-till-canceled-on-schwab-mobile
+so60d-only coverage cannot cover the stated any-owner working-buy rule.
+Shared writer correcting producer; parent flagged F's absent actual unbound
+book/retire caller and causal publication attestation. Runtime must consume
+positive books/account IDs/DB fences/token/owned-row proof, not helper mocks.
+Actual Webull synthetic never-submitted-coid HTTP200/empty-byte probe is not
+historical FLYE proof; unbound acquisition must rely on both complete books.
+No order/service/env/DB/Redis write;19:30 status/20READY conditional.
+
+2026-10-08 19:03 ET codex-2 C66: material status before19:30 deadline.
+Shared exact44a live readonly acquisition returnedNone after12.150s:
+CANCELED365 HTTP599/10.020s. Same1d unique-ID comparison at1791500404199
+finds72cancelled IDs in both unfiltered72root and filtered28root responses;
+all6children under noncancelled parents covered, no missing IDs. Raw node
+count difference was duplication, not proof of excluded child orders.
+Latest84600444 uses53seven-day slices; real successful bounded book acquisition
+UNMEASURED, currentCI pending. Ff63e89ee configured account binding fixes
+actual NULL database account IDs without writes;434focusPASS/3mutantsRED,
+newCI pending. Actual runtime unbound acquisition/retire caller absent and
+queued-publication closure still unproven. F explicitly reports20ET READY
+not feasible on current proven design. I controlled witness/CI is not a
+historical FLYE/DKI release. No extra production action or install; finished
+proof tomorrow evening under reviewer fallback, archived rows cover morning.
+No absence inferred from partial books or synthetic historical coids.
+
+2026-10-08 19:09 ET codex-2 C67: reviewer accepts F/I Friday10-09 evening,
+READY15:00ET target. Shared sole writer owns >=180d complete Schwab book,
+timed actual acquisition and Webull measured200empty detail fall-through.
+F owns actual request-raised/boot/04:00 caller with DB/account/token fences;
+I owns closed-owner freshSELL consumer. Scope updates sent all three now,
+parallel source work; final positive certificate is named integration dependency.
+Parent shared unit57PASS0.66s, not PostgreSQL/live release evidence.
+Required five final replay outcomes retained, including both working BUY denials
+and operator working SELL admission. No evidence documents or fixture>500lines.
+No further production action tonight; Friday reviewed/pinned install after close.
+
+2026-10-08 19:32 ET codex-2 C68: parent exact8830c945 ephemeral readonly
+acquisition on live account23:29:52.934-23:30:03.000Z total10.066s. First
+seven-day slice returnedHTTP599 after10.065s, rowsUNREADABLE, bookNone;
+not zero-row complete proof. No rate-limit headers. Nominal181day fullpass26
+GETs/request,10requests260calls absent sharing; no burst run on broker.
+Isolated10ms async heartbeatmaxstall12.479ms not actual OMS latency evidence.
+SchwabHTTP uses asyncio.to_thread; nevertheless actual OMS serial intent path
+awaits evidence before cancel-event publication/return, risking exit delay.
+Shared writer owns bounded background proof after normal receipt publication,
+coalesced actual-account complete books percycle with15sfresh/postrequest fences.
+F consumes pendingrequestbatch once, not repeated per-request periodicfullreads.
+Public official Schwab GET quota unreadable;120/min not a verified safety claim.
+PRbody needs exactcurrenthead/cost/unknowns; no evidence docs or production edits.
+
+2026-10-08 19:41 ET codex-2 C69: BEFORE building revised Schwab local proof,
+own source answer YES: ordinary v2 first-rest/reactive and ORB-Schwab BUY
+can reachbroker without a committedBrokerOrder; TradeIntent add/flush is
+also uncommitted. service2472-2482 pre-wire pendingcommit is conditional
+RPG/NFQretry/deferred/retained-mirror only; ordinary2494wire precedes2497
+reports/15450rowcreation and2540finalcommit. BUYwatchdogreplacement17091
+also precedes17106newrowreports, although prior workingrow usually blocks.
+Shared/F informed BEFORE build: empty independent DB is not no-wire proof;
+affected unsafepaths UNKNOWN, exact positive local no-dispatch plus causal
+fences only, no fabricated complete Schwab book or unrelated prewire rewrite.
+Webullbook stays background/shared15s with postrequesttime and token/DBfences.
+Runtime/PG replays and <50ms exit/quote hanging-read proof still owed.
+No production action, revised hybrid head pending, Friday15 target unchanged.
+
+2026-10-08 20:13 ET codex-2 C70: operator-authorized ORBLIVE1 completion,
+not a second application installer. Exact live06b5e388 and clean checkout;
+fresh direct gate00:09:53-00:10:00Z rc0, both brokers flat and zero working
+orders/open managed or virtual rows/in-flight intents. Restarted only
+orb-schwab20:10:30ET, old765206 ->2121782/NRestarts0. Heartbeat00:10:32.222750Z
+LIVE/healthy in Redis and /health by00:10:45.561Z, no new-process ERROR or
+traceback in /var/log/project-mai-tai/orb-schwab.log. Actual phase is
+session_complete with empty after-hours universe; tomorrow waiting/universe,
+09:27 evaluation and first working order remain UNMEASURED.
+Paper ORB disable --now succeeded/PID0/disabled; exactly one normal
+OrbService._sync_gateway_subscription([]) COLDSTART replacement1791504678676-0
+applied. No HDEL, gateway restart or broker operation. Receipt
+/home/trader/restart_evidence/orblive-closeout-20261008/orb-retirement.json
+sha256 b670c1ff8ea62ef71506a3bcdae5957031b759c031d45d56388162c60c1473ab.
+Every other owner and marker identical; v2/strategy three symbols each,
+ORB-live/paper/momentum empty before/after, union3; gateway heartbeat healthy
+active_symbols3. OMS2094823/v22096131/gateway2907 untouched. Catalog already
+has no retired-orb consumer rows; audit153/155, mismatch0, two expected
+momentum-paper UNKNOWN. Preopen retirement/newORB identity re-pin in progress,
+no completed bookkeeping receipt or tomorrow acceptance invented. Shared/F/I
+continue durable-token source work, no token schema installed tonight.
+
+2026-10-08 20:15 ET codex-2 C70 closeout update: Descartes applied only
+authorized preopen identity/retirement bookkeeping at00:15:05.703646Z.
+Source/receipt commit061da3e12b266a66959d60d531400edd1d768625; preopen.sh
+sha885cbe8b714ee72cab7c8726e77fe74a641235f61ea9a6ca3e69167b07e3b83c,
+mode700. New ORB PID/start pinned, retired paper identity removed, daily
+date/paper shape preserved, timer unchanged NEXT Friday10-09 06:20ET.
+Daily runtime rc0; official preopen rc1, NOT GREEN: evening2015ET clock,
+inactive momentum-paper admission,22 pre-existing v2 traceback headers in
+/var/log/project-mai-tai/schwab-1m-v2.log-20261009, and REST backfill
+continuity UNKNOWN for AIXI/FLYE/GRAN/SAIQ. Actual new ORB errors0; OMS/
+strategy/control collectors also0. Full report at
+/home/trader/known_defect_regression_watch/v2-restart-evidence-20261008.md;
+checks-only.json sha7285fd10df30d215fc71088d89cc4dc14549aa14198067c5e7b8bc23681802cb
+under /home/trader/restart_evidence/orb-completion-bookkeeping-06b5e388.
+Original failed install receipt/ABORT retained, no global COMPLETE claim.
+Historical paper heartbeat remains visible in /health; /api/bots has no
+paper ORB row. No heartbeat DB deletion/masking. Tomorrow07:00 universe,
+09:27 evaluating/working and no-paper-anywhere remain unverified rather
+than promised. No further production action on v2 errors under ORB scope.

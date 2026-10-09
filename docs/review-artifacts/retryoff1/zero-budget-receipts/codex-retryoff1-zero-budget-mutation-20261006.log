@@ -1,0 +1,34 @@
+FF....                                                                   [100%]
+=================================== FAILURES ===================================
+________ test_recorded_close_zero_retry_blocks_both_second_drafts[OLOX] ________
+
+symbol = 'OLOX'
+
+    @pytest.mark.parametrize('symbol', ['OLOX', 'IPDN'])
+    def test_recorded_close_zero_retry_blocks_both_second_drafts(symbol):
+        result = closed_case(symbol, int(os.environ.get('REPLAY_MAX_RETRIES', '0')))
+>       assert result['owner_after_close'] == 'consumed'
+E       AssertionError: assert 'idle' == 'consumed'
+E         
+E         - consumed
+E         + idle
+
+../../handoff-1006-codex/project-mai-tai/docs/review-artifacts/retryoff1/test_zero_retry_recorded_replay.py:95: AssertionError
+________ test_recorded_close_zero_retry_blocks_both_second_drafts[IPDN] ________
+
+symbol = 'IPDN'
+
+    @pytest.mark.parametrize('symbol', ['OLOX', 'IPDN'])
+    def test_recorded_close_zero_retry_blocks_both_second_drafts(symbol):
+        result = closed_case(symbol, int(os.environ.get('REPLAY_MAX_RETRIES', '0')))
+>       assert result['owner_after_close'] == 'consumed'
+E       AssertionError: assert 'idle' == 'consumed'
+E         
+E         - consumed
+E         + idle
+
+../../handoff-1006-codex/project-mai-tai/docs/review-artifacts/retryoff1/test_zero_retry_recorded_replay.py:95: AssertionError
+=========================== short test summary info ============================
+FAILED ../../handoff-1006-codex/project-mai-tai/docs/review-artifacts/retryoff1/test_zero_retry_recorded_replay.py::test_recorded_close_zero_retry_blocks_both_second_drafts[OLOX]
+FAILED ../../handoff-1006-codex/project-mai-tai/docs/review-artifacts/retryoff1/test_zero_retry_recorded_replay.py::test_recorded_close_zero_retry_blocks_both_second_drafts[IPDN]
+2 failed, 4 passed in 0.55s

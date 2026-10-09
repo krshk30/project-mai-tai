@@ -1,0 +1,4 @@
+2026-10-06 14:24:02,760 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-ATR-PROBE] sym=IPDN ts_ms=1791296580000 close=4.800000 high=4.940000 low=4.760100 tr=0.179900 loss=0.619674 trail=5.419674 state=short age=0 touch=false flip=SELL vol=137955 fired_seg=false
+2026-10-06 14:24:02,768 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-FLIP-OWNER-RETRY] IPDN segment_id=1791296580000 closes_in_segment=0 retries_left=1 action=reset_new_segment reason=fresh_sell_flip
+2026-10-06 14:27:03,086 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-RESTING-PLACE] IPDN slot=first line=5.3236 trigger=5.3502 limit=5.3769 band_pct=0.50 offset_pct=0.50
+2026-10-06 14:27:03,093 INFO project_mai_tai.strategy_core.schwab_1m_v2 | [V2-WEBULL-RESTING-PLACE] IPDN slot=first line=5.3236 trigger=5.3502 limit=5.3769 band_pct=0.50 offset_pct=0.50 — mirrored rest sitting at Webull (BARE: no bracket, the broker refuses one on a stop-limit master)

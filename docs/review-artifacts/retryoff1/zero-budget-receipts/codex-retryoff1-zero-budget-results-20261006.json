@@ -1,0 +1,78 @@
+{
+  "application": "c21d8274fcd1d3129d61207a33dd7b002a7c9e8c",
+  "cases": [
+    {
+      "symbol": "OLOX",
+      "enabled": true,
+      "max_retries": 0,
+      "row_id": "8f75d2a2-abd5-4acf-9f10-ebe4a37fabcc",
+      "segment_id": 1791302700000,
+      "owner_after_close": "consumed",
+      "closes_in_segment": 1,
+      "primary_drafts": 0,
+      "mirror_drafts": 0,
+      "budget_writes": [
+        [
+          "OLOX",
+          1791302700000,
+          1
+        ]
+      ]
+    },
+    {
+      "symbol": "OLOX",
+      "enabled": true,
+      "max_retries": 1,
+      "row_id": "8f75d2a2-abd5-4acf-9f10-ebe4a37fabcc",
+      "segment_id": 1791302700000,
+      "owner_after_close": "idle",
+      "closes_in_segment": 1,
+      "primary_drafts": 1,
+      "mirror_drafts": 1,
+      "budget_writes": [
+        [
+          "OLOX",
+          1791302700000,
+          1
+        ]
+      ]
+    },
+    {
+      "symbol": "IPDN",
+      "enabled": true,
+      "max_retries": 0,
+      "row_id": "a53adba2-3417-48c5-98c7-15307dab7b1c",
+      "segment_id": 1791301200000,
+      "owner_after_close": "consumed",
+      "closes_in_segment": 1,
+      "primary_drafts": 0,
+      "mirror_drafts": 0,
+      "budget_writes": [
+        [
+          "IPDN",
+          1791301200000,
+          1
+        ]
+      ]
+    },
+    {
+      "symbol": "IPDN",
+      "enabled": true,
+      "max_retries": 1,
+      "row_id": "a53adba2-3417-48c5-98c7-15307dab7b1c",
+      "segment_id": 1791301200000,
+      "owner_after_close": "idle",
+      "closes_in_segment": 1,
+      "primary_drafts": 1,
+      "mirror_drafts": 1,
+      "budget_writes": [
+        [
+          "IPDN",
+          1791301200000,
+          1
+        ]
+      ]
+    }
+  ],
+  "boundary": "Offline decision replay; reconstructed owner and successful gates."
+}

@@ -1,0 +1,51 @@
+{
+  "as_of_utc": "2026-10-06T20:21:19.468988+00:00",
+  "read_only": true,
+  "broker_method": "GET exact order by ID",
+  "refresh_enabled": false,
+  "broker_reads": [
+    {
+      "order_id": "1008197739975",
+      "read_started_at_utc": "2026-10-06T20:19:31.877446+00:00",
+      "read_completed_at_utc": "2026-10-06T20:19:32.668689+00:00",
+      "status": "FILLED",
+      "limit_price": 1.18,
+      "quantity": 504,
+      "entered_time": "2026-10-06T19:34:46+0000",
+      "close_time": "2026-10-06T19:34:46+0000",
+      "tag": "API_TOS:TraderAPI",
+      "serialized_decoded_response_bytes": 1088,
+      "replacement_history_fields": "absent; empty projections do not prove no prior changes"
+    },
+    {
+      "order_id": "1008195341839",
+      "read_started_at_utc": "2026-10-06T20:19:34.679211+00:00",
+      "read_completed_at_utc": "2026-10-06T20:19:35.264581+00:00",
+      "status": "FILLED",
+      "limit_price": 1.19,
+      "quantity": 526,
+      "tag_prefix": "TA_",
+      "tag_remaining_client_identifier": "redacted",
+      "serialized_decoded_response_bytes": 1098
+    }
+  ],
+  "read_only_database_parent": {
+    "client_order_id": "schwab_1m_v2-MOBX-open-b985974f44f8",
+    "broker_order_id": "1008196842877",
+    "reference_price": "1.1834",
+    "persisted_bracket_target_price": "1.24",
+    "persisted_bracket_stop_price": "1.09",
+    "buy_fill_quantity": "504.00000000",
+    "buy_fill_price": "1.18000000",
+    "buy_fill_at_utc": "2026-10-06T18:59:50+00:00"
+  },
+  "read_only_database_exit": {
+    "broker_order_id": "1008197739975",
+    "quantity": "504.00000000",
+    "fill_price": "1.18500000",
+    "filled_at_utc": "2026-10-06T19:34:46+00:00"
+  },
+  "conclusion": "Broker final limit1.18 differs from persisted target1.24. API_TOS:TraderAPI channel tag measured; specific actor/client and full replacement chain UNMEASURED. No software attribution from tag alone.",
+  "parked": "reference-versus-fill base difference; no exit build",
+  "production_changes": false
+}
