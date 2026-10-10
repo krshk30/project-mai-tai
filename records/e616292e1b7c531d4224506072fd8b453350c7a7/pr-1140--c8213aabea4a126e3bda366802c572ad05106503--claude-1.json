@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "c8213aabea4a126e3bda366802c572ad05106503",
+  "range_head": "e616292e1b7c531d4224506072fd8b453350c7a7",
+  "reviewed_at": "2026-10-10T15:10:20Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "codex-2 handoff row commit on #1140: docs/session-handoff.md + docs/handoff-log.md only (C rows 10-09); read against the box/gh state I verified the same day."
+}
