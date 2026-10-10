@@ -1,5 +1,6 @@
 import asyncio
 import gc
+import threading
 from types import SimpleNamespace
 from time import sleep
 from time import monotonic
@@ -322,3 +323,91 @@ def test_actual_column_rows_are_observed_without_hydrating_or_changing_values(mo
     spans = [row for row in observer.records if row["kind"] == "drift_materialize"]
     assert len(spans) == 1 and spans[0]["row_count"] == 1 and spans[0]["row_type"] == "Row"
     assert spans[0]["site"][1] == "collect" and spans[0]["operation"] == "EXIT11"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True])
+async def test_worker_phase_observer_preserves_result_failure_and_sampled_site(fails):
+    from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
+    from project_mai_tai.oms.service import OmsRiskService
+
+    observer = Observer()
+    service = OmsRiskService.__new__(OmsRiskService)
+    service.broker_adapter = DurableBuyAdapter(SimpleNamespace(), None)
+    marker = object()
+
+    def controlled_read(value, *, exact):
+        assert value is marker and exact == "same-session"
+        sleep(0.030)
+        if fails:
+            raise ValueError("controlled unit failure")
+        return marker
+
+    observer.start()
+    token = observer.operation.set("EXIT103")
+    try:
+        wrapped = observer.intent_db(OmsRiskService._intent_db)
+        if fails:
+            with pytest.raises(ValueError, match="controlled unit failure"):
+                await wrapped(service, controlled_read, marker, exact="same-session")
+        else:
+            assert await wrapped(service, controlled_read, marker, exact="same-session") is marker
+    finally:
+        observer.operation.reset(token)
+        observer.stop()
+    units = [row for row in observer.records if row["kind"].startswith("intent_db_unit:")]
+    waits = [row for row in observer.records if row["kind"].startswith("intent_db_await:")]
+    assert len(units) == len(waits) == 1
+    assert units[0]["thread"] == "worker" and units[0]["wall_ms"] >= 30
+    assert waits[0]["wall_ms"] >= units[0]["wall_ms"]
+    assert waits[0]["queue_ms"] >= 0 and waits[0]["resume_ms"] >= 0
+    assert any(row["kind"].startswith("intent_db_stack:") and row["operation"] == "EXIT103"
+               and any(frame[1] == "controlled_read" for frame in row["frames"])
+               for row in observer.records)
+    assert not observer.units and observer.operation.get() is None
+
+
+@pytest.mark.asyncio
+async def test_phase_observer_keeps_repeated_cancel_session_fence_and_worst_unit():
+    from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
+    from project_mai_tai.oms.service import OmsRiskService
+
+    observer = Observer()
+    service = OmsRiskService.__new__(OmsRiskService)
+    service.broker_adapter = DurableBuyAdapter(SimpleNamespace(), None)
+    entered, release = threading.Event(), threading.Event()
+    closed = []
+
+    def controlled_read():
+        entered.set()
+        assert release.wait(2)
+        assert not closed
+
+    async def intent():
+        token = observer.operation.set("EXIT103")
+        try:
+            await observer.intent_db(OmsRiskService._intent_db)(service, controlled_read)
+        finally:
+            observer.operation.reset(token)
+            closed.append(True)
+
+    task = asyncio.create_task(intent())
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        for _ in range(2):
+            task.cancel()
+            await asyncio.sleep(0.01)
+            assert not task.done() and not closed
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    for index in range(2000):
+        observer.record("intent", index, wall_ms=1)
+    observer.start()
+    observer.stop()
+    receipt = observer.receipt()
+    assert closed == [True] and not observer.units
+    assert any(row["kind"].startswith("intent_db_unit:") for row in receipt["records"])
+    assert any(row["kind"].startswith("intent_db_await:") for row in receipt["records"])
+    assert len(receipt["records"]) == 512

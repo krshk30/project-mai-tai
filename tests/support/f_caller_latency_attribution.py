@@ -50,6 +50,7 @@ class Observer:
         self.sampler = None
         self.gc_started = {}
         self.commits = {}
+        self.units = {}
         self.initial_state = None
         self.final_state = None
 
@@ -134,6 +135,13 @@ class Observer:
                                 sampled_at=now, operation=operation,
                                 thread="loop" if thread == self.loop_thread else "worker",
                                 frames=frames(sys._current_frames().get(thread)))
+            for thread, (begin, operation, function) in list(self.units.items()):
+                if now - begin >= 0.010:
+                    self.record("intent_db_stack:" + function, begin,
+                                wall_ms=(now - begin) * 1000, sampled_at=now,
+                                operation=operation, function=function,
+                                thread="loop" if thread == self.loop_thread else "worker",
+                                frames=frames(sys._current_frames().get(thread)))
 
     def gc_event(self, phase, info):
         thread = threading.get_ident()
@@ -189,6 +197,48 @@ class Observer:
                 self.record("session_commit", begin, wall_ms=(monotonic() - begin) * 1000,
                             cpu_ms=(thread_time() - cpu) * 1000, operation=operation,
                             thread="loop" if thread == self.loop_thread else "worker")
+        return call
+
+    def intent_db(self, original):
+        @wraps(original)
+        async def call(instance, function, *args, **kwargs):
+            operation = self.operation.get()
+            if operation is None:
+                return await original(instance, function, *args, **kwargs)
+            name = getattr(function, "__qualname__", type(function).__name__)
+            begin = monotonic()
+            site = frames(sys._getframe(1), 8)
+            timing = {}
+
+            @wraps(function)
+            def unit(*values, **named):
+                started, cpu = monotonic(), thread_time()
+                thread = threading.get_ident()
+                timing["started"] = started
+                self.units[thread] = (started, operation, name)
+                try:
+                    return function(*values, **named)
+                finally:
+                    finished = monotonic()
+                    timing["finished"] = finished
+                    self.units.pop(thread, None)
+                    self.record("intent_db_unit:" + name, started,
+                                wall_ms=(finished - started) * 1000,
+                                cpu_ms=(thread_time() - cpu) * 1000,
+                                operation=operation, function=name,
+                                thread="loop" if thread == self.loop_thread else "worker")
+
+            try:
+                return await original(instance, unit, *args, **kwargs)
+            finally:
+                finished = monotonic()
+                self.record("intent_db_await:" + name, begin,
+                            wall_ms=(finished - begin) * 1000, operation=operation,
+                            function=name, entry_frames=site,
+                            queue_ms=((timing["started"] - begin) * 1000
+                                      if "started" in timing else None),
+                            resume_ms=((finished - timing["finished"]) * 1000
+                                       if "finished" in timing else None))
         return call
 
     def collect_drift(self, original):
@@ -285,6 +335,7 @@ def closed_owner_latency_observer(request, monkeypatch):
                       observer.quote(OmsRiskService._handle_quote_tick_event))
         patch.setattr(OmsRiskService, "process_trade_intent",
                       observer.async_span("intent", OmsRiskService.process_trade_intent, intent=True))
+        patch.setattr(OmsRiskService, "_intent_db", observer.intent_db(OmsRiskService._intent_db))
         patch.setattr(DurableBuyAdapter, "commit_order_reports", observer.async_span(
             "report_commit_await", DurableBuyAdapter.commit_order_reports))
         for name in ("_record_order_reports", "_publish_order_event", "_flush_dirty_armed_stops"):
