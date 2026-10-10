@@ -1,0 +1,9 @@
+{
+  "pr_number": 1147,
+  "range_base": "3277ea9da53b01bbbb25f7ab6142deb2691fc7e8",
+  "range_head": "2598f512cea9fb1d51e6c39f276b975755f7ebb8",
+  "reviewed_at": "2026-10-10T15:18:00Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independent final review: complete successful broker positions-read receipts, cached Webull wire timestamps, failed/partial/fill-only evidence stays open, bounded off-loop independent-pool receipt writer, exact MI180 Oct5/NXL2 Oct1 allowances and other findings remain critical, incident age/exposure/order/intent vetoes and existing close path. Reviewed all five Claude-authored commits; no self-authored commits. Paired unchanged real-PG workload at current I source and source-clean trial merge plus ALERTS1: baseline 240ev/s60s/loop20.516ms/close27.759ms; active writer 240ev/s60s/loop20.238ms/close30.950ms, five actual two-account receipt batches persisted off-loop on own pool, 30s stalled broker read. Human accepted this pair as satisfying Saturday ask2. Validate37996159615 PASS. Deployment and production auto-close counts not inferred from tests."
+}
