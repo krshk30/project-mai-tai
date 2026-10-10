@@ -19,6 +19,7 @@ sdk = runtime.sdk
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method,side", [
     ("ensure_strategy", "buy"),
+    ("ensure_intent_strategy", "buy"),
     ("ensure_broker_account", "buy"),
     ("create_trade_intent", "buy"),
     ("record_risk_check", "buy"),
