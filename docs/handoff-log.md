@@ -9074,7 +9074,8 @@ The CLI incorrectly printed held despite the successful UPDATE; main verified
 the actual durable closed rows. No SQL write outside the existing normal path
 and no auto-resolve expansion were built. Agent A performed documentation only.
 
-Main owns SAT7 logger repair #1150 a06e29: focused tests/Ruff reported PASS,
+Main owns SAT7 logger repair #1150 a06e88045deec911bfd300b1ece7fa9b5ce17a18:
+focused tests/Ruff reported PASS,
 independent reviewer pin pending, not deployed. This does not retrospectively
 turn silent historical logging into proof. Existing Claude rows, production
 header and boards are preserved. The neutral107-commit rebase preserves every
