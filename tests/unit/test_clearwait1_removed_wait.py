@@ -1042,13 +1042,39 @@ def test_fresh_fanout_bind_before_first_rest_journals_begin_once_not_on_restore(
 
 
 @pytest.mark.asyncio
-async def test_actual_ordinary_oms_lost_transaction_counterexample_now_fails_closed(capsys):
+async def test_actual_ordinary_oms_lost_transaction_counterexample_now_fails_closed(capsys, tmp_path, monkeypatch):
     import importlib.util
+    from tests.unit.test_clearwait1_probe_connections import probe_factory
     path = Path(__file__).parents[2] / "docs/review-artifacts/clearwait1/probe_ordinary_submit_durability.py"
     spec = importlib.util.spec_from_file_location("clearwait1_real_rollback_probe", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    await module.main()
+    factory = probe_factory(tmp_path)
+    services = []
+    original_load = module.load
+
+    def load(name, path):
+        loaded = original_load(name, path)
+        if name == "clearwait1_probe_oms":
+            loaded._session_factory = lambda: factory
+            original_service = loaded._service
+
+            def service(*args, **kwargs):
+                instance = original_service(*args, **kwargs)
+                services.append(instance)
+                return instance
+
+            loaded._service = service
+        return loaded
+
+    monkeypatch.setattr(module, "load", load)
+    try:
+        await module.main()
+    finally:
+        for service in services:
+            await service._drain_cancel_terminal_evidence()
+            assert not service.__dict__.get("_cancel_feedback_tasks")
+        factory.kw["bind"].dispose()
     output = json.loads(capsys.readouterr().out)
     assert output["mock_submit_calls"] == 1
     assert output["durable_open_intents_after_rollback"] == 0
