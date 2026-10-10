@@ -182,14 +182,25 @@ class OmsStore:
         symbol: str,
         include_native_stop_guard: bool = True,
     ) -> Decimal:
-        orders = session.scalars(
-            select(BrokerOrder).where(
-                BrokerOrder.broker_account_id == broker_account_id,
-                BrokerOrder.symbol == symbol,
-                BrokerOrder.side == "sell",
-                BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES),
-            )
-        ).all()
+        # Loaded orders can retain identity-map values even in a clean Session.
+        if (session.autoflush and not (session.new or session.dirty or session.deleted)
+                and not any(isinstance(row, BrokerOrder) for row in session.identity_map.values())):
+            columns = BrokerOrder.__table__.c
+            orders = session.execute(select(columns.quantity, columns.payload).where(
+                columns.broker_account_id == broker_account_id,
+                columns.symbol == symbol,
+                columns.side == "sell",
+                columns.status.in_(self.OPEN_ORDER_STATUSES),
+            )).all()
+        else:
+            orders = session.scalars(
+                select(BrokerOrder).where(
+                    BrokerOrder.broker_account_id == broker_account_id,
+                    BrokerOrder.symbol == symbol,
+                    BrokerOrder.side == "sell",
+                    BrokerOrder.status.in_(self.OPEN_ORDER_STATUSES),
+                )
+            ).all()
         total = Decimal("0")
         for order in orders:
             payload = order.payload or {}
@@ -1431,6 +1442,16 @@ class OmsStore:
         symbol: str,
     ) -> None:
         """Remove the durable mirror row for a closed/cleared stop (no commit)."""
+        if (session.autoflush and not (session.new or session.dirty or session.deleted)
+                and not any(isinstance(row, OmsArmedStop) for row in session.identity_map.values())):
+            columns = OmsArmedStop.__table__.c
+            present = session.scalar(select(columns.id).where(
+                columns.broker_account_name == broker_account_name,
+                columns.strategy_code == strategy_code,
+                columns.symbol == symbol,
+            ))
+            if present is None:
+                return
         row = session.scalar(
             select(OmsArmedStop).where(
                 OmsArmedStop.broker_account_name == broker_account_name,
