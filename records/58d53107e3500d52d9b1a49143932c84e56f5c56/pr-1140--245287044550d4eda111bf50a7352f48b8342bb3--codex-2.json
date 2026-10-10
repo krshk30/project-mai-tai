@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "245287044550d4eda111bf50a7352f48b8342bb3",
+  "range_head": "58d53107e3500d52d9b1a49143932c84e56f5c56",
+  "reviewed_at": "2026-10-10T20:50:30Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed E91 only: docs/session-handoff.md one added reviewer row; alternating uninstrumented run38083211443 F fails in both positions and I passes6/6, human Core-read approval and1149 re-pin agree with sources. Assessment records reviewer decision, not new production evidence. E90 causal qualification is separately open; this pin does not cover E90."
+}
