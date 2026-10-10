@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "724c107ba637cad1779c6af3df62da31a2224661",
+  "range_head": "e5c4410d1e90ab89cf07a815110e8bf4cb956e65",
+  "reviewed_at": "2026-10-10T16:44:38Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of 720844358d6161c7e149687872677d0f7a481896: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E36 14:13 scan, Webull unconfirmed cancel. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

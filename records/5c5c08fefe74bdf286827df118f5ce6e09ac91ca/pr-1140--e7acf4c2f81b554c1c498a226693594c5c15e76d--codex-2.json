@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "e7acf4c2f81b554c1c498a226693594c5c15e76d",
+  "range_head": "5c5c08fefe74bdf286827df118f5ce6e09ac91ca",
+  "reviewed_at": "2026-10-10T16:44:38Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of 26996a78a4db840592d5cbf39a6f49d9d6aa1d5d: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E33 #1143 gates review, Webull dating correction. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

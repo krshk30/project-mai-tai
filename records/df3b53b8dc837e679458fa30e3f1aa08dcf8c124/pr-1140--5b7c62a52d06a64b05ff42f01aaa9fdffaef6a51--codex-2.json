@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "5b7c62a52d06a64b05ff42f01aaa9fdffaef6a51",
+  "range_head": "df3b53b8dc837e679458fa30e3f1aa08dcf8c124",
+  "reviewed_at": "2026-10-10T16:44:40Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of 495e305e0b4049cbc3fd994a2e927bc73879061b: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E54 HEALTHNOISE1 fix for codex hold. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

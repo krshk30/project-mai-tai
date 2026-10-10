@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "144543a822869a165c7c2f385d2bec568021ea27",
+  "range_head": "19ecbaef6bccb1dae0c56a46a0247d5bbdb35f18",
+  "reviewed_at": "2026-10-10T16:44:35Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of ad7804d99c6ec38280a6d1090887e8ef18862fee: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E7 open read \u2014 false-trigger LINE rollback (mine), repair candle error open. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

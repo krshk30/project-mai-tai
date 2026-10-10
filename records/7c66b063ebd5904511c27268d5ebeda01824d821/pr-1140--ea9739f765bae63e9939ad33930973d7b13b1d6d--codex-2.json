@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "ea9739f765bae63e9939ad33930973d7b13b1d6d",
+  "range_head": "7c66b063ebd5904511c27268d5ebeda01824d821",
+  "reviewed_at": "2026-10-10T16:44:43Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of 00b316d7acf56da29f603c91c77fa062316791d7: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E82 codex relays, FI3 partial. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "e7c13d594f2259277238839661b9f381420da6cd",
+  "range_head": "fa158c4556db9fb17860dfa1892c9b15ad72cd38",
+  "reviewed_at": "2026-10-10T16:44:39Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of 88e8db8bab38007dfb4abc7ca4a5e7d2ff263deb: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E42 issue to PR map 10-08 and 10-09. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

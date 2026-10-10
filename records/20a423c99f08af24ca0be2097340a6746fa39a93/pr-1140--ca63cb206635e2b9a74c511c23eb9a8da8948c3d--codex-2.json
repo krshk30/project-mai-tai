@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "ca63cb206635e2b9a74c511c23eb9a8da8948c3d",
+  "range_head": "20a423c99f08af24ca0be2097340a6746fa39a93",
+  "reviewed_at": "2026-10-10T16:44:37Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of ee8d64c60b11549c6cf9ec92c285e09409cf980a: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E21 ORBFILL1 approved, #1143 L4/L5 review. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

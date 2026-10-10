@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "2a42a9726aa9a7bf9d03264883cddf80993d8c6e",
+  "range_head": "dc4fdde8f3316ac89fea766d8330050900bbea24",
+  "reviewed_at": "2026-10-10T16:44:35Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of a7257845b9f9878c911679fa838b7223f295c02a: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E5 correction \u2014 OMS restarted at 02:30 after the postgres restart. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

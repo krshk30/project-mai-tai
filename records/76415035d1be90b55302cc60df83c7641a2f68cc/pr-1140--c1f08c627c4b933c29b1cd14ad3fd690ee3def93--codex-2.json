@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "c1f08c627c4b933c29b1cd14ad3fd690ee3def93",
+  "range_head": "76415035d1be90b55302cc60df83c7641a2f68cc",
+  "reviewed_at": "2026-10-10T16:44:40Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of 5d1fb901ee559e71527fce258e1feb0f44c534a1: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E50 15:43 scan, JZ gated, HEALTHNOISE1 PR. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

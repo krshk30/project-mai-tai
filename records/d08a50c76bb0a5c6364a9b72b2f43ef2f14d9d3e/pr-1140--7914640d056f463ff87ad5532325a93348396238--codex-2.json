@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "7914640d056f463ff87ad5532325a93348396238",
+  "range_head": "d08a50c76bb0a5c6364a9b72b2f43ef2f14d9d3e",
+  "reviewed_at": "2026-10-10T16:44:41Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of f29b5d35d2df12d9c77fba6c042516f654bfe1a5: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E63 F/I latency vs done-check. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "66a17778e01041cdca7c658295154290f6c28496",
+  "range_head": "2a42a9726aa9a7bf9d03264883cddf80993d8c6e",
+  "reviewed_at": "2026-10-10T16:44:35Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Re-reviewed neutral rebase of b8cfe71b595776064970975e67d0d41d6b84ee5c: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E5 06:0x check \u2014 #1139 live; 02:30 postgres restart by apt. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}
