@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "ce07d50dcc781ee166e03c6d8bc30b318c0e0bc4",
-  "range_head": "f29b5d35d2df12d9c77fba6c042516f654bfe1a5",
-  "reviewed_at": "2026-10-10T15:20:31Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E63 F/I latency vs done-check. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

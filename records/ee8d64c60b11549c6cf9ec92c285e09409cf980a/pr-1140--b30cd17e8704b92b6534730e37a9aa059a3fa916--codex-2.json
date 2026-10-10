@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "b30cd17e8704b92b6534730e37a9aa059a3fa916",
-  "range_head": "ee8d64c60b11549c6cf9ec92c285e09409cf980a",
-  "reviewed_at": "2026-10-10T15:20:26Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E21 ORBFILL1 approved, #1143 L4/L5 review. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

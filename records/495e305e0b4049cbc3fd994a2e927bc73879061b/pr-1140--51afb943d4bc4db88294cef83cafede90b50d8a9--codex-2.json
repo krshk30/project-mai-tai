@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "51afb943d4bc4db88294cef83cafede90b50d8a9",
-  "range_head": "495e305e0b4049cbc3fd994a2e927bc73879061b",
-  "reviewed_at": "2026-10-10T15:20:30Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E54 HEALTHNOISE1 fix for codex hold. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

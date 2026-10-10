@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "ad7804d99c6ec38280a6d1090887e8ef18862fee",
-  "range_head": "a9b42f46805854c3c22fd54a4c6d135ca653ed07",
-  "reviewed_at": "2026-10-10T15:20:24Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E8 07:43 scan \u2014 MI 07:17 flip by the established-short rule. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

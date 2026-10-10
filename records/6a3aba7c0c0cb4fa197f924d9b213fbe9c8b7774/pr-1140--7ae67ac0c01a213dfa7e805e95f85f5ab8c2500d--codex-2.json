@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "7ae67ac0c01a213dfa7e805e95f85f5ab8c2500d",
-  "range_head": "6a3aba7c0c0cb4fa197f924d9b213fbe9c8b7774",
-  "reviewed_at": "2026-10-10T16:44:36Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed neutral rebase of 30526bf7cefea123bdb41e8b72566b0c7e2c18af: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E14 09:13 scan \u2014 VEEA traded both legs. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

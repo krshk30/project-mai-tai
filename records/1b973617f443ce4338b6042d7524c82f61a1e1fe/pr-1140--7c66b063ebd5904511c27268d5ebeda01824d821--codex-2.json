@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "7c66b063ebd5904511c27268d5ebeda01824d821",
-  "range_head": "1b973617f443ce4338b6042d7524c82f61a1e1fe",
-  "reviewed_at": "2026-10-10T16:44:43Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed neutral rebase of 956b78477b5a8705c5a918963fe08edd91d52731: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E83 #1147 latency settled, codex ACK. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

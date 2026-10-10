@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "d110c70e7354b7d6ee40dcf18ee5288f81660e29",
-  "range_head": "e0eecf88a203d6e38888aa119d3840dc263b09d1",
-  "reviewed_at": "2026-10-10T15:20:30Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E52 codex holds on ALERTS1/HEALTHNOISE1. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "e5c4410d1e90ab89cf07a815110e8bf4cb956e65",
-  "range_head": "9da375d1a468faaeb4db4a4aa69b81df0f8f6cf5",
-  "reviewed_at": "2026-10-10T16:44:39Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed neutral rebase of 4c2564223fb059e79a5eaa61fc1e2cf54f17ceca: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E37 codex ack and capacity. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

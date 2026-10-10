@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "081bc289b7c7ba934fcb79d92cccf8de76fea7d4",
-  "range_head": "32196a63d5f862f5709b25ea2d7c90338bfab312",
-  "reviewed_at": "2026-10-10T16:44:38Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed neutral rebase of 189e7137b45710eec6f31d5539a4f15a003646a3: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E29 line repair v3 approved to go live when green. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

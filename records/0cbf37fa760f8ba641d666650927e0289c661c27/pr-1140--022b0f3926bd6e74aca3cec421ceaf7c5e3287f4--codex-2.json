@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "022b0f3926bd6e74aca3cec421ceaf7c5e3287f4",
-  "range_head": "0cbf37fa760f8ba641d666650927e0289c661c27",
-  "reviewed_at": "2026-10-10T15:20:28Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E38 #1145 pinned. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

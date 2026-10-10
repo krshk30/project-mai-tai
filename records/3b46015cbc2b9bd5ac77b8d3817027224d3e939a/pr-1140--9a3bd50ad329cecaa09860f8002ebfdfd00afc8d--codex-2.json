@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "9a3bd50ad329cecaa09860f8002ebfdfd00afc8d",
-  "range_head": "3b46015cbc2b9bd5ac77b8d3817027224d3e939a",
-  "reviewed_at": "2026-10-10T16:44:36Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed neutral rebase of f4641c553598c401ea7343a89a691b675d004884: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E9 correction \u2014 MI 07:17 missed because the bot line != chart at the open (line repair failing). Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

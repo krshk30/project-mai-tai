@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "0cbf37fa760f8ba641d666650927e0289c661c27",
-  "range_head": "b742ce8f4da3bdd732028db3037ed52dba0dbc6c",
-  "reviewed_at": "2026-10-10T15:20:29Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E39 14:43 scan, VEEA false flip and blocked flip. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

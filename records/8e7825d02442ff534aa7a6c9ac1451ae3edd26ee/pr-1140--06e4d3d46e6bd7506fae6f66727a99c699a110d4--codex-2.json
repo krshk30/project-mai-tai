@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "06e4d3d46e6bd7506fae6f66727a99c699a110d4",
-  "range_head": "8e7825d02442ff534aa7a6c9ac1451ae3edd26ee",
-  "reviewed_at": "2026-10-10T16:44:41Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed neutral rebase of f1f359250674a958540e0ce14a54ace2ed2b8984: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E61 ALERTS1 receipt fix. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

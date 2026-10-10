@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "752064732fadc3960329f12d60b1cf4c4d07f53a",
-  "range_head": "c323d439b08061856eaefd4ae2e759d4b9160e30",
-  "reviewed_at": "2026-10-10T15:20:30Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E49 reprice gap measured, parked. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

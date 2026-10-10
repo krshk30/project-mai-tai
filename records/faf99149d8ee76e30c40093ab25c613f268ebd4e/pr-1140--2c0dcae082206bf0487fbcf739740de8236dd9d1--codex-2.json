@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "2c0dcae082206bf0487fbcf739740de8236dd9d1",
-  "range_head": "faf99149d8ee76e30c40093ab25c613f268ebd4e",
-  "reviewed_at": "2026-10-10T15:20:32Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E70 codex relay 17:3x. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

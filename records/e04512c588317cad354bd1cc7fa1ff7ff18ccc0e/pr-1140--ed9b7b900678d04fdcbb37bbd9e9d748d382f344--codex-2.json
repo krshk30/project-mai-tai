@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "ed9b7b900678d04fdcbb37bbd9e9d748d382f344",
-  "range_head": "e04512c588317cad354bd1cc7fa1ff7ff18ccc0e",
-  "reviewed_at": "2026-10-10T15:20:32Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E68 wave 1 installed and verified. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

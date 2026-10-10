@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "b8cfe71b595776064970975e67d0d41d6b84ee5c",
-  "range_head": "a7257845b9f9878c911679fa838b7223f295c02a",
-  "reviewed_at": "2026-10-10T15:20:24Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E5 correction \u2014 OMS restarted at 02:30 after the postgres restart. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

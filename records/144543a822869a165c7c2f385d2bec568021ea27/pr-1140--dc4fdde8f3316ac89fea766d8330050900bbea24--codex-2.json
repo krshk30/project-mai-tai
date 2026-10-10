@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "dc4fdde8f3316ac89fea766d8330050900bbea24",
-  "range_head": "144543a822869a165c7c2f385d2bec568021ea27",
-  "reviewed_at": "2026-10-10T16:44:35Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed neutral rebase of 22e4343552e52a0881246524acb0c59f50fdff48: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E6 ORB page check; momentum MI by design, $1 floor kept. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

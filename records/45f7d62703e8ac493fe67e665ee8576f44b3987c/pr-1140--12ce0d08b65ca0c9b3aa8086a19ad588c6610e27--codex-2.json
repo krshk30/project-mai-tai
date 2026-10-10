@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "12ce0d08b65ca0c9b3aa8086a19ad588c6610e27",
-  "range_head": "45f7d62703e8ac493fe67e665ee8576f44b3987c",
-  "reviewed_at": "2026-10-10T16:44:41Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed neutral rebase of 84c07aeb4cb657437da6768282d164959bdaf9cb: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E58 HEALTHNOISE1 merged, ALERTS1 second hold. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

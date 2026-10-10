@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "1860691ff75572c3e4a1345d47d88452c4cc1efb",
-  "range_head": "88e8db8bab38007dfb4abc7ca4a5e7d2ff263deb",
-  "reviewed_at": "2026-10-10T15:20:29Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E42 issue to PR map 10-08 and 10-09. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

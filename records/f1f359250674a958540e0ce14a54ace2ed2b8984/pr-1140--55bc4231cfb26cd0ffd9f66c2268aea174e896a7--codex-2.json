@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "55bc4231cfb26cd0ffd9f66c2268aea174e896a7",
-  "range_head": "f1f359250674a958540e0ce14a54ace2ed2b8984",
-  "reviewed_at": "2026-10-10T15:20:31Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E61 ALERTS1 receipt fix. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

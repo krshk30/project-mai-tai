@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "c690446d3cca0c4357edeef19cdc9f31918bb7ff",
-  "range_head": "2e2f8004a84e1b7518501f69ab26f70dc56dfe6f",
-  "reviewed_at": "2026-10-10T15:20:24Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E11 08:13 scan \u2014 MI stuck removed-wait request (live case). Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

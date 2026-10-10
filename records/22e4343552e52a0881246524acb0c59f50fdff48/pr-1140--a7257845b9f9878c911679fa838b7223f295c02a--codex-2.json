@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "a7257845b9f9878c911679fa838b7223f295c02a",
-  "range_head": "22e4343552e52a0881246524acb0c59f50fdff48",
-  "reviewed_at": "2026-10-10T15:20:24Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E6 ORB page check; momentum MI by design, $1 floor kept. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

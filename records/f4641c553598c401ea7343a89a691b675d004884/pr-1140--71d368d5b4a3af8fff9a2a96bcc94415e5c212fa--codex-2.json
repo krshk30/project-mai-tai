@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "71d368d5b4a3af8fff9a2a96bcc94415e5c212fa",
-  "range_head": "f4641c553598c401ea7343a89a691b675d004884",
-  "reviewed_at": "2026-10-10T15:20:24Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E9 correction \u2014 MI 07:17 missed because the bot line != chart at the open (line repair failing). Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

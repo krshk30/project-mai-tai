@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "5b450dbcc7eb09f84440a8b67015c4daad72761d",
-  "range_head": "752064732fadc3960329f12d60b1cf4c4d07f53a",
-  "reviewed_at": "2026-10-10T15:20:30Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E48 work split claude/codex. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

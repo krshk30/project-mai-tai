@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "5d1fb901ee559e71527fce258e1feb0f44c534a1",
-  "range_head": "d110c70e7354b7d6ee40dcf18ee5288f81660e29",
-  "reviewed_at": "2026-10-10T15:20:30Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E51 ALERTS1 PR. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

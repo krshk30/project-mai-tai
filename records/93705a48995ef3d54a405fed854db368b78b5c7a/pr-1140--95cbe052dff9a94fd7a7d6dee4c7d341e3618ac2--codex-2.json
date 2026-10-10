@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "95cbe052dff9a94fd7a7d6dee4c7d341e3618ac2",
-  "range_head": "93705a48995ef3d54a405fed854db368b78b5c7a",
-  "reviewed_at": "2026-10-10T15:20:23Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): 2026-10-09 shared handoff \u2014 carried rows E1\u2013E4. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

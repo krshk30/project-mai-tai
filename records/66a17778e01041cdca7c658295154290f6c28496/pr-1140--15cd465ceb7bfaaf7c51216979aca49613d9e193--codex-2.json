@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "15cd465ceb7bfaaf7c51216979aca49613d9e193",
-  "range_head": "66a17778e01041cdca7c658295154290f6c28496",
-  "reviewed_at": "2026-10-10T16:44:35Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed neutral rebase of a5d39838ba59b8a8723ed00c9bf33ae7d62c6054: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E3 operator ruling \u2014 pin gate stays on handoff PRs. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}

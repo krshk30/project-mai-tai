@@ -1,9 +1,0 @@
-{
-  "pr_number": 1140,
-  "range_base": "dfb11f958d92681006c30dd20330dbee45147c95",
-  "range_head": "710c28608e857ec6b743e23a754b68755f424c1c",
-  "reviewed_at": "2026-10-10T16:44:42Z",
-  "reviewer": "codex-2",
-  "schema_version": 1,
-  "summary": "Re-reviewed neutral rebase of faf99149d8ee76e30c40093ab25c613f268ebd4e: exact parent-to-commit binary diff, author identity/date, full message and single recognized Claude marker unchanged; docs-only paths preserved. Prior independent review: Independently read this exact parent-to-commit diff: docs(handoff): E70 codex relay 17:3x. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
-}
