@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import event
 
-from project_mai_tai.db.models import AccountPosition, BrokerOrder, VirtualPosition
+from project_mai_tai.db.models import AccountPosition, BrokerOrder, Strategy, VirtualPosition
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.store import OmsStore
 from tests.unit.test_oms_store import build_test_session_factory
@@ -123,3 +123,38 @@ def test_account_quantity_retains_dirty_identity_and_autoflush_semantics(databas
             broker_account_id=account_id, symbol="MI") == Decimal("2.5")
         assert store.get_account_position(session, broker_account_id=account_id, symbol="MI") is row
         session.rollback()
+
+
+@pytest.mark.parametrize("virtual", [False, True])
+def test_clean_quantity_read_uses_core_result_without_orm_setup(database, virtual):
+    store, factory, (strategy_id, account_id) = database
+    statements = []
+    with factory() as session:
+        registration = session.get(Strategy, strategy_id)
+        assert registration is not None
+        event.listen(session, "do_orm_execute", lambda state: statements.append(state.is_orm_statement))
+        kwargs = {"broker_account_id": account_id, "symbol": "MI"}
+        if virtual:
+            kwargs["strategy_id"] = strategy_id
+        reader = store.get_virtual_position_quantity if virtual else store.get_account_position_quantity
+        assert reader(session, **kwargs) is None
+        assert statements == [False]
+        assert list(session.identity_map.values()) == [registration]
+
+
+@pytest.mark.parametrize("virtual", [False, True])
+def test_pending_quantity_keeps_autoflush_and_transaction_values(database, virtual):
+    store, factory, (strategy_id, account_id) = database
+    kwargs = {"broker_account_id": account_id, "symbol": "MI"}
+    if virtual:
+        kwargs["strategy_id"] = strategy_id
+    model = VirtualPosition if virtual else AccountPosition
+    reader = store.get_virtual_position_quantity if virtual else store.get_account_position_quantity
+    with factory() as session:
+        row = model(**kwargs, quantity=Decimal("2.5"), average_price=1)
+        session.add(row)
+        assert reader(session, **kwargs) == Decimal("2.5")
+        assert row in session.identity_map.values()
+        session.rollback()
+    with factory() as session:
+        assert reader(session, **kwargs) is None
