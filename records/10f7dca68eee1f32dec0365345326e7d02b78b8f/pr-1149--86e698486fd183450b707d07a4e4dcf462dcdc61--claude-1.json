@@ -1,0 +1,9 @@
+{
+  "pr_number": 1149,
+  "range_base": "86e698486fd183450b707d07a4e4dcf462dcdc61",
+  "range_head": "10f7dca68eee1f32dec0365345326e7d02b78b8f",
+  "reviewed_at": "2026-10-10T20:43:45Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after rebase onto main 86e69848: patch-id 36da4ffcae62 identical to my pin of 90be742b. Same review: ops-only collector, untimestamped orb-schwab Traceback = shutdown only with CancelledError + start marker <=5 s + journal Stopping->Stopped->Started (nonempty boot id, new invocation id)."
+}
