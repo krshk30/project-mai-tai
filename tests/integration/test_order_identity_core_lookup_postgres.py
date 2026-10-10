@@ -10,8 +10,9 @@ database, sessions = controlled_database, controlled_sessions
 
 
 @pytest.mark.parametrize("kind", ["missing", "cached", "unloaded", "expired"])
-def test_pg_clean_order_id_is_core_with_exact_identity(database, kind):
-    control.test_clean_order_id_is_core_and_hydration_retains_exact_identity(database, kind)
+@pytest.mark.parametrize("mode", ["autoflush", "disabled", "context"])
+def test_pg_clean_order_id_is_core_with_exact_identity(database, kind, mode):
+    control.test_clean_order_id_is_core_and_hydration_retains_exact_identity(database, kind, mode)
 
 
 @pytest.mark.parametrize("mode", ["autoflush", "disabled", "context"])
