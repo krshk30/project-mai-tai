@@ -1097,9 +1097,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             tasks = [task for task in producers if task is not None]
             for task in tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             await self._shutdown_symbol_tick_work()
             await self._drain_cancel_terminal_evidence()
+            if results and isinstance(results[0], Exception):
+                raise results[0]  # Preserve a failed tick consumer, but only after final drainage.
         # Producers may enqueue a successfully committed report during cancellation.
         # Repeated cancellation cannot abandon them or the final private audit COMMIT.
         await finish_task(asyncio.create_task(cleanup()))

@@ -222,8 +222,7 @@ async def test_terminal_cancel_refusal_stays_inline(database, terminal):
         assert await service._append_order_event_isolated_awaited(session, order=order, report=report,
             payload={"reason": report.reason})
         assert service.store.count_terminal_cancel_refusals(session, order_id=order.id) == 1
-        assert staged == []
-
+    assert staged == []
 
 @pytest.mark.asyncio
 async def test_concurrent_capacity_waiters_recheck_no_drop_one_writer(database, monkeypatch):
@@ -261,9 +260,9 @@ async def test_concurrent_capacity_waiters_recheck_no_drop_one_writer(database, 
     assert seen == list(range(8))
     assert fifo.enqueued == fifo.written == 8 and fifo.failed == 0
 
-
 @pytest.mark.asyncio
-async def test_whole_shutdown_fences_producer_settlement_and_private_commit(database, monkeypatch):
+@pytest.mark.parametrize("fatal", [False, True])
+async def test_whole_shutdown_fences_producer_settlement_and_private_commit(database, monkeypatch, fatal):
     service = service_for(database)
     settling, settled = asyncio.Event(), asyncio.Event()
     entered, release = threading.Event(), threading.Event()
@@ -282,6 +281,8 @@ async def test_whole_shutdown_fences_producer_settlement_and_private_commit(data
             with database() as session:
                 staged, _ = staged_order(service, session)
                 await service._commit_reports_and_transfer_audits(session, staged)
+            if fatal:
+                raise RuntimeError("controlled tick consumer failure")
     task = asyncio.create_task(producer())
     await asyncio.sleep(0)
     shutdown = asyncio.create_task(service._shutdown_runtime_producers(asyncio.Event(), task))
@@ -298,7 +299,7 @@ async def test_whole_shutdown_fences_producer_settlement_and_private_commit(data
     finally:
         settled.set()
         release.set()
-        with pytest.raises(asyncio.CancelledError):
+        with pytest.raises(RuntimeError if fatal else asyncio.CancelledError):
             await shutdown
     assert task.done() and service._report_audit_fifo().written == 1
     with database() as session:

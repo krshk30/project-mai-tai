@@ -21,11 +21,9 @@ from tests.unit import test_webull_day_cancel_proof as day
 sessions = runtime.sessions
 sdk = runtime.sdk
 
-
 @pytest.mark.asyncio
 async def test_pg_fifo_parent_fk_copy_and_commit_census(sessions, monkeypatch, caplog):
     await control.test_fifo_parent_fk_copy_order_and_commit_accounting(sessions, monkeypatch, caplog)
-
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("commit_fails", [False, True])
@@ -61,8 +59,9 @@ async def test_pg_concurrent_bounded_waiters(sessions, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pg_whole_shutdown_double_cancel_and_private_commit(sessions, monkeypatch):
-    await control.test_whole_shutdown_fences_producer_settlement_and_private_commit(sessions, monkeypatch)
+@pytest.mark.parametrize("fatal", [False, True])
+async def test_pg_whole_shutdown_double_cancel_and_private_commit(sessions, monkeypatch, fatal):
+    await control.test_whole_shutdown_fences_producer_settlement_and_private_commit(sessions, monkeypatch, fatal)
 
 
 @pytest.mark.asyncio
