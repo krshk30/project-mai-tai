@@ -96,6 +96,7 @@ BOUNDED_STARTUP_MARKERS = {
     "orb-schwab": ("[ORB-SCHWAB] mode=", "mai-tai-orb-schwab"),
 }
 STARTUP_MARKER_BOUND_SECONDS = 60
+SHUTDOWN_START_BOUND_SECONDS = 5
 
 
 def _log_timestamp(line: str) -> datetime | None:
@@ -106,7 +107,8 @@ def _log_timestamp(line: str) -> datetime | None:
 
 
 def _prior_process_exit_before_bounded_startup(
-    lines: list[str], header_index: int, *, since: datetime, service: str | None
+    lines: list[str], header_index: int, *, since: datetime, service: str | None,
+    runner: Runner | None = None,
 ) -> bool:
     marker_and_script = BOUNDED_STARTUP_MARKERS.get(service or "")
     if marker_and_script is None or header_index + 2 >= len(lines):
@@ -117,13 +119,60 @@ def _prior_process_exit_before_bounded_startup(
         return False
     if lines[header_index + 2].strip() != "sys.exit(run())":
         return False
-    for line in lines[header_index + 3 :]:
+    for index in range(header_index + 3, len(lines)):
+        line = lines[index]
         stamp = _log_timestamp(line)
         if stamp is not None:
+            if service == "orb-schwab":
+                block = lines[header_index:index]
+                return (
+                    marker in line
+                    and stamp <= since + timedelta(seconds=SHUTDOWN_START_BOUND_SECONDS)
+                    and next((item.strip() for item in reversed(block) if item.strip()), "")
+                    == "asyncio.exceptions.CancelledError"
+                    and runner is not None
+                    and _verified_shutdown_start(service, stamp, runner)
+                )
             return marker in line and 0 <= (stamp - since).total_seconds() <= STARTUP_MARKER_BOUND_SECONDS
         if "Traceback (most recent call last):" in line:
             return False
     return False
+
+
+def _verified_shutdown_start(service: str, marker_at: datetime, runner: Runner) -> bool:
+    """Bound the journal transition, not the untimestamped traceback's occurrence time."""
+    unit = f"{UNIT_PREFIX}{service}.service"
+    floor = marker_at - timedelta(seconds=SHUTDOWN_START_BOUND_SECONDS)
+    raw = runner([
+        "sudo", "-n", "journalctl", "-u", unit, "--since", floor.isoformat(),
+        "--until", marker_at.isoformat(), "--output=json", "--no-pager",
+    ])
+    events = []
+    try:
+        for line in raw.splitlines():
+            row = json.loads(line)
+            if row.get("_PID") != "1" or row.get("UNIT") != unit:
+                continue
+            message = row.get("MESSAGE", "")
+            kind = next((prefix for prefix in ("Stopping", "Stopped", "Started")
+                         if message.startswith(f"{prefix} {unit} - ")), None)
+            if kind is None:
+                continue
+            at = datetime.fromtimestamp(int(row["__REALTIME_TIMESTAMP"]) / 1_000_000, UTC)
+            if not floor <= at <= marker_at:
+                return False
+            events.append((kind, at, row["_BOOT_ID"], row["INVOCATION_ID"]))
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+        return False
+    if [event[0] for event in events] != ["Stopping", "Stopped", "Started"]:
+        return False
+    stopping, stopped, started = events
+    return (
+        stopping[1] <= stopped[1] <= started[1]
+        and bool(stopping[2]) and stopping[2] == stopped[2] == started[2]
+        and bool(stopping[3]) and stopping[3] == stopped[3]
+        and bool(started[3]) and started[3] != stopped[3]
+    )
 
 
 def run_checked(args: Sequence[str], *, timeout: int = 30) -> str:
@@ -216,7 +265,8 @@ def format_moment(value: datetime) -> str:
 
 
 def parse_log_files(
-    files: Iterable[tuple[str, Iterable[str]]], *, since: datetime, service: str | None = None
+    files: Iterable[tuple[str, Iterable[str]]], *, since: datetime, service: str | None = None,
+    runner: Runner | None = None,
 ) -> TracebackEvidence:
     """Scope traceback headers within each file, never borrowing another file's context."""
 
@@ -237,7 +287,7 @@ def parse_log_files(
                 continue
             if preceding is None:
                 if _prior_process_exit_before_bounded_startup(
-                    file_lines, index, since=since, service=service
+                    file_lines, index, since=since, service=service, runner=runner
                 ):
                     prior_process_exits += 1
                     continue
@@ -1603,7 +1653,7 @@ def report(args: argparse.Namespace, runner: Runner = run_checked) -> int:
     for service in sorted(restarted | (new_services & installed_optional - already_present)):
         start = datetime.fromisoformat(current[service].started_at_utc).astimezone(UTC)
         evidence = parse_log_files(
-            _log_files(service, runner, since=start), since=start, service=service
+            _log_files(service, runner, since=start), since=start, service=service, runner=runner
         )
         traceback_total += len(evidence.traceback_times_utc)
         timestamped_total += evidence.timestamped_records
