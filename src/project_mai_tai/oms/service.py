@@ -1666,7 +1666,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 {"key": f"orb-v2:{event.payload.broker_account_name}:{event.payload.symbol.upper()}"},
             )
         registration = self.strategy_registrations.get(event.payload.strategy_code)
-        strategy = self.store.ensure_strategy(
+        ensure_strategy = (self.store.ensure_intent_strategy
+            if isinstance(self.broker_adapter, DurableBuyAdapter) else self.store.ensure_strategy)
+        strategy = ensure_strategy(
             session, event.payload.strategy_code,
             name=(registration.display_name if registration else event.payload.strategy_code.replace("_", " ").upper()),
             execution_mode=registration.execution_mode if registration else "paper",
