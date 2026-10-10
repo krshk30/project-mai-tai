@@ -1,0 +1,9 @@
+{
+  "pr_number": 1150,
+  "range_base": "86e698486fd183450b707d07a4e4dcf462dcdc61",
+  "range_head": "a06e88045deec911bfd300b1ece7fa9b5ce17a18",
+  "reviewed_at": "2026-10-10T16:58:02Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Reconciler logging: services/reconciler.py main() never called configure_logging -> no handlers since the 10-07 rotation (log 0 bytes, no journal lines). Fix: configure_logging(SERVICE_NAME, settings.log_level) + pass settings; reconciliation/service.py adds one [RECONCILER-CYCLE] summary line after the run commit. +15 src lines, 85-line test; validate x2 green. No trading path."
+}
