@@ -63,6 +63,10 @@ from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms import wbquiet_shadow
+from project_mai_tai.positions_read_receipt import (
+    PositionsReadReceiptWriter,
+    receipt_session_factory,
+)
 from project_mai_tai.falseflip1_runtime import classify_managed_entries, record_bar
 from project_mai_tai.oms.mirror_fresh_price import MirrorFreshPriceMixin
 from project_mai_tai.oms.eh_fresh_price import EhFreshPriceMixin
@@ -1039,6 +1043,17 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # price, never a backlogged one.
         tick_task = asyncio.create_task(self._run_tick_consumer(stop_event))
         rpg_task = asyncio.create_task(self._run_rpg_retry_loop(stop_event))
+        # ALERTS1: bounded positions-read receipt writer on its own small pool. It can never
+        # stop the OMS from starting: without it no receipt is written, so the reconciler
+        # simply keeps every exposure incident open (the safe direction).
+        receipt_task = None
+        try:
+            self._positions_read_receipt_writer = PositionsReadReceiptWriter(
+                receipt_session_factory(self.settings)
+            )
+            receipt_task = asyncio.create_task(self._positions_read_receipt_writer.run())
+        except Exception:  # noqa: BLE001 - evidence bookkeeping is never load-bearing
+            self.logger.warning("[POSITIONS-READ-RECEIPT] writer_unavailable — no receipts")
         falseflip_task = (
             asyncio.create_task(self._run_falseflip_worker(stop_event))
             if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True
@@ -1050,9 +1065,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             stop_event.set()
             tick_task.cancel()
             rpg_task.cancel()
+            if receipt_task is not None:
+                receipt_task.cancel()
             if falseflip_task is not None:
                 falseflip_task.cancel()
-            await asyncio.gather(rpg_task, *([falseflip_task] if falseflip_task is not None else []),
+            await asyncio.gather(rpg_task, *([receipt_task] if receipt_task is not None else []),
+                                 *([falseflip_task] if falseflip_task is not None else []),
                                  return_exceptions=True)
             try:
                 await tick_task
@@ -10426,6 +10444,29 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     symbol, detail.get("broker_order_id"), detail.get("quantity"),
                 )
 
+    def _offer_positions_read_receipts(self, receipts: list[tuple[str, datetime, int]]) -> None:
+        writer = self.__dict__.get("_positions_read_receipt_writer")
+        if writer is None or not receipts:
+            return
+        try:
+            writer.offer(receipts)
+        except Exception:  # noqa: BLE001 - evidence bookkeeping is never load-bearing here
+            self.logger.warning("[POSITIONS-READ-RECEIPT] offer_failed")
+
+    def _positions_wire_read_at(self, account_name: str) -> datetime:
+        """Wall time of the real broker read behind the snapshot just returned (ALERTS1).
+
+        Adapters with a positions cache (Webull) report the cached read's age; an adapter
+        without one returned a real read just now. Pure in-memory; never raises."""
+        now = utcnow()
+        try:
+            age = self.broker_adapter.positions_wire_read_age_seconds(account_name)
+        except Exception:  # noqa: BLE001 - absent/duck-typed adapter: the call just returned
+            return now
+        if isinstance(age, (int, float)) and not isinstance(age, bool) and age >= 0:
+            return now - timedelta(seconds=float(age))
+        return now
+
     async def sync_broker_positions(self, *, account_names: list[str] | None = None) -> dict[str, int]:
         # SPOF fix (Fix 2): this is the method BOTH 2026-07-01/02 zombies hung in
         # — `sync_account_positions -> session.flush()` ran on the event loop and
@@ -10459,6 +10500,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # the sync for EVERY account. Webull has raised since 2026-07-24, so a Webull 429 with no
         # cached snapshot was already able to stop Schwab's sync too.
         fetched: list[tuple[UUID, list]] = []
+        read_receipts: list[tuple[str, datetime, int]] = []
         unreadable: list[str] = []
         for account_id, account_name in accounts:
             try:
@@ -10522,6 +10564,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             except Exception:  # noqa: BLE001 - a counter must never cost us the sync
                 pass
             fetched.append((account_id, snapshots))
+            # ALERTS1: positive receipt of this COMPLETE successful read (no broker call; an
+            # in-memory cache-age lookup). A cached snapshot carries its real wire-read time.
+            read_receipts.append(
+                (account_name, self._positions_wire_read_at(account_name), len(snapshots))
+            )
             # P0.2: read-only settlement probe on the read we ALREADY made (no extra call).
             # Wrapped: a probe must never be able to break broker-sync.
             try:
@@ -10633,6 +10680,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return synced_positions
 
         synced_positions = await self._run_db(_persist)
+        # ALERTS1: the save above COMMITTED (it raises otherwise), so hand the receipts of the
+        # accounts it saved to the bounded writer. put_nowait only: never awaited, never in
+        # this pass's transaction, and a writer failure cannot reach this path.
+        self._offer_positions_read_receipts(read_receipts)
 
         return {
             "accounts": len(accounts),

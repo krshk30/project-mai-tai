@@ -34,6 +34,8 @@ from project_mai_tai.db.models import (
     VirtualPosition,
 )
 from project_mai_tai.db.session import build_timed_session_factory
+from project_mai_tai.reconciliation.allowances import ALLOWANCE_KEYS, match_position_allowance
+from project_mai_tai.reconciliation.flat_incidents import resolve_flat_exposure_incidents
 from project_mai_tai.events import HeartbeatEvent, HeartbeatPayload, stream_name
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
@@ -161,6 +163,20 @@ class ReconciliationService:
             run.summary = summary
 
             self._sync_incidents(session, findings)
+            if self.settings.reconciliation_auto_resolve_flat_exposure_incidents:
+                # ALERTS1 A1: off the order path (reconciler process), bounded per cycle, and
+                # isolated in a savepoint so a failure never loses this run's findings.
+                try:
+                    with session.begin_nested():
+                        resolved = resolve_flat_exposure_incidents(session, now=utcnow())
+                    if resolved:
+                        self.logger.info(
+                            "[RECONCILER-INCIDENT-AUTO-RESOLVED] count=%s ids=%s",
+                            len(resolved),
+                            ",".join(resolved),
+                        )
+                except Exception:  # noqa: BLE001 - observability must not fail the cycle
+                    self.logger.exception("[RECONCILER-INCIDENT-AUTO-RESOLVE-FAILED]")
             session.commit()
 
             return {
@@ -328,6 +344,24 @@ class ReconciliationService:
         fill_balances = {
             key: quantity for key, quantity in fill_balances.items() if abs(quantity) > tolerance
         }
+        # ALERTS1 A2: last fill time, read only for the few allowance (account, symbol) keys.
+        allowance_account_ids = {
+            account.id: account.name
+            for account in account_lookup.values()
+            if any(name == account.name for name, _ in ALLOWANCE_KEYS)
+        }
+        last_fill_at: dict[tuple[UUID, str], datetime] = {}
+        if allowance_account_ids:
+            for account_id, symbol, filled_at in session.execute(
+                select(Fill.broker_account_id, Fill.symbol, func.max(Fill.filled_at))
+                .where(
+                    Fill.broker_account_id.in_(tuple(allowance_account_ids)),
+                    Fill.symbol.in_(sorted({symbol for _, symbol in ALLOWANCE_KEYS})),
+                )
+                .group_by(Fill.broker_account_id, Fill.symbol)
+            ).all():
+                if (allowance_account_ids[account_id], symbol) in ALLOWANCE_KEYS:
+                    last_fill_at[(account_id, symbol)] = filled_at
 
         # ⛔⭐⭐ `virtual_positions` FALSELY READS ZERO ON A POSITION WE REALLY HOLD, and comparing
         # ONLY against it manufactures a CRITICAL drift for a position that is tracked correctly.
@@ -432,6 +466,22 @@ class ReconciliationService:
                 severity = "critical"
                 title = f"Broker position disagrees with our live books for {symbol}"
 
+            allowance = None
+            if severity == "critical" and direction is not None:
+                allowance = match_position_allowance(
+                    account_name=account_name,
+                    symbol=symbol,
+                    direction=direction,
+                    account_quantity=account_quantity,
+                    our_quantity=our_quantity,
+                    net_fill_balance=net_fill_balance,
+                    last_fill_at=last_fill_at.get((account_id, symbol)),
+                )
+                if allowance is not None:
+                    # Operator-closed historical item: visible as info, never a page.
+                    severity = "info"
+                    title = f"{title} - operator-closed ({allowance.allowance_id})"
+
             if severity is not None and direction is not None and title is not None:
                 configured_entry_quantity: int | None = None
                 configured_entry_notional_usd: int | None = None
@@ -478,6 +528,14 @@ class ReconciliationService:
                                 "manual_not_ours"
                                 if direction == "broker_only_manual"
                                 else "ours_or_conflicting"
+                            ),
+                            "operator_allowance": (
+                                {
+                                    "allowance_id": allowance.allowance_id,
+                                    "ruling": allowance.ruling,
+                                }
+                                if allowance is not None
+                                else None
                             ),
                             # Context only. Quantity shape never decides ownership: 500 and 1000
                             # are both multiples of the live Schwab size of 2.

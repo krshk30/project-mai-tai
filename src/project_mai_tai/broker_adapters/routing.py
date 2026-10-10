@@ -65,6 +65,13 @@ class RoutingBrokerAdapter:
         adapter = self._adapter_for_account(broker_account_name)
         return await adapter.list_account_positions(broker_account_name)
 
+    def positions_wire_read_age_seconds(self, broker_account_name: str) -> float | None:
+        """Route to the account's adapter. An adapter without a positions cache returns None,
+        meaning every successful ``list_account_positions`` call was a real read (ALERTS1)."""
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "positions_wire_read_age_seconds", None)
+        return fn(broker_account_name) if fn is not None else None
+
     async def fetch_armed_native_oco_symbols(
         self, broker_account_name: str, symbols: list[str]
     ) -> set[str]:

@@ -301,8 +301,8 @@ def test_all_on_effective_catalog_zero_with_controlled_process_environments():
     rc, lines = audit(entries, environment_reader=lambda service: ServiceEnvironment(
         101, environments[service], frozenset(), None))
     assert rc == 0
-    assert lines[-1] == "Final call: PASS; checked=154/154 mismatches=0 unknown=0"
-    assert len(environments) == 8
+    assert lines[-1] == "Final call: PASS; checked=155/155 mismatches=0 unknown=0"
+    assert len(environments) == 9  # ALERTS1 adds the reconciler
 
 
 @pytest.mark.parametrize("pm", [False, True])

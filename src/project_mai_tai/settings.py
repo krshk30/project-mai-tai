@@ -1268,6 +1268,10 @@ class Settings(BaseSettings):
     reconciliation_position_quantity_tolerance: float = 0.0001
     reconciliation_average_price_tolerance: float = 0.02
     reconciliation_ignored_position_mismatches: str = ""
+    # ALERTS1 A1: the reconciler closes a "SCHWAB OPEN REFUSED ... check Webull-only exposure"
+    # or "ORB strategy-exit evidence unavailable" incident once its symbol is flat at both live
+    # accounts (no position, no book row, no working order, no active intent). Default ON.
+    reconciliation_auto_resolve_flat_exposure_incidents: bool = True
     # #961 introduced fill-balance ownership on 2026-09-12. Both live accounts were positively
     # verified flat with zero working orders immediately before the reconciler loaded it, making
     # this a real zero-balance checkpoint. Earlier fills are an incomplete historical ledger and

@@ -610,6 +610,17 @@ class WebullBrokerAdapter:
             self._positions_backoff_secs.pop(key, None)
         return snapshots
 
+    def positions_wire_read_age_seconds(self, broker_account_name: str) -> float | None:
+        """Seconds since the last REAL successful positions read for this account (ALERTS1).
+
+        ``list_account_positions`` may serve a cached snapshot (throttle / 429 backoff); this is
+        the age of the read that snapshot came from. None when no successful read exists."""
+        with self._positions_lock:
+            cached = self._positions_cache.get(broker_account_name)
+        if cached is None:
+            return None
+        return max(0.0, time.monotonic() - cached[0])
+
     @staticmethod
     def _is_rate_limited(exc: Exception) -> bool:
         """True when a Webull SDK exception is an HTTP 429 / TOO_MANY_REQUESTS rate-limit.

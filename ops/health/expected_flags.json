@@ -949,6 +949,13 @@
       "also_check_services": ["oms"],
       "reason": "FALSEFLIP1 exact entry-bar classification and durable once-per-segment skip; code default OFF.",
       "ruling": "Operator 2026-10-08 H1-H7: two false episodes, skip exactly one cross, following same-segment cross may trade; ON only after pin/merge and after-close install."
+    },
+    {
+      "name": "reconciliation_auto_resolve_flat_exposure_incidents",
+      "expected": true,
+      "owning_service": "reconciler",
+      "reason": "ALERTS1 A1: the reconciler closes SCHWAB OPEN REFUSED and ORB exit-evidence incidents only once the symbol is flat at live:schwab_1m_v2 and live:orb (no position, book row, working order or active intent); off the order path; code default ON, OFF is the rollback.",
+      "ruling": "Operator 10-05 deploy = flag ON; ALERTS1 ask 2026-10-09. ON at the next reviewed after-close install."
     }
   ]
 }
