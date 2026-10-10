@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "a42b9795fc01bb0b1a6d73df391ea7a90039aadc",
+  "range_head": "7b98f1050d06b8cadc69d20aae3b7f6eba36312f",
+  "reviewed_at": "2026-10-10T18:42:14Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed E89: single Claude-marked documentation row preserving reviewer attribution of historical run 38069994150 and the proposed audit FIFO. This record does not certify the proposal implemented or sufficient for newer failures; no source or production change."
+}
