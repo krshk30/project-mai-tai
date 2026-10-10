@@ -243,6 +243,25 @@ class OmsStore:
     # (SchwabBrokerAdapter.fetch_armed_native_oco_symbols). Do not reintroduce a DB-side query
     # for OCO legs; it cannot see them.
 
+    def ensure_intent_strategy(
+        self, session: Session, code: str, *, name: str,
+        execution_mode: str, metadata_json: dict[str, object],
+    ):
+        # This intent caller consumes only id/code. No cache: every fast path
+        # reads this transaction's columns; changes retain the original write path.
+        if (session.autoflush and not session.identity_map and not session.new
+                and not session.dirty and not session.deleted):
+            table = Strategy.__table__
+            row = session.execute(select(table.c.id, table.c.code, table.c.name,
+                table.c.execution_mode, table.c.is_enabled, table.c.metadata).where(
+                table.c.code == code)).first()
+            if (row is not None and row.name == name
+                    and row.execution_mode == execution_mode and row.is_enabled is True
+                    and row.metadata == metadata_json):
+                return row
+        return self.ensure_strategy(session, code, name=name,
+            execution_mode=execution_mode, metadata_json=metadata_json)
+
     def ensure_strategy(
         self,
         session: Session,
