@@ -132,6 +132,19 @@ class OmsStore:
             )
         )
 
+    def get_account_position_quantity(
+        self, session: Session, *, broker_account_id: UUID, symbol: str,
+    ) -> Decimal | None:
+        # Explicit no-autoflush callers must retain dirty identity-map values.
+        if not session.autoflush:
+            position = self.get_account_position(session,
+                broker_account_id=broker_account_id, symbol=symbol)
+            return position.quantity if position is not None else None
+        return session.scalar(select(AccountPosition.quantity).where(
+            AccountPosition.broker_account_id == broker_account_id,
+            AccountPosition.symbol == symbol,
+        ))
+
     def get_virtual_position_quantity(
         self, session: Session, *, strategy_id: UUID, broker_account_id: UUID,
         symbol: str,
