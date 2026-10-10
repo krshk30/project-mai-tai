@@ -469,7 +469,11 @@ class OmsStore:
         if reject_reason:
             payload["reject_reason"] = reject_reason
         # A new coid needs no ORM row processor; hydrate only an existing order.
-        order_id = session.scalar(select(BrokerOrder.id).where(BrokerOrder.client_order_id == client_order_id))
+        if session.autoflush and not (session.new or session.dirty or session.deleted):
+            columns = BrokerOrder.__table__.c
+            order_id = session.scalar(select(columns.id).where(columns.client_order_id == client_order_id))
+        else:
+            order_id = session.scalar(select(BrokerOrder.id).where(BrokerOrder.client_order_id == client_order_id))
         order = session.get(BrokerOrder, order_id) if order_id is not None else None
         if order is None:
             order = BrokerOrder(
