@@ -1,0 +1,9 @@
+{
+  "pr_number": 1149,
+  "range_base": "3277ea9da53b01bbbb25f7ab6142deb2691fc7e8",
+  "range_head": "90be742b31ebf9feaab479aacd3ff06a1cad4167",
+  "reviewed_at": "2026-10-10T03:34:16Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Ops tooling only (ops/health/v2_restart_evidence.py + tests): an untimestamped orb-schwab Traceback counts as a shutdown only if the block ends in asyncio.exceptions.CancelledError, the service start marker follows within 5 s, and journalctl shows Stopping->Stopped->Started for that unit in that window with one boot id and a new invocation id; anything else stays UNKNOWN. Matches my wave-1 evidence (2 CancelledError blocks before mode=LIVE at 00:10 and 21:11 UTC). No src/runtime change."
+}
