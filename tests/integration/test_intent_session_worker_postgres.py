@@ -82,6 +82,12 @@ async def test_actual_cancel_persists_before_publication_without_loop_db(session
         assert not task.done() and not publications
     finally:
         release.set()
-        result = await task
+        try:
+            result = await task
+        finally:
+            await service._drain_cancel_terminal_evidence()
+    assert not service.__dict__.get("_cancel_feedback_tasks")
+    assert not service.__dict__.get("_cancel_terminal_assessment_tasks")
+    assert not service.__dict__.get("_cancel_terminal_tasks")
     assert result and result[0].payload.reason == "cancel_target_not_found"
     assert publications == result
