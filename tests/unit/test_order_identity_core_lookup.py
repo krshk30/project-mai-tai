@@ -20,7 +20,8 @@ def arguments(ids, coid="core-id-order"):
 
 
 @pytest.mark.parametrize("kind", ["missing", "cached", "unloaded", "expired"])
-def test_clean_order_id_is_core_and_hydration_retains_exact_identity(database, kind):
+@pytest.mark.parametrize("mode", ["autoflush", "disabled", "context"])
+def test_clean_order_id_is_core_and_hydration_retains_exact_identity(database, kind, mode):
     store, factory, ids = database
     args = arguments(ids)
     with factory() as session:
@@ -37,9 +38,12 @@ def test_clean_order_id_is_core_and_hydration_retains_exact_identity(database, k
         statements, loaded = [], []
         event.listen(session, "do_orm_execute", lambda state: statements.append(state.is_orm_statement))
         event.listen(session, "loaded_as_persistent", lambda _session, row: loaded.append(row))
-        actual = store.get_or_create_order(session, **args, metadata={"reason": "controlled"},
-            status="rejected", reject_reason="controlled-reject")
-        assert statements[0] is False
+        if mode == "disabled":
+            session.autoflush = False
+        with session.no_autoflush if mode == "context" else nullcontext():
+            actual = store.get_or_create_order(session, **args, metadata={"reason": "controlled"},
+                status="rejected", reject_reason="controlled-reject")
+        assert statements[0] is (mode != "autoflush")
         assert actual.payload == {"reason": "controlled", "reject_reason": "controlled-reject"}
         assert actual.status == "rejected"
         if kind != "missing":
