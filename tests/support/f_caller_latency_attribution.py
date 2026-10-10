@@ -8,7 +8,7 @@ import gc
 import json
 import sys
 import threading
-from time import monotonic, thread_time
+from time import monotonic, thread_time, time
 
 import pytest
 
@@ -53,6 +53,7 @@ class Observer:
         self.units = {}
         self.initial_state = None
         self.final_state = None
+        self.clock_anchor = None
 
     def record(self, kind, begin, **data):
         self.total += 1
@@ -241,6 +242,23 @@ class Observer:
                                        if "finished" in timing else None))
         return call
 
+    def flush(self, original):
+        @wraps(original)
+        def call(session, *args, **kwargs):
+            operation = self.operation.get()
+            if operation is None:
+                return original(session, *args, **kwargs)
+            begin, cpu = monotonic(), thread_time()
+            try:
+                return original(session, *args, **kwargs)
+            finally:
+                elapsed = (monotonic() - begin) * 1000
+                if elapsed >= 10:
+                    self.record("session_flush", begin, wall_ms=elapsed,
+                                cpu_ms=(thread_time() - cpu) * 1000, operation=operation,
+                                thread="loop" if threading.get_ident() == self.loop_thread else "worker")
+        return call
+
     def collect_drift(self, original):
         @wraps(original)
         def call(instance, *args, **kwargs):
@@ -282,6 +300,7 @@ class Observer:
         return call
 
     def start(self):
+        self.clock_anchor = dict(monotonic=monotonic(), wall_clock_epoch=time())
         self.initial_state = process_state()
         gc.callbacks.append(self.gc_event)
         self.sampler = threading.Thread(target=self.sample, name="i-loop-observer", daemon=True)
@@ -303,6 +322,7 @@ class Observer:
             selected.setdefault(row["sequence"], row)
         records = sorted(selected.values(), key=lambda row: row["sequence"])
         return dict(observer="F/I bounded diagnostic, NOT the raw acceptance gate", clock="monotonic",
+                    clock_anchor=self.clock_anchor,
                     initial_process_state=self.initial_state, final_process_state=self.final_state,
                     sample_interval_ms=5, span_floor_ms=10, capacity=self.records.maxlen,
                     records_total=self.total, dropped=max(0, self.total - len(records)),
@@ -321,12 +341,17 @@ def closed_owner_latency_observer(request, monkeypatch):
     from sqlalchemy.orm import Session
     from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
     from project_mai_tai.oms.service import OmsRiskService
+    import psycopg
+    from f_commit_wait_attribution import CommitWaits
 
     observer = Observer()
+    waits = CommitWaits(observer)
     capture = request.getfixturevalue("capsys")
     with monkeypatch.context() as patch:
         patch.setattr(asyncio.Handle, "_run", observer.callback(asyncio.Handle._run))
         patch.setattr(Session, "commit", observer.commit(Session.commit))
+        patch.setattr(Session, "flush", observer.flush(Session.flush))
+        patch.setattr(psycopg.Connection, "commit", waits.commit(psycopg.Connection.commit))
         patch.setattr(Result, "all", observer.materialize(Result.all))
         patch.setattr(ScalarResult, "all", observer.materialize(ScalarResult.all))
         patch.setattr(OmsRiskService, "_collect_drift_cancel_candidates", observer.collect_drift(
@@ -341,9 +366,12 @@ def closed_owner_latency_observer(request, monkeypatch):
         for name in ("_record_order_reports", "_publish_order_event", "_flush_dirty_armed_stops"):
             patch.setattr(OmsRiskService, name, observer.async_span(name, getattr(OmsRiskService, name)))
         observer.start()
+        waits.start()
         try:
             yield
         finally:
+            waits.stop()
             observer.stop()
             with capture.disabled():
-                print("[I-LOOP-ATTRIBUTION] " + json.dumps(observer.receipt()), flush=True)
+                print("[I-LOOP-ATTRIBUTION] " + json.dumps({**observer.receipt(),
+                      "pg_wait_sampler_joined": not waits.thread.is_alive()}), flush=True)
