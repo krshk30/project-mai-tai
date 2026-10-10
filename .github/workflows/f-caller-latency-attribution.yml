@@ -5,7 +5,9 @@ on:
     branches: ["codex/clearwait1-session-rollover-1008"]
     paths:
       - "tests/support/f_caller_latency_attribution.py"
+      - "tests/support/f_commit_wait_attribution.py"
       - "tests/unit/test_f_caller_latency_attribution.py"
+      - "tests/unit/test_f_commit_wait_attribution.py"
       - ".github/workflows/f-caller-latency-attribution.yml"
   workflow_dispatch:
 
@@ -30,7 +32,7 @@ jobs:
       MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
       F_HEAD: c00aec7558ede5884c145fe4a1f4bc8540b128b7
       I_HEAD: 576b2750079033a8bdeab312955b038d53a43906
-      F_REBASE_HEAD: c00aec7558ede5884c145fe4a1f4bc8540b128b7
+      OBSERVER_SOURCE_HEAD: e77bcb249fedba59c46ea672075a8ec4f7e5271c
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,13 +43,14 @@ jobs:
       - name: Freeze the worker-handoff pair without trading source or canonical test changes
         id: freeze
         run: |
-          git fetch origin "$F_HEAD" "$I_HEAD" "$F_REBASE_HEAD"
-          git diff --exit-code "$F_REBASE_HEAD" HEAD -- src tests/integration/test_buy_submission_tokens_runtime.py
+          git fetch origin "$F_HEAD" "$I_HEAD" "$OBSERVER_SOURCE_HEAD"
+          git diff --exit-code "$OBSERVER_SOURCE_HEAD" HEAD -- src tests/integration/test_buy_submission_tokens_runtime.py
           git diff --exit-code "$F_HEAD" "$I_HEAD" -- src/project_mai_tai/oms src/project_mai_tai/db src/project_mai_tai/broker_adapters tests/integration/test_buy_submission_tokens_runtime.py
           mkdir -p "$RUNNER_TEMP/f-frozen" "$RUNNER_TEMP/i-frozen" attribution-logs
           git archive "$F_HEAD" | tar -x -C "$RUNNER_TEMP/f-frozen"
           git archive "$I_HEAD" | tar -x -C "$RUNNER_TEMP/i-frozen"
           printf 'purpose=attribution ONLY, not raw acceptance\nF=%s\nI=%s\nobserver=%s\nrunner=%s\norder=F then I; independent processes and PG schemas; GC policy unchanged\n' "$F_HEAD" "$I_HEAD" "$GITHUB_SHA" "$RUNNER_NAME" | tee attribution-logs/identity.log
+          printf 'observer_checkout_source=%s; source is NOT overlaid on frozen captures\n' "$OBSERVER_SOURCE_HEAD" | tee -a attribution-logs/identity.log
           for ref in "$F_HEAD" "$I_HEAD"; do
             printf '%s token_blob=%s runtime_blob=%s\n' "$ref" "$(git rev-parse "$ref:src/project_mai_tai/oms/buy_submission_journal.py")" "$(git rev-parse "$ref:tests/integration/test_buy_submission_tokens_runtime.py")" | tee -a attribution-logs/identity.log
           done
@@ -59,14 +62,18 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
         run: |
-          python -m pytest -p no:cacheprovider -q tests/unit/test_f_caller_latency_attribution.py
-          python -m ruff check tests/support/f_caller_latency_attribution.py tests/unit/test_f_caller_latency_attribution.py
+          python -m pytest -p no:cacheprovider -q tests/unit/test_f_caller_latency_attribution.py tests/unit/test_f_commit_wait_attribution.py
+          python -m ruff check tests/support/f_caller_latency_attribution.py tests/support/f_commit_wait_attribution.py tests/unit/test_f_caller_latency_attribution.py tests/unit/test_f_commit_wait_attribution.py
       - name: Same original PostgreSQL precontrols
         id: pg_controls
         working-directory: ${{ runner.temp }}/i-frozen
         env:
           PYTHONPATH: ${{ runner.temp }}/i-frozen:${{ runner.temp }}/i-frozen/src
         run: python -m pytest -p no:cacheprovider -q tests/integration/test_intent_order_scalar_reads_postgres.py tests/integration/test_clearwait1_day_nonworking_postgres.py
+      - name: Verify read-only diagnostic backend wait sampling
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
+        run: python -m pytest -p no:cacheprovider -q tests/integration/test_f_commit_wait_observer_postgres.py
       - name: Same original twenty duplicate controls per frozen source
         id: duplicates
         run: |
@@ -105,6 +112,12 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest -p no:cacheprovider -p f_caller_latency_attribution -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/attribution-logs/i.log"
+      - name: Read PostgreSQL durability settings, statistics and container logs
+        if: always()
+        run: |
+          mkdir -p attribution-logs
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -d project_mai_tai_test -v ON_ERROR_STOP=1 -c "BEGIN READ ONLY; SELECT clock_timestamp(), version(); SELECT name, setting FROM pg_settings WHERE name IN ('fsync','synchronous_commit','full_page_writes','track_io_timing','track_wal_io_timing','log_checkpoints','checkpoint_timeout'); SELECT * FROM pg_stat_wal; SELECT * FROM pg_stat_bgwriter; COMMIT;" > attribution-logs/postgres-state.log 2>&1
+          docker logs --timestamps --tail 1000 "${{ job.services.postgres.id }}" > attribution-logs/postgres-server.log 2>&1
       - name: Retain both captures including setup or workload failures
         if: always()
         uses: actions/upload-artifact@v4
