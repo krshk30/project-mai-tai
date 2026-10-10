@@ -29,6 +29,8 @@ Do not carry an old GREEN, PID, or admission result forward as current proof.
 | C2 | 2026-10-10: F eaa1c8ff / I 97b12c7e Core-read equivalence: 22 SQLite + 22 PostgreSQL new controls and 126 existing controls PASS. Strict raw CI pairs 38085722247 / 38085724039 / 38085725918 all FAIL; final-head acceptance streak 0/3. The 50 ms limit is unchanged. Neither F/I pin nor deployment is complete. | codex-2 |
 | C3 | DKI 10-08 07:45 and JZ 10-09 15:04 original order endings remain incomplete. Genuine complete Schwab working-order evidence is still being assessed; a capped historical scan or synthetic completeness assertion is not accepted as absence proof. | codex-2 |
 | C4 | Collector #1149 was neutrally rebased after #1140 to c41713ea; stable patch-id 36da4ffc unchanged. Current-head independent re-pin and Validate are required before merge; the old 10f7dca6 record is not current-head approval. No restart is required for this tooling change. | codex-2 |
+| C5 | 2026-10-10 19:03:56 ET: #1149 merged as caaef9a3 after exact-head pin and both Validate runs PASS; 127 focused collector controls and Ruff PASS. No deployment or restart. This supersedes C4's pending-merge status. | codex-2 |
+| C6 | F 3794d909 / I b6c688c9 published on main caaef9a3. Three immutable parameterized lookup shapes reduce query-construction allocation without changing guards, autoflush, identity or commit order. 86 SQLite/PostgreSQL scalar/equivalence controls PASS, including eight new reuse/binding controls; removed reuse makes all eight RED. Raw strict CI 38093892061 / 38093893540 / 38093895366 is pending; no readiness or new latency pass claimed. | codex-2 |
 
 SAT2 ALERTS and SAT7 reconciler logging were completed and independently verified
 in the preceding handoff. Those receipts remain historical; they are not a new
@@ -42,3 +44,20 @@ Monday production-state check. Claude rows remain Claude-owned.
   after any rebase; documentation preparation is not a collector deployment.
 - Preserve the previously approved LINE/ORB Monday observations as live-session
   checks; after-hours startup or a later historical response is not their proof.
+
+## Active Master
+
+| ID | Priority / Status | Remaining Completion Criterion |
+|---|---|---|
+| SAT-1b | P1 / F-I latency pending | Three consecutive uninstrumented strict PostgreSQL greens on final F heads with I green; at least 200 events/s for 60 s, stall and protective close below 50 ms; harness unchanged. |
+| SAT-1c | P1 / original DKI-JZ endings blocked | Genuine complete Schwab working-order evidence, original request identities and normal runtime callers, then accepted orders; controlled new-order answers must be labelled. A request-window scan is not all-age inventory. |
+| SAT-1d | P1 / install blocked | F and I together only after all original-case evidence, CI and independent pin; fresh production gates, authorized OMS/v2 install and verification. No I-only variant. |
+| SAT-2 / SAT-6 / SAT-7 | Completed historical evidence | ALERTS1 installed, eighteen incidents closed, BENF x2 and DAIC individually closed through the normal path, reconciler logging restored. Receipts and independent verification are in merged #1140. No duplicate action. |
+| SAT-3 / SAT-4 | Merge/publication completed | Collector #1149 and handoff #1140 merged; this Monday handoff is published. App attachment attempt hit the chat's 100-attachment limit. |
+| SAT-5 | Queued live-session observations | Monday October 12: 07:09 LINE readings versus Massive-seeded chart on every watched name; 09:27 ORB fill receipts. Future observations remain unmeasured. |
+
+F/I release deadline is Sunday October 11, 20:00 ET. If not fully green and
+pinned, neither F nor I ships before Monday; the reviewer owns the manual
+archive fallback. Sunday 12:00 and 18:00 checkpoints were cancelled. This
+document preserves work state; it does not itself schedule future execution.
+DB resilience #1142, RPGSTALE/#1115 and other superseded lanes remain parked.
