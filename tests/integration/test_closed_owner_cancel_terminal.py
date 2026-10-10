@@ -19,6 +19,8 @@ from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, OmsManagedPosition, Strategy, TradeIntent
 from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload, TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore, current_session_anchor
+from project_mai_tai.fanout_identity import fanout_slot_id
+from project_mai_tai.falseflip1_runtime import FalseFlipStore, classify_managed_entries, record_bar
 from project_mai_tai.oms import buy_submission_journal as journal
 from project_mai_tai.oms.cancel_feedback import feedback_published
 from project_mai_tai.oms.service import OmsRiskService
@@ -107,8 +109,21 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
         "strategy_schwab_1m_v2_broker_provider": "schwab",
         "strategy_schwab_1m_v2_dual_broker_fanout_enabled": True,
         "oms_v2_exit_management_enabled": True, "oms_cancel_verify_enabled": False})
+    if case == "recorded_target":
+        settings = settings.model_copy(update={
+            "strategy_schwab_1m_v2_resting_buy_round_up_enabled": True,
+            "strategy_schwab_1m_v2_retry_one_enabled": True,
+            "strategy_schwab_1m_v2_retry_one_max_retries": 0,
+            "strategy_schwab_1m_v2_atr_reprice_handoff_enabled": False,
+            "strategy_schwab_1m_v2_false_flip_enabled": True,
+            "strategy_schwab_1m_v2_gap_line_carry_enabled": True,
+            "oms_v2_webull_mirror_retained_hold_enabled": True,
+            "strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct": 0.5,
+        })
     strategy.settings, strategy._removed_wait_persist = settings, store.record
     if case == "recorded_target":
+        strategy._resting_trigger_offset_pct = settings.strategy_schwab_1m_v2_cw_v2_resting_trigger_offset_pct
+        assert strategy._retry_one_enabled and strategy._retry_one_max_retries == 0
         strategy.configure_fanout_identity_persistence(lambda symbol, segment, active, reason:
             FanoutSegmentIdentityStore(sessions).record(symbol, segment, active, reason, now=at(clock[0])))
     routing = controlled_routing()
@@ -179,6 +194,8 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
 
     routing._adapter_for_account(account).submit_order = wire
     bind_ms = clock[0] - 60_000
+    if case == "recorded_target":
+        bind_ms = record.position_entry_ms[account] - 2
     clock[0] = bind_ms - 1
     await oms.broker_adapter.start()
     FanoutSegmentIdentityStore(sessions).record("FLYE", record.opportunity_id, True,
@@ -194,19 +211,32 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
     for side in ("buy", "sell"):
         if side == "sell" and case == "open_owned":
             break
+        if case == "recorded_target" and side == "sell":
+            clock[0] = int(datetime.fromisoformat(FLYE["target_fill_utc"]).timestamp() * 1000)
         event = TradeIntentEvent(source_service="controlled-entry-close", produced_at=at(clock[0]), payload=TradeIntentPayload(
             strategy_code="schwab_1m_v2", broker_account_name=account, symbol="FLYE", side=side,
             intent_type="open" if side == "buy" else "close",
             quantity=Decimal(280) if side == "buy" else wires[0].quantity,
             reason="oms_v2_managed_exit:CW_HARD_STOP" if case == "terminal_stop" else "synthetic target close",
-            metadata={"fanout_segment_id": str(record.opportunity_id), "reference_price": "2.34",
+            metadata={"fanout_segment_id": str(record.opportunity_id),
+                "fanout_slot_id": fanout_slot_id(strategy_code="schwab_1m_v2", symbol="FLYE",
+                    segment_id=record.opportunity_id, slot="resting"), "reference_price": "2.34",
                 "entry_size_price": "2.34", "order_type": "oco_exit"
                 if side == "sell" and case != "terminal_stop" else "market"}))
         await oms.process_trade_intent(event)
         clock[0] += 1
+    if case == "recorded_target":
+        # Retained 16:58:02.801 UTC probe for the 12:57 ET entry bar.
+        record_bar(sessions, {"symbol": "FLYE", "bar_ms": 1791478620000,
+            "observed_at_ms": 1791478682801, "close": "2.135000",
+            "trail": "1.882676", "state": "long", "phase": "live"}, now=at(clock[0]))
+        assert classify_managed_entries(sessions, now=at(clock[0])) == 1
+        strategy.configure_falseflip(FalseFlipStore(sessions).restore(now=at(clock[0])), readable=True)
     with sessions() as session:
         row = session.scalar(select(OmsManagedPosition))
         assert row is not None and row.entry_order_id is not None
+        if case == "recorded_target":
+            assert row.entry_classification["classification"] == "REAL_FLIP"
         assert row.current_quantity == (wires[0].quantity if case == "open_owned" else 0)
         entry = session.get(BrokerOrder, row.entry_order_id)
         assert entry.status == "filled" and entry.payload["fanout_segment_id"] == str(record.opportunity_id)
@@ -337,6 +367,7 @@ async def test_actual_terminal_transport_closed_owner_after_sell(db, monkeypatch
                             "account": venue, "time": at(clock[0]).isoformat(),
                             "price": draft.metadata.get("stop_price"),
                             "limit": draft.metadata.get("limit_price"),
+                            "order_result": "CONTROLLED ACCEPTED (verified below)",
                             "evidence": "recorded boundary; controlled post-deploy broker replay"}))
                         async def accept(order_request):
                             return [ExecutionReport("accepted", order_request.client_order_id,
