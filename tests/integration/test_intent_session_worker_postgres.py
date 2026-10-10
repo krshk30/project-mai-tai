@@ -26,7 +26,7 @@ sdk = runtime.sdk
     ("find_open_native_stop_guard_order", "sell"),
     ("find_open_exit_order", "sell"),
     ("get_virtual_position_quantity", "sell"),
-    ("get_account_position", "sell"),
+    ("get_account_position_quantity", "sell"),
 ])
 async def test_actual_intent_database_phase_runs_offloop(sessions, sdk, monkeypatch, method, side):
     caller = threading.get_ident()
