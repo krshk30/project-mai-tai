@@ -158,3 +158,36 @@ def test_pending_quantity_keeps_autoflush_and_transaction_values(database, virtu
         session.rollback()
     with factory() as session:
         assert reader(session, **kwargs) is None
+
+
+@pytest.mark.parametrize("mode", ["clean", "dirty", "no_autoflush"])
+def test_reused_order_lookup_keeps_distinct_bindings_and_identity(database, mode):
+    store, factory, (strategy_id, account_id) = database
+    with factory() as session:
+        strategy = session.get(Strategy, strategy_id)
+        account = store.ensure_broker_account(session, "paper:scalar", provider="alpaca", environment="test")
+        intent = store.create_trade_intent(session, strategy=strategy, broker_account=account,
+            event=TradeIntentEvent(source_service="test", payload=TradeIntentPayload(
+                strategy_code="macd_30s", broker_account_name=account.name, symbol="MI", side="buy",
+                quantity=Decimal(1), intent_type="open", reason="controlled")))
+        session.commit()
+        args = dict(intent=intent, strategy_id=strategy_id, broker_account_id=account_id,
+            symbol="MI", side="buy", quantity=Decimal(1))
+        lookups, rows = [], []
+        event.listen(session, "do_orm_execute", lambda state: lookups.append(state.statement))
+        for index in range(4):
+            if mode == "dirty":
+                strategy.name = f"dirty-{index}"
+            session.autoflush = mode != "no_autoflush"
+            rows.append(store.get_or_create_order(session, **args,
+                client_order_id=f"bound-{index}", metadata={"index": str(index)}))
+        assert len({row.id for row in rows}) == 4
+        assert len(lookups) == 4 and all(item is lookups[0] for item in lookups)
+        assert [row.client_order_id for row in rows] == [f"bound-{index}" for index in range(4)]
+        assert [row.payload for row in rows] == [{"index": str(index)} for index in range(4)]
+        session.commit()
+        for index, row in enumerate(rows):
+            repeated = store.get_or_create_order(session, **args,
+                client_order_id=f"bound-{index}", metadata={"updated": str(index)})
+            assert repeated is row and repeated.payload == {"updated": str(index)}
+        session.rollback()
