@@ -47,3 +47,8 @@ def test_pg_clean_quantity_without_orm_setup(database, virtual):
 @pytest.mark.parametrize("virtual", [False, True])
 def test_pg_pending_quantity_autoflush_and_rollback(database, virtual):
     control.test_pending_quantity_keeps_autoflush_and_transaction_values(database, virtual)
+
+
+@pytest.mark.parametrize("mode", ["clean", "dirty", "no_autoflush"])
+def test_pg_reused_lookup_bindings_and_identity(database, mode):
+    control.test_reused_order_lookup_keeps_distinct_bindings_and_identity(database, mode)

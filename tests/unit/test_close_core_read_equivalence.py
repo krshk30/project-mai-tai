@@ -183,3 +183,31 @@ def test_stop_delete_equivalent_and_never_commits(database, case):
         if restored is not None:
             assert restored.stop_price == Decimal("1.84")
             assert restored.high_water_mark == Decimal("2.1") and restored.close_in_flight
+
+
+def test_reused_stop_absence_lookup_never_leaks_a_key(database):
+    store, factory, _ = database
+    with factory() as session:
+        row = stop()
+        session.add(row)
+        session.commit()
+        stop_id = row.id
+    with factory() as session:
+        statements = []
+        event.listen(session, "do_orm_execute", lambda state: statements.append(state.statement))
+        for strategy, account, symbol in (
+            ("other", "paper:scalar", "MI"),
+            ("schwab_1m_v2", "other", "MI"),
+            ("schwab_1m_v2", "paper:scalar", "OTHER"),
+            ("other", "other", "OTHER"),
+        ):
+            store.delete_armed_stop(session, strategy_code=strategy,
+                broker_account_name=account, symbol=symbol)
+        assert len(statements) == 4 and all(item is statements[0] for item in statements)
+        assert session.get(OmsArmedStop, stop_id) is not None
+        store.delete_armed_stop(session, strategy_code="schwab_1m_v2",
+            broker_account_name="paper:scalar", symbol="MI")
+        assert session.get(OmsArmedStop, stop_id) is None
+        session.rollback()
+    with factory() as session:
+        assert session.get(OmsArmedStop, stop_id) is not None

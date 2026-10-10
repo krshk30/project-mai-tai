@@ -31,3 +31,7 @@ def test_pg_stale_loaded_identity(database):
 @pytest.mark.parametrize("case", ["absent", "existing", "loaded", "dirty", "new", "deleted", "no_autoflush"])
 def test_pg_stop_delete_and_rollback(database, case):
     controls.test_stop_delete_equivalent_and_never_commits(database, case)
+
+
+def test_pg_reused_stop_lookup_key_isolation(database):
+    controls.test_reused_stop_absence_lookup_never_leaks_a_key(database)
