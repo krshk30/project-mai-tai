@@ -1099,7 +1099,13 @@ class WebullBrokerAdapter:
                 if index == len(lookups) - 1 or not self._is_order_not_found(exc):
                     raise
         if not isinstance(body, dict):
-            logger.warning("Webull order-detail: unexpected body=%r", body)
+            logger.warning(
+                "Webull order-detail: unexpected body=%r account=%s symbol=%s "
+                "order=%s coid=%s lookup_coid=%s broker_order_id=%s",
+                body, request.broker_account_name, request.symbol,
+                request.client_order_id, request.client_order_id, coid,
+                request.metadata.get("broker_order_id", "not_reported"),
+            )
             return None
 
         # Confirmed live shape (real AZI fills 2026-06-24): order_id is TOP-LEVEL; status +

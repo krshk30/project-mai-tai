@@ -1,0 +1,61 @@
+{
+  "captured_at": "2026-10-09T18:56:14.136324+00:00",
+  "source": "mai-tai-vps bounded READ ONLY trade_intents; no historical broker inventory retained",
+  "raw_receipt": "/tmp/fi23-capture-readonly-full-day.json",
+  "cases": [
+    {
+      "symbol": "FLYE", "diagnostic_at_et": "2026-10-08T14:10:00-04:00",
+      "account": "live:schwab_1m_v2", "id": "3f2920f0-f012-4dc1-9e08-3793cef6dce4",
+      "created_at": "2026-10-08T17:04:48.455064+00:00", "updated_at": "2026-10-08T17:04:48.461679+00:00",
+      "status": "rejected", "event_id": "34331a22-017c-4b54-bfc2-5391ea1fb62f",
+      "refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found",
+      "target_client_order_id": null, "client_order_id": null, "segment": "1791475802931",
+      "token": "73418882-269b-49b0-bd76-539f588a68ac"
+    },
+    {
+      "symbol": "FLYE", "diagnostic_at_et": "2026-10-08T14:10:00-04:00",
+      "account": "live:orb", "id": "81415da9-a587-4802-9a59-0a0007bb73bf",
+      "created_at": "2026-10-08T17:04:48.499883+00:00", "updated_at": "2026-10-08T17:04:48.507699+00:00",
+      "status": "rejected", "event_id": "f0fe060e-9ee0-4163-9749-2cada1fe6e4d",
+      "refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found",
+      "target_client_order_id": null, "client_order_id": null, "segment": "1791475802931",
+      "token": "73418882-269b-49b0-bd76-539f588a68ac"
+    },
+    {
+      "symbol": "VEEA", "diagnostic_at_et": "2026-10-09T14:23:00-04:00",
+      "account": "live:schwab_1m_v2", "id": "cf47a1d2-3756-4522-8b2c-8c67f70b92c3",
+      "created_at": "2026-10-09T18:18:37.462216+00:00", "updated_at": "2026-10-09T18:18:37.472932+00:00",
+      "status": "rejected", "event_id": "5c7e8bb2-df88-416b-a7df-1f5103c2da11",
+      "refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found",
+      "target_client_order_id": null, "client_order_id": null, "segment": "1791564122190",
+      "token": "cb33ef76-146f-4c2c-ad2e-1b45e63fb750"
+    },
+    {
+      "symbol": "VEEA", "diagnostic_at_et": "2026-10-09T14:23:00-04:00",
+      "account": "live:orb", "id": "6dee512b-dd2c-4904-9eb6-664a0afecbcc",
+      "created_at": "2026-10-09T18:18:37.510952+00:00", "updated_at": "2026-10-09T18:18:37.517583+00:00",
+      "status": "rejected", "event_id": "1044b572-44d7-4530-959a-a2e9faa0fd63",
+      "refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found",
+      "target_client_order_id": null, "client_order_id": null, "segment": "1791564122190",
+      "token": "cb33ef76-146f-4c2c-ad2e-1b45e63fb750"
+    },
+    {
+      "symbol": "DKI", "diagnostic_at_et": "2026-10-08T07:45:00-04:00",
+      "account": "live:schwab_1m_v2", "id": "3b041c63-0d09-4be2-bb7a-d38da95fd8e4",
+      "created_at": "2026-10-08T11:28:41.382952+00:00", "updated_at": "2026-10-08T11:28:41.38956+00:00",
+      "status": "rejected", "event_id": "236b04bf-8478-4689-bd14-7b8b4a798e91",
+      "refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found",
+      "target_client_order_id": null, "client_order_id": null, "segment": "1791396182729",
+      "token": "5a43e203-a09d-4467-ba9d-ee2a4d639590"
+    },
+    {
+      "symbol": "DKI", "diagnostic_at_et": "2026-10-08T07:45:00-04:00",
+      "account": "live:orb", "id": "44eedc9b-f428-4ef7-b8d8-1a20619ded72",
+      "created_at": "2026-10-08T11:28:41.53585+00:00", "updated_at": "2026-10-08T11:28:41.548618+00:00",
+      "status": "rejected", "event_id": "16c36650-b134-4fd1-95fa-f253cf8ea7d1",
+      "refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found",
+      "target_client_order_id": null, "client_order_id": null, "segment": "1791396182729",
+      "token": "5a43e203-a09d-4467-ba9d-ee2a4d639590"
+    }
+  ]
+}
