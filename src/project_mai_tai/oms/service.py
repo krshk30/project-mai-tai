@@ -2224,7 +2224,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     strategy_available_quantity,
                     remaining_account_quantity,
                 )
-                intent.quantity = request_quantity
+                if intent.quantity != request_quantity:
+                    intent.quantity = request_quantity
 
             # Piece 1: ORB entry priced off the OMS live quote at placement (flag-gated;
             # no-op when off / non-ORB). Mutates event.payload.metadata's limit in place,
