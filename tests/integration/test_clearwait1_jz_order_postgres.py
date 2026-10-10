@@ -47,7 +47,8 @@ async def test_original_jz_event_sequence_current_coverage_clear_and_actual_two_
         @classmethod
         def now(cls, tz=None):
             return datetime.fromtimestamp(clock[0] / 1000, tz or UTC)
-    for path in ("project_mai_tai.oms.service.datetime", "project_mai_tai.db.models.datetime",
+    for path in ("project_mai_tai.events.datetime", "project_mai_tai.oms.service.datetime",
+                 "project_mai_tai.db.models.datetime",
                  "project_mai_tai.services.schwab_1m_v2_bot.datetime",
                  "project_mai_tai.fanout_segment_store.datetime",
                  "project_mai_tai.v2_flip_entry_ownership.datetime"):
@@ -112,6 +113,7 @@ async def test_original_jz_event_sequence_current_coverage_clear_and_actual_two_
         assert binds, "identity must be produced by actual caller persistence"
     try:
         await bot._drain_direct_strategy_intents()
+        assert all(event.produced_at == Clock.now(UTC) for event in transport.events)
         await settle(oms)
         with db[1]() as session:
             receipts = list(session.scalars(select(TradeIntent)))
@@ -171,6 +173,7 @@ async def test_original_jz_event_sequence_current_coverage_clear_and_actual_two_
                 bid_price=Decimal("1.16"), ask_price=Decimal("1.17"))))
         bot.strategy._queue_resting_place(state, float(sell["trail"]))
         await bot._drain_direct_strategy_intents()
+        assert all(event.produced_at == Clock.now(UTC) for event in transport.events[-2:])
         assert {order.broker_account_name for order in wires} == {PRIMARY, WEBULL}
         with db[1]() as session:
             orders = list(session.scalars(select(BrokerOrder)))
