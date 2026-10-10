@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import desc, insert, select
 from sqlalchemy.orm import Session
+from project_mai_tai.oms.report_audit_fifo import PRIOR as PRIOR_AUDIT_PAYLOAD
 
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
 from project_mai_tai.db.models import (
@@ -462,6 +463,7 @@ class OmsStore:
         order_type: str = "market",
         time_in_force: str = "day",
         reject_reason: str | None = None,
+        capture_prior_audit: bool = False,
     ) -> BrokerOrder:
         # Persist the broker reject reason onto the order payload so a rejected
         # order is self-explanatory on the row, not only in broker_order_events.
@@ -475,6 +477,9 @@ class OmsStore:
         else:
             order_id = session.scalar(select(BrokerOrder.id).where(BrokerOrder.client_order_id == client_order_id))
         order = session.get(BrokerOrder, order_id) if order_id is not None else None
+        if capture_prior_audit:
+            session.info[PRIOR_AUDIT_PAYLOAD] = (
+                {} if order is None else dict(order.payload) if isinstance(order.payload, dict) else None)
         if order is None:
             order = BrokerOrder(
                 intent_id=intent.id,
@@ -620,8 +625,8 @@ class OmsStore:
             event_at=report.reported_at, payload=payload,
             event_source=getattr(report, "origin", "unknown") or "unknown")
         if use_core:
-            # Only the awaited worker consumes this transient result; ordinary
-            # callers retain a persistent ORM object. Both writes share the savepoint.
+            # Exclusive inline workers and the private FIFO writer consume this transient
+            # result; other callers retain a persistent ORM object. Both use the savepoint.
             values["id"] = uuid4()
             values["event_at"] = values["event_at"] or utcnow()
             session.flush()

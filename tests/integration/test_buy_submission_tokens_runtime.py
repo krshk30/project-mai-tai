@@ -133,6 +133,7 @@ async def test_actual_oms_report_commit_does_not_block_quote_loop(sessions, sdk,
         assert not task.done() and committed == []
     finally:
         result = await task
+        await service._drain_cancel_terminal_evidence()
     assert result and result[0].payload.status == "accepted" and committed == [True]
 
 async def noop(*args, **kwargs):

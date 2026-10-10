@@ -66,6 +66,10 @@ from project_mai_tai.oms.cancel_terminal import acquire_cancel_terminal_evidence
 from project_mai_tai.oms.cancel_terminal_assessment import read_assessment_receipts
 from project_mai_tai.oms.cancel_feedback import mark_feedback_published
 from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
+from project_mai_tai.oms.report_audit_fifo import (
+    AuditItem, LIMIT as AUDIT_FIFO_LIMIT, ReportAuditFIFO, PRIOR as PRIOR_AUDIT_PAYLOAD,
+    finish_task, ordinary_metadata,
+)
 from project_mai_tai.oms import wbquiet_shadow
 from project_mai_tai.positions_read_receipt import (
     PositionsReadReceiptWriter,
@@ -1021,6 +1025,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         adapter = getattr(self, "broker_adapter", None)
         if isinstance(adapter, DurableBuyAdapter):
             await adapter.start()
+            self._report_audit_fifo()
 
         seed_summary = self.seed_runtime_metadata()
         self.logger.info(
@@ -1074,22 +1079,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         try:
             await self._run_control_loop(stop_event)
         finally:
-            stop_event.set()
-            tick_task.cancel()
-            rpg_task.cancel()
-            if receipt_task is not None:
-                receipt_task.cancel()
-            if falseflip_task is not None:
-                falseflip_task.cancel()
-            await asyncio.gather(rpg_task, *([receipt_task] if receipt_task is not None else []),
-                                 *([falseflip_task] if falseflip_task is not None else []),
-                                 return_exceptions=True)
-            try:
-                await tick_task
-            except asyncio.CancelledError:
-                pass
-            await self._shutdown_symbol_tick_work()
-            await self._drain_cancel_terminal_evidence()
+            await self._shutdown_runtime_producers(stop_event,
+                tick_task, rpg_task, receipt_task, falseflip_task)
 
         await self._publish_heartbeat(
             "stopping",
@@ -1099,6 +1090,19 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             },
         )
         await self.redis.aclose()
+
+    async def _shutdown_runtime_producers(self, stop_event, *producers):
+        async def cleanup():
+            stop_event.set()
+            tasks = [task for task in producers if task is not None]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await self._shutdown_symbol_tick_work()
+            await self._drain_cancel_terminal_evidence()
+        # Producers may enqueue a successfully committed report during cancellation.
+        # Repeated cancellation cannot abandon them or the final private audit COMMIT.
+        await finish_task(asyncio.create_task(cleanup()))
 
     async def _run_control_loop(self, stop_event: asyncio.Event) -> None:
         """Intents + periodic broker-sync + heartbeat. Reads ONLY the strategy-intents
@@ -1793,6 +1797,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "fanout_attempt_id": self._build_client_order_id(event),
             }
         with self.session_factory() as session:
+            ordinary_audits = []
             strategy, broker_account, intent = await self._intent_db(
                 self._prepare_intent_rows, session, event, strategy_code,
             )
@@ -1907,8 +1912,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     published_events = await self._process_cancel_intent(
                         session=session, strategy_id=strategy.id,
                         broker_account_id=broker_account.id, intent=intent, event=event,
+                        ordinary_audits=ordinary_audits,
                     )
-                    await self._intent_db(session.commit)
+                    await self._commit_reports_and_transfer_audits(session, ordinary_audits)
                     for order_event in published_events:
                         await self._publish_order_event(order_event)
                     if publication is not None:
@@ -2546,6 +2552,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 intent_event=event,
                 request=request,
                 reports=reports,
+                ordinary_audits=ordinary_audits,
             ))
             stop_reject_reason = self._stop_reject_reason(request=request, reports=reports)
             if stop_reject_reason:
@@ -2581,10 +2588,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     )
                 )
 
-            if isinstance(self.broker_adapter, DurableBuyAdapter):
-                await self.broker_adapter.commit_order_reports(session)
-            else:
-                session.commit()
+            await self._commit_reports_and_transfer_audits(session, ordinary_audits)
 
         for order_event in published_events:
             await self._publish_order_event(order_event)
@@ -2910,6 +2914,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         broker_account_id: UUID,
         intent,
         event: TradeIntentEvent,
+        ordinary_audits: list[AuditItem] | None = None,
     ) -> list[OrderEventEvent]:
         metadata = dict(event.payload.metadata)
         target_order = await self._intent_db(self.store.find_open_order_for_cancel,
@@ -2919,6 +2924,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             symbol=event.payload.symbol,
             metadata=metadata,
         )
+        prior_audit_metadata = (dict(target_order.payload)
+            if target_order is not None and isinstance(target_order.payload, dict) else None)
         if (event.payload.strategy_code == "schwab_1m_v2"
                 and metadata.get("clearwait_removal_token")):
             bind_cancel_target(intent, event, self.broker_adapter, target_order)
@@ -3019,6 +3026,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             reports = []
         published_events: list[OrderEventEvent] = []
+        if len(reports) > AUDIT_FIFO_LIMIT:
+            ordinary_audits = None
 
         if verify_enabled:
             self._spawn_cancel_verification(
@@ -3049,9 +3058,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "metadata": recorded_metadata,
                 "reason": report.reason,
             }
-            await self._append_order_event_isolated_awaited(
-                session, order=order, report=report, payload=payload
-            )
+            if not self._stage_ordinary_audit(ordinary_audits, order, report, payload,
+                    prior=prior_audit_metadata,
+                    request_metadata=request.metadata):
+                await self._append_order_event_isolated_awaited(
+                    session, order=order, report=report, payload=payload)
             # ⛔⭐ A CANCEL INTENT TRACKS THE REQUEST; THE ORDER TRACKS THE OUTCOME.
             #
             # This used to copy `report.event_type` straight onto the intent. For a cancel the
@@ -3224,6 +3235,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     batch = dict(ids)
                     ids.clear()
                     try:
+                        audit = self.__dict__.get("_ordinary_report_audit_fifo")
+                        if audit is not None:
+                            await audit.drain()
                         await acquire_cancel_terminal_evidence(
                             self.session_factory, self.broker_adapter, batch,
                             minimum_started_at_ms=batch)
@@ -3254,6 +3268,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     await cycle.drain()
             except (ValueError, AttributeError):
                 pass
+        audit = self.__dict__.get("_ordinary_report_audit_fifo")
+        if audit is not None:
+            await audit.drain()
 
     async def _verify_cancel_landed(
         self,
@@ -15647,8 +15664,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         intent_event: TradeIntentEvent,
         request: OrderRequest,
         reports: list[ExecutionReport],
+        ordinary_audits: list[AuditItem] | None = None,
     ) -> list[OrderEventEvent]:
         published_events: list[OrderEventEvent] = []
+        prior_audit_by_coid = {}
+        capture_prior = (ordinary_audits is not None and len(reports) <= AUDIT_FIFO_LIMIT
+            and isinstance(self.broker_adapter, DurableBuyAdapter)
+            and ordinary_metadata(request.metadata, *(report.metadata for report in reports)))
         for report in reports:
             order = await self._intent_db(self.store.get_or_create_order,
                 session,
@@ -15665,7 +15687,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 order_type=request.order_type,
                 time_in_force=request.time_in_force,
                 reject_reason=report.reason if report.event_type == "rejected" else None,
+                **({"capture_prior_audit": True} if capture_prior else {}),
             )
+            if capture_prior:
+                captured = session.info.pop(PRIOR_AUDIT_PAYLOAD, None)
+                prior_audit_by_coid.setdefault(report.client_order_id, captured)
             recorded_metadata = carry_fanout_identity(
                 report.metadata, request.metadata
             )
@@ -15694,9 +15720,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 report=report,
                 payload=payload,
             )
-            await self._append_order_event_isolated_awaited(
-                session, order=order, report=report, payload=payload
-            )
+            if not self._stage_ordinary_audit(ordinary_audits, order, report, payload,
+                    prior=prior_audit_by_coid.get(report.client_order_id),
+                    request_metadata=request.metadata):
+                await self._append_order_event_isolated_awaited(
+                    session, order=order, report=report, payload=payload)
             if fill is not None:
                 self.store.apply_fill_to_positions(
                     session,
@@ -16765,6 +16793,54 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return "not_marketable"
         return None
 
+    def _report_audit_fifo(self):
+        fifo = self.__dict__.get("_ordinary_report_audit_fifo")
+        if fifo is None:
+            fifo = self._ordinary_report_audit_fifo = ReportAuditFIFO(
+                self.session_factory, self.store.append_order_event,
+                self._finish_order_event_write, self.logger)
+        return fifo
+
+    def _stage_ordinary_audit(self, staged, order, report, payload, *, prior, request_metadata):
+        if (staged is None or not isinstance(self.broker_adapter, DurableBuyAdapter)
+                or not ordinary_metadata(prior, request_metadata, report.metadata, order.payload)
+                or " ".join(str(report.reason or "").upper().split()) in self.store.TERMINAL_CANCEL_REFUSAL_REASONS):
+            return False
+        if len(staged) >= AUDIT_FIFO_LIMIT:
+            return False  # Preserve the existing inline savepoint for oversized report batches.
+        try:
+            staged.append(AuditItem.capture(order, report, payload))
+        except (TypeError, ValueError, AttributeError):
+            return False
+        return True
+
+    async def _commit_reports_and_transfer_audits(self, session, staged):
+        outcome = {"committed": False}
+        def commit():
+            session.commit()
+            outcome["committed"] = True
+        cancelled = False
+        try:
+            await self._intent_db(commit)
+        except asyncio.CancelledError:
+            if not outcome["committed"]:
+                staged.clear()
+                raise
+            cancelled = True
+        except BaseException:
+            staged.clear()
+            raise
+        if staged:
+            self._order_event_attempts += len(staged)
+            try:
+                await self._report_audit_fifo().transfer(tuple(staged))
+            except asyncio.CancelledError:
+                cancelled = True
+            finally:
+                staged.clear()
+        if cancelled:
+            raise asyncio.CancelledError
+
     def _append_order_event_isolated(
         self,
         session: Session,
@@ -16861,7 +16937,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         makes a broken watch and a healthy system print the same number.
         ⛔ `attempts` is the DENOMINATOR and is read FIRST:
              attempts=0 failures=0  -> no order event occurred. Nothing to conclude.
-             attempts>0 failures=0  -> every audit row landed. THAT is the pass.
+             attempts>0 failures=0  -> pending/inflight may still be unwritten.
+        FIFO written counts only its own successful COMMIT; startup prior-process inventory is UNKNOWN.
         """
         try:
             now = utcnow()
@@ -16869,6 +16946,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if last is not None and (now - last).total_seconds() < interval_seconds:
                 return
             self._order_event_census_last_emit = now
+            fifo = self.__dict__.get("_ordinary_report_audit_fifo")
             self.logger.info(
                 "[OMS-ORDER-EVENT-CENSUS] audit rows: %d dropped of %d attempted since boot "
                 "(⛔ read attempts FIRST: attempts=0 means UNMEASURED, not clean). A drop costs "
@@ -16876,6 +16954,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 self._order_event_failures,
                 self._order_event_attempts,
             )
+            if fifo is not None:
+                self.logger.info("[OMS-AUDIT-FIFO-CENSUS] enqueued=%d committed_written=%d "
+                    "failed=%d pending=%d inflight=%d previous_process_pending=UNKNOWN",
+                    fifo.enqueued, fifo.written, fifo.failed, len(fifo.pending),
+                    int(fifo.active is not None))
         except Exception:  # noqa: BLE001 - bookkeeping must never break the sync path
             pass
 

@@ -14,7 +14,7 @@ sdk = runtime.sdk
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("side", ["buy", "sell"])
-async def test_actual_pg_audit_flush_offloop_before_report_publication(sessions, sdk, monkeypatch, side):
+async def test_actual_pg_audit_flush_offloop_and_drained_before_assertion(sessions, sdk, monkeypatch, side):
     loop_thread = threading.get_ident()
     original = OmsStore.append_order_event
     writes = []
