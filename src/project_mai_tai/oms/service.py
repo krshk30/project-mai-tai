@@ -16343,36 +16343,41 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         orders are excluded by ``_quote_drift_dollars_against`` returning None."""
         from sqlalchemy import func
 
-        # Column rows retain the cancellation payload without ORM identity-map hydration.
+        # Core columns avoid ORM cursor setup even for an empty working book.
+        # Preserve the autoflush performed by the former ORM-enabled SELECT.
+        if session.autoflush:
+            session.flush()
+        orders_table = BrokerOrder.__table__.c
+        intents_table = TradeIntent.__table__.c
         query = select(
-            BrokerOrder.id, BrokerOrder.intent_id, BrokerOrder.strategy_id,
-            BrokerOrder.broker_account_id, BrokerOrder.client_order_id,
-            BrokerOrder.broker_order_id, BrokerOrder.symbol, BrokerOrder.side,
-            BrokerOrder.quantity, BrokerOrder.order_type, BrokerOrder.time_in_force,
-            BrokerOrder.payload, TradeIntent.intent_type,
-            TradeIntent.created_at.label("intent_created_at"),
-        ).join(TradeIntent, TradeIntent.id == BrokerOrder.intent_id).where(
-            BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES),
-            func.lower(TradeIntent.intent_type) == "open",
+            orders_table.id, orders_table.intent_id, orders_table.strategy_id,
+            orders_table.broker_account_id, orders_table.client_order_id,
+            orders_table.broker_order_id, orders_table.symbol, orders_table.side,
+            orders_table.quantity, orders_table.order_type, orders_table.time_in_force,
+            orders_table.payload, intents_table.intent_type,
+            intents_table.created_at.label("intent_created_at"),
+        ).join(TradeIntent.__table__, intents_table.id == orders_table.intent_id).where(
+            orders_table.status.in_(self.store.OPEN_ORDER_STATUSES),
+            func.lower(intents_table.intent_type) == "open",
         )
         if quote is None:
             # Cache refresh excludes these orders below; avoid decoding their payloads.
-            query = query.where(func.lower(BrokerOrder.payload["order_type"].as_string()) == "limit")
+            query = query.where(func.lower(orders_table.payload["order_type"].as_string()) == "limit")
         if symbol is not None:
-            query = query.where(BrokerOrder.symbol == symbol)
+            query = query.where(orders_table.symbol == symbol)
         orders = session.execute(query).all()
         if not orders:
             return []
         account_lookup = {
             account.id: account for account in session.execute(
-                select(BrokerAccount.id, BrokerAccount.name)
-                .where(BrokerAccount.is_active.is_(True))
-                .order_by(BrokerAccount.name)
+                select(BrokerAccount.__table__.c.id, BrokerAccount.__table__.c.name)
+                .where(BrokerAccount.__table__.c.is_active.is_(True))
+                .order_by(BrokerAccount.__table__.c.name)
             ).all()
         }
         strategy_lookup = {
             strategy.id: strategy for strategy in session.execute(
-                select(Strategy.id, Strategy.code)
+                select(Strategy.__table__.c.id, Strategy.__table__.c.code)
             ).all()
         }
         candidates: list[_DriftCancelCandidate] = []
