@@ -20,6 +20,7 @@ async def test_actual_pg_audit_flush_offloop_before_report_publication(sessions,
     writes = []
     def slow_audit(store, *args, **kwargs):
         assert threading.get_ident() != loop_thread
+        assert kwargs["use_core"] is True
         sleep(0.15)
         result = original(store, *args, **kwargs)
         writes.append(True)

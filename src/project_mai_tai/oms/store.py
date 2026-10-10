@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, insert, select
 from sqlalchemy.orm import Session
 
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
@@ -614,19 +614,23 @@ class OmsStore:
         order: BrokerOrder,
         report: ExecutionReport,
         payload: dict[str, object],
+        use_core: bool = False,
     ) -> BrokerOrderEvent:
-        event = BrokerOrderEvent(
-            order_id=order.id,
-            event_type=report.event_type,
-            event_at=report.reported_at,
-            payload=payload,
-            # Q1: carried straight through from the report. This function does not INFER an
-            # origin — it has no way to know one, and a guess here would be indistinguishable
-            # from the truth downstream, which is the whole defect.
-            event_source=getattr(report, "origin", "unknown") or "unknown",
-        )
-        session.add(event)
-        session.flush()
+        values = dict(order_id=order.id, event_type=report.event_type,
+            event_at=report.reported_at, payload=payload,
+            event_source=getattr(report, "origin", "unknown") or "unknown")
+        if use_core:
+            # Only the awaited worker consumes this transient result; ordinary
+            # callers retain a persistent ORM object. Both writes share the savepoint.
+            values["id"] = uuid4()
+            values["event_at"] = values["event_at"] or utcnow()
+            session.flush()
+            session.execute(insert(BrokerOrderEvent.__table__).values(**values))
+            event = BrokerOrderEvent(**values)
+        else:
+            event = BrokerOrderEvent(**values)
+            session.add(event)
+            session.flush()
         metadata = payload.get("metadata", {})
         recorded_metadata = dict(getattr(order, "payload", {}) or {})
         if isinstance(metadata, dict):
