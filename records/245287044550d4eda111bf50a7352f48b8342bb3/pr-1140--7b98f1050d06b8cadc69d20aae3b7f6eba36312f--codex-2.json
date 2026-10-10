@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "7b98f1050d06b8cadc69d20aae3b7f6eba36312f",
+  "range_head": "245287044550d4eda111bf50a7352f48b8342bb3",
+  "reviewed_at": "2026-10-10T22:02:16Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed historical E90 only in final composed handoff2378e93f with appended E92 explicitly correcting the first-position/not-F-code claim. Actual metrics/source equality verified; process-pause/root-cause wording was initially held and is historical superseded assessment, not current acceptance. No production or source changes in this commit."
+}
