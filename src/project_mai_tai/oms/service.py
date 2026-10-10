@@ -16799,10 +16799,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         error = self._write_order_event_savepoint(session, order=order, report=report, payload=payload)
         return self._finish_order_event_write(error, order=order, report=report)
 
-    def _write_order_event_savepoint(self, session, *, order, report, payload):
+    def _write_order_event_savepoint(self, session, *, order, report, payload, use_core=False):
         try:
             with session.begin_nested():
-                self.store.append_order_event(session, order=order, report=report, payload=payload)
+                if use_core:
+                    self.store.append_order_event(
+                        session, order=order, report=report, payload=payload, use_core=True)
+                else:
+                    self.store.append_order_event(session, order=order, report=report, payload=payload)
             return None
         except Exception as error:  # noqa: BLE001 - an audit row must never cost a fill
             return error
@@ -16815,7 +16819,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # finishes. Audit counters and all protection state stay on the loop.
         outcome = {}
         def write():
-            outcome["error"] = self._write_order_event_savepoint(session, order=order, report=report, payload=payload)
+            outcome["error"] = self._write_order_event_savepoint(
+                session, order=order, report=report, payload=payload, use_core=True)
             return outcome["error"]
         try:
             error = await self.broker_adapter._db(write)
