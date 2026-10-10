@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import desc, insert, select
+from sqlalchemy import bindparam, desc, insert, select
 from sqlalchemy.orm import Session
 from project_mai_tai.oms.report_audit_fifo import PRIOR as PRIOR_AUDIT_PAYLOAD
 
@@ -26,6 +26,20 @@ from project_mai_tai.db.models import (
 )
 from project_mai_tai.events import TradeIntentEvent
 from project_mai_tai.fanout_outcome_consumer import append_outcome_isolated, broker_outcome
+
+
+# Reuse immutable lookup shapes; request values stay local to each execution.
+_ORDER_ID_BY_COID_CORE = select(BrokerOrder.__table__.c.id).where(
+    BrokerOrder.__table__.c.client_order_id == bindparam("lookup_client_order_id")
+)
+_ORDER_ID_BY_COID_ORM = select(BrokerOrder.id).where(
+    BrokerOrder.client_order_id == bindparam("lookup_client_order_id")
+)
+_ARMED_STOP_ID_BY_SCOPE_CORE = select(OmsArmedStop.__table__.c.id).where(
+    OmsArmedStop.__table__.c.broker_account_name == bindparam("lookup_broker_account_name"),
+    OmsArmedStop.__table__.c.strategy_code == bindparam("lookup_strategy_code"),
+    OmsArmedStop.__table__.c.symbol == bindparam("lookup_symbol"),
+)
 
 
 def utcnow() -> datetime:
@@ -483,10 +497,11 @@ class OmsStore:
             payload["reject_reason"] = reject_reason
         # A new coid needs no ORM row processor; hydrate only an existing order.
         if session.autoflush and not (session.new or session.dirty or session.deleted):
-            columns = BrokerOrder.__table__.c
-            order_id = session.scalar(select(columns.id).where(columns.client_order_id == client_order_id))
+            order_id = session.scalar(_ORDER_ID_BY_COID_CORE,
+                {"lookup_client_order_id": client_order_id})
         else:
-            order_id = session.scalar(select(BrokerOrder.id).where(BrokerOrder.client_order_id == client_order_id))
+            order_id = session.scalar(_ORDER_ID_BY_COID_ORM,
+                {"lookup_client_order_id": client_order_id})
         order = session.get(BrokerOrder, order_id) if order_id is not None else None
         if capture_prior_audit:
             session.info[PRIOR_AUDIT_PAYLOAD] = (
@@ -1444,12 +1459,11 @@ class OmsStore:
         """Remove the durable mirror row for a closed/cleared stop (no commit)."""
         if (session.autoflush and not (session.new or session.dirty or session.deleted)
                 and not any(isinstance(row, OmsArmedStop) for row in session.identity_map.values())):
-            columns = OmsArmedStop.__table__.c
-            present = session.scalar(select(columns.id).where(
-                columns.broker_account_name == broker_account_name,
-                columns.strategy_code == strategy_code,
-                columns.symbol == symbol,
-            ))
+            present = session.scalar(_ARMED_STOP_ID_BY_SCOPE_CORE, {
+                "lookup_broker_account_name": broker_account_name,
+                "lookup_strategy_code": strategy_code,
+                "lookup_symbol": symbol,
+            })
             if present is None:
                 return
         row = session.scalar(
