@@ -23,6 +23,10 @@ def test_pg_audit_pending_order_and_rollback(sessions):
     control.test_core_audit_flushes_pending_order_and_rolls_back(sessions)
 
 
+def test_pg_audit_flushes_new_order_foreign_key(sessions):
+    control.test_core_audit_flushes_a_genuinely_new_parent_order(sessions)
+
+
 @pytest.mark.parametrize("use_core", [False, True])
 def test_pg_missing_timestamp_and_origin_defaults(sessions, use_core):
     control.test_missing_timestamp_and_origin_keep_existing_defaults(sessions, use_core)
