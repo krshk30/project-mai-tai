@@ -1,0 +1,9 @@
+{
+  "pr_number": 1149,
+  "range_base": "3311fa1a6923539007e8207512928971cb786898",
+  "range_head": "c41713ea31c8036c59af5d623d0e12e2b7a9b829",
+  "reviewed_at": "2026-10-10T22:32:25Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "Re-pin after rebase onto current main 3311fa1a: patch-id 36da4ffcae62 identical to my pins of 90be742b and 10f7dca6. Ops-only collector shutdown classification."
+}
