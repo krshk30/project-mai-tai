@@ -1642,6 +1642,47 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             self._report_confirmation_fanout(decision)
             return
 
+    async def _intent_db(self, function, *args, **kwargs):
+        # The caller leases its Session exclusively until the shielded worker ends,
+        # including repeated cancellation; no broker await runs inside this lease.
+        adapter = getattr(self, "broker_adapter", None)
+        if isinstance(adapter, DurableBuyAdapter):
+            return await adapter._db(lambda: function(*args, **kwargs))
+        return function(*args, **kwargs)
+
+    def _prepare_intent_rows(self, session, event, strategy_code):
+        if (
+            bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
+            and (strategy_code == "orb_schwab" or (
+                event.payload.intent_type == "open" and strategy_code == "schwab_1m_v2"
+            ))
+            and event.payload.broker_account_name
+            == self.settings.strategy_schwab_1m_v2_account_name
+            and session.get_bind().dialect.name == "postgresql"
+        ):
+            # Keep the existing per-symbol transaction lock through commit.
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"orb-v2:{event.payload.broker_account_name}:{event.payload.symbol.upper()}"},
+            )
+        registration = self.strategy_registrations.get(event.payload.strategy_code)
+        strategy = self.store.ensure_strategy(
+            session, event.payload.strategy_code,
+            name=(registration.display_name if registration else event.payload.strategy_code.replace("_", " ").upper()),
+            execution_mode=registration.execution_mode if registration else "paper",
+            metadata_json=(dict(registration.metadata) if registration else
+                           {"account_name": event.payload.broker_account_name}),
+        )
+        broker_account = self.store.ensure_broker_account(
+            session, event.payload.broker_account_name,
+            provider=self.settings.provider_for_account(event.payload.broker_account_name),
+            environment=self.settings.environment,
+        )
+        intent = self.store.create_trade_intent(
+            session, strategy=strategy, broker_account=broker_account, event=event,
+        )
+        return strategy, broker_account, intent
+
     @_refresh_working_cache_after_intent
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
         if self._rpg_external_retry(event):
@@ -1750,48 +1791,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "fanout_attempt_id": self._build_client_order_id(event),
             }
         with self.session_factory() as session:
-            if (
-                bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
-                and (
-                    strategy_code == "orb_schwab"
-                    or (
-                        event.payload.intent_type == "open"
-                        and strategy_code == "schwab_1m_v2"
-                    )
-                )
-                and event.payload.broker_account_name
-                == self.settings.strategy_schwab_1m_v2_account_name
-                and session.get_bind().dialect.name == "postgresql"
-            ):
-                # One OMS may run several async loops. Hold the per-symbol lock until
-                # commit so the second strategy sees the first strategy's order.
-                session.execute(
-                    text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-                    {"key": f"orb-v2:{event.payload.broker_account_name}:{event.payload.symbol.upper()}"},
-                )
-            registration = self.strategy_registrations.get(event.payload.strategy_code)
-            strategy = self.store.ensure_strategy(
-                session,
-                event.payload.strategy_code,
-                name=(registration.display_name if registration else event.payload.strategy_code.replace("_", " ").upper()),
-                execution_mode=registration.execution_mode if registration else "paper",
-                metadata_json=(
-                    dict(registration.metadata)
-                    if registration
-                    else {"account_name": event.payload.broker_account_name}
-                ),
-            )
-            broker_account = self.store.ensure_broker_account(
-                session,
-                event.payload.broker_account_name,
-                provider=self.settings.provider_for_account(event.payload.broker_account_name),
-                environment=self.settings.environment,
-            )
-            intent = self.store.create_trade_intent(
-                session,
-                strategy=strategy,
-                broker_account=broker_account,
-                event=event,
+            strategy, broker_account, intent = await self._intent_db(
+                self._prepare_intent_rows, session, event, strategy_code,
             )
 
             passed, risk_reason = self._evaluate_risk(event)
@@ -1799,7 +1800,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if rpg_refusal:
                 passed, risk_reason = False, rpg_refusal
             outcome = "pass" if passed else "reject"
-            self.store.record_risk_check(
+            await self._intent_db(self.store.record_risk_check,
                 session,
                 intent=intent,
                 strategy_id=strategy.id,
@@ -1905,7 +1906,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         session=session, strategy_id=strategy.id,
                         broker_account_id=broker_account.id, intent=intent, event=event,
                     )
-                    session.commit()
+                    await self._intent_db(session.commit)
                     for order_event in published_events:
                         await self._publish_order_event(order_event)
                     if publication is not None:
@@ -2090,7 +2091,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                             symbol=event.payload.symbol,
                         )
                     )
-                duplicate_exit = self.store.find_open_exit_order(
+                duplicate_exit = await self._intent_db(self.store.find_open_exit_order,
                     session,
                     strategy_id=strategy.id,
                     broker_account_id=broker_account.id,
@@ -2114,7 +2115,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     await self._publish_order_event(order_event)
                     return [*pre_submit_events, order_event]
 
-                virtual_quantity = self.store.get_virtual_position_quantity(
+                virtual_quantity = await self._intent_db(self.store.get_virtual_position_quantity,
                     session,
                     strategy_id=strategy.id,
                     broker_account_id=broker_account.id,
@@ -2140,7 +2141,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     await self._publish_order_event(order_event)
                     return [order_event]
 
-                account_position = self.store.get_account_position(
+                account_position = await self._intent_db(self.store.get_account_position,
                     session,
                     broker_account_id=broker_account.id,
                     symbol=event.payload.symbol,
@@ -2909,7 +2910,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         event: TradeIntentEvent,
     ) -> list[OrderEventEvent]:
         metadata = dict(event.payload.metadata)
-        target_order = self.store.find_open_order_for_cancel(
+        target_order = await self._intent_db(self.store.find_open_order_for_cancel,
             session,
             strategy_id=strategy_id,
             broker_account_id=broker_account_id,
@@ -3046,7 +3047,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "metadata": recorded_metadata,
                 "reason": report.reason,
             }
-            self._append_order_event_isolated(session, order=order, report=report, payload=payload)
+            await self._append_order_event_isolated_awaited(
+                session, order=order, report=report, payload=payload
+            )
             # ⛔⭐ A CANCEL INTENT TRACKS THE REQUEST; THE ORDER TRACKS THE OUTCOME.
             #
             # This used to copy `report.event_type` straight onto the intent. For a cancel the
@@ -4203,7 +4206,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         broker_account: BrokerAccount,
         symbol: str,
     ) -> list[OrderEventEvent]:
-        native_order = self.store.find_open_native_stop_guard_order(
+        native_order = await self._intent_db(self.store.find_open_native_stop_guard_order,
             session,
             strategy_id=strategy.id,
             broker_account_id=broker_account.id,
@@ -15645,7 +15648,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     ) -> list[OrderEventEvent]:
         published_events: list[OrderEventEvent] = []
         for report in reports:
-            order = self.store.get_or_create_order(
+            order = await self._intent_db(self.store.get_or_create_order,
                 session,
                 intent=intent,
                 strategy_id=strategy_id,
