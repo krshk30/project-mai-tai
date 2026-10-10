@@ -2141,14 +2141,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     await self._publish_order_event(order_event)
                     return [order_event]
 
-                account_position = await self._intent_db(self.store.get_account_position,
+                account_quantity = await self._intent_db(self.store.get_account_position_quantity,
                     session,
                     broker_account_id=broker_account.id,
                     symbol=event.payload.symbol,
                 )
                 available_quantity = (
-                    account_position.quantity
-                    if account_position is not None and account_position.quantity > 0
+                    account_quantity
+                    if account_quantity is not None and account_quantity > 0
                     else Decimal("0")
                 )
                 if available_quantity <= 0:

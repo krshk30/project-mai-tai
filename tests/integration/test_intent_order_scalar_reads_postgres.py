@@ -27,3 +27,13 @@ def test_pg_virtual_quantity_transaction_semantics(database, autoflush):
 
 def test_pg_order_create_and_repeated_report_identity(database):
     control.test_order_create_and_repeated_report_preserve_exact_identity_and_payload(database)
+
+
+@pytest.mark.parametrize("quantity", [None, Decimal(0), Decimal(-1), Decimal("1.25")])
+def test_pg_account_quantity_without_hydration(database, quantity):
+    control.test_account_quantity_matches_without_hydrating_position(database, quantity)
+
+
+@pytest.mark.parametrize("autoflush", [False, True])
+def test_pg_account_quantity_transaction_semantics(database, autoflush):
+    control.test_account_quantity_retains_dirty_identity_and_autoflush_semantics(database, autoflush)
