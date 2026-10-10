@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "c2debf13361f28aa45886449713f8180480fe924",
+  "range_head": "c690446d3cca0c4357edeef19cdc9f31918bb7ff",
+  "reviewed_at": "2026-10-10T15:20:24Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E10 scope ruling \u2014 fix only regressions; #1142 parked; LINE replay gate. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

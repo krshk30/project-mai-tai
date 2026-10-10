@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "93705a48995ef3d54a405fed854db368b78b5c7a",
+  "range_head": "a5d39838ba59b8a8723ed00c9bf33ae7d62c6054",
+  "reviewed_at": "2026-10-10T15:20:23Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E3 operator ruling \u2014 pin gate stays on handoff PRs. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

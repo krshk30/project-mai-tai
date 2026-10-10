@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "5be4e3b1e217217c91ad7b0f56d0b25069c5fce5",
+  "range_head": "b0ef5201a46d08a984c3cf4a9615b02af2e8d292",
+  "reviewed_at": "2026-10-10T15:20:26Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E24 ORBFILL1/#1143/F-I review. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

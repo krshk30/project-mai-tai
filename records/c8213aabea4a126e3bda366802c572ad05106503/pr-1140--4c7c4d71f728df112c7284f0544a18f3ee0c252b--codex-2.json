@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "4c7c4d71f728df112c7284f0544a18f3ee0c252b",
+  "range_head": "c8213aabea4a126e3bda366802c572ad05106503",
+  "reviewed_at": "2026-10-10T15:20:25Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E15 operator validated LINE v3 on 4 stocks; switch stays off. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

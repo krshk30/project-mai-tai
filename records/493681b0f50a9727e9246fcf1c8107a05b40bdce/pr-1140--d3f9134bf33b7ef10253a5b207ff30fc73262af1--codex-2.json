@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "d3f9134bf33b7ef10253a5b207ff30fc73262af1",
+  "range_head": "493681b0f50a9727e9246fcf1c8107a05b40bdce",
+  "reviewed_at": "2026-10-10T15:20:32Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E65 #1143 merged, #1147 rebased. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

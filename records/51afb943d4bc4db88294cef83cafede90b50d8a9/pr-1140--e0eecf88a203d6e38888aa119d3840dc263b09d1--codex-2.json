@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "e0eecf88a203d6e38888aa119d3840dc263b09d1",
+  "range_head": "51afb943d4bc4db88294cef83cafede90b50d8a9",
+  "reviewed_at": "2026-10-10T15:20:30Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E53 codex ask audit. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

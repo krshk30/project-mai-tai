@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "1ca3a5b765a3f0189673bde636f3ec1f041c3f38",
+  "range_head": "f3599cf9c3ca92e8527900d91bd01eb791f13063",
+  "reviewed_at": "2026-10-10T15:20:33Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E78 #1128 installed and verified. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

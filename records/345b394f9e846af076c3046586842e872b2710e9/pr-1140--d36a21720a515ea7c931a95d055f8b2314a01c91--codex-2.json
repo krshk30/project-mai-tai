@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "d36a21720a515ea7c931a95d055f8b2314a01c91",
+  "range_head": "345b394f9e846af076c3046586842e872b2710e9",
+  "reviewed_at": "2026-10-10T15:20:29Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E46 close-all tracker. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

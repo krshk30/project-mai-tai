@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "221cdd2cf4171e0b06ec3bb2bc80d0dcfdf06044",
+  "range_head": "7f5de8e1774aa073565c4c919c5b1dc7c16a96c6",
+  "reviewed_at": "2026-10-10T15:20:34Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E80 tracker 21:44, codex idle, #1149 pinned. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "b0ef5201a46d08a984c3cf4a9615b02af2e8d292",
+  "range_head": "e30f44f3133804e5dec75c1e7843e15dccc5977b",
+  "reviewed_at": "2026-10-10T15:20:27Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E25 11:13 scan. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

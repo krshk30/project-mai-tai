@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "e6d54e2d4d248bcf410ab93fc0ad91da3b1a8e59",
+  "range_head": "26996a78a4db840592d5cbf39a6f49d9d6aa1d5d",
+  "reviewed_at": "2026-10-10T15:20:28Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E33 #1143 gates review, Webull dating correction. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

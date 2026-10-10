@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "e616292e1b7c531d4224506072fd8b453350c7a7",
+  "range_head": "e64efe8506b072d5d5d4aedbfa8176bb13fc3671",
+  "reviewed_at": "2026-10-10T15:20:25Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E16 09:43 scan \u2014 VEEA +5% target both legs. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}

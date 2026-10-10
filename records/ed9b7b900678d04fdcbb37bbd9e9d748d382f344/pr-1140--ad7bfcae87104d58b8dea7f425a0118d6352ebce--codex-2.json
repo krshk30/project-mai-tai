@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "ad7bfcae87104d58b8dea7f425a0118d6352ebce",
+  "range_head": "ed9b7b900678d04fdcbb37bbd9e9d748d382f344",
+  "reviewed_at": "2026-10-10T15:20:32Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read this exact parent-to-commit diff: docs(handoff): E67 #1128 pinned, wave 1 pending. Verified docs-only paths, a single recognized Claude co-author marker, historical/as-of chronology, and retained corrections and pending gates. No source or deployment policy changes; old header/board preserved. This reviews the documentation delta, not a new verification of production state, broker receipts, replay availability or latency acceptance."
+}
