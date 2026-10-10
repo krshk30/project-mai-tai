@@ -733,6 +733,7 @@ def test_every_fleet_check_has_an_explicit_alert_class() -> None:
         "check_orb_schwab_heartbeat": fhc.FLEET_RUNTIME,
         "check_service_restart_storms": fhc.FLEET_RUNTIME,
         "check_massive_socket_policy_violations": fhc.FLEET_RUNTIME,
+        "check_buy_submission_commit_failures": fhc.FLEET_RUNTIME,
         "check_oms_order_lifecycle": fhc.LIVE_MONEY,
         "check_stops_armed": fhc.LIVE_MONEY,
         "check_bar_continuity": fhc.DIAGNOSTIC,

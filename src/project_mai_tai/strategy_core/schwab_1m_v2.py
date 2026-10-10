@@ -1194,15 +1194,24 @@ class SchwabV2Strategy:
         self, persist: RemovalPersist | None, *, restored: Mapping[str, RemovedWait],
         readable: bool,
         dispatch_persist: Callable[[dict], None] | None = None,
+        terminal_proofs: Iterable[RemovedWaitProof] = (),
+        closed_barrier_requests: Iterable[RemovedWait] = (),
     ) -> None:
         self._removed_wait_persist = persist
         self._removed_wait_restore_readable = readable
         self._removed_wait_requests = dict(restored)
         self._removed_wait_dispatch_persist = dispatch_persist
+        self._removed_wait_terminal_proofs = tuple(terminal_proofs)
+        closed_barriers = set(closed_barrier_requests)
         self._removed_scanner_symbols.update(
             symbol for symbol, request in restored.items() if request.purpose == "scanner_removal")
         for symbol, request in restored.items():
             state = self.watchlist_state(symbol)
+            if request in closed_barriers:
+                continue
+            if any(p.clear and p.reason == "unbound_symbol_terminal" and p.request == request
+                   for p in self._removed_wait_terminal_proofs):
+                continue
             if request.purpose in {"retry_exhausted", "false_flip_restore"} or not self._removed_wait_has_owner(state):
                 self._queue_removed_wait_barriers(state, request)
 
@@ -1253,17 +1262,42 @@ class SchwabV2Strategy:
         return True
 
     def _removed_wait_gate_closed(self, symbol: str) -> bool:
-        request = getattr(self, "_removed_wait_requests", {}).get(symbol.upper())
-        if request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"}:
-            return True
-        if (getattr(self, "_retry_one_enabled", False)
-                and not getattr(self, "_removed_wait_restore_readable", True)):
-            return True
-        return getattr(self, "_removed_wait_enabled", False) and (
-            not self._removed_wait_restore_readable
-            or symbol.upper() in self._removed_wait_requests
-            or symbol.upper() in self._removed_scanner_symbols
-        )
+        symbol = symbol.upper()
+        request = getattr(self, "_removed_wait_requests", {}).get(symbol)
+        unreadable = not getattr(self, "_removed_wait_restore_readable", True)
+        blocked = bool((request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"})
+            or (getattr(self, "_retry_one_enabled", False) and unreadable)
+            or (getattr(self, "_removed_wait_enabled", False) and (
+                unreadable or request is not None or symbol in self._removed_scanner_symbols)))
+        states = self.__dict__.setdefault("_removed_wait_gate_log_state", {})
+        reason = request.purpose if request and request.purpose in {"retry_exhausted", "false_flip_restore"} else "pending"
+        disposition = (request.token if request else "", reason)
+        if blocked and states.get(symbol) != disposition:
+            states[symbol] = disposition
+            request_ts = request.requested_at_ms if request else 0
+            logger.info("[V2-REMOVED-WAIT-GATE] sym=%s blocked=1 reason=%s request_ts=%d age_s=%.3f",
+                        symbol, reason, request_ts,
+                        max(0, self._now_ms() - request_ts) / 1000 if request_ts else -1)
+        elif not blocked:
+            states.pop(symbol, None)
+        return blocked
+
+    def apply_removed_wait_rollover(self, proofs: Iterable[RemovedWaitProof]) -> None:
+        """Publish only fresh, committed retirements for the still-current token."""
+        from project_mai_tai.v2_removed_wait import prior_session_request
+
+        now_ms = self._now_ms()
+        for proof in proofs:
+            request = proof.request
+            if (not proof.clear or proof.reason != "session_rollover"
+                    or self._removed_wait_requests.get(request.symbol) != request
+                    or not 0 <= now_ms - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS
+                    or not prior_session_request(request, datetime.fromtimestamp(now_ms / 1000, UTC))):
+                continue
+            self._removed_wait_requests.pop(request.symbol, None)
+            self._removed_scanner_symbols.discard(request.symbol)
+            logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=CLEAR reason=session_rollover",
+                        request.symbol, request.opportunity_id)
 
     @staticmethod
     def _removed_wait_has_owner(state: SymbolState) -> bool:
@@ -1275,11 +1309,35 @@ class SchwabV2Strategy:
         for proof in proofs:
             request = proof.request
             state = self._symbol_states.get(request.symbol)
+            if (proof.clear and proof.reason == "unbound_symbol_terminal"
+                    and self._removed_wait_requests.get(request.symbol) == request
+                    and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+                self._removed_wait_terminal_proofs = tuple(
+                    p for p in getattr(self, "_removed_wait_terminal_proofs", ())
+                    if p.request.symbol != request.symbol) + (proof,)
+                if request.purpose == "retry_exhausted":
+                    continue  # Positive cancellation proof never refunds a same-session trade.
+                if request.purpose != "false_flip_restore":
+                    if state is not None and state.flip_owner_phase == "unknown":
+                        continue
+                    unfilled_identity = (state is not None and request.opportunity_id > 0
+                        and state.flip_owner_phase in {"idle", "resting", "awaiting_fill"}
+                        and not self._removed_wait_has_owner(state)
+                        and int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+                            == request.opportunity_id)
+                    if not unfilled_identity:
+                        self._removed_wait_requests.pop(request.symbol, None)
+                        logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=CLEAR reason=%s",
+                                    request.symbol, request.opportunity_id,
+                                    "no_dispatch" if request.opportunity_id == 0 else proof.reason)
+                        continue
+                    # Admission closed this generation. Retire its unfilled
+                    # identity below before allowing a new physical BUY.
             if request.purpose in {"retry_exhausted", "false_flip_restore"}:
                 expected_reason = ("false_flip_leftovers_cancelled_owner_kept"
                                    if request.purpose == "false_flip_restore"
                                    else "retry_leftovers_cancelled_owner_kept")
-                if (proof.clear and proof.reason == expected_reason
+                if (proof.clear and proof.reason in {expected_reason, "unbound_symbol_terminal"}
                         and self._removed_wait_requests.get(request.symbol) == request
                         and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
                     try:
@@ -1357,6 +1415,18 @@ class SchwabV2Strategy:
                         or any(d.intent_type == "open" and d.symbol == symbol
                                for queue in (self._pending_intents, self._pending_webull_direct_intents,
                                              self._pending_webull_fanout_intents) for d in queue))
+        if (state.cw_armed and not state.resting_active and not state.webull_resting_active
+                and state.flip_owner_phase == "idle"
+                and not state.flip_owner_first_rest_placed
+                and self._flip_owner_restore_readable and self._removed_wait_restore_readable
+                and self._fanout_identity_persist is not None
+                and self._removed_wait_dispatch_persist is not None
+                and not (state.flip_owner_opportunity_id or state.fanout_segment_id)
+                and not self._removed_wait_has_owner(state)
+                and symbol not in self._removed_wait_requests):
+            # Bind only this new software wait before its removal barriers. A
+            # restored zero-ID request remains unknown; no legacy proof is adopted.
+            self._ensure_flip_owner_opportunity(state)
         self._finish_first_rest_quote_wait(state, action="gave_up", reason=reason)
         for name in ("_pending_intents", "_pending_webull_direct_intents", "_pending_webull_fanout_intents"):
             setattr(self, name, self._drop_queued_open_intents_for_symbol(getattr(self, name), symbol))
@@ -1391,6 +1461,7 @@ class SchwabV2Strategy:
     def _queue_removed_wait_barriers(self, state: SymbolState, request: RemovedWait) -> None:
         symbol = state.symbol
         md = {"clearwait_removal_token": request.token,
+              "clearwait_purpose": request.purpose,
               "clearwait_opportunity_id": str(request.opportunity_id),
               "resting_entry_cancel": "true", "reason": (
                   "false_flip_restore" if request.purpose == "false_flip_restore" else
@@ -8286,6 +8357,7 @@ class SchwabV2IntentEmitter:
         draft: TradeIntentDraft,
         *,
         correlation_id: UUID | None = None,
+        event_id: UUID | None = None,
     ) -> UUID:
         payload = TradeIntentPayload(
             strategy_code=STRATEGY_CODE,
@@ -8298,6 +8370,7 @@ class SchwabV2IntentEmitter:
             metadata=dict(draft.metadata),
         )
         event = TradeIntentEvent(
+            event_id=event_id or uuid4(),
             source_service=SERVICE_NAME,
             correlation_id=correlation_id,
             payload=payload,
@@ -8322,6 +8395,10 @@ class SchwabV2IntentEmitter:
     async def emit_entry_bar_close(self, payload: dict) -> None:
         await self.redis.xadd(self.stream, {"data": json.dumps({**payload, "event_type": "v2_entry_bar_close"})},
                               maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)
+
+    async def emit_cancel_terminal_assessment(self, payload: dict) -> None:
+        await self.redis.xadd(self.stream, {"data": json.dumps(payload)},
+            maxlen=self.settings.redis_strategy_intent_stream_maxlen, approximate=True)
 
     async def emit_atr_sell_observation(self, observation: ATRSellObservation) -> None:
         """Publish an account-neutral ATR SELL observation, never an order instruction."""

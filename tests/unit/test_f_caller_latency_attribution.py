@@ -1,0 +1,413 @@
+import asyncio
+import gc
+import threading
+from types import SimpleNamespace
+from time import sleep
+from time import monotonic
+
+import pytest
+
+from tests.support.f_caller_latency_attribution import Observer, process_state
+
+
+def test_process_state_does_not_collect_freeze_disable_or_walk_object_graph(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("observer must not change GC policy or walk the heap")
+
+    for name in ("collect", "freeze", "unfreeze", "disable", "enable", "set_threshold", "get_objects"):
+        monkeypatch.setattr(gc, name, forbidden)
+    state = process_state()
+    assert state["gc_enabled"] == gc.isenabled()
+    assert tuple(state["thresholds"]) == gc.get_threshold()
+    assert len(state["generation_stats"]) == 3
+    assert state["project_modules_total"] >= len(state["project_modules"])
+    assert len(state["project_modules"]) <= 256
+
+
+@pytest.mark.asyncio
+async def test_observer_attributes_real_loop_callback_without_swallowing_exception(monkeypatch):
+    observer = Observer()
+    original = asyncio.Handle._run
+    monkeypatch.setattr(asyncio.Handle, "_run", observer.callback(original))
+    observer.start()
+    done = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    errors = []
+    loop.set_exception_handler(lambda _loop, context: errors.append(context["exception"]))
+
+    def controlled_loop_block():
+        sleep(0.040)
+        done.set()
+        raise ValueError("controlled callback failure")
+
+    try:
+        loop.call_soon(controlled_loop_block)
+        await done.wait()
+    finally:
+        observer.stop()
+        loop.set_exception_handler(previous_handler)
+    callbacks = [row for row in observer.records if row["kind"] == "loop_callback"]
+    assert any("controlled_loop_block" in row["callback"] and row["wall_ms"] >= 40
+               for row in callbacks)
+    stacks = [row for row in observer.records if row["kind"] == "active_loop_stack"]
+    assert any(any(frame[1] == "controlled_loop_block" for frame in row["frames"]) for row in stacks)
+    assert observer.receipt()["sampler_joined"]
+    assert observer.gc_event not in gc.callbacks
+    assert len(errors) == 1 and str(errors[0]) == "controlled callback failure"
+
+
+@pytest.mark.asyncio
+async def test_worker_commit_span_propagates_operation_and_preserves_result_and_failure():
+    observer = Observer()
+
+    def slow_commit(session):
+        sleep(0.030)
+        if session.fail:
+            raise ValueError("controlled commit failure")
+        return "committed"
+
+    wrapped = observer.commit(slow_commit)
+    observer.start()
+    token = observer.operation.set("EXIT75")
+    try:
+        assert await asyncio.to_thread(wrapped, SimpleNamespace(fail=False)) == "committed"
+        with pytest.raises(ValueError, match="controlled commit failure"):
+            await asyncio.to_thread(wrapped, SimpleNamespace(fail=True))
+    finally:
+        observer.operation.reset(token)
+        observer.stop()
+    commits = [row for row in observer.records if row["kind"] == "session_commit"]
+    assert len(commits) == 2
+    assert all(row["operation"] == "EXIT75" and row["thread"] == "worker"
+               and row["wall_ms"] >= 30 for row in commits)
+    assert any(row["kind"] == "commit_stack"
+               and any(frame[1] == "slow_commit" for frame in row["frames"])
+               for row in observer.records)
+    assert observer.operation.get() is None
+
+
+@pytest.mark.asyncio
+async def test_async_observer_does_not_change_cancellation_fence_or_operation_lifetime():
+    observer = Observer()
+    started, finish = asyncio.Event(), asyncio.Event()
+    completed = []
+
+    async def fenced(_self, _event):
+        worker = asyncio.create_task(finish.wait())
+        started.set()
+        cancelled = False
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                cancelled = True
+        completed.append(observer.operation.get())
+        if cancelled:
+            raise asyncio.CancelledError
+        return "accepted"
+
+    wrapped = observer.async_span("intent", fenced, intent=True)
+    event = SimpleNamespace(payload=SimpleNamespace(side="sell", intent_type="close", symbol="EXIT75"))
+    task = asyncio.create_task(wrapped(None, event))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done() and not completed
+    finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert completed == ["EXIT75"]
+    assert observer.operation.get() is None
+    assert observer.records[-1]["kind"] == "intent"
+
+
+@pytest.mark.asyncio
+async def test_async_observer_preserves_success_exception_and_nonclose_scope():
+    observer = Observer()
+    operations = []
+
+    async def original(_self, event):
+        operations.append(observer.operation.get())
+        if event.fail:
+            raise ValueError("controlled intent failure")
+        return event.result
+
+    wrapped = observer.async_span("intent", original, intent=True)
+    payload = SimpleNamespace(side="sell", intent_type="close", symbol="EXIT75")
+    event = SimpleNamespace(payload=payload, fail=False, result=object())
+    assert await wrapped(None, event) is event.result
+    event.fail = True
+    with pytest.raises(ValueError, match="controlled intent failure"):
+        await wrapped(None, event)
+    event.fail = False
+    payload.side = "buy"
+    assert await wrapped(None, event) is event.result
+    assert operations == ["EXIT75", "EXIT75", None]
+    assert observer.operation.get() is None and len(observer.records) == 2
+
+
+def test_actual_gc_span_has_thread_and_trigger_frame_without_changing_gc_policy():
+    observer = Observer()
+
+    class ControlledCycle:
+        def __init__(self):
+            self.cycle = self
+
+        def __del__(self):
+            sleep(0.015)
+
+    enabled, thresholds = gc.isenabled(), gc.get_threshold()
+    observer.start()
+    try:
+        cycle = ControlledCycle()
+        del cycle
+        gc.collect()
+    finally:
+        observer.stop()
+    records = [row for row in observer.records if row["kind"] == "gc"]
+    assert any(row["wall_ms"] >= 15 and row["thread"] == "loop"
+               and any(frame[1] == "test_actual_gc_span_has_thread_and_trigger_frame_without_changing_gc_policy"
+                       for frame in row["frames"]) for row in records)
+    assert gc.isenabled() == enabled and gc.get_threshold() == thresholds
+
+
+def test_observer_records_are_bounded_and_overflow_is_explicit():
+    observer = Observer()
+    for index in range(600):
+        observer.record("controlled", index)
+    observer.start()
+    observer.stop()
+    receipt = observer.receipt()
+    assert receipt["records_total"] == 600 and receipt["dropped"] == 88
+    assert len(receipt["records"]) == receipt["capacity"] == 512
+
+
+@pytest.mark.asyncio
+async def test_timer_lateness_is_separate_from_callback_execution_time(monkeypatch):
+    observer = Observer()
+    monkeypatch.setattr(asyncio.Handle, "_run", observer.callback(asyncio.Handle._run))
+    observer.start()
+    done = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    try:
+        loop.call_later(0.001, done.set)
+        loop.call_soon(sleep, 0.060)
+        await done.wait()
+    finally:
+        observer.stop()
+    assert any(row["kind"] == "late_timer" and row["late_ms"] >= 50
+               and row["callback"] == "Event.set" for row in observer.records)
+    assert any(row["kind"] == "loop_callback" and row["callback"] == "sleep"
+               and row["wall_ms"] >= 60 for row in observer.records)
+
+
+def test_overflow_preserves_first_and_worst_gc_and_pump_records_with_fixed_total_capacity():
+    observer = Observer()
+    kinds = ("gc", "pump_deadline", "active_loop_stack", "commit_stack")
+    for kind in kinds:
+        thread = "worker" if kind in {"gc", "commit_stack"} else "loop"
+        for score in (54, 80, 10):
+            observer.record(kind, score, thread=thread, wall_ms=score)
+    for index in range(3000):
+        observer.record("intent", index, wall_ms=20)
+    observer.start()
+    observer.stop()
+    receipt = observer.receipt()
+    assert len(receipt["records"]) == 512 and receipt["dropped"] == 2500
+    for kind in kinds:
+        assert sorted(row["wall_ms"] for row in receipt["records"] if row["kind"] == kind) == [54, 80]
+    assert receipt["protected"] <= 64
+
+
+@pytest.mark.asyncio
+async def test_quote_observer_copies_actual_deadline_without_changing_result_or_clock():
+    observer = Observer()
+    result = object()
+
+    async def original(_self, event):
+        assert event is result
+        return event
+
+    wrapped = observer.quote(original)
+    observer.start()
+
+    async def quote_pump():
+        due = monotonic() + 0.001
+        asyncio.get_running_loop().call_soon(sleep, 0.060)
+        await asyncio.sleep(max(0, due - monotonic()))
+        begin = monotonic()
+        assert await wrapped(None, result) is result
+        return due, begin
+
+    try:
+        due, begin = await quote_pump()
+    finally:
+        observer.stop()
+    receipt = observer.receipt()
+    assert receipt["pump_wakes"] == 1
+    assert receipt["pump_max_late_ms"] == (begin - due) * 1000 >= 50
+    row = next(row for row in receipt["records"] if row["kind"] == "pump_deadline")
+    assert row["due"] == due and row["actual"] == begin
+    assert row["frames"][0][1] == "quote_pump"
+    assert any(row["kind"] == "first_late_pump" for row in receipt["records"])
+
+
+@pytest.mark.asyncio
+async def test_drift_materialization_keeps_result_identity_count_thread_and_failure():
+    observer = Observer()
+    rows = [object(), object()]
+    calls = []
+
+    def all_rows(result):
+        calls.append(result)
+        sleep(0.015)
+        if result.fail:
+            raise ValueError("controlled fetch failure")
+        return rows
+
+    materialize = observer.materialize(all_rows)
+
+    def collect(_self, result):
+        return materialize(result)
+
+    wrapped = observer.collect_drift(collect)
+    token = observer.operation.set("EXIT11")
+    try:
+        success = SimpleNamespace(fail=False)
+        assert await asyncio.to_thread(wrapped, None, success) is rows
+        with pytest.raises(ValueError, match="controlled fetch failure"):
+            await asyncio.to_thread(wrapped, None, SimpleNamespace(fail=True))
+    finally:
+        observer.operation.reset(token)
+    assert len(calls) == 2
+    spans = [r for r in observer.records if r["kind"] == "drift_materialize"]
+    assert [r["row_count"] for r in spans] == [2, None]
+    assert all(r["operation"] == "EXIT11" and r["thread"] == "worker"
+               and r["wall_ms"] >= 15 and r["site"][1] == "collect" for r in spans)
+    assert [r["candidate_count"] for r in observer.records if r["kind"] == "drift_read"] == [2, None]
+    assert observer.drift_read.get() is False
+
+
+def test_materialization_outside_close_drift_scope_is_not_recorded():
+    observer = Observer()
+    result = object()
+    wrapped = observer.materialize(lambda value: value)
+    assert wrapped(result) is result
+    collect = observer.collect_drift(lambda _self: wrapped(result))
+    assert collect(None) is result
+    assert not observer.records and observer.drift_read.get() is False
+
+
+def test_actual_column_rows_are_observed_without_hydrating_or_changing_values(monkeypatch):
+    from sqlalchemy import create_engine, literal, select
+    from sqlalchemy.engine import Result
+
+    observer = Observer()
+    monkeypatch.setattr(Result, "all", observer.materialize(Result.all))
+    engine = create_engine("sqlite://")
+
+    def collect(_self):
+        with engine.connect() as connection:
+            return connection.execute(select(literal("open").label("intent_type"))).all()
+
+    token = observer.operation.set("EXIT11")
+    try:
+        rows = observer.collect_drift(collect)(None)
+    finally:
+        observer.operation.reset(token)
+        engine.dispose()
+    assert len(rows) == 1 and rows[0].intent_type == "open"
+    spans = [row for row in observer.records if row["kind"] == "drift_materialize"]
+    assert len(spans) == 1 and spans[0]["row_count"] == 1 and spans[0]["row_type"] == "Row"
+    assert spans[0]["site"][1] == "collect" and spans[0]["operation"] == "EXIT11"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True])
+async def test_worker_phase_observer_preserves_result_failure_and_sampled_site(fails):
+    from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
+    from project_mai_tai.oms.service import OmsRiskService
+
+    observer = Observer()
+    service = OmsRiskService.__new__(OmsRiskService)
+    service.broker_adapter = DurableBuyAdapter(SimpleNamespace(), None)
+    marker = object()
+
+    def controlled_read(value, *, exact):
+        assert value is marker and exact == "same-session"
+        sleep(0.030)
+        if fails:
+            raise ValueError("controlled unit failure")
+        return marker
+
+    observer.start()
+    token = observer.operation.set("EXIT103")
+    try:
+        wrapped = observer.intent_db(OmsRiskService._intent_db)
+        if fails:
+            with pytest.raises(ValueError, match="controlled unit failure"):
+                await wrapped(service, controlled_read, marker, exact="same-session")
+        else:
+            assert await wrapped(service, controlled_read, marker, exact="same-session") is marker
+    finally:
+        observer.operation.reset(token)
+        observer.stop()
+    units = [row for row in observer.records if row["kind"].startswith("intent_db_unit:")]
+    waits = [row for row in observer.records if row["kind"].startswith("intent_db_await:")]
+    assert len(units) == len(waits) == 1
+    assert units[0]["thread"] == "worker" and units[0]["wall_ms"] >= 30
+    assert waits[0]["wall_ms"] >= units[0]["wall_ms"]
+    assert waits[0]["queue_ms"] >= 0 and waits[0]["resume_ms"] >= 0
+    assert any(row["kind"].startswith("intent_db_stack:") and row["operation"] == "EXIT103"
+               and any(frame[1] == "controlled_read" for frame in row["frames"])
+               for row in observer.records)
+    assert not observer.units and observer.operation.get() is None
+
+
+@pytest.mark.asyncio
+async def test_phase_observer_keeps_repeated_cancel_session_fence_and_worst_unit():
+    from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
+    from project_mai_tai.oms.service import OmsRiskService
+
+    observer = Observer()
+    service = OmsRiskService.__new__(OmsRiskService)
+    service.broker_adapter = DurableBuyAdapter(SimpleNamespace(), None)
+    entered, release = threading.Event(), threading.Event()
+    closed = []
+
+    def controlled_read():
+        entered.set()
+        assert release.wait(2)
+        assert not closed
+
+    async def intent():
+        token = observer.operation.set("EXIT103")
+        try:
+            await observer.intent_db(OmsRiskService._intent_db)(service, controlled_read)
+        finally:
+            observer.operation.reset(token)
+            closed.append(True)
+
+    task = asyncio.create_task(intent())
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        for _ in range(2):
+            task.cancel()
+            await asyncio.sleep(0.01)
+            assert not task.done() and not closed
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    for index in range(2000):
+        observer.record("intent", index, wall_ms=1)
+    observer.start()
+    observer.stop()
+    receipt = observer.receipt()
+    assert closed == [True] and not observer.units
+    assert any(row["kind"].startswith("intent_db_unit:") for row in receipt["records"])
+    assert any(row["kind"].startswith("intent_db_await:") for row in receipt["records"])
+    assert len(receipt["records"]) == 512

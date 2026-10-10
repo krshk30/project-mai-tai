@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, insert, select
 from sqlalchemy.orm import Session
 
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport
@@ -132,6 +132,47 @@ class OmsStore:
             )
         )
 
+    def get_account_position_quantity(
+        self, session: Session, *, broker_account_id: UUID, symbol: str,
+    ) -> Decimal | None:
+        # Explicit no-autoflush callers must retain dirty identity-map values.
+        if not session.autoflush:
+            position = self.get_account_position(session,
+                broker_account_id=broker_account_id, symbol=symbol)
+            return position.quantity if position is not None else None
+        if not (session.new or session.dirty or session.deleted):
+            columns = AccountPosition.__table__.c
+            return session.scalar(select(columns.quantity).where(
+                columns.broker_account_id == broker_account_id,
+                columns.symbol == symbol,
+            ))
+        return session.scalar(select(AccountPosition.quantity).where(
+            AccountPosition.broker_account_id == broker_account_id,
+            AccountPosition.symbol == symbol,
+        ))
+
+    def get_virtual_position_quantity(
+        self, session: Session, *, strategy_id: UUID, broker_account_id: UUID,
+        symbol: str,
+    ) -> Decimal | None:
+        # Preserve dirty identity-map semantics for explicit no-autoflush callers.
+        if not session.autoflush:
+            position = self.get_virtual_position(session, strategy_id=strategy_id,
+                broker_account_id=broker_account_id, symbol=symbol)
+            return position.quantity if position is not None else None
+        if not (session.new or session.dirty or session.deleted):
+            columns = VirtualPosition.__table__.c
+            return session.scalar(select(columns.quantity).where(
+                columns.strategy_id == strategy_id,
+                columns.broker_account_id == broker_account_id,
+                columns.symbol == symbol,
+            ))
+        return session.scalar(select(VirtualPosition.quantity).where(
+            VirtualPosition.strategy_id == strategy_id,
+            VirtualPosition.broker_account_id == broker_account_id,
+            VirtualPosition.symbol == symbol,
+        ))
+
     def get_open_exit_reserved_quantity(
         self,
         session: Session,
@@ -165,8 +206,8 @@ class OmsStore:
         symbol: str,
         include_native_stop_guard: bool = True,
     ) -> BrokerOrder | None:
-        orders = session.scalars(
-            select(BrokerOrder)
+        orders = session.execute(
+            select(BrokerOrder.__table__.c.id, BrokerOrder.__table__.c.payload)
             .where(
                 BrokerOrder.strategy_id == strategy_id,
                 BrokerOrder.broker_account_id == broker_account_id,
@@ -176,11 +217,11 @@ class OmsStore:
             )
             .order_by(desc(BrokerOrder.updated_at))
         ).all()
-        for order in orders:
-            payload = order.payload or {}
+        for order_id, order_payload in orders:
+            payload = order_payload or {}
             if not include_native_stop_guard and str(payload.get("native_stop_guard", "")).strip().lower() == "true":
                 continue
-            return order
+            return session.get(BrokerOrder, order_id)
         return None
 
     def find_open_native_stop_guard_order(
@@ -191,8 +232,9 @@ class OmsStore:
         broker_account_id: UUID,
         symbol: str,
     ) -> BrokerOrder | None:
-        orders = session.scalars(
-            select(BrokerOrder)
+        # Inspect the discriminator before hydrating an order on the exit path.
+        orders = session.execute(
+            select(BrokerOrder.__table__.c.id, BrokerOrder.__table__.c.payload)
             .where(
                 BrokerOrder.strategy_id == strategy_id,
                 BrokerOrder.broker_account_id == broker_account_id,
@@ -202,10 +244,10 @@ class OmsStore:
             )
             .order_by(desc(BrokerOrder.updated_at))
         ).all()
-        for order in orders:
-            payload = order.payload or {}
+        for order_id, order_payload in orders:
+            payload = order_payload or {}
             if str(payload.get("native_stop_guard", "")).strip().lower() == "true":
-                return order
+                return session.get(BrokerOrder, order_id)
         return None
 
     # NOTE (2026-07-22): a `find_open_native_oco_bracket_legs` DB query was removed here. OCO
@@ -213,6 +255,25 @@ class OmsStore:
     # the DB for them always returns nothing. The stand-down instead asks the broker directly
     # (SchwabBrokerAdapter.fetch_armed_native_oco_symbols). Do not reintroduce a DB-side query
     # for OCO legs; it cannot see them.
+
+    def ensure_intent_strategy(
+        self, session: Session, code: str, *, name: str,
+        execution_mode: str, metadata_json: dict[str, object],
+    ):
+        # This intent caller consumes only id/code. No cache: every fast path
+        # reads this transaction's columns; changes retain the original write path.
+        if (session.autoflush and not session.identity_map and not session.new
+                and not session.dirty and not session.deleted):
+            table = Strategy.__table__
+            row = session.execute(select(table.c.id, table.c.code, table.c.name,
+                table.c.execution_mode, table.c.is_enabled, table.c.metadata).where(
+                table.c.code == code)).first()
+            if (row is not None and row.name == name
+                    and row.execution_mode == execution_mode and row.is_enabled is True
+                    and row.metadata == metadata_json):
+                return row
+        return self.ensure_strategy(session, code, name=name,
+            execution_mode=execution_mode, metadata_json=metadata_json)
 
     def ensure_strategy(
         self,
@@ -407,7 +468,13 @@ class OmsStore:
         payload = dict(metadata)
         if reject_reason:
             payload["reject_reason"] = reject_reason
-        order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == client_order_id))
+        # A new coid needs no ORM row processor; hydrate only an existing order.
+        if session.autoflush and not (session.new or session.dirty or session.deleted):
+            columns = BrokerOrder.__table__.c
+            order_id = session.scalar(select(columns.id).where(columns.client_order_id == client_order_id))
+        else:
+            order_id = session.scalar(select(BrokerOrder.id).where(BrokerOrder.client_order_id == client_order_id))
+        order = session.get(BrokerOrder, order_id) if order_id is not None else None
         if order is None:
             order = BrokerOrder(
                 intent_id=intent.id,
@@ -547,19 +614,23 @@ class OmsStore:
         order: BrokerOrder,
         report: ExecutionReport,
         payload: dict[str, object],
+        use_core: bool = False,
     ) -> BrokerOrderEvent:
-        event = BrokerOrderEvent(
-            order_id=order.id,
-            event_type=report.event_type,
-            event_at=report.reported_at,
-            payload=payload,
-            # Q1: carried straight through from the report. This function does not INFER an
-            # origin — it has no way to know one, and a guess here would be indistinguishable
-            # from the truth downstream, which is the whole defect.
-            event_source=getattr(report, "origin", "unknown") or "unknown",
-        )
-        session.add(event)
-        session.flush()
+        values = dict(order_id=order.id, event_type=report.event_type,
+            event_at=report.reported_at, payload=payload,
+            event_source=getattr(report, "origin", "unknown") or "unknown")
+        if use_core:
+            # Only the awaited worker consumes this transient result; ordinary
+            # callers retain a persistent ORM object. Both writes share the savepoint.
+            values["id"] = uuid4()
+            values["event_at"] = values["event_at"] or utcnow()
+            session.flush()
+            session.execute(insert(BrokerOrderEvent.__table__).values(**values))
+            event = BrokerOrderEvent(**values)
+        else:
+            event = BrokerOrderEvent(**values)
+            session.add(event)
+            session.flush()
         metadata = payload.get("metadata", {})
         recorded_metadata = dict(getattr(order, "payload", {}) or {})
         if isinstance(metadata, dict):

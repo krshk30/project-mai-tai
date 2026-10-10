@@ -71,7 +71,7 @@ from project_mai_tai.fanout_outcome_consumer import (
 )
 from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.falseflip1_runtime import FalseFlipStore
-from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
+from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore, current_session_anchor
 from project_mai_tai.v2_flip_entry_ownership import (
     FlipConfirmationClose,
     FlipEntryOwnershipStore,
@@ -137,7 +137,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     TradeIntentDraft,
     session_start_ts_ms,
 )
-from project_mai_tai.v2_removed_wait import RemovedWaitStore
+from project_mai_tai.v2_removed_wait import RemovedWaitStore, SETTLE_MS, configured_removed_wait_bindings
 
 logger = logging.getLogger(__name__)
 
@@ -812,7 +812,7 @@ class SchwabV2BotService:
             getattr(self.settings, "strategy_schwab_1m_v2_streamer_enabled", False)
         )
 
-    def _configure_removed_wait_store(self) -> None:
+    async def _configure_removed_wait_store(self) -> None:
         if not (self.strategy._removed_wait_enabled or getattr(self.strategy, "_retry_one_enabled", False)):
             return
         store = None
@@ -820,14 +820,206 @@ class SchwabV2BotService:
             if self.session_factory is None:
                 raise RuntimeError("removal evidence database unavailable")
             store = RemovedWaitStore(self.session_factory)
-            restored = store.restore()
+            accounts = {self.settings.strategy_schwab_1m_v2_account_name}
+            if self.strategy._dual_broker_fanout_enabled:
+                accounts.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
+
+            def restore_and_retire():
+                restored = store.restore()
+                proofs = store.retire_prior_sessions(tuple(restored.values()), accounts)
+                return store.restore(), proofs, store.restore_terminal_proofs()
+
+            restored, proofs, terminal_proofs = await asyncio.to_thread(restore_and_retire)
+            # Boot runs before emitters/tasks. Close memory admission while evaluating
+            # retained exact request receipts, before configure queues new barriers.
+            self.strategy._removed_wait_restore_readable = False
+            self.strategy._removed_wait_requests = dict(restored)
+            self.__dict__.setdefault("_removed_wait_assessment_triggers", {}).update(
+                {request: ("boot", str(uuid4())) for request in restored.values()})
+            closed_barriers = await self._removed_wait_unbound_pass(tuple(restored.values()), store, accounts)
+            restored, terminal_proofs = await asyncio.to_thread(
+                lambda: (store.restore(), store.restore_terminal_proofs()))
+            now_ms = self.strategy._now_ms()
+            for proof in proofs:
+                if proof.clear:
+                    if not 0 <= now_ms - proof.observed_at_ms <= SETTLE_MS:
+                        raise RuntimeError("stale boot rollover proof")
+                    logger.info("[V2-REMOVED-WAIT] %s opportunity_id=%d verdict=CLEAR reason=session_rollover",
+                                proof.request.symbol, proof.request.opportunity_id)
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=restore_unreadable")
             self.strategy.configure_removed_wait(None, restored={}, readable=False)
         else:
             self.strategy.configure_removed_wait(store.record, restored=restored, readable=True,
-                                                 dispatch_persist=store.record_dispatch)
+                dispatch_persist=store.record_dispatch, terminal_proofs=terminal_proofs,
+                closed_barrier_requests=closed_barriers)
         self._removed_wait_store = store
+        self._removed_wait_roll_anchor = current_session_anchor()
+
+    def _removed_wait_request_quiet(self, request) -> bool:
+        queued = (*getattr(self.strategy, "_pending_intents", ()),
+                  *getattr(self.strategy, "_pending_webull_direct_intents", ()),
+                  *getattr(self.strategy, "_pending_webull_fanout_intents", ()))
+        return (self.strategy._removed_wait_requests.get(request.symbol) == request
+                and not self.__dict__.get("_clearwait_open_emits", {}).get(request.symbol, 0)
+                and not any(d.symbol.upper() == request.symbol and d.side == "buy"
+                            and d.intent_type in {"open", "cancel"} for d in queued))
+
+    async def _removed_wait_publish_assessment(self, request, store, expected, now, trigger) -> bool:
+        emitter = getattr(self, "intent_emitter", None)
+        if emitter is None and getattr(self, "redis", None) is not None:
+            emitter = SchwabV2IntentEmitter(self.settings, self.redis,
+                broker_account_name=self.settings.strategy_schwab_1m_v2_account_name)
+        publish = getattr(emitter, "emit_cancel_terminal_assessment", None)
+        if not callable(publish):
+            return False
+        receipts = await asyncio.to_thread(store.request_assessment_receipts, request,
+            expected_bindings=expected, now=now)
+        if receipts is None or not self._removed_wait_request_quiet(request):
+            return False
+        signature = (trigger, json.dumps(receipts, sort_keys=True, separators=(",", ":")))
+        states = self.__dict__.setdefault("_removed_wait_assessment_signals", {})
+        if states.get(request) == signature:
+            return False
+        assessment_ms = int(now.timestamp() * 1000)
+        payload = {"event_type": "v2_cancel_terminal_assessment", "schema_version": 1,
+            "source_service": "schwab-1m-v2", "assessment_id": str(uuid4()),
+            "assessment_at_ms": assessment_ms, "trigger": trigger[0],
+            "request": request.payload(active=True), "receipts": list(receipts)}
+        # Retain the lower bound even after delivery failure. Only a new explicit
+        # trigger or receipt revision may publish another assessment.
+        states[request] = signature
+        self.__dict__.setdefault("_removed_wait_assessment_after_ms", {})[request] = assessment_ms
+        await publish(payload)
+        return True
+
+    async def _removed_wait_unbound_pass(self, requests, store, accounts):
+        from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
+        from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
+        from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+
+        adapter = getattr(self, "_removed_wait_adapter", None)
+        if adapter is None:
+            adapter = RoutingBrokerAdapter(default_provider="schwab",
+                provider_by_account={name: self.settings.provider_for_account(name) for name in accounts},
+                factories_by_provider={"schwab": lambda: SchwabBrokerAdapter(self.settings),
+                                       "webull": lambda: WebullBrokerAdapter(self.settings)})
+            self._removed_wait_adapter = adapter
+        wakes = self.strategy.__dict__.setdefault("_removed_wait_evidence_wakes", set())
+        attempts = self.__dict__.setdefault("_removed_wait_book_attempts", {})
+        active = set(self.strategy._removed_wait_requests.values())
+        for field in ("_removed_wait_assessment_triggers", "_removed_wait_assessment_signals",
+                      "_removed_wait_assessment_after_ms"):
+            cache = self.__dict__.setdefault(field, {})
+            for old in set(cache) - active:
+                cache.pop(old)
+        closed_barriers = set()
+        for old in set(attempts) - active:
+            attempts.pop(old)
+        wakes.intersection_update(active)
+        for request in requests:
+            if not self._removed_wait_request_quiet(request):
+                continue
+            version = self.__dict__.get("_clearwait_emit_versions", {}).get(request.symbol, 0)
+            try:
+                expected = configured_removed_wait_bindings(adapter, request.account_names)
+                zero_read = None
+                if request.opportunity_id == 0 and request.purpose == "scanner_removal":
+                    from project_mai_tai.broker_adapters.cancel_terminal import (
+                        acquire_complete_working_book, broker_binding,
+                    )
+                    for name, (provider, _account_id) in expected.items():
+                        if provider == "schwab":
+                            leaf, _ = broker_binding(adapter, name)
+                            zero_read = getattr(leaf, "acquire_complete_working_book", None)
+                if callable(zero_read):
+                    trigger = self._removed_wait_assessment_triggers.setdefault(
+                        request, ("request_raised", request.token))
+                    if attempts.get(request) == (version, trigger) and request not in wakes:
+                        continue
+                    attempts[request] = (version, trigger)
+                    wakes.discard(request)
+                    books = dict.fromkeys(request.account_names)
+                    async with asyncio.timeout(15):
+                        for name, (provider, _account_id) in expected.items():
+                            if provider == "webull":
+                                books[name] = await acquire_complete_working_book(
+                                    adapter, name, after_ms=request.requested_at_ms)
+                            else:
+                                # A capped Schwab account listing is not this contract.
+                                books[name] = await zero_read(name, after_ms=request.requested_at_ms)
+                    now = datetime.fromtimestamp(self.strategy._now_ms() / 1000, UTC)
+                    def zero_current(candidate):
+                        owner = self.strategy._symbol_states.get(candidate.symbol)
+                        return (candidate == request and self._removed_wait_request_quiet(candidate)
+                            and self.strategy._removed_wait_restore_readable
+                            and self.strategy._flip_owner_restore_readable
+                            and (owner is None or (owner.flip_owner_phase != "unknown"
+                                and not self.strategy._removed_wait_has_owner(owner)))
+                            and self.__dict__.get("_clearwait_emit_versions", {}).get(candidate.symbol, 0) == version)
+                    proof = await asyncio.to_thread(store.retire_zero_id_no_dispatch,
+                        request, accounts, books=books, expected_bindings=expected,
+                        publication_current=zero_current, now=now)
+                    if zero_current(request):
+                        self.strategy.apply_removed_wait_proofs((proof,))
+                    logger.info("[V2-CANCEL-TERMINAL] sym=%s request=%s bound=0 decision=%s reason=%s",
+                        request.symbol, request.token, "TERMINAL" if proof.clear else "UNKNOWN", proof.reason)
+                    if proof.clear:
+                        closed_barriers.add(request)
+                    continue
+                last = {name: tuple(events) for (symbol, name), events in
+                        self.__dict__.get("_clearwait_last_publications", {}).items() if symbol == request.symbol}
+                now = datetime.fromtimestamp(self.strategy._now_ms() / 1000, UTC)
+                state = await asyncio.to_thread(store.request_publication_closed, request,
+                    last_publications=last, no_dispatch=False, now=now, include_revision=True)
+                closed, revision = state if isinstance(state, tuple) else (state, "")
+                if closed:
+                    closed_barriers.add(request)
+                    for name, events in last.items():
+                        self._clearwait_last_publications[request.symbol, name].difference_update(events)
+                        if not self._clearwait_last_publications[request.symbol, name]:
+                            self._clearwait_last_publications.pop((request.symbol, name))
+                    triggers = self._removed_wait_assessment_triggers
+                    trigger = triggers.setdefault(request, ("request_raised", request.token))
+                    prior_signal = self._removed_wait_assessment_signals.get(request)
+                    if request in wakes and prior_signal is not None and prior_signal[0] == trigger:
+                        trigger = triggers[request] = ("after_feedback", str(uuid4()))
+                    emitted = await self._removed_wait_publish_assessment(request, store, expected, now, trigger)
+                    if attempts.get(request) == (version, revision) and request not in wakes and not emitted:
+                        continue
+                    attempts[request] = (version, revision)
+                    wakes.discard(request)
+                    assessment_after_ms = self._removed_wait_assessment_after_ms.get(request, 0)
+                    def still_current(candidate):
+                        return (candidate == request and self._removed_wait_request_quiet(candidate)
+                            and self.__dict__.get("_clearwait_emit_versions", {}).get(candidate.symbol, 0) == version
+                            and self._removed_wait_assessment_triggers.get(candidate) == trigger
+                            and self._removed_wait_assessment_after_ms.get(candidate, 0) == assessment_after_ms)
+
+                    proofs = await asyncio.to_thread(store.retire_unbound, (request,), accounts,
+                        expected_bindings=expected, publication_closed={request: True},
+                        publication_current=still_current, now=now,
+                        minimum_book_started_at_ms=assessment_after_ms)
+                    if still_current(request):
+                        self.strategy.apply_removed_wait_proofs(proofs)
+                    continue
+                await asyncio.to_thread(store.retire_unbound, (request,), accounts,
+                    books=dict.fromkeys(request.account_names), expected_bindings=expected,
+                    publication_closed={request: False}, now=now)
+            except Exception:  # noqa: BLE001 - missing bindings/receipts never imply flat
+                logger.exception("[V2-CANCEL-TERMINAL] sym=%s request=%s bound=0 decision=UNKNOWN "
+                                 "reason=runtime_evidence_unreadable books=schwab:?,webull:?",
+                                 request.symbol, request.token)
+        return closed_barriers
+
+    def _schedule_removed_wait_books(self, requests, store, accounts) -> None:
+        task = getattr(self, "_removed_wait_book_task", None)
+        if task is not None and not task.done():
+            return
+        if task is not None:
+            task.result()
+        self._removed_wait_book_task = asyncio.create_task(
+            self._removed_wait_unbound_pass(requests, store, accounts), name="removed_wait_request_books")
 
     async def _removed_wait_poll(self) -> None:
         if not (getattr(self.strategy, "_removed_wait_enabled", False)
@@ -846,7 +1038,25 @@ class SchwabV2BotService:
         if self.strategy._dual_broker_fanout_enabled:
             accounts.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
         try:
+            anchor = current_session_anchor()
+            if anchor != getattr(self, "_removed_wait_roll_anchor", anchor):
+                if self._removed_wait_rollover_busy():
+                    return
+                self.strategy.__dict__.setdefault("_removed_wait_evidence_wakes", set()).update(requests)
+                self.__dict__.setdefault("_removed_wait_assessment_triggers", {}).update(
+                    {request: ("session_reset", anchor.isoformat()) for request in requests})
+                proofs = await asyncio.to_thread(store.retire_prior_sessions, requests, accounts)
+                if self._removed_wait_rollover_busy():
+                    return
+                self.strategy.apply_removed_wait_rollover(proofs)
+                self._removed_wait_roll_anchor = anchor
+                requests = tuple(self.strategy._removed_wait_requests.values())
+                if not requests:
+                    return
+            self._schedule_removed_wait_books(requests, store, accounts)
             proofs = await asyncio.to_thread(store.proofs, requests, accounts)
+            proofs = tuple(p for p in proofs if p.reason != "unbound_symbol_terminal"
+                or p.observed_at_ms >= self.__dict__.get("_removed_wait_assessment_after_ms", {}).get(p.request, 0))
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=evidence_unreadable")
             return
@@ -858,21 +1068,44 @@ class SchwabV2BotService:
         counts = getattr(self, "_clearwait_open_emits", {})
         return any(counts.get(symbol, 0) for symbol in self.strategy._removed_wait_requests)
 
+    def _removed_wait_rollover_busy(self) -> bool:
+        symbols = self.strategy._removed_wait_requests
+        queued = (*getattr(self.strategy, "_pending_intents", ()),
+                  *getattr(self.strategy, "_pending_webull_direct_intents", ()),
+                  *getattr(self.strategy, "_pending_webull_fanout_intents", ()))
+        return (self._removed_wait_emits_inflight()
+                or any(d.symbol.upper() in symbols and d.side == "buy"
+                       and d.intent_type in {"open", "cancel"} for d in queued))
+
     async def _emit_removal_tracked(self, emitter, draft) -> bool:
-        if (getattr(draft, "intent_type", "") != "open"
+        if (getattr(draft, "intent_type", "") not in {"open", "cancel"}
+                or getattr(draft, "side", "") != "buy"
                 or not getattr(getattr(self, "strategy", None), "_removed_wait_enabled", False)):
             await emitter.emit(draft)
             return True
-        if not self._line_draft_allowed(draft):
+        if draft.intent_type == "open" and not self._line_draft_allowed(draft):
+            return False
+        if (draft.intent_type == "open"
+                and self.strategy._removed_wait_gate_closed(draft.symbol)):
             return False
         counts = self.__dict__.setdefault("_clearwait_open_emits", {})
         symbol = draft.symbol.upper()
         counts[symbol] = counts.get(symbol, 0) + 1
         try:
             account = getattr(emitter, "broker_account_name", "")
-            if not self.strategy.track_removed_wait_dispatch(draft, account):
+            if draft.intent_type == "open" and not self.strategy.track_removed_wait_dispatch(draft, account):
                 return False
-            await emitter.emit(draft)
+            versions = self.__dict__.setdefault("_clearwait_emit_versions", {})
+            versions[symbol] = versions.get(symbol, 0) + 1
+            event_id = uuid4()
+            self.__dict__.setdefault("_clearwait_last_publications", {}).setdefault(
+                (symbol, account), set()).add(str(event_id))
+            if isinstance(emitter, SchwabV2IntentEmitter):
+                emitted = await emitter.emit(draft, event_id=event_id)
+                if emitted != event_id:
+                    raise ValueError("removal publication event identity changed")
+            else:
+                await emitter.emit(draft)
         finally:
             counts[symbol] -= 1
             if not counts[symbol]:
@@ -905,7 +1138,7 @@ class SchwabV2BotService:
         await asyncio.to_thread(self._rpg_retire_disabled_at_boot)
         active_segments = self._configure_fanout_identity_store()
         self._configure_flip_entry_ownership_store(active_segments)
-        self._configure_removed_wait_store()
+        await self._configure_removed_wait_store()
         await self._recover_soft_rest_boot()
         self._configure_fanout_outcome_journal(active_segments)
         self.intent_emitter = SchwabV2IntentEmitter(
@@ -1036,6 +1269,10 @@ class SchwabV2BotService:
             await self._stop_event.wait()
         finally:
             await self._publish_heartbeat("stopping")
+            book_task = getattr(self, "_removed_wait_book_task", None)
+            if book_task is not None and not book_task.done():
+                book_task.cancel()
+                await asyncio.gather(book_task, return_exceptions=True)
             for task in self._tasks.values():
                 task.cancel()
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
@@ -3596,6 +3833,7 @@ class SchwabV2BotService:
                 candidates.update(self._protected_symbols())
                 await self._prepare_atr_massive_seeds(candidates - self._watchlist)
         self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+        await self._removed_wait_poll()
         self._log_atr_massive_seed_census()
 
     def _apply_strategy_state_event(
@@ -5948,6 +6186,11 @@ class SchwabV2BotService:
                 )
                 continue
             acknowledge(observation.decision_id)
+            request = self.strategy.__dict__.get("_removed_wait_requests", {}).get(observation.symbol)
+            if request is not None:
+                self.__dict__.setdefault("_removed_wait_assessment_triggers", {})[request] = (
+                    "fresh_sell", observation.decision_id)
+                self.strategy.__dict__.setdefault("_removed_wait_evidence_wakes", set()).add(request)
 
     def _sync_halt_data_health(self) -> None:
         active = self._subscription_symbols()
