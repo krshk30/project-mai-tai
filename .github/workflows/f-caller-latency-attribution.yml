@@ -30,9 +30,9 @@ jobs:
           --health-interval 2s --health-timeout 5s --health-retries 10
     env:
       MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
-      F_HEAD: c00aec7558ede5884c145fe4a1f4bc8540b128b7
-      I_HEAD: 576b2750079033a8bdeab312955b038d53a43906
-      OBSERVER_SOURCE_HEAD: e77bcb249fedba59c46ea672075a8ec4f7e5271c
+      F_HEAD: fea8836a7118752ca55f1c04a2b4a75faf546abf
+      I_HEAD: 4cb8d3e1d771fe816ecd66753b15535d311f04ab
+      OBSERVER_SOURCE_HEAD: fea8836a7118752ca55f1c04a2b4a75faf546abf
     steps:
       - uses: actions/checkout@v4
         with:
