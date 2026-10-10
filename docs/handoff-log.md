@@ -9050,3 +9050,33 @@ not delivered. Extended recordedFLYE nextrealBUYtest remainsRED despite initial
 controlled restoredrests accepted. ALERTS2598activewriterstrictproof stillowed;
 preparedcollector90be not pinned/deployed. Main andSinger own separatewrites;
 replacementworkercreationhit toolthreadlimit, not falsely described as running.
+
+### 2026-10-10 12:48 ET - Codex-2 SAT2/SAT6 evidence relay, SAT7 not deployed
+
+Human/main verified SAT2 at12:21 ET: main/box86e69848, OMS2431239,
+reconciler2431827,18 flat incidents closed, fresh account position-read
+receipts at about15s cadence. This is a dated relay of supplied verification,
+not a new Agent A production read. Official C6 historical Friday bar
+continuity UNKNOWN and silent reconciler logging UNKNOWN remain retained.
+
+SAT6 used the existing normal `ops/health/unexercised_watch.py --inc1` path.
+Fresh complete both-broker GET gate rc0, read2026-10-10T16:36:56Z,
+quantity0 plus exact BENF closed managed rows supported these durable closures:
+- DAIC c82c2dc0 (2026-09-17): closed16:37:09.907572Z,
+  reason `hdl1_no_position_or_open_row`.
+- BENF c7dd4f76 (2026-09-23): closed16:37:10.055055Z.
+- BENF a7472739: closed16:37:10.201219Z,
+  reason `exact_row_closed_and_broker_flat`.
+
+Receipt:
+`/home/trader/after-hours/2026-10-10/alerts1-86e69848-20261010T153758Z/benf-daic-closed-records.txt`.
+The CLI incorrectly printed held despite the successful UPDATE; main verified
+the actual durable closed rows. No SQL write outside the existing normal path
+and no auto-resolve expansion were built. Agent A performed documentation only.
+
+Main owns SAT7 logger repair #1150 a06e29: focused tests/Ruff reported PASS,
+independent reviewer pin pending, not deployed. This does not retrospectively
+turn silent historical logging into proof. Existing Claude rows, production
+header and boards are preserved. The neutral107-commit rebase preserves every
+old patch/message/trailer; this new Codex append needs a separate Claude pin,
+alongside the23 rewritten Codex commits. Actual new-head CI remains required.
