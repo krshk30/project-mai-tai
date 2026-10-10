@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "b1b4a8ccda644d0d31d6ca07a888e271eb805126",
+  "range_head": "01cab0f493c017205d57f29267d4eb17f9483d1e",
+  "reviewed_at": "2026-10-10T18:31:09Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Reviewed the dated Claude handoff delta and unchanged neutral-rebase content: shared docs only, historical observations and corrections retained, no production instruction executed or unknown evidence upgraded. Parent-bound record for this individual commit."
+}
