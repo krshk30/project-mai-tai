@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "956b78477b5a8705c5a918963fe08edd91d52731",
+  "range_head": "aef5829ee99aad003795e3f4e18fc954420943a7",
+  "reviewed_at": "2026-10-10T15:49:24Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independently read E84 exact append: historical controlled-acceptance FLYE target-exit result is labeled controlled, remaining DKI/JZ and final latency gates stay open, ALERTS merge matches hosted86e69848 and installation is not claimed independently verified. Only docs/session-handoff.md changed; one recognized Claude marker; old rows/header/board unchanged. Documentation review, not a new production or broker receipt."
+}
