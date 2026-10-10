@@ -1,0 +1,9 @@
+{
+  "pr_number": 1140,
+  "range_base": "0a8b4c7e29fa17ec77319717118d9ff51b9c22ce",
+  "range_head": "d9aa410f91a3f894ddef1f3c4bcc86c40b997059",
+  "reviewed_at": "2026-10-10T21:58:25Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "codex-2 handoff row commit on #1140 (re-recorded on the current branch history after a rewrite): docs/session-handoff.md + docs/handoff-log.md only; content checked against the box/gh state I verified."
+}
