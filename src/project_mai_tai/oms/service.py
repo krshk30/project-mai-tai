@@ -16809,6 +16809,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         return fifo
 
     def _stage_ordinary_audit(self, staged, order, report, payload, *, prior, request_metadata):
+        # RESERVE1 reads this rejection audit immediately as recovery admission proof.
+        if (order.side == "sell" and report.event_type == "rejected"
+                and report.filled_quantity == 0 and "oversold" in str(report.reason).lower()):
+            return False
         if (staged is None or not isinstance(self.broker_adapter, DurableBuyAdapter)
                 or not ordinary_metadata(prior, request_metadata, report.metadata, order.payload)
                 or " ".join(str(report.reason or "").upper().split()) in self.store.TERMINAL_CANCEL_REFUSAL_REASONS):
