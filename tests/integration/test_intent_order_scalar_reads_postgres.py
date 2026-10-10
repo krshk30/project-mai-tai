@@ -37,3 +37,13 @@ def test_pg_account_quantity_without_hydration(database, quantity):
 @pytest.mark.parametrize("autoflush", [False, True])
 def test_pg_account_quantity_transaction_semantics(database, autoflush):
     control.test_account_quantity_retains_dirty_identity_and_autoflush_semantics(database, autoflush)
+
+
+@pytest.mark.parametrize("virtual", [False, True])
+def test_pg_clean_quantity_without_orm_setup(database, virtual):
+    control.test_clean_quantity_read_uses_core_result_without_orm_setup(database, virtual)
+
+
+@pytest.mark.parametrize("virtual", [False, True])
+def test_pg_pending_quantity_autoflush_and_rollback(database, virtual):
+    control.test_pending_quantity_keeps_autoflush_and_transaction_values(database, virtual)

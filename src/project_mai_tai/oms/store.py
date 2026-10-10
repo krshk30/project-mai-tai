@@ -140,6 +140,12 @@ class OmsStore:
             position = self.get_account_position(session,
                 broker_account_id=broker_account_id, symbol=symbol)
             return position.quantity if position is not None else None
+        if not (session.new or session.dirty or session.deleted):
+            columns = AccountPosition.__table__.c
+            return session.scalar(select(columns.quantity).where(
+                columns.broker_account_id == broker_account_id,
+                columns.symbol == symbol,
+            ))
         return session.scalar(select(AccountPosition.quantity).where(
             AccountPosition.broker_account_id == broker_account_id,
             AccountPosition.symbol == symbol,
@@ -154,6 +160,13 @@ class OmsStore:
             position = self.get_virtual_position(session, strategy_id=strategy_id,
                 broker_account_id=broker_account_id, symbol=symbol)
             return position.quantity if position is not None else None
+        if not (session.new or session.dirty or session.deleted):
+            columns = VirtualPosition.__table__.c
+            return session.scalar(select(columns.quantity).where(
+                columns.strategy_id == strategy_id,
+                columns.broker_account_id == broker_account_id,
+                columns.symbol == symbol,
+            ))
         return session.scalar(select(VirtualPosition.quantity).where(
             VirtualPosition.strategy_id == strategy_id,
             VirtualPosition.broker_account_id == broker_account_id,
