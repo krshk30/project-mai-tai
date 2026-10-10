@@ -9081,3 +9081,17 @@ turn silent historical logging into proof. Existing Claude rows, production
 header and boards are preserved. The neutral107-commit rebase preserves every
 old patch/message/trailer; this new Codex append needs a separate Claude pin,
 alongside the23 rewritten Codex commits. Actual new-head CI remains required.
+
+### 2026-10-10 - Codex-2 SAT7 live evidence relay through17:02:50Z
+
+Main supplied the actual SAT7 install/read: box62f23f19, reconciler2440758
+started17:00:18Z/NRestarts0. Fresh native gate16:59Z rc0; native deployment
+healthy17:00:20Z. Log grew0->924bytes over six consecutive cycles from
+17:00:20Z through17:02:50Z, each findings2/critical0/warning0.
+All other five process identities and env remained unchanged.
+Receipt:
+`/home/trader/after-hours/2026-10-10/reconciler-logging-62f23f19-20261010T165930Z`.
+This supersedes C31's pre-deploy status and proves logging for this new process,
+not historical Friday bar continuity or silent historical logging; those
+UNKNOWN limits are retained. Agent A made no production call or write.
+Claude E86 and the preceding neutral-rebase history remain unchanged.
