@@ -4,12 +4,13 @@ import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import inspect, select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
-from project_mai_tai.db.models import BrokerOrderEvent, DashboardSnapshot
+from project_mai_tai.db.models import AccountPosition, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, VirtualPosition
 from project_mai_tai.fanout_outcome_consumer import OUTCOME_SNAPSHOT_TYPE
 from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
 from project_mai_tai.oms.service import OmsRiskService
@@ -111,12 +112,42 @@ async def test_real_core_insert_failure_keeps_ledger_and_counts_drop(database, c
     service._order_event_attempts = service._order_event_failures = 0
     with database() as session:
         _, order = order_in_session(session)
-        order.status = "accepted"
+        order.status = "filled"
+        report = ExecutionReport("filled", order.client_order_id,
+            filled_quantity=Decimal(1), fill_price=Decimal("2.55"), origin="broker")
+        service.store.record_fill_if_needed(session, order=order,
+            strategy_id=order.strategy_id, broker_account_id=order.broker_account_id,
+            report=report, payload={})
+        service.store.apply_fill_to_positions(session, strategy_id=order.strategy_id,
+            broker_account_id=order.broker_account_id, symbol=order.symbol, side="buy",
+            quantity=Decimal(1), price=Decimal("2.55"), reported_at=report.reported_at)
         assert not await service._append_order_event_isolated_awaited(session,
             order=SimpleNamespace(id=None, symbol="YYGH"),
-            report=ExecutionReport("accepted", "audit-core"), payload={})
+            report=report, payload={})
         session.commit()
-        assert order.status == "accepted"
+        assert order.status == "filled"
         assert list(session.scalars(select(BrokerOrderEvent))) == []
+    with database() as session:
+        assert session.scalar(select(Fill.price)) == Decimal("2.55")
+        assert session.scalar(select(VirtualPosition.quantity)) == Decimal(1)
+        assert session.scalar(select(AccountPosition.quantity)) == Decimal(1)
     assert service._order_event_attempts == service._order_event_failures == 1
     assert "OMS-ORDER-EVENT-DROPPED" in caplog.text
+
+
+def test_core_audit_flushes_a_genuinely_new_parent_order(database):
+    with database() as session:
+        store, existing = order_in_session(session)
+        session.commit()
+        order = BrokerOrder(id=uuid4(), strategy_id=existing.strategy_id,
+            broker_account_id=existing.broker_account_id, client_order_id="new-parent",
+            symbol="YYGH", side="buy", order_type="limit", time_in_force="day",
+            quantity=Decimal(1), status="accepted", payload={})
+        session.add(order)
+        assert inspect(order).pending
+        with session.begin_nested():
+            result = store.append_order_event(session, order=order,
+                report=ExecutionReport("accepted", order.client_order_id),
+                payload={}, use_core=True)
+        session.commit()
+        assert session.get(BrokerOrderEvent, result.id).order_id == order.id
