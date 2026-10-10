@@ -179,6 +179,15 @@ class ReconciliationService:
                     self.logger.exception("[RECONCILER-INCIDENT-AUTO-RESOLVE-FAILED]")
             session.commit()
 
+            self.logger.info(
+                "[RECONCILER-CYCLE] run_id=%s status=%s findings=%s critical=%s warning=%s",
+                run.id,
+                run.status,
+                summary["total_findings"],
+                summary["critical_findings"],
+                summary["warning_findings"],
+            )
+
             return {
                 "run_id": str(run.id),
                 "status": run.status,
