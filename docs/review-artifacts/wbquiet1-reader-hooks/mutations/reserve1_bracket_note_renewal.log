@@ -1,0 +1,40 @@
+.........F................                                               [100%]
+=================================== FAILURES ===================================
+_____ test_reserve1_renewal_notes_exact_bound_entry_without_position_pull ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10acac350>
+
+    @pytest.mark.asyncio
+    async def test_reserve1_renewal_notes_exact_bound_entry_without_position_pull(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        service.settings = SimpleNamespace(oms_native_oco_stand_down_enabled=True,
+                                          oms_native_oco_resolve_flat_reconcile_enabled=False)
+        service._page_aged_pending_oco_exit_fills = AsyncMock()
+        service._managed_v2_symbols = {(SCHWAB, "IPDN")}
+        service._native_oco_armed_confirmed_at = {}
+        service._native_oco_resolving = {}
+        row = SimpleNamespace(id="managed-row-1")
+        service.store.get_open_managed_position = Mock(return_value=row)
+        service._find_oco_entry_order = lambda *_a, **_kw: SimpleNamespace(broker_order_id="parent-1")
+        service._is_v2_webull_account = lambda _acct: False
+        async def run_db(fn, **_kwargs):
+            return fn(object())
+        service._run_db = run_db
+        service.broker_adapter.fetch_exit_legs_for_entry = AsyncMock(return_value={
+            "working": ["target", "stop"], "unsafe": False, "filled": False,
+        })
+        service.broker_adapter.fetch_armed_native_oco_symbols = AsyncMock(return_value={"IPDN"})
+        monkeypatch.setattr(service_module, "utcnow", lambda: AT)
+        await service._refresh_native_oco_armed_state(None)
+        assert service._native_oco_armed_confirmed_at == {(SCHWAB, "IPDN"): AT}
+        service.broker_adapter.fetch_exit_legs_for_entry.assert_awaited_once_with(SCHWAB, "parent-1")
+        service.broker_adapter.list_account_positions.assert_not_awaited()
+>       note = notes(service)[0]["readers"][0]
+               ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:196: IndexError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/reserve1_bracket_note_renewal.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_reserve1_renewal_notes_exact_bound_entry_without_position_pull
+1 failed, 25 passed in 0.88s

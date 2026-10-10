@@ -1,0 +1,28 @@
+.........................F                                               [100%]
+=================================== FAILURES ===================================
+_ test_repeated_read_cannot_inherit_a_prior_source_acquisition_on_metadata_error _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d5bb9e0>
+
+    def test_repeated_read_cannot_inherit_a_prior_source_acquisition_on_metadata_error(monkeypatch):
+        service, frame, _clock = harness(monkeypatch)
+        adapter = service.broker_adapter._adapters_by_provider["webull"]
+        adapter._positions_cache[WB] = ("invalid-stamp", [])
+        token = shadow.CURRENT.set(frame)
+        try:
+            shadow.note_read(WB, "returned_not_wire_proof", service=service, positions=[])
+            shadow.note_committed([WB])
+        finally:
+            shadow.CURRENT.reset(token)
+        assert frame.committed[WB]["adapter_calls"] == 2
+>       assert frame.committed[WB]["acquisition_generation"] == "UNMEASURED"
+E       AssertionError: assert 'adapter_cache:99.0' == 'UNMEASURED'
+E         
+E         - UNMEASURED
+E         + adapter_cache:99.0
+
+tests/unit/test_wbquiet_shadow_readers.py:440: AssertionError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/stale_generation_reuse.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_repeated_read_cannot_inherit_a_prior_source_acquisition_on_metadata_error
+1 failed, 25 passed in 0.83s

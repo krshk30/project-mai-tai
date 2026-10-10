@@ -1,0 +1,31 @@
+........................F.                                               [100%]
+=================================== FAILURES ===================================
+______ test_same_source_only_when_nonempty_immutable_cache_objects_match _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d5d88f0>
+
+    def test_same_source_only_when_nonempty_immutable_cache_objects_match(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        snapshots = service.broker_adapter.list_account_positions.return_value
+        shadow.note_consumed([WB], "test_reader", service=service, source="adapter_positions",
+                             positions=list(snapshots), symbol="IPDN")
+        row = notes(service)[-1]["readers"][0]
+        assert row["same_source_generation"] == "observed_adapter_cache_identity"
+        assert row["reader_acquisition_generation"] == "adapter_cache:99.0"
+        adapter = service.broker_adapter._adapters_by_provider["webull"]
+        for returned, cached in [([], []), ([position()], snapshots)]:
+            adapter._positions_cache[WB] = (99, cached)
+            shadow.note_consumed([WB], "test_reader", service=service, source="adapter_positions",
+                                 positions=returned, symbol="IPDN")
+            row = notes(service)[-1]["readers"][0]
+>           assert row["same_source_generation"] == "UNMEASURED"
+E           AssertionError: assert 'observed_ada...ache_identity' == 'UNMEASURED'
+E             
+E             - UNMEASURED
+E             + observed_adapter_cache_identity
+
+tests/unit/test_wbquiet_shadow_readers.py:425: AssertionError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/empty_generation_guess.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_same_source_only_when_nonempty_immutable_cache_objects_match
+1 failed, 25 passed in 0.85s

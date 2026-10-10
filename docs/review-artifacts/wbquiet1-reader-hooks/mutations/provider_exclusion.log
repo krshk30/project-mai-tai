@@ -1,0 +1,20 @@
+......................F...                                               [100%]
+=================================== FAILURES ===================================
+______ test_orb_scope_is_excluded_even_with_misrouted_or_unknown_provider ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d3b3e30>
+
+    def test_orb_scope_is_excluded_even_with_misrouted_or_unknown_provider(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        service.broker_adapter.provider_by_account[SCHWAB] = "webull"
+        shadow.note_consumed([SCHWAB], "orb_close_positions", service=service, provider="schwab")
+        row = notes(service)[-1]["readers"][0]
+        assert row["provider"] == "webull" and row["reader_provider_scope"] == "schwab"
+>       assert row["webull_cadence_eligible"] is False
+E       assert True is False
+
+tests/unit/test_wbquiet_shadow_readers.py:384: AssertionError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/provider_exclusion.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_orb_scope_is_excluded_even_with_misrouted_or_unknown_provider
+1 failed, 25 passed in 1.01s

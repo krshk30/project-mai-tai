@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="9" skipped="0" tests="26" time="0.960" timestamp="2026-10-08T09:21:18.090223-04:00" hostname="Shirleys-MacBook-Pro-2.local"><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reconcile_consumes_own_account_generation_after_context_reset[2-_PositionRead.HELD]" time="0.002"><failure message="AssertionError: assert ('2026-10-08T14:00:00+00:00' == '2026-10-08T14:00:00+00:00'&#10;  &#10;    2026-10-08T14:00:00+00:00 and 0 == 1)">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10c9f2060&gt;
+quantity = '2', expected = &lt;_PositionRead.HELD: 'held'&gt;
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("quantity,expected", [("2", _PositionRead.HELD),
+                                                   ("0", _PositionRead.FLAT_CONFIRMED)])
+    async def test_reconcile_consumes_own_account_generation_after_context_reset(monkeypatch, quantity, expected):
+        service, frame, clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.return_value = [position(quantity=quantity)]
+        clock[0] += 59
+        assert shadow.CURRENT.get() is None
+        assert await service._broker_symbol_position_state(WB, "IPDN") is expected
+        service.broker_adapter.list_account_positions.assert_awaited_once_with(WB)
+        row = notes(service)[0]["readers"][0]
+        assert row["reader"] == "reconcile_tri_state" and row["account"] == WB
+&gt;       assert row["generation"] == AT.isoformat() and row["adapter_calls"] == 1
+E       AssertionError: assert ('2026-10-08T14:00:00+00:00' == '2026-10-08T14:00:00+00:00'
+E         
+E           2026-10-08T14:00:00+00:00 and 0 == 1)
+
+tests/unit/test_wbquiet_shadow_readers.py:74: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reconcile_consumes_own_account_generation_after_context_reset[0-_PositionRead.FLAT_CONFIRMED]" time="0.001"><failure message="AssertionError: assert ('2026-10-08T14:00:00+00:00' == '2026-10-08T14:00:00+00:00'&#10;  &#10;    2026-10-08T14:00:00+00:00 and 0 == 1)">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10c9f3260&gt;
+quantity = '0', expected = &lt;_PositionRead.FLAT_CONFIRMED: 'flat_confirmed'&gt;
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("quantity,expected", [("2", _PositionRead.HELD),
+                                                   ("0", _PositionRead.FLAT_CONFIRMED)])
+    async def test_reconcile_consumes_own_account_generation_after_context_reset(monkeypatch, quantity, expected):
+        service, frame, clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.return_value = [position(quantity=quantity)]
+        clock[0] += 59
+        assert shadow.CURRENT.get() is None
+        assert await service._broker_symbol_position_state(WB, "IPDN") is expected
+        service.broker_adapter.list_account_positions.assert_awaited_once_with(WB)
+        row = notes(service)[0]["readers"][0]
+        assert row["reader"] == "reconcile_tri_state" and row["account"] == WB
+&gt;       assert row["generation"] == AT.isoformat() and row["adapter_calls"] == 1
+E       AssertionError: assert ('2026-10-08T14:00:00+00:00' == '2026-10-08T14:00:00+00:00'
+E         
+E           2026-10-08T14:00:00+00:00 and 0 == 1)
+
+tests/unit/test_wbquiet_shadow_readers.py:74: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_snapshot_refresh_still_persists_once_and_keeps_quantity" time="0.001"><failure message="AssertionError: assert ('exit_snapshot_refresh' == 'exit_snapshot_refresh'&#10;  &#10;    exit_snapshot_refresh and 0 == 1)">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10c9f4b90&gt;
+
+    @pytest.mark.asyncio
+    async def test_snapshot_refresh_still_persists_once_and_keeps_quantity(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        service.store.get_account_position.return_value = SimpleNamespace(quantity=Decimal("2"))
+        session, account_id = object(), uuid4()
+        assert await service._refresh_broker_position_quantity(
+            session=session, broker_account_id=account_id, broker_account_name=WB, symbol="IPDN",
+        ) == Decimal("2")
+        service.store.sync_account_positions.assert_called_once_with(
+            session, broker_account_id=account_id,
+            snapshots=service.broker_adapter.list_account_positions.return_value,
+        )
+        row = notes(service)[0]["readers"][0]
+&gt;       assert row["reader"] == "exit_snapshot_refresh" and row["adapter_calls"] == 1
+E       AssertionError: assert ('exit_snapshot_refresh' == 'exit_snapshot_refresh'
+E         
+E           exit_snapshot_refresh and 0 == 1)
+
+tests/unit/test_wbquiet_shadow_readers.py:97: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[reconcile]" time="0.001"><failure message="AssertionError: assert ('unreadable' == 'unreadable'&#10;  &#10;    unreadable and 0 == 1)">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10c9f6e10&gt;
+reader = 'reconcile'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["reconcile", "refresh", "orb"])
+    async def test_unreadable_real_read_keeps_existing_failure_semantics(monkeypatch, reader):
+        service, _frame, _clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        if reader == "reconcile":
+            assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.UNKNOWN
+        elif reader == "refresh":
+            assert await service._refresh_broker_position_quantity(
+                session=object(), broker_account_id=uuid4(), broker_account_name=WB, symbol="IPDN",
+            ) is None
+            service.store.sync_account_positions.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="unreadable"):
+                await orb_schwab_eod._broker_quantity(service, SimpleNamespace(
+                    account=SCHWAB, symbol="IPDN", quantity=Decimal("2")))
+        row = notes(service)[0]["readers"][0]
+&gt;       assert row["outcome"] == "unreadable" and row["adapter_calls"] == 1
+E       AssertionError: assert ('unreadable' == 'unreadable'
+E         
+E           unreadable and 0 == 1)
+
+tests/unit/test_wbquiet_shadow_readers.py:119: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[refresh]" time="0.001"><failure message="AssertionError: assert ('unreadable' == 'unreadable'&#10;  &#10;    unreadable and 0 == 1)">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10c9f83b0&gt;
+reader = 'refresh'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["reconcile", "refresh", "orb"])
+    async def test_unreadable_real_read_keeps_existing_failure_semantics(monkeypatch, reader):
+        service, _frame, _clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        if reader == "reconcile":
+            assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.UNKNOWN
+        elif reader == "refresh":
+            assert await service._refresh_broker_position_quantity(
+                session=object(), broker_account_id=uuid4(), broker_account_name=WB, symbol="IPDN",
+            ) is None
+            service.store.sync_account_positions.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="unreadable"):
+                await orb_schwab_eod._broker_quantity(service, SimpleNamespace(
+                    account=SCHWAB, symbol="IPDN", quantity=Decimal("2")))
+        row = notes(service)[0]["readers"][0]
+&gt;       assert row["outcome"] == "unreadable" and row["adapter_calls"] == 1
+E       AssertionError: assert ('unreadable' == 'unreadable'
+E         
+E           unreadable and 0 == 1)
+
+tests/unit/test_wbquiet_shadow_readers.py:119: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[orb]" time="0.001"><failure message="AssertionError: assert ('unreadable' == 'unreadable'&#10;  &#10;    unreadable and 0 == 1)">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10c9f96d0&gt;
+reader = 'orb'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["reconcile", "refresh", "orb"])
+    async def test_unreadable_real_read_keeps_existing_failure_semantics(monkeypatch, reader):
+        service, _frame, _clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        if reader == "reconcile":
+            assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.UNKNOWN
+        elif reader == "refresh":
+            assert await service._refresh_broker_position_quantity(
+                session=object(), broker_account_id=uuid4(), broker_account_name=WB, symbol="IPDN",
+            ) is None
+            service.store.sync_account_positions.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="unreadable"):
+                await orb_schwab_eod._broker_quantity(service, SimpleNamespace(
+                    account=SCHWAB, symbol="IPDN", quantity=Decimal("2")))
+        row = notes(service)[0]["readers"][0]
+&gt;       assert row["outcome"] == "unreadable" and row["adapter_calls"] == 1
+E       AssertionError: assert ('unreadable' == 'unreadable'
+E         
+E           unreadable and 0 == 1)
+
+tests/unit/test_wbquiet_shadow_readers.py:119: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_orb_eod_repeated_reads_are_schwab_not_webull_consumption" time="0.001"><failure message="assert 0 == 2&#10; +  where 0 = sum(&lt;generator object test_orb_eod_repeated_reads_are_schwab_not_webull_consumption.&lt;locals&gt;.&lt;genexpr&gt; at 0x10cc21970&gt;)">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10ca0b2c0&gt;
+
+    @pytest.mark.asyncio
+    async def test_orb_eod_repeated_reads_are_schwab_not_webull_consumption(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.return_value = [position(SCHWAB)]
+        target = SimpleNamespace(account=SCHWAB, symbol="IPDN", quantity=Decimal("2"))
+        for _ in range(2):
+            assert await orb_schwab_eod._broker_quantity(service, target) == 2
+        assert service.broker_adapter.list_account_positions.await_count == 2
+        records = notes(service)
+        rows = [r["readers"][0] for r in records]
+        assert [r["reader"] for r in rows] == ["orb_close_positions"] * 2
+&gt;       assert sum(r["adapter_calls"] for r in rows) == 2
+E       assert 0 == 2
+E        +  where 0 = sum(&lt;generator object test_orb_eod_repeated_reads_are_schwab_not_webull_consumption.&lt;locals&gt;.&lt;genexpr&gt; at 0x10cc21970&gt;)
+
+tests/unit/test_wbquiet_shadow_readers.py:134: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_orb_admission_reader_refusal_and_pull_count_unchanged[False]" time="0.001"><failure message="assert (False is False and 0 == 1)">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10ca0ae10&gt;
+unreadable = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("unreadable", [False, True])
+    async def test_real_orb_admission_reader_refusal_and_pull_count_unchanged(monkeypatch, unreadable):
+        service, _frame, _clock = harness(monkeypatch)
+        service.settings = SimpleNamespace(orb_schwab_atr_entry_gate_enabled=False)
+        service._rpg_external_retry = lambda _event: False
+        service._refresh_drift_working_cache = AsyncMock()
+        monkeypatch.setattr(service_module, "orb_schwab_intent_refusal", lambda *_: None)
+        monkeypatch.setattr(service_module, "schwab_completed_bar_macd_gate",
+                            lambda *_: (MacdVerdict.ALLOWED, "allowed", 0.1))
+        service.broker_adapter.list_account_positions.return_value = [position(SCHWAB)]
+        if unreadable:
+            service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        event = TradeIntentEvent(source_service="reader-test", payload=TradeIntentPayload(
+            strategy_code="orb_schwab", broker_account_name=SCHWAB, symbol="IPDN",
+            side="buy", intent_type="open", quantity=Decimal("2"), reason="reader test",
+        ))
+        assert await service.process_trade_intent(event) == []
+        service.broker_adapter.list_account_positions.assert_awaited_once_with(SCHWAB)
+        service._refresh_drift_working_cache.assert_awaited_once()
+        service.session_factory.assert_not_called()
+        row = notes(service)[0]["readers"][0]
+        assert row["reader"] == "orb_admission_positions" and row["provider"] == "schwab"
+&gt;       assert row["webull_cadence_eligible"] is False and row["adapter_calls"] == 1
+E       assert (False is False and 0 == 1)
+
+tests/unit/test_wbquiet_shadow_readers.py:167: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_orb_admission_reader_refusal_and_pull_count_unchanged[True]" time="0.001"><failure message="assert (False is False and 0 == 1)">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10ca09280&gt;
+unreadable = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("unreadable", [False, True])
+    async def test_real_orb_admission_reader_refusal_and_pull_count_unchanged(monkeypatch, unreadable):
+        service, _frame, _clock = harness(monkeypatch)
+        service.settings = SimpleNamespace(orb_schwab_atr_entry_gate_enabled=False)
+        service._rpg_external_retry = lambda _event: False
+        service._refresh_drift_working_cache = AsyncMock()
+        monkeypatch.setattr(service_module, "orb_schwab_intent_refusal", lambda *_: None)
+        monkeypatch.setattr(service_module, "schwab_completed_bar_macd_gate",
+                            lambda *_: (MacdVerdict.ALLOWED, "allowed", 0.1))
+        service.broker_adapter.list_account_positions.return_value = [position(SCHWAB)]
+        if unreadable:
+            service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        event = TradeIntentEvent(source_service="reader-test", payload=TradeIntentPayload(
+            strategy_code="orb_schwab", broker_account_name=SCHWAB, symbol="IPDN",
+            side="buy", intent_type="open", quantity=Decimal("2"), reason="reader test",
+        ))
+        assert await service.process_trade_intent(event) == []
+        service.broker_adapter.list_account_positions.assert_awaited_once_with(SCHWAB)
+        service._refresh_drift_working_cache.assert_awaited_once()
+        service.session_factory.assert_not_called()
+        row = notes(service)[0]["readers"][0]
+        assert row["reader"] == "orb_admission_positions" and row["provider"] == "schwab"
+&gt;       assert row["webull_cadence_eligible"] is False and row["adapter_calls"] == 1
+E       assert (False is False and 0 == 1)
+
+tests/unit/test_wbquiet_shadow_readers.py:167: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reserve1_renewal_notes_exact_bound_entry_without_position_pull" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[logging]" time="0.009" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[registry]" time="0.006" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[contention]" time="0.005" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_missing_observer_or_expired_window_is_not_zero_evidence" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_per_account_registry_is_bounded_and_loss_is_unmeasured" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_one_shadow_receipt_is_not_rewritten_by_later_reader_notes" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_failed_or_missing_commit_cannot_anchor_generation" time="0.000" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_account_mismatch_or_iterator_never_supplies_snapshot_generation" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_sync_only_registers_after_persist_transaction_returns[False]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_sync_only_registers_after_persist_transaction_returns[True]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_failed_shadow_publication_cannot_claim_complete_join" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_window_is_60_seconds_after_commit_and_multiple_passes_are_not_aliases" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_orb_scope_is_excluded_even_with_misrouted_or_unknown_provider" time="0.000" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_acquisition_stamp_and_unknown_source_are_not_pass_id_guesses" time="0.000" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_same_source_only_when_nonempty_immutable_cache_objects_match" time="0.000" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_repeated_read_cannot_inherit_a_prior_source_acquisition_on_metadata_error" time="0.000" /></testsuite></testsuites>

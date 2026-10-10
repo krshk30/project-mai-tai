@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="26" time="0.946" timestamp="2026-10-08T09:21:00.153993-04:00" hostname="Shirleys-MacBook-Pro-2.local"><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reconcile_consumes_own_account_generation_after_context_reset[2-_PositionRead.HELD]" time="0.002" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reconcile_consumes_own_account_generation_after_context_reset[0-_PositionRead.FLAT_CONFIRMED]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_snapshot_refresh_still_persists_once_and_keeps_quantity" time="0.001"><failure message="IndexError: list index out of range">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b9219a0&gt;
+
+    @pytest.mark.asyncio
+    async def test_snapshot_refresh_still_persists_once_and_keeps_quantity(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        service.store.get_account_position.return_value = SimpleNamespace(quantity=Decimal("2"))
+        session, account_id = object(), uuid4()
+        assert await service._refresh_broker_position_quantity(
+            session=session, broker_account_id=account_id, broker_account_name=WB, symbol="IPDN",
+        ) == Decimal("2")
+        service.store.sync_account_positions.assert_called_once_with(
+            session, broker_account_id=account_id,
+            snapshots=service.broker_adapter.list_account_positions.return_value,
+        )
+&gt;       row = notes(service)[0]["readers"][0]
+              ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:96: IndexError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[reconcile]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[refresh]" time="0.001"><failure message="IndexError: list index out of range">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b921580&gt;
+reader = 'refresh'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["reconcile", "refresh", "orb"])
+    async def test_unreadable_real_read_keeps_existing_failure_semantics(monkeypatch, reader):
+        service, _frame, _clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        if reader == "reconcile":
+            assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.UNKNOWN
+        elif reader == "refresh":
+            assert await service._refresh_broker_position_quantity(
+                session=object(), broker_account_id=uuid4(), broker_account_name=WB, symbol="IPDN",
+            ) is None
+            service.store.sync_account_positions.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="unreadable"):
+                await orb_schwab_eod._broker_quantity(service, SimpleNamespace(
+                    account=SCHWAB, symbol="IPDN", quantity=Decimal("2")))
+&gt;       row = notes(service)[0]["readers"][0]
+              ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:118: IndexError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[orb]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_orb_eod_repeated_reads_are_schwab_not_webull_consumption" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_orb_admission_reader_refusal_and_pull_count_unchanged[False]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_orb_admission_reader_refusal_and_pull_count_unchanged[True]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reserve1_renewal_notes_exact_bound_entry_without_position_pull" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[logging]" time="0.010" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[registry]" time="0.006" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[contention]" time="0.005" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_missing_observer_or_expired_window_is_not_zero_evidence" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_per_account_registry_is_bounded_and_loss_is_unmeasured" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_one_shadow_receipt_is_not_rewritten_by_later_reader_notes" time="0.002" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_failed_or_missing_commit_cannot_anchor_generation" time="0.000" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_account_mismatch_or_iterator_never_supplies_snapshot_generation" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_sync_only_registers_after_persist_transaction_returns[False]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_sync_only_registers_after_persist_transaction_returns[True]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_failed_shadow_publication_cannot_claim_complete_join" time="0.002" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_window_is_60_seconds_after_commit_and_multiple_passes_are_not_aliases" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_orb_scope_is_excluded_even_with_misrouted_or_unknown_provider" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_acquisition_stamp_and_unknown_source_are_not_pass_id_guesses" time="0.000" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_same_source_only_when_nonempty_immutable_cache_objects_match" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_repeated_read_cannot_inherit_a_prior_source_acquisition_on_metadata_error" time="0.000" /></testsuite></testsuites>

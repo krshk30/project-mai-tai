@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="26" time="0.848" timestamp="2026-10-08T09:21:25.870482-04:00" hostname="Shirleys-MacBook-Pro-2.local"><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reconcile_consumes_own_account_generation_after_context_reset[2-_PositionRead.HELD]" time="0.002"><failure message="AssertionError: assert 'observed_ada...ache_identity' == 'UNMEASURED'&#10;  &#10;  - UNMEASURED&#10;  + observed_adapter_cache_identity">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10ae13f80&gt;
+quantity = '2', expected = &lt;_PositionRead.HELD: 'held'&gt;
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("quantity,expected", [("2", _PositionRead.HELD),
+                                                   ("0", _PositionRead.FLAT_CONFIRMED)])
+    async def test_reconcile_consumes_own_account_generation_after_context_reset(monkeypatch, quantity, expected):
+        service, frame, clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.return_value = [position(quantity=quantity)]
+        clock[0] += 59
+        assert shadow.CURRENT.get() is None
+        assert await service._broker_symbol_position_state(WB, "IPDN") is expected
+        service.broker_adapter.list_account_positions.assert_awaited_once_with(WB)
+        row = notes(service)[0]["readers"][0]
+        assert row["reader"] == "reconcile_tri_state" and row["account"] == WB
+        assert row["generation"] == AT.isoformat() and row["adapter_calls"] == 1
+        assert row["provider"] == "webull" and row["webull_cadence_eligible"] is True
+        anchor = row["overlapping_periodic_passes"][0]
+        assert anchor["pass_id"] == 71 and anchor["account"] == WB
+        assert anchor["acquisition_generation"] == frame.committed[WB]["acquisition_generation"]
+        assert anchor["adapter_calls"] == 1 and anchor["elapsed_seconds"] == 59
+&gt;       assert row["same_source_generation"] == "UNMEASURED"
+E       AssertionError: assert 'observed_ada...ache_identity' == 'UNMEASURED'
+E         
+E         - UNMEASURED
+E         + observed_adapter_cache_identity
+
+tests/unit/test_wbquiet_shadow_readers.py:80: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reconcile_consumes_own_account_generation_after_context_reset[0-_PositionRead.FLAT_CONFIRMED]" time="0.002"><failure message="AssertionError: assert 'observed_ada...ache_identity' == 'UNMEASURED'&#10;  &#10;  - UNMEASURED&#10;  + observed_adapter_cache_identity">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10ae1b1a0&gt;
+quantity = '0', expected = &lt;_PositionRead.FLAT_CONFIRMED: 'flat_confirmed'&gt;
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("quantity,expected", [("2", _PositionRead.HELD),
+                                                   ("0", _PositionRead.FLAT_CONFIRMED)])
+    async def test_reconcile_consumes_own_account_generation_after_context_reset(monkeypatch, quantity, expected):
+        service, frame, clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.return_value = [position(quantity=quantity)]
+        clock[0] += 59
+        assert shadow.CURRENT.get() is None
+        assert await service._broker_symbol_position_state(WB, "IPDN") is expected
+        service.broker_adapter.list_account_positions.assert_awaited_once_with(WB)
+        row = notes(service)[0]["readers"][0]
+        assert row["reader"] == "reconcile_tri_state" and row["account"] == WB
+        assert row["generation"] == AT.isoformat() and row["adapter_calls"] == 1
+        assert row["provider"] == "webull" and row["webull_cadence_eligible"] is True
+        anchor = row["overlapping_periodic_passes"][0]
+        assert anchor["pass_id"] == 71 and anchor["account"] == WB
+        assert anchor["acquisition_generation"] == frame.committed[WB]["acquisition_generation"]
+        assert anchor["adapter_calls"] == 1 and anchor["elapsed_seconds"] == 59
+&gt;       assert row["same_source_generation"] == "UNMEASURED"
+E       AssertionError: assert 'observed_ada...ache_identity' == 'UNMEASURED'
+E         
+E         - UNMEASURED
+E         + observed_adapter_cache_identity
+
+tests/unit/test_wbquiet_shadow_readers.py:80: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_snapshot_refresh_still_persists_once_and_keeps_quantity" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[reconcile]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[refresh]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_unreadable_real_read_keeps_existing_failure_semantics[orb]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_orb_eod_repeated_reads_are_schwab_not_webull_consumption" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_orb_admission_reader_refusal_and_pull_count_unchanged[False]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_orb_admission_reader_refusal_and_pull_count_unchanged[True]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_reserve1_renewal_notes_exact_bound_entry_without_position_pull" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[logging]" time="0.009" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[registry]" time="0.005" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_observer_failure_never_changes_reconcile_or_adds_io[contention]" time="0.005" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_missing_observer_or_expired_window_is_not_zero_evidence" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_per_account_registry_is_bounded_and_loss_is_unmeasured" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_one_shadow_receipt_is_not_rewritten_by_later_reader_notes" time="0.002" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_failed_or_missing_commit_cannot_anchor_generation" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_account_mismatch_or_iterator_never_supplies_snapshot_generation" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_sync_only_registers_after_persist_transaction_returns[False]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_sync_only_registers_after_persist_transaction_returns[True]" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_failed_shadow_publication_cannot_claim_complete_join" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_window_is_60_seconds_after_commit_and_multiple_passes_are_not_aliases" time="0.001" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_orb_scope_is_excluded_even_with_misrouted_or_unknown_provider" time="0.000" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_real_acquisition_stamp_and_unknown_source_are_not_pass_id_guesses" time="0.000" /><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_same_source_only_when_nonempty_immutable_cache_objects_match" time="0.001"><failure message="AssertionError: assert 'observed_ada...ache_identity' == 'UNMEASURED'&#10;  &#10;  - UNMEASURED&#10;  + observed_adapter_cache_identity">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10ae82f30&gt;
+
+    def test_same_source_only_when_nonempty_immutable_cache_objects_match(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        snapshots = service.broker_adapter.list_account_positions.return_value
+        shadow.note_consumed([WB], "test_reader", service=service, source="adapter_positions",
+                             positions=list(snapshots), symbol="IPDN")
+        row = notes(service)[-1]["readers"][0]
+        assert row["same_source_generation"] == "observed_adapter_cache_identity"
+        assert row["reader_acquisition_generation"] == "adapter_cache:99.0"
+        adapter = service.broker_adapter._adapters_by_provider["webull"]
+        for returned, cached in [([], []), ([position()], snapshots)]:
+            adapter._positions_cache[WB] = (99, cached)
+            shadow.note_consumed([WB], "test_reader", service=service, source="adapter_positions",
+                                 positions=returned, symbol="IPDN")
+            row = notes(service)[-1]["readers"][0]
+&gt;           assert row["same_source_generation"] == "UNMEASURED"
+E           AssertionError: assert 'observed_ada...ache_identity' == 'UNMEASURED'
+E             
+E             - UNMEASURED
+E             + observed_adapter_cache_identity
+
+tests/unit/test_wbquiet_shadow_readers.py:425: AssertionError</failure></testcase><testcase classname="tests.unit.test_wbquiet_shadow_readers" name="test_repeated_read_cannot_inherit_a_prior_source_acquisition_on_metadata_error" time="0.000" /></testsuite></testsuites>

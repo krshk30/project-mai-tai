@@ -1,0 +1,69 @@
+.......FF.................                                               [100%]
+=================================== FAILURES ===================================
+____ test_real_orb_admission_reader_refusal_and_pull_count_unchanged[False] ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cc8d430>
+unreadable = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("unreadable", [False, True])
+    async def test_real_orb_admission_reader_refusal_and_pull_count_unchanged(monkeypatch, unreadable):
+        service, _frame, _clock = harness(monkeypatch)
+        service.settings = SimpleNamespace(orb_schwab_atr_entry_gate_enabled=False)
+        service._rpg_external_retry = lambda _event: False
+        service._refresh_drift_working_cache = AsyncMock()
+        monkeypatch.setattr(service_module, "orb_schwab_intent_refusal", lambda *_: None)
+        monkeypatch.setattr(service_module, "schwab_completed_bar_macd_gate",
+                            lambda *_: (MacdVerdict.ALLOWED, "allowed", 0.1))
+        service.broker_adapter.list_account_positions.return_value = [position(SCHWAB)]
+        if unreadable:
+            service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        event = TradeIntentEvent(source_service="reader-test", payload=TradeIntentPayload(
+            strategy_code="orb_schwab", broker_account_name=SCHWAB, symbol="IPDN",
+            side="buy", intent_type="open", quantity=Decimal("2"), reason="reader test",
+        ))
+        assert await service.process_trade_intent(event) == []
+        service.broker_adapter.list_account_positions.assert_awaited_once_with(SCHWAB)
+        service._refresh_drift_working_cache.assert_awaited_once()
+        service.session_factory.assert_not_called()
+>       row = notes(service)[0]["readers"][0]
+              ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:165: IndexError
+____ test_real_orb_admission_reader_refusal_and_pull_count_unchanged[True] _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cca3fe0>
+unreadable = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("unreadable", [False, True])
+    async def test_real_orb_admission_reader_refusal_and_pull_count_unchanged(monkeypatch, unreadable):
+        service, _frame, _clock = harness(monkeypatch)
+        service.settings = SimpleNamespace(orb_schwab_atr_entry_gate_enabled=False)
+        service._rpg_external_retry = lambda _event: False
+        service._refresh_drift_working_cache = AsyncMock()
+        monkeypatch.setattr(service_module, "orb_schwab_intent_refusal", lambda *_: None)
+        monkeypatch.setattr(service_module, "schwab_completed_bar_macd_gate",
+                            lambda *_: (MacdVerdict.ALLOWED, "allowed", 0.1))
+        service.broker_adapter.list_account_positions.return_value = [position(SCHWAB)]
+        if unreadable:
+            service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        event = TradeIntentEvent(source_service="reader-test", payload=TradeIntentPayload(
+            strategy_code="orb_schwab", broker_account_name=SCHWAB, symbol="IPDN",
+            side="buy", intent_type="open", quantity=Decimal("2"), reason="reader test",
+        ))
+        assert await service.process_trade_intent(event) == []
+        service.broker_adapter.list_account_positions.assert_awaited_once_with(SCHWAB)
+        service._refresh_drift_working_cache.assert_awaited_once()
+        service.session_factory.assert_not_called()
+>       row = notes(service)[0]["readers"][0]
+              ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:165: IndexError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/orb_admission_positions.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_real_orb_admission_reader_refusal_and_pull_count_unchanged[False]
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_real_orb_admission_reader_refusal_and_pull_count_unchanged[True]
+2 failed, 24 passed in 0.87s

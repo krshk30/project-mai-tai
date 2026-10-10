@@ -1,0 +1,24 @@
+....................F.....                                               [100%]
+=================================== FAILURES ===================================
+__________ test_failed_shadow_publication_cannot_claim_complete_join ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b341850>
+
+    @pytest.mark.asyncio
+    async def test_failed_shadow_publication_cannot_claim_complete_join(monkeypatch):
+        service, frame, _clock = harness(monkeypatch)
+        observer = service._wbquiet_shadow
+        observer.committed_generations.clear()
+        service.logger.info.side_effect = RuntimeError("failed publication")
+        await observer.finish(service, frame, "ok")
+        service.logger.info.side_effect = None
+        shadow.note_consumed([WB], "test_reader", service=service)
+        row = notes(service)[0]["readers"][0]
+>       assert row["overlapping_periodic_passes"][0]["shadow_receipt_emitted"] is False
+E       assert True is False
+
+tests/unit/test_wbquiet_shadow_readers.py:346: AssertionError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/publication_loss.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_failed_shadow_publication_cannot_claim_complete_join
+1 failed, 25 passed in 0.84s

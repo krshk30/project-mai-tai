@@ -1,0 +1,268 @@
+{
+  "after_window": "adapter_read_proceeds_without_reader_receipt_not_zero_evidence",
+  "broker_orders": 0,
+  "fixture_as_of": "2026-10-08T14:00:00+00:00",
+  "import_path": "/Users/velkris/.codex/worktrees/wbquiet1-reader-hooks-1008/project-mai-tai/src/project_mai_tai/oms/wbquiet_shadow.py",
+  "kind": "synthetic_real_method_trace_not_historical_or_live_replay",
+  "production_db_or_redis_writes": 0,
+  "production_reader_coverage": "PARTIAL",
+  "real_network_pulls": 0,
+  "receipts": [
+    {
+      "accounts": [
+        {
+          "account": "live:webull_1m_v2",
+          "actual_adapter_calls": 1,
+          "actual_adapter_read": "returned_not_wire_proof",
+          "actual_read_completed_elapsed_seconds": 0.0,
+          "committed_generation": {
+            "account": "live:webull_1m_v2",
+            "acquired_elapsed_seconds": 0.0,
+            "acquisition_generation": "UNMEASURED",
+            "adapter_calls": 1,
+            "committed_elapsed_seconds": 0.0,
+            "generation_basis": "matched_immutable_cache_objects_not_wire_or_broker_id",
+            "local_read_id": "10752:71:live:webull_1m_v2:1",
+            "pass_id": 71,
+            "process_pid": 10752
+          },
+          "covered_readers": [],
+          "facts_at_pass_start": {
+            "fresh": true,
+            "known": true
+          },
+          "nominal_seconds": 60,
+          "state": "flat",
+          "would": "read"
+        }
+      ],
+      "as_of": "2026-10-08T14:00:00+00:00",
+      "basis": "nominal_counterfactual_not_decision_equivalence",
+      "dropped_observations": 0,
+      "other_oms_and_external_readers": "UNMEASURED",
+      "outcome": "synthetic_ok",
+      "pass_id": 71,
+      "policy_applied": false,
+      "process_pid": 10752,
+      "wire_calls_saved": "UNMEASURED"
+    },
+    {
+      "dropped_reader_observations": 0,
+      "other_oms_and_external_readers": "PARTIAL",
+      "policy_applied": false,
+      "process_pid": 10752,
+      "reader_sequence": 1,
+      "readers": [
+        {
+          "account": "live:webull_1m_v2",
+          "adapter_calls": 1,
+          "adapter_read_id": "10752:1:live:webull_1m_v2",
+          "generation": "2026-10-08T14:00:00+00:00",
+          "generation_basis": "caller_observed_metadata_not_wire_id",
+          "outcome": "returned_not_wire_proof",
+          "overlapping_periodic_passes": [
+            {
+              "account": "live:webull_1m_v2",
+              "acquired_elapsed_seconds": 0.0,
+              "acquisition_generation": "UNMEASURED",
+              "adapter_calls": 1,
+              "committed_elapsed_seconds": 0.0,
+              "elapsed_seconds": 59.0,
+              "generation_basis": "matched_immutable_cache_objects_not_wire_or_broker_id",
+              "local_read_id": "10752:71:live:webull_1m_v2:1",
+              "pass_id": 71,
+              "process_pid": 10752,
+              "shadow_receipt_emitted": true
+            }
+          ],
+          "periodic_evidence": "UNMEASURED",
+          "provider": "webull",
+          "reader": "reconcile_tri_state",
+          "reader_acquisition_generation": "UNMEASURED",
+          "reader_provider_scope": "UNMEASURED",
+          "same_source_generation": "UNMEASURED",
+          "source": "adapter_positions",
+          "webull_cadence_eligible": true
+        }
+      ],
+      "window_seconds": 60,
+      "wire_calls": "UNMEASURED",
+      "wire_calls_saved": "UNMEASURED"
+    },
+    {
+      "dropped_reader_observations": 0,
+      "other_oms_and_external_readers": "PARTIAL",
+      "policy_applied": false,
+      "process_pid": 10752,
+      "reader_sequence": 2,
+      "readers": [
+        {
+          "account": "live:webull_1m_v2",
+          "adapter_calls": 1,
+          "adapter_read_id": "10752:2:live:webull_1m_v2",
+          "generation": "2026-10-08T14:00:00+00:00",
+          "generation_basis": "caller_observed_metadata_not_wire_id",
+          "outcome": "returned_not_wire_proof",
+          "overlapping_periodic_passes": [
+            {
+              "account": "live:webull_1m_v2",
+              "acquired_elapsed_seconds": 0.0,
+              "acquisition_generation": "UNMEASURED",
+              "adapter_calls": 1,
+              "committed_elapsed_seconds": 0.0,
+              "elapsed_seconds": 59.0,
+              "generation_basis": "matched_immutable_cache_objects_not_wire_or_broker_id",
+              "local_read_id": "10752:71:live:webull_1m_v2:1",
+              "pass_id": 71,
+              "process_pid": 10752,
+              "shadow_receipt_emitted": true
+            }
+          ],
+          "periodic_evidence": "UNMEASURED",
+          "provider": "webull",
+          "reader": "exit_snapshot_refresh",
+          "reader_acquisition_generation": "UNMEASURED",
+          "reader_provider_scope": "UNMEASURED",
+          "same_source_generation": "UNMEASURED",
+          "source": "adapter_positions",
+          "webull_cadence_eligible": true
+        }
+      ],
+      "window_seconds": 60,
+      "wire_calls": "UNMEASURED",
+      "wire_calls_saved": "UNMEASURED"
+    },
+    {
+      "dropped_reader_observations": 0,
+      "other_oms_and_external_readers": "PARTIAL",
+      "policy_applied": false,
+      "process_pid": 10752,
+      "reader_sequence": 3,
+      "readers": [
+        {
+          "account": "live:schwab_1m_v2",
+          "adapter_calls": 1,
+          "adapter_read_id": "10752:3:live:schwab_1m_v2",
+          "generation": "2026-10-08T14:00:00+00:00",
+          "generation_basis": "caller_observed_metadata_not_wire_id",
+          "outcome": "returned_not_wire_proof",
+          "overlapping_periodic_passes": [],
+          "periodic_evidence": "UNMEASURED",
+          "provider": "schwab",
+          "reader": "orb_close_positions",
+          "reader_acquisition_generation": "UNMEASURED",
+          "reader_provider_scope": "schwab",
+          "same_source_generation": "UNMEASURED",
+          "source": "adapter_positions",
+          "webull_cadence_eligible": false
+        }
+      ],
+      "window_seconds": 60,
+      "wire_calls": "UNMEASURED",
+      "wire_calls_saved": "UNMEASURED"
+    },
+    {
+      "dropped_reader_observations": 0,
+      "other_oms_and_external_readers": "PARTIAL",
+      "policy_applied": false,
+      "process_pid": 10752,
+      "reader_sequence": 4,
+      "readers": [
+        {
+          "account": "live:schwab_1m_v2",
+          "adapter_calls": 1,
+          "adapter_read_id": "10752:4:live:schwab_1m_v2",
+          "generation": "2026-10-08T14:00:00+00:00",
+          "generation_basis": "caller_observed_metadata_not_wire_id",
+          "outcome": "returned_not_wire_proof",
+          "overlapping_periodic_passes": [],
+          "periodic_evidence": "UNMEASURED",
+          "provider": "schwab",
+          "reader": "orb_close_positions",
+          "reader_acquisition_generation": "UNMEASURED",
+          "reader_provider_scope": "schwab",
+          "same_source_generation": "UNMEASURED",
+          "source": "adapter_positions",
+          "webull_cadence_eligible": false
+        }
+      ],
+      "window_seconds": 60,
+      "wire_calls": "UNMEASURED",
+      "wire_calls_saved": "UNMEASURED"
+    },
+    {
+      "dropped_reader_observations": 0,
+      "other_oms_and_external_readers": "PARTIAL",
+      "policy_applied": false,
+      "process_pid": 10752,
+      "reader_sequence": 5,
+      "readers": [
+        {
+          "account": "live:webull_1m_v2",
+          "adapter_calls": 1,
+          "adapter_read_id": "10752:5:live:webull_1m_v2",
+          "generation": "2026-10-08T14:00:00+00:00",
+          "generation_basis": "caller_observed_metadata_not_wire_id",
+          "outcome": "returned_not_wire_proof",
+          "overlapping_periodic_passes": [
+            {
+              "account": "live:webull_1m_v2",
+              "acquired_elapsed_seconds": 0.0,
+              "acquisition_generation": "UNMEASURED",
+              "adapter_calls": 1,
+              "committed_elapsed_seconds": 0.0,
+              "elapsed_seconds": 60.0,
+              "generation_basis": "matched_immutable_cache_objects_not_wire_or_broker_id",
+              "local_read_id": "10752:71:live:webull_1m_v2:1",
+              "pass_id": 71,
+              "process_pid": 10752,
+              "shadow_receipt_emitted": true
+            }
+          ],
+          "periodic_evidence": "UNMEASURED",
+          "provider": "webull",
+          "reader": "reconcile_tri_state",
+          "reader_acquisition_generation": "UNMEASURED",
+          "reader_provider_scope": "UNMEASURED",
+          "same_source_generation": "UNMEASURED",
+          "source": "adapter_positions",
+          "webull_cadence_eligible": true
+        }
+      ],
+      "window_seconds": 60,
+      "wire_calls": "UNMEASURED",
+      "wire_calls_saved": "UNMEASURED"
+    }
+  ],
+  "synthetic_adapter_calls": [
+    {
+      "account": "live:webull_1m_v2",
+      "observed_time": 100.0
+    },
+    {
+      "account": "live:webull_1m_v2",
+      "observed_time": 159
+    },
+    {
+      "account": "live:webull_1m_v2",
+      "observed_time": 159
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "observed_time": 159
+    },
+    {
+      "account": "live:schwab_1m_v2",
+      "observed_time": 159
+    },
+    {
+      "account": "live:webull_1m_v2",
+      "observed_time": 160
+    },
+    {
+      "account": "live:webull_1m_v2",
+      "observed_time": 160.001
+    }
+  ],
+  "wire_calls_saved": "UNMEASURED"
+}

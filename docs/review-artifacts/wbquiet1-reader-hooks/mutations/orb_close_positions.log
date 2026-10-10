@@ -1,0 +1,54 @@
+.....FF...................                                               [100%]
+=================================== FAILURES ===================================
+_______ test_unreadable_real_read_keeps_existing_failure_semantics[orb] ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b1c85c0>
+reader = 'orb'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["reconcile", "refresh", "orb"])
+    async def test_unreadable_real_read_keeps_existing_failure_semantics(monkeypatch, reader):
+        service, _frame, _clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.side_effect = RuntimeError("unreadable")
+        if reader == "reconcile":
+            assert await service._broker_symbol_position_state(WB, "IPDN") is _PositionRead.UNKNOWN
+        elif reader == "refresh":
+            assert await service._refresh_broker_position_quantity(
+                session=object(), broker_account_id=uuid4(), broker_account_name=WB, symbol="IPDN",
+            ) is None
+            service.store.sync_account_positions.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="unreadable"):
+                await orb_schwab_eod._broker_quantity(service, SimpleNamespace(
+                    account=SCHWAB, symbol="IPDN", quantity=Decimal("2")))
+>       row = notes(service)[0]["readers"][0]
+              ^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/unit/test_wbquiet_shadow_readers.py:118: IndexError
+________ test_orb_eod_repeated_reads_are_schwab_not_webull_consumption _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b1be240>
+
+    @pytest.mark.asyncio
+    async def test_orb_eod_repeated_reads_are_schwab_not_webull_consumption(monkeypatch):
+        service, _frame, _clock = harness(monkeypatch)
+        service.broker_adapter.list_account_positions.return_value = [position(SCHWAB)]
+        target = SimpleNamespace(account=SCHWAB, symbol="IPDN", quantity=Decimal("2"))
+        for _ in range(2):
+            assert await orb_schwab_eod._broker_quantity(service, target) == 2
+        assert service.broker_adapter.list_account_positions.await_count == 2
+        records = notes(service)
+        rows = [r["readers"][0] for r in records]
+>       assert [r["reader"] for r in rows] == ["orb_close_positions"] * 2
+E       AssertionError: assert [] == ['orb_close_p...se_positions']
+E         
+E         Right contains 2 more items, first extra item: 'orb_close_positions'
+E         Use -v to get more diff
+
+tests/unit/test_wbquiet_shadow_readers.py:133: AssertionError
+- generated xml file: /tmp/wbquiet1-reader-hooks-release-mutations/orb_close_positions.xml -
+=========================== short test summary info ============================
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_unreadable_real_read_keeps_existing_failure_semantics[orb]
+FAILED tests/unit/test_wbquiet_shadow_readers.py::test_orb_eod_repeated_reads_are_schwab_not_webull_consumption
+2 failed, 24 passed in 0.88s
