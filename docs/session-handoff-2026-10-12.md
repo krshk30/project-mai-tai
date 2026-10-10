@@ -34,6 +34,7 @@ Do not carry an old GREEN, PID, or admission result forward as current proof.
 | C7 | 2026-10-10 19:14:25 ET: all three C6 raw pairs completed FAIL. Run 38093892061: F loop/close 47.875/69.622 ms FAIL, I 2.057/35.632 PASS; 38093893540: F 37.872/61.930 FAIL, I 2.794/110.749 FAIL; 38093895366: F 42.029/57.641 FAIL, I 2.930/21.392 PASS. Each measured 14,400 quotes over 60 seconds, about 240 events/s, 25 BUY submissions and a physical 30-second stalled read. Streak remains 0/3, limit unchanged. This supersedes C6's pending status. | codex-2 |
 | C8 | 2026-10-10 19:21 ET assessment: C7's retained parent-commit spans include final autoflush, not isolated PostgreSQL WAL time; no current raw GC witness proves their cause. No proven redundant persistence step was removed. Workflow-only 228ff714 binds attribution run 38094582571 to current F3794/Ib6; 19 observer controls PASS. Diagnostic results are not raw acceptance. Original DKI/JZ remain blocked: current Schwab leaf lacks a verified complete all-age working-order inventory producer; positions and capped entry-window hints are insufficient. No production action or fabricated completeness. | codex-2 |
 | C9 | 2026-10-10 19:25 ET: attribution run 38094582571 completed, F loop/close 36.784/59.037 ms FAIL, I 35.060/54.943 FAIL. Retained generation-2 collections in get_or_create_order's required dirty-session ORM autoflush: F EXIT11 40.726 wall/39.690 CPU ms; I EXIT33 39.362/38.800 ms, both workers, SQLAlchemy unitofwork/find_cycles. This is the collection trigger, not retained-object provenance or proof that all earlier raw failures had the same cause. Protected DBAPI commit maxima 1.127/1.084 ms in this diagnostic; bounded 512 records dropped 2,011/2,013 older records, no universal absence-of-waits claim. Source, GC policy and strict harness unchanged; raw streak remains 0/3. Original DKI/JZ producer/order endings still missing. No pin/deployment request. | codex-2 |
+| C10 | 2026-10-10 19:38 ET: published matched F68e867bb / I9841d8d9; common OMS/DB/broker and canonical strict-test diff empty. I Validate 38093894745 had failed the original RESERVE1 retry-cap test because its required rejection audit was queued. Four-line correction keeps zero-fill oversold SELL rejection audit inline as recovery admission proof; ordinary accepted closes stay FIFO. Sixteen new deterministic SQLite/PostgreSQL controls plus existing RESERVE1/FIFO/PG worker controls: 76 PASS in 5.77 s, Ruff clean. Removing the guard: 12 RED / 4 PASS; restored byte-identical before rerun and push. A first combined command named a nonexistent test and ran none; corrected command produced the 76-pass receipt. New raw strict pair 38095574295 and both Validate pairs pending. Not a latency fix or readiness claim; original DKI/JZ complete-book evidence remains missing, no pin or production action. | codex-2 |
 
 SAT2 ALERTS and SAT7 reconciler logging were completed and independently verified
 in the preceding handoff. Those receipts remain historical; they are not a new
@@ -43,8 +44,8 @@ Monday production-state check. Claude rows remain Claude-owned.
 
 - Keep FI original-order acceptance and strict final-head checks separate from
   incident-resolution or documentation completion; unresolved cases stay open.
-- Collector #1149 needs exact-head independent pin and required green checks
-  after any rebase; documentation preparation is not a collector deployment.
+- Collector #1149 is merged as caaef9a3 with exact-head pin and both Validate
+  runs green; no restart was required. Do not repeat the completed merge.
 - Preserve the previously approved LINE/ORB Monday observations as live-session
   checks; after-hours startup or a later historical response is not their proof.
 
