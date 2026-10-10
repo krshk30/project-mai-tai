@@ -8650,3 +8650,448 @@ Historical paper heartbeat remains visible in /health; /api/bots has no
 paper ORB row. No heartbeat DB deletion/masking. Tomorrow07:00 universe,
 09:27 evaluating/working and no-paper-anywhere remain unverified rather
 than promised. No further production action on v2 errors under ORB scope.
+
+2026-10-09 07:28 ET codex-2 C1-C3 checkpoint (own read-only sources):
+#1141 pinned2ce4953e mergedc065248e at07:21:28ET after both Validate and
+latest pin SUCCESS; whole tree c0366d24 equals pinned tree. Control deployment
+is after close, not performed. LINE Step0 uses actual current v2 log lines:
+ten MI/VEEA HTTP200 failures07:01-07:05 over-return a next-minute candle;
+the validator calls it foreign or duplicate. Fresh same-window serial reads
+returned22 candles per symbol, not original open-time OHLC. Removing
+periodType still returned25 unique MI timestamps through07:24. Diagnostic
+prefix clipping is local only. Step0 receipt on PR1127 comment6079910850;
+no build or switch activation, LINE staysOFF.
+Shared1138 f6ff295a both CI GREEN including realPG 14400quotes/60.001s,
+25BUY, physical30s stalled read, maximum loop21.713ms/protectiveclose34.818ms.
+F1133 b7 failed16 PG mixed-terminal fixture controls; tests-only78ae7653
+preserves the controlled timezone-aware timestamp explicitly and asserts
+it after commit.51 affected/307 F unit controls PASS; newPG/fullCI pending.
+I1136 actual owned lifecycle remains pending on its final head; historical
+precoverage FLYE/DKI are not retroactively certified. DB-resilience build
+is isolated, no application head or production maintenance policy yet.
+No production write, broker order, flag change or restart in this checkpoint.
+
+2026-10-09 07:41 ET codex-2 C4: DB-resilience draft PR1142 exact9641bdc6,
+basec065248e published. Periodic hold SQLOperationalError backoff is independent
+per sweep,1/2/4/8/16/30s with no control-loop sleep, non-DB/cancel propagation
+and no intent/wire replay. Needrestart app/PG protection retains security
+installs and pending warnings; live operator config backup/hash/diff is a
+mandatory after-close deployment prerequisite, not already applied.
+Writer216 focusedPASS/1SKIP/1DESELECTED and15 assertion mutantsRED; parent
+independent new-controls31PASS/1Linux-only installerSKIP1.49s. LinuxCI and
+independent review pending, NOTREADY. Sharedf6ff has both exactCI green.
+F78ae clock-fix CI reachedPG/golden, final result pending; I99fab761 integrates
+that same tests-only fix, exact full/PG pending. No production action.
+
+2026-10-09 07:45 ET codex-2 C5: actual F78ae CI pair now final. Push37923536721
+SUCCESS:8439 unitPASS/55skip,305 goldenPASS/1xfail. PR37923542111 FAILED:
+304 goldenPASS/1FAIL/1xfail, only strict concurrent-BUY/30s-read latency.
+14400 events/60.001s and25BUY: loop66.163ms, protective close73.616ms against
+unchanged50ms; scoped close3 commit47.715ms, after-wire59.177ms. Parallel
+green loop19.110ms/close33.136ms does not erase failure or explain cause.
+The16 PG timestamp controls now pass. F/I remain NOTREADY. Shared-callchain
+attribution investigation is read-only; no blind rerun/waiver/infrastructure
+claim. I99fab761 and DB9641bdc6 exact CI pending. No production action.
+
+2026-10-09 08:02 ET codex-2 C6: operator scope limited to regressions/P1s;
+DB1142 PARKED unchanged, no more build/install. LINE1143 e6a978b5 delivered
+on c065248e: future-cutoff skip and empty-filter guard only,226 focusPASS,
+old rejection mutant19 assertionFAIL/0errors, final restored27PASS/Ruffclean.
+Fresh serial read-only Schwab/Massive04:00-07:20 responses captured07:54-07:55;
+original07:01 payload not retained. Real parser/bot atomic07:09 rebuild vs
+Massive04:00: MI LONG1.2482/SHORT1.3511; VEEA LONG5.157982/LONG5.1712;
+AIXI LONG2.001056/SHORT2.2511; DKI LONG4.0543/LONG5.0616: allFAIL.
+FLYE no07:09 source/chart candle:UNMEASURED. Four Schwab prefixes10 bars
+from07:00 versus190 chart bars from04:00. Zero rebuild buys, preMIflip rest
+and historical other-symbol trace parity not certified; gate exits1,LINEOFF.
+I11b26 both exactCI14/15 goldenFAIL, including transport/CAS and strict
+latency; noREADY or waiver. Earlier139 has concurrent SQLite worker lead,
+not yet causal proof. Sourceproposals limited to currentregressions. No box
+write, flags, service change, orders, merge or installation in this turn.
+
+2026-10-09 08:07 ET codex-2 C7: shared1138 tests-only7ca1801a adds bounded
+slow SQL/commit thread and OMS call-site attribution; F1133 cherry-picks
+unchanged44a3d5ef, application source diff vs78ae EMPTY. Strict workload and
+50ms bounds unchanged;151 shared unitPASS/6.07s,16 PG collected, not local
+execution. New hostedCI pending, no prior-green inheritance. I remains sole
+writer for real transport/CAS and139 fixture investigation. Session agent
+capacity denied new LINE worker; parent implemented LINE locally, no parked
+DB work or cross-writer source patch. No READY, waiver or production action.
+
+2026-10-09 08:53 ET codex-2 C8: LINE v3 draft1143 21bb5bc5 uses Massive
+only04:00-06:59 and Schwab>=07; one seed/request/session, cached failure,
+existing bounded worker/live fallback. Population25 daily3/7/6/7/2,
+open2/3/4/2/2; fresh08:25-08:27, original07:01 body not retained. Focus409P
+55skip; mutants26/1/1/5 assertionFAIL, final restored/Ruff clean. 07:09
+math21exact/4unknown; full controlled projection19P/2F/4unknown. MI
+SHORT1.3511age15 chart-matched but waiting admission lacks canonical
+owner/budget/book/quotes; LGHL later runtime flips differ; IPDN/NXTS/FLYE/
+HKIT missing07:09 candle. Historical rest/order parity UNMEASURED; zero
+rebuild buys. LINE stays OFF, no live trial. F44a3d5e both hosted green
+8489unit/305golden, but I77 latency red; diagnostic final LOOP report commit
+service.py2562. New shared6849b52a and unchanged F44a20472 move that wrapped
+adapter commit off-loop with repeated-cancel completion fence.154 controls
+PASS;18 realPG controls collected only locally, new CI pending, not READY.
+Original139 native causality remains unproven. No production write/flag/
+service/order/merge/install. Sole I writer Singer, parent LINE/shared/F;
+new agent capacity denied, no overlapping writers or parked-lane work.
+
+2026-10-09 08:59 ET codex-2 C9: latest LINE1143 e94dbcb1 is tests-only over
+21bb; src/ops/scripts diff EMPTY.410focusPASS/55skip,45v3PASS; final runner
+rc1,25rows19P/2F/4unknown,21exact07:09math matches,0historicalBUY,max1seed.
+MI controlled readable empty owner/budget/freshflat public APIs still leave
+retrysegment0 while restoring06:54short. Existing retry_segment_unknown
+guard refuses waiting; not waived, no invented canonical generation.
+Historical rest/order parity stillUNMEASURED; LINEOFF/no trial. Source21bb
+hosted bothValidateGREEN (push8175unit/55skip,94golden/1xfail); latest test
+headCIpending, no inheritedgreen claim. Shared6849 report-worker mutants
+3Fsync/1Foldcancelfence, restoredgitclean154PASS/7.49s. F44a20472/Ica9930d6
+consumeunchanged; strictnewPG/latencyCIpending, original139causalityowed.
+No READY/waiver/merge/install/boxwrite/order/flag/serviceaction.
+
+2026-10-09 09:24 ET codex-2 C10: LINE1143 fa1595ea remains draft and OFF.
+Missing readable unused retry identity is journaled from historical SELL
+off-loop, then fenced before publication. Consumed/unknown/bound owners
+not reset.191focusedPASS/62newcontrols;3newmutantsRED1F/2F/1F, restored.
+25 line/flip diagnostics now match (24seeded, NXTS measured-unseeded),
+0 historical buys. MI control arms before07:17; real-close budget retained.
+LGHL has0 missing-relative/extra/commonOHLC provider differences07-08;
+runner lacked real gap hold events; corrected existing hold/resume yields
+07:01SELL/07:31BUY/07:53SELL. Late IPDN/NXTS/FLYE/HKIT measured at first
+watched bar. Watchlist ledger refines25conservative to22actuallywatched,
+3pre07-only diagnostics. Four retained first-arm receipts captured; full
+historical rest/order parity remains UNMEASURED, not certified by flat
+controls. Prior e94 hostedValidatex2GREEN; currenthead pending. Shared6849
+push fails strictclose99.890ms while parallelPRpasses; slow spans worker
+commit86.961/51.327ms. F44a20472 bothred; Ica9930d6 bothred, unit timing
+and strictlatency. Original native139 not reproduced/causally certified.
+No READY/waiver/merge/install/productionwrite/service/flag change. Latest
+operator narrow set preserves LINEOFF/draft; control1141 tonight only,
+F/I only if newly READY/pinned; nothing half-ready installs.
+
+2026-10-09 09:51 ET codex-2 C11: L4/L5 parallel assessment published on
+draft1143 head120425200965e6c63944ed0e64be2b45e181020c, source unchanged
+fromfa1595ea. Recorded25 symbol-days07-07:59:1373 paired/time-matched,
+only-M0/only-S0,1361 OHLCexact,0 volumeexact; Massive greater1373/1373.
+Max OHLC0.463768%, max volume89.316239% LGHL; differences unjudged.
+Odd-lot/fractional sale-condition rules documented by Massive, but cause
+of Schwab differences unproven without matched trade-condition evidence.
+Fixed prefix/same timestamps07:09 OHLC substitution21 unchanged and4
+UNMEASURED absent exact minute. General callback leaks Massive prefix
+volume into state.bars/VWAP and relative-volume inputs in23 of25; NXTS
+andHKIT no-prefix controls. Actual x0/x100 parser/rebuild/runtime run25
+sampled line/flip/entry/intent decisions identical, not isolation proof.
+Both diagnostic scripts rc1 truthfully. Complete reader inventory and
+proposed ledger/math-only prefix cut in PR body; cut NOT built pending
+review.138 focusedPASS,21 new parity plus4 reachability controls;
+two audit mutantsRED1F/1F and restored,Ruff/diffclean. Priorfa hosted
+Validatex2GREEN; newhead37939419211/37939425388 inprogress. Shared/F/I
+remain NOTREADY with strict50ms failures; Singer owns causal attribution,
+no threshold waiver or original139 proof. LINEOFF/draft, historical
+orderparity and RTH-recorded-restart parity remain UNMEASURED. No box
+read/write, source cut, merge, installer, service or flag action this task.
+
+2026-10-09 09:56 ET codex-2 C12: actual pairedPGdiagnostic37939533918
+on I0ff1ac1b9d292d3c54485044e908c0749dc54358 completed FAILURE.
+Source unchanged Ica9930d6/F44a20472/shared6849. Floop51.422ms and
+protectiveclose74.690ms; Iloop61.037ms/close28.266ms. Both fail unchanged
+50ms loop gate; continue-on-error capture-step success is NOT green.
+F EXIT11 record: worker generation2GC54.627ms/CPU53.899ms during
+service._collect_drift_cancel_candidates16262/_unit1007, overlapping
+intent74.626ms. Imax61.037ms remains unattributed (61 records dropped),
+not proved by the F witness; original75.954ms has no captured cause.
+Raw pair artifact under/tmp/paired-close-latency-37939533918. New I
+Validate pair37939533861/37939542015 and LINE12042520 pair37939419211/
+37939425388 still running. No source fix, READY, waiver or production
+action. F/I remains excluded from tonight absent actual green+pin.
+
+2026-10-09 10:21 ET codex-2 C13: approved L5 ledger-only cut delivered
+on draft1143 cba513786c84e1dcb58a334cfa7bb89fe4aed236. Four source lines
+observe Massive pre07 prefix only in ledger; general callback retains
+Schwab>=07 suffix. Volume audit rc0/25 decision and reader-input pairs
+identical under prefix x0/x100;23 seededPASS and NXTS/HKIT unseeded
+controls. Prefix callback/buffer/relative-window bars and seedDBwrites0.
+All25 state/level/age/read-time/flips and runtime decisions unchanged
+versus12042520 baselines. L4 source equality still diagnosticrc1:
+1373 paired/1361 OHLCexact/0 volumeexact,21 exact07:09OHLCimpactPASS
+and4 no-minuteUNMEASURED. Volume differences operator-judged irrelevant
+after cut, not declared vendor equality. 162focusedPASS, Ruff/diffclean;
+remove boundary24F/2no-prefixPASS, mutationrestored. NewValidate pair
+37943276082/37943285925 running; prior120x2green not inherited. AgentA
+separateORBFILL1 O5proof/build, SingerF/Iattribution, no latencywaiver.
+LINEOFF/draft, no merge/pin/install/productionwrite/service/flagaction.
+
+2026-10-09 10:48 ET codex-2 C14: three-lane delivery recorded. LINE1143
+cba513786c84e1dcb58a334cfa7bb89fe4aed236 exactValidatex2SUCCESS,
+8242unitPASS/55skip,94PG/goldenPASS/1xfail; approved ledger-only L5
+cut and all25 unchanged diagnostics asC13; LINEOFF/draft/noinstall.
+ORBFILL draft1144 1001874b50b5d1fc82f3adbf0bd0ef63484acc00 has264focus
+PASS/12mutantsRED and parent132PASS. Independent review corrected
+stale all-on145/153counts to146/154 and providerraw-nonempty/scopedempty
+guard (wrong-day-only response could synthesize77bars fromsavedanchor).
+ActualO5GETs10:19:53ET HTTP200, not09:27. Parentoffline09:27 cutoff09:26
+on those laterresponses:VIVK29<35refused,VEEA57/nonnegative0.000329945787.
+117retainedsaved-input diagnostics evaluated09:28,105>=35unchanged,
+12noSchwabproviderpayload failclosed. ReviewerMassive counterfactual
+isnotSchwabacceptance; no substitution. ORBFILLNOTREADY;CIpending.
+F/I15c4016a diagnostics sourceIca9930/F44a20472/shared6849 unchanged:
+paired37943620847FAIL,Floop50.341/close70.680ms,I57.843/82.580ms;
+workerGC50.709/60.572ms in_collect_drift_cancel_candidates16262 captured
+misseddeadlines fornewpaironly, notdiscardedold61.037ms interval.
+OrdinaryIValidate37943636516/37943620656 bothFAILstrictPGload,
+loop95.940/70.216 andclose123.707/97.870ms,436goldenPASS/1FAIL/1xfail.
+No50mswaiver ornative139causalproof. F/I staysOUT. Source/head/test
+andrawrecordings/ghlogs checked; no productionwrite, merge,pin,deploy,
+LINE/service/flag/orderaction. Sharedhandoffheader/reviewerrowsuntouched.
+
+2026-10-09 13:40 ET codex-2 C15/C16: conditional LINE live approval
+requires all G1-G7 and exact reviewer pin. Draft1143 final16f9e624
+adds candidate97flag composition, fallback/quiet/load controls and
+weekday source fence; Sunday DST tests now expect no request and
+adjacent trading weekdays retain exact07/16 ET boundaries. Local
+G6 224.993ev/s60.002s,maxstall27.553ms;G3 threefailurecases held0
+after existing60sfallback;G4 3601minute weekend checks quiet. Volume
+isolationrc0/all25generalreaderinputs unchanged. NewCI pending;
+old23dd63fail vs exactbasec06556fail adds sixcorrectedDST failures
+and retained-on HOTFIX1 313.325ms, no performance waiver. Finalhead
+full pair running. G2 decisive Mondayclockshifted firstMIflip07:17:
+real hydrated opportunity0 request8373e311 survives, boot/fleet hold
+released, _removed_wait_gate_closedTrue,0buys. No future table or
+flat provider proof invented;actualVEEA twoacceptedbuys keptblocked.
+G7 expanded142liveARM/PLACE lines across13symbol-days; projection
+initializedbefore07:09responseavailability,all25causal comparisons
+UNMEASURED;7numericdifferences not evidenceofactualchanges. No
+sourceedit/retirement from proof workers. Two existing workers reused
+because agentcapacity full;parent sole LINEsourcewriter. Noactivation.
+Readonly ORBfinding: realdecisions logs-only/livepublisher missing;
+paper modeledtape previouslyfedbyheartbeatbridge, notdirecteventsSQL.
+ReadonlyWebullfinding: actualwarningdatesOct7=104/Oct8=111/Oct9=3,
+firstOct7beforeeveninginstall;adapterblobsidenticalacrossdeploys.
+List validation/proof can synthesize200None, warningsnotID-tagged.
+16DB-visibleordersenumerated/8knownfilledbooked;delaystoobservation
+10.802/29.332/17.721s withcausalityUNPROVEN,brokerwideunknown.
+No buildfor eitherfinding,no production action; reviewerFIX/PARKowed.
+
+2026-10-09 13:48 ET codex-2 C17: final16f9 LINE validation bothGREEN
+37966531055/37966537287,8313unitPASS/55skip,94PG/integrationPASS/1xfail
+each/RuffPASS. Local56FAIL/8257PASS/55skip vs exactc06556FAIL/8048PASS:
+failednames identical0added/removed; old23dd timing failure not waived.
+Requested G1 undraft completed, PRtitle/body explicitly G2/G7NOTREADY,
+no pin/merge/installrequest. Exacthead60s seedbenchmark13500events,
+224.992/s,maxloop31.193ms/maxquote21.465ms/1seedrequest/0buys PASS;
+same strictcontrolpassedbothLinuxruns. CorrectedG7 clocks forward:
+repair07:09:01 throughclosed07:08,lateadd firstclosedwatchedbar;
+25rows16projectedarms0intents,7numericdifferences6horizon12missing
+receipts. No historicalquotes/owner/removalreplay,notcausalorderPASS.
+ActualG2MI previous-session waitstillblocksMondayfirstflip after
+explicitboot/fleetholdrelease; finalpostarchivetableproofstillowed.
+No productionaction; ownCrows/docs only,header/reviewerrowsunchanged.
+
+2026-10-09 14:00 ET codex-2 C18: MASTER received and governs scope.
+Scheduling failure acknowledged:10:50 ORBFILL asks received but parent
+concentrated on LINE gates and failed to maintain ORBFILL progress.
+Actual capacity two subagents plus parent; extra spawn refused, not
+five independent workers. Prefer one master with stable ask IDs.
+AgentA owns O1 anchor/source/tests,O2 historical Schwab reads,O3 retained
+poll search,O4 finalCI. Root failedCI37946657648:3F/8137P/55skip;
+two catalog153->154 literals plus expected-value production recompute.
+Singer resumes FI1 strict50ms attribution. Parent L1 waits reviewer
+post-archive receipt; L2/C3 wait G2+pin+flat. T1 design only until Ogreen;
+C1 after-close fresh gates,C2 wait Oreview/pin. Reviewer acceptedG7,
+remaining LINE gate G2; no reuse of failed pre-archive snapshot.
+Webull detail/DB resilience parked. No production change. Own docs only.
+
+2026-10-09 14:14 ET codex-2 C19: latestMASTER scopes O+T parallel.
+One combined draft1145 head1c91d05b on Oadd40418; trial987b1e35
+tree-identical, two app conflicts preserve fill/deadline then tape.
+347combinedaffectedPASS; isolatedT202PASS/writerremovedRED1F;
+T-only8058PASS/56FAIL/55SKIP vs c0658048PASS/56FAIL/55SKIP,
+failednames identical0introduced/resolved in actual XML pair.
+O336focusPASS/15RED;12laterSchwabHTTP200 payloads fill57minutes
+at09:27:15;105>=35 unchanged. Matched09:28 sign11/12 not12/12;
+Sep2VIVK provider15x stored prices, no normalization/waiver shipped.
+O3 raw request/candle availability UNKNOWN;85warmup summaries are
+not HTTP telemetry. Combined Validate37970875315/37970881523
+pending and unpinned. Bounded live tape own snapshot50/day7days,
+memoryqueue128/onephysical off-loop writer/isolatedpool; actual11
+logs replayed offline, no retrospective production insertion.
+L waits reviewer archive then fresh Monday G2; FI50ms remains
+NOTREADY/latestLinuxpairFAIL. C no finalized/staged runner and no
+fresh after-close gatePASS, existing exactSHA deploy path inspected.
+Two actualworkers+parent, notfive. No production/service/flag/DB
+write,merge,pin,deploy. OwnC-row/docs only, reviewer rows preserved.
+
+2026-10-09 14:22 ET codex-2 C20: combined1145 exact1c91d05b
+Validate37970875315/37970881523 bothSUCCESS,8157unitPASS/55SKIP,
+95PG/goldenPASS/1xfail each,RuffPASS/newtapePG roundtripPASS.
+Oadd40418 alsoGREENx2. Historical split-basis mismatch and missing
+raw O3 telemetry disclosed; no READY/pin/install claimed. Singer
+correctedpair37969709238:loop48.195/42.668ms but protectiveclose
+67.443/61.729ms FAIL; captured workerGC48.815/42.701ms, separate
+NFQunitfailure notattributed. Samewriter tests narrow driftcollector
+equivalent projection/open-intent SQL, not certified finalhead.
+FreedOworker nowCprep isolatedc065 worktree,51currentgatecontrols
+PASS/58olderrepincontrols inspected only; no runner/staging yet.
+FinalSHA/pins/postarchiveG2 owed; currentpreopen cumulativeOMS/
+strategy group not reusable as control/ORB/v2 binding. Actual
+after-close gateproof stillpending. No productionwrite,merge,pin,
+restart,flag/order/DB action; ownC-row and narrative only.
+
+2026-10-09 15:03 ET codex-2 C21: latestMASTER assessment and
+ACK landed in chat; main+AgentA+Singer onFI priority1. #1145 exact
+pinned1c91 merged14:47:25ET to67131907; #1144 already merged,
+supersession recorded. Read-only directgate14:55:57ET rc0: both
+brokersflat,orders0,managed/virtual0,inflight0,stderr0. No after-close
+or staged/runnable installer claim. E41 independently confirmed3
+archived/active0. G2 fresh literal prior-sessionDBcopy/controlled
+Monday input replay:25bootcomplete,0oldgates,24repair+NXTSunseeded,
+21firstflips/4horizonlimits,0tracebacks; MI07:17BUYready. Table in
+1143body/comment6087396639, unchanged16f9 exactpin requested.
+FI source1db1 moves identical quote-less limitcachepredicate into
+SQL;131focused/82equivalence/RuffPASS. StrictLinux37976428107
+RED (Floop43.890/close67.463;Iloop55.720/close61.857ms).
+SlowIframe loopGC44.126ms at native-stopguard orderread, not
+remaining collector hydration. No threshold/GC-policy waiver.
+F7001local175caller/129neighbor/64PGPASS,28.003/23.314ms does
+not certify finalcombinedLinuxhead. SharedWebullproof withAgentA,
+FcallerSinger,mainlatency; finalcomposition/CI owed. LINE/RPG
+remainfalse live. No productionconfig/service/order/DB write;
+sharedreviewer rows/header/boards preserved.
+
+### 2026-10-09 15:59 ET - Codex-2 latest master continuation
+
+The 15:45 ONLY list stays active: main and Singer own FI; AgentA owns
+the Monday rerun then RPGRETIRE. Current published F457d89dc and
+Ie97dd9fe are frozen into Linux pair37983559886 with unchanged tests.
+The earlier pair37983131802 failed setup on an unpublished F checkpoint,
+not latency. NFQ busy-return source2dda1913 has88focusedPASS and RuffPASS;
+final strict timing and five original order endings remain incomplete.
+HEALTHNOISE1146 corrected5fedca55 reviewed83PASS, independent pin3e96ae74,
+hosted pin and ValidatePASS, merged d451edf8 at15:55:31ET; no deployment.
+ALERTS1147 current16e41c75 reviewed104PASS but held on a reproduced
+fill-only freshness counterexample: an incident closes without a complete
+broker positions sync. Account-level complete-read receipt requested in
+comment6088106740. Review results are reported immediately in boxed
+callouts; all unfinished asks persist in the task queue. No production
+config, service, order or DB write by Codex in this checkpoint.
+
+### 2026-10-09 16:22 ET - Codex-2 Wave1/FI checkpoint
+
+Wave1 is independently owned by AgentA: LINE8eda has the reviewer re-pin;
+Validate and actual restart receipts are pending. FI remains NOT READY.
+Run37985595121 measured raw unchanged strict PG passes at240ev/s for60s:
+Floop14.955/close28.888ms, Iloop14.447/close25.167ms. The instrumented I
+failure52.325/77.448ms remains recorded and is not waived. The requested
+main d451/Faffd/I70 same-runner baseline and isolated freeze/memory
+assessment37986251741 is running. Main lacks the full token runtime/test,
+so the common unchanged-source OMS workload is explicitly not a main
+token-proof certificate. Original five order endings and trial-source
+conflicts remain open. ALERTS8cbffe3d receipt correction has86independent
+focused passes, but its new OMS scope still needs strict/trial latency;
+R1128 has4CI failures. All asks persist in the durable queue. No production
+GC policy change, source pause respected after reviewer ruling; token
+optimizationfc735 was committed immediately before that ruling and is
+not deployed. Main made no production write; Wave1 evidence not received.
+
+### 2026-10-09 17:15 ET - Codex-2 Wave1 processes installed, closeout pending
+
+Main took the urgent production sequence after explicit AgentA handoff.
+bf8ca5ec is live: ORB2356722/start21:11:07Z, control2357094/start21:11:28Z,
+v22357360/start21:11:48Z; each active/NRestarts0/native health PASS.
+Both approved switches true in all three /proc, RPG false; OMS/strategy untouched.
+Fresh gates before env/every service/after sequence rc0, flat both brokers,
+no working orders/open managed or virtual rows/inflight. Env backup and raw
+stdout/stderr retained in wave1-bf8ca5ec-20261009T211035Z. Initial root Git
+key and missing new ORB assignment mechanics stopped before mutation, fixed.
+Boot5/5 warm/restored, streamer5 names, ORB fresh LIVE/session_complete.
+Zero raw tracebacks so far is not the ten-minute proof. Three historical
+VEEA confirmation-exit ERRORs disclosed; removed-wait memory count unmeasured.
+AgentA continues closeout only. Main resumes FI; completed reviews do not
+discard the queue. R exact re-pin passes, new CI blocked before testing on
+Docker container rate limit; bounded reruns. FI raw pair FAIL, updated mutation
+targets4PASS, original five endings incomplete; JZ runtime complete Schwab
+book capability absent. ALERTS31PASS, no source merge conflict, test map adapted
+locally only; combined strict PG62.090/69.017ms FAIL. No FI/ALERTS pin or Wave2.
+
+### 2026-10-09 17:58 ET - Codex-2 Wave1 closed, CI mirror merged, FI acceptance incomplete
+
+Reviewer disposed both old ORB CancelledError shutdown blocks and explicitly
+closed Wave1. Actual new-process raw traceback counts remained0 over13min;
+three historical VEEA warm-up exit warnings are not hidden. Final published
+binding check535/535PASS at21:34:02Z; preopen0d81edaa, catalog061a80f5,
+binding514b9c3c/runtime33b4da66, immutable backup212740427813Z.
+Collector shutdown classification is a separate narrow fix, no duplicate restart.
+No removed-wait process-memory witness is inferred from a missing log marker.
+#1148 bothValidate/pinPASS, reviewer merged3277ea9d at21:53:36Z.
+ECR PostgreSQL16 image fixes infra only, no test or trading threshold changed.
+Current combined I9901 has four PostgreSQL false-close transport controls PASS
+and RuffPASS, using recorded entry/bar facts and explicitly controlled broker
+answers. This is not completion of five historic original endings. JZ's real
+complete Schwab inventory producer is still absent and source stays UNKNOWN.
+Frozen raw F7b/I9901 CI37996371611 pending; first dispatch shortSHA cancelled
+before timing. ALERTS standalone/combined latency pending, R updated CI pending.
+No Wave2 deployment or F/I pin request. All unfinished asks retained in queue.
+
+### 2026-10-09 18:36 ET - Codex-2 RPGRETIRE1 deployed independently, FI acceptance remains incomplete
+
+#1128 exact2f9b8c12 validated and independently pinned, merged7807cbed22:18:10Z.
+Native OMS deploy restarted OMS2373370 at22:19:06Z and strategy2373380 at22:19:07Z;
+v22374172 started22:21:21Z. RPG false and env unchanged. Fresh direct gates before
+each step and after services/closeout rc0, flat/working0/managedvirtual0/inflight0.
+Both RPGRETIRE1 bootlines retired0; v2 restoration_complete1 with5/5warmed.
+Actualcloseout22:35:59Z rawTraceback0/ERROR0 in allthree logs since their own starts,
+live+rotatedsources retained, schema0023. OMSsync389-799ms,DB14.8tx/s;55v2probes.
+Preopen573ab936/bindingfdf2a582/runtimeafb579e6 published and538inputsverified;
+flagmismatches0 with two stoppedmomentum-paperUNKNOWN, Monday06:20ETtimerunchanged.
+Receipt/home/trader/after-hours/2026-10-09/rpgretire-7807cbed-20261009T221842Z.
+No removed-wait memory witness invented. FI remains blocked: raw37998609989
+finalFstrictFAIL/IstrictPASS; originalfiveacceptedorderendings/JZcompleteSchwabbook
+not delivered. Extended recordedFLYE nextrealBUYtest remainsRED despite initial
+controlled restoredrests accepted. ALERTS2598activewriterstrictproof stillowed;
+preparedcollector90be not pinned/deployed. Main andSinger own separatewrites;
+replacementworkercreationhit toolthreadlimit, not falsely described as running.
+
+### 2026-10-10 12:48 ET - Codex-2 SAT2/SAT6 evidence relay, SAT7 not deployed
+
+Human/main verified SAT2 at12:21 ET: main/box86e69848, OMS2431239,
+reconciler2431827,18 flat incidents closed, fresh account position-read
+receipts at about15s cadence. This is a dated relay of supplied verification,
+not a new Agent A production read. Official C6 historical Friday bar
+continuity UNKNOWN and silent reconciler logging UNKNOWN remain retained.
+
+SAT6 used the existing normal `ops/health/unexercised_watch.py --inc1` path.
+Fresh complete both-broker GET gate rc0, read2026-10-10T16:36:56Z,
+quantity0 plus exact BENF closed managed rows supported these durable closures:
+- DAIC c82c2dc0 (2026-09-17): closed16:37:09.907572Z,
+  reason `hdl1_no_position_or_open_row`.
+- BENF c7dd4f76 (2026-09-23): closed16:37:10.055055Z.
+- BENF a7472739: closed16:37:10.201219Z,
+  reason `exact_row_closed_and_broker_flat`.
+
+Receipt:
+`/home/trader/after-hours/2026-10-10/alerts1-86e69848-20261010T153758Z/benf-daic-closed-records.txt`.
+The CLI incorrectly printed held despite the successful UPDATE; main verified
+the actual durable closed rows. No SQL write outside the existing normal path
+and no auto-resolve expansion were built. Agent A performed documentation only.
+
+Main owns SAT7 logger repair #1150 a06e88045deec911bfd300b1ece7fa9b5ce17a18:
+focused tests/Ruff reported PASS,
+independent reviewer pin pending, not deployed. This does not retrospectively
+turn silent historical logging into proof. Existing Claude rows, production
+header and boards are preserved. The neutral107-commit rebase preserves every
+old patch/message/trailer; this new Codex append needs a separate Claude pin,
+alongside the23 rewritten Codex commits. Actual new-head CI remains required.
+
+### 2026-10-10 - Codex-2 SAT7 live evidence relay through17:02:50Z
+
+Main supplied the actual SAT7 install/read: box62f23f19, reconciler2440758
+started17:00:18Z/NRestarts0. Fresh native gate16:59Z rc0; native deployment
+healthy17:00:20Z. Log grew0->924bytes over six consecutive cycles from
+17:00:20Z through17:02:50Z, each findings2/critical0/warning0.
+All other five process identities and env remained unchanged.
+Receipt:
+`/home/trader/after-hours/2026-10-10/reconciler-logging-62f23f19-20261010T165930Z`.
+This supersedes C31's pre-deploy status and proves logging for this new process,
+not historical Friday bar continuity or silent historical logging; those
+UNKNOWN limits are retained. Agent A made no production call or write.
+Claude E86 and the preceding neutral-rebase history remain unchanged.
