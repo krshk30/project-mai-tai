@@ -7,7 +7,6 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import event, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm.context import ORMCompileState
 
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, Strategy, TradeIntent
 from tests.unit.test_drift_cache_projection_equivalence import (
@@ -38,25 +37,24 @@ def test_empty_book_uses_one_core_statement(lane, symbol, quote):
 def test_core_cursor_reads_skip_orm_setup(lane, monkeypatch, eligible, quote):
     service, factory, _ids = lane
     order_id = seed_order(lane, symbol="DKI") if eligible else None
-    original = ORMCompileState.orm_setup_cursor_result
-    cursor_setups = []
+    orm_statements = []
 
-    def spy(cls, session, statement, *args, **kwargs):
-        cursor_setups.append(statement)
-        return original(session, statement, *args, **kwargs)
+    def capture(state):
+        if state.is_orm_statement:
+            orm_statements.append(state.statement)
 
-    monkeypatch.setattr(ORMCompileState, "orm_setup_cursor_result", classmethod(spy))
     with factory() as session:
-        # Positive control: the former ORM column projection must trip this spy.
+        event.listen(session, "do_orm_execute", capture)
+        # Positive control: the former ORM column projection must trip this hook.
         session.execute(select(BrokerOrder.id)).all()
-        assert len(cursor_setups) == 1
-        cursor_setups.clear()
+        assert len(orm_statements) == 1
+        orm_statements.clear()
         candidates = service._collect_drift_cancel_candidates(session, "DKI", quote, 0.01)
         assert {candidate.order_id for candidate in candidates} == ({order_id} if eligible else set())
         assert not session.identity_map
     # The unchanged per-order terminal-evidence read remains ORM-enabled.
-    assert len(cursor_setups) == int(eligible)
-    assert all(BrokerOrderEvent.__table__.name in str(statement) for statement in cursor_setups)
+    assert len(orm_statements) == int(eligible)
+    assert all(BrokerOrderEvent.__table__.name in str(statement) for statement in orm_statements)
 
 
 @pytest.mark.parametrize("quote", [None, {"ask": 3.0, "bid": 2.0}])
