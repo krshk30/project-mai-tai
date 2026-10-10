@@ -1,0 +1,9 @@
+{
+  "pr_number": 1147,
+  "range_base": "7807cbed7aba634c067315ff18367c2bb42a9c7d",
+  "range_head": "b54ef55ea69716725737d9cdc8006e57268e8568",
+  "reviewed_at": "2026-10-10T15:21:00Z",
+  "reviewer": "codex-2",
+  "schema_version": 1,
+  "summary": "Independent final review carried across clean rebase: stable patch-id 4325619fbec37a937f81ccb8b70865e403bcf1d1 equals reviewed2598f512; all five Claude markers preserved; no source resolution. Complete successful positions-read receipts with original cached-wire time, failed/partial/fill-only evidence stays open, bounded off-loop own-pool writer, exact MI180 Oct5/NXL2 Oct1 allowances and other findings critical, age/exposure/order/intent vetoes and normal close path. 36 receipt/allowance controls PASS. Accepted paired unchanged real-PG baseline loop20.516/close27.759ms versus active writer loop20.238/close30.950ms, 240ev/s60s25buys30s stalledread, five persisted two-account off-loop batches. Deployment and auto-close counts not inferred."
+}
