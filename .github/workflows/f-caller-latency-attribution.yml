@@ -28,9 +28,9 @@ jobs:
           --health-interval 2s --health-timeout 5s --health-retries 10
     env:
       MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
-      F_HEAD: 7b658787f16f0aab454c39b59e2fa23aa436a8c8
-      I_HEAD: 9901f2f2a94354c7c5f8dbf197e76e4534ad03b7
-      F_REBASE_HEAD: 324a06c44649b8e91a938b69fd3b20af41a2b679
+      F_HEAD: c00aec7558ede5884c145fe4a1f4bc8540b128b7
+      I_HEAD: 576b2750079033a8bdeab312955b038d53a43906
+      F_REBASE_HEAD: c00aec7558ede5884c145fe4a1f4bc8540b128b7
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Freeze the raw failing pair without trading source or canonical test changes
+      - name: Freeze the worker-handoff pair without trading source or canonical test changes
         id: freeze
         run: |
           git fetch origin "$F_HEAD" "$I_HEAD" "$F_REBASE_HEAD"
