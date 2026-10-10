@@ -62,6 +62,10 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms.cancel_terminal import acquire_cancel_terminal_evidence, bind_cancel_target
+from project_mai_tai.oms.cancel_terminal_assessment import read_assessment_receipts
+from project_mai_tai.oms.cancel_feedback import mark_feedback_published
+from project_mai_tai.oms.buy_submission_journal import DurableBuyAdapter
 from project_mai_tai.oms import wbquiet_shadow
 from project_mai_tai.positions_read_receipt import (
     PositionsReadReceiptWriter,
@@ -773,7 +777,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self.settings = settings or get_settings()
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
         self.session_factory = session_factory or build_oms_session_factory(self.settings)
-        self.broker_adapter = broker_adapter or self._build_broker_adapter()
+        adapter = broker_adapter or self._build_broker_adapter()
+        self.broker_adapter = (
+            DurableBuyAdapter(adapter, self.session_factory)
+            if isinstance(adapter, (RoutingBrokerAdapter, SchwabBrokerAdapter, WebullBrokerAdapter))
+            else adapter
+        )
         self.store = store or OmsStore()
         self.strategy_registrations = strategy_registration_map(self.settings)
         self.instance_name = socket.gethostname()
@@ -1009,6 +1018,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     async def run(self) -> None:
         stop_event = asyncio.Event()
         _install_signal_handlers(stop_event)
+        adapter = getattr(self, "broker_adapter", None)
+        if isinstance(adapter, DurableBuyAdapter):
+            await adapter.start()
 
         seed_summary = self.seed_runtime_metadata()
         self.logger.info(
@@ -1077,6 +1089,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             except asyncio.CancelledError:
                 pass
             await self._shutdown_symbol_tick_work()
+            await self._drain_cancel_terminal_evidence()
 
         await self._publish_heartbeat(
             "stopping",
@@ -1377,6 +1390,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
         payload = json.loads(data)
         event_type = str(payload.get("event_type", "")).strip().lower()
+        if event_type == "v2_cancel_terminal_assessment":
+            self._schedule_cancel_terminal_assessment(payload)
+            return
         if event_type == "v2_entry_bar_close":
             if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True:
                 signal = self._falseflip_signal()
@@ -1626,11 +1642,59 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             self._report_confirmation_fanout(decision)
             return
 
+    async def _intent_db(self, function, *args, **kwargs):
+        # The caller leases its Session exclusively until the shielded worker ends,
+        # including repeated cancellation; no broker await runs inside this lease.
+        adapter = getattr(self, "broker_adapter", None)
+        if isinstance(adapter, DurableBuyAdapter):
+            return await adapter._db(lambda: function(*args, **kwargs))
+        return function(*args, **kwargs)
+
+    def _prepare_intent_rows(self, session, event, strategy_code):
+        if (
+            bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
+            and (strategy_code == "orb_schwab" or (
+                event.payload.intent_type == "open" and strategy_code == "schwab_1m_v2"
+            ))
+            and event.payload.broker_account_name
+            == self.settings.strategy_schwab_1m_v2_account_name
+            and session.get_bind().dialect.name == "postgresql"
+        ):
+            # Keep the existing per-symbol transaction lock through commit.
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"orb-v2:{event.payload.broker_account_name}:{event.payload.symbol.upper()}"},
+            )
+        registration = self.strategy_registrations.get(event.payload.strategy_code)
+        ensure_strategy = (self.store.ensure_intent_strategy
+            if isinstance(self.broker_adapter, DurableBuyAdapter) else self.store.ensure_strategy)
+        strategy = ensure_strategy(
+            session, event.payload.strategy_code,
+            name=(registration.display_name if registration else event.payload.strategy_code.replace("_", " ").upper()),
+            execution_mode=registration.execution_mode if registration else "paper",
+            metadata_json=(dict(registration.metadata) if registration else
+                           {"account_name": event.payload.broker_account_name}),
+        )
+        broker_account = self.store.ensure_broker_account(
+            session, event.payload.broker_account_name,
+            provider=self.settings.provider_for_account(event.payload.broker_account_name),
+            environment=self.settings.environment,
+        )
+        intent = self.store.create_trade_intent(
+            session, strategy=strategy, broker_account=broker_account, event=event,
+        )
+        return strategy, broker_account, intent
+
     @_refresh_working_cache_after_intent
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
         if self._rpg_external_retry(event):
             return []
         strategy_code = str(event.payload.strategy_code).strip().lower()
+        if event.payload.intent_type == "cancel" and isinstance(self.broker_adapter, DurableBuyAdapter):
+            # Stamp the actual writer, never enroll a late epoch or await a new
+            # proof DB/HTTP operation ahead of normal cancel feedback.
+            event.payload.metadata = {**event.payload.metadata,
+                "buy_submission_process_id": str(self.broker_adapter.process_id)}
         reserve1_dispatch = self.__dict__.get("_reserve1_hard_stop_dispatch", {}).pop(
             event.event_id, None,
         ) == event.model_dump_json()
@@ -1729,48 +1793,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "fanout_attempt_id": self._build_client_order_id(event),
             }
         with self.session_factory() as session:
-            if (
-                bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
-                and (
-                    strategy_code == "orb_schwab"
-                    or (
-                        event.payload.intent_type == "open"
-                        and strategy_code == "schwab_1m_v2"
-                    )
-                )
-                and event.payload.broker_account_name
-                == self.settings.strategy_schwab_1m_v2_account_name
-                and session.get_bind().dialect.name == "postgresql"
-            ):
-                # One OMS may run several async loops. Hold the per-symbol lock until
-                # commit so the second strategy sees the first strategy's order.
-                session.execute(
-                    text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-                    {"key": f"orb-v2:{event.payload.broker_account_name}:{event.payload.symbol.upper()}"},
-                )
-            registration = self.strategy_registrations.get(event.payload.strategy_code)
-            strategy = self.store.ensure_strategy(
-                session,
-                event.payload.strategy_code,
-                name=(registration.display_name if registration else event.payload.strategy_code.replace("_", " ").upper()),
-                execution_mode=registration.execution_mode if registration else "paper",
-                metadata_json=(
-                    dict(registration.metadata)
-                    if registration
-                    else {"account_name": event.payload.broker_account_name}
-                ),
-            )
-            broker_account = self.store.ensure_broker_account(
-                session,
-                event.payload.broker_account_name,
-                provider=self.settings.provider_for_account(event.payload.broker_account_name),
-                environment=self.settings.environment,
-            )
-            intent = self.store.create_trade_intent(
-                session,
-                strategy=strategy,
-                broker_account=broker_account,
-                event=event,
+            strategy, broker_account, intent = await self._intent_db(
+                self._prepare_intent_rows, session, event, strategy_code,
             )
 
             passed, risk_reason = self._evaluate_risk(event)
@@ -1778,7 +1802,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if rpg_refusal:
                 passed, risk_reason = False, rpg_refusal
             outcome = "pass" if passed else "reject"
-            self.store.record_risk_check(
+            await self._intent_db(self.store.record_risk_check,
                 session,
                 intent=intent,
                 strategy_id=strategy.id,
@@ -1875,17 +1899,28 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         for order_event in published_events:
                             await self._publish_order_event(order_event)
                         return published_events
-                published_events = await self._process_cancel_intent(
-                    session=session,
-                    strategy_id=strategy.id,
-                    broker_account_id=broker_account.id,
-                    intent=intent,
-                    event=event,
-                )
-                session.commit()
-                for order_event in published_events:
-                    await self._publish_order_event(order_event)
-                return published_events
+                publication = None
+                if strategy_code == "schwab_1m_v2" and event.payload.metadata.get("clearwait_removal_token"):
+                    publication = asyncio.Event()
+                    self.__dict__.setdefault("_cancel_feedback_pending", {})[intent.id] = publication
+                try:
+                    published_events = await self._process_cancel_intent(
+                        session=session, strategy_id=strategy.id,
+                        broker_account_id=broker_account.id, intent=intent, event=event,
+                    )
+                    await self._intent_db(session.commit)
+                    for order_event in published_events:
+                        await self._publish_order_event(order_event)
+                    if publication is not None:
+                        self._schedule_cancel_feedback(
+                            broker_account.name, broker_account.provider, intent.id,
+                            intent.updated_at, dict(intent.payload), published_events, publication)
+                        publication = None  # The retained worker now owns completion.
+                    return published_events
+                finally:
+                    if publication is not None:
+                        publication.set()
+                        self._cancel_feedback_pending.pop(intent.id, None)
 
             if (
                 broker_account.provider == "schwab"
@@ -2058,7 +2093,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                             symbol=event.payload.symbol,
                         )
                     )
-                duplicate_exit = self.store.find_open_exit_order(
+                duplicate_exit = await self._intent_db(self.store.find_open_exit_order,
                     session,
                     strategy_id=strategy.id,
                     broker_account_id=broker_account.id,
@@ -2082,15 +2117,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     await self._publish_order_event(order_event)
                     return [*pre_submit_events, order_event]
 
-                virtual_position = self.store.get_virtual_position(
+                virtual_quantity = await self._intent_db(self.store.get_virtual_position_quantity,
                     session,
                     strategy_id=strategy.id,
                     broker_account_id=broker_account.id,
                     symbol=event.payload.symbol,
                 )
                 strategy_available_quantity = (
-                    virtual_position.quantity
-                    if virtual_position is not None and virtual_position.quantity > 0
+                    virtual_quantity
+                    if virtual_quantity is not None and virtual_quantity > 0
                     else Decimal("0")
                 )
                 if strategy_available_quantity <= 0:
@@ -2108,14 +2143,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     await self._publish_order_event(order_event)
                     return [order_event]
 
-                account_position = self.store.get_account_position(
+                account_quantity = await self._intent_db(self.store.get_account_position_quantity,
                     session,
                     broker_account_id=broker_account.id,
                     symbol=event.payload.symbol,
                 )
                 available_quantity = (
-                    account_position.quantity
-                    if account_position is not None and account_position.quantity > 0
+                    account_quantity
+                    if account_quantity is not None and account_quantity > 0
                     else Decimal("0")
                 )
                 if available_quantity <= 0:
@@ -2546,7 +2581,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     )
                 )
 
-            session.commit()
+            if isinstance(self.broker_adapter, DurableBuyAdapter):
+                await self.broker_adapter.commit_order_reports(session)
+            else:
+                session.commit()
 
         for order_event in published_events:
             await self._publish_order_event(order_event)
@@ -2874,13 +2912,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         event: TradeIntentEvent,
     ) -> list[OrderEventEvent]:
         metadata = dict(event.payload.metadata)
-        target_order = self.store.find_open_order_for_cancel(
+        target_order = await self._intent_db(self.store.find_open_order_for_cancel,
             session,
             strategy_id=strategy_id,
             broker_account_id=broker_account_id,
             symbol=event.payload.symbol,
             metadata=metadata,
         )
+        if (event.payload.strategy_code == "schwab_1m_v2"
+                and metadata.get("clearwait_removal_token")):
+            bind_cancel_target(intent, event, self.broker_adapter, target_order)
         if target_order is None:
             self.store.mark_intent_refused(
                 intent,
@@ -3008,7 +3049,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "metadata": recorded_metadata,
                 "reason": report.reason,
             }
-            self._append_order_event_isolated(session, order=order, report=report, payload=payload)
+            await self._append_order_event_isolated_awaited(
+                session, order=order, report=report, payload=payload
+            )
             # ⛔⭐ A CANCEL INTENT TRACKS THE REQUEST; THE ORDER TRACKS THE OUTCOME.
             #
             # This used to copy `report.event_type` straight onto the intent. For a cancel the
@@ -3090,6 +3133,127 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         tasks.add(task)
         task.add_done_callback(tasks.discard)
         return task
+
+    def _schedule_cancel_feedback(self, account, provider, intent_id, revision, payload, feedback, signal):
+        tasks = self.__dict__.setdefault("_cancel_feedback_tasks", set())
+        if len(tasks) >= 64:
+            self.logger.warning("Cancel feedback journal full; request stays UNKNOWN")
+            signal.set()
+            self._cancel_feedback_pending.pop(intent_id, None)
+            return
+
+        async def run():
+            try:
+                marked = await asyncio.to_thread(
+                    mark_feedback_published, self.session_factory, intent_id, revision, payload, feedback)
+                if marked and provider == "webull":
+                    self._schedule_cancel_terminal_evidence(account, intent_id)
+                elif not marked:
+                    self.logger.warning("Cancel feedback journal unavailable; request stays UNKNOWN")
+            except Exception:
+                self.logger.warning("Cancel feedback journal failed; request stays UNKNOWN", exc_info=True)
+            finally:
+                signal.set()
+                self._cancel_feedback_pending.pop(intent_id, None)
+
+        task = asyncio.create_task(run())
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    def _schedule_cancel_terminal_assessment(self, payload: dict) -> None:
+        if getattr(self, "_cancel_terminal_closing", False):
+            return
+        try:
+            assessment_id = str(UUID(payload["assessment_id"]))
+        except (KeyError, ValueError, TypeError, AttributeError):
+            return
+        seen = self.__dict__.setdefault("_cancel_terminal_assessment_seen", {})
+        tasks = self.__dict__.setdefault("_cancel_terminal_assessment_tasks", set())
+        if assessment_id in seen:
+            return
+        if len(tasks) >= 64:
+            self.logger.warning("Cancel assessment queue full; request stays UNKNOWN")
+            return
+        seen[assessment_id] = None
+        if len(seen) > 512:
+            seen.pop(next(iter(seen)))
+
+        async def run():
+            try:
+                publications = self.__dict__.get("_cancel_feedback_pending", {})
+                waits = [publications.get(UUID(r["intent_id"])) for r in payload.get("receipts", [])[:2]]
+                await asyncio.gather(*(event.wait() for event in waits if event is not None))
+                receipts = await asyncio.to_thread(
+                    read_assessment_receipts, self.session_factory, self.broker_adapter,
+                    payload, int(datetime.now(UTC).timestamp() * 1000),
+                )
+                for account, intent_id, after_ms in receipts:
+                    self._schedule_cancel_terminal_evidence(account, intent_id,
+                                                           minimum_started_at_ms=after_ms)
+            except Exception:
+                self.logger.warning("Cancel assessment unavailable; request stays UNKNOWN", exc_info=True)
+
+        task = asyncio.create_task(run())
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    def _schedule_cancel_terminal_evidence(
+        self, account_name: str, intent_id: UUID, *, minimum_started_at_ms: int = 0,
+    ) -> None:
+        """Retain one bounded batch per account, after normal cancel feedback.
+
+        Capture IDs only, never the caller's session or its transaction/locks.
+        Evidence is UNKNOWN until the private off-loop journal write commits.
+        """
+        if getattr(self, "_cancel_terminal_closing", False):
+            return
+        tasks = self.__dict__.setdefault("_cancel_terminal_tasks", {})
+        self.__dict__.setdefault("_cancel_terminal_accounts", set()).add(account_name)
+        pending = self.__dict__.setdefault("_cancel_terminal_pending", {})
+        ids = pending.setdefault(account_name, {})
+        if len(ids) >= 256 and intent_id not in ids:
+            self.logger.warning("Cancel evidence batch full account=%s", account_name)
+            return
+        ids[intent_id] = max(ids.get(intent_id, 0), minimum_started_at_ms)
+        if account_name in tasks:
+            return
+
+        async def run():
+            try:
+                while ids:
+                    batch = dict(ids)
+                    ids.clear()
+                    try:
+                        await acquire_cancel_terminal_evidence(
+                            self.session_factory, self.broker_adapter, batch,
+                            minimum_started_at_ms=batch)
+                    except Exception:
+                        self.logger.warning("Cancel evidence unavailable account=%s", account_name,
+                                            exc_info=True)
+            finally:
+                tasks.pop(account_name, None)
+                pending.pop(account_name, None)
+
+        tasks[account_name] = asyncio.create_task(run())
+
+    async def _drain_cancel_terminal_evidence(self) -> None:
+        await asyncio.gather(*self.__dict__.get("_cancel_feedback_tasks", set()),
+                             return_exceptions=True)
+        await asyncio.gather(*self.__dict__.get("_cancel_terminal_assessment_tasks", set()),
+                             return_exceptions=True)
+        self._cancel_terminal_closing = True
+        await asyncio.gather(*self.__dict__.get("_cancel_terminal_tasks", {}).values(),
+                             return_exceptions=True)
+        # A timed-out assessment must not abandon its still-running SDK thread.
+        for account_name in self.__dict__.get("_cancel_terminal_accounts", set()):
+            try:
+                from project_mai_tai.broker_adapters.cancel_terminal import broker_binding
+                leaf, _account_id = broker_binding(self.broker_adapter, account_name)
+                cycle = getattr(leaf, "_cancel_terminal_book_cycle", None)
+                if cycle is not None:
+                    await cycle.drain()
+            except (ValueError, AttributeError):
+                pass
 
     async def _verify_cancel_landed(
         self,
@@ -4044,7 +4208,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         broker_account: BrokerAccount,
         symbol: str,
     ) -> list[OrderEventEvent]:
-        native_order = self.store.find_open_native_stop_guard_order(
+        native_order = await self._intent_db(self.store.find_open_native_stop_guard_order,
             session,
             strategy_id=strategy.id,
             broker_account_id=broker_account.id,
@@ -15486,7 +15650,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     ) -> list[OrderEventEvent]:
         published_events: list[OrderEventEvent] = []
         for report in reports:
-            order = self.store.get_or_create_order(
+            order = await self._intent_db(self.store.get_or_create_order,
                 session,
                 intent=intent,
                 strategy_id=strategy_id,
@@ -15530,7 +15694,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 report=report,
                 payload=payload,
             )
-            self._append_order_event_isolated(
+            await self._append_order_event_isolated_awaited(
                 session, order=order, report=report, payload=payload
             )
             if fill is not None:
@@ -16149,17 +16313,39 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         the limit beyond tolerance, as plain snapshots (no ORM crosses the thread).
         Mirrors the prior in-line filter exactly: open-intent only; stop-guard / non-limit
         orders are excluded by ``_quote_drift_dollars_against`` returning None."""
-        query = select(BrokerOrder).where(BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES))
+        from sqlalchemy import func
+
+        # Column rows retain the cancellation payload without ORM identity-map hydration.
+        query = select(
+            BrokerOrder.id, BrokerOrder.intent_id, BrokerOrder.strategy_id,
+            BrokerOrder.broker_account_id, BrokerOrder.client_order_id,
+            BrokerOrder.broker_order_id, BrokerOrder.symbol, BrokerOrder.side,
+            BrokerOrder.quantity, BrokerOrder.order_type, BrokerOrder.time_in_force,
+            BrokerOrder.payload, TradeIntent.intent_type,
+            TradeIntent.created_at.label("intent_created_at"),
+        ).join(TradeIntent, TradeIntent.id == BrokerOrder.intent_id).where(
+            BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES),
+            func.lower(TradeIntent.intent_type) == "open",
+        )
+        if quote is None:
+            # Cache refresh excludes these orders below; avoid decoding their payloads.
+            query = query.where(func.lower(BrokerOrder.payload["order_type"].as_string()) == "limit")
         if symbol is not None:
             query = query.where(BrokerOrder.symbol == symbol)
-        orders = session.scalars(query).all()
+        orders = session.execute(query).all()
         if not orders:
             return []
         account_lookup = {
-            account.id: account for account in self.store.list_active_broker_accounts(session)
+            account.id: account for account in session.execute(
+                select(BrokerAccount.id, BrokerAccount.name)
+                .where(BrokerAccount.is_active.is_(True))
+                .order_by(BrokerAccount.name)
+            ).all()
         }
         strategy_lookup = {
-            strategy.id: strategy for strategy in session.scalars(select(Strategy)).all()
+            strategy.id: strategy for strategy in session.execute(
+                select(Strategy.id, Strategy.code)
+            ).all()
         }
         candidates: list[_DriftCancelCandidate] = []
         for order in orders:
@@ -16178,10 +16364,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 drift = self._quote_drift_dollars_against(order, quote)
                 if drift is None or drift <= tolerance_dollars:
                     continue
-            intent = session.get(TradeIntent, order.intent_id)
-            if intent is None:
-                continue
-            if str(intent.intent_type).lower() != "open":
+            if str(order.intent_type).lower() != "open":
                 continue  # don't auto-cancel close/scale chases here
             account = account_lookup.get(order.broker_account_id)
             if account is None:
@@ -16202,7 +16385,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     existing_metadata={str(k): str(v) for k, v in (order.payload or {}).items()},
                     broker_order_id=order.broker_order_id or "",
                     limit_price=str((order.payload or {}).get("limit_price", "")),
-                    intent_created_at=intent.created_at,
+                    intent_created_at=order.intent_created_at,
                     drift=drift,
                     terminal_cancel_reports=self.store.count_terminal_cancel_refusals(
                         session,
@@ -16613,11 +16796,43 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         want to note the degradation, never a gate on recording what happened.
         """
         self._order_event_attempts += 1
+        error = self._write_order_event_savepoint(session, order=order, report=report, payload=payload)
+        return self._finish_order_event_write(error, order=order, report=report)
+
+    def _write_order_event_savepoint(self, session, *, order, report, payload, use_core=False):
         try:
             with session.begin_nested():
-                self.store.append_order_event(session, order=order, report=report, payload=payload)
-            return True
-        except Exception:  # noqa: BLE001 - an audit row must never cost a fill
+                if use_core:
+                    self.store.append_order_event(
+                        session, order=order, report=report, payload=payload, use_core=True)
+                else:
+                    self.store.append_order_event(session, order=order, report=report, payload=payload)
+            return None
+        except Exception as error:  # noqa: BLE001 - an audit row must never cost a fill
+            return error
+
+    async def _append_order_event_isolated_awaited(self, session, *, order, report, payload):
+        if not isinstance(self.broker_adapter, DurableBuyAdapter):
+            return self._append_order_event_isolated(session, order=order, report=report, payload=payload)
+        self._order_event_attempts += 1
+        # This intent exclusively leases its Session until the shielded worker
+        # finishes. Audit counters and all protection state stay on the loop.
+        outcome = {}
+        def write():
+            outcome["error"] = self._write_order_event_savepoint(
+                session, order=order, report=report, payload=payload, use_core=True)
+            return outcome["error"]
+        try:
+            error = await self.broker_adapter._db(write)
+        except asyncio.CancelledError:
+            # _db has finished the lease before propagating cancellation. A
+            # dropped audit must still be counted and logged during shutdown.
+            self._finish_order_event_write(outcome["error"], order=order, report=report)
+            raise
+        return self._finish_order_event_write(error, order=order, report=report)
+
+    def _finish_order_event_write(self, error, *, order, report):
+        if error is not None:
             self._order_event_failures += 1
             self.logger.error(
                 "[OMS-ORDER-EVENT-DROPPED] %s %s coid=%s status=%s — the audit row was NOT "
@@ -16632,9 +16847,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 getattr(report, "event_type", "?"),
                 self._order_event_failures,
                 self._order_event_attempts,
-                exc_info=True,
+                exc_info=(type(error), error, error.__traceback__),
             )
             return False
+        return True
 
     def _maybe_emit_order_event_census(self, *, interval_seconds: float = 300.0) -> None:
         """Periodic rollup of audit-row writes. Emits at ZERO failures, deliberately.
@@ -17244,8 +17460,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if callable(fetcher):
             quotes = await fetcher([symbol])
             return dict(quotes.get(symbol.upper(), {}))
-        if isinstance(self.broker_adapter, RoutingBrokerAdapter):
-            adapter = self.broker_adapter._adapter_for_account(broker_account_name)
+        delegate = getattr(self.broker_adapter, "cancel_terminal_delegate", self.broker_adapter)
+        if isinstance(delegate, RoutingBrokerAdapter):
+            adapter = delegate._adapter_for_account(broker_account_name)
             fetcher = getattr(adapter, "fetch_quotes", None)
             if callable(fetcher):
                 quotes = await fetcher([symbol])

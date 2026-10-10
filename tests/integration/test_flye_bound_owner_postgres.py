@@ -1,0 +1,251 @@
+"""FLYE chronology through the real PG journal; broker responses are controlled, not live."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from datetime import UTC, datetime
+from decimal import Decimal
+from threading import get_ident
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.engine import make_url
+
+from project_mai_tai.broker_adapters import cancel_terminal as broker
+from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
+from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBrokerAdapter
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, OmsManagedPosition, Strategy, TradeIntent
+from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.oms import cancel_terminal as journal
+from project_mai_tai.v2_flip_entry_ownership import FlipPositionLeg
+from project_mai_tai.v2_removed_wait import RemovedWaitStore
+from tests.integration.test_cancel_terminal_runtime import (
+    Client, adapter, sdk, sessions,  # noqa: F401
+)
+from tests.unit.test_flye_bound_owner_target_close import (
+    FLYE, PRIMARY, WEBULL, book, replay, sell,
+)
+
+
+@pytest.fixture
+def pg(request):
+    url = make_url(os.environ.get("MAI_TAI_DATABASE_URL", ""))
+    assert url.host in {"localhost", "127.0.0.1"} and url.database.endswith("_test")
+    return request.getfixturevalue("sessions")
+
+
+def routed_accounts(client):
+    webull = adapter(client)._adapter_for_account(WEBULL)
+    primary = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
+    primary.accounts_by_name = {PRIMARY: SchwabAccountConfig(account_hash="TEST-SCHWAB")}
+    calls = []
+
+    async def get(method, path):
+        calls.append((method, path, get_ident()))
+        return 200, {}, {"orderId": "test-schwab-target", "status": "CANCELED",
+                         "filledQuantity": 0,
+                         "orderLegCollection": [{"instrument": {"symbol": "FLYE"}}]}
+
+    primary._authorized_request_json = get
+    routed = RoutingBrokerAdapter(default_provider="schwab",
+        provider_by_account={PRIMARY: "schwab", WEBULL: "webull"},
+        factories_by_provider={"schwab": lambda: primary, "webull": lambda: webull})
+    return routed, calls
+
+
+def persist_controls(factory, routed, request, drafts, *, unbound=False):
+    """Explicit future-request target bindings, never assigned to the legacy FLYE receipt."""
+    ids = []
+    at = datetime.fromtimestamp((request.requested_at_ms + 200) / 1000, UTC)
+    with factory() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="I controlled PG replay")
+        accounts = {PRIMARY: BrokerAccount(name=PRIMARY, provider="schwab", environment="test",
+                                          external_account_id="TEST-SCHWAB"),
+                    WEBULL: BrokerAccount(name=WEBULL, provider="webull", environment="test",
+                                         external_account_id="ACC1")}
+        session.add_all([strategy, *accounts.values()])
+        session.flush()
+        for name, draft in zip((PRIMARY, WEBULL), drafts, strict=True):
+            md = dict(draft.metadata)
+            if not unbound:
+                md["target_client_order_id"] = "test-primary" if name == PRIMARY else "test-webull"
+                if name == PRIMARY:
+                    md["broker_order_id"] = "test-schwab-target"
+                    session.add(BrokerOrder(strategy_id=strategy.id, broker_account_id=accounts[name].id,
+                        client_order_id="test-primary", broker_order_id="test-schwab-target",
+                        symbol="FLYE", side="buy", order_type="limit", time_in_force="day",
+                        quantity=1, status="cancelled", submitted_at=at, updated_at=at))
+            event = TradeIntentEvent(source_service="I controlled replay", payload=TradeIntentPayload(
+                strategy_code="schwab_1m_v2", broker_account_name=name, symbol="FLYE",
+                side="buy", intent_type="cancel", quantity=Decimal(1),
+                reason=draft.reason, metadata=md))
+            intent = TradeIntent(strategy_id=strategy.id, broker_account_id=accounts[name].id,
+                symbol="FLYE", side="buy", intent_type="cancel", quantity=1, reason=draft.reason,
+                status="rejected", created_at=at, updated_at=at,
+                payload={"event_id": str(event.event_id), "metadata": md,
+                         "refusal_origin": "skipped_before_submit",
+                         "refusal_code": "cancel_target_not_found"})
+            journal.bind_cancel_target(intent, event, routed)
+            session.add(intent)
+            session.flush()
+            ids.append(intent.id)
+        session.commit()
+    return ids
+
+
+async def journal_proof(factory, routed, ids, store, request, now_ms):
+    await journal.acquire_cancel_terminal_evidence(factory, routed, ids)
+    return (await asyncio.to_thread(store.proofs, (request,), set(request.account_names),
+                                   now=datetime.fromtimestamp(now_ms / 1000, UTC)))[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sdk")
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("fault", ["none", "working", "partial", "unbound", "stale", "open", "unknown", "held"])
+async def test_pg_bound_ids_without_schwab_dispatch_proof_stay_unknown(pg, monkeypatch, pm, fault):
+    strategy, state, record, clock, _ = replay(pm=pm)
+    store = RemovedWaitStore(pg)
+    strategy._removed_wait_persist = store.record
+    book(strategy, record, clock)
+    request = strategy._removed_wait_requests["FLYE"]
+    drafts = (strategy.drain_pending_intents()[0], strategy.drain_webull_direct_intents()[0])
+    pages = [{"has_next": False, "orders": []}]
+    if fault == "working":
+        pages[0]["orders"] = [{"client_order_id": "test-webull", "symbol": "FLYE",
+                                "order_status": "SUBMITTED"}]
+    elif fault == "partial":
+        pages = [{"has_next": True, "orders": []}]
+    client = Client(pages=pages)
+    routed, calls = routed_accounts(client)
+    ids = persist_controls(pg, routed, request, drafts, unbound=fault == "unbound")
+    clock[0] = FLYE["fresh_sell_poll_ms"]
+    book(strategy, record, clock)
+    sell(strategy, state, clock)
+    assert state.flip_owner_phase == "awaiting_close"
+    assert not strategy._strict_first_rest_admitted(state, slot="first")
+    monkeypatch.setattr(broker, "now_ms", lambda: clock[0] - (15_001 if fault == "stale" else 0))
+    proof = await journal_proof(pg, routed, ids, store, request, clock[0])
+    # Exact future IDs do not replace the missing actual Schwab dispatch witness.
+    assert not proof.clear
+    strategy.apply_removed_wait_proofs((proof,))
+    legs = (FlipPositionLeg(WEBULL, "test-open-sibling", clock[0], 1),) if fault == "open" else ()
+    if fault == "held":
+        state.position_qty_held = 1
+    book(strategy, record, clock, legs=legs, readable=fault != "unknown")
+    assert state.flip_owner_phase != "idle"
+    assert not strategy._strict_first_rest_admitted(state, slot="first")
+    assert state.retry_one_closes_in_segment == 0
+    assert not strategy.drain_pending_intents()
+    assert not strategy.drain_webull_direct_intents()
+    assert calls == []
+    assert store.restore() == {state.symbol: request}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sdk")
+@pytest.mark.parametrize("pm", [False, True])
+async def test_pg_same_real_segment_unsupported_bound_cancel_never_grants_second_buy(pg, monkeypatch, pm):
+    strategy, state, record, clock, _ = replay(pm=pm)
+    store = RemovedWaitStore(pg)
+    strategy._removed_wait_persist = store.record
+    book(strategy, record, clock)
+    request = strategy._removed_wait_requests["FLYE"]
+    drafts = (strategy.drain_pending_intents()[0], strategy.drain_webull_direct_intents()[0])
+    routed, _ = routed_accounts(Client())
+    ids = persist_controls(pg, routed, request, drafts)
+    clock[0] += 1_000
+    monkeypatch.setattr(broker, "now_ms", lambda: clock[0])
+    proof = await journal_proof(pg, routed, ids, store, request, clock[0])
+    assert not proof.clear and proof.reason == "cancel_source_unknown"
+    strategy.apply_removed_wait_proofs((proof,))
+    book(strategy, record, clock)
+    assert state.flip_owner_phase == "bound"
+    assert not strategy._strict_first_rest_admitted(state, slot="first")
+    assert store.restore() == {state.symbol: request}
+    with pg() as session:
+        assert all(i.intent_type == "cancel" for i in session.scalars(select(TradeIntent)))
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sdk")
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+async def test_pg_open_managed_row_in_either_account_blocks_canonical_release(pg, monkeypatch, pm, account):
+    strategy, state, record, clock, _ = replay(pm=pm)
+    store = RemovedWaitStore(pg)
+    strategy._removed_wait_persist = store.record
+    book(strategy, record, clock)
+    request = strategy._removed_wait_requests["FLYE"]
+    drafts = (strategy.drain_pending_intents()[0], strategy.drain_webull_direct_intents()[0])
+    routed, _ = routed_accounts(Client())
+    ids = persist_controls(pg, routed, request, drafts)
+    clock[0] = FLYE["fresh_sell_poll_ms"]
+    book(strategy, record, clock)
+    sell(strategy, state, clock)
+    with pg() as session:
+        row = OmsManagedPosition(strategy_code="schwab_1m_v2", broker_account_name=account,
+            symbol="FLYE", entry_price=2.24, original_quantity=1, current_quantity=1,
+            status="open", entry_time=datetime.fromtimestamp(clock[0] / 1000, UTC))
+        session.add(row)
+        session.commit()
+        row_id = str(row.id)
+    monkeypatch.setattr(broker, "now_ms", lambda: clock[0])
+    proof = await journal_proof(pg, routed, ids, store, request, clock[0])
+    assert not proof.clear and proof.reason == "position_stays_managed"
+    strategy.apply_removed_wait_proofs((proof,))
+    book(strategy, record, clock, legs=(FlipPositionLeg(account, row_id, clock[0], 1),))
+    assert state.flip_owner_phase != "idle"
+    assert not strategy._strict_first_rest_admitted(state, slot="first")
+    assert store.restore() == {"FLYE": request}
+
+
+def controlled_unbound_db(pg):
+    with pg() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="I controlled boot ordering")
+        accounts = {name: BrokerAccount(name=name, provider="webull" if name == WEBULL else "schwab",
+            environment="test", external_account_id=None) for name in (PRIMARY, WEBULL)}
+        session.add_all([strategy, *accounts.values()])
+        session.flush()
+        strategy_id = strategy.id
+        ids = {name: account.id for name, account in accounts.items()}
+        session.commit()
+    return RemovedWaitStore(pg), pg, ids, strategy_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("fault", ["none", "stale", "open", "unknown"])
+async def test_pg_legacy_books_do_not_create_boot_witness(pg, active, fault):
+    from tests.unit.test_flye_unbound_owner_release import (
+        test_legacy_books_do_not_create_closed_owner_boot_witness as boot_control,
+    )
+
+    # Real PG store and service loader; the reused books/drain remain explicit controls.
+    await boot_control(controlled_unbound_db(pg), active, fault)
+
+
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("fault", ["none", "schwab_buy", "webull_buy", "open_owned", "unknown_book",
+                                  "same_segment", "operator_sell", "missing_config", "retained_id", "provider"])
+def test_pg_legacy_unbound_books_never_clear_wired_owner(pg, pm, fault):
+    from tests.unit.test_flye_unbound_owner_release import (
+        test_legacy_unbound_store_books_never_clear_wired_owner as chronology_control,
+    )
+
+    chronology_control(controlled_unbound_db(pg), pm, fault)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("sdk")
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("case", ["filled_target", "filled_stop", "operator_sell", "working_schwab",
+                                  "working_webull", "open_owned", "unknown_rows", "same_real_segment", "legacy"])
+async def test_pg_actual_wired_owner_cannot_be_certified_never_sent(pg, monkeypatch, pm, account, case):
+    from tests.unit.test_flye_prewire_runtime_caller import (
+        test_actual_wired_owner_cannot_be_certified_never_sent as caller_control,
+    )
+
+    await caller_control(controlled_unbound_db(pg), monkeypatch, pm, account, case)

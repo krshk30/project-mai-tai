@@ -1,0 +1,110 @@
+name: I Paired Close Latency Diagnostics
+
+on:
+  push:
+    branches: ["codex/flye-bound-owner-target-close-1008"]
+    paths:
+      - "tests/support/closed_owner_latency_diagnostics.py"
+      - "tests/unit/test_closed_owner_latency_diagnostics.py"
+      - ".github/workflows/closed-owner-latency-diagnostics.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  paired-diagnostics:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: project_mai_tai_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d project_mai_tai_test"
+          --health-interval 2s --health-timeout 5s --health-retries 10
+    env:
+      MAI_TAI_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
+      F_HEAD: 44a20472934c63118c3ec9956223a82a916e4676
+      I_BASE_SOURCE_HEAD: ca9930d64e13958891d3c839f5fd5c3d46c7ae36
+      I_SOURCE_HEAD: 280b32e32c659e6b8da18361274a5d18906a8d93
+      SHARED_HEAD: 6849b52aa87af9fddf52fc65ce76f623bc2f7f19
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the same dependency environment
+        run: python -m pip install -e ".[dev]"
+      - name: Verify frozen source and prepare immutable F reference
+        run: |
+          git diff --exit-code "$I_SOURCE_HEAD" HEAD -- src
+          git diff --exit-code "$F_HEAD" "$I_BASE_SOURCE_HEAD" -- src/project_mai_tai/oms tests/integration/test_buy_submission_tokens_runtime.py
+          git diff --exit-code "$SHARED_HEAD" HEAD -- src/project_mai_tai/oms/buy_submission_journal.py tests/integration/test_buy_submission_tokens_runtime.py
+          python - <<'PY'
+          import ast
+          import os
+          import subprocess
+          allowed = {"src/project_mai_tai/oms/service.py": {"_collect_drift_cancel_candidates", "_record_order_reports", "_append_order_event_isolated"},
+                     "src/project_mai_tai/oms/store.py": {"find_open_exit_order", "find_open_native_stop_guard_order"}}
+          added = {"_write_order_event_savepoint", "_append_order_event_isolated_awaited", "_finish_order_event_write"}
+          changed = subprocess.check_output(["git", "diff", "--name-only", os.environ["I_BASE_SOURCE_HEAD"],
+                                             os.environ["I_SOURCE_HEAD"], "--", "src"], text=True).splitlines()
+          assert set(changed) == set(allowed), changed
+          for path, names in allowed.items():
+              trees = [ast.parse(subprocess.check_output(["git", "show", os.environ[ref] + ":" + path], text=True))
+                       for ref in ("I_BASE_SOURCE_HEAD", "I_SOURCE_HEAD")]
+              for index, tree in enumerate(trees):
+                  if index == 1 and path.endswith("service.py"):
+                      for node in ast.walk(tree):
+                          if isinstance(node, ast.ClassDef):
+                              node.body = [child for child in node.body if not
+                                           isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) or child.name not in added]
+                  for name in names:
+                      matches = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name]
+                      assert len(matches) == 1
+                      matches[0].body = [ast.Pass()]
+              assert ast.dump(trees[0]) == ast.dump(trees[1]), "change outside projected read bodies: " + path
+          PY
+          mkdir -p "$RUNNER_TEMP/f-baseline" diagnostic-logs
+          git archive "$F_HEAD" | tar -x -C "$RUNNER_TEMP/f-baseline"
+          printf 'runner=%s\nI=%s\nI_source=%s\nI_baseline_source=%s\nF=%s\nshared=%s\norder=F then I; same runner/dependencies/PG, independent schemas; projected reads and awaited savepoint audit differ in OMS\n' "$RUNNER_NAME" "$GITHUB_SHA" "$I_SOURCE_HEAD" "$I_BASE_SOURCE_HEAD" "$F_HEAD" "$SHARED_HEAD" | tee diagnostic-logs/identity.log
+          for ref in "$F_HEAD" "$I_SOURCE_HEAD" "$SHARED_HEAD"; do
+            printf '%s token_blob=%s runtime_test_blob=%s\n' "$ref" "$(git rev-parse "$ref:src/project_mai_tai/oms/buy_submission_journal.py")" "$(git rev-parse "$ref:tests/integration/test_buy_submission_tokens_runtime.py")" | tee -a diagnostic-logs/identity.log
+          done
+      - name: Validate observer and SQLite PostgreSQL equivalence plus Ruff
+        run: |
+          python -m pytest -p no:cacheprovider tests/unit/test_closed_owner_latency_diagnostics.py tests/unit/test_drift_cache_projection_equivalence.py tests/integration/test_drift_cache_projection.py tests/unit/test_exit_order_projection.py tests/integration/test_exit_order_projection_postgres.py tests/unit/test_report_audit_worker.py tests/integration/test_report_audit_worker_postgres.py
+          python -m ruff check src tests
+      - name: F reference with the identical I observer
+        id: f
+        env:
+          PYTHONPATH: ${{ runner.temp }}/f-baseline:${{ runner.temp }}/f-baseline/src:${{ github.workspace }}/tests/support
+        working-directory: ${{ runner.temp }}/f-baseline
+        run: |
+          set -o pipefail
+          python -m pytest -p no:cacheprovider -p closed_owner_latency_diagnostics -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee "$GITHUB_WORKSPACE/diagnostic-logs/f.log"
+      - name: I with the identical observer and unchanged strict workload
+        id: i
+        if: ${{ !cancelled() && (steps.f.outcome == 'success' || steps.f.outcome == 'failure') }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src:${{ github.workspace }}/tests/support
+        run: |
+          set -o pipefail
+          python -m pytest -p no:cacheprovider -p closed_owner_latency_diagnostics -s tests/integration/test_buy_submission_tokens_runtime.py::test_actual_oms_240_events_per_second_concurrent_buys_and_30_second_read 2>&1 | tee diagnostic-logs/i.log
+      - name: Preserve both receipts including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paired-close-latency-${{ github.sha }}
+          path: diagnostic-logs
+      - name: Keep either strict failure red
+        if: always()
+        env:
+          F_OUTCOME: ${{ steps.f.outcome }}
+          I_OUTCOME: ${{ steps.i.outcome }}
+        run: test "$F_OUTCOME" = success && test "$I_OUTCOME" = success

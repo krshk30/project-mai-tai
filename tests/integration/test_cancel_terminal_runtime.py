@@ -1,0 +1,487 @@
+"""Real PostgreSQL OMS journal and adapter endpoint controls, never live broker traffic."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import threading
+from datetime import UTC, datetime
+from decimal import Decimal
+from types import ModuleType, SimpleNamespace
+from uuid import UUID, uuid4
+
+import pytest
+from sqlalchemy import create_engine, event, select, text, update
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import sessionmaker
+
+from project_mai_tai.broker_adapters import cancel_terminal as broker
+from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
+from project_mai_tai.broker_adapters.schwab import SchwabAccountConfig, SchwabBrokerAdapter
+from project_mai_tai.broker_adapters.webull import WebullAccountConfig, WebullBrokerAdapter
+from project_mai_tai.broker_adapters.webull_order_reads import shared_budget
+from project_mai_tai.cancel_terminal_proof import evaluate_cancel_terminal
+from project_mai_tai.db.base import Base
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Strategy, TradeIntent
+from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.oms import cancel_terminal as journal
+from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.settings import Settings
+
+NOW = 1_791_466_919_000
+EMPTY_DETAIL = object()
+
+
+def _test_database_engine():
+    url = os.environ.get("MAI_TAI_DATABASE_URL")
+    assert url, "required real PostgreSQL service: MAI_TAI_DATABASE_URL"
+    parsed = make_url(url)
+    assert (parsed.get_backend_name() == "postgresql"
+            and parsed.host in {"localhost", "127.0.0.1"}
+            and parsed.database == "project_mai_tai_test"
+            and not parsed.query), "refusing writes outside the explicit local/CI test database"
+    return create_engine(url)
+
+
+@pytest.fixture
+def sessions():
+    engine = _test_database_engine()
+    schema = "cancel_terminal_" + uuid4().hex
+    with engine.begin() as conn:
+        conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+    isolated = engine.execution_options(schema_translate_map={None: schema})
+    Base.metadata.create_all(isolated)
+    threads = []
+    event.listen(engine, "before_cursor_execute", lambda *args: threads.append(threading.get_ident()))
+    factory = sessionmaker(bind=isolated, expire_on_commit=False)
+    factory.test_threads = threads
+    yield factory
+    with engine.begin() as conn:
+        conn.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+    engine.dispose()
+
+
+@pytest.fixture
+def sdk(monkeypatch):
+    class Request:
+        kind = ""
+
+        def __init__(self):
+            self.values = {}
+
+        def get_action_name(self):
+            return "/trade/orders/list-open" if self.kind == "open" else "/trade/order/detail"
+
+        def get_version(self):
+            return "v2"
+
+        def get_method(self):
+            return "GET"
+
+        def set_account_id(self, value):
+            self.values["account_id"] = value
+
+        def set_client_order_id(self, value):
+            self.values["client_order_id"] = value
+
+        def set_page_size(self, value):
+            self.values["page_size"] = value
+
+        def set_last_client_order_id(self, value):
+            self.values["last_client_order_id"] = value
+
+    for path, cls_name, kind in (
+        ("get_open_orders_request", "OpenOrdersListRequest", "open"),
+        ("get_order_detail_request", "OrderDetailRequest", "detail"),
+    ):
+        name = "webull.trade.request." + path
+        module = ModuleType(name)
+        setattr(module, cls_name, type(cls_name, (Request,), {"kind": kind}))
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(broker, "now_ms", lambda: NOW)
+
+
+class Client:
+    _auto_retry = False
+    def __init__(self, pages=None, detail=None):
+        self.pages = pages or [{"has_next": False, "orders": []}]
+        self.detail = detail
+        self.calls = []
+        self.on_read = None
+
+    def get_response(self, request):
+        self.calls.append((request.kind, dict(request.values), threading.get_ident()))
+        if self.on_read:
+            self.on_read()
+        if request.kind == "detail":
+            if self.detail is EMPTY_DETAIL:
+                return SimpleNamespace(status_code=200, body=None, content=b"", json=lambda: None)
+            return SimpleNamespace(status_code=417 if self.detail is None else 200,
+                                   body={"error_code": "ORDER_NOT_FOUND"} if self.detail is None else self.detail)
+        assert request.kind == "open", "today/cache cannot prove complete working book"
+        index = sum(kind == "open" for kind, _, _ in self.calls) - 1
+        return SimpleNamespace(status_code=200, body=self.pages[index])
+
+
+def adapter(client):
+    leaf = WebullBrokerAdapter.__new__(WebullBrokerAdapter)
+    leaf.accounts_by_name = {"live:orb": WebullAccountConfig(account_id="ACC1")}
+    leaf._get_client = lambda: client
+    leaf.host, leaf.app_key = "controlled-broker", uuid4().hex
+    leaf._query_budget = shared_budget(leaf.host, leaf.app_key)
+    return RoutingBrokerAdapter(default_provider="webull", provider_by_account={"live:orb": "webull"},
+                                factories_by_provider={"webull": lambda: leaf})
+
+
+def cancel_event(*, coid="exact-coid", symbol="DKI"):
+    md = {"clearwait_removal_token": "exact-token", "clearwait_opportunity_id": str(NOW),
+          "clearwait_purpose": "retry_exhausted", "reason": "retry_budget_exhausted"}
+    if coid:
+        md["target_client_order_id"] = coid
+    return TradeIntentEvent(source_service="schwab-1m-v2", payload=TradeIntentPayload(
+        strategy_code="schwab_1m_v2", broker_account_name="live:orb", symbol=symbol,
+        side="buy", intent_type="cancel", quantity=Decimal(1), reason="retry_budget_exhausted",
+        metadata=md,
+    ))
+
+
+def seed(sessions, routed, *, coid="exact-coid"):
+    ev = cancel_event(coid=coid)
+    with sessions() as session:
+        strategy = Strategy(code="schwab_1m_v2", name="v2", execution_mode="live")
+        account = BrokerAccount(name="live:orb", provider="webull", environment="test",
+                                external_account_id="ACC1")
+        session.add_all([strategy, account])
+        session.flush()
+        intent = TradeIntent(strategy_id=strategy.id, broker_account_id=account.id,
+            symbol="DKI", side="buy", intent_type="cancel", quantity=Decimal(1),
+            reason="retry_budget_exhausted", status="rejected",
+            updated_at=datetime.fromtimestamp((NOW - 20_000) / 1000, UTC),
+            payload={"event_id": str(ev.event_id), "metadata": dict(ev.payload.metadata),
+                     "refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found"})
+        journal.bind_cancel_target(intent, ev, routed)
+        session.add(intent)
+        session.commit()
+        return intent.id
+
+
+def read(sessions, intent_id):
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        account = session.get(BrokerAccount, intent.broker_account_id)
+        receipt = journal.receipt_from_intent(intent, account)
+        evidence = journal.load_cancel_terminal_evidence(session, [intent])
+        proof = evaluate_cancel_terminal(receipt, evidence.get(receipt.scope.event_id), now_ms=NOW)
+        return intent, proof
+
+
+@pytest.mark.asyncio
+async def test_offloop_real_pg_exact_journal_and_every_page(sessions, sdk):
+    client = Client(pages=[{"has_next": False, "orders": [
+        {"client_order_id": "other", "symbol": "OTHER", "order_status": "SUBMITTED"}]}])
+    routed = adapter(client)
+    intent_id = seed(sessions, routed)
+    sessions.test_threads.clear()
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert sessions.test_threads and all(t != threading.get_ident() for t in sessions.test_threads)
+    assert all(t != threading.get_ident() for _, _, t in client.calls)
+    intent, proof = read(sessions, intent_id)
+    assert proof.terminal and proof.scope.account_id == "ACC1"
+    assert intent.updated_at == datetime.fromtimestamp((NOW - 20_000) / 1000, UTC)
+    pages = Client(pages=[{"hasNext": True, "orders": [
+        {"client_order_id": "other", "symbol": "OTHER", "order_status": "SUBMITTED"}]},
+        {"hasNext": False, "orders": []}])
+    assert (await broker.acquire_complete_working_book(adapter(pages), "live:orb")).complete
+    assert pages.calls[-1][1]["last_client_order_id"] == "other"
+    assert intent.payload[journal.JOURNAL_KEY]["binding"]["generation"] == str(NOW)
+    assert intent.payload[journal.JOURNAL_KEY]["binding"]["token"] == "exact-token"
+    with sessions() as session:
+        raw = session.execute(text(
+            f'SELECT (payload::jsonb->\'{journal.JOURNAL_KEY}\'->\'evidence\'->\'book\' '
+            f'->>\'started_at_ms\')::bigint FROM "{session.bind.get_execution_options()["schema_translate_map"][None]}".trade_intents'
+        )).scalar_one()
+        assert raw == NOW
+
+
+@pytest.mark.parametrize("pages", [
+    [{"data": [], "pagination_key": ""}],
+    [{"has_next": True, "orders": []}], [{"orders": []}], [{"has_next": 0, "orders": []}],
+    [{"has_next": False, "orders": [{"client_order_id": "exact-coid", "symbol": "DKI",
+                                      "order_status": "SUBMITTED"}]}],
+    [{"has_next": False, "orders": [{"client_order_id": "exact-coid", "symbol": "FOREIGN",
+                                      "order_status": "SUBMITTED"}]}],
+])
+@pytest.mark.asyncio
+async def test_partial_unknown_and_real_working_books_never_clear(sessions, sdk, pages):
+    routed = adapter(Client(pages=pages))
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert not read(sessions, intent_id)[1].terminal
+
+
+@pytest.mark.parametrize("status,filled,clear", [
+    ("CANCELLED", "0", True), ("REJECTED", "0", True), ("EXPIRED", "0", True),
+    ("CANCELLED", "1", False), ("FILLED", "1", False), ("PENDING_CANCEL", "0", False),
+])
+@pytest.mark.asyncio
+async def test_exact_broker_terminal_target_not_local_rejected_order(sessions, sdk, status, filled, clear):
+    detail = {"account_id": "ACC1", "client_order_id": "exact-coid", "order_id": "broker-id",
+              "items": [{"symbol": "DKI", "order_status": status, "filled_qty": filled}]}
+    routed = adapter(Client(detail=detail))
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert read(sessions, intent_id)[1].terminal is clear
+
+
+@pytest.mark.parametrize("field", ["token", "purpose", "generation"])
+@pytest.mark.asyncio
+async def test_request_cas_change_during_http_never_publishes_evidence(sessions, sdk, field):
+    client = Client()
+    routed = adapter(client)
+    intent_id = seed(sessions, routed)
+
+    def change_request():
+        client.on_read = None
+        with sessions() as session:
+            intent = session.get(TradeIntent, intent_id)
+            payload = dict(intent.payload)
+            payload[journal.BINDING_KEY] = {**payload[journal.BINDING_KEY], field: "foreign"}
+            intent.payload = payload
+            session.commit()
+
+    client.on_read = change_request
+    assert not await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    with sessions() as session:
+        assert journal.JOURNAL_KEY not in session.get(TradeIntent, intent_id).payload
+
+
+@pytest.mark.asyncio
+async def test_missing_recorded_dki_coid_never_invented(sessions, sdk):
+    client = Client()
+    routed = adapter(client)
+    intent_id = seed(sessions, routed, coid="")
+    assert not await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("field,value", [("account_id", "foreign"), ("client_order_id", "foreign")])
+@pytest.mark.asyncio
+async def test_mismatched_broker_detail_cannot_fall_back_to_empty_book(sessions, sdk, field, value):
+    detail = {"account_id": "ACC1", "client_order_id": "exact-coid", "order_id": "broker-id",
+              "items": [{"symbol": "DKI", "order_status": "CANCELLED", "filled_qty": "0"}]}
+    detail[field] = value
+    client = Client(detail=detail)
+    routed = adapter(client)
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert not read(sessions, intent_id)[1].terminal
+    assert [kind for kind, _, _ in client.calls] == ["detail"]
+
+
+@pytest.mark.parametrize("field", ["clearwait_removal_token", "clearwait_purpose", "clearwait_opportunity_id"])
+@pytest.mark.asyncio
+async def test_journal_loader_rejects_changed_request_metadata(sessions, sdk, field):
+    routed = adapter(Client())
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        payload = dict(intent.payload)
+        payload["metadata"] = {**payload["metadata"], field: "foreign"}
+        intent.payload = payload
+        session.flush()
+        assert journal.load_cancel_terminal_evidence(session, [intent]) == {}
+
+
+@pytest.mark.asyncio
+async def test_external_account_number_is_not_laundered_into_actual_broker_id(sessions, sdk):
+    routed = adapter(Client())
+    intent_id = seed(sessions, routed)
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        account = session.get(BrokerAccount, intent.broker_account_id)
+        account.external_account_id = "different-account-number"
+        session.flush()
+        assert journal.receipt_from_intent(intent, account) is None
+        session.commit()
+    assert not await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+
+
+@pytest.mark.parametrize("retry", [True, None])
+@pytest.mark.asyncio
+async def test_hidden_sdk_retry_policy_is_unknown_without_http(sessions, sdk, retry):
+    client = Client()
+    client._auto_retry = retry
+    routed = adapter(client)
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert not read(sessions, intent_id)[1].terminal
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_shared_budget_denial_never_returns_partial_book(sessions, sdk):
+    client = Client()
+    routed = adapter(client)
+    leaf = routed._adapter_for_account("live:orb")
+    leaf._query_budget.claim("list-open", "other-account", strict=True)
+    leaf._query_budget.claim("list-open", "other-account", strict=True)
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert not read(sessions, intent_id)[1].terminal
+    assert [kind for kind, _, _ in client.calls] == ["detail"]
+
+
+@pytest.mark.asyncio
+async def test_real_oms_cancel_caller_produces_committed_book(sessions, sdk, monkeypatch):
+    # Exercise the real source caller, not a test-only invocation of the producer.
+    monkeypatch.setattr(broker, "now_ms", lambda: int(datetime.now(UTC).timestamp() * 1000))
+    client = Client()
+    service = OmsRiskService(settings=Settings(oms_adapter="simulated", broker_default_provider="webull",
+        orb_broker_account_name="unused", webull_account_id="ACC1"),
+        redis_client=SimpleNamespace(), session_factory=sessions, broker_adapter=adapter(client))
+
+    async def publish(_event):
+        pass
+
+    monkeypatch.setattr(service, "_publish_order_event", publish)
+    await service.process_trade_intent(cancel_event())
+    await service._drain_cancel_terminal_evidence()
+    with sessions() as session:
+        intent = session.scalar(select(TradeIntent).where(TradeIntent.intent_type == "cancel"))
+        assert intent.status == "rejected"
+        evidence = journal.load_cancel_terminal_evidence(session, [intent])
+        assert len(evidence) == 1
+        receipt = next(iter(evidence.values())).receipt
+        assert evaluate_cancel_terminal(receipt, evidence[receipt.scope.event_id],
+                                        now_ms=broker.now_ms()).terminal
+    assert [kind for kind, _, _ in client.calls] == ["detail", "open"]
+
+
+@pytest.mark.asyncio
+async def test_schwab_exact_target_receipt_without_relabelled_account_list(sessions, sdk):
+    leaf = SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)
+    leaf.accounts_by_name = {"live:orb": SchwabAccountConfig(account_hash="ACC1")}
+    calls = []
+
+    async def get(method, path):
+        calls.append((method, path))
+        return 200, {}, {"orderId": "broker-id", "status": "CANCELED", "filledQuantity": 0,
+                         "orderLegCollection": [{"instrument": {"symbol": "DKI"}}]}
+
+    leaf._authorized_request_json = get
+    intent_id = seed(sessions, leaf)
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        account = session.get(BrokerAccount, intent.broker_account_id)
+        account.provider = "schwab"
+        order = BrokerOrder(strategy_id=intent.strategy_id, broker_account_id=account.id,
+                            client_order_id="exact-coid", broker_order_id="broker-id", symbol="DKI",
+                            side="buy", quantity=Decimal(1), status="cancelled",
+                            order_type="limit", time_in_force="day", payload={})
+        session.add(order)
+        event = cancel_event()
+        event.event_id = UUID(intent.payload["event_id"])
+        journal.bind_cancel_target(intent, event, leaf, order)
+        session.flush()
+        session.execute(update(TradeIntent).where(TradeIntent.id == intent_id).values(
+            updated_at=datetime.fromtimestamp((NOW - 20_000) / 1000, UTC)))
+        session.commit()
+    await journal.acquire_cancel_terminal_evidence(sessions, leaf, [intent_id])
+    assert not read(sessions, intent_id)[1].terminal
+    request = await asyncio.to_thread(journal._read_request, sessions, intent_id, leaf)
+    assert calls == []
+    unknown = await broker.acquire_broker_cancel_evidence(leaf, request.receipt)
+    assert not evaluate_cancel_terminal(request.receipt, unknown, now_ms=NOW).terminal
+    assert await broker.acquire_complete_working_book(leaf, "live:orb") is None
+
+
+@pytest.mark.parametrize("detail", [{}, {"items": []}, {"error_code": "UNKNOWN_ERROR"}])
+@pytest.mark.asyncio
+async def test_empty_malformed_detail_is_not_explicit_not_found(sessions, sdk, detail):
+    client = Client(detail=detail)
+    routed = adapter(client)
+    intent_id = seed(sessions, routed)
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert not read(sessions, intent_id)[1].terminal
+    assert [kind for kind, _, _ in client.calls] == ["detail"]
+
+
+@pytest.mark.asyncio
+async def test_ten_request_burst_uses_actual_aggregate_two_per_two_second_budget(sdk):
+    from project_mai_tai.broker_adapters.webull_order_reads import QueryBudget
+    from project_mai_tai.cancel_terminal_proof import CancelReceipt, CancelScope
+
+    client = Client()
+    routed = adapter(client)
+    clock = [0.0]
+    budget = QueryBudget(clock=lambda: clock[0])
+    routed._adapter_for_account("live:orb")._query_budget = budget
+    for index in range(10):
+        receipt = CancelReceipt(CancelScope("live:orb", "ACC1", f"SYM{index}", f"coid{index}", f"event{index}"),
+                                NOW - 20_000, "rejected", "skipped_before_submit", "cancel_target_not_found")
+        evidence = await broker.acquire_broker_cancel_evidence(routed, receipt)
+        assert evaluate_cancel_terminal(receipt, evidence, now_ms=NOW).terminal is (index == 0)
+    assert [kind for kind, _, _ in client.calls] == ["detail", "open"]
+    assert len(budget.attempts["detail"]) == len(budget.attempts["list-open"]) == 1
+    clock[0] = 2.0
+    await broker.acquire_broker_cancel_evidence(routed, receipt)
+    assert len(client.calls) == 3  # Same fresh book; no duplicate list-open.
+
+
+@pytest.mark.parametrize("side,coid,terminal", [("BUY", "operator", False), ("SELL", "operator", True),
+                                              ("SELL", "", True), (None, "operator", False)])
+@pytest.mark.asyncio
+async def test_offloop_v2_nested_items_book_for_approved_unbound_rule(sessions, sdk, side, coid, terminal):
+    from project_mai_tai.cancel_terminal_proof import SchwabLocalCancelWitness, UnboundCancelFences, UnboundCancelRequest, evaluate_unbound_cancel_terminal
+
+    client = Client(pages=[{"hasNext": False, "orders": [{"account_id": "ACC1",
+        "client_order_id": coid, "order_id": "actual-operator-broker-id", "items": [
+            {"symbol": "FLYE", "order_status": "SUBMITTED", "side": side}]}]}])
+    book = await broker.acquire_complete_working_book(adapter(client), "live:orb")
+    request = UnboundCancelRequest("FLYE", "token", "token", str(NOW), "retry_exhausted", NOW - 1000,
+        {"live:orb": "ACC1", "schwab": "hash"}, {"live:orb": "webull", "schwab": "schwab"}, "2026-10-08")
+    assert book and book.orders[0].client_order_id == coid
+    # Controlled local closure, never a fabricated Schwab broker book.
+    witness = SchwabLocalCancelWitness(request, "schwab", "hash", request.session_key,
+        NOW, "exact_cancel_chain", True, True, True, True, True)
+    proof = evaluate_unbound_cancel_terminal(request, {"live:orb": book},
+        fences=UnboundCancelFences(request, True, True, True, True), schwab_witness=witness, now_ms=NOW)
+    assert proof.terminal is terminal
+    assert all(t != threading.get_ident() for _, _, t in client.calls)
+    with sessions() as session:
+        assert session.execute(text("SELECT CAST(:epoch AS bigint)"), {"epoch": request.requested_at_ms}).scalar_one() == NOW - 1000
+
+
+@pytest.mark.parametrize("status,origin,code,book_case,terminal", [
+    ("rejected", "client", "cancel_target_not_found", "empty", True),
+    ("rejected", "skipped_before_submit", "", "empty", True),
+    ("rejected", "client", "cancel_target_not_found", "working", False),
+    ("rejected", "client", "cancel_target_not_found", "timeout", False),
+    ("pending", "skipped_before_submit", "cancel_target_not_found", "empty", False),
+    ("rejected", "broker_reject", "cannot_cancel", "empty", False),
+])
+@pytest.mark.asyncio
+async def test_measured_empty_detail_needs_exact_local_refusal_and_fresh_book(sessions, sdk, status, origin, code, book_case, terminal):
+    client = Client(detail=EMPTY_DETAIL)
+    if book_case == "working":
+        client.pages = [{"hasNext": False, "orders": [{"client_order_id": "operator-buy",
+            "symbol": "DKI", "status": "working", "side": "BUY"}]}]
+    if book_case == "timeout":
+        def timeout():
+            if client.calls[-1][0] == "open":
+                raise TimeoutError("controlled book timeout")
+        client.on_read = timeout
+    routed = adapter(client)
+    intent_id = seed(sessions, routed)
+    with sessions() as session:
+        intent = session.get(TradeIntent, intent_id)
+        session.execute(update(TradeIntent).where(TradeIntent.id == intent_id).values(
+            status=status, payload={**intent.payload, "refusal_origin": origin, "refusal_code": code},
+            updated_at=intent.updated_at))
+        session.commit()
+    await journal.acquire_cancel_terminal_evidence(sessions, routed, [intent_id])
+    assert read(sessions, intent_id)[1].terminal is terminal
+    eligible = status == "rejected" and (code == "cancel_target_not_found" or origin == "skipped_before_submit")
+    assert [kind for kind, _, _ in client.calls] == (["detail", "open"] if eligible else ["detail"])
