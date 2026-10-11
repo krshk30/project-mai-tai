@@ -765,9 +765,9 @@ class SchwabV2Strategy:
             self.settings.strategy_schwab_1m_v2_removed_wait_clear_enabled
         )
         self._removed_wait_requests: dict[str, RemovedWait] = {}
-        self._removed_wait_clear_rules_enabled = bool(
-            self.settings.strategy_schwab_1m_v2_removed_wait_clear_rules_enabled
-        )
+        self._removed_wait_clear_rules_enabled = getattr(
+            self.settings, "strategy_schwab_1m_v2_removed_wait_clear_rules_enabled", True
+        ) is True
         self._removed_scanner_symbols: set[str] = set()
         self._removed_wait_persist: RemovalPersist | None = None
         self._removed_wait_restore_readable = True

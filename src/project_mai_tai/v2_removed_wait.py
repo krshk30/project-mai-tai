@@ -122,7 +122,7 @@ def assess_clear_rules(
     for order in orders:
         if (prior or str(order.side).lower() == "buy") and order.status not in ORDER_TERMINAL:
             return result("working_order" if prior else "opening_order_not_terminal")
-    if any(i.intent_type == "open" and str(i.side).lower() == "buy"
+    if any(i.intent_type == "open"
            and i.status not in INTENT_TERMINAL for i in intents):
         return result("intent_not_terminal")
     if observed - request.requested_at_ms < SETTLE_MS:
@@ -685,6 +685,7 @@ class RemovedWaitStore:
                     BrokerOrder.broker_account_id.in_(accounts), BrokerOrder.symbol == request.symbol,
                     or_(BrokerOrder.status.is_(None), BrokerOrder.status.not_in(ORDER_TERMINAL),
                         BrokerOrder.updated_at >= cutoff, BrokerOrder.submitted_at >= anchor,
+                        (BrokerOrder.strategy_id == strategy_id) & (request.opportunity_id == 0),
                         BrokerOrder.id.in_(select(BrokerOrderEvent.order_id).where(
                             BrokerOrderEvent.event_source == "broker",
                             or_(BrokerOrderEvent.payload["cancel_outcome"].as_string().in_(

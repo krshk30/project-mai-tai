@@ -269,6 +269,11 @@ def test_stale_zero_and_exact_token_cas(db):
     assert store.restore() == {req.symbol: req}
     newer = replace(req, token="new-token")
     store.record_rules(newer, True)
+    assert store.clear_rule_proofs((req,), NAMES, now=NOW)[0].reason == "active_request_changed"
+    assert not strat.stage_removed_wait_clear(proof)
+    plan = strat._removed_wait_pending_clears[req]
+    with pytest.raises(ValueError, match="changed"):
+        store.commit_clear(plan, lambda: strat.removed_wait_clear_valid(plan))
     strat.apply_removed_wait_proofs((proof,))
     assert store.restore() == {req.symbol: newer} and strat._removed_wait_requests == {req.symbol: req}
     with pytest.raises(ValueError, match="changed"):
@@ -322,6 +327,19 @@ def test_flag_default_catalog_owner():
     row, = [r for r in catalog["flags"] if r["name"] == flag]
     assert row["expected"] is True and row["owning_service"] == "schwab-1m-v2"
     assert "also_check_services" not in row
+
+
+@pytest.mark.parametrize("value, expected", [(True, True), (False, False), ("false", False), (None, False)])
+def test_clear_rule_flag_uses_boolean_permission(value, expected):
+    settings = SimpleNamespace(**Settings(_env_file=None).model_dump())
+    settings.strategy_schwab_1m_v2_removed_wait_clear_rules_enabled = value
+    assert SchwabV2Strategy(settings)._removed_wait_clear_rules_enabled is expected
+
+
+def test_legacy_constructor_omitted_flag_keeps_default_on():
+    settings = SimpleNamespace(**Settings(_env_file=None).model_dump())
+    del settings.strategy_schwab_1m_v2_removed_wait_clear_rules_enabled
+    assert SchwabV2Strategy(settings)._removed_wait_clear_rules_enabled is True
 
 
 @pytest.mark.asyncio

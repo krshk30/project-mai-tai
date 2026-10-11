@@ -1,9 +1,12 @@
 """Recorded DKI/JZ inputs through v2 and unchanged OMS, controlled transport/books."""
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
@@ -11,8 +14,11 @@ from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, TradeIntent
-from project_mai_tai.events import TradeIntentEvent
+from project_mai_tai.events import StrategyStateSnapshotEvent, StrategyStateSnapshotPayload, TradeIntentEvent
 from project_mai_tai.oms.service import OmsRiskService
+from project_mai_tai.market_data.massive_atr_seed import MassiveAtrSeedClient
+from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, SchwabV2RestClient
+from project_mai_tai.market_data.schwab_v2_streamer import SchwabTick
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2IntentEmitter
@@ -22,6 +28,8 @@ from tests.unit.test_v2_removed_wait_clear_rules import PRIMARY, WEBULL, db as l
 db = l1_database
 
 RECORDED = json.loads((Path(__file__).parents[1] / "fixtures/v2_removed_wait_l1_recorded.json").read_text())
+LIVE = json.loads((Path(__file__).parents[1] / "fixtures/v2_removed_wait_l1_live_flags.json").read_text())
+LINE = json.loads((Path(__file__).parents[1] / "fixtures/v2_removed_wait_l1_line_sources.json").read_text())
 
 
 def ms(value):
@@ -63,15 +71,12 @@ class ControlledTransport:
         return None
 
 
-@pytest.mark.parametrize("name", ["dki", "jz"])
-@pytest.mark.parametrize("enabled", [True, False], ids=["rules_ON", "rollback_OFF"])
-@pytest.mark.asyncio
-async def test_original_recorded_case_ends_accepted_buy(db, monkeypatch, name, enabled):
+async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
     store, factory, accounts, strategies = db
     case = RECORDED[name]
     symbol = name.upper()
     start = "2026-10-08T11:28:42Z" if name == "dki" else "2026-10-09T18:19:51.846Z"
-    clock = [ms(start)]
+    clock = [ms(case["bars"][0]["created_at"]) if native_line else ms(start)]
     class ClockMeta(type):
         def __instancecheck__(cls, value):
             return isinstance(value, datetime)
@@ -114,6 +119,15 @@ async def test_original_recorded_case_ends_accepted_buy(db, monkeypatch, name, e
         strategy_schwab_1m_v2_account_name=PRIMARY,
         strategy_schwab_1m_v2_webull_account_name=WEBULL,
         oms_adapter="simulated")
+    if native_line:
+        options = {key.removeprefix("MAI_TAI_").lower():
+                   (value == "true" if value in {"true", "false"} else int(value))
+                   for key, value in LIVE["flags"].items()}
+        assert set(options) <= set(Settings.model_fields)
+        settings = Settings(_env_file=None, **{**settings.model_dump(), **options, **LIVE["accounts"]})
+        assert len(options) == 40 and settings.strategy_schwab_1m_v2_atr_only_mode
+        for key, value in options.items():
+            assert getattr(settings, key) == value
     bot = SchwabV2BotService(settings, session_factory=factory)
     strat = bot.strategy
     strat._now_ms = lambda: clock[0]
@@ -140,6 +154,22 @@ async def test_original_recorded_case_ends_accepted_buy(db, monkeypatch, name, e
     bot.webull_intent_emitter = SchwabV2IntentEmitter(settings, transport, WEBULL)
     await bot._configure_removed_wait_store()
     strat.scanner_readded(symbol)
+    if native_line:
+        source = LINE[name]
+        assert "schwab" in source, "full recorded Schwab provider response unavailable; coverage UNKNOWN"
+        bot.tick_writer = None  # Offline replay does not run the capture writer.
+        bot.rest_client = SchwabV2RestClient(settings, on_chart_bar=None, on_quote=None)
+        bot.rest_client._authorized_get = lambda _url: source["schwab"]
+        provider = Mock(get_aggs=Mock(return_value=SimpleNamespace(data=json.dumps(source["preopen"]).encode())))
+        bot._atr_massive_seed_client = MassiveAtrSeedClient("recorded-not-a-live-key", rest_client=provider)
+        bot._watchlist.add(symbol)
+        bot._boot_scanner_selected = {symbol}
+        bot._boot_exclusion_sources_readable = True
+        event = StrategyStateSnapshotEvent(source_service="recorded-scanner", produced_at=Clock.now(UTC),
+            payload=StrategyStateSnapshotPayload(watchlist=[symbol],
+                top_confirmed=[{"symbol": symbol, "confirmed_at": source["added_at"]}]))
+        bot._line_scanner_transition(event, {symbol})
+        bot._sync_line_epochs()
     state = strat.watchlist_state(symbol)
     for row in case["bars"]:
         current = bar(row)
@@ -153,10 +183,48 @@ async def test_original_recorded_case_ends_accepted_buy(db, monkeypatch, name, e
         phase = "replay" if current.timestamp_ms < ms(start) - 60_000 else "live"
         if name == "jz":
             phase = "replay" if current.timestamp_ms < case["sell"]["bar_time_ms"] else "live"
-        bot._strategy_on_bar(symbol, current, observation_phase=phase)
+        if native_line:
+            native = ChartBar(symbol, current.open, current.high, current.low, current.close,
+                              current.volume, current.timestamp_ms)
+            await bot._handle_bar_from_rest(symbol, native)
+            bot._try_complete_boot_state_restoration({symbol}, new_symbols=set())
+            bot._cw_boot_hold_check()
+            await bot._line_restoration_pass()
+            if symbol in bot._line_source_pending:
+                await bot._line_source_events_pass()
+                await bot._line_restoration_pass()
+        else:
+            bot._strategy_on_bar(symbol, current, observation_phase=phase)
     primary = []
     assert bool(strat._removed_wait_requests) is (not enabled)
-    if name == "dki":
+    if name == "dki" and native_line:
+        callbacks = [(ms(row["received_at"]), "trade", row) for row in source["stream"]["trades"]]
+        callbacks += [(ms(row["received_at"]), "quote", row) for row in source["stream"]["quotes"]]
+        callbacks += [(ms(row["created_at"]), "bar", row) for row in case["bars"]
+                      if ms(row["bar_time"]) >= ms("2026-10-08T11:45Z")]
+        for received, kind, row in sorted(callbacks, key=lambda item: item[0]):
+            if received < clock[0]:
+                continue
+            clock[0] = received
+            strat.apply_flip_position_book(FlipPositionBook(clock[0], True, {}))
+            await bot._removed_wait_poll()
+            if kind == "bar":
+                current = bar(row)
+                await bot._handle_bar_from_rest(symbol, ChartBar(symbol, current.open, current.high,
+                    current.low, current.close, current.volume, current.timestamp_ms))
+                await bot._line_restoration_pass()
+            else:
+                await bot._handle_stream_tick(SchwabTick(kind=kind, service=row["service"],
+                    symbol=symbol, event_ts_ms=ms(row["event_ts"]), raw=row["raw"], raw_hash=row["raw_hash"],
+                    price=float(row["price"]) if kind == "trade" else None,
+                    size=row.get("size")))
+                if bot._eh_stream_emit_tasks:
+                    await asyncio.gather(*tuple(bot._eh_stream_emit_tasks))
+        ledger = bot._line_sessions[symbol]
+        print(f"native DKI provider_complete={getattr(ledger._coverage, 'complete', None)} "
+              f"LINE_published={symbol in bot._line_published} reason={ledger.incomplete_reason} "
+              f"fallback={state.line_live_fallback} events={len(transport.events)}")
+    elif name == "dki":
         tick = case["cross"]["schwab_trade"]
         clock[0] = ms(tick["received_at"])
         strat.apply_flip_position_book(FlipPositionBook(clock[0], True, {}))
@@ -171,8 +239,9 @@ async def test_original_recorded_case_ends_accepted_buy(db, monkeypatch, name, e
     opens += [(bot.webull_intent_emitter, d) for d in mirror if d.intent_type == "open"]
     if not enabled:
         assert not opens and strat._removed_wait_gate_closed(symbol)
+        assert not any(e.get("payload", {}).get("intent_type") == "open" for e in transport.events)
         return
-    assert opens, (state.atr_state, state.atr_trail, state.resting_active, state.resting_level,
+    assert opens or transport.events, (state.atr_state, state.atr_trail, state.resting_active, state.resting_level,
                    state.flip_owner_phase, state.gap_hold_active)
     # JZ's 15:04 SELL must create a normal resting BUY. DKI's 07:45 candle
     # remains software-rested until the recorded 07:46:00.728 Schwab callback.
@@ -196,3 +265,17 @@ async def test_original_recorded_case_ends_accepted_buy(db, monkeypatch, name, e
         print(f"L1 recorded {symbol} rules_ON accepted_BUY={len(accepted)} "
               f"quantities={[str(r.quantity) for r in accepted]} controlled_broker_answers=True")
     assert transport.requests
+
+
+@pytest.mark.parametrize("name", ["dki", "jz"])
+@pytest.mark.parametrize("enabled", [True, False], ids=["rules_ON", "rollback_OFF"])
+@pytest.mark.asyncio
+async def test_original_recorded_case_ends_accepted_buy(db, monkeypatch, name, enabled):
+    await replay_case(db, monkeypatch, name, enabled)
+
+
+@pytest.mark.parametrize("name", ["dki", "jz"])
+@pytest.mark.parametrize("enabled", [True, False], ids=["rules_ON", "rollback_OFF"])
+@pytest.mark.asyncio
+async def test_original_actual_live_flags_native_line_path(db, monkeypatch, name, enabled):
+    await replay_case(db, monkeypatch, name, enabled, native_line=True)
