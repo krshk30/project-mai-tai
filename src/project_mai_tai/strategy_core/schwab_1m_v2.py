@@ -100,6 +100,14 @@ FLIP_OWNER_ROW_SETTLE_MS = 15_000
 
 
 @dataclass(frozen=True)
+class FreshSellReleaseEvidence:
+    request: RemovedWait
+    observed_at_ms: int
+    clear: bool
+    reason: str
+
+
+@dataclass(frozen=True)
 class SchwabV2Config:
     """All MACD Momentum v1.32 inputs. Defaults match the design doc
     (Section 3) exactly. Trade size is read separately from settings so
@@ -316,6 +324,7 @@ class SymbolState:
     flip_owner_open_positions: dict[str, FlipPositionLeg] = field(default_factory=dict)
     flip_owner_first_rest_placed: bool = False
     flip_owner_recovery_warning_at_ms: int = 0
+    fresh_sell_owner_release_segment_ms: int = 0
     retry_one_segment_id: int = 0
     retry_one_closes_in_segment: int = 0
     retry_one_budget_readable: bool = True
@@ -774,6 +783,7 @@ class SchwabV2Strategy:
         self._removed_wait_restore_readable = True
         self._removed_wait_dispatch_persist: Callable[[dict], None] | None = None
         self._removed_wait_block_reason: dict[str, tuple[str, str]] = {}
+        self._fresh_sell_release_evidence: dict[str, FreshSellReleaseEvidence] = {}
         self._retry_one_max_retries = max(
             0,
             int(
@@ -1565,10 +1575,12 @@ class SchwabV2Strategy:
         state.flip_owner_position_entry_ms.clear()
         state.flip_owner_first_rest_placed = False
         state.flip_owner_recovery_warning_at_ms = 0
+        state.fresh_sell_owner_release_segment_ms = 0
 
     def _retire_flip_owner_opportunity(self, state: SymbolState, *, reason: str) -> bool:
         if (self._removed_wait_enabled and state.symbol in self._removed_wait_requests
                 and reason != "scanner_removed_terminal_unfilled"):
+            logger.info("[V2-FRESH-SELL-OWNER-HELD] %s reason=open_removal_request", state.symbol)
             return False
         previous_phase = state.flip_owner_phase
         opportunity_id = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
@@ -2798,8 +2810,102 @@ class SchwabV2Strategy:
         state.cw_resting_suppressed_segment_id = 0
         state.cw_resting_suppressed_bars = 0
 
-    def _end_flip_owner_on_sell(self, state: SymbolState) -> None:
+    def _fresh_sell_release_owner(self, state: SymbolState, signal: dict | None) -> bool:
+        request = self._removed_wait_requests.get(state.symbol)
+        proof = self._fresh_sell_release_evidence.get(state.symbol)
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        watch_ms = max(self._boot_ms, state.retry_one_watch_start_ms)
+        reason = ""
+        if not self.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled:
+            reason = "flag_off"
+        elif request is None or request.purpose not in {"retry_exhausted", "false_flip_restore"}:
+            reason = "request_not_exhausted"
+        elif ((signal or {}).get("flip") == "BUY"
+              or (signal or {}).get("observation_phase", self._bar_observation_phase) != "live"
+              or not self._slotclear_live_sell_close_after_watch(state, watch_ms)
+              or not state.fresh_sell_owner_release_segment_ms
+              or state.atr_short_flip_bar_ts != state.fresh_sell_owner_release_segment_ms
+              or bar_ms < state.fresh_sell_owner_release_segment_ms
+              or state.fresh_sell_owner_release_segment_ms <= max(
+                  state.flip_owner_retry_segment_id, state.flip_owner_flip_bar_ts)):
+            reason = "sell_not_fresh_live_boundary"
+        elif (not self._removed_wait_restore_readable or not self._flip_owner_restore_readable
+              or not self._flip_owner_evidence_fresh(state)):
+            reason = "position_evidence_unknown_or_stale"
+        elif (state.flip_owner_open_positions or state.position_qty or state.position_qty_held
+              or state.resting_active or state.webull_resting_active):
+            reason = "position_or_buy_stays_owned"
+        elif (request.opportunity_id != int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+              or state.fanout_segment_id not in {0, request.opportunity_id}):
+            reason = "request_owner_mismatch"
+        elif proof is None or proof.request != request:
+            reason = "cancel_evidence_unknown"
+        elif not 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS:
+            reason = "cancel_evidence_stale"
+        elif not proof.clear:
+            reason = proof.reason
+        if reason:
+            logger.info("[V2-FRESH-SELL-OWNER-HELD] %s reason=%s", state.symbol, reason)
+            return False
+        stage = getattr(self, "stage_removed_wait_clear", None)
+        if not callable(stage):
+            logger.info("[V2-FRESH-SELL-OWNER-HELD] %s reason=offloop_clear_api_unavailable", state.symbol)
+            return False
+        # The shared poll atomically commits these exact retirements off-loop.
+        # A later bar must still match the request, owner and observed SELL segment.
+        segment = state.fresh_sell_owner_release_segment_ms
+        def valid() -> bool:
+            current = self._fresh_sell_release_evidence.get(state.symbol)
+            return bool(
+                self.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled
+                and self._symbol_states.get(state.symbol) is state
+                and state.fresh_sell_owner_release_segment_ms == segment
+                and state.atr_short_flip_bar_ts == segment
+                and self._flip_owner_restore_readable and self._flip_owner_evidence_fresh(state)
+                and not (state.flip_owner_open_positions or state.position_qty or state.position_qty_held
+                         or state.resting_active or state.webull_resting_active)
+                and current is not None and current.request == request and current.clear
+                and 0 <= self._now_ms() - current.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS
+            )
+        if not stage(proof, retire_owner=True, reason="fresh_sell_cancelled_flat", validate=valid):
+            logger.info("[V2-FRESH-SELL-OWNER-HELD] %s reason=offloop_clear_pending", state.symbol)
+            return False
+        self._flip_owner_counts["release_evaluated"] += 1
+        state.fanout_last_retired_opportunity_id = max(
+            state.fanout_last_retired_opportunity_id, request.opportunity_id)
+        self._release_fanout_webull_claim(state, reason="fresh_sell_cancelled_flat", persist=False)
+        self._clear_fanout_segment_id(state, reason="fresh_sell_cancelled_flat", persist=False)
+        self._reset_fanout_webull_slots(state)
+        self._clear_cw_slot_claims(state)
+        state.cw_v2_emit_claimed = False
+        state.cw_v2_emit_ms = 0
+        self._clear_flip_owner_memory(state)
+        self._flip_owner_counts["release_succeeded"] += 1
+        self._removed_wait_requests.pop(state.symbol, None)
+        self._fresh_sell_release_evidence.pop(state.symbol, None)
+        for name in ("_removed_wait_pending_clears", "_removed_wait_committed_clears"):
+            self.__dict__.get(name, {}).pop(request, None)
+        logger.info("[V2-FRESH-SELL-OWNER-RELEASED] %s old_opportunity=%d sell_bar=%d",
+                    state.symbol, request.opportunity_id, bar_ms)
+        return True
+
+    def _end_flip_owner_on_sell(self, state: SymbolState, signal: dict | None = None) -> None:
         if not self._flip_owned_first_entry_enabled:
+            return
+        # The exit's close receipt can raise its request after this SELL observation.
+        # Remember only the boundary here; flat/cancel proof still gates retirement.
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        if (self.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled
+                and signal and signal.get("flip") == "SELL"
+                and signal.get("observation_phase", "live") == "live"
+                and self._slotclear_live_sell_close_after_watch(
+                    state, max(self._boot_ms, state.retry_one_watch_start_ms))
+                and state.atr_short_flip_bar_ts == bar_ms
+                and bar_ms > max(state.flip_owner_retry_segment_id, state.flip_owner_flip_bar_ts)):
+            state.fresh_sell_owner_release_segment_ms = bar_ms
+        request = getattr(self, "_removed_wait_requests", {}).get(state.symbol)
+        if request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"}:
+            self._fresh_sell_release_owner(state, signal)
             return
         phase = state.flip_owner_phase
         if phase == "idle":
@@ -5173,6 +5279,11 @@ class SchwabV2Strategy:
         fields (write-disjoint from Paths 1/2 and the A/B path)."""
         if not self._cw_v2_enabled:
             return
+        flip = (atr_signal or {}).get("flip")
+        if flip == "BUY":
+            state.fresh_sell_owner_release_segment_ms = 0
+        elif state.fresh_sell_owner_release_segment_ms and flip != "SELL":
+            self._fresh_sell_release_owner(state, atr_signal)
         # New bar: reset the forming-bar low; release a stale emit claim that never filled.
         state.cw_bar_low_so_far = 0.0
         state.cw_v2_bars_since_exit += 1  # reclaim gap: count NEW bars since the prior exit
@@ -5188,7 +5299,6 @@ class SchwabV2Strategy:
             state.cw_segment_high = max(state.cw_segment_high, float(state.bars[-1].high))
         if atr_signal is None:
             return
-        flip = atr_signal.get("flip")
         if flip == "BUY":
             gap_ms = int(atr_signal.get("decision_gap_ms") or 0)
             if gap_ms > _ATR_MAX_BAR_GAP_MS:
@@ -5271,6 +5381,9 @@ class SchwabV2Strategy:
                         or atr_signal.get("observation_phase", "live") != "live"
                         or state.atr_short_flip_bar_ts != bar_ms
                         or bar_ms <= state.slotclear_last_fresh_sell_bar_ms):
+                    if state.symbol in self._removed_wait_requests:
+                        logger.info("[V2-FRESH-SELL-OWNER-HELD] %s reason=sell_not_fresh_live_boundary",
+                                    state.symbol)
                     # Historical/duplicate delivery ends the indicator arm, not live ownership.
                     state.cw_armed = False
                     state.cw_arm_bar_ts = 0
@@ -5287,7 +5400,7 @@ class SchwabV2Strategy:
             state.cw_arm_bar_ts = 0
             live_fanout_transition = self._fanout_identity_bar_is_live(state)
             if self._flip_owned_first_entry_enabled:
-                self._end_flip_owner_on_sell(state)
+                self._end_flip_owner_on_sell(state, atr_signal)
                 self._retry_one_start_segment_on_sell(
                     state,
                     live=(

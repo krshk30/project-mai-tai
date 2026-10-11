@@ -107,6 +107,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import (
 from project_mai_tai.market_data.schwab_v2_streamer import SchwabTick, SchwabV2Streamer
 from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
 from project_mai_tai.settings import Settings, get_settings
+from project_mai_tai.positions_read_receipt import load_receipts
 from project_mai_tai.strategy_core.time_utils import (
     US_MARKET_HOLIDAYS,
     session_day_eastern_str,
@@ -126,6 +127,8 @@ from project_mai_tai.strategy_core.session_line_restore import (
 from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, local_rpg_abort_proof
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     FLIP_OWNER_ROW_SETTLE_MS,
+    FLIP_OWNER_EVIDENCE_MAX_AGE_MS,
+    FreshSellReleaseEvidence,
     MAX_BAR_AGE_SECONDS_FOR_EMIT,
     PostCloseEntryRelease,
     SERVICE_NAME,
@@ -137,7 +140,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     TradeIntentDraft,
     session_start_ts_ms,
 )
-from project_mai_tai.v2_removed_wait import RemovedWaitStore
+from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitStore
 
 logger = logging.getLogger(__name__)
 
@@ -2143,6 +2146,9 @@ class SchwabV2BotService:
                 unknown_opportunities,
             )
             self.strategy.apply_flip_position_book(position_book)
+        fresh_sell_poll = getattr(self, "_fresh_sell_owner_release_poll", None)
+        if callable(fresh_sell_poll):
+            await fresh_sell_poll()
         removed_wait_poll = getattr(self, "_removed_wait_poll", None)
         if callable(removed_wait_poll):
             await removed_wait_poll()
@@ -2813,6 +2819,113 @@ class SchwabV2BotService:
                     continue
                 proof.update(never_dispatched=True, flat_accounts=list(accounts), reason="positive_begin_no_attempt")
         return proofs
+
+    async def _fresh_sell_owner_release_poll(self) -> None:
+        strategy = self.strategy
+        if (not getattr(strategy, "_flip_owned_first_entry_enabled", False)
+                or not self.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled):
+            return
+        requests = tuple(r for r in strategy._removed_wait_requests.values()
+                         if r.purpose in {"retry_exhausted", "false_flip_restore"})
+        if not requests:
+            return
+        proofs = await asyncio.to_thread(self._fetch_fresh_sell_release_evidence, requests)
+        strategy._fresh_sell_release_evidence = {p.request.symbol: p for p in proofs}
+
+    def _fetch_fresh_sell_release_evidence(
+        self, requests: tuple[RemovedWait, ...],
+    ) -> tuple[FreshSellReleaseEvidence, ...]:
+        # Cache only a read result. A later live SELL owns the release decision.
+        now = datetime.now(UTC)
+        observed = int(now.timestamp() * 1000)
+        cutoff = now - timedelta(milliseconds=FLIP_OWNER_ROW_SETTLE_MS)
+        terminal = {"cancelled", "canceled", "filled", "rejected", "expired"}
+
+        def at_ms(value: datetime | None) -> int:
+            if value is None:
+                return 0
+            return int((value.replace(tzinfo=UTC) if value.tzinfo is None else value).timestamp() * 1000)
+
+        def assess(session: Session, request: RemovedWait, receipts: dict) -> FreshSellReleaseEvidence:
+            evidence_at = observed
+
+            def result(reason: str, clear: bool = False) -> FreshSellReleaseEvidence:
+                return FreshSellReleaseEvidence(request, evidence_at, clear, reason)
+
+            names = tuple(request.account_names)
+            expected = self.strategy._flip_owner_accounts
+            if len(names) != 2 or len(set(names)) != 2 or set(names) != expected:
+                return result("accounts_unknown")
+            accounts = session.scalars(select(BrokerAccount).where(BrokerAccount.name.in_(names))).all()
+            if len(accounts) != len(names):
+                return result("accounts_unknown")
+            account_names = {a.id: a.name for a in accounts}
+            for name in names:
+                receipt = receipts.get(name, {})
+                read_at = at_ms(receipt.get("read_at"))
+                if (receipt.get("writer") != "oms.sync_broker_positions"
+                        or not read_at or not 0 <= observed - read_at <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+                    return result("broker_position_evidence_unknown_or_stale")
+                evidence_at = min(evidence_at, read_at)
+            symbol = request.symbol
+            if (session.scalar(select(AccountPosition.id).where(
+                    AccountPosition.broker_account_id.in_(account_names), AccountPosition.symbol == symbol,
+                    AccountPosition.quantity != 0).limit(1))
+                    or session.scalar(select(VirtualPosition.id).where(
+                        VirtualPosition.broker_account_id.in_(account_names), VirtualPosition.symbol == symbol,
+                        VirtualPosition.quantity != 0).limit(1))
+                    or session.scalar(select(OmsManagedPosition.id).where(
+                        OmsManagedPosition.broker_account_name.in_(names), OmsManagedPosition.symbol == symbol,
+                        or_(OmsManagedPosition.status == "open", OmsManagedPosition.current_quantity != 0)
+                    ).limit(1))):
+                return result("position_stays_owned")
+            # Deliberately no strategy/account restriction: shared Schwab ORB also owns a BUY.
+            if (session.scalar(select(BrokerOrder.id).where(BrokerOrder.symbol == symbol,
+                    BrokerOrder.side == "buy",
+                    or_(BrokerOrder.status.is_(None), BrokerOrder.status.notin_(terminal))).limit(1))
+                    or session.scalar(select(TradeIntent.id).where(TradeIntent.symbol == symbol,
+                        TradeIntent.side == "buy", TradeIntent.intent_type == "open",
+                        or_(TradeIntent.status.is_(None), TradeIntent.status.notin_(terminal))).limit(1))):
+                return result("working_buy_or_intent")
+            cancels = session.execute(select(TradeIntent, Strategy.code)
+                .join(Strategy, Strategy.id == TradeIntent.strategy_id)
+                .where(TradeIntent.symbol == symbol, TradeIntent.intent_type == "cancel",
+                       TradeIntent.created_at >= datetime.fromtimestamp(request.requested_at_ms / 1000, UTC),
+                       TradeIntent.broker_account_id.in_(account_names))).all()
+            acknowledged = set()
+            for intent, code in cancels:
+                payload = intent.payload or {}
+                md = payload.get("metadata", {})
+                if md.get("clearwait_removal_token") != request.token:
+                    continue
+                if (code != STRATEGY_CODE or intent.side != "buy"
+                        or str(md.get("clearwait_opportunity_id")) != str(request.opportunity_id)
+                        or md.get("clearwait_buy_only") != "true"
+                        or md.get("reason") != ("false_flip_restore" if request.purpose == "false_flip_restore"
+                                                else "retry_budget_exhausted")):
+                    return result("cancel_request_identity_unknown")
+                no_target = (intent.status == "rejected"
+                             and payload.get("refusal_origin") == "skipped_before_submit"
+                             and payload.get("refusal_code") == "cancel_target_not_found")
+                if intent.status not in {"cancelled", "canceled"} and not no_target:
+                    return result("own_cancel_not_terminal")
+                updated = at_ms(intent.updated_at)
+                if not updated or updated < request.requested_at_ms or updated > int(cutoff.timestamp() * 1000):
+                    return result("own_cancel_settling")
+                acknowledged.add(account_names[intent.broker_account_id])
+            if acknowledged != set(names):
+                return result("own_cancel_missing")
+            return result("flat_both_own_cancels_settled", True)
+
+        try:
+            if self.session_factory is None:
+                raise ValueError("position database unavailable")
+            with self.session_factory() as session:
+                receipts = load_receipts(session)
+                return tuple(assess(session, request, receipts) for request in requests)
+        except Exception:  # noqa: BLE001 - unknown evidence never releases an owner
+            logger.exception("[V2-FRESH-SELL-OWNER-READ] reason=evidence_unreadable")
+            return tuple(FreshSellReleaseEvidence(r, observed, False, "evidence_unreadable") for r in requests)
 
     def _fetch_flip_position_book(
         self,
