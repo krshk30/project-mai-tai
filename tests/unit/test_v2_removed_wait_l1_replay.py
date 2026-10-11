@@ -15,6 +15,7 @@ from sqlalchemy import select
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, TradeIntent
 from project_mai_tai.events import StrategyStateSnapshotEvent, StrategyStateSnapshotPayload, TradeIntentEvent
+from project_mai_tai.falseflip1_runtime import FalseFlipStore
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.market_data.massive_atr_seed import MassiveAtrSeedClient
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, SchwabV2RestClient
@@ -131,6 +132,11 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
     strat = bot.strategy
     strat._now_ms = lambda: clock[0]
     bot._configure_flip_entry_ownership_store(bot._configure_fanout_identity_store())
+    if native_line:
+        assert isinstance(bot._falseflip_store, FalseFlipStore)
+        assert strat._falseflip_readable is True
+        print(f"native {symbol} FalseFlipStore_restore=True readable={strat._falseflip_readable} "
+              f"restored_budgets={len(strat._falseflip_budgets)} disposable_database=True")
     # Replay the historical request under its original type, explicitly counterfactual
     # local restoration. The actual box currently has zero active requests.
     with factory() as session:
@@ -219,7 +225,9 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
         ledger = bot._line_sessions[symbol]
         print(f"native DKI provider_complete={getattr(ledger._coverage, 'complete', None)} "
               f"LINE_published={symbol in bot._line_published} reason={ledger.incomplete_reason} "
-              f"fallback={state.line_live_fallback} events={len(transport.events)}")
+              f"fallback={state.line_live_fallback} events={len(transport.events)} "
+              f"falseflip_readable={strat._falseflip_readable} "
+              f"falseflip_entry_blocked={strat._falseflip_entry_blocked(state)}")
         print("native DKI events=" + json.dumps([{
             "event_type": e.get("event_type"),
             "intent_type": (e.get("payload") or {}).get("intent_type"),
