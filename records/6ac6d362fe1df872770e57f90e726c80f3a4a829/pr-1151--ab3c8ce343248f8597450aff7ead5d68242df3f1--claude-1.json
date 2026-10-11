@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "ab3c8ce343248f8597450aff7ead5d68242df3f1",
+  "range_head": "6ac6d362fe1df872770e57f90e726c80f3a4a829",
+  "reviewed_at": "2026-10-11T17:57:01Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only lane status rows C16-C18 (claude-1)"
+}
