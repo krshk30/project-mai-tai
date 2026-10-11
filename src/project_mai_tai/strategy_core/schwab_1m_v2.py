@@ -764,6 +764,9 @@ class SchwabV2Strategy:
             self.settings.strategy_schwab_1m_v2_removed_wait_clear_enabled
         )
         self._removed_wait_requests: dict[str, RemovedWait] = {}
+        self._removed_wait_clear_rules_enabled = bool(
+            self.settings.strategy_schwab_1m_v2_removed_wait_clear_rules_enabled
+        )
         self._removed_scanner_symbols: set[str] = set()
         self._removed_wait_persist: RemovalPersist | None = None
         self._removed_wait_restore_readable = True
@@ -1275,6 +1278,30 @@ class SchwabV2Strategy:
         for proof in proofs:
             request = proof.request
             state = self._symbol_states.get(request.symbol)
+            if (self._removed_wait_clear_rules_enabled and proof.clear
+                    and proof.reason in {"previous_session_flat", "scanner_removal_flat"}
+                    and self._removed_wait_requests.get(request.symbol) == request
+                    and self._removed_wait_restore_readable
+                    and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+                current = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) if state else 0
+                # An old request may close, but it cannot retire a different current owner.
+                request_only = (proof.reason == "previous_session_flat"
+                                or request.opportunity_id != current or current == 0)
+                if request_only:
+                    try:
+                        if self._removed_wait_persist is None:
+                            raise RuntimeError("removal store unavailable")
+                        self._removed_wait_persist(request, False)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("[V2-REMOVED-WAIT] %s reason=request_retire_failed", request.symbol)
+                    else:
+                        self._removed_wait_requests.pop(request.symbol, None)
+                        for name in ("_pending_intents", "_pending_webull_direct_intents", "_pending_webull_fanout_intents"):
+                            setattr(self, name, [d for d in getattr(self, name)
+                                                if d.metadata.get("clearwait_removal_token") != request.token])
+                        logger.info("[V2-REMOVED-WAIT] %s verdict=CLEAR reason=%s owner_kept=1",
+                                    request.symbol, proof.reason)
+                    continue
             if request.purpose in {"retry_exhausted", "false_flip_restore"}:
                 expected_reason = ("false_flip_leftovers_cancelled_owner_kept"
                                    if request.purpose == "false_flip_restore"
@@ -1331,6 +1358,15 @@ class SchwabV2Strategy:
             if request.opportunity_id == 0:
                 continue
             seed_cap = (state.cw_seed_cap_watch_start_ms, state.cw_resting_taken, state.cw_reclaim_taken)
+            rules_retired = self._removed_wait_clear_rules_enabled and proof.reason == "scanner_removal_flat"
+            if rules_retired:
+                try:
+                    if self._removed_wait_persist is None:
+                        raise RuntimeError("removal store unavailable")
+                    self._removed_wait_persist(request, False)
+                except Exception:  # noqa: BLE001
+                    logger.exception("[V2-REMOVED-WAIT] %s reason=request_cas_failed", request.symbol)
+                    continue
             if request.opportunity_id and not self._retire_flip_owner_opportunity(
                 state, reason="scanner_removed_terminal_unfilled"):
                 continue
@@ -1339,7 +1375,8 @@ class SchwabV2Strategy:
             try:
                 if self._removed_wait_persist is None:
                     raise RuntimeError("removal store unavailable")
-                self._removed_wait_persist(request, False)
+                if not rules_retired:
+                    self._removed_wait_persist(request, False)
             except Exception:  # noqa: BLE001
                 logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=retire_write_failed", request.symbol)
                 continue

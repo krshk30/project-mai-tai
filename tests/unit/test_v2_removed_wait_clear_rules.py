@@ -1,0 +1,269 @@
+"""L1 shared-account rules and runtime fences; controlled books are labelled."""
+
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+import asyncio
+import json
+from pathlib import Path
+import threading
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from project_mai_tai.db.models import (
+    AccountPosition, Base, BrokerAccount, BrokerOrder, BrokerOrderEvent,
+    Fill, OmsManagedPosition, Strategy, TradeIntent, VirtualPosition,
+)
+from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+from project_mai_tai.settings import Settings
+from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
+from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitProof, RemovedWaitStore, assess_clear_rules
+
+PRIMARY, WEBULL = "live:schwab_1m_v2", "live:orb"
+NAMES = {PRIMARY, WEBULL}
+NOW = datetime(2026, 10, 9, 19, 4, tzinfo=UTC)
+MS = int(NOW.timestamp() * 1000)
+
+
+@pytest.fixture
+def db(tmp_path):
+    engine = create_engine("sqlite:///" + str(tmp_path / "l1.sqlite"), connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(engine)
+    accounts = {n: uuid4() for n in NAMES}
+    strategies = {n: uuid4() for n in ("schwab_1m_v2", "orb_schwab")}
+    with factory() as session:
+        for name, ident in accounts.items():
+            session.add(BrokerAccount(id=ident, name=name, environment="live", external_account_id=name,
+                                      provider="webull" if name == WEBULL else "schwab"))
+        for name, ident in strategies.items():
+            session.add(Strategy(id=ident, code=name, name=name))
+        session.commit()
+    yield RemovedWaitStore(factory), factory, accounts, strategies
+    engine.dispose()
+
+
+def request(*, purpose="scanner_removal", opportunity=MS - 60_000):
+    return RemovedWait("JZ", opportunity, str(uuid4()), MS - 40_000, (PRIMARY, WEBULL), purpose)
+
+
+def strategy(req, store, *, enabled=True, now=MS):
+    strat = SchwabV2Strategy(Settings(_env_file=None,
+        strategy_schwab_1m_v2_removed_wait_clear_rules_enabled=enabled,
+        strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
+        strategy_schwab_1m_v2_dual_broker_fanout_enabled=True,
+        strategy_schwab_1m_v2_account_name=PRIMARY,
+        strategy_schwab_1m_v2_webull_account_name=WEBULL))
+    strat._now_ms = lambda: now
+    strat.configure_fanout_identity_persistence(lambda *_: None)
+    strat.configure_flip_entry_ownership(lambda *_: None, restore_readable=True)
+    strat.configure_removed_wait(store.record_rules if enabled else store.record,
+                                 restored={req.symbol: req}, readable=True)
+    return strat
+
+
+def order_row(db, req, *, account=PRIMARY, own=False, status="accepted", side="buy", updated=None):
+    _, factory, accounts, strategies = db
+    row = BrokerOrder(id=uuid4(), strategy_id=strategies["schwab_1m_v2" if own else "orb_schwab"],
+        broker_account_id=accounts[account], symbol=req.symbol, side=side, order_type="limit",
+        time_in_force="gtc", quantity=100, status=status, client_order_id=str(uuid4()),
+        submitted_at=NOW - timedelta(days=2), updated_at=updated or NOW - timedelta(seconds=20),
+        payload={"fanout_segment_id": str(req.opportunity_id)} if own else {})
+    with factory() as session:
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        session.expunge(row)
+    return row
+
+
+@pytest.mark.parametrize("opportunity", [0, MS - 60_000])
+def test_scanner_empty_settled_snapshot_clears_without_dispatch_journal(db, opportunity):
+    store, _, _, _ = db
+    req = request(opportunity=opportunity)
+    store.record_rules(req, True)
+    proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
+    assert proof.clear and proof.reason == "scanner_removal_flat"
+    strat = strategy(req, store)
+    strat.scanner_readded(req.symbol)
+    strat.apply_removed_wait_proofs((proof,))
+    assert store.restore() == {} and not strat._removed_wait_requests
+    assert strat.line_buy_ready(req.symbol)
+
+
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("own", [False, True])
+@pytest.mark.parametrize("status", ["accepted", "pending", "unknown", "aborted", "partially_filled"])
+def test_any_strategy_and_account_working_buy_blocks_including_old_gtc(db, account, own, status):
+    store, _, _, _ = db
+    req = request()
+    store.record_rules(req, True)
+    order_row(db, req, account=account, own=own, status=status)
+    proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
+    assert not proof.clear
+
+
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+def test_other_strategy_pending_open_blocks(db, account):
+    store, factory, accounts, strategies = db
+    req = request()
+    store.record_rules(req, True)
+    with factory() as session:
+        session.add(TradeIntent(strategy_id=strategies["orb_schwab"], broker_account_id=accounts[account],
+            symbol=req.symbol, side="buy", intent_type="open", quantity=10, reason="controlled ORB",
+            status="pending", created_at=NOW - timedelta(days=2), updated_at=NOW - timedelta(days=2)))
+        session.commit()
+    assert not store.clear_rule_proofs((req,), NAMES, now=NOW)[0].clear
+
+
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("kind", ["account", "virtual", "managed"])
+def test_position_in_either_account_and_any_strategy_blocks(db, account, kind):
+    store, factory, accounts, strategies = db
+    req = request()
+    store.record_rules(req, True)
+    row = {
+        "account": lambda: AccountPosition(broker_account_id=accounts[account], symbol=req.symbol, quantity=1),
+        "virtual": lambda: VirtualPosition(broker_account_id=accounts[account], strategy_id=strategies["orb_schwab"],
+                                            symbol=req.symbol, quantity=1),
+        "managed": lambda: OmsManagedPosition(broker_account_name=account, strategy_code="orb_schwab",
+            symbol=req.symbol, entry_price=1, original_quantity=1, current_quantity=0, status="open"),
+    }[kind]()
+    with factory() as session:
+        session.add(row)
+        session.commit()
+    assert not store.clear_rule_proofs((req,), NAMES, now=NOW)[0].clear
+
+
+@pytest.mark.parametrize("purpose", ["scanner_removal", "retry_exhausted", "false_flip_restore"])
+@pytest.mark.parametrize("outcome", ["already_absent", "confirmed_after_accepted_request", "could_not_tell", "not_confirmed"])
+def test_cancel_outcomes_and_cancelled_ticket_fill_fence(db, purpose, outcome):
+    store, factory, accounts, strategies = db
+    req = request(purpose=purpose)
+    store.record_rules(req, True)
+    row = order_row(db, req, own=True, status="cancelled")
+    with factory() as session:
+        session.add(BrokerOrderEvent(order_id=row.id, event_type="cancelled", event_source="broker",
+            event_at=NOW - timedelta(seconds=20), payload={"cancel_outcome": outcome}))
+        for account in NAMES:
+            session.add(TradeIntent(strategy_id=strategies["schwab_1m_v2"], broker_account_id=accounts[account],
+                symbol=req.symbol, side="buy", intent_type="cancel", quantity=2, reason="controlled receipt",
+                status="cancelled", created_at=NOW - timedelta(seconds=30), updated_at=NOW - timedelta(seconds=20),
+                payload={"metadata": {"fanout_segment_id": str(req.opportunity_id),
+                    "clearwait_removal_token": req.token, "clearwait_opportunity_id": str(req.opportunity_id),
+                    "clearwait_buy_only": "true", "reason": "false_flip_restore" if purpose == "false_flip_restore"
+                    else "retry_budget_exhausted"}}))
+        session.commit()
+    proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
+    assert proof.clear is (outcome in {"already_absent", "confirmed_after_accepted_request"})
+    if proof.clear:
+        with factory() as session:
+            session.add(Fill(order_id=row.id, strategy_id=strategies["schwab_1m_v2"],
+                             broker_account_id=accounts[PRIMARY], symbol=req.symbol,
+                             side="buy", quantity=1, price=1, filled_at=NOW - timedelta(seconds=25)))
+            session.commit()
+        assert not store.clear_rule_proofs((req,), NAMES, now=NOW)[0].clear
+
+
+@pytest.mark.parametrize("age_ms", [14_999, 15_000])
+def test_settle_boundary(db, age_ms):
+    store, _, _, _ = db
+    req = replace(request(), requested_at_ms=MS - age_ms)
+    store.record_rules(req, True)
+    proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
+    assert proof.clear is (age_ms >= 15_000)
+
+
+@pytest.mark.parametrize("purpose", ["scanner_removal", "retry_exhausted", "false_flip_restore"])
+@pytest.mark.parametrize("opportunity", [0, MS - 86_400_000])
+def test_prior_session_all_purposes_retire_only_request(db, purpose, opportunity):
+    store, _, _, _ = db
+    req = replace(request(purpose=purpose, opportunity=opportunity), requested_at_ms=MS - 86_000_000)
+    store.record_rules(req, True)
+    strat = strategy(req, store)
+    state = strat.watchlist_state(req.symbol)
+    state.flip_owner_opportunity_id = state.fanout_segment_id = MS
+    state.flip_owner_phase = "consumed"
+    state.flip_owner_fill_accounts.add(PRIMARY)
+    before = (state.flip_owner_phase, state.fanout_segment_id, set(state.flip_owner_fill_accounts))
+    proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
+    assert proof.clear and proof.reason == "previous_session_flat"
+    strat.apply_removed_wait_proofs((proof,))
+    assert store.restore() == {} and not strat._removed_wait_requests
+    assert before == (state.flip_owner_phase, state.fanout_segment_id, state.flip_owner_fill_accounts)
+
+
+def test_previous_session_working_sell_blocks(db):
+    store, _, _, _ = db
+    req = request(opportunity=MS - 86_400_000)
+    store.record_rules(req, True)
+    order_row(db, req, side="sell")
+    assert store.clear_rule_proofs((req,), NAMES, now=NOW)[0].reason == "working_order"
+
+
+def test_stale_zero_and_exact_token_cas(db):
+    store, _, _, _ = db
+    req = request(opportunity=0)
+    store.record_rules(req, True)
+    strat = strategy(req, store)
+    proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
+    strat.apply_removed_wait_proofs((replace(proof, observed_at_ms=MS - 15_001),))
+    assert store.restore() == {req.symbol: req}
+    newer = replace(req, token="new-token")
+    store.record_rules(newer, True)
+    strat.apply_removed_wait_proofs((proof,))
+    assert store.restore() == {req.symbol: newer} and strat._removed_wait_requests == {req.symbol: req}
+    with pytest.raises(ValueError, match="changed"):
+        store.record_rules(req, False)
+
+
+@pytest.mark.asyncio
+async def test_boot_retirement_and_offloop_generation_fence(db, monkeypatch):
+    store, _, _, _ = db
+    req = request(opportunity=MS - 86_400_000)
+    store.record_rules(req, True)
+    strat = strategy(req, store)
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings, bot.session_factory = strat, strat.settings, store.session_factory
+    monkeypatch.setattr(RemovedWaitStore, "clear_rule_proofs", lambda self, r, a: (RemovedWaitProof(
+        req, MS, True, "previous_session_flat"),))
+    await bot._configure_removed_wait_store()
+    assert not strat._removed_wait_requests and store.restore() == {}
+    assert not strat._pending_intents and not strat._pending_webull_direct_intents
+    store.record_rules(req, True)
+    strat._removed_wait_requests[req.symbol] = req
+    entered, release = threading.Event(), threading.Event()
+    def paused(*_):
+        entered.set()
+        assert release.wait(5)
+        return (RemovedWaitProof(req, MS, True, "previous_session_flat"),)
+    bot._removed_wait_store.clear_rule_proofs = paused
+    task = asyncio.create_task(bot._removed_wait_poll())
+    assert await asyncio.to_thread(entered.wait, 5)
+    bot._clearwait_emit_generation = 1  # emit completed while the snapshot read was away
+    release.set()
+    await asyncio.wait_for(task, 5)
+    assert strat._removed_wait_requests and store.restore()
+
+
+def test_null_status_unknown_is_not_empty():
+    req = request()
+    rows = dict(now=NOW, accounts={PRIMARY: PRIMARY, WEBULL: WEBULL}, intents=[], filled_order_ids=set(),
+        order_events=[], snapshots=[SimpleNamespace(snapshot_type="v2_removed_wait", payload=req.payload(active=True))],
+        has_position=False, strategy_id="v2")
+    for column in ("orders", "intents"):
+        row = SimpleNamespace(status=None, intent_type="open", side="buy", updated_at=NOW)
+        assert not assess_clear_rules(req, orders=[row] if column == "orders" else [],
+                                      **{**rows, "intents": [row] if column == "intents" else []}).clear
+
+
+def test_flag_default_catalog_owner():
+    flag = "strategy_schwab_1m_v2_removed_wait_clear_rules_enabled"
+    assert getattr(Settings(_env_file=None), flag) is True
+    catalog = json.loads((Path(__file__).parents[2] / "ops/health/expected_flags.json").read_text())
+    row, = [r for r in catalog["flags"] if r["name"] == flag]
+    assert row["expected"] is True and row["owning_service"] == "schwab-1m-v2"
+    assert "also_check_services" not in row

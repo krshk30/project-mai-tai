@@ -812,7 +812,7 @@ class SchwabV2BotService:
             getattr(self.settings, "strategy_schwab_1m_v2_streamer_enabled", False)
         )
 
-    def _configure_removed_wait_store(self) -> None:
+    async def _configure_removed_wait_store(self) -> None:
         if not (self.strategy._removed_wait_enabled or getattr(self.strategy, "_retry_one_enabled", False)):
             return
         store = None
@@ -820,14 +820,16 @@ class SchwabV2BotService:
             if self.session_factory is None:
                 raise RuntimeError("removal evidence database unavailable")
             store = RemovedWaitStore(self.session_factory)
-            restored = store.restore()
+            restored = await asyncio.to_thread(store.restore)
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=restore_unreadable")
             self.strategy.configure_removed_wait(None, restored={}, readable=False)
         else:
-            self.strategy.configure_removed_wait(store.record, restored=restored, readable=True,
+            record = (store.record_rules if self.strategy._removed_wait_clear_rules_enabled else store.record)
+            self.strategy.configure_removed_wait(record, restored=restored, readable=True,
                                                  dispatch_persist=store.record_dispatch)
         self._removed_wait_store = store
+        await self._removed_wait_poll()
 
     async def _removed_wait_poll(self) -> None:
         if not (getattr(self.strategy, "_removed_wait_enabled", False)
@@ -839,18 +841,24 @@ class SchwabV2BotService:
         # An emit already past its gate must finish before the serial cancellation barrier.
         if self._removed_wait_emits_inflight():
             return
+        generation = getattr(self, "_clearwait_emit_generation", 0)
         store = getattr(self, "_removed_wait_store", None)
         if store is None:
             return
         accounts = {self.settings.strategy_schwab_1m_v2_account_name}
-        if self.strategy._dual_broker_fanout_enabled:
+        if (self.strategy._dual_broker_fanout_enabled
+                or self.strategy._removed_wait_clear_rules_enabled):
             accounts.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
         try:
-            proofs = await asyncio.to_thread(store.proofs, requests, accounts)
+            if self.strategy._removed_wait_clear_rules_enabled:
+                proofs = await asyncio.to_thread(store.clear_rule_proofs, requests, accounts)
+            else:
+                proofs = await asyncio.to_thread(store.proofs, requests, accounts)
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=evidence_unreadable")
             return
-        if self._removed_wait_emits_inflight():
+        if (self._removed_wait_emits_inflight()
+                or getattr(self, "_clearwait_emit_generation", 0) != generation):
             return
         self.strategy.apply_removed_wait_proofs(proofs)
 
@@ -868,6 +876,7 @@ class SchwabV2BotService:
         counts = self.__dict__.setdefault("_clearwait_open_emits", {})
         symbol = draft.symbol.upper()
         counts[symbol] = counts.get(symbol, 0) + 1
+        self._clearwait_emit_generation = getattr(self, "_clearwait_emit_generation", 0) + 1
         try:
             account = getattr(emitter, "broker_account_name", "")
             if not self.strategy.track_removed_wait_dispatch(draft, account):
@@ -905,7 +914,7 @@ class SchwabV2BotService:
         await asyncio.to_thread(self._rpg_retire_disabled_at_boot)
         active_segments = self._configure_fanout_identity_store()
         self._configure_flip_entry_ownership_store(active_segments)
-        self._configure_removed_wait_store()
+        await self._configure_removed_wait_store()
         await self._recover_soft_rest_boot()
         self._configure_fanout_outcome_journal(active_segments)
         self.intent_emitter = SchwabV2IntentEmitter(
