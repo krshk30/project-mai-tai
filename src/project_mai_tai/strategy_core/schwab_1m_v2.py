@@ -2892,17 +2892,19 @@ class SchwabV2Strategy:
     def _end_flip_owner_on_sell(self, state: SymbolState, signal: dict | None = None) -> None:
         if not self._flip_owned_first_entry_enabled:
             return
+        # The exit's close receipt can raise its request after this SELL observation.
+        # Remember only the boundary here; flat/cancel proof still gates retirement.
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        if (self.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled
+                and signal and signal.get("flip") == "SELL"
+                and signal.get("observation_phase", "live") == "live"
+                and self._slotclear_live_sell_close_after_watch(
+                    state, max(self._boot_ms, state.retry_one_watch_start_ms))
+                and state.atr_short_flip_bar_ts == bar_ms
+                and bar_ms > max(state.flip_owner_retry_segment_id, state.flip_owner_flip_bar_ts)):
+            state.fresh_sell_owner_release_segment_ms = bar_ms
         request = getattr(self, "_removed_wait_requests", {}).get(state.symbol)
         if request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"}:
-            bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
-            if (self.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled
-                    and signal and signal.get("flip") == "SELL"
-                    and signal.get("observation_phase", "live") == "live"
-                    and self._slotclear_live_sell_close_after_watch(
-                        state, max(self._boot_ms, state.retry_one_watch_start_ms))
-                    and state.atr_short_flip_bar_ts == bar_ms
-                    and bar_ms > max(state.flip_owner_retry_segment_id, state.flip_owner_flip_bar_ts)):
-                state.fresh_sell_owner_release_segment_ms = bar_ms
             self._fresh_sell_release_owner(state, signal)
             return
         phase = state.flip_owner_phase
