@@ -155,7 +155,7 @@ async def test_original_no_id_cancel_receipts_release_only_on_fresh_sell(monkeyp
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("account", [PRIMARY, MIRROR])
 @pytest.mark.parametrize("fault", ["position", "order", "orb", "intent", "cancel", "settle", "receipt",
-                                  "token", "missing", "stale", "unreadable", "flag", "replay"])
+                                  "token", "missing", "stale", "unreadable", "flag", "replay", "owner"])
 async def test_blocking_controls(monkeypatch, caplog, pm, account, fault):
     bot, state, clock, request, writes, engine = setup(monkeypatch, pm=pm)
     refresh(bot, clock, age=15_001 if fault == "receipt" else 0)
@@ -193,6 +193,8 @@ async def test_blocking_controls(monkeypatch, caplog, pm, account, fault):
         state.flip_owner_evidence_readable = False
     elif fault == "flag":
         bot.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled = False
+    elif fault == "owner":
+        state.fanout_segment_id = request.opportunity_id + 1
     with caplog.at_level("INFO"):
         sell(bot, state, phase="replay" if fault == "replay" else "live")
     assert "[V2-FRESH-SELL-OWNER-HELD]" in caplog.text
@@ -315,6 +317,7 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch):
     bot._strategy_on_bar("FLYE", ChartBar("FLYE", *(float(n) for n in row[1:5]), int(row[5]),
                                          FLYE["next_buy_flip_bar_ms"]), observation_phase="live")
     assert state.atr_state == "long" and state.flip_owner_phase == "bound"
+    assert state.atr_trail == pytest.approx(FLYE["next_buy_flip_trail"], abs=0.000001)
     assert not bot.strategy._strict_first_rest_admitted(state, slot="first")
     engine.dispose()
 
@@ -396,3 +399,15 @@ def test_default_on_flag_and_v2_catalog_owner():
     entries = [e for e in catalog["flags"] if e["name"] == name]
     assert len(entries) == 1 and entries[0]["expected"] is True
     assert entries[0]["owning_service"] == "schwab-1m-v2"
+
+
+@pytest.mark.asyncio
+async def test_original_flye_acceptance_kills_flag_off_mutation(monkeypatch):
+    original = setup
+    def disabled(*args, **kwargs):
+        result = original(*args, **kwargs)
+        result[0].settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled = False
+        return result
+    monkeypatch.setitem(test_original_flye_recorded_bar_runtime_reaches_1517_buy.__globals__, "setup", disabled)
+    with pytest.raises(AssertionError):
+        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch)

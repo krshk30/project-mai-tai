@@ -2811,7 +2811,8 @@ class SchwabV2Strategy:
         elif (state.flip_owner_open_positions or state.position_qty or state.position_qty_held
               or state.resting_active or state.webull_resting_active):
             reason = "position_or_buy_stays_owned"
-        elif request.opportunity_id != int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0):
+        elif (request.opportunity_id != int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+              or state.fanout_segment_id not in {0, request.opportunity_id}):
             reason = "request_owner_mismatch"
         elif proof is None or proof.request != request:
             reason = "cancel_evidence_unknown"
