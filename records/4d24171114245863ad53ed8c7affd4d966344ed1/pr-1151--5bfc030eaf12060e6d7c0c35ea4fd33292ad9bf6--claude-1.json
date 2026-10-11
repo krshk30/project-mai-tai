@@ -1,9 +1,0 @@
-{
-  "pr_number": 1151,
-  "range_base": "5bfc030eaf12060e6d7c0c35ea4fd33292ad9bf6",
-  "range_head": "4d24171114245863ad53ed8c7affd4d966344ed1",
-  "reviewed_at": "2026-10-11T14:31:27Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "docs-only 10-12 handoff commit reviewed (claude-1): Record verified RESERVE1 audit proof correction and pending final checks"
-}

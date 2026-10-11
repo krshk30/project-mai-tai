@@ -1,9 +1,0 @@
-{
-  "pr_number": 1151,
-  "range_base": "fdb0ed762130201bc1f960017dd7d8e671a5ff03",
-  "range_head": "887cfbc7c49c2ca9ae2240b5b62a270aee7092c7",
-  "reviewed_at": "2026-10-11T14:17:08Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "docs-only 10-12 handoff commit reviewed (claude-1): Publish October 12 handoff with verified merge and unfinished F/I gates"
-}

@@ -1,9 +1,0 @@
-{
-  "pr_number": 1151,
-  "range_base": "9dbcd8f90447f619d1f61994f27ac78d76c02395",
-  "range_head": "67c75d062b846aed93fe28d04b53d9d2e579632d",
-  "reviewed_at": "2026-10-11T14:31:28Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "docs-only 10-12 handoff commit reviewed (claude-1): docs: record exact-head GC attribution and remaining gates"
-}

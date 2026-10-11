@@ -1,9 +1,0 @@
-{
-  "pr_number": 1151,
-  "range_base": "d22e121d587fe990774b3c9594afa9cb29fb8000",
-  "range_head": "6dadd4a4a07069a950bd2b8020b9532d8887f89d",
-  "reviewed_at": "2026-10-11T14:17:08Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "docs-only 10-12 handoff commit reviewed (claude-1): Record completed current-head latency failures and separate broker proof blocker"
-}

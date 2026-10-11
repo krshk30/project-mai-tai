@@ -1,9 +1,0 @@
-{
-  "pr_number": 1151,
-  "range_base": "c2abd8ca724d5c6662bd024baa68ca2d9d076d34",
-  "range_head": "9dbcd8f90447f619d1f61994f27ac78d76c02395",
-  "reviewed_at": "2026-10-11T14:31:27Z",
-  "reviewer": "claude-1",
-  "schema_version": 1,
-  "summary": "docs-only 10-12 handoff commit reviewed (claude-1): docs: record final raw latency failures"
-}
