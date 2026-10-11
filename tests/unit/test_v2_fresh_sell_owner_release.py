@@ -73,20 +73,22 @@ def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False):
         strategy_schwab_1m_v2_atr_reprice_handoff_enabled=False,
     )
     if all_on:
-        # Sunday live set; external completed-line readiness remains an explicit replay control.
-        enabled = ("streamer gateway_register atr_flip tick_capture go_live confirmed_window cw_v2 "
-                   "cw_armed_segment_safety cw_v2_resting_entry cw_v2_reactive_entry webull_mirror "
-                   "cw_v2_eh_resting_entry webull_mirror_eh dual_broker_fanout flip_owned_first_entry "
-                   "gap_hold retry_one session_time_roll webull_resting_mirror confirmation_exit "
-                   "confirmation_account_neutral_discovery pm_print_ask_confirm pm_flip_wait "
-                   "pm_rest_reprice resting_buy_round_up line_chart_restoration keep_rest_after_buy "
-                   "removed_wait_clear slotclear_fresh_flip slotclear_fresh_sell gap_line_carry false_flip")
-        disabled = "timesale_capture hold_confirm cw_v2_reclaim atr_massive_seed atr_reprice_handoff"
-        settings = settings.model_copy(update={
-            **{f"strategy_schwab_1m_v2_{name}_enabled": True for name in enabled.split()},
-            **{f"strategy_schwab_1m_v2_{name}_enabled": False for name in disabled.split()},
-        })
-    strategy = SchwabV2Strategy(settings, config=SchwabV2Config(macd_warmup_settling_bars=0))
+        # Every observed process override, not just ON flag names or replay defaults.
+        settings = Settings(**{**{k: getattr(settings, k) for k in Settings.model_fields},
+                               **DATA["proc_settings"]})
+        expected = Settings(**DATA["proc_settings"])
+        assert len(DATA["proc_settings"]) == 62
+        assert sum(k.endswith(("_enabled", "_atr_only_mode", "_retry_one_max_retries"))
+                   for k in DATA["proc_settings"]) == 40
+        assert all(getattr(settings, k) == getattr(expected, k) for k in DATA["proc_settings"])
+        assert settings.strategy_schwab_1m_v2_enabled and settings.strategy_schwab_1m_v2_atr_only_mode
+        assert all(getattr(settings, f"strategy_schwab_1m_v2_{name}_enabled") for name in (
+            "line_chart_restoration", "gap_hold", "false_flip", "slotclear_fresh_flip",
+            "slotclear_fresh_sell", "fresh_sell_owner_release"))
+        assert (settings.strategy_schwab_1m_v2_account_name,
+                settings.strategy_schwab_1m_v2_webull_account_name) == (PRIMARY, MIRROR)
+    strategy = SchwabV2Strategy(settings, config=(
+        SchwabV2Config() if all_on else SchwabV2Config(macd_warmup_settling_bars=0)))
     if all_on:
         strategy._line_readiness = lambda symbol: symbol == "FLYE"
         strategy.configure_falseflip({}, readable=True)
@@ -363,7 +365,7 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, 
     emitted = []
     class Redis:
         async def xadd(self, _stream, fields, **_kwargs):
-            emitted.append(json.loads(fields["data"]))
+            emitted.append((clock[0], json.loads(fields["data"])))
             return "test"
     redis = Redis()
     wire = SchwabV2IntentEmitter(bot.settings, redis, PRIMARY)
@@ -413,7 +415,12 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, 
     # Broker acceptance/fill are controlled; the cross prices/times are original retained quotes.
     draft = next(d for d in reversed(drafts) if d.intent_type == "open")
     assert int(draft.metadata["fanout_segment_id"]) > request.opportunity_id
-    recorded_quote = next(q for q in DATA["quotes_1517"] if q[4] and float(q[4]) >= 2.33)
+    # This order passed the real service gate when first placed, before the recorded cross.
+    waiting_at, event_row = next(
+        (at, row) for at, row in reversed(emitted) if row["payload"]["intent_type"] == "open")
+    event = TradeIntentEvent.model_validate(event_row)
+    stop, limit = (Decimal(event.payload.metadata[k]) for k in ("stop_price", "limit_price"))
+    recorded_quote = next(q for q in DATA["quotes_1517"] if q[4] and stop <= Decimal(q[4]) <= limit)
     quote_at = datetime.fromisoformat(recorded_quote[0])
     received_at = datetime.fromisoformat(recorded_quote[1])
     clock[0] = int(received_at.timestamp() * 1000)
@@ -421,7 +428,8 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, 
     class Broker:
         async def submit_order(self, order):
             assert order.symbol == "FLYE" and order.side == "buy"
-            assert last >= Decimal(str(order.metadata["stop_price"]))
+            assert order.broker_account_name == PRIMARY
+            assert Decimal(order.metadata["stop_price"]) <= last <= Decimal(order.metadata["limit_price"])
             return [ExecutionReport(event_type=kind, client_order_id=order.client_order_id,
                 broker_order_id="CONTROL-FLYE-1517", symbol=order.symbol, side=order.side,
                 intent_type=order.intent_type, quantity=order.quantity,
@@ -429,9 +437,8 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, 
                 fill_price=last if kind == "filled" else None, metadata=dict(order.metadata),
                 reported_at=quote_at) for kind in ("accepted", "filled")]
 
-    # This order passed the real service gate when first placed, before the recorded cross.
-    event = TradeIntentEvent.model_validate(next(
-        row for row in reversed(emitted) if row["payload"]["intent_type"] == "open"))
+    assert waiting_at < clock[0] < FLYE["next_buy_flip_poll_ms"]
+    assert received_at.astimezone(strategy_module.EASTERN_TZ).strftime("%H:%M") == "15:17"
     settings = bot.settings.model_copy(update={"oms_adapter": "simulated"})
     oms = OmsRiskService(settings=settings, redis_client=redis,
                          session_factory=bot.session_factory, broker_adapter=Broker())
@@ -456,6 +463,16 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, 
     assert state.atr_state == "long" and state.flip_owner_phase == "bound"
     assert state.atr_trail == pytest.approx(FLYE["next_buy_flip_trail"], abs=0.000001)
     assert not bot.strategy._strict_first_rest_admitted(state, slot="first")
+    def et(ms):
+        return instant(ms).astimezone(strategy_module.EASTERN_TZ).strftime("%H:%M:%S.%f")
+    print(f"FLYE_CONTROLLED deferred_cancel={deferred_cancel} "
+          f"release_bar={et(released_at)} waiting_buy={et(waiting_at)} "
+          f"account={event.payload.broker_account_name} "
+          f"stop={event.payload.metadata['stop_price']} limit={event.payload.metadata['limit_price']} "
+          f"accepted_filled={quote_at.astimezone(strategy_module.EASTERN_TZ).strftime('%H:%M:%S.%f')} "
+          f"observed={received_at.astimezone(strategy_module.EASTERN_TZ).strftime('%H:%M:%S.%f')} price={last} "
+          "proc_fields=62 tracked_fields=40 provider_coverage/freshness/broker=CONTROLLED "
+          "LINE/GAP/FALSE/SLOTx2/ATR_ONLY=ON old_segment=consumed same_segment_reentry=blocked")
     engine.dispose()
 
 
@@ -523,8 +540,11 @@ async def test_pending_slow_commit_does_not_block_bar_or_release_at_buy(monkeypa
     bot._removed_wait_store.commit_clear = slow
     task = asyncio.create_task(bot._removed_wait_poll())
     try:
-        while not started.is_set():
-            await asyncio.sleep(.001)
+        async def wait_for_commit():
+            while not started.is_set():
+                assert not task.done(), "off-loop retirement not staged; L1 API dependency required"
+                await asyncio.sleep(.001)
+        await asyncio.wait_for(wait_for_commit(), 2)
         before = perf_counter()
         bot.strategy._cw_v2_track(state, None)
         elapsed = perf_counter() - before
@@ -617,6 +637,7 @@ def test_default_on_flag_and_v2_catalog_owner():
 
 @pytest.mark.asyncio
 async def test_original_flye_acceptance_kills_flag_off_mutation(monkeypatch):
+    assert callable(getattr(SchwabV2Strategy, "stage_removed_wait_clear", None))
     original = setup
     def disabled(*args, **kwargs):
         result = original(*args, **kwargs)
