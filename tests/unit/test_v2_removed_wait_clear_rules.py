@@ -74,12 +74,13 @@ def apply_committed(strat, store, proof):
     strat.apply_removed_wait_proofs((proof,))
 
 
-def order_row(db, req, *, account=PRIMARY, own=False, status="accepted", side="buy", updated=None):
+def order_row(db, req, *, account=PRIMARY, own=False, status="accepted", side="buy", updated=None,
+              submitted=None):
     _, factory, accounts, strategies = db
     row = BrokerOrder(id=uuid4(), strategy_id=strategies["schwab_1m_v2" if own else "orb_schwab"],
         broker_account_id=accounts[account], symbol=req.symbol, side=side, order_type="limit",
         time_in_force="gtc", quantity=100, status=status, client_order_id=str(uuid4()),
-        submitted_at=NOW - timedelta(days=2), updated_at=updated or NOW - timedelta(seconds=20),
+        submitted_at=submitted or NOW - timedelta(days=2), updated_at=updated or NOW - timedelta(seconds=20),
         payload={"fanout_segment_id": str(req.opportunity_id)} if own else {})
     with factory() as session:
         session.add(row)
@@ -213,11 +214,56 @@ def test_previous_session_working_sell_blocks(db):
     assert store.clear_rule_proofs((req,), NAMES, now=NOW)[0].reason == "working_order"
 
 
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+@pytest.mark.parametrize("status", ["filled", "cancelled"])
+def test_zero_op_same_session_own_fill_blocks_even_before_removal(db, status, account):
+    store, factory, accounts, strategies = db
+    req = request(opportunity=0)
+    store.record_rules(req, True)
+    row = order_row(db, req, own=True, status=status, account=account, submitted=NOW - timedelta(hours=1))
+    with factory() as session:
+        session.add(Fill(order_id=row.id, strategy_id=strategies["schwab_1m_v2"],
+            broker_account_id=accounts[account], symbol=req.symbol, side="buy", quantity=1, price=1,
+            filled_at=NOW - timedelta(hours=1)))
+        session.commit()
+    assert store.clear_rule_proofs((req,), NAMES, now=NOW)[0].reason == "own_fill_stays_owned"
+
+
+@pytest.mark.parametrize("account", [PRIMARY, WEBULL])
+def test_zero_op_unrelated_old_terminal_own_fill_does_not_block(db, account):
+    store, factory, accounts, strategies = db
+    req = request(opportunity=0)
+    store.record_rules(req, True)
+    old = NOW - timedelta(days=50)
+    row = order_row(db, req, own=True, account=account, status="filled", submitted=old, updated=old)
+    with factory() as session:
+        saved = session.get(BrokerOrder, row.id)
+        saved.payload = {"fanout_segment_id": str(MS - 50 * 86_400_000)}
+        session.flush()
+        saved.updated_at = old
+        session.add(Fill(order_id=row.id, strategy_id=strategies["schwab_1m_v2"],
+            broker_account_id=accounts[account], symbol=req.symbol, side="buy", quantity=1, price=1,
+            filled_at=old))
+        session.commit()
+    assert store.clear_rule_proofs((req,), NAMES, now=NOW)[0].reason == "scanner_removal_flat"
+
+
+@pytest.mark.parametrize("purpose", ["scanner_removal", "retry_exhausted", "false_flip_restore"])
+@pytest.mark.parametrize("side", ["buy", "sell"])
+def test_zero_op_previous_session_any_age_working_order_blocks_all_purposes(db, purpose, side):
+    store, _, _, _ = db
+    req = replace(request(opportunity=0, purpose=purpose), requested_at_ms=MS - 86_400_000)
+    store.record_rules(req, True)
+    order_row(db, req, side=side, submitted=NOW - timedelta(days=50))
+    assert store.clear_rule_proofs((req,), NAMES, now=NOW)[0].reason == "working_order"
+
+
 @pytest.mark.parametrize("purpose", ["scanner_removal", "retry_exhausted", "false_flip_restore"])
 @pytest.mark.parametrize("outcome", ["could_not_tell", "not_confirmed"])
-def test_old_unknown_cancel_outside_request_anchor_remains_open(db, purpose, outcome):
+@pytest.mark.parametrize("opportunity", [0, MS - 86_400_000])
+def test_old_unknown_cancel_outside_request_anchor_remains_open(db, purpose, outcome, opportunity):
     store, factory, _, _ = db
-    req = request(purpose=purpose, opportunity=MS - 86_400_000)
+    req = request(purpose=purpose, opportunity=opportunity)
     store.record_rules(req, True)
     row = order_row(db, req, account=WEBULL, status="cancelled", side="sell",
                     updated=NOW - timedelta(days=2))

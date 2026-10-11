@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 import json
+from math import ceil
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -13,7 +14,7 @@ import pytest
 from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
-from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, TradeIntent
+from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill, StrategyBarHistory, TradeIntent
 from project_mai_tai.events import StrategyStateSnapshotEvent, StrategyStateSnapshotPayload, TradeIntentEvent
 from project_mai_tai.falseflip1_runtime import FalseFlipStore
 from project_mai_tai.oms.service import OmsRiskService
@@ -31,6 +32,30 @@ db = l1_database
 RECORDED = json.loads((Path(__file__).parents[1] / "fixtures/v2_removed_wait_l1_recorded.json").read_text())
 LIVE = json.loads((Path(__file__).parents[1] / "fixtures/v2_removed_wait_l1_live_flags.json").read_text())
 LINE = json.loads((Path(__file__).parents[1] / "fixtures/v2_removed_wait_l1_line_sources.json").read_text())
+REVIEW = json.loads((Path(__file__).parents[1] / "fixtures/v2_removed_wait_l1_reviewer_evidence.json").read_text())
+
+
+class DatabaseOnlyLineSource:
+    """Recorded DB bars, with UNKNOWN provider coverage; never accesses a provider/token."""
+    def __init__(self, factory):
+        self.factory = factory
+
+    def set_desired_symbols(self, symbols):
+        self.desired_symbols = set(symbols)
+
+    def fetch_session_history(self, symbol, anchor, current):
+        with self.factory() as session:
+            rows = session.scalars(select(StrategyBarHistory).where(
+                StrategyBarHistory.symbol == symbol,
+                StrategyBarHistory.bar_time >= datetime.fromtimestamp(anchor / 1000, UTC),
+                StrategyBarHistory.bar_time <= datetime.fromtimestamp(current / 1000, UTC),
+            ).order_by(StrategyBarHistory.bar_time)).all()
+            return [ChartBar(symbol, *(float(getattr(r, k + "_price")) for k in
+                ("open", "high", "low", "close")), r.volume,
+                int(r.bar_time.replace(tzinfo=UTC).timestamp() * 1000)) for r in rows], None
+
+    def _set_line_source_state(self, *_):
+        pass
 
 
 def ms(value):
@@ -77,7 +102,8 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
     case = RECORDED[name]
     symbol = name.upper()
     start = "2026-10-08T11:28:42Z" if name == "dki" else "2026-10-09T18:19:51.846Z"
-    clock = [ms(case["bars"][0]["created_at"]) if native_line else ms(start)]
+    clock = [int(case["request"]["payload"]["requested_at_ms"]) if native_line and name == "jz"
+             else ms(case["bars"][0]["created_at"]) if native_line else ms(start)]
     class ClockMeta(type):
         def __instancecheck__(cls, value):
             return isinstance(value, datetime)
@@ -153,37 +179,100 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
                 quantity=row["quantity"], status=row["status"], reason="recorded cancel receipt",
                 payload=payload, created_at=datetime.fromisoformat(row["created_at"]),
                 updated_at=datetime.fromisoformat(row["updated_at"])))
+        if name == "jz" and native_line:
+            evidence = REVIEW["jz"]
+            assert evidence["oct9_broker_orders"] == 0
+            assert evidence["account_positions"] == evidence["virtual_positions"] == evidence["managed_open_positions"] == 0
+            for row in evidence["historical_orders"]:
+                session.add(BrokerOrder(id=UUID(row["id"]), strategy_id=strategies["schwab_1m_v2"],
+                    broker_account_id=accounts[row["account"]], symbol=symbol, side=row["side"],
+                    order_type=row["order_type"], time_in_force=row["time_in_force"], quantity=row["quantity"],
+                    status=row["status"], client_order_id=row["client_order_id"], payload=row["payload"],
+                    submitted_at=datetime.fromisoformat(row["submitted_at"]),
+                    updated_at=datetime.fromisoformat(row["updated_at"])))
+            for row in evidence["historical_fills"]:
+                session.add(Fill(id=UUID(row["id"]), order_id=UUID(row["order_id"]),
+                    strategy_id=strategies["schwab_1m_v2"], broker_account_id=accounts[row["account"]],
+                    symbol=symbol, side=row["side"], quantity=row["quantity"], price=row["price"],
+                    filled_at=datetime.fromisoformat(row["filled_at"])))
+            for row in case["bars"]:
+                if ms(row["created_at"]) > clock[0]:
+                    continue
+                session.add(StrategyBarHistory(strategy_code="schwab_1m_v2", symbol=symbol,
+                    interval_secs=60, bar_time=datetime.fromisoformat(row["bar_time"]),
+                    **{k: row[k] for k in ("open_price", "high_price", "low_price", "close_price", "volume")},
+                    created_at=datetime.fromisoformat(row["created_at"]), source="live"))
         session.commit()
     transport = ControlledTransport()
     bot.redis = transport
     bot.intent_emitter = SchwabV2IntentEmitter(settings, transport, PRIMARY)
     bot.webull_intent_emitter = SchwabV2IntentEmitter(settings, transport, WEBULL)
     await bot._configure_removed_wait_store()
+    cleared_at = None
+    if native_line and name == "jz" and enabled:
+        req = strat._removed_wait_requests[symbol]
+        assert req.opportunity_id == 0
+        clock[0] = req.requested_at_ms + 14_999
+        await bot._removed_wait_poll()
+        assert symbol in strat._removed_wait_requests
+        # The recorded cancel rows settle slightly later than the request itself.
+        first_valid = max(req.requested_at_ms,
+                          *(ceil(datetime.fromisoformat(r["updated_at"]).timestamp() * 1000)
+                            for r in case["receipts"])) + 15_000
+        clock[0] = first_valid - 1
+        await bot._removed_wait_poll()
+        assert symbol in strat._removed_wait_requests
+        clock[0] = first_valid
+        await bot._removed_wait_poll()
+        assert not strat._removed_wait_requests and store.restore() == {}
+        cleared_at = first_valid
+        print(f"JZ opportunity_id=0 first_valid_poll_CLEAR={first_valid} "
+              f"requested_at_ms={req.requested_at_ms} settle_ms={first_valid - req.requested_at_ms}")
+    if native_line and name == "jz":
+        clock[0] = ms(start)
     strat.scanner_readded(symbol)
     if native_line:
         source = LINE[name]
-        assert "schwab" in source, "full recorded Schwab provider response unavailable; coverage UNKNOWN"
         bot.tick_writer = None  # Offline replay does not run the capture writer.
-        bot.rest_client = SchwabV2RestClient(settings, on_chart_bar=None, on_quote=None)
-        bot.rest_client._authorized_get = lambda _url: source["schwab"]
-        provider = Mock(get_aggs=Mock(return_value=SimpleNamespace(data=json.dumps(source["preopen"]).encode())))
-        bot._atr_massive_seed_client = MassiveAtrSeedClient("recorded-not-a-live-key", rest_client=provider)
-        bot._watchlist.add(symbol)
-        bot._boot_scanner_selected = {symbol}
-        bot._boot_exclusion_sources_readable = True
+        if name == "dki":
+            bot.rest_client = SchwabV2RestClient(settings, on_chart_bar=None, on_quote=None)
+            bot.rest_client._authorized_get = lambda _url: source["schwab"]
+            provider = Mock(get_aggs=Mock(return_value=SimpleNamespace(data=json.dumps(source["preopen"]).encode())))
+            bot._atr_massive_seed_client = MassiveAtrSeedClient("recorded-not-a-live-key", rest_client=provider)
+        else:
+            bot.rest_client = DatabaseOnlyLineSource(factory)
         event = StrategyStateSnapshotEvent(source_service="recorded-scanner", produced_at=Clock.now(UTC),
             payload=StrategyStateSnapshotPayload(watchlist=[symbol],
-                top_confirmed=[{"symbol": symbol, "confirmed_at": source["added_at"]}]))
-        bot._line_scanner_transition(event, {symbol})
-        bot._sync_line_epochs()
+                top_confirmed=[{"symbol": symbol, **({"confirmed_at": source["added_at"]}
+                                                    if "added_at" in source else {})}]))
+        bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=1)
+        assert bot._watchlist == {symbol} and bot._boot_exclusion_sources_readable
     state = strat.watchlist_state(symbol)
+    admitted = []
+    actual_admission = strat._strict_first_rest_admitted
+    def observe_admission(state, *, slot):
+        allowed = actual_admission(state, slot=slot)
+        admitted.append((clock[0], state.symbol, allowed, strat._removed_wait_gate_closed(state.symbol)))
+        return allowed
+    monkeypatch.setattr(strat, "_strict_first_rest_admitted", observe_admission)
     for row in case["bars"]:
         current = bar(row)
         if name == "dki" and current.timestamp_ms > ms("2026-10-08T11:44Z"):
             break
         if name == "jz" and current.timestamp_ms > case["sell"]["bar_time_ms"] + 3 * 60_000:
             break
-        clock[0] = ms(row["created_at"])
+        clock[0] = max(clock[0], ms(row["created_at"]))
+        if native_line and name == "jz":
+            with factory() as session:
+                existing = session.scalar(select(StrategyBarHistory.id).where(
+                    StrategyBarHistory.symbol == symbol,
+                    StrategyBarHistory.bar_time == datetime.fromisoformat(row["bar_time"])))
+                if existing is None:
+                    session.add(StrategyBarHistory(strategy_code="schwab_1m_v2", symbol=symbol,
+                        interval_secs=60, bar_time=datetime.fromisoformat(row["bar_time"]),
+                        **{k: row[k] for k in ("open_price", "high_price", "low_price", "close_price", "volume")},
+                        created_at=datetime.fromisoformat(row["created_at"]), source="live"))
+                    session.commit()
         strat.apply_flip_position_book(FlipPositionBook(clock[0], True, {}))  # controlled empty book
         await bot._removed_wait_poll()
         phase = "replay" if current.timestamp_ms < ms(start) - 60_000 else "live"
@@ -242,6 +331,15 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
             "intent_type": (e.get("payload") or {}).get("intent_type"),
             "account": (e.get("payload") or {}).get("broker_account_name")
         } for e in transport.events], default=str))
+        if enabled:
+            assert not strat._removed_wait_gate_closed(symbol)
+            assert state.cw_arm_bar_ts == ms("2026-10-08T11:45Z")
+            assert strat._flip_owner_evidence_fresh(state) and not strat._removed_wait_has_owner(state)
+            assert not strat._falseflip_entry_blocked(state)
+            assert any(allowed and not blocked for _, _, allowed, blocked in admitted)
+            assert state.line_live_fallback and not state.gap_hold_active
+            assert not state.resting_flip_ms and not transport.requests
+            return {"admitted": admitted, "state": state, "events": transport.events}
     elif name == "dki":
         tick = case["cross"]["schwab_trade"]
         clock[0] = ms(tick["received_at"])
@@ -259,6 +357,13 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
         assert not opens and strat._removed_wait_gate_closed(symbol)
         assert not any(e.get("payload", {}).get("intent_type") == "open" for e in transport.events)
         return
+    if native_line and name == "jz":
+        assert not strat._removed_wait_gate_closed(symbol)
+        assert any(allowed and not blocked for _, _, allowed, blocked in admitted)
+        assert state.line_live_fallback and not strat._falseflip_entry_blocked(state)
+        assert any(e.get("payload", {}).get("intent_type") == "open" for e in transport.events), (
+            state.resting_active, state.resting_level, state.flip_owner_phase)
+        return {"admitted": admitted, "state": state, "events": transport.events, "cleared_at": cleared_at}
     assert opens or transport.events, (state.atr_state, state.atr_trail, state.resting_active, state.resting_level,
                    state.flip_owner_phase, state.gap_hold_active)
     # JZ's 15:04 SELL must create a normal resting BUY. DKI's 07:45 candle
@@ -295,5 +400,30 @@ async def test_original_recorded_case_ends_accepted_buy(db, monkeypatch, name, e
 @pytest.mark.parametrize("name", ["dki", "jz"])
 @pytest.mark.parametrize("enabled", [True, False], ids=["rules_ON", "rollback_OFF"])
 @pytest.mark.asyncio
-async def test_original_actual_live_flags_native_line_path(db, monkeypatch, name, enabled):
-    await replay_case(db, monkeypatch, name, enabled, native_line=True)
+async def test_reviewer_done_checks_actual_live_flags_native_path(db, monkeypatch, caplog, name, enabled):
+    result = await replay_case(db, monkeypatch, name, enabled, native_line=True)
+    if not enabled:
+        return
+    assert "verdict=CLEAR reason=" in caplog.text
+    assert "reason=scanner_removed_waiting_buy" not in caplog.text
+    if name == "dki":
+        assert "reason=ask_past_band ask=4.8300 cap=4.8100" in caplog.text
+        assert "reason=ask_past_band ask=4.8500 cap=4.8100" in caplog.text
+        witness = REVIEW["dki"]["raw_log_witness"]
+        assert REVIEW["dki"]["db_created_at_is_replay_proxy"] is True
+        assert any("11:46:02,861" in line and "flip=BUY" in line for line in witness)
+        assert any("11:46:02,862" in line and "[V2-CW-ARM]" in line for line in witness)
+        print("DKI done: stale request CLEAR; normal admission allowed; asks 4.83/4.85 > cap 4.81; "
+              "DB created_at is arrival proxy, separate UTC PROBE/ARM witness 11:46:02.861/.862")
+    else:
+        assert result["cleared_at"] is not None
+        opens = [e["payload"] for e in result["events"] if e.get("payload", {}).get("intent_type") == "open"]
+        assert {e["broker_account_name"] for e in opens} == {PRIMARY, WEBULL}
+        assert all(e["side"] == "buy" and e["metadata"].get("resting_entry") == "true"
+                   and e["metadata"]["order_type"] == "STOP_LIMIT"
+                   and Decimal(e["metadata"]["stop_price"]) == Decimal("1.41")
+                   and Decimal(e["metadata"]["limit_price"]) == Decimal("1.42") for e in opens), json.dumps(opens)
+        assert "bar_time_ms=1791572640000" in caplog.text
+        assert "[V2-FLIP-OWNER-ADMISSION] JZ evaluated=1 refused_unknown=0 allowed=1" in caplog.text
+        print("JZ done: rule A opportunity 0 CLEAR, original 15:04 SELL reaches normal waiting BUY; "
+              "DB-only replay, provider coverage UNKNOWN, no provider/credential read")

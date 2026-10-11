@@ -681,6 +681,8 @@ class RemovedWaitStore:
                 if not set(request.account_names) <= account_names:
                     raise ValueError("removal account configuration changed")
                 anchor = datetime.fromtimestamp((request.opportunity_id or request.requested_at_ms) / 1000, UTC)
+                # Opportunity zero owns this session's terminal history, not unrelated old fills.
+                zero_op_session = current_session_anchor(anchor)
                 cutoff = observed - timedelta(milliseconds=SETTLE_MS)
                 intents = bounded(select(TradeIntent).where(
                     TradeIntent.broker_account_id.in_(accounts), TradeIntent.symbol == request.symbol,
@@ -693,7 +695,8 @@ class RemovedWaitStore:
                     BrokerOrder.broker_account_id.in_(accounts), BrokerOrder.symbol == request.symbol,
                     or_(BrokerOrder.status.is_(None), BrokerOrder.status.not_in(ORDER_TERMINAL),
                         BrokerOrder.updated_at >= cutoff, BrokerOrder.submitted_at >= anchor,
-                        (BrokerOrder.strategy_id == strategy_id) & (request.opportunity_id == 0),
+                        (BrokerOrder.strategy_id == strategy_id) & (request.opportunity_id == 0)
+                            & (BrokerOrder.submitted_at >= zero_op_session),
                         BrokerOrder.id.in_(select(BrokerOrderEvent.order_id).where(
                             BrokerOrderEvent.event_source == "broker",
                             or_(BrokerOrderEvent.payload["cancel_outcome"].as_string().in_(
