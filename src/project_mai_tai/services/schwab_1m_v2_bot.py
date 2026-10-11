@@ -5738,17 +5738,43 @@ class SchwabV2BotService:
         for i, (left, right) in enumerate(pairs):
             params[f"left_{i}"] = left
             params[f"right_{i}"] = right
+        capture_filter = tick_filter = ""
+        if self.settings.strategy_schwab_1m_v2_gap_trade_conditions_filter_enabled:
+            # Frozen stocks/trade consolidated rules read 2026-10-11. High/low-only
+            # updates cannot establish a missing minute's open/close (e.g. 32).
+            # Form T (12) remains eligible under the existing minute-bar semantics.
+            params["known_conditions"] = [str(code) for code in (
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+                19, 20, 21, 22, 23, 24, 25, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+                36, 37, 38, 41, 52, 53, 55,
+            )]
+            params["non_bar_conditions"] = [str(code) for code in (
+                2, 5, 7, 10, 13, 15, 16, 20, 21, 22, 29, 32, 33, 37, 52, 53,
+            )]
+
+            def condition_filter(codes):
+                # Only positively classified exclusions permit spanning. Unknown
+                # providers/codes or missing/malformed metadata keep the gap held.
+                return f"""AND NOT COALESCE(
+                    t.provider IN ('massive', 'polygon')
+                    AND {codes} <@ CAST(:known_conditions AS text[])
+                    AND {codes} && CAST(:non_bar_conditions AS text[]), FALSE)"""
+
+            capture_filter = condition_filter("string_to_array(t.conditions, ',')")
+            raw_codes = "COALESCE(t.raw->'conditions', t.raw->'c')"
+            tick_filter = condition_filter(f"""CASE WHEN jsonb_typeof({raw_codes}) = 'array'
+                THEN ARRAY(SELECT jsonb_array_elements_text({raw_codes})) ELSE NULL END""")
         query = text(f"""
             WITH gaps(lo, hi) AS (VALUES {values})
             SELECT lo, hi FROM gaps WHERE
             EXISTS (SELECT 1 FROM market_capture_trades t
                     WHERE t.symbol=:symbol
                     AND t.event_ts >= to_timestamp((lo+60000)/1000.0)
-                    AND t.event_ts < to_timestamp(hi/1000.0))
+                    AND t.event_ts < to_timestamp(hi/1000.0) {capture_filter})
             OR EXISTS (SELECT 1 FROM market_trade_ticks t
                     WHERE t.symbol=:symbol
                     AND t.event_ts >= to_timestamp((lo+60000)/1000.0)
-                    AND t.event_ts < to_timestamp(hi/1000.0))
+                    AND t.event_ts < to_timestamp(hi/1000.0) {tick_filter})
         """)
         with self.session_factory() as session:
             session.execute(text("SET LOCAL statement_timeout = '5s'"))
