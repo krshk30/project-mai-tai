@@ -1,5 +1,6 @@
 """Real PostgreSQL gap SQL and WFF replay; private schemas and simulated venue only."""
 
+import inspect
 import json
 import os
 from datetime import UTC, datetime
@@ -184,7 +185,9 @@ async def test_original_wff_1553_buy_reaches_simulated_accepted_order(factory, m
     case.bot.session_factory = factory
     active = case.bot._configure_fanout_identity_store()
     case.bot._configure_flip_entry_ownership_store(active)
-    case.bot._configure_removed_wait_store()
+    configured = case.bot._configure_removed_wait_store()
+    if inspect.isawaitable(configured):
+        await configured
     case.schwab.broker_account_name = case.settings.strategy_schwab_1m_v2_account_name
     case.webull.broker_account_name = case.settings.strategy_schwab_1m_v2_webull_account_name
     for row in prefix:
