@@ -49,7 +49,7 @@ def test_sunday_composition_keeps_every_captured_live_v2_flag():
 
 @pytest.mark.asyncio
 async def test_sunday_60s_real_bar_and_quote_handlers_stay_under_50ms(monkeypatch, caplog, tmp_path):
-    replay = __import__("line_repair_preopen_replay")
+    from scripts import line_repair_preopen_replay as replay
     monkeypatch.setattr(replay, "LIVE_CONTROLS", CANDIDATE)
     row = next(r for r in ROWS if r["day"] == "2026-10-09" and r["symbol"] == "MI")
     current = row["boundary_ms"] + 9 * 60_000
