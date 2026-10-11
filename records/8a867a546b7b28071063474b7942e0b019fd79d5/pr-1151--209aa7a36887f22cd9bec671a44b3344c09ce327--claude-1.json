@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "209aa7a36887f22cd9bec671a44b3344c09ce327",
+  "range_head": "8a867a546b7b28071063474b7942e0b019fd79d5",
+  "reviewed_at": "2026-10-11T14:31:27Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only 10-12 handoff commit reviewed (claude-1): Record actual corrected-head strict pair failure without waiver"
+}

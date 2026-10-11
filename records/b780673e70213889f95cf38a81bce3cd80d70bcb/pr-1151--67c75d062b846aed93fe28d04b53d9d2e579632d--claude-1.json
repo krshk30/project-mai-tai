@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "67c75d062b846aed93fe28d04b53d9d2e579632d",
+  "range_head": "b780673e70213889f95cf38a81bce3cd80d70bcb",
+  "reviewed_at": "2026-10-11T14:31:28Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only 10-12 handoff commit reviewed (claude-1): docs: close F/I under Sunday operator ruling"
+}
