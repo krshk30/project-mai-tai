@@ -774,6 +774,7 @@ class SchwabV2Strategy:
             self.settings.strategy_schwab_1m_v2_removed_wait_clear_enabled
         )
         self._removed_wait_requests: dict[str, RemovedWait] = {}
+        self._removed_wait_pending_publications: dict[str, RemovedWait] = {}
         self._removed_wait_clear_rules_enabled = getattr(
             self.settings, "strategy_schwab_1m_v2_removed_wait_clear_rules_enabled", True
         ) is True
@@ -1212,6 +1213,7 @@ class SchwabV2Strategy:
         self._removed_wait_persist = persist
         self._removed_wait_restore_readable = readable
         self._removed_wait_requests = dict(restored)
+        self._removed_wait_pending_publications = {}
         self._removed_wait_pending_clears = {}
         self._removed_wait_committed_clears = {}
         self._removed_wait_dispatch_persist = dispatch_persist
@@ -1221,6 +1223,25 @@ class SchwabV2Strategy:
             state = self.watchlist_state(symbol)
             if request.purpose in {"retry_exhausted", "false_flip_restore"} or not self._removed_wait_has_owner(state):
                 self._queue_removed_wait_barriers(state, request)
+
+    def _publish_removed_wait(self, request: RemovedWait) -> bool:
+        if self._removed_wait_clear_rules_enabled:
+            # The request already closes admission in memory; SQL belongs to the poll.
+            self._removed_wait_pending_publications[request.symbol] = request
+            return False
+        if self._removed_wait_persist is None:
+            raise RuntimeError("removal store unavailable")
+        self._removed_wait_persist(request, True)
+        return True
+
+    def acknowledge_removed_wait_publication(self, request: RemovedWait) -> None:
+        if (self._removed_wait_pending_publications.get(request.symbol) != request
+                or self._removed_wait_requests.get(request.symbol) != request):
+            self._removed_wait_restore_readable = False
+            return
+        self._removed_wait_pending_publications.pop(request.symbol)
+        if request.purpose == "scanner_removal":
+            self._queue_removed_wait_barriers(self.watchlist_state(request.symbol), request)
 
     def scanner_readded(self, symbol: str) -> None:
         self._removed_scanner_symbols.discard(symbol)
@@ -1300,6 +1321,7 @@ class SchwabV2Strategy:
 
     def removed_wait_clear_valid(self, plan: RemovedWaitClear) -> bool:
         return bool(self._removed_wait_requests.get(plan.proof.request.symbol) == plan.proof.request
+                    and plan.proof.request.symbol not in self._removed_wait_pending_publications
                     and self._removed_wait_restore_readable
                     and 0 <= self._now_ms() - plan.proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS
                     and self._removed_wait_memory_fence(plan.proof.request) == plan.memory_fence
@@ -1503,9 +1525,8 @@ class SchwabV2Strategy:
                               str(uuid4()), self._now_ms(), self._removed_wait_accounts())
         self._removed_wait_requests[symbol] = request
         try:
-            if self._removed_wait_persist is None:
-                raise RuntimeError("removal store unavailable")
-            self._removed_wait_persist(request, True)
+            if not self._publish_removed_wait(request):
+                return released
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=request_write_failed", symbol)
             return released
@@ -1972,9 +1993,7 @@ class SchwabV2Strategy:
                               accounts, "retry_exhausted")
         self._removed_wait_requests[state.symbol] = request
         try:
-            if self._removed_wait_persist is None:
-                raise RuntimeError("cancellation store unavailable")
-            self._removed_wait_persist(request, True)
+            self._publish_removed_wait(request)
         except Exception:  # noqa: BLE001 - cancelling is still safe if the receipt cannot be persisted
             logger.exception("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=UNKNOWN reason=request_write_failed",
                              state.symbol)

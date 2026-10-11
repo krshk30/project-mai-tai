@@ -848,6 +848,25 @@ class SchwabV2BotService:
         store = getattr(self, "_removed_wait_store", None)
         if store is None:
             return
+        if self.strategy._removed_wait_clear_rules_enabled:
+            for request in tuple(self.strategy._removed_wait_pending_publications.values()):
+                def publication_valid(request=request):
+                    return (self.strategy._removed_wait_requests.get(request.symbol) == request
+                            and self.strategy._removed_wait_pending_publications.get(request.symbol) == request
+                            and not self._removed_wait_emits_inflight()
+                            and getattr(self, "_clearwait_emit_generation", 0) == generation)
+                try:
+                    await asyncio.to_thread(store.record_rules, request, True, publication_valid)
+                    if publication_valid():
+                        self.strategy.acknowledge_removed_wait_publication(request)
+                    else:
+                        self.strategy._removed_wait_restore_readable = False
+                except Exception:  # noqa: BLE001 - pending publication keeps admission closed
+                    logger.exception("[V2-REMOVED-WAIT] %s reason=offloop_publication_failed", request.symbol)
+            requests = tuple(r for r in self.strategy._removed_wait_requests.values()
+                             if r.symbol not in self.strategy._removed_wait_pending_publications)
+            if not requests:
+                return
         accounts = {self.settings.strategy_schwab_1m_v2_account_name}
         if (self.strategy._dual_broker_fanout_enabled
                 or self.strategy._removed_wait_clear_rules_enabled):

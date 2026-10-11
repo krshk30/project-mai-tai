@@ -18,6 +18,7 @@ from project_mai_tai.db.models import (
     Fill, OmsManagedPosition, Strategy, TradeIntent, VirtualPosition,
 )
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
 from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitProof, RemovedWaitStore, assess_clear_rules
@@ -278,6 +279,128 @@ def test_stale_zero_and_exact_token_cas(db):
     assert store.restore() == {req.symbol: newer} and strat._removed_wait_requests == {req.symbol: req}
     with pytest.raises(ValueError, match="changed"):
         store.record_rules(req, False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("purpose", ["scanner_removal", "retry_exhausted"])
+async def test_slow_same_symbol_clear_and_publication_leave_bar_quote_loop_free(db, monkeypatch, purpose):
+    """Controlled symbol lock models PG contention; writes use a real disposable DB."""
+    store, _, _, _ = db
+    old = request(opportunity=MS - 86_400_000)
+    store.record_rules(old, True)
+    strat = strategy(old, store)
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings, bot._removed_wait_store = strat, strat.settings, store
+    store.clear_rule_proofs = lambda requests, _: tuple(RemovedWaitProof(
+        r, MS, r == old, "previous_session_flat" if r == old else "settling") for r in requests)
+    clear_entered, publication_entered, release = threading.Event(), threading.Event(), threading.Event()
+    symbol_lock = threading.Lock()
+    real_clear, real_publish = store.commit_clear, store.record_rules
+    loop_thread = threading.get_ident()
+    def slow_clear(plan, valid):
+        with symbol_lock:
+            clear_entered.set()
+            assert release.wait(5)
+            real_clear(plan, valid)
+    def blocked_publication(req, active, valid=None):
+        assert threading.get_ident() != loop_thread
+        publication_entered.set()
+        with symbol_lock:
+            real_publish(req, active, valid)
+    monkeypatch.setattr(store, "commit_clear", slow_clear)
+    monkeypatch.setattr(store, "record_rules", blocked_publication)
+    state = strat.watchlist_state(old.symbol)
+    state.flip_owner_opportunity_id = state.fanout_segment_id = old.opportunity_id
+    clear_task = asyncio.create_task(bot._removed_wait_poll())
+    publication_task = None
+    try:
+        assert await asyncio.to_thread(clear_entered.wait, 5)
+        state.cw_armed = True
+        if purpose == "scanner_removal":
+            strat.release_and_drop_symbol(old.symbol)
+        else:
+            strat._cancel_retry_leftovers(state)
+        assert strat._removed_wait_requests == {old.symbol: old}
+        assert not strat._removed_wait_pending_publications and not publication_entered.is_set()
+        # Adversarial reconfiguration tests fencing, not a claimed runtime reset/lock incident.
+        strat.configure_removed_wait(store.record_rules, restored={}, readable=True)
+        state = strat.watchlist_state(old.symbol)
+        state.cw_armed = True
+        state.flip_owner_opportunity_id = state.fanout_segment_id = MS - 60_000
+        started = asyncio.get_running_loop().time()
+        if purpose == "scanner_removal":
+            strat.release_and_drop_symbol(old.symbol)
+        else:
+            strat._cancel_retry_leftovers(state)
+        assert asyncio.get_running_loop().time() - started < .05
+        new = strat._removed_wait_requests[old.symbol]
+        assert new.token != old.token and new.purpose == purpose
+        assert strat._removed_wait_pending_publications == {new.symbol: new}
+        assert strat._removed_wait_gate_closed(new.symbol)
+        assert not strat.stage_removed_wait_clear(RemovedWaitProof(new, MS, True, "scanner_removal_flat"))
+        if purpose == "scanner_removal":
+            assert not any(d.metadata.get("clearwait_removal_token") == new.token
+                           for d in strat._pending_intents)  # new barriers await durable publication
+        publication_task = asyncio.create_task(bot._removed_wait_poll())
+        assert await asyncio.to_thread(publication_entered.wait, 5)
+        quote = Quote(new.symbol, last_price=4.8, bid_price=4.79, ask_price=4.81, quote_time_ms=MS)
+        loop = asyncio.get_running_loop()
+        started = previous = loop.time()
+        while loop.time() - started < .12:
+            assert strat.on_bar(new.symbol, ChartBar(new.symbol, 4.8, 4.9, 4.7, 4.8, 10, MS)) is None
+            assert strat.on_quote(new.symbol, quote) is None
+            await asyncio.sleep(.005)
+            assert loop.time() - previous < .05
+            previous = loop.time()
+        assert not publication_task.done() and not clear_task.done()
+        assert store.restore() == {old.symbol: old}
+    finally:
+        release.set()
+        await asyncio.wait_for(clear_task, 5)
+        if publication_task is not None:
+            await asyncio.wait_for(publication_task, 5)
+    assert store.restore() == {new.symbol: new}
+    assert not strat._removed_wait_pending_publications
+    assert strat._removed_wait_requests == {new.symbol: new}
+    assert not strat.__dict__.get("_removed_wait_committed_clears")
+    assert strat._removed_wait_gate_closed(new.symbol)
+    assert any(d.metadata.get("clearwait_removal_token") == new.token for d in strat._pending_intents)
+
+
+def test_publication_precommit_fence_rolls_back_and_stale_ack_stays_closed(db):
+    store, _, _, _ = db
+    req = request()
+    answers = iter((True, False))
+    with pytest.raises(ValueError, match="before commit"):
+        store.record_rules(req, True, lambda: next(answers))
+    assert store.restore() == {}
+    strat = strategy(req, store)
+    strat._publish_removed_wait(req)
+    newer = replace(req, token="replacement-token")
+    strat._removed_wait_requests[req.symbol] = newer
+    strat.acknowledge_removed_wait_publication(req)
+    assert strat._removed_wait_requests == {req.symbol: newer}
+    assert strat._removed_wait_pending_publications and not strat._removed_wait_restore_readable
+    assert strat._removed_wait_gate_closed(req.symbol)
+
+
+@pytest.mark.asyncio
+async def test_failed_publication_is_retryable_without_clear_or_entry(db):
+    store, _, _, _ = db
+    req = request()
+    strat = strategy(req, store)
+    strat._publish_removed_wait(req)
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings, bot._removed_wait_store = strat, strat.settings, store
+    def unavailable(*_):
+        raise RuntimeError("controlled publication failure")
+    store.record_rules = unavailable
+    store.clear_rule_proofs = lambda *_: pytest.fail("unpublished request was assessed for clear")
+    await bot._removed_wait_poll()
+    assert store.restore() == {}
+    assert strat._removed_wait_pending_publications == {req.symbol: req}
+    assert strat._removed_wait_requests == {req.symbol: req}
+    assert strat._removed_wait_gate_closed(req.symbol)
 
 
 @pytest.mark.asyncio
