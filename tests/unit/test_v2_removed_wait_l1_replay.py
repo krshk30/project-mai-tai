@@ -216,6 +216,11 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
                     current.low, current.close, current.volume, current.timestamp_ms))
                 await bot._line_restoration_pass()
             else:
+                if kind == "trade" and ms(row["event_ts"]) == ms(case["cross"]["schwab_trade"]["event_ts"]):
+                    print(f"native DKI original_cross received_ms={clock[0]} "
+                          f"last_closed_bar_ms={state.bars[-1].timestamp_ms} "
+                          f"required_closed_bar_ms={clock[0] // 60_000 * 60_000 - 60_000} "
+                          f"line_buy_ready={strat.line_buy_ready(symbol)}")
                 await bot._handle_stream_tick(SchwabTick(kind=kind, service=row["service"],
                     symbol=symbol, event_ts_ms=ms(row["event_ts"]), raw=row["raw"], raw_hash=row["raw_hash"],
                     price=float(row["price"]) if kind == "trade" else None,
