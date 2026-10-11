@@ -31,6 +31,8 @@ MUTANTS = {
                             "store.record_rules(request, True, publication_valid)"),
     "publication_precommit_fence": ("store", "record_rules",
                                     "if valid is not None and not valid():", "if False:"),
+    "zero_op_session_bound": ("store", "clear_rule_proofs",
+                              "& (BrokerOrder.submitted_at >= zero_op_session)", ""),
     "later_bar_freshness": ("strategy", "removed_wait_clear_valid",
                             "0 <= self._now_ms() - plan.proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS",
                             "True"),
