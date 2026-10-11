@@ -176,18 +176,16 @@ async def test_original_wff_1553_buy_reaches_simulated_accepted_order(factory, m
     prefix, live_tail, buy_bar = rows[:-12], rows[-12:-2], rows[-2]
     now = int(datetime.fromisoformat(prefix[-1]["created_at"]).timestamp() * 1000)
     case = make_line_restore_case(symbol="WFF", now_ms=now, settings_overrides={
-        **RAW["live_flags"], FLAG: enabled,
-        "strategy_schwab_1m_v2_account_name": "live:schwab_1m_v2",
-        "strategy_schwab_1m_v2_webull_account_name": "live:webull_orb",
-        "strategy_schwab_1m_v2_atr_only_mode": True,
-        "strategy_schwab_1m_v2_cw_v2_reactive_entry_enabled": True,
+        **RAW["live_flags"], **RAW["process_settings"], FLAG: enabled,
     })
+    assert case.bot.enabled is True
+    assert case.settings.strategy_schwab_1m_v2_webull_account_name == "live:orb"
     case.bot._persist_bar = lambda *args: None
     case.bot.session_factory = factory
     active = case.bot._configure_fanout_identity_store()
     case.bot._configure_flip_entry_ownership_store(active)
     case.bot._configure_removed_wait_store()
-    case.schwab.broker_account_name = "live:schwab_1m_v2"
+    case.schwab.broker_account_name = case.settings.strategy_schwab_1m_v2_account_name
     case.webull.broker_account_name = case.settings.strategy_schwab_1m_v2_webull_account_name
     for row in prefix:
         await case.feed_bar(row)
