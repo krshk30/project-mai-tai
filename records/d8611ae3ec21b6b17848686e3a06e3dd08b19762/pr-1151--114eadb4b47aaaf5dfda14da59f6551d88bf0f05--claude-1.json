@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "114eadb4b47aaaf5dfda14da59f6551d88bf0f05",
+  "range_head": "d8611ae3ec21b6b17848686e3a06e3dd08b19762",
+  "reviewed_at": "2026-10-11T16:32:51Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only: lane rows kept in shared table (claude-1)"
+}
