@@ -2127,7 +2127,9 @@ class SchwabV2BotService:
                 unknown_opportunities,
             )
             self.strategy.apply_flip_position_book(position_book)
-        await self._fresh_sell_owner_release_poll()
+        fresh_sell_poll = getattr(self, "_fresh_sell_owner_release_poll", None)
+        if callable(fresh_sell_poll):
+            await fresh_sell_poll()
         removed_wait_poll = getattr(self, "_removed_wait_poll", None)
         if callable(removed_wait_poll):
             await removed_wait_poll()
@@ -2860,10 +2862,11 @@ class SchwabV2BotService:
                 return result("position_stays_owned")
             # Deliberately no strategy/account restriction: shared Schwab ORB also owns a BUY.
             if (session.scalar(select(BrokerOrder.id).where(BrokerOrder.symbol == symbol,
-                    BrokerOrder.side == "buy", BrokerOrder.status.notin_(terminal)).limit(1))
+                    BrokerOrder.side == "buy",
+                    or_(BrokerOrder.status.is_(None), BrokerOrder.status.notin_(terminal))).limit(1))
                     or session.scalar(select(TradeIntent.id).where(TradeIntent.symbol == symbol,
                         TradeIntent.side == "buy", TradeIntent.intent_type == "open",
-                        TradeIntent.status.notin_(terminal)).limit(1))):
+                        or_(TradeIntent.status.is_(None), TradeIntent.status.notin_(terminal))).limit(1))):
                 return result("working_buy_or_intent")
             cancels = session.execute(select(TradeIntent, Strategy.code)
                 .join(Strategy, Strategy.id == TradeIntent.strategy_id)

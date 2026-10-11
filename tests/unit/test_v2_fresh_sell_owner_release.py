@@ -1,14 +1,16 @@
 """B2 original FLYE bars/cancels; broker freshness and acceptance are replay controls."""
 from __future__ import annotations
 
+import asyncio
 import json
 import inspect
 import textwrap
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from threading import get_ident
+from threading import Event, get_ident
+from time import perf_counter
 from uuid import UUID
 
 import pytest
@@ -19,13 +21,15 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.db.base import Base
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import (
-    AccountPosition, BrokerAccount, BrokerOrder, Strategy, TradeIntent,
+    AccountPosition, BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, TradeIntent,
 )
 from project_mai_tai.events import TradeIntentEvent
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.positions_read_receipt import record_receipts
 from project_mai_tai.services import schwab_1m_v2_bot as bot_module
+from project_mai_tai.strategy_core import schwab_1m_v2 as strategy_module
+from project_mai_tai import v2_removed_wait as wait_module
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
@@ -34,7 +38,9 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
 from project_mai_tai.v2_flip_entry_ownership import (
     FlipEntryOwnershipRecord, FlipPositionBook, FlipPositionLeg,
 )
-from project_mai_tai.v2_removed_wait import RemovedWait
+from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitStore
+from project_mai_tai.strategy_core.session_line_restore import SessionCoverage, history_fingerprint
+from tests.line_restore_acceptance_factory import make_line_restore_case
 
 DATA = json.loads((Path(__file__).parents[1] / "fixtures/fresh_sell_flye_20261008.json").read_text())
 FLYE = DATA["owner"]
@@ -45,8 +51,9 @@ def instant(ms):
     return datetime.fromtimestamp(ms / 1000, UTC)
 
 
-def setup(monkeypatch, *, pm=False, purpose="retry_exhausted"):
-    strategy = SchwabV2Strategy(Settings(
+def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False):
+    shift = -6 * 60 * 60_000 if pm else 0  # Explicit PM time-shift control, not original event time.
+    settings = Settings(
         strategy_schwab_1m_v2_confirmed_window_enabled=True,
         strategy_schwab_1m_v2_atr_flip_enabled=True,
         strategy_schwab_1m_v2_atr_only_mode=True,
@@ -64,19 +71,38 @@ def setup(monkeypatch, *, pm=False, purpose="retry_exhausted"):
         strategy_schwab_1m_v2_account_name=PRIMARY,
         strategy_schwab_1m_v2_webull_account_name=MIRROR,
         strategy_schwab_1m_v2_atr_reprice_handoff_enabled=False,
-    ), config=SchwabV2Config(macd_warmup_settling_bars=0))
-    clock = [FLYE["fresh_sell_poll_ms"]]
+    )
+    if all_on:
+        # Sunday live set; external completed-line readiness remains an explicit replay control.
+        enabled = ("streamer gateway_register atr_flip tick_capture go_live confirmed_window cw_v2 "
+                   "cw_armed_segment_safety cw_v2_resting_entry cw_v2_reactive_entry webull_mirror "
+                   "cw_v2_eh_resting_entry webull_mirror_eh dual_broker_fanout flip_owned_first_entry "
+                   "gap_hold retry_one session_time_roll webull_resting_mirror confirmation_exit "
+                   "confirmation_account_neutral_discovery pm_print_ask_confirm pm_flip_wait "
+                   "pm_rest_reprice resting_buy_round_up line_chart_restoration keep_rest_after_buy "
+                   "removed_wait_clear slotclear_fresh_flip slotclear_fresh_sell gap_line_carry false_flip")
+        disabled = "timesale_capture hold_confirm cw_v2_reclaim atr_massive_seed atr_reprice_handoff"
+        settings = settings.model_copy(update={
+            **{f"strategy_schwab_1m_v2_{name}_enabled": True for name in enabled.split()},
+            **{f"strategy_schwab_1m_v2_{name}_enabled": False for name in disabled.split()},
+        })
+    strategy = SchwabV2Strategy(settings, config=SchwabV2Config(macd_warmup_settling_bars=0))
+    if all_on:
+        strategy._line_readiness = lambda symbol: symbol == "FLYE"
+        strategy.configure_falseflip({}, readable=True)
+    clock = [FLYE["fresh_sell_poll_ms"] + shift]
     strategy._now_ms = lambda: clock[0]
-    strategy._boot_ms = FLYE["retry_segment_id"] - 60_000
+    strategy._boot_ms = FLYE["retry_segment_id"] + shift - 60_000
     record = FlipEntryOwnershipRecord("FLYE", FLYE["opportunity_id"], "bound",
-        FLYE["flip_bar_ts"], FLYE["provisional_started_ms"], tuple(FLYE["fill_accounts"]),
-        FLYE["position_ids"], FLYE["position_entry_ms"], FLYE["retry_segment_id"], 0)
+        FLYE["flip_bar_ts"] + shift, FLYE["provisional_started_ms"] + shift, tuple(FLYE["fill_accounts"]),
+        FLYE["position_ids"], {k: v + shift for k, v in FLYE["position_entry_ms"].items()},
+        FLYE["retry_segment_id"] + shift, 0)
     strategy.configure_fanout_identity_persistence(lambda *_: None)
     strategy.configure_flip_entry_ownership(lambda *_: None, restored={"FLYE": record},
         active_segments={"FLYE": record.opportunity_id}, retry_budget_persist=lambda *_: None,
         restored_retry_budgets={"FLYE": (record.retry_segment_id, 1)})
     request = RemovedWait("FLYE", record.opportunity_id, FLYE["cancel_token"],
-        FLYE["cancel_request_ms"], (PRIMARY, MIRROR), purpose)
+        FLYE["cancel_request_ms"] + shift, (PRIMARY, MIRROR), purpose)
     writes = []
     strategy.configure_removed_wait(lambda r, active: writes.append((r, active)),
                                     restored={"FLYE": request}, readable=True)
@@ -85,8 +111,8 @@ def setup(monkeypatch, *, pm=False, purpose="retry_exhausted"):
     state = strategy.watchlist_state("FLYE")
     state.retry_one_watch_start_ms = strategy._boot_ms
     state.cw_resting_taken = state.cw_reclaim_taken = True
-    state.bars.append(OHLCVBar(FLYE["fresh_sell_bar_ms"], 2.325, 2.3499, 2.27, 2.285, 149257))
-    state.atr_short_flip_bar_ts = FLYE["fresh_sell_bar_ms"]
+    state.bars.append(OHLCVBar(FLYE["fresh_sell_bar_ms"] + shift, 2.325, 2.3499, 2.27, 2.285, 149257))
+    state.atr_short_flip_bar_ts = FLYE["fresh_sell_bar_ms"] + shift
     strategy.apply_flip_position_book(FlipPositionBook(clock[0], True, {}))
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
@@ -105,8 +131,9 @@ def setup(monkeypatch, *, pm=False, purpose="retry_exhausted"):
             account = next(a for a in accounts if a.name == row["account"])
             session.add(TradeIntent(id=UUID(row["id"]), strategy_id=own.id, broker_account_id=account.id,
                 symbol="FLYE", side="buy", intent_type="cancel", quantity=1, reason="recorded cancellation",
-                status=row["status"], payload=payload, created_at=datetime.fromisoformat(row["created_at"]),
-                updated_at=datetime.fromisoformat(row["updated_at"])))
+                status=row["status"], payload=payload,
+                created_at=datetime.fromisoformat(row["created_at"]) + timedelta(milliseconds=shift),
+                updated_at=datetime.fromisoformat(row["updated_at"]) + timedelta(milliseconds=shift)))
         session.commit()
 
     class ClockDatetime(datetime):
@@ -114,9 +141,24 @@ def setup(monkeypatch, *, pm=False, purpose="retry_exhausted"):
         def now(cls, tz=None):
             return datetime.fromtimestamp(clock[0] / 1000, tz or UTC)
 
-    monkeypatch.setattr(bot_module, "datetime", ClockDatetime)
-    bot = SchwabV2BotService.__new__(SchwabV2BotService)
+    for module in (bot_module, strategy_module, wait_module):
+        monkeypatch.setattr(module, "datetime", ClockDatetime)
+    if all_on:
+        case = make_line_restore_case(symbol="FLYE", now_ms=clock[0],
+                                      settings_overrides={k: getattr(settings, k) for k in Settings.model_fields})
+        bot = case.bot
+        bot._persist_bar = lambda *_: None  # External recording, never a source-admission proof.
+        strategy._line_readiness = bot._line_buy_ready
+        strategy._line_version_reader = bot._line_version
+    else:
+        bot = SchwabV2BotService.__new__(SchwabV2BotService)
     bot.settings, bot.strategy, bot.session_factory = strategy.settings, strategy, factory
+    bot._removed_wait_store = RemovedWaitStore(factory)
+    bot._removed_wait_store.record(request, True)
+    with factory() as session:
+        session.add(DashboardSnapshot(snapshot_type="v2_flip_entry_ownership",
+                    payload=record.as_payload(active=True, reason="recorded_owner_replay_control")))
+        session.commit()
     return bot, state, clock, request, writes, engine
 
 
@@ -133,6 +175,30 @@ def sell(bot, state, phase="live"):
     bot.strategy._cw_v2_track(state, {"flip": "SELL", "observation_phase": phase})
 
 
+async def commit_and_later_bar(bot, state, clock):
+    await bot._removed_wait_poll()
+    clock[0] += 60_000
+    state.bars.append(replace(state.bars[-1], timestamp_ms=state.bars[-1].timestamp_ms + 60_000))
+    refresh(bot, clock)
+    await bot._fresh_sell_owner_release_poll()
+    bot.strategy._cw_v2_track(state, None)
+
+
+async def recorded_bar(bot, row, phase):
+    ts = int(datetime.fromisoformat(row[0]).timestamp() * 1000)
+    bar = ChartBar("FLYE", *(float(n) for n in row[1:5]), int(row[5]), ts)
+    await bot._handle_bar("FLYE", bar, observation_phase=phase)
+    ledger = bot._line_sessions["FLYE"]
+    bars = tuple(ledger._bars[key] for key in sorted(ledger._bars))
+    # Historical provider coverage was not retained. This is a labelled external control.
+    ledger.attest(SessionCoverage("schwab_rest_full_session", ledger.anchor_ms, ts + 60_000,
+                  tuple(b.timestamp_ms for b in bars), True, history_fingerprint(bars),
+                  prefix_complete=True))
+    rebuilt = await bot._rebuild_session_line("FLYE", ledger)
+    assert rebuilt or (phase == "replay" and ledger.incomplete_reason == "indicator_unseeded"), (
+        ts, ledger.incomplete_reason)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("pm", [False, True])
 @pytest.mark.parametrize("purpose", ["retry_exhausted", "false_flip_restore"])
@@ -143,10 +209,13 @@ async def test_original_no_id_cancel_receipts_release_only_on_fresh_sell(monkeyp
     assert bot.strategy._fresh_sell_release_evidence["FLYE"].clear
     assert state.flip_owner_phase == "bound" and bot.strategy._removed_wait_gate_closed("FLYE")
     sell(bot, state)
+    assert state.flip_owner_phase == "bound"
+    await commit_and_later_bar(bot, state, clock)
     assert state.flip_owner_phase == "idle" and not bot.strategy._removed_wait_requests
     assert state.fanout_last_retired_opportunity_id == request.opportunity_id
-    assert writes == [(request, False)]
-    assert state.retry_one_segment_id == FLYE["fresh_sell_bar_ms"]
+    assert writes == []  # The new atomic store path never calls the synchronous callback.
+    assert bot._removed_wait_store.restore() == {}
+    assert state.retry_one_segment_id == FLYE["fresh_sell_bar_ms"] - (6 * 60 * 60_000 if pm else 0)
     assert not bot.strategy.drain_pending_intents() and not bot.strategy.drain_webull_direct_intents()
     engine.dispose()
 
@@ -200,6 +269,14 @@ async def test_blocking_controls(monkeypatch, caplog, pm, account, fault):
     assert "[V2-FRESH-SELL-OWNER-HELD]" in caplog.text
     assert state.flip_owner_phase == "bound" and bot.strategy._removed_wait_requests == {"FLYE": request}
     assert writes == [] and not bot.strategy._strict_first_rest_admitted(state, slot="first")
+    clock[0] += 60_000
+    state.bars.append(replace(state.bars[-1], timestamp_ms=state.bars[-1].timestamp_ms + 60_000))
+    state.atr_state, state.atr_short_flip_bar_ts = "long", 0
+    bot.strategy._cw_v2_track(state, {"flip": "BUY", "observation_phase": "live", "flip_level": 2.3})
+    assert state.fresh_sell_owner_release_segment_ms == 0
+    assert bot.strategy._removed_wait_requests == {"FLYE": request}
+    assert not bot.strategy._strict_first_rest_admitted(state, slot="first")
+    assert not bot.strategy.drain_pending_intents()
     engine.dispose()
 
 
@@ -217,6 +294,16 @@ async def test_poll_reads_off_loop_and_bar_has_no_database_reads(monkeypatch):
     assert threads and threads[0] != get_ident()
     bot.session_factory = lambda: pytest.fail("database read on bar")
     sell(bot, state)
+    bot.session_factory = bot._removed_wait_store.session_factory
+    await bot._removed_wait_poll()
+    clock[0] += 60_000
+    state.bars.append(replace(state.bars[-1], timestamp_ms=state.bars[-1].timestamp_ms + 60_000))
+    refresh(bot, clock)
+    await bot._fresh_sell_owner_release_poll()
+    bot.session_factory = lambda: pytest.fail("database access on release bar")
+    for name in ("_removed_wait_persist", "_flip_owner_persist", "_fanout_identity_persist"):
+        setattr(bot.strategy, name, lambda *_: pytest.fail("synchronous persistence on release bar"))
+    bot.strategy._cw_v2_track(state, None)
     assert state.flip_owner_phase == "idle"
     engine.dispose()
 
@@ -235,13 +322,32 @@ async def test_settled_receipt_alone_never_reenters_original_segment(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch):
-    bot, state, clock, request, _, engine = setup(monkeypatch)
+@pytest.mark.parametrize("deferred_cancel", [False, True])
+async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, deferred_cancel):
+    bot, state, clock, request, _, engine = setup(monkeypatch, all_on=True)
     state.bars.clear()
     state.atr_short_flip_bar_ts = 0
     bot.strategy._entries_held = True
     drafts = []
     flips = []
+    released_at = 0
+    emitted = []
+    class Redis:
+        async def xadd(self, _stream, fields, **_kwargs):
+            emitted.append(json.loads(fields["data"]))
+            return "test"
+    redis = Redis()
+    wire = SchwabV2IntentEmitter(bot.settings, redis, PRIMARY)
+    record_emit = bot.intent_emitter.emit
+    async def recorded_emit(draft):
+        await record_emit(draft)
+        await wire.emit(draft)
+    bot.intent_emitter.emit = recorded_emit
+    if deferred_cancel:
+        with bot.session_factory() as session:
+            for cancel in session.scalars(select(TradeIntent)):
+                cancel.updated_at = instant(FLYE["fresh_sell_poll_ms"] - 10_000)
+            session.commit()
     for row in DATA["bars"]:
         ts = int(datetime.fromisoformat(row[0]).timestamp() * 1000)
         if ts >= FLYE["next_buy_flip_bar_ms"]:
@@ -251,17 +357,28 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch):
         bot.strategy._entries_held = replay
         refresh(bot, clock)
         await bot._fresh_sell_owner_release_poll()
+        await bot._removed_wait_poll()
         before = state.atr_state
-        bot._strategy_on_bar("FLYE", ChartBar("FLYE", *(float(n) for n in row[1:5]), int(row[5]), ts),
-                             observation_phase="replay" if replay else "live")
+        await recorded_bar(bot, row, "replay" if replay else "live")
+        if not bot.strategy._removed_wait_requests and not released_at:
+            released_at = ts
+        if ts == FLYE["fresh_sell_bar_ms"]:
+            assert bot.strategy._removed_wait_requests == {"FLYE": request}
         if state.atr_state != before:
             flips.append((ts, state.atr_state))
         drafts.extend(bot.strategy.drain_pending_intents())
         bot.strategy.drain_webull_direct_intents()
+        # The production 5-second poll commits a staged clear between minute bars.
+        clock[0] += 5_000
+        refresh(bot, clock)
+        await bot._fresh_sell_owner_release_poll()
+        await bot._removed_wait_poll()
+    drafts.extend(bot.intent_emitter.intents)
     assert not bot.strategy._removed_wait_requests, (state.flip_owner_phase, flips[-5:])
     assert state.fanout_last_retired_opportunity_id == request.opportunity_id
     assert (FLYE["fresh_sell_bar_ms"], "short") in flips
     assert state.atr_state == "short"
+    assert released_at > FLYE["fresh_sell_bar_ms"]
     assert any(d.intent_type == "open" for d in drafts), [(d.intent_type, d.reason) for d in drafts]
     # Feed the last working entry from the real bar manager through the normal emitter and OMS.
     # Broker acceptance/fill are controlled; the cross prices/times are original retained quotes.
@@ -272,13 +389,6 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch):
     received_at = datetime.fromisoformat(recorded_quote[1])
     clock[0] = int(received_at.timestamp() * 1000)
     last = Decimal(recorded_quote[4])
-    emitted = []
-
-    class Redis:
-        async def xadd(self, _stream, fields, **_kwargs):
-            emitted.append(json.loads(fields["data"]))
-            return "test"
-
     class Broker:
         async def submit_order(self, order):
             assert order.symbol == "FLYE" and order.side == "buy"
@@ -290,10 +400,9 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch):
                 fill_price=last if kind == "filled" else None, metadata=dict(order.metadata),
                 reported_at=quote_at) for kind in ("accepted", "filled")]
 
-    redis = Redis()
-    emitter = SchwabV2IntentEmitter(bot.settings, redis, PRIMARY)
-    assert await bot._emit_removal_tracked(emitter, draft)
-    event = TradeIntentEvent.model_validate(emitted[-1])
+    # This order passed the real service gate when first placed, before the recorded cross.
+    event = TradeIntentEvent.model_validate(next(
+        row for row in reversed(emitted) if row["payload"]["intent_type"] == "open"))
     settings = bot.settings.model_copy(update={"oms_adapter": "simulated"})
     oms = OmsRiskService(settings=settings, redis_client=redis,
                          session_factory=bot.session_factory, broker_adapter=Broker())
@@ -314,8 +423,7 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch):
         {"FLYE": (FlipPositionLeg(PRIMARY, "CONTROL-new-row", refresh_at, int(draft.quantity)),)}))
     row = next(row for row in DATA["bars"] if int(datetime.fromisoformat(row[0]).timestamp() * 1000)
                == FLYE["next_buy_flip_bar_ms"])
-    bot._strategy_on_bar("FLYE", ChartBar("FLYE", *(float(n) for n in row[1:5]), int(row[5]),
-                                         FLYE["next_buy_flip_bar_ms"]), observation_phase="live")
+    await recorded_bar(bot, row, "live")
     assert state.atr_state == "long" and state.flip_owner_phase == "bound"
     assert state.atr_trail == pytest.approx(FLYE["next_buy_flip_trail"], abs=0.000001)
     assert not bot.strategy._strict_first_rest_admitted(state, slot="first")
@@ -332,21 +440,21 @@ async def test_restart_requires_new_poll_and_fresh_live_boundary(monkeypatch):
     assert bot.strategy._removed_wait_requests == {"FLYE": request} and state.flip_owner_phase == "bound"
     await bot._fresh_sell_owner_release_poll()
     sell(bot, state)
+    await commit_and_later_bar(bot, state, clock)
     assert state.flip_owner_phase == "idle"
     engine.dispose()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("store", ["identity", "owner", "request"])
-async def test_persistence_failure_preserves_entry_barrier(monkeypatch, store):
+async def test_persistence_failure_preserves_entry_barrier(monkeypatch):
     bot, state, clock, request, _, engine = setup(monkeypatch)
     refresh(bot, clock)
     await bot._fresh_sell_owner_release_poll()
     def fail(*_args):
         raise RuntimeError("controlled store failure")
-    setattr(bot.strategy, {"identity": "_fanout_identity_persist", "owner": "_flip_owner_persist",
-                           "request": "_removed_wait_persist"}[store], fail)
+    bot._removed_wait_store.commit_clear = fail
     sell(bot, state)
+    await commit_and_later_bar(bot, state, clock)
     assert bot.strategy._removed_wait_requests == {"FLYE": request}
     assert not bot.strategy._strict_first_rest_admitted(state, slot="first")
     engine.dispose()
@@ -366,14 +474,91 @@ async def test_exact_15_second_own_cancel_boundary(monkeypatch, account, status)
         session.commit()
     await bot._fresh_sell_owner_release_poll()
     sell(bot, state)
+    await commit_and_later_bar(bot, state, clock)
     assert state.flip_owner_phase == "idle"
     engine.dispose()
 
 
 @pytest.mark.asyncio
+async def test_pending_slow_commit_does_not_block_bar_or_release_at_buy(monkeypatch):
+    bot, state, clock, request, _, engine = setup(monkeypatch)
+    refresh(bot, clock)
+    await bot._fresh_sell_owner_release_poll()
+    sell(bot, state)
+    started, finish = Event(), Event()
+    commit = bot._removed_wait_store.commit_clear
+    def slow(plan, valid):
+        started.set()
+        assert finish.wait(2)
+        commit(plan, valid)
+    bot._removed_wait_store.commit_clear = slow
+    task = asyncio.create_task(bot._removed_wait_poll())
+    try:
+        while not started.is_set():
+            await asyncio.sleep(.001)
+        before = perf_counter()
+        bot.strategy._cw_v2_track(state, None)
+        elapsed = perf_counter() - before
+        assert elapsed < .05 and not task.done()
+        assert state.flip_owner_phase == "bound" and bot.strategy._removed_wait_gate_closed("FLYE")
+        state.atr_state, state.atr_short_flip_bar_ts = "long", 0
+        bot.strategy._cw_v2_track(state, {"flip": "BUY", "observation_phase": "live", "flip_level": 2.3})
+    finally:
+        finish.set()
+        await task
+    assert bot._removed_wait_store.restore() == {"FLYE": request}
+    assert bot.strategy._removed_wait_requests == {"FLYE": request}
+    assert not bot.strategy._strict_first_rest_admitted(state, slot="first")
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_recorded_deferred_release_kills_sell_bar_only_mutation(monkeypatch):
+    original = SchwabV2Strategy._cw_v2_track
+    source = textwrap.dedent(inspect.getsource(original))
+    before = 'elif state.fresh_sell_owner_release_segment_ms and flip != "SELL":'
+    assert before in source
+    namespace = dict(strategy_module.__dict__)
+    exec(compile(source.replace(before, "elif False:"), "<B2-deferred-mutant>", "exec"), namespace)
+    monkeypatch.setattr(SchwabV2Strategy, original.__name__, namespace[original.__name__])
+    with pytest.raises(AssertionError):
+        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", [PRIMARY, MIRROR])
+async def test_original_flye_unclear_at_1517_buy_stays_owned(monkeypatch, account):
+    bot, state, clock, request, _, engine = setup(monkeypatch, all_on=True)
+    with bot.session_factory() as session:
+        acct = session.scalar(select(BrokerAccount).where(BrokerAccount.name == account))
+        cancel = session.scalar(select(TradeIntent).where(TradeIntent.broker_account_id == acct.id))
+        cancel.status = "submitted"
+        session.commit()
+    state.bars.clear()
+    state.atr_short_flip_bar_ts = 0
+    for row in DATA["bars"]:
+        ts = int(datetime.fromisoformat(row[0]).timestamp() * 1000)
+        if ts > FLYE["next_buy_flip_bar_ms"]:
+            break
+        clock[0] = ts + 62_626
+        replay = ts < FLYE["fresh_sell_bar_ms"]
+        bot.strategy._entries_held = replay
+        refresh(bot, clock)
+        await bot._fresh_sell_owner_release_poll()
+        await bot._removed_wait_poll()
+        await recorded_bar(bot, row, "replay" if replay else "live")
+    assert state.atr_state == "long" and state.fresh_sell_owner_release_segment_ms == 0
+    assert bot.strategy._removed_wait_requests == {"FLYE": request}
+    assert state.flip_owner_opportunity_id == request.opportunity_id
+    assert not bot.strategy._strict_first_rest_admitted(state, slot="first")
+    assert not any(d.intent_type == "open" for d in bot.intent_emitter.intents + bot.webull_intent_emitter.intents)
+    engine.dispose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("fault,before,after", [
-    ("orb", 'BrokerOrder.side == "buy", BrokerOrder.status.notin_(terminal)',
-     'BrokerOrder.side == "buy", BrokerOrder.strategy_id == session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE)), BrokerOrder.status.notin_(terminal)'),
+    ("orb", 'BrokerOrder.side == "buy",',
+     'BrokerOrder.side == "buy", BrokerOrder.strategy_id == session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE)),'),
     ("settle", 'updated > int(cutoff.timestamp() * 1000)', 'False'),
     ("receipt", 'not 0 <= observed - read_at <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS', 'False'),
 ])
@@ -410,4 +595,4 @@ async def test_original_flye_acceptance_kills_flag_off_mutation(monkeypatch):
         return result
     monkeypatch.setitem(test_original_flye_recorded_bar_runtime_reaches_1517_buy.__globals__, "setup", disabled)
     with pytest.raises(AssertionError):
-        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch)
+        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, False)
