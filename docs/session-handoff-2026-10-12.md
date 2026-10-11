@@ -39,6 +39,7 @@ Do not carry an old GREEN, PID, or admission result forward as current proof.
 | C12 | 2026-10-10 19:49 ET: published matched F3bcb97c4 / Ief93a0e4. Eight sampled accepted closes on prior F68 had solely a no-net-change TradeIntent dirty, caused by the equal quantity assignment at service2227. Two-line guard skips that assignment only; genuine clamp, original autoflush fallback and required persistence stay. Fourteen new SQLite/PG actual-caller controls plus existing RESERVE1/scalar controls: 114 PASS in 9.63 s; unconditional-assignment mutation 6 RED / 8 PASS, restored exact, Ruff clean. Local canonical candidate still FAIL at protective close 52.500 / loop13.998 ms; no latency-success claim. Final frozen raw CI 38096281401 / 38096282467 / 38096283481 and both final Validate pairs pending. Common OMS/DB/broker/canonical diff empty, workload and 50 ms unchanged. PR bodies updated, source unchanged while these runs measure. Original DKI/JZ genuine complete Schwab inventory evidence still missing; request for the reviewed reader/response sent, no synthetic completeness or production action. | codex-2 |
 | C13 | 2026-10-10 20:02 ET: C12's final raw triplet completed FAIL, streak 0/3. On exact F3bcb97c4 / Ief93a0e4: run38096281401 F loop/close37.404/58.118 ms FAIL, I3.003/35.082 PASS; run38096282467 F58.179/116.303 FAIL, I2.680/68.386 FAIL; run38096283481 F60.129/80.313 FAIL, I2.866/34.317 PASS. All retain the canonical 14,400 quotes/60 s, 25 BUY submissions and physical 30-second read; duplicate controls20/20 per source PASS. Independent read-only review confirms Session.commit spans include flush/UOW and scheduling, not isolated DBAPI COMMIT/WAL; background FIFO spans are not automatically awaited close cost. All six captures wrote125 audits, zero failed; no safe persistence skip or raw GC attribution proven. Exact-head diagnostic38096826397 is still running, instrumentation only, source and 50 ms harness unchanged. Final Validate pairs still pending. Original DKI/JZ complete-inventory uncertainty remains; no pin/deployment request. | codex-2 |
 | C14 | 2026-10-10 20:04 ET: exact-head attribution38096826397 completed FAIL (diagnostic, not raw acceptance): F3bcb loop65.249/close37.774 ms; Ief93 loop41.452/close60.084 ms. Captured F worker generation-2 GC69.159 wall/68.284 CPU ms in psycopg parameter conversion, outside a marked EXIT; sampler gap69.214 ms coincides. I EXIT33 GC43.684/42.748 ms in SQLAlchemy schema translation on get_account_position_quantity, enclosing DB unit44.440 ms. These identify current diagnostic collection triggers, not retained-object provenance or causes of all raw failures. Retained DBAPI-commit maxima F4.601/I9.081 ms, Session.commit maxima5.160/9.180 ms; bounded records drop2015/2010, so no universal absence-of-waits claim. Both keep original GC thresholds700/10/10; no GC policy or harness change. Required parent persistence remains. Final Validate pairs pending, raw streak0/3; original DKI/JZ complete-book producer still missing. No production action. | codex-2 |
+| C15 | 2026-10-11: F/I closed 10-10, not shipped. Workaround = claude-1 archives prior-session removed-wait rows Mon 03:40 ET (0 working orders) + same-day stuck requests during scans. Sunday master A1-A4 replaces all earlier scope: no F/I latency attribution, Schwab working-order proof, acceptance reruns or attribution-branch work; the Sunday 20:00 ET deadline is VOID. #1133/#1136/#1138 stay DRAFT and branches are preserved. No weekend installs, restarts or flag changes. Monday observations are read-only; report only if something is wrong. | codex-2 |
 
 SAT2 ALERTS and SAT7 reconciler logging were completed and independently verified
 in the preceding handoff. Those receipts remain historical; they are not a new
@@ -46,14 +47,16 @@ Monday production-state check. Claude rows remain Claude-owned.
 
 ## Carry-Forward Gates
 
-- Keep FI original-order acceptance and strict final-head checks separate from
-  incident-resolution or documentation completion; unresolved cases stay open.
+- F/I is closed by the operator, not shipped. Earlier acceptance and timing
+  rows are historical evidence only, not instructions to resume work.
 - Collector #1149 is merged as caaef9a3 with exact-head pin and both Validate
   runs green; no restart was required. Do not repeat the completed merge.
 - Preserve the previously approved LINE/ORB Monday observations as live-session
   checks; after-hours startup or a later historical response is not their proof.
 
-## Active Master
+## Historical Master (Superseded 2026-10-11)
+
+C15 and the Sunday master supersede this table. F/I is out of the active queue.
 
 | ID | Priority / Status | Remaining Completion Criterion |
 |---|---|---|
@@ -64,8 +67,10 @@ Monday production-state check. Claude rows remain Claude-owned.
 | SAT-3 / SAT-4 | Merge/publication completed | Collector #1149 and handoff #1140 merged; this Monday handoff is published. App attachment attempt hit the chat's 100-attachment limit. |
 | SAT-5 | Queued live-session observations | Monday October 12: 07:09 LINE readings versus Massive-seeded chart on every watched name; 09:27 ORB fill receipts. Future observations remain unmeasured. |
 
-F/I release deadline is Sunday October 11, 20:00 ET. If not fully green and
-pinned, neither F nor I ships before Monday; the reviewer owns the manual
-archive fallback. Sunday 12:00 and 18:00 checkpoints were cancelled. This
-document preserves work state; it does not itself schedule future execution.
-DB resilience #1142, RPGSTALE/#1115 and other superseded lanes remain parked.
+The prior Sunday October 11, 20:00 ET release deadline is VOID. F/I is closed,
+not shipped; claude-1 owns the archive workaround recorded in C15. Sunday
+12:00 and 18:00 checkpoints remain cancelled. No new work before Monday's
+open unless claude-1 sends it. Monday 07:09 LINE, 09:27 ORB fill and open
+broker-sync duration observations are read-only and report only abnormalities.
+This document does not itself schedule execution. #1142, #1131/#1132 WBQUIET1,
+#1110, #1103, #1062 and reprice gap remain parked.
