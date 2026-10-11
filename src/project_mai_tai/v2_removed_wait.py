@@ -608,11 +608,16 @@ class RemovedWaitStore:
             )
             session.commit()
 
-    def record_rules(self, request: RemovedWait, active: bool) -> None:
+    def record_rules(self, request: RemovedWait, active: bool,
+                     valid: Callable[[], bool] | None = None) -> None:
         with self.session_factory() as session:
             if session.bind.dialect.name == "postgresql":
+                session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                session.execute(text("SET LOCAL statement_timeout = '2s'"))
                 session.execute(select(func.pg_advisory_xact_lock(
                     func.hashtext("v2_removed_wait:" + request.symbol))))
+            if valid is not None and not valid():
+                raise ValueError("removal publication changed")
             if not active:
                 latest = session.scalar(select(DashboardSnapshot).where(
                     DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
@@ -622,6 +627,9 @@ class RemovedWaitStore:
                 if latest is None or latest.payload != request.payload(active=True):
                     raise ValueError("active removal request changed")
             session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE, payload=request.payload(active=active)))
+            session.flush()
+            if valid is not None and not valid():
+                raise ValueError("removal publication changed before commit")
             session.commit()
 
     def commit_clear(self, plan: RemovedWaitClear, valid: Callable[[], bool]) -> None:
