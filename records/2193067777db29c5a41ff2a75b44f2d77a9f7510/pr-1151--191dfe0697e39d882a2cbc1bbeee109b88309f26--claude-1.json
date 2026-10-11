@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "191dfe0697e39d882a2cbc1bbeee109b88309f26",
+  "range_head": "2193067777db29c5a41ff2a75b44f2d77a9f7510",
+  "reviewed_at": "2026-10-11T14:34:45Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only 10-12 handoff commit, rebased onto caaef9a3, patch-id unchanged (claude-1): Record exact quantity-guard candidate and final CI identities"
+}

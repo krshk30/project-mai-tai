@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "caaef9a3dc18c735e051970792f3c1ad50e3a10a",
+  "range_head": "81c7c8e77aa67e47370db925ad2ce5e08558b6d9",
+  "reviewed_at": "2026-10-11T14:34:44Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only 10-12 handoff commit, rebased onto caaef9a3, patch-id unchanged (claude-1): Initialize unfrozen October 12 shared handoff with historical continuity"
+}

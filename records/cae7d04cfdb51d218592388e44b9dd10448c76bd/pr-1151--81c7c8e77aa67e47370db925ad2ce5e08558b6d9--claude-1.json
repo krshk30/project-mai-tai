@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "81c7c8e77aa67e47370db925ad2ce5e08558b6d9",
+  "range_head": "cae7d04cfdb51d218592388e44b9dd10448c76bd",
+  "reviewed_at": "2026-10-11T14:34:44Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only 10-12 handoff commit, rebased onto caaef9a3, patch-id unchanged (claude-1): Publish October 12 handoff with verified merge and unfinished F/I gates"
+}

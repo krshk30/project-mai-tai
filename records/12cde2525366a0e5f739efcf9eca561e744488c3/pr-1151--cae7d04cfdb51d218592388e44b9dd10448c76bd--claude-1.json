@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "cae7d04cfdb51d218592388e44b9dd10448c76bd",
+  "range_head": "12cde2525366a0e5f739efcf9eca561e744488c3",
+  "reviewed_at": "2026-10-11T14:34:45Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only 10-12 handoff commit, rebased onto caaef9a3, patch-id unchanged (claude-1): Carry latest merged collector and active F/I master into Monday handoff"
+}

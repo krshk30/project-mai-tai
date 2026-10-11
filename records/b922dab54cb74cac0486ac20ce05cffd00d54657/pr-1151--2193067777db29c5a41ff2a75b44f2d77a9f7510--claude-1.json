@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "2193067777db29c5a41ff2a75b44f2d77a9f7510",
+  "range_head": "b922dab54cb74cac0486ac20ce05cffd00d54657",
+  "reviewed_at": "2026-10-11T14:34:45Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only 10-12 handoff commit, rebased onto caaef9a3, patch-id unchanged (claude-1): docs: record final raw latency failures"
+}

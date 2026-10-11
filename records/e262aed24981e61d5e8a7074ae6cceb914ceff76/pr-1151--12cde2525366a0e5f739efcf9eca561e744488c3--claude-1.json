@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "12cde2525366a0e5f739efcf9eca561e744488c3",
+  "range_head": "e262aed24981e61d5e8a7074ae6cceb914ceff76",
+  "reviewed_at": "2026-10-11T14:34:45Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only 10-12 handoff commit, rebased onto caaef9a3, patch-id unchanged (claude-1): Record completed current-head latency failures and separate broker proof blocker"
+}

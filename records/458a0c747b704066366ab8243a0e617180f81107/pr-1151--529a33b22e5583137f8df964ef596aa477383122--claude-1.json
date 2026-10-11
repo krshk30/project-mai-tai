@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "529a33b22e5583137f8df964ef596aa477383122",
+  "range_head": "458a0c747b704066366ab8243a0e617180f81107",
+  "reviewed_at": "2026-10-11T14:34:45Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only 10-12 handoff commit, rebased onto caaef9a3, patch-id unchanged (claude-1): Correct C10 observation time to actual 19:36 ET"
+}
