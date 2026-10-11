@@ -94,7 +94,6 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
     monkeypatch.setattr(bot_module, "datetime", Clock)
     monkeypatch.setattr(removed_module, "datetime", Clock)
     monkeypatch.setattr(oms_module, "utcnow", lambda: Clock.now(UTC))
-    monkeypatch.setattr(oms_module, "_is_regular_market_session", lambda now=None: name == "jz")
     settings = Settings(_env_file=None,
         strategy_schwab_1m_v2_removed_wait_clear_rules_enabled=enabled,
         strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
@@ -162,14 +161,11 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
         bot.rest_client._authorized_get = lambda _url: source["schwab"]
         provider = Mock(get_aggs=Mock(return_value=SimpleNamespace(data=json.dumps(source["preopen"]).encode())))
         bot._atr_massive_seed_client = MassiveAtrSeedClient("recorded-not-a-live-key", rest_client=provider)
-        bot._watchlist.add(symbol)
-        bot._boot_scanner_selected = {symbol}
-        bot._boot_exclusion_sources_readable = True
         event = StrategyStateSnapshotEvent(source_service="recorded-scanner", produced_at=Clock.now(UTC),
             payload=StrategyStateSnapshotPayload(watchlist=[symbol],
                 top_confirmed=[{"symbol": symbol, "confirmed_at": source["added_at"]}]))
-        bot._line_scanner_transition(event, {symbol})
-        bot._sync_line_epochs()
+        bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=1)
+        assert bot._watchlist == {symbol} and bot._boot_exclusion_sources_readable
     state = strat.watchlist_state(symbol)
     for row in case["bars"]:
         current = bar(row)
@@ -224,6 +220,11 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
         print(f"native DKI provider_complete={getattr(ledger._coverage, 'complete', None)} "
               f"LINE_published={symbol in bot._line_published} reason={ledger.incomplete_reason} "
               f"fallback={state.line_live_fallback} events={len(transport.events)}")
+        print("native DKI events=" + json.dumps([{
+            "event_type": e.get("event_type"),
+            "intent_type": (e.get("payload") or {}).get("intent_type"),
+            "account": (e.get("payload") or {}).get("broker_account_name")
+        } for e in transport.events], default=str))
     elif name == "dki":
         tick = case["cross"]["schwab_trade"]
         clock[0] = ms(tick["received_at"])
@@ -251,10 +252,15 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
     events = [TradeIntentEvent.model_validate(e) for e in transport.events if e.get("event_type") == "trade_intent"]
     oms = OmsRiskService(settings, transport, session_factory=factory, broker_adapter=transport)
     if name == "dki":
-        tick = case["cross"]["schwab_trade"]
-        oms._latest_quotes_by_symbol[symbol] = {"ask": float(tick["raw"]["2"]),
-            "bid": float(tick["raw"]["1"]),
-            "received_at": Clock.now(UTC)}
+        if native_line:
+            quote = max((q for q in source["stream"]["quotes"] if ms(q["received_at"]) <= clock[0]),
+                        key=lambda q: ms(q["received_at"]))
+            oms._latest_quotes_by_symbol[symbol] = {"ask": float(quote["ask_price"]),
+                "bid": float(quote["bid_price"]), "received_at": datetime.fromisoformat(quote["received_at"])}
+        else:
+            tick = case["cross"]["schwab_trade"]
+            oms._latest_quotes_by_symbol[symbol] = {"ask": float(tick["raw"]["2"]),
+                "bid": float(tick["raw"]["1"]), "received_at": datetime.fromisoformat(tick["received_at"])}
     for event in events:
         await oms.process_trade_intent(event)
     with factory() as session:
