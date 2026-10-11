@@ -1237,11 +1237,23 @@ class SchwabV2Strategy:
     def acknowledge_removed_wait_publication(self, request: RemovedWait) -> None:
         if (self._removed_wait_pending_publications.get(request.symbol) != request
                 or self._removed_wait_requests.get(request.symbol) != request):
-            self._removed_wait_restore_readable = False
+            self.retry_superseded_removed_wait(request)
             return
         self._removed_wait_pending_publications.pop(request.symbol)
         if request.purpose == "scanner_removal":
             self._queue_removed_wait_barriers(self.watchlist_state(request.symbol), request)
+
+    def retry_superseded_removed_wait(self, request: RemovedWait) -> None:
+        current = self._removed_wait_requests.get(request.symbol)
+        if current is not None:
+            # A late clear ack may follow a durable inactive row. Republish only
+            # the current exact request on the next poll before taking fresh proof.
+            self._removed_wait_pending_publications[current.symbol] = current
+            self._removed_wait_committed_clears.pop(current, None)
+            self._removed_wait_pending_clears.pop(current, None)
+        self._removed_wait_committed_clears.pop(request, None)
+        self._removed_wait_pending_clears.pop(request, None)
+        logger.warning("[V2-REMOVED-WAIT] %s reason=superseded_retry", request.symbol)
 
     def scanner_readded(self, symbol: str) -> None:
         self._removed_scanner_symbols.discard(symbol)

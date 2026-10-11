@@ -841,30 +841,50 @@ class SchwabV2BotService:
         requests = tuple(self.strategy._removed_wait_requests.values())
         if not requests:
             return
-        # An emit already past its gate must finish before the serial cancellation barrier.
-        if self._removed_wait_emits_inflight():
-            return
+        rules_enabled = self.strategy._removed_wait_clear_rules_enabled
         generation = getattr(self, "_clearwait_emit_generation", 0)
+        symbol_generations = dict(getattr(self, "_clearwait_emit_generation_by_symbol", {}))
+        open_counts = dict(getattr(self, "_clearwait_open_emits", {}))
+
+        def emit_valid(symbol):
+            return (not self._removed_wait_emits_inflight(symbol)
+                    and getattr(self, "_clearwait_open_emits", {}).get(symbol, 0) == open_counts.get(symbol, 0)
+                    and getattr(self, "_clearwait_emit_generation_by_symbol", {}).get(symbol, 0)
+                        == symbol_generations.get(symbol, 0))
+
+        # An emit already past its gate must finish, without delaying other symbols.
+        if rules_enabled:
+            requests = tuple(r for r in requests if emit_valid(r.symbol))
+            if not requests:
+                return
+        elif self._removed_wait_emits_inflight():
+            return
         store = getattr(self, "_removed_wait_store", None)
         if store is None:
             return
-        if self.strategy._removed_wait_clear_rules_enabled:
+        if rules_enabled:
             for request in tuple(self.strategy._removed_wait_pending_publications.values()):
+                if not emit_valid(request.symbol):
+                    self.strategy.retry_superseded_removed_wait(request)
+                    continue
                 def publication_valid(request=request):
                     return (self.strategy._removed_wait_requests.get(request.symbol) == request
                             and self.strategy._removed_wait_pending_publications.get(request.symbol) == request
-                            and not self._removed_wait_emits_inflight()
-                            and getattr(self, "_clearwait_emit_generation", 0) == generation)
+                            and emit_valid(request.symbol))
                 try:
                     await asyncio.to_thread(store.record_rules, request, True, publication_valid)
                     if publication_valid():
                         self.strategy.acknowledge_removed_wait_publication(request)
                     else:
-                        self.strategy._removed_wait_restore_readable = False
+                        self.strategy.retry_superseded_removed_wait(request)
                 except Exception:  # noqa: BLE001 - pending publication keeps admission closed
-                    logger.exception("[V2-REMOVED-WAIT] %s reason=offloop_publication_failed", request.symbol)
+                    if not publication_valid():
+                        self.strategy.retry_superseded_removed_wait(request)
+                    else:
+                        logger.exception("[V2-REMOVED-WAIT] %s reason=offloop_publication_failed", request.symbol)
             requests = tuple(r for r in self.strategy._removed_wait_requests.values()
-                             if r.symbol not in self.strategy._removed_wait_pending_publications)
+                             if r.symbol not in self.strategy._removed_wait_pending_publications
+                             and emit_valid(r.symbol))
             if not requests:
                 return
         accounts = {self.settings.strategy_schwab_1m_v2_account_name}
@@ -879,10 +899,17 @@ class SchwabV2BotService:
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=evidence_unreadable")
             return
-        if (self._removed_wait_emits_inflight()
+        if not rules_enabled and (self._removed_wait_emits_inflight()
                 or getattr(self, "_clearwait_emit_generation", 0) != generation):
             return
-        if self.strategy._removed_wait_clear_rules_enabled:
+        if rules_enabled:
+            fresh = []
+            for proof in proofs:
+                if emit_valid(proof.request.symbol):
+                    fresh.append(proof)
+                else:
+                    self.strategy.retry_superseded_removed_wait(proof.request)
+            proofs = tuple(fresh)
             for proof in proofs:
                 if not proof.clear:
                     continue
@@ -901,11 +928,10 @@ class SchwabV2BotService:
                 self.strategy.stage_removed_wait_clear(proof, retire_owner=retire)
             for request, plan in tuple(self.strategy.__dict__.get("_removed_wait_pending_clears", {}).items()):
                 def valid(plan=plan):
-                    return (not self._removed_wait_emits_inflight()
-                            and getattr(self, "_clearwait_emit_generation", 0) == generation
+                    return (emit_valid(plan.proof.request.symbol)
                             and self.strategy.removed_wait_clear_valid(plan))
                 if not valid():
-                    self.strategy._removed_wait_pending_clears.pop(request, None)
+                    self.strategy.retry_superseded_removed_wait(request)
                     continue
                 committing = self.__dict__.setdefault("_clearwait_committing_symbols", set())
                 committing.add(request.symbol)
@@ -915,19 +941,29 @@ class SchwabV2BotService:
                         self.strategy.__dict__.setdefault("_removed_wait_committed_clears", {})[request] = plan
                     else:
                         # A committed but superseded acknowledgement must never authorize entry.
-                        self.strategy._removed_wait_restore_readable = False
+                        self.strategy.retry_superseded_removed_wait(request)
                 except Exception:  # noqa: BLE001
-                    logger.exception("[V2-REMOVED-WAIT] %s reason=offloop_clear_failed", request.symbol)
+                    if not valid():
+                        self.strategy.retry_superseded_removed_wait(request)
+                    else:
+                        logger.exception("[V2-REMOVED-WAIT] %s reason=offloop_clear_failed", request.symbol)
                 finally:
                     committing.discard(request.symbol)
-                    self.strategy._removed_wait_pending_clears.pop(request, None)
-            if (self._removed_wait_emits_inflight()
-                    or getattr(self, "_clearwait_emit_generation", 0) != generation):
-                return
+                    if self.strategy._removed_wait_pending_clears.get(request) is plan:
+                        self.strategy._removed_wait_pending_clears.pop(request)
+            fresh = []
+            for proof in proofs:
+                if emit_valid(proof.request.symbol):
+                    fresh.append(proof)
+                else:
+                    self.strategy.retry_superseded_removed_wait(proof.request)
+            proofs = tuple(fresh)
         self.strategy.apply_removed_wait_proofs(proofs)
 
-    def _removed_wait_emits_inflight(self) -> bool:
+    def _removed_wait_emits_inflight(self, symbol: str | None = None) -> bool:
         counts = getattr(self, "_clearwait_open_emits", {})
+        if symbol is not None:
+            return bool(counts.get(symbol, 0))
         return any(counts.get(symbol, 0) for symbol in self.strategy._removed_wait_requests)
 
     async def _emit_removal_tracked(self, emitter, draft) -> bool:
@@ -944,6 +980,8 @@ class SchwabV2BotService:
         symbol = draft.symbol.upper()
         counts[symbol] = counts.get(symbol, 0) + 1
         self._clearwait_emit_generation = getattr(self, "_clearwait_emit_generation", 0) + 1
+        generations = self.__dict__.setdefault("_clearwait_emit_generation_by_symbol", {})
+        generations[symbol] = generations.get(symbol, 0) + 1
         try:
             account = getattr(emitter, "broker_account_name", "")
             if not self.strategy.track_removed_wait_dispatch(draft, account):

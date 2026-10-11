@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import asyncio
+from decimal import Decimal
 import json
 from pathlib import Path
 import threading
@@ -20,7 +21,7 @@ from project_mai_tai.db.models import (
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
 from project_mai_tai.settings import Settings
-from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
+from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy, TradeIntentDraft
 from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitProof, RemovedWaitStore, assess_clear_rules
 
 PRIMARY, WEBULL = "live:schwab_1m_v2", "live:orb"
@@ -298,12 +299,16 @@ async def test_pending_clear_commit_is_offloop_and_fenced(db, monkeypatch):
         assert strat._removed_wait_requests and store.restore()
         assert req.symbol in bot._clearwait_committing_symbols
         await asyncio.wait_for(asyncio.sleep(0), .05)
-        bot._clearwait_emit_generation = 1
+        bot._clearwait_emit_generation_by_symbol = {req.symbol: 1}
     finally:
         release.set()
     await asyncio.wait_for(task, 5)
     assert strat._removed_wait_requests and store.restore()
     assert not strat.__dict__.get("_removed_wait_committed_clears")
+    assert strat._removed_wait_restore_readable
+    assert strat._removed_wait_pending_publications == {req.symbol: req}
+    await bot._removed_wait_poll()
+    assert not strat._removed_wait_requests and store.restore() == {}
 
 
 def test_stale_zero_and_exact_token_cas(db):
@@ -426,7 +431,8 @@ def test_publication_precommit_fence_rolls_back_and_stale_ack_stays_closed(db):
     strat._removed_wait_requests[req.symbol] = newer
     strat.acknowledge_removed_wait_publication(req)
     assert strat._removed_wait_requests == {req.symbol: newer}
-    assert strat._removed_wait_pending_publications and not strat._removed_wait_restore_readable
+    assert strat._removed_wait_pending_publications == {req.symbol: newer}
+    assert strat._removed_wait_restore_readable
     assert strat._removed_wait_gate_closed(req.symbol)
 
 
@@ -450,7 +456,7 @@ async def test_failed_publication_is_retryable_without_clear_or_entry(db):
 
 
 @pytest.mark.asyncio
-async def test_boot_retirement_and_offloop_generation_fence(db, monkeypatch):
+async def test_boot_retirement_and_offloop_symbol_generation_fence(db, monkeypatch):
     store, _, _, _ = db
     req = request(opportunity=MS - 86_400_000)
     store.record_rules(req, True)
@@ -472,10 +478,208 @@ async def test_boot_retirement_and_offloop_generation_fence(db, monkeypatch):
     bot._removed_wait_store.clear_rule_proofs = paused
     task = asyncio.create_task(bot._removed_wait_poll())
     assert await asyncio.to_thread(entered.wait, 5)
-    bot._clearwait_emit_generation = 1  # emit completed while the snapshot read was away
+    bot._clearwait_emit_generation_by_symbol = {req.symbol: 1}  # same-symbol completed emit (ABA)
     release.set()
     await asyncio.wait_for(task, 5)
     assert strat._removed_wait_requests and store.restore()
+    assert strat._removed_wait_restore_readable
+
+
+class RecordingEmitter:
+    broker_account_name = PRIMARY
+
+    def __init__(self):
+        self.drafts = []
+
+    async def emit(self, draft):
+        self.drafts.append(draft)
+
+
+async def emit_other_symbol_buy(bot, emitter):
+    state = bot.strategy.watchlist_state("Y")
+    state.fanout_segment_id = state.flip_owner_opportunity_id = MS
+    assert bot.strategy.line_buy_ready("Y")
+    draft = TradeIntentDraft("Y", "buy", "open", Decimal(1), "controlled unrelated BUY",
+                             {"fanout_segment_id": str(MS)})
+    assert await bot._emit_removal_tracked(emitter, draft)
+    assert emitter.drafts[-1] is draft
+    assert not bot._clearwait_open_emits
+    assert bot._clearwait_emit_generation_by_symbol["Y"] == len(emitter.drafts)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["publication", "clear"])
+@pytest.mark.parametrize("supersede", ["none", "before_commit", "after_commit"])
+async def test_symbol_write_fence_y_buy_and_x_aba_retry(db, monkeypatch, caplog, boundary, supersede):
+    """Real bot Y emit; controlled already-admitted X ABA, before or after a real DB commit."""
+    store, _, _, _ = db
+    req = request(opportunity=0)
+    store.record_rules(req, True)
+    strat = strategy(req, store)
+    strat.scanner_readded(req.symbol)
+    if boundary == "publication":
+        strat._publish_removed_wait(req)
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings, bot._removed_wait_store = strat, strat.settings, store
+    store.clear_rule_proofs = lambda *_: (RemovedWaitProof(req, MS, True, "scanner_removal_flat"),)
+    entered, release = threading.Event(), threading.Event()
+    method = "record_rules" if boundary == "publication" else "commit_clear"
+    real = getattr(store, method)
+    loop_thread = threading.get_ident()
+    def paused(*args):
+        assert threading.get_ident() != loop_thread
+        if supersede == "after_commit":
+            real(*args)
+        entered.set()
+        assert release.wait(5)
+        if supersede != "after_commit":
+            real(*args)
+    monkeypatch.setattr(store, method, paused)
+    task = asyncio.create_task(bot._removed_wait_poll())
+    emitter = RecordingEmitter()
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        assert strat._removed_wait_gate_closed(req.symbol)
+        await emit_other_symbol_buy(bot, emitter)
+        if supersede != "none":
+            # Mirror a same-symbol emit that was already admitted: active count
+            # returns to zero, but its monotonic symbol generation must survive.
+            bot._clearwait_open_emits[req.symbol] = 1
+            generations = bot._clearwait_emit_generation_by_symbol
+            generations[req.symbol] = generations.get(req.symbol, 0) + 1
+            bot._clearwait_open_emits.pop(req.symbol)
+    finally:
+        release.set()
+    await asyncio.wait_for(task, 5)
+    assert strat._removed_wait_restore_readable
+    await emit_other_symbol_buy(bot, emitter)
+    if supersede == "none":
+        assert not strat._removed_wait_requests and store.restore() == {}
+        assert "reason=superseded_retry" not in caplog.text
+    else:
+        assert strat._removed_wait_requests == {req.symbol: req}
+        assert strat._removed_wait_pending_publications == {req.symbol: req}
+        assert strat._removed_wait_gate_closed(req.symbol)
+        assert not strat._removed_wait_committed_clears
+        assert not strat._removed_wait_pending_clears  # next poll must obtain fresh proof
+        assert f"{req.symbol} reason=superseded_retry" in caplog.text
+        monkeypatch.setattr(store, method, real)
+        await bot._removed_wait_poll()
+        assert not strat._removed_wait_requests and store.restore() == {}
+        assert strat._removed_wait_restore_readable
+
+
+@pytest.mark.asyncio
+async def test_stale_publication_ack_retries_current_token_without_fleet_freeze(db, caplog):
+    store, _, _, _ = db
+    old = request(opportunity=0)
+    store.record_rules(old, True)
+    strat = strategy(old, store)
+    strat.scanner_readded(old.symbol)
+    strat._publish_removed_wait(old)
+    current = replace(old, token="current-request")
+    strat._removed_wait_requests[old.symbol] = current
+    strat.acknowledge_removed_wait_publication(old)
+    assert strat._removed_wait_restore_readable
+    assert strat._removed_wait_pending_publications == {current.symbol: current}
+    assert strat._removed_wait_gate_closed(current.symbol)
+    assert f"{current.symbol} reason=superseded_retry" in caplog.text
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings, bot._removed_wait_store = strat, strat.settings, store
+    await emit_other_symbol_buy(bot, RecordingEmitter())
+    store.clear_rule_proofs = lambda requests, _: tuple(RemovedWaitProof(
+        r, MS, True, "scanner_removal_flat") for r in requests)
+    await bot._removed_wait_poll()
+    assert strat._removed_wait_restore_readable and not strat._removed_wait_requests
+    assert store.restore() == {}
+
+
+@pytest.mark.asyncio
+async def test_superseded_symbol_read_does_not_discard_other_symbol_proofs(db, monkeypatch):
+    store, _, _, _ = db
+    x = request(opportunity=0)
+    z = replace(x, symbol="Z", token="z-request")
+    store.record_rules(x, True)
+    store.record_rules(z, True)
+    strat = strategy(x, store)
+    strat._removed_wait_requests[z.symbol] = z
+    strat.scanner_readded(x.symbol)
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings, bot._removed_wait_store = strat, strat.settings, store
+    entered, release = threading.Event(), threading.Event()
+    def paused(requests, _):
+        entered.set()
+        assert release.wait(5)
+        return tuple(RemovedWaitProof(r, MS, True, "scanner_removal_flat") for r in requests)
+    monkeypatch.setattr(store, "clear_rule_proofs", paused)
+    task = asyncio.create_task(bot._removed_wait_poll())
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        bot._clearwait_emit_generation_by_symbol = {x.symbol: 1}
+        await emit_other_symbol_buy(bot, RecordingEmitter())
+    finally:
+        release.set()
+    await asyncio.wait_for(task, 5)
+    assert strat._removed_wait_restore_readable
+    assert strat._removed_wait_requests == {x.symbol: x}
+    assert store.restore() == {x.symbol: x}
+    assert strat._removed_wait_gate_closed(x.symbol) and not strat._removed_wait_gate_closed(z.symbol)
+    assert strat._removed_wait_pending_publications == {x.symbol: x}
+    await bot._removed_wait_poll()
+    assert not strat._removed_wait_requests and store.restore() == {}
+
+
+@pytest.mark.asyncio
+async def test_active_symbol_emit_does_not_hold_other_request(db):
+    store, _, _, _ = db
+    x = request(opportunity=0)
+    z = replace(x, symbol="Z", token="z-request")
+    for req in (x, z):
+        store.record_rules(req, True)
+    strat = strategy(x, store)
+    strat._removed_wait_requests[z.symbol] = z
+    strat.scanner_readded(x.symbol)
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings, bot._removed_wait_store = strat, strat.settings, store
+    bot._clearwait_open_emits = {x.symbol: 1}
+    store.clear_rule_proofs = lambda requests, _: tuple(RemovedWaitProof(
+        r, MS, True, "scanner_removal_flat") for r in requests)
+    await bot._removed_wait_poll()
+    assert strat._removed_wait_restore_readable
+    assert strat._removed_wait_requests == store.restore() == {x.symbol: x}
+    assert strat._removed_wait_gate_closed(x.symbol) and not strat._removed_wait_gate_closed(z.symbol)
+    bot._clearwait_open_emits.clear()
+    await bot._removed_wait_poll()
+    assert not strat._removed_wait_requests and store.restore() == {}
+
+
+@pytest.mark.asyncio
+async def test_superseded_clear_requires_new_proof_when_working_buy_appears(db, monkeypatch):
+    store, _, _, _ = db
+    req = request(opportunity=0)
+    store.record_rules(req, True)
+    strat = strategy(req, store)
+    strat.scanner_readded(req.symbol)
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings, bot._removed_wait_store = strat, strat.settings, store
+    read = store.clear_rule_proofs
+    store.clear_rule_proofs = lambda requests, accounts: read(requests, accounts, now=NOW)
+    real_commit = store.commit_clear
+    def superseded(plan, valid):
+        # Controlled completed same-symbol emit; no admission or provider override.
+        bot._clearwait_emit_generation_by_symbol = {req.symbol: 1}
+        real_commit(plan, valid)
+    monkeypatch.setattr(store, "commit_clear", superseded)
+    await bot._removed_wait_poll()
+    assert strat._removed_wait_pending_publications == {req.symbol: req}
+    assert strat._removed_wait_requests == store.restore() == {req.symbol: req}
+    monkeypatch.setattr(store, "commit_clear", real_commit)
+    order_row(db, req)  # actual shared-account working BUY in the disposable DB
+    await bot._removed_wait_poll()
+    assert strat._removed_wait_restore_readable
+    assert strat._removed_wait_requests == store.restore() == {req.symbol: req}
+    assert strat._removed_wait_gate_closed(req.symbol)
+    assert not strat._removed_wait_committed_clears and not strat._removed_wait_pending_clears
 
 
 def test_null_status_unknown_is_not_empty():
