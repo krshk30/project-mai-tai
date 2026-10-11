@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "0b8f2bd57cda24e36c25079505f7fd50445a48f3",
+  "range_head": "c42014f150da9f3312bc59db9b0f1c9ccf5967c9",
+  "reviewed_at": "2026-10-11T18:21:33Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only: revised DKI/JZ criteria + CI status rows (claude-1)"
+}
