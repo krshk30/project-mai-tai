@@ -622,7 +622,7 @@ async def test_recorded_deferred_release_kills_sell_bar_only_mutation(monkeypatc
 
 @pytest.mark.asyncio
 async def test_post_sell_request_kills_request_dependent_latch_mutation(monkeypatch):
-    original = SchwabV2Strategy._end_flip_owner_on_sell
+    original = SchwabV2Strategy._latch_fresh_sell_owner_release_boundary
     source = textwrap.dedent(inspect.getsource(original))
     before = "        state.fresh_sell_owner_release_segment_ms = bar_ms"
     assert before in source

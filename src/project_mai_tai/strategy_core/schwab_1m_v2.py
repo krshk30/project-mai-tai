@@ -2889,7 +2889,7 @@ class SchwabV2Strategy:
                     state.symbol, request.opportunity_id, bar_ms)
         return True
 
-    def _end_flip_owner_on_sell(self, state: SymbolState, signal: dict | None = None) -> None:
+    def _latch_fresh_sell_owner_release_boundary(self, state: SymbolState, signal: dict) -> None:
         if not self._flip_owned_first_entry_enabled:
             return
         # The exit's close receipt can raise its request after this SELL observation.
@@ -2903,9 +2903,13 @@ class SchwabV2Strategy:
                 and state.atr_short_flip_bar_ts == bar_ms
                 and bar_ms > max(state.flip_owner_retry_segment_id, state.flip_owner_flip_bar_ts)):
             state.fresh_sell_owner_release_segment_ms = bar_ms
+
+    def _end_flip_owner_on_sell(self, state: SymbolState) -> None:
+        if not self._flip_owned_first_entry_enabled:
+            return
         request = getattr(self, "_removed_wait_requests", {}).get(state.symbol)
         if request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"}:
-            self._fresh_sell_release_owner(state, signal)
+            self._fresh_sell_release_owner(state, None)
             return
         phase = state.flip_owner_phase
         if phase == "idle":
@@ -5400,7 +5404,8 @@ class SchwabV2Strategy:
             state.cw_arm_bar_ts = 0
             live_fanout_transition = self._fanout_identity_bar_is_live(state)
             if self._flip_owned_first_entry_enabled:
-                self._end_flip_owner_on_sell(state, atr_signal)
+                self._latch_fresh_sell_owner_release_boundary(state, atr_signal)
+                self._end_flip_owner_on_sell(state)
                 self._retry_one_start_segment_on_sell(
                     state,
                     live=(
