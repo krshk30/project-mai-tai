@@ -57,7 +57,8 @@ from project_mai_tai.v2_flip_entry_ownership import (
     FlipPositionBook,
     FlipPositionLeg,
 )
-from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitProof, RemovalPersist
+from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitClear, RemovedWaitProof, RemovalPersist
+from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.falseflip1 import Classification, false_episode_proven_closed
 from project_mai_tai.falseflip1_runtime import FalseBudget
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
@@ -764,6 +765,10 @@ class SchwabV2Strategy:
             self.settings.strategy_schwab_1m_v2_removed_wait_clear_enabled
         )
         self._removed_wait_requests: dict[str, RemovedWait] = {}
+        self._removed_wait_pending_publications: dict[str, RemovedWait] = {}
+        self._removed_wait_clear_rules_enabled = getattr(
+            self.settings, "strategy_schwab_1m_v2_removed_wait_clear_rules_enabled", True
+        ) is True
         self._removed_scanner_symbols: set[str] = set()
         self._removed_wait_persist: RemovalPersist | None = None
         self._removed_wait_restore_readable = True
@@ -1198,6 +1203,9 @@ class SchwabV2Strategy:
         self._removed_wait_persist = persist
         self._removed_wait_restore_readable = readable
         self._removed_wait_requests = dict(restored)
+        self._removed_wait_pending_publications = {}
+        self._removed_wait_pending_clears = {}
+        self._removed_wait_committed_clears = {}
         self._removed_wait_dispatch_persist = dispatch_persist
         self._removed_scanner_symbols.update(
             symbol for symbol, request in restored.items() if request.purpose == "scanner_removal")
@@ -1205,6 +1213,25 @@ class SchwabV2Strategy:
             state = self.watchlist_state(symbol)
             if request.purpose in {"retry_exhausted", "false_flip_restore"} or not self._removed_wait_has_owner(state):
                 self._queue_removed_wait_barriers(state, request)
+
+    def _publish_removed_wait(self, request: RemovedWait) -> bool:
+        if self._removed_wait_clear_rules_enabled:
+            # The request already closes admission in memory; SQL belongs to the poll.
+            self._removed_wait_pending_publications[request.symbol] = request
+            return False
+        if self._removed_wait_persist is None:
+            raise RuntimeError("removal store unavailable")
+        self._removed_wait_persist(request, True)
+        return True
+
+    def acknowledge_removed_wait_publication(self, request: RemovedWait) -> None:
+        if (self._removed_wait_pending_publications.get(request.symbol) != request
+                or self._removed_wait_requests.get(request.symbol) != request):
+            self._removed_wait_restore_readable = False
+            return
+        self._removed_wait_pending_publications.pop(request.symbol)
+        if request.purpose == "scanner_removal":
+            self._queue_removed_wait_barriers(self.watchlist_state(request.symbol), request)
 
     def scanner_readded(self, symbol: str) -> None:
         self._removed_scanner_symbols.discard(symbol)
@@ -1271,10 +1298,102 @@ class SchwabV2Strategy:
                     or state.flip_owner_open_positions or state.position_qty_held
                     or state.flip_owner_phase in {"provisional", "bound", "consumed", "awaiting_close"})
 
+    def _removed_wait_memory_fence(self, request: RemovedWait) -> tuple:
+        state = self._symbol_states.get(request.symbol)
+        if state is None:
+            return ()
+        return (self._flip_owner_record(state), state.fanout_segment_id,
+                state.fanout_last_retired_opportunity_id, state.position_qty,
+                state.position_qty_held, tuple(sorted(state.flip_owner_open_positions)),
+                state.fanout_claim_slot_id, state.fanout_claim_attempt_id,
+                state.fanout_webull_claimed,
+                getattr(state, "fresh_sell_owner_release_segment_ms", 0))
+
+    def removed_wait_clear_valid(self, plan: RemovedWaitClear) -> bool:
+        return bool(self._removed_wait_requests.get(plan.proof.request.symbol) == plan.proof.request
+                    and plan.proof.request.symbol not in self._removed_wait_pending_publications
+                    and self._removed_wait_restore_readable
+                    and 0 <= self._now_ms() - plan.proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS
+                    and self._removed_wait_memory_fence(plan.proof.request) == plan.memory_fence
+                    and (plan.validate is None or plan.validate()))
+
+    def stage_removed_wait_clear(
+        self, proof: RemovedWaitProof, *, retire_owner: bool = False,
+        reason: str = "scanner_removed_terminal_unfilled", validate: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Pure staging/ack API. Bars may call this, but never perform a clear write."""
+        request = proof.request
+        if not proof.clear:
+            return False
+        retirements = ()
+        state = self._symbol_states.get(request.symbol)
+        if retire_owner:
+            if state is None or int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) != request.opportunity_id:
+                return False
+            retirements = (
+                ("v2_fanout_segment_identity", {
+                    "schema_version": 1, "strategy_code": STRATEGY_CODE, "symbol": request.symbol,
+                    "fanout_segment_id": str(request.opportunity_id), "active": False, "reason": reason,
+                    "session_anchor": current_session_anchor(datetime.now(UTC)).isoformat(),
+                }),
+                ("v2_flip_entry_ownership", self._flip_owner_record(state).as_payload(active=False, reason=reason)),
+            )
+        plan = RemovedWaitClear(proof, retirements, self._removed_wait_memory_fence(request), validate)
+        if not self.removed_wait_clear_valid(plan):
+            return False
+        committed = self.__dict__.setdefault("_removed_wait_committed_clears", {}).get(request)
+        if (committed is not None and committed.retirements == plan.retirements
+                and committed.memory_fence == plan.memory_fence):
+            # The durable ack survives to the next bar, but that bar must provide
+            # a new fresh proof and an unchanged request/owner/SELL memory fence.
+            self._removed_wait_committed_clears[request] = plan
+            return True
+        self.__dict__.setdefault("_removed_wait_pending_clears", {})[request] = plan
+        return False
+
+    def _removed_wait_clear_receipt(self, request: RemovedWait) -> None:
+        if self._removed_wait_clear_rules_enabled:
+            plan = self.__dict__.get("_removed_wait_committed_clears", {}).get(request)
+            if plan is None or not self.removed_wait_clear_valid(plan):
+                raise RuntimeError("off-loop removal commit not acknowledged")
+        else:
+            if self._removed_wait_persist is None:
+                raise RuntimeError("removal store unavailable")
+            self._removed_wait_persist(request, False)
+
     def apply_removed_wait_proofs(self, proofs: Iterable[RemovedWaitProof]) -> None:
         for proof in proofs:
             request = proof.request
+            if self._removed_wait_clear_rules_enabled and proof.clear:
+                committed = self.__dict__.get("_removed_wait_committed_clears", {}).get(request)
+                if committed is None or not self.removed_wait_clear_valid(committed):
+                    continue
+                if any(p.get("reason") != "scanner_removed_terminal_unfilled" for _, p in committed.retirements):
+                    # A fresh-SELL plan belongs to L2's later-bar memory transition.
+                    continue
             state = self._symbol_states.get(request.symbol)
+            if (self._removed_wait_clear_rules_enabled and proof.clear
+                    and proof.reason in {"previous_session_flat", "scanner_removal_flat"}
+                    and self._removed_wait_requests.get(request.symbol) == request
+                    and self._removed_wait_restore_readable
+                    and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+                current = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) if state else 0
+                # An old request may close, but it cannot retire a different current owner.
+                request_only = (proof.reason == "previous_session_flat"
+                                or request.opportunity_id != current or current == 0)
+                if request_only:
+                    try:
+                        self._removed_wait_clear_receipt(request)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("[V2-REMOVED-WAIT] %s reason=request_retire_failed", request.symbol)
+                    else:
+                        self._removed_wait_requests.pop(request.symbol, None)
+                        for name in ("_pending_intents", "_pending_webull_direct_intents", "_pending_webull_fanout_intents"):
+                            setattr(self, name, [d for d in getattr(self, name)
+                                                if d.metadata.get("clearwait_removal_token") != request.token])
+                        logger.info("[V2-REMOVED-WAIT] %s verdict=CLEAR reason=%s owner_kept=1",
+                                    request.symbol, proof.reason)
+                    continue
             if request.purpose in {"retry_exhausted", "false_flip_restore"}:
                 expected_reason = ("false_flip_leftovers_cancelled_owner_kept"
                                    if request.purpose == "false_flip_restore"
@@ -1283,13 +1402,13 @@ class SchwabV2Strategy:
                         and self._removed_wait_requests.get(request.symbol) == request
                         and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
                     try:
-                        if self._removed_wait_persist is None:
-                            raise RuntimeError("cancellation store unavailable")
-                        self._removed_wait_persist(request, False)
+                        self._removed_wait_clear_receipt(request)
                     except Exception:  # noqa: BLE001
                         logger.exception("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=UNKNOWN", request.symbol)
                     else:
                         self._removed_wait_requests.pop(request.symbol, None)
+                        self.__dict__.setdefault("_removed_wait_completed_requests", {})[
+                            (request.symbol, request.opportunity_id)] = request
                         self.__dict__.setdefault("_retry_leftover_receipts", set()).add(
                             (request.symbol, request.opportunity_id))
                         if request.purpose == "false_flip_restore":
@@ -1302,9 +1421,7 @@ class SchwabV2Strategy:
                     and not proof.clear and self._removed_wait_requests.get(request.symbol) == request
                     and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
                 try:
-                    if self._removed_wait_persist is None:
-                        raise RuntimeError("removal store unavailable")
-                    self._removed_wait_persist(request, False)
+                    self._removed_wait_clear_receipt(request)
                 except Exception:  # noqa: BLE001
                     logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=owned_fill_write_failed", request.symbol)
                 else:
@@ -1331,7 +1448,25 @@ class SchwabV2Strategy:
             if request.opportunity_id == 0:
                 continue
             seed_cap = (state.cw_seed_cap_watch_start_ms, state.cw_resting_taken, state.cw_reclaim_taken)
-            if request.opportunity_id and not self._retire_flip_owner_opportunity(
+            rules_retired = self._removed_wait_clear_rules_enabled and proof.reason == "scanner_removal_flat"
+            if rules_retired:
+                try:
+                    self._removed_wait_clear_receipt(request)
+                except Exception:  # noqa: BLE001
+                    logger.exception("[V2-REMOVED-WAIT] %s reason=request_cas_failed", request.symbol)
+                    continue
+            if rules_retired:
+                # Both durable retirements were atomically committed by the poll.
+                state.fanout_last_retired_opportunity_id = max(
+                    state.fanout_last_retired_opportunity_id, request.opportunity_id)
+                self._release_fanout_webull_claim(state, reason="scanner_removed_terminal_unfilled", persist=False)
+                self._clear_fanout_segment_id(state, reason="scanner_removed_terminal_unfilled", persist=False)
+                self._reset_fanout_webull_slots(state)
+                self._clear_cw_slot_claims(state)
+                state.cw_v2_emit_claimed = False
+                state.cw_v2_emit_ms = 0
+                self._clear_flip_owner_memory(state)
+            elif request.opportunity_id and not self._retire_flip_owner_opportunity(
                 state, reason="scanner_removed_terminal_unfilled"):
                 continue
             if seed_cap[0]:
@@ -1339,7 +1474,8 @@ class SchwabV2Strategy:
             try:
                 if self._removed_wait_persist is None:
                     raise RuntimeError("removal store unavailable")
-                self._removed_wait_persist(request, False)
+                if not rules_retired:
+                    self._removed_wait_clear_receipt(request)
             except Exception:  # noqa: BLE001
                 logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=retire_write_failed", request.symbol)
                 continue
@@ -1379,9 +1515,8 @@ class SchwabV2Strategy:
                               str(uuid4()), self._now_ms(), self._removed_wait_accounts())
         self._removed_wait_requests[symbol] = request
         try:
-            if self._removed_wait_persist is None:
-                raise RuntimeError("removal store unavailable")
-            self._removed_wait_persist(request, True)
+            if not self._publish_removed_wait(request):
+                return released
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=request_write_failed", symbol)
             return released
@@ -1846,9 +1981,7 @@ class SchwabV2Strategy:
                               accounts, "retry_exhausted")
         self._removed_wait_requests[state.symbol] = request
         try:
-            if self._removed_wait_persist is None:
-                raise RuntimeError("cancellation store unavailable")
-            self._removed_wait_persist(request, True)
+            self._publish_removed_wait(request)
         except Exception:  # noqa: BLE001 - cancelling is still safe if the receipt cannot be persisted
             logger.exception("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=UNKNOWN reason=request_write_failed",
                              state.symbol)

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Callable, Mapping, Sequence
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
@@ -31,6 +31,13 @@ DISPATCH_SNAPSHOT_TYPE = "v2_wait_dispatch"
 SETTLE_MS = 15_000
 ROW_LIMIT = 2048
 TERMINAL = frozenset({"cancelled", "canceled", "rejected", "expired"})
+ORDER_TERMINAL = TERMINAL | {"filled", "replaced"}
+INTENT_TERMINAL = TERMINAL | {"filled", "aborted"}
+
+
+def previous_session_request(request: RemovedWait, now: datetime) -> bool:
+    identity_ms = request.opportunity_id or request.requested_at_ms
+    return 0 < identity_ms < int(current_session_anchor(now).timestamp() * 1000)
 
 
 @dataclass(frozen=True)
@@ -64,6 +71,133 @@ class RemovedWaitProof:
     observed_at_ms: int
     clear: bool
     reason: str
+
+
+@dataclass(frozen=True)
+class RemovedWaitClear:
+    proof: RemovedWaitProof
+    retirements: tuple[tuple[str, dict], ...]
+    memory_fence: tuple
+    validate: Callable[[], bool] | None = field(default=None, compare=False, repr=False)
+
+
+
+def assess_clear_rules(
+    request: RemovedWait, *, now: datetime, accounts: Mapping[object, str],
+    intents: Sequence[TradeIntent], orders: Sequence[BrokerOrder],
+    filled_order_ids: set[object], order_events: Sequence[BrokerOrderEvent],
+    snapshots: Sequence[DashboardSnapshot], has_position: bool, strategy_id: object,
+) -> RemovedWaitProof:
+    """L1 rules over a fresh shared-account snapshot; no dispatch journal prerequisite."""
+    observed = int(now.timestamp() * 1000)
+    cutoff = _utc(now) - timedelta(milliseconds=SETTLE_MS)
+
+    def result(reason: str, clear: bool = False) -> RemovedWaitProof:
+        return RemovedWaitProof(request, observed, clear, reason)
+
+    def metadata(row: object) -> dict:
+        p = getattr(row, "payload", None)
+        if not isinstance(p, dict):
+            return {}
+        md = p.get("metadata", p)
+        return md if isinstance(md, dict) else {}
+
+    def own(row: object) -> bool:
+        return (getattr(row, "strategy_id", None) == strategy_id
+                and (request.opportunity_id == 0 or str(metadata(row).get("fanout_segment_id", ""))
+                     == str(request.opportunity_id)))
+
+    if (len(accounts) != 2 or len(set(accounts.values())) != 2 or not request.account_names
+            or len(set(request.account_names)) != len(request.account_names)
+            or not set(request.account_names) <= set(accounts.values())):
+        return result("accounts_unreadable")
+    requests = [r for r in snapshots if r.snapshot_type == SNAPSHOT_TYPE]
+    if not requests or requests[-1].payload != request.payload(active=True):
+        return result("active_request_changed")
+    if request.purpose not in {"scanner_removal", "retry_exhausted", "false_flip_restore"}:
+        return result("purpose_unreadable")
+    if has_position:
+        return result("position_stays_managed")
+    prior = previous_session_request(request, now)
+    for order in orders:
+        if (prior or str(order.side).lower() == "buy") and order.status not in ORDER_TERMINAL:
+            return result("working_order" if prior else "opening_order_not_terminal")
+    if any(i.intent_type == "open"
+           and i.status not in INTENT_TERMINAL for i in intents):
+        return result("intent_not_terminal")
+    if observed - request.requested_at_ms < SETTLE_MS:
+        return result("request_settling")
+    for row in (*orders, *intents):
+        if not isinstance(row.updated_at, datetime) or _utc(row.updated_at) > cutoff:
+            return result("terminal_row_settling")
+    # Only the latest broker outcome controls a cancelled ticket. A previous
+    # unknown cannot overrule a later confirmation; absence cannot confirm unknown.
+    latest_events: dict[object, BrokerOrderEvent] = {}
+    for event in order_events:
+        if (event.event_source == "broker" and event.event_type in TERMINAL
+                and (event.order_id not in latest_events
+                     or _utc(event.event_at) > _utc(latest_events[event.order_id].event_at))):
+            latest_events[event.order_id] = event
+    own_intents = {i.id for i in intents if i.intent_type == "open" and own(i)}
+    own_orders = [o for o in orders if own(o) or o.intent_id in own_intents]
+    for order in orders:
+        event = latest_events.get(order.id)
+        if event and (metadata(event).get("cancel_outcome") in {"could_not_tell", "not_confirmed"}
+                      or _utc(event.event_at) > cutoff):
+            return result("cancel_unknown_or_refused")
+    for intent in intents:
+        if metadata(intent).get("cancel_outcome") in {"could_not_tell", "not_confirmed"}:
+            return result("cancel_unknown_or_refused")
+        if metadata(intent).get("clearwait_removal_token") != request.token:
+            continue
+        p = intent.payload or {}
+        no_target = (intent.status == "rejected" and p.get("refusal_origin") == "skipped_before_submit"
+                     and p.get("refusal_code") == "cancel_target_not_found")
+        if (intent.intent_type != "cancel" or intent.status not in {"cancelled", "canceled"}
+                and not no_target or metadata(intent).get("cancel_outcome") in {"could_not_tell", "not_confirmed"}):
+            return result("cancel_unknown_or_refused")
+    if prior:
+        return result("previous_session_flat", True)
+    if request.purpose == "scanner_removal":
+        own_ids = {o.id for o in own_orders}
+        if (any(o.id in filled_order_ids or o.status in {"filled", "partially_filled"} for o in own_orders)
+                or any(e.order_id in own_ids and (e.event_type in {"filled", "partially_filled"}
+                       or (e.payload or {}).get("broker_fill_id")) for e in order_events)):
+            return result("own_fill_stays_owned")
+        for snapshot in snapshots:
+            p = snapshot.payload or {}
+            if (snapshot.snapshot_type == "v2_flip_entry_ownership"
+                    and str(p.get("opportunity_id")) == str(request.opportunity_id)
+                    and (p.get("fill_accounts") or p.get("position_ids")
+                         or p.get("phase") in {"provisional", "bound", "consumed", "awaiting_close"})):
+                return result("filled_or_ambiguous_owner")
+        return result("scanner_removal_flat", True)
+    # B1 is a cancellation receipt only. Historical filled siblings remain owned;
+    # a fill on the cancelled ticket itself disqualifies that ticket's receipt.
+    for order in own_orders:
+        if order.status == "filled":
+            continue
+        if order.id in filled_order_ids or any(
+            e.order_id == order.id and (e.event_type in {"filled", "partially_filled"}
+                                       or (e.payload or {}).get("broker_fill_id")) for e in order_events
+        ):
+            return result("own_fill_stays_owned")
+        event = latest_events.get(order.id)
+        if not event or event.event_type not in {"cancelled", "canceled", "rejected", "expired"}:
+            return result("broker_terminal_unproven")
+        if metadata(event).get("cancel_outcome") in {"could_not_tell", "not_confirmed"}:
+            return result("cancel_unknown_or_refused")
+    receipts = {accounts[i.broker_account_id] for i in intents
+                if metadata(i).get("clearwait_removal_token") == request.token
+                and str(metadata(i).get("clearwait_opportunity_id")) == str(request.opportunity_id)
+                and metadata(i).get("clearwait_buy_only") == "true"
+                and metadata(i).get("reason") == ("false_flip_restore" if request.purpose == "false_flip_restore"
+                                                  else "retry_budget_exhausted")
+                and own(i) and _utc(i.created_at).timestamp() * 1000 >= request.requested_at_ms}
+    if receipts != set(request.account_names):
+        return result("waiting_for_all_cancel_receipts")
+    return result("false_flip_leftovers_cancelled_owner_kept" if request.purpose == "false_flip_restore"
+                  else "retry_leftovers_cancelled_owner_kept", True)
 
 
 def _utc(value: datetime) -> datetime:
@@ -473,6 +607,132 @@ class RemovedWaitStore:
                 )
             )
             session.commit()
+
+    def record_rules(self, request: RemovedWait, active: bool,
+                     valid: Callable[[], bool] | None = None) -> None:
+        with self.session_factory() as session:
+            if session.bind.dialect.name == "postgresql":
+                session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                session.execute(text("SET LOCAL statement_timeout = '2s'"))
+                session.execute(select(func.pg_advisory_xact_lock(
+                    func.hashtext("v2_removed_wait:" + request.symbol))))
+            if valid is not None and not valid():
+                raise ValueError("removal publication changed")
+            if not active:
+                latest = session.scalar(select(DashboardSnapshot).where(
+                    DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                    DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+                ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc())
+                  .limit(1).with_for_update())
+                if latest is None or latest.payload != request.payload(active=True):
+                    raise ValueError("active removal request changed")
+            session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE, payload=request.payload(active=active)))
+            session.flush()
+            if valid is not None and not valid():
+                raise ValueError("removal publication changed before commit")
+            session.commit()
+
+    def commit_clear(self, plan: RemovedWaitClear, valid: Callable[[], bool]) -> None:
+        """Off-loop atomic retirement; a changed request or memory fence rolls back."""
+        request = plan.proof.request
+        with self.session_factory() as session:
+            if session.bind.dialect.name == "postgresql":
+                session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                session.execute(text("SET LOCAL statement_timeout = '2s'"))
+                session.execute(select(func.pg_advisory_xact_lock(
+                    func.hashtext("v2_removed_wait:" + request.symbol))))
+            latest = session.scalar(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+            ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc())
+              .limit(1).with_for_update())
+            if latest is None or latest.payload != request.payload(active=True) or not valid():
+                raise ValueError("active removal request or memory fence changed")
+            for snapshot_type, payload in plan.retirements:
+                session.add(DashboardSnapshot(snapshot_type=snapshot_type, payload=payload))
+            session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE, payload=request.payload(active=False)))
+            session.flush()
+            if not valid():
+                raise ValueError("removal fence changed before commit")
+            session.commit()
+
+    def clear_rule_proofs(
+        self, requests: Sequence[RemovedWait], account_names: set[str], *, now: datetime | None = None,
+    ) -> tuple[RemovedWaitProof, ...]:
+        observed = now or datetime.now(UTC)
+        results = []
+        with self.session_factory() as session:
+            if session.bind.dialect.name == "postgresql":
+                session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                session.execute(text("SET TRANSACTION READ ONLY"))
+            strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == "schwab_1m_v2"))
+            accounts = {a.id: a.name for a in session.scalars(select(BrokerAccount).where(
+                BrokerAccount.name.in_(account_names))).all()}
+            if strategy_id is None or len(accounts) != 2 or set(accounts.values()) != account_names:
+                raise ValueError("required removal accounts unavailable")
+
+            def bounded(query: object) -> list:
+                rows = list(session.scalars(query.limit(ROW_LIMIT + 1)).all())
+                if len(rows) > ROW_LIMIT:
+                    raise ValueError("removal proof exceeded bounded evidence")
+                return rows
+
+            for request in requests:
+                if not set(request.account_names) <= account_names:
+                    raise ValueError("removal account configuration changed")
+                anchor = datetime.fromtimestamp((request.opportunity_id or request.requested_at_ms) / 1000, UTC)
+                # Opportunity zero owns this session's terminal history, not unrelated old fills.
+                zero_op_session = current_session_anchor(anchor)
+                cutoff = observed - timedelta(milliseconds=SETTLE_MS)
+                intents = bounded(select(TradeIntent).where(
+                    TradeIntent.broker_account_id.in_(accounts), TradeIntent.symbol == request.symbol,
+                    or_(TradeIntent.status.is_(None), TradeIntent.status.not_in(INTENT_TERMINAL),
+                        TradeIntent.updated_at >= cutoff, TradeIntent.created_at >= anchor,
+                        TradeIntent.payload["cancel_outcome"].as_string().in_(("could_not_tell", "not_confirmed")),
+                        TradeIntent.payload["metadata"]["cancel_outcome"].as_string().in_(
+                            ("could_not_tell", "not_confirmed")))))
+                orders = bounded(select(BrokerOrder).where(
+                    BrokerOrder.broker_account_id.in_(accounts), BrokerOrder.symbol == request.symbol,
+                    or_(BrokerOrder.status.is_(None), BrokerOrder.status.not_in(ORDER_TERMINAL),
+                        BrokerOrder.updated_at >= cutoff, BrokerOrder.submitted_at >= anchor,
+                        (BrokerOrder.strategy_id == strategy_id) & (request.opportunity_id == 0)
+                            & (BrokerOrder.submitted_at >= zero_op_session),
+                        BrokerOrder.id.in_(select(BrokerOrderEvent.order_id).where(
+                            BrokerOrderEvent.event_source == "broker",
+                            or_(BrokerOrderEvent.payload["cancel_outcome"].as_string().in_(
+                                    ("could_not_tell", "not_confirmed")),
+                                BrokerOrderEvent.payload["metadata"]["cancel_outcome"].as_string().in_(
+                                    ("could_not_tell", "not_confirmed"))))),
+                        (BrokerOrder.strategy_id == strategy_id) & (
+                            BrokerOrder.payload["fanout_segment_id"].as_string() == str(request.opportunity_id)),
+                        BrokerOrder.intent_id.in_([i.id for i in intents]))))
+                events = bounded(select(BrokerOrderEvent).where(
+                    BrokerOrderEvent.order_id.in_([o.id for o in orders])))
+                fills = set(session.scalars(select(Fill.order_id).where(
+                    Fill.order_id.in_([o.id for o in orders]))).all())
+                latest_request = session.scalar(select(DashboardSnapshot).where(
+                    DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                    DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+                ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc()).limit(1))
+                snapshots = bounded(select(DashboardSnapshot).where(
+                    DashboardSnapshot.snapshot_type == "v2_flip_entry_ownership",
+                    DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+                    DashboardSnapshot.created_at >= anchor))
+                if latest_request is not None:
+                    snapshots.append(latest_request)
+                position_queries = [
+                    select(AccountPosition.id).where(AccountPosition.symbol == request.symbol,
+                        AccountPosition.broker_account_id.in_(accounts), AccountPosition.quantity != 0),
+                    select(VirtualPosition.id).where(VirtualPosition.symbol == request.symbol,
+                        VirtualPosition.broker_account_id.in_(accounts), VirtualPosition.quantity != 0),
+                    select(OmsManagedPosition.id).where(OmsManagedPosition.symbol == request.symbol,
+                        OmsManagedPosition.broker_account_name.in_(account_names), OmsManagedPosition.status == "open"),
+                ]
+                results.append(assess_clear_rules(request, now=observed, accounts=accounts,
+                    intents=intents, orders=orders, filled_order_ids=fills, order_events=events,
+                    snapshots=snapshots, has_position=any(session.scalar(q.limit(1)) is not None
+                                                        for q in position_queries), strategy_id=strategy_id))
+        return tuple(results)
 
     def restore(self) -> dict[str, RemovedWait]:
         with self.session_factory() as session:
