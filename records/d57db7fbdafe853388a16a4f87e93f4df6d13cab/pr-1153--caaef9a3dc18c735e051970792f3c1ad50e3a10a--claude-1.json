@@ -1,0 +1,9 @@
+{
+  "pr_number": 1153,
+  "range_base": "caaef9a3dc18c735e051970792f3c1ad50e3a10a",
+  "range_head": "d57db7fbdafe853388a16a4f87e93f4df6d13cab",
+  "reviewed_at": "2026-10-11T17:28:15Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "L3/D approved card 10-11. src: one SQL filter in _read_line_gap_trades (off-loop to_thread, existing 5 s timeout; not on tick/bar path) + flag default ON. Fail-closed: only positively known Massive/Polygon non-OHLC codes (16 incl 32) allow spanning; unknown/missing/native Schwab prints still hold (CABO-type tested). Ledger: L3-D DELIVERED; WFF 10-09 15:53 replay ON = one accepted Schwab stop-limit 13.28/13.35, OFF = traded_gap_unrecovered; no same-segment re-entry. Must-not-break: Form T 12 kept, RETO/R6/re-add/GAPHOLD regressions pass, CI validate x2 green (8502 unit, 176 integ). Not verified by me: historical Oct-9 env (uses current /proc config). (claude-1)"
+}
