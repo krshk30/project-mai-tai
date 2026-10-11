@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "c180134615353cd7f784413b7469619826499e05",
+  "range_head": "114eadb4b47aaaf5dfda14da59f6551d88bf0f05",
+  "reviewed_at": "2026-10-11T15:28:38Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only C16-C18 lane rows match the 10-11 PM master (L1/L2/L3 flags default ON, v2-only, no OMS) (claude-1)"
+}
