@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Callable, Mapping, Sequence
 
@@ -73,6 +73,15 @@ class RemovedWaitProof:
     reason: str
 
 
+@dataclass(frozen=True)
+class RemovedWaitClear:
+    proof: RemovedWaitProof
+    retirements: tuple[tuple[str, dict], ...]
+    memory_fence: tuple
+    validate: Callable[[], bool] | None = field(default=None, compare=False, repr=False)
+
+
+
 def assess_clear_rules(
     request: RemovedWait, *, now: datetime, accounts: Mapping[object, str],
     intents: Sequence[TradeIntent], orders: Sequence[BrokerOrder],
@@ -137,6 +146,8 @@ def assess_clear_rules(
                       or _utc(event.event_at) > cutoff):
             return result("cancel_unknown_or_refused")
     for intent in intents:
+        if metadata(intent).get("cancel_outcome") in {"could_not_tell", "not_confirmed"}:
+            return result("cancel_unknown_or_refused")
         if metadata(intent).get("clearwait_removal_token") != request.token:
             continue
         p = intent.payload or {}
@@ -613,6 +624,30 @@ class RemovedWaitStore:
             session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE, payload=request.payload(active=active)))
             session.commit()
 
+    def commit_clear(self, plan: RemovedWaitClear, valid: Callable[[], bool]) -> None:
+        """Off-loop atomic retirement; a changed request or memory fence rolls back."""
+        request = plan.proof.request
+        with self.session_factory() as session:
+            if session.bind.dialect.name == "postgresql":
+                session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                session.execute(text("SET LOCAL statement_timeout = '2s'"))
+                session.execute(select(func.pg_advisory_xact_lock(
+                    func.hashtext("v2_removed_wait:" + request.symbol))))
+            latest = session.scalar(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
+            ).order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc())
+              .limit(1).with_for_update())
+            if latest is None or latest.payload != request.payload(active=True) or not valid():
+                raise ValueError("active removal request or memory fence changed")
+            for snapshot_type, payload in plan.retirements:
+                session.add(DashboardSnapshot(snapshot_type=snapshot_type, payload=payload))
+            session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE, payload=request.payload(active=False)))
+            session.flush()
+            if not valid():
+                raise ValueError("removal fence changed before commit")
+            session.commit()
+
     def clear_rule_proofs(
         self, requests: Sequence[RemovedWait], account_names: set[str], *, now: datetime | None = None,
     ) -> tuple[RemovedWaitProof, ...]:
@@ -642,11 +677,20 @@ class RemovedWaitStore:
                 intents = bounded(select(TradeIntent).where(
                     TradeIntent.broker_account_id.in_(accounts), TradeIntent.symbol == request.symbol,
                     or_(TradeIntent.status.is_(None), TradeIntent.status.not_in(INTENT_TERMINAL),
-                        TradeIntent.updated_at >= cutoff, TradeIntent.created_at >= anchor)))
+                        TradeIntent.updated_at >= cutoff, TradeIntent.created_at >= anchor,
+                        TradeIntent.payload["cancel_outcome"].as_string().in_(("could_not_tell", "not_confirmed")),
+                        TradeIntent.payload["metadata"]["cancel_outcome"].as_string().in_(
+                            ("could_not_tell", "not_confirmed")))))
                 orders = bounded(select(BrokerOrder).where(
                     BrokerOrder.broker_account_id.in_(accounts), BrokerOrder.symbol == request.symbol,
                     or_(BrokerOrder.status.is_(None), BrokerOrder.status.not_in(ORDER_TERMINAL),
                         BrokerOrder.updated_at >= cutoff, BrokerOrder.submitted_at >= anchor,
+                        BrokerOrder.id.in_(select(BrokerOrderEvent.order_id).where(
+                            BrokerOrderEvent.event_source == "broker",
+                            or_(BrokerOrderEvent.payload["cancel_outcome"].as_string().in_(
+                                    ("could_not_tell", "not_confirmed")),
+                                BrokerOrderEvent.payload["metadata"]["cancel_outcome"].as_string().in_(
+                                    ("could_not_tell", "not_confirmed"))))),
                         (BrokerOrder.strategy_id == strategy_id) & (
                             BrokerOrder.payload["fanout_segment_id"].as_string() == str(request.opportunity_id)),
                         BrokerOrder.intent_id.in_([i.id for i in intents]))))
