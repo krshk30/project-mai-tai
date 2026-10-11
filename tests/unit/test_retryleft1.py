@@ -418,6 +418,7 @@ async def test_retry_cancel_receipts_polled_off_thread_without_removed_wait_flag
     close_book(strategy, state, record, clock)
     request = strategy._removed_wait_requests[state.symbol]
     strategy._removed_wait_enabled = False
+    strategy._removed_wait_clear_rules_enabled = False
     proof = receipts(strategy, request, AT + timedelta(seconds=40))
     clock[0] = proof.observed_at_ms
     service = object.__new__(SchwabV2BotService)
