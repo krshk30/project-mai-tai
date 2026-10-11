@@ -1,0 +1,9 @@
+{
+  "pr_number": 1151,
+  "range_base": "6dadd4a4a07069a950bd2b8020b9532d8887f89d",
+  "range_head": "5bfc030eaf12060e6d7c0c35ea4fd33292ad9bf6",
+  "reviewed_at": "2026-10-11T14:17:08Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "docs-only 10-12 handoff commit reviewed (claude-1): Record current-head autoflush attribution without claiming raw acceptance"
+}
