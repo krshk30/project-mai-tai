@@ -2883,6 +2883,8 @@ class SchwabV2Strategy:
         self._flip_owner_counts["release_succeeded"] += 1
         self._removed_wait_requests.pop(state.symbol, None)
         self._fresh_sell_release_evidence.pop(state.symbol, None)
+        for name in ("_removed_wait_pending_clears", "_removed_wait_committed_clears"):
+            self.__dict__.get(name, {}).pop(request, None)
         logger.info("[V2-FRESH-SELL-OWNER-RELEASED] %s old_opportunity=%d sell_bar=%d",
                     state.symbol, request.opportunity_id, bar_ms)
         return True

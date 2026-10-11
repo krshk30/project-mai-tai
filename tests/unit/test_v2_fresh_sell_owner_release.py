@@ -322,6 +322,35 @@ async def test_settled_receipt_alone_never_reenters_original_segment(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_one_trade_in_new_sell_segment_cannot_release_again(monkeypatch):
+    bot, state, clock, old_request, _, engine = setup(monkeypatch)
+    refresh(bot, clock)
+    await bot._fresh_sell_owner_release_poll()
+    sell(bot, state)
+    await commit_and_later_bar(bot, state, clock)
+    assert state.flip_owner_phase == "idle"
+    assert not bot.strategy.__dict__.get("_removed_wait_committed_clears", {})
+    new_opportunity = bot.strategy._ensure_flip_owner_opportunity(state)
+    assert new_opportunity > old_request.opportunity_id
+    state.flip_owner_phase = "provisional"  # Controlled first trade closes before the next BUY.
+    state.flip_owner_retry_segment_id = state.retry_one_segment_id
+    state.flip_owner_retry_closes_at_place = 0
+    assert not bot.strategy._retry_one_release_or_hold(state, exit_reason="CW_TARGET")
+    assert state.retry_one_closes_in_segment == 1 and state.flip_owner_phase == "consumed"
+    clock[0] += 60_000
+    state.bars.append(replace(state.bars[-1], timestamp_ms=state.bars[-1].timestamp_ms + 60_000))
+    refresh(bot, clock)
+    await bot._fresh_sell_owner_release_poll()
+    bot.strategy._cw_v2_track(state, None)
+    assert state.fresh_sell_owner_release_segment_ms == 0
+    assert state.flip_owner_phase == "consumed" and state.flip_owner_opportunity_id == new_opportunity
+    assert state.fanout_last_retired_opportunity_id == old_request.opportunity_id
+    assert bot.strategy._flip_owner_counts["release_succeeded"] == 1
+    assert not bot.strategy._strict_first_rest_admitted(state, slot="first")
+    engine.dispose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("deferred_cancel", [False, True])
 async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, deferred_cancel):
     bot, state, clock, request, _, engine = setup(monkeypatch, all_on=True)
