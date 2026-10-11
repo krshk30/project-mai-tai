@@ -24,6 +24,13 @@
       "ruling": "Original operator protocol authorizes default-ON at deploy with a rollback switch. Reviewed exact-SHA deployment remains separate; this PR authorizes no production writes, activation or restart."
     },
     {
+      "name": "strategy_schwab_1m_v2_fresh_sell_owner_release_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "B2 releases an exhausted owner only on a fresh live SELL with fresh flat-both evidence, no working BUY, and own terminal cancels settled for 15 seconds.",
+      "ruling": "Sunday PM operator rule: default ON; exact-head review and deployment remain separate."
+    },
+    {
       "name": "strategy_schwab_1m_v2_resting_buy_round_up_enabled",
       "expected": true,
       "owning_service": "schwab-1m-v2",
