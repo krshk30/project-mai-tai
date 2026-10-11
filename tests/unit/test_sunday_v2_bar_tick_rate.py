@@ -72,12 +72,19 @@ async def test_sunday_60s_real_bar_and_quote_handlers_stay_under_50ms(monkeypatc
         session.commit()
     request = RemovedWait("MI", 0, "rate-clear", case.now_ms - 40_000, accounts)
     store = RemovedWaitStore(factory)
-    store.record(request, True)
     case.bot.session_factory = factory
     case.bot._removed_wait_store = store
     writes = []
+    publications = []
     loop_thread = threading.get_ident()
     original_write = RemovedWaitStore.commit_clear
+    original_publish = RemovedWaitStore.record_rules
+
+    def slow_publish(self, pending, active, valid=None):
+        publications.append(threading.get_ident())
+        assert publications[-1] != loop_thread, "durable publication must not run on the v2 loop"
+        time.sleep(0.1)
+        return original_publish(self, pending, active, valid)
 
     def slow_write(self, plan, valid):
         writes.append(threading.get_ident())
@@ -86,6 +93,7 @@ async def test_sunday_60s_real_bar_and_quote_handlers_stay_under_50ms(monkeypatc
         return original_write(self, plan, valid)
 
     monkeypatch.setattr(RemovedWaitStore, "commit_clear", slow_write)
+    monkeypatch.setattr(RemovedWaitStore, "record_rules", slow_publish)
 
     class Clock(datetime):
         @classmethod
@@ -96,6 +104,9 @@ async def test_sunday_60s_real_bar_and_quote_handlers_stay_under_50ms(monkeypatc
     monkeypatch.setattr("project_mai_tai.v2_removed_wait.datetime", Clock)
     case.strategy.configure_removed_wait(store.record_rules, restored={"MI": request},
                                          readable=True, dispatch_persist=store.record_dispatch)
+    assert not case.strategy._publish_removed_wait(request)
+    assert case.strategy._removed_wait_pending_publications == {"MI": request}
+    assert not publications
     candles = {c["datetime"]: c for c in row["schwab"]["candles"]}
     loop = asyncio.get_running_loop()
     start = loop.time()
@@ -148,7 +159,8 @@ async def test_sunday_60s_real_bar_and_quote_handlers_stay_under_50ms(monkeypatc
     assert max(quote_ms) < 50
     assert max(bar_ms) < 50
     assert case.bot._persist_bar.call_count == events
-    assert writes and store.restore() == {}
+    assert publications and writes and store.restore() == {}
+    assert not case.strategy._removed_wait_pending_publications
     assert not case.strategy._removed_wait_requests
     assert not any(record.exc_info for record in caplog.records)
     engine.dispose()
