@@ -860,6 +860,48 @@ class SchwabV2BotService:
         if (self._removed_wait_emits_inflight()
                 or getattr(self, "_clearwait_emit_generation", 0) != generation):
             return
+        if self.strategy._removed_wait_clear_rules_enabled:
+            for proof in proofs:
+                if not proof.clear:
+                    continue
+                pending = self.strategy.__dict__.get("_removed_wait_pending_clears", {}).get(proof.request)
+                committed = self.strategy.__dict__.get("_removed_wait_committed_clears", {}).get(proof.request)
+                if any(p is not None and self.strategy.removed_wait_clear_valid(p) for p in (pending, committed)):
+                    continue
+                state = self.strategy._symbol_states.get(proof.request.symbol)
+                current = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) if state else 0
+                retire = (proof.reason == "scanner_removal_flat" and current > 0
+                          and current == proof.request.opportunity_id)
+                if retire and (not self.strategy._flip_owner_restore_readable
+                               or self.strategy._removed_wait_has_owner(state) or state.position_qty
+                               or not self.strategy._flip_owner_evidence_fresh(state)):
+                    continue
+                self.strategy.stage_removed_wait_clear(proof, retire_owner=retire)
+            for request, plan in tuple(self.strategy.__dict__.get("_removed_wait_pending_clears", {}).items()):
+                def valid(plan=plan):
+                    return (not self._removed_wait_emits_inflight()
+                            and getattr(self, "_clearwait_emit_generation", 0) == generation
+                            and self.strategy.removed_wait_clear_valid(plan))
+                if not valid():
+                    self.strategy._removed_wait_pending_clears.pop(request, None)
+                    continue
+                committing = self.__dict__.setdefault("_clearwait_committing_symbols", set())
+                committing.add(request.symbol)
+                try:
+                    await asyncio.to_thread(store.commit_clear, plan, valid)
+                    if valid():
+                        self.strategy.__dict__.setdefault("_removed_wait_committed_clears", {})[request] = plan
+                    else:
+                        # A committed but superseded acknowledgement must never authorize entry.
+                        self.strategy._removed_wait_restore_readable = False
+                except Exception:  # noqa: BLE001
+                    logger.exception("[V2-REMOVED-WAIT] %s reason=offloop_clear_failed", request.symbol)
+                finally:
+                    committing.discard(request.symbol)
+                    self.strategy._removed_wait_pending_clears.pop(request, None)
+            if (self._removed_wait_emits_inflight()
+                    or getattr(self, "_clearwait_emit_generation", 0) != generation):
+                return
         self.strategy.apply_removed_wait_proofs(proofs)
 
     def _removed_wait_emits_inflight(self) -> bool:
@@ -867,6 +909,9 @@ class SchwabV2BotService:
         return any(counts.get(symbol, 0) for symbol in self.strategy._removed_wait_requests)
 
     async def _emit_removal_tracked(self, emitter, draft) -> bool:
+        if (getattr(draft, "intent_type", "") == "open"
+                and draft.symbol.upper() in getattr(self, "_clearwait_committing_symbols", ())):
+            return False
         if (getattr(draft, "intent_type", "") != "open"
                 or not getattr(getattr(self, "strategy", None), "_removed_wait_enabled", False)):
             await emitter.emit(draft)

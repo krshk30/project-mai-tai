@@ -41,6 +41,7 @@ def recorded(*, phase="provisional", account=PRIMARY, pm=False, max_retries=0):
 def strategy_for_record(record, at, *, pm=False, max_retries=0, quantities):
     """Current policy control over a recorded episode; no new bars or prints."""
     strategy = SchwabV2Strategy(Settings(
+        strategy_schwab_1m_v2_removed_wait_clear_rules_enabled=False,
         strategy_schwab_1m_v2_confirmed_window_enabled=True,
         strategy_schwab_1m_v2_cw_v2_enabled=True,
         strategy_schwab_1m_v2_cw_v2_resting_entry_enabled=True,

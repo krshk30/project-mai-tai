@@ -65,6 +65,14 @@ def strategy(req, store, *, enabled=True, now=MS):
     return strat
 
 
+def apply_committed(strat, store, proof):
+    assert not strat.stage_removed_wait_clear(proof)
+    plan = strat._removed_wait_pending_clears[proof.request]
+    store.commit_clear(plan, lambda: strat.removed_wait_clear_valid(plan))
+    strat._removed_wait_committed_clears = {proof.request: plan}
+    strat.apply_removed_wait_proofs((proof,))
+
+
 def order_row(db, req, *, account=PRIMARY, own=False, status="accepted", side="buy", updated=None):
     _, factory, accounts, strategies = db
     row = BrokerOrder(id=uuid4(), strategy_id=strategies["schwab_1m_v2" if own else "orb_schwab"],
@@ -89,7 +97,7 @@ def test_scanner_empty_settled_snapshot_clears_without_dispatch_journal(db, oppo
     assert proof.clear and proof.reason == "scanner_removal_flat"
     strat = strategy(req, store)
     strat.scanner_readded(req.symbol)
-    strat.apply_removed_wait_proofs((proof,))
+    apply_committed(strat, store, proof)
     assert store.restore() == {} and not strat._removed_wait_requests
     assert strat.line_buy_ready(req.symbol)
 
@@ -191,7 +199,7 @@ def test_prior_session_all_purposes_retire_only_request(db, purpose, opportunity
     before = (state.flip_owner_phase, state.fanout_segment_id, set(state.flip_owner_fill_accounts))
     proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
     assert proof.clear and proof.reason == "previous_session_flat"
-    strat.apply_removed_wait_proofs((proof,))
+    apply_committed(strat, store, proof)
     assert store.restore() == {} and not strat._removed_wait_requests
     assert before == (state.flip_owner_phase, state.fanout_segment_id, state.flip_owner_fill_accounts)
 
@@ -202,6 +210,53 @@ def test_previous_session_working_sell_blocks(db):
     store.record_rules(req, True)
     order_row(db, req, side="sell")
     assert store.clear_rule_proofs((req,), NAMES, now=NOW)[0].reason == "working_order"
+
+
+@pytest.mark.parametrize("purpose", ["scanner_removal", "retry_exhausted", "false_flip_restore"])
+@pytest.mark.parametrize("outcome", ["could_not_tell", "not_confirmed"])
+def test_old_unknown_cancel_outside_request_anchor_remains_open(db, purpose, outcome):
+    store, factory, _, _ = db
+    req = request(purpose=purpose, opportunity=MS - 86_400_000)
+    store.record_rules(req, True)
+    row = order_row(db, req, account=WEBULL, status="cancelled", side="sell",
+                    updated=NOW - timedelta(days=2))
+    with factory() as session:
+        session.add(BrokerOrderEvent(order_id=row.id, event_type="cancelled", event_source="broker",
+            event_at=NOW - timedelta(days=2), payload={"cancel_outcome": outcome}))
+        session.commit()
+    assert store.clear_rule_proofs((req,), NAMES, now=NOW)[0].reason == "cancel_unknown_or_refused"
+
+
+@pytest.mark.asyncio
+async def test_pending_clear_commit_is_offloop_and_fenced(db, monkeypatch):
+    store, _, _, _ = db
+    req = request(opportunity=0)
+    store.record_rules(req, True)
+    strat = strategy(req, store)
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings, bot._removed_wait_store = strat, strat.settings, store
+    store.clear_rule_proofs = lambda *_: (RemovedWaitProof(req, MS, True, "scanner_removal_flat"),)
+    entered, release = threading.Event(), threading.Event()
+    real_commit = store.commit_clear
+    loop_thread = threading.get_ident()
+    def slow_commit(plan, valid):
+        assert threading.get_ident() != loop_thread
+        entered.set()
+        assert release.wait(5)
+        real_commit(plan, valid)
+    monkeypatch.setattr(store, "commit_clear", slow_commit)
+    task = asyncio.create_task(bot._removed_wait_poll())
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        assert strat._removed_wait_requests and store.restore()
+        assert req.symbol in bot._clearwait_committing_symbols
+        await asyncio.wait_for(asyncio.sleep(0), .05)
+        bot._clearwait_emit_generation = 1
+    finally:
+        release.set()
+    await asyncio.wait_for(task, 5)
+    assert strat._removed_wait_requests and store.restore()
+    assert not strat.__dict__.get("_removed_wait_committed_clears")
 
 
 def test_stale_zero_and_exact_token_cas(db):
@@ -267,3 +322,81 @@ def test_flag_default_catalog_owner():
     row, = [r for r in catalog["flags"] if r["name"] == flag]
     assert row["expected"] is True and row["owning_service"] == "schwab-1m-v2"
     assert "also_check_services" not in row
+
+
+@pytest.mark.asyncio
+async def test_atomic_owner_retirement_does_not_call_sync_callbacks(db):
+    store, factory, _, _ = db
+    req = request()
+    store.record_rules(req, True)
+    strat = strategy(req, store)
+    state = strat.watchlist_state(req.symbol)
+    state.flip_owner_opportunity_id = state.fanout_segment_id = req.opportunity_id
+    state.flip_owner_phase = "resting"
+    state.flip_owner_evidence_readable = True
+    state.flip_owner_evidence_at_ms = MS
+    def forbidden(*_):
+        pytest.fail("a new proof application invoked synchronous persistence")
+    strat._fanout_identity_persist = strat._flip_owner_persist = strat._removed_wait_persist = forbidden
+    bot = object.__new__(SchwabV2BotService)
+    bot.strategy, bot.settings, bot._removed_wait_store = strat, strat.settings, store
+    proof = RemovedWaitProof(req, MS, True, "scanner_removal_flat")
+    store.clear_rule_proofs = lambda *_: (proof,)
+    strat.apply_removed_wait_proofs((proof,))
+    assert state.fanout_segment_id == req.opportunity_id and strat._removed_wait_requests
+    await bot._removed_wait_poll()
+    assert not strat._removed_wait_requests and state.fanout_segment_id == 0
+    assert state.flip_owner_phase == "idle" and store.restore() == {}
+    from project_mai_tai.db.models import DashboardSnapshot
+    from sqlalchemy import select
+    with factory() as session:
+        rows = session.scalars(select(DashboardSnapshot)).all()
+        assert {r.snapshot_type for r in rows if r.payload.get("active") is False} == {
+            "v2_removed_wait", "v2_fanout_segment_identity", "v2_flip_entry_ownership"}
+
+
+def test_later_sell_bar_ack_requires_fresh_proof_not_second_commit(db):
+    store, _, _, _ = db
+    req = request(purpose="retry_exhausted")
+    store.record_rules(req, True)
+    clock = [MS]
+    strat = strategy(req, store)
+    strat._now_ms = lambda: clock[0]
+    state = strat.watchlist_state(req.symbol)
+    state.flip_owner_opportunity_id = state.fanout_segment_id = req.opportunity_id
+    state.flip_owner_phase = "consumed"
+    state.fresh_sell_owner_release_segment_ms = MS
+    proof = RemovedWaitProof(req, MS, True, "controlled_fresh_sell_flat")
+    assert not strat.stage_removed_wait_clear(proof, retire_owner=True, reason="fresh_sell_cancelled_flat")
+    plan = strat._removed_wait_pending_clears.pop(req)
+    store.commit_clear(plan, lambda: strat.removed_wait_clear_valid(plan))
+    strat._removed_wait_committed_clears = {req: plan}
+    assert store.restore() == {} and strat._removed_wait_requests
+    clock[0] += 60_000
+    assert not strat.stage_removed_wait_clear(proof, retire_owner=True, reason="fresh_sell_cancelled_flat")
+    fresh = replace(proof, observed_at_ms=clock[0])
+    assert strat.stage_removed_wait_clear(fresh, retire_owner=True, reason="fresh_sell_cancelled_flat")
+    assert not strat.stage_removed_wait_clear(fresh, retire_owner=True, reason="fresh_sell_cancelled_flat",
+                                             validate=lambda: False)
+    state.fresh_sell_owner_release_segment_ms += 60_000
+    assert not strat.stage_removed_wait_clear(fresh, retire_owner=True, reason="fresh_sell_cancelled_flat")
+
+
+def test_atomic_retirement_precommit_mismatch_rolls_back_all_rows(db):
+    store, factory, _, _ = db
+    req = request()
+    store.record_rules(req, True)
+    strat = strategy(req, store)
+    state = strat.watchlist_state(req.symbol)
+    state.flip_owner_opportunity_id = state.fanout_segment_id = req.opportunity_id
+    proof = RemovedWaitProof(req, MS, True, "scanner_removal_flat")
+    strat.stage_removed_wait_clear(proof, retire_owner=True)
+    plan = strat._removed_wait_pending_clears[req]
+    answers = iter((True, False))
+    with pytest.raises(ValueError, match="before commit"):
+        store.commit_clear(plan, lambda: next(answers))
+    from sqlalchemy import func, select
+    from project_mai_tai.db.models import DashboardSnapshot
+    with factory() as session:
+        assert session.scalar(select(func.count()).select_from(DashboardSnapshot)) == 1
+    assert store.restore() == {req.symbol: req}
