@@ -112,6 +112,15 @@ class Settings(BaseSettings):
     market_data_warmup_lookback_days: int = 14
     market_data_warmup_bar_limit: int = 50_000
     market_data_live_aggregate_stream_enabled: bool = False
+    market_data_momentum_warning_enabled: bool = False
+    market_data_momentum_warning_queue_maxsize: int = Field(default=4096, ge=1, le=65536)
+    market_data_momentum_warning_stream_maxlen: int = Field(default=20000, ge=1, le=100000)
+    market_data_momentum_warning_owner_cap: int = Field(default=16, ge=1, le=16)
+    market_data_publish_round_size: int = Field(default=16, ge=1, le=64)
+    market_data_momentum_warning_monitor_interval_seconds: float = Field(default=1, ge=0.1, le=1)
+    market_data_momentum_warning_monitor_timeout_seconds: float = Field(default=1, gt=0, le=2)
+    market_data_momentum_warning_health_path: str = "/run/project-mai-tai/momentum-warning-health.json"
+    market_data_momentum_warning_log_directory: str = "/var/log/project-mai-tai"
     strategy_macd_30s_enabled: bool = True
     strategy_polygon_30s_enabled: bool = _legacy_strategy_alias_field(
         False,

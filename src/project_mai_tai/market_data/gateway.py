@@ -4,7 +4,11 @@ import asyncio
 import json
 import logging
 import socket
+import time
+from collections import deque
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
+from uuid import uuid4
 
 from redis.asyncio import Redis
 from redis.exceptions import (
@@ -19,6 +23,7 @@ from project_mai_tai.market_data.massive_provider import MassiveSnapshotProvider
 from project_mai_tai.market_data.models import (
     HistoricalBarsRecord,
     LiveBarRecord,
+    MomentumWarningAggregateRecord,
     QuoteTickRecord,
     SnapshotRecord,
     TradeTickRecord,
@@ -26,13 +31,16 @@ from project_mai_tai.market_data.models import (
 from project_mai_tai.market_data.protocols import SnapshotProvider, TradeStreamProvider
 from project_mai_tai.market_data.publisher import MarketDataPublisher
 from project_mai_tai.market_data.reference_cache import ReferenceDataCache
+from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealthReader, WarningWatchdog
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
+from project_mai_tai.strategy_core.time_utils import is_fillable_et_session
 
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "market-data-gateway"
 WARMUP_INTERVALS = (30, 60)
+WARNING_CONSUMER = "momentum-warning"
 # Mirror the reconciler's measured Redis-reload margin: five total attempts
 # spanning 7.5 seconds. Persistent failures still escape and let systemd make
 # the loss of the heartbeat task visible.
@@ -57,6 +65,8 @@ class MarketDataGatewayService:
         snapshot_provider: SnapshotProvider | None = None,
         trade_stream: TradeStreamProvider | None = None,
         reference_cache: ReferenceDataCache | None = None,
+        warning_redis_client: Redis | None = None,
+        warning_health_reader: WarningHealthReader | None = None,
     ):
         self.settings = settings or get_settings()
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
@@ -67,6 +77,7 @@ class MarketDataGatewayService:
             snapshot_batch_stream_maxlen=self.settings.redis_snapshot_batch_stream_maxlen,
             market_data_stream_maxlen=self.settings.redis_market_data_stream_maxlen,
             heartbeat_stream_maxlen=self.settings.redis_heartbeat_stream_maxlen,
+            momentum_warning_stream_maxlen=self.settings.market_data_momentum_warning_stream_maxlen,
         )
         self.snapshot_provider = snapshot_provider or self._build_snapshot_provider()
         self.trade_stream = trade_stream or self._build_trade_stream()
@@ -83,6 +94,44 @@ class MarketDataGatewayService:
         self._trade_queue: asyncio.Queue[TradeTickRecord] = asyncio.Queue()
         self._quote_queue: asyncio.Queue[QuoteTickRecord] = asyncio.Queue()
         self._bar_queue: asyncio.Queue[LiveBarRecord] = asyncio.Queue()
+        self._live_wakeup = asyncio.Event()
+        self._warning_queue: asyncio.Queue[tuple[int, MomentumWarningAggregateRecord]] = asyncio.Queue(
+            maxsize=self.settings.market_data_momentum_warning_queue_maxsize
+        )
+        self._warning_seq = 0
+        self._warning_drop_count = 0
+        self._warning_queue_drop_count = 0
+        self._warning_max_publish_lag_ms = 0.0
+        self._warning_active = False
+        self._warning_revert_reason: str | None = None
+        self._warning_inflight: MomentumWarningAggregateRecord | None = None
+        self._warning_publish_task: asyncio.Task | None = None
+        self._warning_generation = 0
+        self._warning_instance_id = str(uuid4())
+        self._warning_published = 0
+        self._warning_rate_bins: deque[tuple[int, int]] = deque(maxlen=10)
+        self._warning_reverted_utc_ns: int | None = None
+        self._warning_requested_utc_ns: int | None = None
+        self._warning_first_a_utc_ns: int | None = None
+        self._warning_trade_coverage: dict[str, dict] = {}
+        self._warning_watchdog = WarningWatchdog()
+        self._warning_health_reader = warning_health_reader or WarningHealthReader(
+            self.settings.market_data_momentum_warning_health_path,
+            self.settings.market_data_momentum_warning_log_directory,
+        )
+        self._warning_redis = None
+        self._warning_publisher = None
+        if self.settings.market_data_momentum_warning_enabled:
+            self.trade_stream.configure_momentum_warning(self._enqueue_warning, self._latch_warning_revert)
+            # A has its own Redis pool/task; stalled A writes never serialize T/Q writes.
+            self._warning_redis = warning_redis_client or Redis.from_url(
+                self.settings.redis_url, decode_responses=True,
+                max_connections=2, socket_timeout=1, socket_connect_timeout=1,
+            )
+            self._warning_publisher = MarketDataPublisher(
+                self._warning_redis, self.settings.redis_stream_prefix, SERVICE_NAME,
+                momentum_warning_stream_maxlen=self.settings.market_data_momentum_warning_stream_maxlen,
+            )
         self._live_aggregate_stream_enabled = (
             self.settings.market_data_live_aggregate_stream_enabled
             or self.settings.strategy_macd_30s_live_aggregate_bars_enabled
@@ -117,15 +166,15 @@ class MarketDataGatewayService:
 
         loop = asyncio.get_running_loop()
         await self.trade_stream.start(
-            on_trade=lambda record: loop.call_soon_threadsafe(self._trade_queue.put_nowait, record),
-            on_quote=lambda record: loop.call_soon_threadsafe(self._quote_queue.put_nowait, record),
+            on_trade=lambda record: loop.call_soon_threadsafe(self._enqueue_trade, record),
+            on_quote=lambda record: loop.call_soon_threadsafe(self._enqueue_live, self._quote_queue, record),
             on_agg=(
-                (lambda record: loop.call_soon_threadsafe(self._bar_queue.put_nowait, record))
+                (lambda record: loop.call_soon_threadsafe(self._enqueue_live, self._bar_queue, record))
                 if self._live_aggregate_stream_enabled
                 else None
             ),
         )
-        await self.trade_stream.sync_subscriptions(self._active_symbols)
+        await self._sync_provider_owners(self._desired_symbols_by_consumer)
 
         heartbeat_task = asyncio.create_task(
             self._heartbeat_loop(stop_event),
@@ -138,10 +187,18 @@ class MarketDataGatewayService:
             heartbeat_task,
             asyncio.create_task(self._reference_refresh_loop(stop_event)),
         ]
-        if self._active_symbols and self.settings.market_data_warmup_enabled:
+        if self.settings.market_data_momentum_warning_enabled:
+            self._warning_publish_task = asyncio.create_task(self._warning_publish_loop(stop_event))
+            tasks.extend([
+                self._warning_publish_task,
+                asyncio.create_task(self._warning_monitor_loop(stop_event)),
+                asyncio.create_task(self._warning_metrics_loop(stop_event)),
+            ])
+        regular_symbols = self._regular_symbols(self._desired_symbols_by_consumer)
+        if regular_symbols and self.settings.market_data_warmup_enabled:
             tasks.append(
                 asyncio.create_task(
-                    self._publish_historical_warmup(self._active_symbols),
+                    self._publish_historical_warmup(regular_symbols),
                 )
             )
 
@@ -152,6 +209,8 @@ class MarketDataGatewayService:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await self.trade_stream.stop()
+            if self._warning_redis is not None:
+                await self._warning_redis.aclose()
             await self._publish_heartbeat(
                 "stopping",
                 {"active_symbols": str(len(self._active_symbols))},
@@ -286,7 +345,12 @@ class MarketDataGatewayService:
         else:
             updated = current - symbols
 
+        if consumer == WARNING_CONSUMER:
+            updated = self._validated_warning_symbols(updated)
+
         candidate_owners = {**self._desired_symbols_by_consumer, consumer: updated}
+        for owned in candidate_owners.values():
+            MassiveTradeStream._validate_explicit_symbols(owned)
         stream = stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions")
         checkpoint_id = message_id or self._subscription_offsets.get(stream, "0-0")
         if checkpoint_id == "$":
@@ -301,8 +365,17 @@ class MarketDataGatewayService:
         added_symbols = next_symbols - self._active_symbols
         removed_symbols = self._active_symbols - next_symbols
         await self.redis.hset(self._subscription_state_key, mapping=checkpoint)
-        if next_symbols != self._active_symbols:
-            await self.trade_stream.sync_subscriptions(sorted(next_symbols))
+        provider_union_changed = self._regular_symbols(candidate_owners) != self._regular_symbols(
+            self._desired_symbols_by_consumer
+        ) or (
+            self.settings.market_data_momentum_warning_enabled
+            and candidate_owners.get(WARNING_CONSUMER, set()) != self._desired_symbols_by_consumer.get(WARNING_CONSUMER, set())
+        )
+        if provider_union_changed:
+            await self._sync_provider_owners(candidate_owners)
+        warmup_symbols = self._regular_symbols(candidate_owners) - self._regular_symbols(
+            self._desired_symbols_by_consumer
+        )
         self._desired_symbols_by_consumer = candidate_owners
         self._active_symbols = next_symbols
         self.logger.info(
@@ -310,16 +383,39 @@ class MarketDataGatewayService:
             consumer, ",".join(sorted(added_symbols)) or "-",
             ",".join(sorted(removed_symbols)) or "-", len(next_symbols),
         )
-        if added_symbols:
+        if warmup_symbols:
             self.logger.info(
                 "[MARKET-DATA-WARMUP-UNION-ADD] consumer=%s symbols=%s count=%d",
-                consumer, ",".join(sorted(added_symbols)), len(added_symbols),
+                consumer, ",".join(sorted(warmup_symbols)), len(warmup_symbols),
             )
-            await self._publish_historical_warmup(added_symbols)
+            await self._publish_historical_warmup(warmup_symbols)
         return set(self._active_symbols)
 
     def active_symbols(self) -> set[str]:
         return set(self._active_symbols)
+
+    @staticmethod
+    def _regular_symbols(owners: dict[str, set[str]]) -> set[str]:
+        return set().union(*(symbols for owner, symbols in owners.items() if owner != WARNING_CONSUMER))
+
+    def _validated_warning_symbols(self, symbols: set[str]) -> set[str]:
+        MassiveTradeStream._validate_explicit_symbols(symbols)
+        if len(symbols) > self.settings.market_data_momentum_warning_owner_cap:
+            raise ValueError("momentum-warning T owner exceeds cap")
+        return symbols if self.settings.market_data_momentum_warning_enabled else set()
+
+    async def _sync_provider_owners(self, owners: dict[str, set[str]]) -> None:
+        await self.trade_stream.sync_subscriptions(sorted(self._regular_symbols(owners)))
+        if self.settings.market_data_momentum_warning_enabled:
+            symbols = owners.get(WARNING_CONSUMER, set())
+            await self.trade_stream.sync_warning_trade_symbols(sorted(symbols))
+            self._warning_trade_coverage = {
+                symbol: self._warning_trade_coverage.get(symbol) or {
+                    "requested_utc_ns": time.time_ns(), "first_event_observed_ns": None,
+                    "first_trade_sip_ns": None, "subscription_confirmed": None,
+                    "status": "requested",
+                } for symbol in sorted(symbols)
+            }
 
     def _build_snapshot_provider(self) -> SnapshotProvider:
         if not self.settings.massive_api_key:
@@ -443,6 +539,10 @@ class MarketDataGatewayService:
                 self._desired_symbols_by_consumer[consumer] = {
                     symbol.upper() for symbol in symbols if symbol
                 }
+                if consumer == WARNING_CONSUMER:
+                    self._desired_symbols_by_consumer[consumer] = self._validated_warning_symbols(
+                        self._desired_symbols_by_consumer[consumer]
+                    )
         # Replay updates newer than the durable checkpoint. On first upgrade,
         # replay all retained events rather than only the last consumer's event.
         entries = await self.redis.xrange(stream, min=f"({checkpoint}" if checkpoint else "-")
@@ -462,6 +562,8 @@ class MarketDataGatewayService:
                 updated = current | symbols
             else:
                 updated = current - symbols
+            if consumer == WARNING_CONSUMER:
+                updated = self._validated_warning_symbols(updated)
             self._desired_symbols_by_consumer[consumer] = updated
         if entries or not migrated:
             state = {
@@ -492,19 +594,199 @@ class MarketDataGatewayService:
 
     async def _stream_publish_loop(self, stop_event: asyncio.Event) -> None:
         while not stop_event.is_set():
+            self._live_wakeup.clear()
+            published = False
+            for _ in range(self.settings.market_data_publish_round_size):
+                for queue, publish in (
+                    (self._trade_queue, self._publish_trade_tick_safely),
+                    (self._quote_queue, self._publish_quote_tick_safely),
+                    (self._bar_queue, self._publish_live_bar_safely),
+                ):
+                    if not queue.empty():
+                        published = True
+                        await publish(queue.get_nowait())
+            if published:
+                await asyncio.sleep(0)
+            else:
+                try:
+                    await asyncio.wait_for(self._live_wakeup.wait(), timeout=0.01)
+                except TimeoutError:
+                    pass
+
+    def _enqueue_live(self, queue: asyncio.Queue, record) -> None:
+        queue.put_nowait(record)
+        self._live_wakeup.set()
+
+    def _enqueue_trade(self, record: TradeTickRecord) -> None:
+        coverage = self._warning_trade_coverage.get(record.symbol)
+        if coverage is not None and coverage["first_event_observed_ns"] is None:
+            coverage.update(first_event_observed_ns=time.time_ns(),
+                            first_trade_sip_ns=record.timestamp_ns, status="provider_event_observed")
+        self._enqueue_live(self._trade_queue, record)
+
+    def _latch_warning_revert(self, reason: str) -> None:
+        if self._warning_revert_reason is None:
+            self._warning_revert_reason = reason
+            self._warning_reverted_utc_ns = time.time_ns()
+            self.logger.warning("[MOMWARN1-AUTO-REVERT] reason=%s A_only=true", reason)
+        self._warning_active = False
+        while not self._warning_queue.empty():
+            self._warning_queue.get_nowait()
+            self._warning_drop_count += 1
+        task = self._warning_publish_task
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        if task is not None and task is not current_task:
+            task.cancel()
+
+    async def _revert_warning(self, reason: str) -> None:
+        self._latch_warning_revert(reason)
+        try:
+            await self.trade_stream.set_momentum_warning_aggregates(False)
+        except Exception:
+            self.logger.exception("[MOMWARN1-AUTO-REVERT] A unsubscribe failed; locally latched OFF")
+
+    def _enqueue_warning(self, record: MomentumWarningAggregateRecord) -> None:
+        if not self._warning_active or self._warning_revert_reason is not None:
+            return
+        self._warning_seq += 1
+        if self._warning_first_a_utc_ns is None:
+            self._warning_first_a_utc_ns = record.received_utc_ns
+        second = record.received_utc_ns // 1_000_000_000
+        if self._warning_rate_bins and self._warning_rate_bins[-1][0] == second:
+            sec, count = self._warning_rate_bins.pop()
+            self._warning_rate_bins.append((sec, count + 1))
+        else:
+            self._warning_rate_bins.append((second, 1))
+        if self._warning_queue.full():
+            self._warning_queue.get_nowait()
+            self._warning_drop_count += 1
+            self._warning_queue_drop_count += 1
+        self._warning_queue.put_nowait((self._warning_seq, record))
+
+    def _warning_publish_lag(self) -> float:
+        records = []
+        if self._warning_inflight is not None:
+            records.append(self._warning_inflight)
+        if not self._warning_queue.empty():
+            records.append(self._warning_queue._queue[0][1])
+        return max((max(0, (time.monotonic_ns() - r.received_monotonic_ns) / 1e9) for r in records), default=0)
+
+    async def _warning_publish_loop(self, stop_event: asyncio.Event) -> None:
+        while not stop_event.is_set() and self._warning_revert_reason is None:
             try:
-                trade = await asyncio.wait_for(self._trade_queue.get(), timeout=1.0)
-                await self._publish_trade_tick_safely(trade)
+                seq, record = await asyncio.wait_for(self._warning_queue.get(), timeout=0.1)
+            except TimeoutError:
+                continue
+            self._warning_inflight = record
+            try:
+                lag_seconds = (time.monotonic_ns() - record.received_monotonic_ns) / 1e9
+                self._warning_max_publish_lag_ms = max(self._warning_max_publish_lag_ms, lag_seconds * 1000)
+                if lag_seconds > 2:
+                    self._warning_drop_count += 1
+                    await self._revert_warning("publish_lag")
+                    return
+                if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
+                    self._warning_drop_count += 1
+                    await self._revert_warning("outside_pm_window")
+                    return
+                await asyncio.wait_for(
+                    self._warning_publisher.publish_momentum_warning_aggregate(
+                        record, sequence=seq, dropped_total=self._warning_drop_count,
+                        gateway_instance_id=self._warning_instance_id, generation=self._warning_generation,
+                    ), timeout=1,
+                )
+                self._warning_published += 1
+            except asyncio.CancelledError:
+                self._warning_drop_count += 1
+                raise
+            except Exception:
+                self._warning_drop_count += 1
+                await self._revert_warning("publish_error")
+                return
+            finally:
+                self._warning_inflight = None
+            await asyncio.sleep(0)
+
+    async def _warning_monitor_once(self) -> None:
+        if self._warning_revert_reason is not None:
+            return
+        if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
+            self._warning_active = False
+            await self.trade_stream.set_momentum_warning_aggregates(False)
+            return
+        try:
+            health = await asyncio.wait_for(
+                asyncio.to_thread(self._warning_health_reader.read),
+                timeout=self.settings.market_data_momentum_warning_monitor_timeout_seconds,
+            )
+            reason = self._warning_watchdog.check(health, publish_lag_seconds=self._warning_publish_lag())
+            if reason:
+                await self._revert_warning(reason)
+                return
+            was_active = self._warning_active
+            self._warning_active = await self.trade_stream.set_momentum_warning_aggregates(True)
+            if self._warning_active and not was_active:
+                self._warning_generation += 1
+                self._warning_requested_utc_ns = time.time_ns()
+                self._warning_first_a_utc_ns = None
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await self._revert_warning("monitor_unreadable")
+
+    async def _warning_monitor_loop(self, stop_event: asyncio.Event) -> None:
+        while not stop_event.is_set() and self._warning_revert_reason is None:
+            await self._warning_monitor_once()
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=self.settings.market_data_momentum_warning_monitor_interval_seconds)
             except TimeoutError:
                 pass
 
-            while not self._bar_queue.empty():
-                bar = await self._bar_queue.get()
-                await self._publish_live_bar_safely(bar)
+    def warning_metrics(self, *, event_type: str = "gateway_sample") -> dict:
+        return {
+            "version": 1, "source": SERVICE_NAME, "event_type": event_type,
+            "observed_ns": time.time_ns(), "gateway_instance_id": self._warning_instance_id,
+            "generation": self._warning_generation, "A_received": self._warning_seq,
+            "A_published": self._warning_published, "A_rate_bins": list(self._warning_rate_bins),
+            "queue_depth": self._warning_queue.qsize(), "queue_drops": self._warning_queue_drop_count,
+            "dropped_total": self._warning_drop_count, "lag_ms": self._warning_publish_lag() * 1000,
+            "max_publish_lag_ms": self._warning_max_publish_lag_ms,
+            "owned_warning_symbols": sorted(self._warning_trade_coverage),
+            "warning_trade_coverage": self._warning_trade_coverage,
+            "A_subscription_requested_ns": self._warning_requested_utc_ns,
+            "A_first_provider_event_ns": self._warning_first_a_utc_ns,
+            "A_subscription_confirmed": None,
+            "coverage_status": "reverted" if self._warning_revert_reason else (
+                "provider_event_observed" if self._warning_first_a_utc_ns else (
+                    "requested" if self._warning_active else "inactive"
+                )
+            ),
+            "watchdog_revert_reason": self._warning_revert_reason,
+            "watchdog_revert_ns": self._warning_reverted_utc_ns,
+        }
 
-            while not self._quote_queue.empty():
-                quote = await self._quote_queue.get()
-                await self._publish_quote_tick_safely(quote)
+    async def _warning_metrics_loop(self, stop_event: asyncio.Event) -> None:
+        reported_revert = False
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=10)
+                return
+            except TimeoutError:
+                pass
+            try:
+                event_type = "revert" if self._warning_revert_reason and not reported_revert else "gateway_sample"
+                await asyncio.wait_for(
+                    self._warning_publisher.publish_momentum_warning_metric(self.warning_metrics(event_type=event_type)),
+                    timeout=1,
+                )
+                reported_revert |= event_type == "revert"
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await self._revert_warning("metrics_publish_error")
 
     async def _publish_trade_tick_safely(self, trade: TradeTickRecord) -> None:
         try:

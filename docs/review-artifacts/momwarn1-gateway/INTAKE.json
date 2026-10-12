@@ -1,0 +1,17 @@
+{
+  "owner": "G1 gateway solewriter",
+  "source": "Human Oct12 MOMWARN1 G1 approval",
+  "base": "b680c2aff50150ea6130b19ccf0db9e05dfb680d",
+  "branch": "codex/momwarn1-gateway-20261012",
+  "tasks": [
+    {"id":"MOMWARN1-W1","priority":2,"owner":"G1","status":"local_build_offline_verified_acceptance_pending","next_action":"Main/G2/G3 exact-head integration; recorded W5 proof before install","completion_criterion":"Existing socket only; bounded A; watched owners, warmup, scanner and live bars preserved"},
+    {"id":"MOMWARN1-W3","priority":2,"owner":"G1","status":"local_build_offline_verified_live_evidence_pending","next_action":"Main verify measured OMS/v2 health evidence source; no evidence means A OFF; W5 before install","completion_criterion":"All stated triggers revert A; bounded off-loop reads; no restart"},
+    {"id":"MOMWARN1-W5","priority":2,"owner":"G1 + main/G2","status":"blocked_recorded_peak_evidence","next_action":"Offline isolation controls; main obtains recorded A burst/peak evidence within approved scope","completion_criterion":"Recorded A 3x measured peak and watched T/Q stall <50ms, original cases and accepted composed live paths"}
+  ],
+  "assessment": "Provider exact-symbol filter rejects A wildcard. Existing publisher drains all quotes/bars after one trade. Separate provider A callback, T-only owner union, A task and strict stream maxlen required.",
+  "file_plan": ["market_data/gateway.py","market_data/massive_provider.py","market_data/publisher.py","market_data/models.py","market_data/protocols.py","market_data/momentum_warning_watchdog.py","settings.py","ops/health/expected_flags.json","tests/unit/test_expected_flags_check.py","dedicated offline tests"],
+  "unknowns": ["Massive websocket A entitlement UNPROVEN", "Full-market A peak UNMEASURED", "Recorded websocket A burst unavailable", "Recorded1s REST aggregate normalization fixture unavailable locally", "Actual OMS duration/v2 lateness health evidence source not supplied"],
+  "amendments": ["Human contract v1 supersedes proposed aggregate suffix/fields: bars+metrics, UTCns, instance/generation/sequence", "Official A docs s/e UTCms confirmed; entitlement still unknown", "G2 conservative whole-bucket seeding and separate ledger approved; G3 now Euler read-only10s metrics, main display/integrator", "A/D old68ms gate explicitly waived by human; B remains open; gateway/MOMWARN gate remains"],
+  "verification": {"selected_tests_passed":716,"dedicated_gateway_controls":71,"ruff":"PASS","diff_check":"PASS","synthetic_A_rows":12000,"synthetic_watched_TQ_observed_ms":0.997917,"recorded_3x_peak_proof":"MISSING","reported_at":"2026-10-12T18:10:51Z","report_kind":"offline regression run, not W5 completion"},
+  "relay": "App send_message_to_thread rejected native ancestor; no native message tool exposed. Main must read handoff and relay to G2 before integration. Queue not edited."
+}

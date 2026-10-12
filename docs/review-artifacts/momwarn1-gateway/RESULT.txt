@@ -1,0 +1,49 @@
+MOMWARN1 G1 local review handoff -- Oct12
+Base b680c2aff50150ea6130b19ccf0db9e05dfb680d
+Branch codex/momwarn1-gateway-20261012
+Commit marker Co-Authored-By: OpenAI Codex <noreply@openai.com>
+
+W1 local implementation: separate wildcard A callback/route, bounded drop-oldest
+queue and strict A-only Redis stream. Existing Massive SDK socket only. Warning
+owner momentum-warning uses explicit T symbols, cap16, no Q or REST warmup.
+Other owners retain T/Q, restore/cold-start, scanner, warmup and bars.
+Legacy live-aggregate flags/path remain untouched; conflicting explicit-A route
+refuses warning wildcard activation. Pending A after revert cannot reach generic bars.
+Fair live T/Q/bar round-robin writer; separate A Redis pool/writer. SDK raw frames
+decode off-loop and typed normalization/dispatch yield every64. SDK hidden reconnect
+disabled only for warning-configured client so A never silently resubscribes.
+
+W3 local implementation: A-only sticky revert on1008/disconnect, publish lag>2s,
+two distinct consecutive OMS syncs>5s, actual v2 bar lateness>5s, load1m>6,
+MemAvailable<3GiB, new ERROR in required live logs. Reader errors, stale/invalid
+health, unreadable/rotated/truncated/oversized logs fail closed. No watchdog restart.
+Actual OMS-duration/v2-lateness evidence input still must be verified by main;
+missing evidence disables A. This lane did not claim a production revert receipt.
+
+Contract/flags: see PROTOCOL.txt, version1 momentum-warning-bars and
+momentum-warning-metrics, defaultFalse/installTrue, catalog137->138.
+No invented SIP low timestamp or subscription ACK. Received UTC/monotonic clocks,
+upstream exact s/e UTCms, published local attempt wall clock; explicit provenance.
+First provider event is coverage observation distinct from subscription request.
+
+Verification: 716 selected unit/regression tests PASS, 71 dedicated G1 controls.
+Ruff and diffcheck PASS. All service/OMS/strategy_core/momentum_paper source diff
+against b680 is empty. No G2/EulerB/MendelF files edited. No extra proof workers.
+JUnit offline-regressions.xml contains names/results; dedicated-controls XML also
+preserved locally. Synthetic12,000-row callback fairness control observed watched
+T/Q at0.997917ms while A Redis blocked; queue bounded, drop-oldest exercised.
+This is SYNTHETIC, NOT a recorded WebSocket burst, NOT3x an unknown peak.
+Raw JSON/SDK parsing and real SDK disconnect also exercised offline with fake transport.
+
+W5 NOT COMPLETE: expected full A peak UNMEASURED; recorded A3xpeak proof MISSING;
+current socket entitlement UNPROVEN; recorded1s REST aggregate fixture unavailable
+locally (no fabricated replacement called recorded); WFF/324 original consumer
+case and accepted all-ON EDP/E/F composition evidence belongs to main/G2 and is
+not delivered by these gateway-only tests. No install/activation recommendation.
+
+Reporting/ownership: queue read only, not edited. Main owns queue/integration and
+must record these results and relay protocol to Huygens G2/Euler G3. Parent-thread
+message API rejected native ancestor; no native collaboration tool exposed here.
+No GitHub operation, production write/service/flag/subscription/order action,
+REST acquisition or provider connection/probe was performed. Gateway restart
+after-close review only, no authority for today's intraday production.

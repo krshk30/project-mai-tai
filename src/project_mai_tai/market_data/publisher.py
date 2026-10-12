@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import asdict
+import json
+import time
 
 from redis.asyncio import Redis
 
@@ -19,6 +22,7 @@ from project_mai_tai.events import (
 from project_mai_tai.market_data.models import (
     HistoricalBarsRecord,
     LiveBarRecord,
+    MomentumWarningAggregateRecord,
     QuoteTickRecord,
     SnapshotRecord,
     TradeTickRecord,
@@ -35,6 +39,7 @@ class MarketDataPublisher:
         snapshot_batch_stream_maxlen: int = 4,
         market_data_stream_maxlen: int = 10_000,
         heartbeat_stream_maxlen: int = 1_000,
+        momentum_warning_stream_maxlen: int = 20_000,
     ):
         self.redis = redis
         self.stream_prefix = stream_prefix
@@ -42,6 +47,31 @@ class MarketDataPublisher:
         self.snapshot_batch_stream_maxlen = max(1, snapshot_batch_stream_maxlen)
         self.market_data_stream_maxlen = max(100, market_data_stream_maxlen)
         self.heartbeat_stream_maxlen = max(10, heartbeat_stream_maxlen)
+        self.momentum_warning_stream_maxlen = max(1, momentum_warning_stream_maxlen)
+
+    async def publish_momentum_warning_aggregate(
+        self, record: MomentumWarningAggregateRecord, *, sequence: int, dropped_total: int,
+        gateway_instance_id: str, generation: int,
+    ) -> str:
+        payload = {
+            **asdict(record), "version": 1, "event_type": "aggregate",
+            "sequence": sequence, "dropped_total": dropped_total,
+            "gateway_instance_id": gateway_instance_id, "generation": generation,
+            "published_utc_ns": time.time_ns(),
+        }
+        return await self.redis.xadd(
+            stream_name(self.stream_prefix, "momentum-warning-bars"),
+            {"data": json.dumps(payload, separators=(",", ":"), allow_nan=False)},
+            maxlen=self.momentum_warning_stream_maxlen,
+            approximate=False,
+        )
+
+    async def publish_momentum_warning_metric(self, payload: dict) -> str:
+        return await self.redis.xadd(
+            stream_name(self.stream_prefix, "momentum-warning-metrics"),
+            {"data": json.dumps(payload, separators=(",", ":"), allow_nan=False)},
+            maxlen=1000, approximate=False,
+        )
 
     async def publish_snapshot_batch(
         self,
