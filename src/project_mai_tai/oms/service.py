@@ -547,6 +547,20 @@ class _DriftCancelCandidate:
     terminal_cancel_reports: int
 
 
+def _finalize_retained_mirror_after_intent(method):
+    @wraps(method)
+    async def finalized(self, event):
+        retained_owned = self._mirrorhold_scope(event)
+        results = await method(self, event)
+        if (retained_owned or self._mirrorhold_scope(event)) and (
+            not results or any(r.payload.intent_event_id == event.event_id and r.payload.status == "rejected"
+                               for r in results)
+        ):
+            await self._run_db(lambda session: self._mirrorhold_finalize_refusal(session, event, results))
+        return results
+    return finalized
+
+
 def _refresh_working_cache_after_intent(method):
     @wraps(method)
     async def refreshed(self, event):
@@ -1658,6 +1672,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return
 
     @_refresh_working_cache_after_intent
+    @_finalize_retained_mirror_after_intent
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
         if self._rpg_external_retry(event):
             return []
@@ -1734,7 +1749,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 event.event_id,
             )
             return []
-        if not self._mirrorhold_admit(event):
+        if (self._mirrorhold_enabled() and event.payload.side == "buy"
+                and event.payload.intent_type in {"open", "scale"}):
+            mirrorhold_admitted = await asyncio.to_thread(self._mirrorhold_admit, event)
+        else:
+            mirrorhold_admitted = self._mirrorhold_admit(event)
+        if not mirrorhold_admitted:
             return []
         if not self._claim_nfq_retry(event):
             return []

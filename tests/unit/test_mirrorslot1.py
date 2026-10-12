@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 import json
+import threading
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -19,6 +20,7 @@ lane = _lane
 
 
 CASES = json.loads((Path(__file__).parents[1] / "fixtures/mirrorslot1_recorded.json").read_text())["cases"]
+HISTORY = json.loads((Path(__file__).parents[1] / "fixtures/mirrorslot1_history.json").read_text())
 
 
 def cancel_for(event, clock, reason="liquidity_floor"):
@@ -67,11 +69,39 @@ async def test_four_recorded_rearms_legacy_reason_proof_and_duplicate(lane, case
     old = event_for(lane, symbol=case["symbol"], segment=case["segment"], stop=case["old_stop"])
     old.payload.metadata.update(fanout_slot_id=case["slot"], limit_price=case["old_limit"],
         webull_mirror_generation_id=case["generation"], rpg_resting_generation=case["rpg"])
-    # CONTROLLED cold/no-wire owner seed, not reconstruction of historical venue clearance.
+    history = next(r for r in HISTORY["owners"] if r["identity"][2] == case["symbol"])
+    old.event_id = UUID(history["event_id"])
+    old.payload.quantity = Decimal(history["quantity"])
+    # Preserve actual old orders and broker-sourced audits, including missing metadata keys.
+    with factory() as session:
+        account = service.store.ensure_broker_account(session, old.payload.broker_account_name,
+            provider="webull", environment="live")
+        strategy_row = service.store.ensure_strategy(session, old.payload.strategy_code)
+        for raw in [r for r in HISTORY["orders"] if r["symbol"] == case["symbol"]]:
+            assert raw["fill_count"] == 0 and raw["filled_quantity"] == 0
+            prior = old.model_copy(deep=True)
+            prior.event_id = UUID(raw["event_id"])
+            prior.payload.quantity = Decimal(str(raw["quantity"]))
+            prior.payload.metadata.update(raw["metadata"])
+            intent = service.store.create_trade_intent(session, strategy=strategy_row, broker_account=account, event=prior)
+            order = service.store.get_or_create_order(session, intent=intent, strategy_id=strategy_row.id,
+                broker_account_id=account.id, client_order_id=raw["client"], symbol=raw["symbol"], side="buy",
+                quantity=prior.payload.quantity, metadata=raw["metadata"], status=raw["status"], order_type="stop_limit")
+            order.submitted_at = datetime.fromisoformat(raw["submitted_at"])
+            for audit in [a for a in HISTORY["audits"] if a["client"] == raw["client"]]:
+                session.add(BrokerOrderEvent(order_id=order.id, event_type=audit["event_type"],
+                    event_source=audit["source"], event_at=datetime.fromisoformat(audit["event_at"]),
+                    payload={"client_order_id":audit["event_client"], "reason":audit["reason"],
+                             "metadata":audit["metadata"]}))
+        session.commit()
     service._mirrorhold_observe_intent(old)
     with factory() as session:
         row = session.get(DashboardSnapshot, row_id(old))
-        service._mirrorhold_write(session, row, {**row.payload, "phase":"retired", "reason":"v2_terminal_cancel"})
+        assert row.payload["wire_submissions"] == int(history["wire_submissions"])
+        assert row.payload["wire_clients"] == history["wire_clients"]
+        service._mirrorhold_write(session, row, {**row.payload, "phase":"retired", "reason":"v2_terminal_cancel",
+            "dispatch_client":history["dispatch_client"], "dispatch_unresolved":False,
+            "local_no_wire":history["local_no_wire"] == "true"})
         session.commit()
     clock[0] = datetime.fromisoformat(case["cancel_at"])
     cancel = cancel_for(old, clock)
@@ -98,10 +128,11 @@ async def test_four_recorded_rearms_legacy_reason_proof_and_duplicate(lane, case
         result = await service.process_trade_intent(fresh)
         assert result[-1].payload.status == "accepted"
         assert state(lane, fresh)["event"]["payload"]["metadata"]["stop_price"] == stop
-        assert state(lane, fresh)["wire_submissions"] == index + 1
+        assert state(lane, fresh)["wire_submissions"] == int(history["wire_submissions"]) + index + 1
+        assert state(lane, fresh)["price_aggressive_refusals"] == 0
         await service.process_trade_intent(fresh)
         assert client.calls["place"] == index + 1
-    print(f"MIRRORSLOT1 recorded={case['symbol']} levels={[r[1] for r in case['rearms']]} controlled_wires={len(case['rearms'])} duplicate_wires=0")
+    print(f"MIRRORSLOT1 recorded={case['symbol']} old_wires={history['wire_submissions']} levels={[r[1] for r in case['rearms']]} controlled_new_wires={len(case['rearms'])} duplicate_wires=0")
 
 
 @pytest.mark.asyncio
@@ -323,6 +354,7 @@ async def test_existing_store_local_refusal_applies_native_and_reports_account(l
         active_segments={event.payload.symbol:s.fanout_segment_id}, now=clock[0])
     assert not s.webull_resting_active and not s.fanout_webull_claimed
     assert "CONTROLLED risk refusal" in caplog.text and "slot=" in caplog.text
+    assert state(lane, event)["phase"] == "paused"
 
 
 @pytest.mark.asyncio
@@ -376,3 +408,66 @@ async def test_paused_ticks_are_memory_only(lane, monkeypatch):
     for _ in range(1000):
         service._mirrorhold_schedule(event.payload.symbol)
     assert not service.__dict__.get("_symbol_tick_work")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("off", [False, True])
+async def test_cancelled_accepted_wire_fences_nonretained_buy_until_actual_clear(lane, off):
+    service, _, factory, clock = lane
+    old = event_for(lane)
+    quote(lane, old, "5.2")
+    await service.process_trade_intent(old)
+    clock[0] += timedelta(seconds=1)
+    service._mirrorhold_observe_intent(cancel_for(old, clock))
+    assert state(lane, old)["phase"] == "paused" and state(lane, old)["dispatch_unresolved"]
+    service.settings.oms_v2_webull_mirror_retained_hold_enabled = not off
+    lane = restart(lane)
+    event = old.model_copy(deep=True)
+    event.event_id = uuid4()
+    event.payload.metadata["fanout_source"] = "eh_resting"
+    event.produced_at = clock[0]
+    assert not lane[0]._mirrorhold_admit(event)
+    with factory() as session:
+        order = session.scalar(select(BrokerOrder))
+        order.status = "cancelled"
+        order.payload = {k:v for k,v in order.payload.items()
+                         if k not in {"mirrorhold_id", "mirrorhold_dispatch_generation"}}
+        session.add(BrokerOrderEvent(order_id=order.id, event_type="cancelled", event_source="broker",
+            payload={"client_order_id":order.client_order_id,"metadata":dict(order.payload)}))
+        session.commit()
+    assert lane[0]._mirrorhold_admit(event)
+    assert state(lane, old)["phase"] == "paused" and not state(lane, old)["dispatch_unresolved"]
+
+
+@pytest.mark.asyncio
+async def test_final_size_refusal_off_loop_durable_native_and_cold(lane, monkeypatch, caplog):
+    service, client, factory, clock = lane
+    event = event_for(lane)
+    quote(lane, event, "5.2")
+    loop_thread = threading.get_ident()
+    original = service._mirrorhold_finalize_refusal
+    calls = []
+    admission_threads = []
+    admit = service._mirrorhold_admit
+    def admission(event):
+        admission_threads.append(threading.get_ident())
+        return admit(event)
+    def finalize(session, event, results):
+        calls.append(threading.get_ident())
+        return original(session, event, results)
+    monkeypatch.setattr(service, "_mirrorhold_finalize_refusal", finalize)
+    monkeypatch.setattr(service, "_mirrorhold_admit", admission)
+    monkeypatch.setattr(service, "_finalize_v2_entry_quantity", lambda event, intent: "CONTROLLED final_size")
+    await service.process_trade_intent(event)
+    assert calls and all(t != loop_thread for t in calls)
+    assert admission_threads and all(t != loop_thread for t in admission_threads)
+    assert state(lane, event)["phase"] == "paused"
+    assert client.calls.get("place", 0) == 0
+    assert "CONTROLLED final_size" in caplog.text and "slot=" in caplog.text
+    strategy, s = native_claim(event)
+    journal = FanoutOutcomeJournal(factory)
+    journal.bootstrap(strategy.apply_fanout_outcome,
+        active_segments={event.payload.symbol:s.fanout_segment_id}, now=clock[0])
+    assert not s.webull_resting_active and not s.fanout_webull_claimed
+    await service._evaluate_webull_mirror_deferred_resubmits(event.payload.symbol)
+    assert not queued(lane)

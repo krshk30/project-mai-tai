@@ -244,6 +244,7 @@ class MirrorRetainedHoldMixin:
             return data
         return self._mirrorhold_write(session, row, {**data, "phase": "paused", "token": "",
             "paused_at": timestamp.isoformat(), "pause_cancel_id": str(cancel.id),
+            "dispatch_unresolved": data.get("dispatch_unresolved", False) or bool(data.get("dispatch_client")),
             "reason": "v2_pause:" + cancel.payload["metadata"]["reason"]})
 
     def _mirrorhold_finish(self, event):
@@ -392,14 +393,23 @@ class MirrorRetainedHoldMixin:
         account = session.get(BrokerAccount, order.broker_account_id)
         strategy = session.get(Strategy, order.strategy_id)
         intent = session.get(TradeIntent, order.intent_id) if order.intent_id else None
+        owner_md = order.payload or {}
+        if "mirrorhold_id" not in owner_md or "mirrorhold_dispatch_generation" not in owner_md:
+            # Cancel metadata replaces the mutable order payload. The original
+            # accepted audit may prove ownership, never the requested cancel's success.
+            owner_md = next(((audit.payload or {}).get("metadata", {})
+                for audit in self._mirrorhold_audits(session, order)
+                if audit.event_source == "broker" and audit.event_type == "accepted"
+                and (audit.payload or {}).get("metadata", {}).get("mirrorhold_id") == str(row.id)
+                and (audit.payload or {}).get("metadata", {}).get("mirrorhold_dispatch_generation") == data["price_generation"]), {})
         if (account is None or strategy is None or intent is None or account.name != data["identity"][0]
                 or strategy.code != data["identity"][1] or order.symbol != data["identity"][2]
                 or order.side != "buy" or intent.intent_type != "open"
                 or intent.broker_account_id != order.broker_account_id or intent.strategy_id != order.strategy_id
                 or intent.payload.get("event_id") != str(event.event_id)
                 or intent.quantity != order.quantity or order.quantity != event.payload.quantity
-                or (order.payload or {}).get("mirrorhold_id") != str(row.id)
-                or (order.payload or {}).get("mirrorhold_dispatch_generation") != data["price_generation"]
+                or owner_md.get("mirrorhold_id") != str(row.id)
+                or owner_md.get("mirrorhold_dispatch_generation") != data["price_generation"]
                 or any((order.payload or {}).get(k) != event.payload.metadata.get(k) for k in (
                     "fanout_segment_id", "fanout_slot_id", "rpg_handoff_token", "rpg_resting_generation"))
                 or not self._mirrorhold_clear_order(session, order)):
@@ -629,6 +639,7 @@ class MirrorRetainedHoldMixin:
                     paused = md.get("reason") in PAUSE_REASONS
                     data = self._mirrorhold_write(session, row, {**data,
                         "phase": "paused" if paused else "retired", "token": "",
+                        "dispatch_unresolved": data.get("dispatch_unresolved", False) or data["phase"] == "accepted",
                         "paused_at": event.produced_at.isoformat(), "pause_cancel_id": str(event.event_id),
                         "reason": "v2_pause:" + md["reason"] if paused else "v2_terminal_cancel"})
                     self._mirrorhold_project(data)
@@ -657,6 +668,7 @@ class MirrorRetainedHoldMixin:
 
     def _mirrorhold_feedback(self, session, event, reason, scan_receipt=None):
         md = event.payload.metadata
+        md["mirrorhold_feedback_reason"] = reason
         if md.get("fanout_source") != "rth_resting_mirror" or not md.get("fanout_slot_id"):
             self._mirrorhold_refusal(event, reason, {"orders_considered": "unbound"})
             return reason
@@ -724,6 +736,29 @@ class MirrorRetainedHoldMixin:
     def _mirrorhold_wait(self, session, event, reason, scan_receipt=None):
         self._mirrorhold_refusal(event, reason, scan_receipt or {"orders_considered": "not_scanned"})
         self._nfq_outcome(session, event, "held_no_fresh_quote", "mirrorhold_wait:" + reason)
+
+    def _mirrorhold_finalize_refusal(self, session, event, results):
+        row = self._mirrorhold_read(session, event)
+        current = [r for r in results if r.payload.intent_event_id == event.event_id and r.payload.status == "rejected"]
+        reason = str(current[-1].payload.reason or "local_refusal") if current else "serial_empty_result"
+        if current:
+            intent = session.get(TradeIntent, current[-1].payload.intent_db_id)
+            reason = str((intent.payload or {}).get("refusal_code") or reason) if intent is not None else reason
+        if row is not None and self._mirrorhold_token_matches(row.payload, event):
+            data = self._mirrorhold_write(session, row, {**row.payload, "phase": "held", "token": "",
+                "reason": "serial_no_dispatch"})
+            self._mirrorhold_project(data)
+            self._mirrorhold_wait(session, event, reason)
+            return
+        if row is not None and row.payload["phase"] == "held" and (
+            reason in {HELD_REASON, "webull_mirror_precheck_deferred"}
+            or row.payload["reason"] in {"outside_8pct", "PRICE_AGGRESSIVE", "freshness_no_wire"}
+        ):
+            self._mirrorhold_wait(session, event, reason)
+            return
+        if not results and event.payload.metadata.get("mirrorhold_feedback_reason"):
+            return  # Admission already durably reported this exact drop.
+        self._mirrorhold_feedback(session, event, reason)
 
     def _mirrorhold_dispatch(self, session, event):
         if not self._mirrorhold_scope(event):
@@ -845,6 +880,8 @@ class MirrorRetainedHoldMixin:
         else:
             phase, reason = "uncertain", "dispatch_evidence_unproven"
         unresolved = phase == "uncertain"
+        if data["phase"] in {"paused", "retired"} and phase == "accepted":
+            unresolved = True  # Late acceptance is not confirmation of the requested cancel.
         if data["phase"] in {"paused", "retired", "filled", "capped"} and phase != "filled":
             if phase != "capped" or data["phase"] in {"filled", "capped"}:
                 phase, reason = data["phase"], data["reason"]

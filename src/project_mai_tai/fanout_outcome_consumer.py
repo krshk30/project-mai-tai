@@ -168,12 +168,12 @@ def append_outcome(
     if identity is None:
         return None
     normalized_attempt = attempt_id or identity["fanout_attempt_id"]
-    if (event_source == "client" and outcome in TERMINAL_RELEASE_OUTCOMES
+    if (event_source in {"client", "broker"} and outcome in TERMINAL_RELEASE_OUTCOMES
             and (metadata or {}).get("mirrorhold_refusal_owned") == "true"
             and (metadata or {}).get("fanout_source") == "rth_resting_mirror"):
         # The retained serial admission supplied the old-order clearance bound.
         # A delegated/unresolved owner may describe a local drop, never venue terminality.
-        if (metadata or {}).get("mirrorhold_refusal_uncertain") == "true":
+        if event_source == "client" and (metadata or {}).get("mirrorhold_refusal_uncertain") == "true":
             outcome = "could_not_tell"
         broker_account_name = broker_account_name or str((metadata or {}).get("mirrorhold_feedback_account", ""))
         if not str(reason).startswith(MIRROR_REFUSAL_PREFIX):

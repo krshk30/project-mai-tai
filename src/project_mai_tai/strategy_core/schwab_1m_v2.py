@@ -3244,6 +3244,10 @@ class SchwabV2Strategy:
         if record.reason.startswith(MIRROR_REFUSAL_PREFIX):
             if state.fanout_claim_outcome == "filled":
                 return "filled_wins"
+            if record.event_source == "broker":
+                # The retained finalizer settles the owner/budget after this
+                # raw venue report. Do not race its classified client outcome.
+                return "await_retained_refusal"
             if (record.event_source != "client" or record.broker_account_name != self._flip_owner_webull_account
                     or record.slot != "resting" or not exact
                     or not record.attempt_id or record.attempt_id != state.fanout_claim_attempt_id):
@@ -3322,6 +3326,11 @@ class SchwabV2Strategy:
             return "consumed"
 
         if record.outcome in POSITIVE_HOLD_OUTCOMES:
+            if (state.fanout_claim_outcome == "mirror_uncertain" and exact and exact_attempt
+                    and record.event_source == "broker" and record.outcome in {"submitted", "working"}
+                    and record.mirror_generation_id
+                    and record.mirror_generation_id == state.webull_resting_generation_id):
+                state.webull_resting_active = True
             if record.outcome == "held_no_fresh_quote" and exact and not exact_attempt:
                 return "wrong_attempt"
             if (record.outcome == "held_no_fresh_quote" and state.webull_resting_generation_id
