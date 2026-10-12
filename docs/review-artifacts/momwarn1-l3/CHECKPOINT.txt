@@ -1,5 +1,12 @@
 L3 local checkpoint -- NOT FEATURE COMPLETE / NOT INSTALLABLE
 
+SUPERSESSION: new human L3a explicitly replaces recorded-A gate with approved
+raw-tape derivation, moves actual health setup to INSTALL, and replaces original
+c1 generation with Mendel OUR signal lists. See ../momwarn1-l3a/RESULT.txt and
+INTAKE.json. e064 and earlier receipts preserved; old missing-input statements
+below are historical, not active blockers silently reimposed. No whole-card/W4
+claim from these local derived controls; main owns final F+B composition/hotpath.
+
 LATEST SOURCE FOLLOWUP:1db4edf15218340297569f92ca60ed988bd55c77, explicit
 source_config first-bar start07:00 +interval60s derives first closed due07:01.
 Main approved conditional LOCAL predicate, not actual source setup/live proof.
