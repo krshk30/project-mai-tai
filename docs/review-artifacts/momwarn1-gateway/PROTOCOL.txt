@@ -38,6 +38,12 @@ Existing market-data-subscriptions stream/event envelope unchanged:
 consumer_name="momentum-warning", symbols=[explicit symbols], mode=replace/add/remove.
 T-only owner cap16; no Q, historical warmup or REST for warning-only owners.
 Removing/restoring warning owner preserves other owners' T/Q and warmup.
+All-owner symbol validation also applies with the warning flag OFF, solely to
+reject wildcards, comma/whitespace channel separators and a lone invalid dot.
+It does not reject dots within class tickers (BRK.B/BRK.A/BF.B). SDK subscription
+parsing splits at the first dot only, preserving the class suffix. No blanket
+channel-prefix/dotted-symbol restriction was introduced; the provider prepends
+the channel itself, while comma injection could otherwise add another topic.
 Warning T trades keep existing trade_tick eligibility/conditions/provenance fields.
 Provider configure_momentum_warning(on_aggregate,on_revert,on_window_close=None),
 set_momentum_warning_aggregates(enabled), sync_warning_trade_symbols(symbols).

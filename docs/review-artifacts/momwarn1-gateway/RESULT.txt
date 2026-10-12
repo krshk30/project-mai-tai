@@ -73,3 +73,16 @@ provider protocol; existing two-callback callers remain compatible.
 monitor boundary, stale row, in-flight write, late frame, weekend and sticky
 safety controls verified. Ruff/diffcheck PASS; unchanged50ms synthetic gate.
 W5 recorded3xburst/entitlement/source-health/composed acceptance still pending.
+
+DefaultOFF all-owner symbol assessment follow-up:
+Existing validation permits BRK.B/BRK.A/BF.B and other internal class dots;
+real SDK parser splits the channel at the FIRST dot only. Tests verify default
+OFF normal-owner subscriptions and durable restore preserve these class symbols.
+The all-owner fence rejects wildcard and comma/whitespace separator injection
+before persistence, because SDK joins topics into one params string. A lone dot
+is invalid, but internal dots are allowed. No new prefix/dotted-ticker policy or
+runtime validator expansion; this follow-up is tests and explanation only.
+286 focused tests PASS, including94 G1 controls; Ruff/diffcheck PASS. Unchanged
+synthetic50ms gate observed1.240959ms, NOT recorded3xpeak proof.
+Daily-window fix is41484e5c; preserve80026c6c/b5c0125b as historical reviewed heads.
+No queue/production/GitHub/provider action. G2/G3 protocol already relayed by main.

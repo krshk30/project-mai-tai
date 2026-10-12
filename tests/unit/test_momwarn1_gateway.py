@@ -120,6 +120,47 @@ async def test_no_TQ_wildcard_even_in_saved_owner_request(symbol):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("symbol", ["BRK.B", "BRK.A", "BF.B"])
+async def test_default_OFF_normal_owners_accept_and_restore_stock_class_tickers(symbol):
+    from massive import WebSocketClient
+    provider = stream()
+    redis = FakeRedis()
+    settings = Settings(_env_file=None, redis_stream_prefix="test", market_data_warmup_enabled=False)
+    assert not settings.market_data_momentum_warning_enabled
+    svc = MarketDataGatewayService(settings, redis, snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=provider, reference_cache=FakeReferenceCache())
+    await svc.apply_subscription_event(event("v2", [symbol.lower()]))
+    assert svc.active_symbols() == {symbol}
+    assert set(provider._ws.added) == {f"T.{symbol}", f"Q.{symbol}"}
+    assert WebSocketClient._parse_subscription(f"T.{symbol}") == ["T", symbol]
+    assert not provider._warning_trade_symbols
+    restored_provider = stream()
+    restored = MarketDataGatewayService(settings, redis, snapshot_provider=FakeSnapshotProvider(),
+        trade_stream=restored_provider, reference_cache=FakeReferenceCache())
+    await restored._restore_subscription_state()
+    await restored._sync_provider_owners(restored._desired_symbols_by_consumer)
+    assert restored.active_symbols() == {symbol}
+    assert set(restored_provider._ws.added) == {f"T.{symbol}", f"Q.{symbol}"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("symbol", ["*", "T.*", "WFF,Q.*", "WFF,Q.NEW", "WFF T.NEW", "WFF\nQ.NEW"])
+async def test_default_OFF_normal_owner_rejects_channel_injection_before_persistence(symbol):
+    provider = stream()
+    redis = FakeRedis()
+    svc = MarketDataGatewayService(
+        Settings(_env_file=None, market_data_warmup_enabled=False), redis,
+        snapshot_provider=FakeSnapshotProvider(), trade_stream=provider,
+        reference_cache=FakeReferenceCache(),
+    )
+    assert not svc.settings.market_data_momentum_warning_enabled
+    with pytest.raises(ValueError):
+        await svc.apply_subscription_event(event("v2", [symbol]))
+    assert not redis.hashes and not provider._ws.added
+    assert not svc.active_symbols()
+
+
+@pytest.mark.asyncio
 async def test_restore_warning_owner_never_warms_or_adds_Q():
     svc, _, redis, _ = service()
     await svc.apply_subscription_event(event("v2", ["WFF"]))
