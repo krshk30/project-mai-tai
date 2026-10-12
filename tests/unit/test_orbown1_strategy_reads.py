@@ -5,7 +5,7 @@ import inspect
 import json
 import threading
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,11 +19,15 @@ from project_mai_tai.db.models import (
     Strategy, TradeIntent, VirtualPosition,
 )
 from project_mai_tai.services import schwab_1m_v2_bot as module
+from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
-from project_mai_tai.v2_flip_entry_ownership import FlipEntryOwnershipStore
-from tests.unit.test_v2_flip_owned_first_entry import _bar, _book, _place_first, _strategy
+from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy
+from project_mai_tai.settings import Settings
+from project_mai_tai.v2_flip_entry_ownership import FlipEntryOwnershipRecord, FlipEntryOwnershipStore
+from tests.unit.test_v2_flip_owned_first_entry import _bar, _strategy
 
 FIXTURE = json.loads((Path(__file__).parents[1] / "fixtures/orbown1_cases.json").read_text())
+NATIVE = json.loads((Path(__file__).parents[1] / "fixtures/orbown1_native.json").read_text())
 PRIMARY, WEBULL = "live:schwab_1m_v2", "live:orb"
 V2, ORB = "schwab_1m_v2", "orb_schwab"
 
@@ -42,9 +46,12 @@ def replay():
             BrokerAccount(name=WEBULL, provider="webull", environment="live"),
         ])
         session.commit()
-    strategy, clock, _, writes = _strategy(dual=True)
-    strategy._resting_trigger_offset_pct = float(FIXTURE["gixi_line_control"]["offset_pct"])
-    strategy.settings.strategy_schwab_1m_v2_resting_buy_round_up_enabled = True
+    strategy = SchwabV2Strategy(Settings(**NATIVE["settings"]))
+    clock, writes = [1791818762282], []
+    strategy._now_ms = lambda: clock[0]
+    strategy.configure_flip_entry_ownership(lambda *args: writes.append(args),
+        restore_readable=True, retry_budget_persist=lambda *_: None)
+    strategy.configure_falseflip({}, readable=True)
     bot = object.__new__(SchwabV2BotService)
     bot.settings, bot.session_factory, bot.strategy = strategy.settings, factory, strategy
     bot._exit_coverage = set()
@@ -114,37 +121,18 @@ def test_recorded_orb_poll_never_mints_unknown_or_consumes_v2_or_webull_claim(re
     assert "[V2-FLIP-OWNER-UNKNOWN]" not in caplog.text
     _position(factory, ORB, symbol, 0)
     _apply_maps(bot, symbol)
-    # Actual observed level; controlled admission, not a full historical execution replay.
-    clock[0] = int(datetime.fromisoformat(FIXTURE["gixi_line_control"]["observed_at"]).timestamp() * 1000)
-    _book(strategy, clock, symbol)
-    state.bars.append(_bar(clock[0]))
-    strategy._queue_resting_place(state, 6.0171, slot="first")
-    drafts = strategy.drain_pending_intents()
-    assert len(drafts) == 1 and drafts[0].metadata["cw_entry_slot"] == "first"
-    raw_trigger = strategy._resting_trigger_for_line(6.0171)
-    assert Decimal(str(raw_trigger)).quantize(Decimal(".01"), rounding=ROUND_HALF_UP) == Decimal("6.05")
-    assert drafts[0].metadata["resting_wire_stop_price"] == "6.0500"
-
-
-def test_gixi_1126_branch_has_no_orb_consumed_slot(replay):
-    bot, factory, strategy, clock, _ = replay
-    _position(factory, ORB, "GIXI", 2)
-    _apply_maps(bot, "GIXI")
-    _position(factory, ORB, "GIXI", 0)
-    _apply_maps(bot, "GIXI")
-    control = FIXTURE["gixi_line_control"]
-    clock[0] = int(datetime.fromisoformat(control["earlier_eligible_bar_at"]).timestamp() * 1000)
-    state = strategy.watchlist_state("GIXI")
-    state.bars.append(_bar(clock[0]))
-    _book(strategy, clock, "GIXI")
-    strategy._queue_resting_place(state, float(control["earlier_line"]), slot="first")
-    drafts = strategy.drain_pending_intents()
-    assert len(drafts) == 1 and drafts[0].metadata["cw_entry_slot"] == "first"
+    assert state.flip_owner_phase == "idle" and not state.cw_resting_taken
+    # Admission is separately exercised through the native service in the all-ON replay.
 
 
 def test_actual_owned_fill_still_consumes_first_rest_and_binds_primary(replay):
     bot, factory, strategy, clock, _ = replay
-    state, _ = _place_first(strategy, clock, "OWNFILL")
+    opportunity = clock[0] - 1000
+    record = FlipEntryOwnershipRecord("OWNFILL", opportunity, "resting", 0, 0, (), {}, {})
+    strategy.configure_flip_entry_ownership(lambda *_: None,
+        active_segments={"OWNFILL": opportunity}, restored={"OWNFILL": record},
+        restore_readable=True, retry_budget_persist=lambda *_: None)
+    state = strategy.watchlist_state("OWNFILL")
     _position(factory, ORB, "OWNFILL", 2)
     _position(factory, V2, "OWNFILL", 3)
     assert _apply_maps(bot, "OWNFILL") == ({"OWNFILL": 3}, {"OWNFILL": 3})
@@ -205,7 +193,11 @@ def _entry_fill(factory, code, symbol, now):
     with factory() as session:
         sid = session.scalar(select(Strategy.id).where(Strategy.code == code))
         aid = session.scalar(select(BrokerAccount.id).where(BrokerAccount.name == PRIMARY))
-        md = {"cw_entry_slot": "first", "atr_variant": "cw-v2-resting", "resting_entry": "true"}
+        md = {"cw_entry_slot": "first", "atr_variant": "cw-v2-resting", "resting_entry": "true",
+              "fanout_slot": "resting", "fanout_slot_id": fanout_slot_id(
+                  strategy_code=code, symbol=symbol, segment_id=int(now.timestamp()*1000), slot="resting"),
+              "fanout_segment_id": str(int(now.timestamp() * 1000)),
+              "fanout_identity_schema": "entry_opportunity_v2"}
         intent = TradeIntent(strategy_id=sid, broker_account_id=aid, symbol=symbol, side="buy",
                              intent_type="open", quantity=Decimal("2"), status="filled",
                              reason="ownership control", payload={"metadata": md})
