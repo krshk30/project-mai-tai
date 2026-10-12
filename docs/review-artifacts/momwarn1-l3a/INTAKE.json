@@ -1,0 +1,19 @@
+{
+  "id": "L3A-DERIVED-A-LOAD",
+  "source": "Human NEW L3 unblocked Oct12 evening",
+  "priority": 1,
+  "owner": "Anscombe sole L3a on existing MOMWARN worktree",
+  "status": "bounded_tooling_controls_verified_rate_scan_authorized_burst_window_pending",
+  "base": "e064bcc4bbf9c92ba33b94b36224d51c5f86d201",
+  "next_action": "Build bounded full-file streaming cardinality scanner, exact nine-day coverage/input hashes, then coordinate serialized scan and derived3xmaxpeak gateway/TQ qualification",
+  "completion_criterion": "Eight full-flatfile plus explicit partialOct12 distinct-symbol-per-SIPsecond peak/p99.9 table with downloaded-symbol/time/universe/eligibility denominators; DERIVED A-shaped3xmaxpeak actual gateway controls preserve T/Q under unchanged50ms, reviewed receipts",
+  "supersedes": [
+    {"id": "L3-P1-RECORDED-A", "reason": "Human explicitly replaces recorded liveA requirement with approved derivation from MOMRAW raw trade tapes; no recordedWS claim"},
+    {"id": "L3-P2-ACTUAL-SETUP-PREBUILD", "reason": "Actual health settings/PID/timezone/baseline/cadence moved to INSTALL, local source controls preserved"},
+    {"id": "L3-P4-ORIGINAL-C1-GENERATOR", "reason": "Original c1 generator no longer needed; Mendel sole offline OUR signal-list lane"}
+  ],
+  "file_plan": ["scripts/momwarn1_trade_second_counts.cpp bounded all-symbol flatfile scanner", "scripts/momwarn1_derive_a_load.py bounded source/REST/hash coordinator", "dedicated unit and derived gateway burst controls", "L3a assessment/receipts only; no runtime/Settings/trading edits"],
+  "input_assessment": "8complete2.4-2.9GBgz whole trade files, not Momentum retained subsets; Oct12sealed4332symbols/2793712prints, lower-price/universe exclusions and04:00-04:10/missing7488 notzero",
+  "coordination": "App messaging rejected native ancestor; direct commentary coordination. Human main explicitly permits rate-analysis reads now, reserves requested60s window; no heavy parsing/burst simultaneous. Own PAUSE file at L3a output permits chunk-bounded quiescence. Burst window still to request after derived peak available",
+  "boundary": "No queue edits, provider requests/socket/live writes/deploy/GitHub; Mendel offlinelead and main F+B composition/hotpath directories untouched"
+}
