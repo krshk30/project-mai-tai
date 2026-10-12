@@ -18,12 +18,14 @@ from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, Strategy, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, stream_name
 from project_mai_tai.fanout_segment_store import SNAPSHOT_TYPE as SEGMENT_SNAPSHOT, current_session_anchor
+from project_mai_tai.fanout_outcome_consumer import MIRROR_REFUSAL_PREFIX, OUTCOME_SNAPSHOT_TYPE, append_outcome
 from project_mai_tai.oms.mirror_fresh_price import HELD_REASON, SNAPSHOT_TYPE as NFQ_SNAPSHOT
 
 
 SNAPSHOT_TYPE = "oms_webull_mirror_retained_hold"
 MAX_PRICE_AGGRESSIVE_REFUSALS = 4  # Initial refusal, then at most three actual resubmissions.
 FENCED_PHASES = {"dispatching", "uncertain"}
+PAUSE_REASONS = {"liquidity_floor", "bar_gap", "flip_no_fill"}
 
 
 def identity(event):
@@ -136,29 +138,113 @@ class MirrorRetainedHoldMixin:
                 unresolved = [r for r in rows if r.payload.get("dispatch_unresolved", r.payload["phase"] in FENCED_PHASES)]
                 for row in unresolved:
                     if not self._mirrorhold_reconcile_terminal(session, row):
+                        self._mirrorhold_feedback(session, event, "dispatch_uncertain")
+                        session.commit()
                         return False
                 if unresolved:
                     session.commit()
         if not self._mirrorhold_scope(event):
             return not (self._mirrorhold_new_enabled() and event.payload.metadata.get("nfq_retry_token"))
         if event.payload.metadata.get("nfq_retry_token"):
+            with self.session_factory() as session:
+                self._mirrorhold_feedback(session, event, "transferred_nfq_token")
+                session.commit()
             return False  # A transferred NFQ token is never authority for this owner.
         with self.session_factory() as session:
+            md = event.payload.metadata
+            md["mirrorhold_refusal_owned"] = "true"
+            md["mirrorhold_feedback_account"] = event.payload.broker_account_name
+            account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == event.payload.broker_account_name))
+            orders = self._mirrorhold_session_orders(session, account, event) if account is not None else []
+            reason = self._mirrorhold_order_fence(session, event, orders)
+            if reason:
+                if not md.get("rpg_handoff_token"):
+                    self._mirrorhold_feedback(session, event, reason, {"orders_considered": len(orders)})
+                    session.commit()
+                    return False
+                md["mirrorhold_refusal_uncertain"] = "true"
+            else:
+                md.pop("mirrorhold_refusal_uncertain", None)
             row = self._mirrorhold_read(session, event)
             if row is None:
-                return self._mirrorhold_new_enabled() and not event.payload.metadata.get("mirrorhold_token")
+                allowed = self._mirrorhold_new_enabled() and not event.payload.metadata.get("mirrorhold_token")
+                if not allowed:
+                    self._mirrorhold_feedback(session, event, "owner_missing")
+                    session.commit()
+                return allowed
             legacy_budget = "price_aggressive_clients" not in row.payload
             data = self._mirrorhold_upgrade_budget(session, row, event)
+            data = self._mirrorhold_legacy_pause(session, row, data)
             if legacy_budget:
                 session.commit()
             if data["phase"] in FENCED_PHASES | {"retired", "filled", "capped"}:
+                self._mirrorhold_feedback(session, event, "owner_" + data["phase"])
+                session.commit()
                 return False
+            if data["phase"] == "paused" and not self._mirrorhold_fresh_authorization(data, event):
+                self._mirrorhold_feedback(session, event, "paused_authorization_required")
+                session.commit()
+                return False
+            if data["phase"] in {"accepted", "paused"} and not event.payload.metadata.get("rpg_handoff_token"):
+                receipt = {"orders_considered": 0}
+                reason = self._mirrorhold_gate(session, event, session_bound=True, scan_receipt=receipt)
+                if reason:
+                    self._mirrorhold_feedback(session, event, reason, receipt)
+                    session.commit()
+                    return False
             if event.payload.metadata.get("mirrorhold_token"):
-                return self._mirrorhold_token_matches(data, event)
+                allowed = self._mirrorhold_token_matches(data, event)
+                if not allowed:
+                    self._mirrorhold_feedback(session, event, "stale_token")
+                session.commit()
+                return allowed
             old = TradeIntentEvent.model_validate(data["event"])
             if event.produced_at < old.produced_at:
+                self._mirrorhold_feedback(session, event, "stale_event")
+                session.commit()
                 return False
-            return self._build_client_order_id(event) not in data["wire_clients"]
+            allowed = self._build_client_order_id(event) not in data["wire_clients"]
+            if not allowed:
+                self._mirrorhold_feedback(session, event, "duplicate_client")
+            session.commit()
+            return allowed
+
+    def _mirrorhold_fresh_authorization(self, data, event):
+        old = TradeIntentEvent.model_validate(data["event"])
+        md, old_md = event.payload.metadata, old.payload.metadata
+        paused_at = datetime.fromisoformat(data["paused_at"])
+        return (not md.get("mirrorhold_token") and not md.get("webull_deferred_resubmit")
+                and event.produced_at > paused_at and event.event_id != old.event_id
+                and bool(md.get("webull_mirror_generation_id"))
+                and md["webull_mirror_generation_id"] != old_md.get("webull_mirror_generation_id"))
+
+    def _mirrorhold_legacy_pause(self, session, row, data):
+        if data["phase"] != "retired" or data["reason"] != "v2_terminal_cancel":
+            return data
+        old = TradeIntentEvent.model_validate(data["event"])
+        md = old.payload.metadata
+        # Legacy retirement omitted the reason. Only an actual matching cancel
+        # record can classify it; the old open draft is not cancellation proof.
+        cancel = session.scalar(select(TradeIntent).join(BrokerAccount).join(
+            Strategy, Strategy.id == TradeIntent.strategy_id).where(
+                BrokerAccount.name == old.payload.broker_account_name,
+                Strategy.code == old.payload.strategy_code, TradeIntent.symbol == old.payload.symbol,
+                TradeIntent.side == "buy", TradeIntent.intent_type == "cancel",
+                TradeIntent.payload["metadata"]["fanout_source"].as_string() == "rth_resting_mirror",
+                *(TradeIntent.payload["metadata"][k].as_string() == md.get(k) for k in (
+                    "fanout_segment_id", "fanout_slot_id", "webull_mirror_generation_id",
+                    "rpg_resting_generation")),
+            ).order_by(TradeIntent.created_at.desc(), TradeIntent.id.desc()).limit(1))
+        if cancel is None or cancel.payload.get("metadata", {}).get("reason") not in PAUSE_REASONS:
+            return data
+        timestamp = cancel.created_at
+        if timestamp.tzinfo is None and session.get_bind().dialect.name == "sqlite":
+            timestamp = timestamp.replace(tzinfo=UTC)
+        if timestamp.tzinfo is None or timestamp < old.produced_at:
+            return data
+        return self._mirrorhold_write(session, row, {**data, "phase": "paused", "token": "",
+            "paused_at": timestamp.isoformat(), "pause_cancel_id": str(cancel.id),
+            "reason": "v2_pause:" + cancel.payload["metadata"]["reason"]})
 
     def _mirrorhold_finish(self, event):
         if not self._mirrorhold_scope(event) or not event.payload.metadata.get("mirrorhold_token"):
@@ -172,6 +258,7 @@ class MirrorRetainedHoldMixin:
                 data = self._mirrorhold_write(session, row, {**data, "phase": "held", "token": "",
                     "reason": "serial_no_dispatch"})
                 self._mirrorhold_project(data)
+                self._mirrorhold_wait(session, event, "serial_no_dispatch")
                 session.commit()
 
     def _mirrorhold_read(self, session, event):
@@ -236,6 +323,8 @@ class MirrorRetainedHoldMixin:
             return row
         data = self._mirrorhold_upgrade_budget(session, row, event)
         if data["phase"] in FENCED_PHASES or data["phase"] in {"retired", "filled", "capped"}:
+            return row
+        if data["phase"] == "paused" and not self._mirrorhold_fresh_authorization(data, event):
             return row
         if event.payload.metadata.get("mirrorhold_token"):
             return row
@@ -321,11 +410,12 @@ class MirrorRetainedHoldMixin:
         clients = list(dict.fromkeys([*data["wire_clients"], *clients]))
         aggressive = list(dict.fromkeys([*data.get("price_aggressive_clients", []), *aggressive]))
         no_wire = self._mirrorhold_proven_no_wire(session, order)
-        phase = "retired" if data["phase"] == "retired" else "held" if no_wire else "blocked"
+        phase = data["phase"] if data["phase"] in {"paused", "retired", "filled", "capped"} else "held" if no_wire else "blocked"
         data = self._mirrorhold_write(session, row, {**data, "phase": phase, "token": "",
             "wire_clients": clients, "wire_submissions": len(clients), "dispatch_unresolved": False,
             "price_aggressive_clients": aggressive, "price_aggressive_refusals": len(aggressive),
-            "local_no_wire": no_wire, "reason": "exact_terminal_audit_accounted"})
+            "local_no_wire": no_wire, "reason": data["reason"] if phase in {"paused", "retired", "filled", "capped"}
+                else "exact_terminal_audit_accounted"})
         self._mirrorhold_project(data)
         self._mirrorhold_log(data, data["reason"])
         return True
@@ -534,8 +624,13 @@ class MirrorRetainedHoldMixin:
                     if md.get("reason") == "reprice" or md.get("atr_reprice") == "true":
                         # This is an ownership transfer, not the end of the opportunity.
                         continue
-                    data = self._mirrorhold_write(session, row, {**data, "phase": "retired",
-                        "token": "", "reason": "v2_terminal_cancel"})
+                    if data["phase"] in {"filled", "capped"}:
+                        continue
+                    paused = md.get("reason") in PAUSE_REASONS
+                    data = self._mirrorhold_write(session, row, {**data,
+                        "phase": "paused" if paused else "retired", "token": "",
+                        "paused_at": event.produced_at.isoformat(), "pause_cancel_id": str(event.event_id),
+                        "reason": "v2_pause:" + md["reason"] if paused else "v2_terminal_cancel"})
                     self._mirrorhold_project(data)
                     self._mirrorhold_log(data, data["reason"])
             session.commit()
@@ -547,7 +642,7 @@ class MirrorRetainedHoldMixin:
         reading = self._mirror_reading(event.payload.symbol)
         outside = (reading.fresh and reading.price < Decimal(event.payload.metadata["stop_price"]) * Decimal("0.92"))
         if outside:
-            if data["phase"] not in FENCED_PHASES | {"retired", "filled", "capped"}:
+            if data["phase"] not in FENCED_PHASES | {"paused", "retired", "filled", "capped"}:
                 data = self._mirrorhold_write(session, row, {**data, "phase": "held", "token": "",
                     "local_no_wire": True, "reason": "outside_8pct"})
             self._mirrorhold_project(data)
@@ -555,10 +650,80 @@ class MirrorRetainedHoldMixin:
         return outside
 
     def _mirrorhold_refusal(self, event, reason, scan_receipt):
-        self.logger.warning("[OMS-MIRRORHOLD1] account=%s symbol=%s phase=refused reason=%s orders_considered=%s",
-                            event.payload.broker_account_name, event.payload.symbol, reason,
-                            scan_receipt["orders_considered"])
+        self.logger.warning("[OMS-MIRRORHOLD1] account=%s symbol=%s slot=%s phase=refused reason=%s orders_considered=%s",
+                            event.payload.broker_account_name, event.payload.symbol,
+                            event.payload.metadata.get("fanout_slot_id", "unbound"), reason, scan_receipt["orders_considered"])
         return reason
+
+    def _mirrorhold_feedback(self, session, event, reason, scan_receipt=None):
+        md = event.payload.metadata
+        if md.get("fanout_source") != "rth_resting_mirror" or not md.get("fanout_slot_id"):
+            self._mirrorhold_refusal(event, reason, {"orders_considered": "unbound"})
+            return reason
+        md["fanout_attempt_id"] = self._build_client_order_id(event)
+        outcome = "rejected_client_abort"
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == event.payload.broker_account_name))
+        orders = self._mirrorhold_session_orders(session, account, event) if account is not None else []
+        receipt = scan_receipt if scan_receipt is not None else {}
+        receipt["orders_considered"] = len(orders)
+        self._mirrorhold_refusal(event, reason, receipt)
+        unresolved_owner = session.scalar(select(DashboardSnapshot.id).where(
+            DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+            DashboardSnapshot.payload["identity"][0].as_string() == event.payload.broker_account_name,
+            DashboardSnapshot.payload["identity"][2].as_string() == event.payload.symbol.upper(),
+            or_(DashboardSnapshot.payload["dispatch_unresolved"].as_boolean().is_(True),
+                DashboardSnapshot.payload["phase"].as_string().in_(FENCED_PHASES)),
+        ).limit(1))
+        if unresolved_owner is not None:
+            outcome = "could_not_tell"
+        if self._mirrorhold_order_fence(session, event, orders):
+            # A refused new draft is not a broker fill event. The existing
+            # broker-sourced journal owns fills; ambiguity never proves terminality.
+            outcome = "could_not_tell"
+        owner = self._mirrorhold_read(session, event) if self._mirrorhold_scope(event) else None
+        if owner is not None and owner.payload["phase"] in {"held", "queued"}:
+            data = owner.payload
+            current = TradeIntentEvent.model_validate(data["event"])
+            if (current.event_id == event.event_id or self._mirrorhold_token_matches(data, event)):
+                # A dropped attempt is cold, unlike an explicitly retained wait.
+                data = self._mirrorhold_write(session, owner, {**data, "phase": "paused", "token": "",
+                    "paused_at": self._nfq_now().isoformat(), "pause_cancel_id": str(event.event_id),
+                    "reason": "local_refusal:" + reason})
+                self._mirrorhold_project(data)
+        evidence = f"mirrorrefusal:{event.event_id}:{reason}"
+        existing = session.scalar(select(DashboardSnapshot.id).where(
+            DashboardSnapshot.snapshot_type == OUTCOME_SNAPSHOT_TYPE,
+            DashboardSnapshot.payload["evidence_id"].as_string() == evidence).limit(1))
+        if existing is None:
+            append_outcome(session, metadata=md, symbol=event.payload.symbol, outcome=outcome,
+                reason=MIRROR_REFUSAL_PREFIX + reason, evidence_id=evidence,
+                event_source="client", broker_account_name=event.payload.broker_account_name)
+        return reason
+
+    def _mirrorhold_order_fence(self, session, event, orders):
+        for order in orders:
+            md = order.payload or {}
+            if not self._mirrorhold_timestamp_readable(session, order.submitted_at):
+                return "dispatch_uncertain"
+            if not self._mirrorhold_segment_readable(md):
+                if self._mirrorhold_unrelated_legacy_fill(session, order, event):
+                    continue
+                return "dispatch_uncertain"
+            if (str(md["fanout_segment_id"]) == identity(event)[3]
+                    and (not isinstance(md.get("fanout_slot_id"), str) or not md["fanout_slot_id"].strip())):
+                return "dispatch_uncertain"
+            same = all(md.get(k) == event.payload.metadata.get(k) for k in ("fanout_segment_id", "fanout_slot_id"))
+            filled = order.status in {"filled", "partially_filled"} or session.scalar(
+                select(Fill.id).where(Fill.order_id == order.id).limit(1))
+            if same and filled:
+                return "mirror_filled"
+            if not filled and not self._mirrorhold_clear_order(session, order):
+                return "dispatch_uncertain" if order.status in {"pending", "cancelled", "canceled", "expired", "rejected", "aborted"} else "duplicate_buy"
+        return None
+
+    def _mirrorhold_wait(self, session, event, reason, scan_receipt=None):
+        self._mirrorhold_refusal(event, reason, scan_receipt or {"orders_considered": "not_scanned"})
+        self._nfq_outcome(session, event, "held_no_fresh_quote", "mirrorhold_wait:" + reason)
 
     def _mirrorhold_dispatch(self, session, event):
         if not self._mirrorhold_scope(event):
@@ -566,7 +731,7 @@ class MirrorRetainedHoldMixin:
         scan_receipt = {"orders_considered": 0}
 
         def refuse(reason):
-            return self._mirrorhold_refusal(event, reason, scan_receipt)
+            return self._mirrorhold_feedback(session, event, reason, scan_receipt)
 
         if self.__dict__.get("_symbol_tick_work_closing", False):
             return refuse("mirrorhold_shutdown")
@@ -591,7 +756,7 @@ class MirrorRetainedHoldMixin:
         reason = self._mirrorhold_gate(session, event, session_bound=True, scan_receipt=scan_receipt)
         if reason:
             if reason == "mirror_filled":
-                data = self._mirrorhold_write(session, row, {**data, "phase": "retired", "token": "",
+                data = self._mirrorhold_write(session, row, {**data, "phase": "filled", "token": "",
                     "reason": reason})
                 self._mirrorhold_project(data)
             return refuse("mirrorhold_" + reason)
@@ -631,17 +796,21 @@ class MirrorRetainedHoldMixin:
             return
         row = self._mirrorhold_read(session, event)
         if row is None:
+            self._mirrorhold_feedback(session, event, "report_owner_missing")
             return
         data = row.payload
         client = data["dispatch_client"]
         if not client or event.payload.metadata.get("mirrorhold_dispatch_generation") != data["price_generation"]:
+            self._mirrorhold_feedback(session, event, "report_stale_generation")
             return
         if (event.payload.quantity != Decimal(data["event"]["payload"]["quantity"])
                 or self._build_client_order_id(TradeIntentEvent.model_validate(data["event"])) != client):
+            self._mirrorhold_feedback(session, event, "report_wrong_quantity_or_client")
             return
         exact = [r for r in reports if r.client_order_id == client and r.symbol == event.payload.symbol
                  and r.side == "buy" and r.intent_type == "open" and r.quantity == event.payload.quantity]
         if not exact:
+            self._mirrorhold_feedback(session, event, "report_identity_unproven")
             return
         data = self._mirrorhold_upgrade_budget(session, row, event)
         wired = any(r.metadata.get("webull_wire_submitted_at_utc") or
@@ -676,8 +845,9 @@ class MirrorRetainedHoldMixin:
         else:
             phase, reason = "uncertain", "dispatch_evidence_unproven"
         unresolved = phase == "uncertain"
-        if data["phase"] == "retired" and phase != "filled":
-            phase, reason = "retired", data["reason"]
+        if data["phase"] in {"paused", "retired", "filled", "capped"} and phase != "filled":
+            if phase != "capped" or data["phase"] in {"filled", "capped"}:
+                phase, reason = data["phase"], data["reason"]
         data = self._mirrorhold_write(session, row, {**data, "phase": phase, "token": "",
             "local_no_wire": phase == "held" and all(r.origin == "client" and
                 r.metadata.get("webull_local_no_wire") == "true" and not r.metadata.get("webull_wire_submitted_at_utc")
@@ -697,13 +867,24 @@ class MirrorRetainedHoldMixin:
     def _mirrorhold_claim(self, event):
         token = event.payload.metadata.get("mirrorhold_token")
         if not token:
-            return not self._is_webull_mirror_deferred_resubmit(event)
+            if not self._is_webull_mirror_deferred_resubmit(event):
+                return True
+            with self.session_factory() as session:
+                self._mirrorhold_feedback(session, event, "retry_token_missing")
+                session.commit()
+            return False
         with self.session_factory() as session:
             row = self._mirrorhold_read(session, event)
             if row is None:
+                self._mirrorhold_feedback(session, event, "claim_owner_missing")
+                session.commit()
                 return False
             data = row.payload
-            return self._mirrorhold_token_matches(data, event)
+            allowed = self._mirrorhold_token_matches(data, event)
+            if not allowed:
+                self._mirrorhold_feedback(session, event, "claim_stale_token")
+                session.commit()
+            return allowed
 
     def _mirrorhold_price_budget_exhausted(self, job):
         if not self._mirrorhold_enabled():
@@ -767,14 +948,14 @@ class MirrorRetainedHoldMixin:
         queued = await asyncio.to_thread(self._mirrorhold_prepare_queue, symbol, keys)
         for event, token, retry in queued:
             if self.__dict__.get("_symbol_tick_work_closing", False):
-                await asyncio.to_thread(self._mirrorhold_invalidate_enqueue, event, token)
+                await asyncio.to_thread(self._mirrorhold_invalidate_enqueue, retry, token)
                 continue
             try:
                 await self.redis.xadd(stream_name(self.settings.redis_stream_prefix, "strategy-intents"),
                     {"data": retry.model_dump_json()}, maxlen=self.settings.redis_strategy_intent_stream_maxlen,
                     approximate=True)
             except (Exception, asyncio.CancelledError) as exc:
-                await asyncio.to_thread(self._mirrorhold_invalidate_enqueue, event, token)
+                await asyncio.to_thread(self._mirrorhold_invalidate_enqueue, retry, token)
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 self.logger.exception("[OMS-MIRRORHOLD1] enqueue unconfirmed; durable claim fenced")
@@ -786,6 +967,7 @@ class MirrorRetainedHoldMixin:
                 data = self._mirrorhold_write(session, row, {**row.payload, "phase": "held",
                     "token": "", "reason": "enqueue_token_invalidated"})
                 self._mirrorhold_project(data)
+                self._mirrorhold_wait(session, event, "enqueue_token_invalidated")
             session.commit()
 
     def _mirrorhold_prepare_queue(self, symbol, keys):
@@ -807,9 +989,13 @@ class MirrorRetainedHoldMixin:
                 scan_receipt = {"orders_considered": 0}
                 reason = self._mirrorhold_gate(session, event, session_bound=True, scan_receipt=scan_receipt)
                 if reason:
-                    self._mirrorhold_refusal(event, "mirrorhold_" + reason, scan_receipt)
+                    if reason not in {"resting_window_ended", "segment_ended", "mirror_filled"} and data["phase"] in {"held", "queued"}:
+                        self._mirrorhold_wait(session, event, "mirrorhold_" + reason, scan_receipt)
+                    else:
+                        self._mirrorhold_feedback(session, event, "mirrorhold_" + reason, scan_receipt)
                 if reason in {"resting_window_ended", "segment_ended", "mirror_filled"}:
-                    data = self._mirrorhold_write(session, row, {**data, "phase": "retired",
+                    phase = data["phase"] if data["phase"] in {"filled", "capped"} else "filled" if reason == "mirror_filled" else "retired"
+                    data = self._mirrorhold_write(session, row, {**data, "phase": phase,
                         "token": "", "reason": reason})
                     self._mirrorhold_project(data)
                     continue
@@ -824,6 +1010,10 @@ class MirrorRetainedHoldMixin:
                 if not reading.fresh or reading.price < Decimal(event.payload.metadata["stop_price"]) * Decimal("0.92"):
                     continue
                 if self._mirrorhold_budget_exhausted(data):
+                    data = self._mirrorhold_write(session, row, {**data, "phase": "capped", "token": "",
+                        "reason": "actual_submission_cap"})
+                    self._mirrorhold_project(data)
+                    self._mirrorhold_feedback(session, event, "actual_submission_cap", scan_receipt)
                     continue
                 retry = TradeIntentEvent(source_service="oms-risk", produced_at=self._nfq_now(),
                                          payload=event.payload.model_copy(deep=True))
@@ -831,9 +1021,12 @@ class MirrorRetainedHoldMixin:
                     retry.payload.metadata.pop(key, None)
                 token = str(uuid4())
                 retry.payload.metadata.update(mirrorhold_token=token, webull_deferred_resubmit="true")
+                retry.payload.metadata.update(fanout_predecessor_attempt_id=self._build_client_order_id(event),
+                    fanout_attempt_id=self._build_client_order_id(retry))
                 data = self._mirrorhold_write(session, row, {**data, "phase": "queued", "token": token,
                     "reason": "serial_queue_reserved"})
                 self._mirrorhold_project(data)
+                self._nfq_outcome(session, retry, "queued", "mirrorhold_retry_queued")
                 queued.append((event, token, retry))
             session.commit()
         return queued
@@ -901,9 +1094,13 @@ class MirrorRetainedHoldMixin:
                     scan_receipt = {"orders_considered": 0}
                     reason = self._mirrorhold_gate(session, event, session_bound=True, scan_receipt=scan_receipt)
                     if reason:
-                        self._mirrorhold_refusal(event, "mirrorhold_" + reason, scan_receipt)
+                        if reason not in {"resting_window_ended", "segment_ended", "mirror_filled"}:
+                            self._mirrorhold_wait(session, event, "mirrorhold_" + reason, scan_receipt)
+                        else:
+                            self._mirrorhold_feedback(session, event, "mirrorhold_" + reason, scan_receipt)
                     if reason in {"resting_window_ended", "segment_ended", "mirror_filled"}:
-                        data = self._mirrorhold_write(session, row, {**data, "phase": "retired", "token": "",
+                        phase = "filled" if reason == "mirror_filled" else "retired"
+                        data = self._mirrorhold_write(session, row, {**data, "phase": phase, "token": "",
                             "reason": reason})
                 self._mirrorhold_project(data)
                 self._mirrorhold_cache_after_commit(session, row.id, data)
@@ -938,6 +1135,7 @@ class MirrorRetainedHoldMixin:
         if not self._nfq_window_open(event):
             self._mirrorhold_write(session, row, {**row.payload, "phase": "retired", "token": "",
                                                    "reason": "resting_window_ended"})
+            self._mirrorhold_feedback(session, event, "mirrorhold_resting_window_ended")
             return "mirrorhold_resting_window_ended"
         if not self._mirror_reading(event.payload.symbol).fresh:
             self._mirrorhold_project(row.payload)

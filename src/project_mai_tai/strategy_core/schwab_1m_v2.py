@@ -45,6 +45,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import fanout_slot_for_source, fanout_slot_id
 from project_mai_tai.fanout_outcome_consumer import (
     NFQ_RELEASE_PREFIXES,
+    MIRROR_REFUSAL_PREFIX,
     POSITIVE_HOLD_OUTCOMES,
     PROVISIONAL_OUTCOMES,
     TERMINAL_RELEASE_OUTCOMES,
@@ -3240,6 +3241,30 @@ class SchwabV2Strategy:
             or not record.attempt_id
             or record.attempt_id == state.fanout_claim_attempt_id
         )
+        if record.reason.startswith(MIRROR_REFUSAL_PREFIX):
+            if state.fanout_claim_outcome == "filled":
+                return "filled_wins"
+            if (record.event_source != "client" or record.broker_account_name != self._flip_owner_webull_account
+                    or record.slot != "resting" or not exact
+                    or not record.attempt_id or record.attempt_id != state.fanout_claim_attempt_id):
+                return "wrong_attempt"
+            if (not record.mirror_generation_id
+                    or record.mirror_generation_id != state.webull_resting_generation_id):
+                return "wrong_generation"
+            if record.outcome in TERMINAL_RELEASE_OUTCOMES | PROVISIONAL_OUTCOMES:
+                # This exact draft was not dispatched. An old uncertain order is
+                # not a resting new copy, nor permission to release its claim.
+                state.webull_resting_active = False
+                if record.outcome in PROVISIONAL_OUTCOMES:
+                    state.fanout_webull_claimed = True
+                    state.fanout_claim_outcome = "mirror_uncertain"
+                    state.fanout_zero_hold_started_ms = 0
+                    return "mirror_uncertain"
+        elif (state.fanout_claim_outcome == "mirror_uncertain"
+                and record.outcome not in {"filled", "partially_filled"}
+                and (not exact or not record.attempt_id
+                     or record.attempt_id != state.fanout_claim_attempt_id)):
+            return "wrong_attempt"
         if record.outcome in {"filled", "partially_filled"}:
             # A durable fill outranks virtual_positions and every stale cancel/reject, but it still
             # belongs to one economic slot. A late fill from another slot must not consume/hold the
@@ -3966,7 +3991,7 @@ class SchwabV2Strategy:
                     int(position_closed),
                     FANOUT_POSITIVE_ZERO_HOLD_MS,
                 )
-            elif position_closed:
+            elif position_closed and state.fanout_claim_outcome != "mirror_uncertain":
                 released = self._release_fanout_webull_claim(
                     state,
                     reason="schwab_position_closed_reclaim_available",

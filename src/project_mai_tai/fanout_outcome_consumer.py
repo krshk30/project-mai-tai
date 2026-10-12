@@ -147,6 +147,7 @@ def broker_outcome(event_type: str, event_source: str) -> str:
 NFQ_GAVE_UP_PREFIX = "webull_mirror_nfq_gave_up:"
 NFQ_RETIRED_PREFIX = "webull_mirror_nfq_retired:"
 NFQ_RELEASE_PREFIXES = (NFQ_GAVE_UP_PREFIX, NFQ_RETIRED_PREFIX)
+MIRROR_REFUSAL_PREFIX = "webull_mirror_refusal:"
 
 
 def append_outcome(
@@ -167,7 +168,17 @@ def append_outcome(
     if identity is None:
         return None
     normalized_attempt = attempt_id or identity["fanout_attempt_id"]
-    nfq_terminal = outcome in TERMINAL_RELEASE_OUTCOMES and (
+    if (event_source == "client" and outcome in TERMINAL_RELEASE_OUTCOMES
+            and (metadata or {}).get("mirrorhold_refusal_owned") == "true"
+            and (metadata or {}).get("fanout_source") == "rth_resting_mirror"):
+        # The retained serial admission supplied the old-order clearance bound.
+        # A delegated/unresolved owner may describe a local drop, never venue terminality.
+        if (metadata or {}).get("mirrorhold_refusal_uncertain") == "true":
+            outcome = "could_not_tell"
+        broker_account_name = broker_account_name or str((metadata or {}).get("mirrorhold_feedback_account", ""))
+        if not str(reason).startswith(MIRROR_REFUSAL_PREFIX):
+            reason = MIRROR_REFUSAL_PREFIX + str(reason or outcome)
+    nfq_terminal = outcome in TERMINAL_RELEASE_OUTCOMES and not str(reason).startswith(MIRROR_REFUSAL_PREFIX) and (
         str(reason).startswith(NFQ_RELEASE_PREFIXES) or (
             (metadata or {}).get("nfq_price_feedback_owned") == "true"
             and (metadata or {}).get("fanout_source") == "rth_resting_mirror"
@@ -213,6 +224,9 @@ def append_outcome(
             "webull_mirror_generation_id": str((metadata or {}).get("webull_mirror_generation_id", "")),
         },
     )
+    if str(reason).startswith(MIRROR_REFUSAL_PREFIX):
+        logger.warning("[OMS-MIRRORSLOT1] symbol=%s slot=%s reason=%s outcome=%s source=%s",
+                       str(symbol).upper(), identity["fanout_slot_id"], reason, outcome, event_source)
     session.add(row)
     session.flush()
     return row
