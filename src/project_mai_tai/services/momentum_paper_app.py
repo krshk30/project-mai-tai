@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 import json
 import logging
 import signal
+import time as wall_time
 from typing import Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
@@ -39,6 +40,7 @@ from project_mai_tai.momentum_paper.engine import MomentumPaperEngine
 from project_mai_tai.momentum_paper.models import (
     MOMENTUM_ACCOUNT_NAME,
     MOMENTUM_STRATEGIES,
+    MOMENTUM_WARNING_STRATEGIES,
     MomentumTapeRecord,
     TradePrint,
 )
@@ -48,6 +50,8 @@ from project_mai_tai.momentum_paper.store import (
     session_closed_record,
     session_record,
 )
+from project_mai_tai.momentum_paper.warning_consumer import MomentumWarningConsumer
+from project_mai_tai.momentum_paper.warning_window import AggregateObservation
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core.time_utils import US_MARKET_HOLIDAYS
 
@@ -178,6 +182,11 @@ class MomentumPaperService:
         self._complete_sessions = 0
         self._session_closed = False
         self._feed_gap_started_ms: int | None = None
+        self._warning: MomentumWarningConsumer | None = None
+        self._warning_task: asyncio.Task[None] | None = None
+        self._last_warning_sample_ns = 0
+        self._warning_subscribed_symbols: set[str] = set()
+        self._warning_owner_uncertain = False
 
     async def run(self) -> None:
         if not bool(getattr(self.settings, "momentum_paper_enabled", False)):
@@ -200,6 +209,8 @@ class MomentumPaperService:
             await self._stop_gateway()
             if self._engine is not None:
                 await self._persist(self._engine.close_session(self._now_ms()))
+            if self._warning is not None:
+                await self._persist(self._warning.engine.close_session(self._now_ms()))
 
     async def _tick(self) -> None:
         now = self._clock()
@@ -218,6 +229,7 @@ class MomentumPaperService:
             self._session_date = et.date()
             self._condition_snapshot = None
             self._engine = None
+            self._warning = None
             self._completed_from_store = []
             self._historical_completed = []
             self._complete_sessions = 0
@@ -227,6 +239,26 @@ class MomentumPaperService:
         if self._engine is None:
             return
         await self._persist(self._engine.advance_clock(self._now_ms()))
+        if self._warning is not None:
+            await self._persist(self._warning.engine.advance_clock(self._now_ms()))
+            outcomes = self._warning.expire_quiet(
+                observed_ms=self._now_ms(), legacy_active=self._engine.active_symbols,
+            )
+            if any(outcome.status == "DROPPED" for outcome in outcomes):
+                await self._sync_gateway_subscriptions()
+            sample_ns = wall_time.time_ns()
+            if sample_ns - self._last_warning_sample_ns >= 10_000_000_000:
+                self._last_warning_sample_ns = sample_ns
+                await self._warning_metrics(
+                    event_type="consumer_sample", observed_ns=sample_ns,
+                    gateway_instance_id=(self._warning.epoch or (None, None))[0],
+                    generation=(self._warning.epoch or (None, None))[1],
+                    coverage="UNKNOWN" if self._warning.coverage is None else "EXPLICIT",
+                    owned_warning_symbols=len(self._warning.desired_symbols(set())),
+                    shared_owned_symbols=len(self._warning.desired_symbols(self._engine.active_symbols)),
+                    active_warning_paths=len(self._warning.engine.active_events),
+                    status=self._warning.last_status, subscription_confirmed_ns=None,
+                )
         if (
             self._last_snapshot_at is not None
             and (now - self._last_snapshot_at).total_seconds() > _SNAPSHOT_STALE_SECONDS
@@ -238,6 +270,8 @@ class MomentumPaperService:
             await self._sync_gateway_subscriptions()
         if et.time() >= _CLOSE_AT and not self._session_closed:
             await self._persist(self._engine.close_session(self._now_ms()))
+            if self._warning is not None:
+                await self._persist(self._warning.engine.close_session(self._now_ms()))
             await self._stop_gateway()
             closed = session_closed_record(
                 session_date=et.date(),
@@ -283,6 +317,21 @@ class MomentumPaperService:
             coverage_started_ms=self._now_ms(),
         )
         self._engine.seed_reentry_boundaries(existing)
+        warning_rows: list[MomentumTapeRecord] = []
+        if bool(getattr(self.settings, "market_data_momentum_warning_enabled", False)):
+            warning_rows = await asyncio.to_thread(
+                self.store.load_session, session_date, strategy_codes=MOMENTUM_WARNING_STRATEGIES,
+            )
+            self._warning = MomentumWarningConsumer(
+                prior_closes=self._engine.prior_closes,
+                condition_version=self._condition_snapshot.version,
+                coverage_started_ms=self._now_ms(),
+                owner_cap=int(getattr(self.settings, "market_data_momentum_warning_owner_cap", 16)),
+            )
+            self._warning.engine.seed_reentry_boundaries(warning_rows)
+            incomplete_warning = self.store.incomplete_logical_ids(warning_rows)
+            if incomplete_warning:
+                await self._persist(self._interrupted_records(warning_rows, incomplete_warning))
         incomplete = self.store.incomplete_logical_ids(existing)
         if incomplete:
             interrupted = self._interrupted_records(existing, incomplete)
@@ -354,8 +403,73 @@ class MomentumPaperService:
     async def _start_gateway(self) -> None:
         await self._sync_gateway_subscriptions(force=True)
         self._gateway_task = asyncio.create_task(self._gateway_loop())
+        if self._warning is not None:
+            self._warning_task = asyncio.create_task(self._warning_loop())
         logger.info("[MOMENTUM-PAPER-FEED] source=gateway snapshots+bounded_trades cap=%d",
                     _MAX_SUBSCRIBED_SYMBOLS)
+
+    async def _warning_loop(self) -> None:
+        stream = stream_name(self.settings.redis_stream_prefix, "momentum-warning-bars")
+        offsets = {stream: "$"}
+        while True:
+            try:
+                messages = await self.redis.xread(offsets, block=1000, count=128)
+                handled = 0
+                for name, entries in messages:
+                    for message_id, fields in entries:
+                        offsets[name] = message_id
+                        if fields.get("data"):
+                            await self._handle_warning_event(fields["data"])
+                        handled += 1
+                        if handled % 32 == 0:
+                            await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[MOMENTUM-WARNING] stream failure; coverage UNKNOWN")
+                if self._warning is not None:
+                    self._warning.set_coverage(None)
+                    await self._persist(self._warning.engine.mark_feed_gap(
+                        self._now_ms(), self._now_ms(),
+                    ))
+                await asyncio.sleep(1)
+
+    async def _handle_warning_event(self, data: str | bytes) -> None:
+        if self._warning is None or self._engine is None:
+            return
+        bar = AggregateObservation.from_payload(json.loads(data))
+        observed_ns = wall_time.time_ns()
+        outcome, records = self._warning.observe_aggregate(
+            bar, observed_ns=observed_ns, legacy_active=self._engine.active_symbols,
+        )
+        decision_ns = wall_time.time_ns()
+        records = self._warning.engine.seal_warning_decisions(records, observed_decision_ns=decision_ns)
+        await self._persist(records)
+        if outcome.status != "IGNORED":
+            await self._warning_metrics(
+                event_type="decision", symbol=bar.symbol, observed_ns=observed_ns,
+                observed_decision_ns=decision_ns,
+                gateway_instance_id=bar.gateway_instance_id, generation=bar.generation,
+                status=outcome.status, reason=outcome.reason, signal_start_ms=bar.start_ms,
+                signal_end_ms=bar.end_ms, lineage="observed_aggregate",
+                warning_obs_ns=self._warning.last_warning_ns.get(bar.symbol),
+                signal_sip_ns=None, dropped_total=bar.dropped_total,
+                subscription_status="request_only", subscription_confirmed_ns=None,
+                signals=[{"strategy_code": row.strategy_code, "logical_id": row.logical_id,
+                          "status": row.event_type, "payload": row.payload}
+                         for row in records if row.event_type == "DETECTED"],
+            )
+        if outcome.status in {"ADMITTED", "DROPPED"}:
+            await self._sync_gateway_subscriptions()
+
+    async def _warning_metrics(self, *, event_type: str, **fields: object) -> None:
+        payload = {"version": 1, "event_type": event_type, "source": SERVICE_NAME, **fields}
+        await self.redis.xadd(
+            stream_name(self.settings.redis_stream_prefix, "momentum-warning-metrics"),
+            {"data": json.dumps(payload)},
+            maxlen=int(getattr(self.settings, "market_data_momentum_warning_stream_maxlen", 20_000)),
+            approximate=False,
+        )
 
     async def _gateway_loop(self) -> None:
         offsets = {
@@ -402,18 +516,43 @@ class MomentumPaperService:
                 await self._persist(
                     self._engine.mark_feed_gap(self._feed_gap_started_ms, self._now_ms())
                 )
+                if self._warning is not None:
+                    await self._persist(self._warning.engine.mark_feed_gap(
+                        self._feed_gap_started_ms, self._now_ms(),
+                    ))
                 self._feed_gap_started_ms = None
             records, capped = self._engine.detect_from_snapshots(
                 event.payload.snapshots, completed_at=completed_at,
-                max_symbols=_MAX_SUBSCRIBED_SYMBOLS,
+                max_symbols=(
+                    _MAX_SUBSCRIBED_SYMBOLS - len(
+                        self._warning.desired_symbols(self._engine.active_symbols)
+                        - self._engine.active_symbols
+                    ) if self._warning is not None else _MAX_SUBSCRIBED_SYMBOLS
+                ),
             )
             self._subscription_cap_skips += capped
+            snapshot_decision_ns = wall_time.time_ns()
             await self._persist(records)
+            if self._warning is not None:
+                for row in records:
+                    snapshot = next(item for item in event.payload.snapshots if item.symbol.upper() == row.symbol)
+                    await self._warning_metrics(
+                        event_type="snapshot_entry", observed_ns=wall_time.time_ns(),
+                        observed_decision_ns=snapshot_decision_ns,
+                        gateway_instance_id=(self._warning.epoch or (None, None))[0],
+                        generation=(self._warning.epoch or (None, None))[1],
+                        signal_sip_ns=normalize_ts_ns(snapshot.last_trade_timestamp_ns),
+                        strategy_code=row.strategy_code, symbol=row.symbol,
+                        logical_id=row.logical_id, status=row.event_type,
+                        lineage="legacy_snapshot", payload=row.payload,
+                    )
             if records:
                 await self._sync_gateway_subscriptions()
         elif event_type == "trade_tick":
             raw_payload = envelope.get("payload") or {}
-            if str(raw_payload.get("symbol", "")).upper() not in self._subscribed_symbols:
+            if str(raw_payload.get("symbol", "")).upper() not in (
+                self._subscribed_symbols | self._warning_subscribed_symbols
+            ):
                 return
             event = TradeTickEvent.model_validate(envelope)
             payload = event.payload
@@ -440,7 +579,43 @@ class MomentumPaperService:
                 price=payload.price, size=payload.size,
                 conditions=codes, eligible=eligible, exclusion_reason=reason,
             )
-            await self._persist(self._engine.ingest(trade, allow_detection=False))
+            legacy_records = self._engine.ingest(trade, allow_detection=False)
+            if self._warning is not None:
+                observed_ns = wall_time.time_ns()
+                records = self._warning.observe_trade(
+                    trade, sip_timestamp_ns=stamp_ns, observed_ns=observed_ns,
+                )
+                decision_ns = wall_time.time_ns()
+                records = self._warning.engine.seal_warning_decisions(
+                    records, observed_decision_ns=decision_ns,
+                )
+                await self._persist((*legacy_records, *records))
+                for record in legacy_records:
+                    if record.event_type in {"FILLED", "EXITED"}:
+                        await self._warning_metrics(
+                            event_type="snapshot_entry", symbol=trade.symbol,
+                            observed_ns=observed_ns, signal_sip_ns=stamp_ns,
+                            strategy_code=record.strategy_code, logical_id=record.logical_id,
+                            status=record.event_type, lineage="legacy_snapshot",
+                            payload=record.payload,
+                        )
+                for record in records:
+                    if record.event_type in {"DETECTED", "FILLED", "EXITED"}:
+                        await self._warning_metrics(
+                            event_type="decision", symbol=trade.symbol, observed_ns=observed_ns,
+                            observed_decision_ns=decision_ns, signal_sip_ns=stamp_ns,
+                            gateway_instance_id=(self._warning.epoch or (None, None))[0],
+                            generation=(self._warning.epoch or (None, None))[1],
+                            status=record.event_type, strategy_code=record.strategy_code,
+                            logical_id=record.logical_id,
+                            lineage=self._warning.last_status,
+                            warning_obs_ns=self._warning.last_warning_ns.get(trade.symbol),
+                            first_tick_boundary="observed_print_not_subscription_ack",
+                            subscription_confirmed_ns=None,
+                            payload=record.payload,
+                        )
+            else:
+                await self._persist(legacy_records)
 
     async def _sync_gateway_subscriptions(
         self, *, force: bool = False, desired_override: set[str] | None = None
@@ -449,6 +624,33 @@ class MomentumPaperService:
             desired_override if desired_override is not None
             else (self._engine.active_symbols if self._engine is not None else set())
         )
+        if self._warning is not None:
+            shared = self._warning.desired_symbols(desired) if desired_override is None else desired
+            if len(shared) > _MAX_SUBSCRIBED_SYMBOLS:
+                raise RuntimeError("Momentum shared subscription cap breached")
+            warning_desired = (
+                self._warning.desired_symbols(set()) if desired_override is None else set()
+            )
+            if (
+                force or self._warning_owner_uncertain
+                or warning_desired != self._warning_subscribed_symbols
+            ):
+                warning_event = MarketDataSubscriptionEvent(
+                    source_service=SERVICE_NAME,
+                    payload=MarketDataSubscriptionPayload(
+                        consumer_name="momentum-warning", mode="replace",
+                        symbols=sorted(warning_desired),
+                    ),
+                )
+                self._warning_owner_uncertain = True
+                await self.redis.xadd(
+                    stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
+                    {"data": warning_event.model_dump_json()},
+                    maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
+                    approximate=True,
+                )
+                self._warning_subscribed_symbols = set(warning_desired)
+                self._warning_owner_uncertain = False
         if len(desired) > _MAX_SUBSCRIBED_SYMBOLS:
             raise RuntimeError("Momentum subscription cap breached")
         first_announcement = (
@@ -490,8 +692,18 @@ class MomentumPaperService:
         self._connected = False
         if self._feed_gap_started_ms is None:
             self._feed_gap_started_ms = self._now_ms()
+        if self._warning is not None:
+            self._warning.set_coverage(None)
 
     async def _stop_gateway(self) -> None:
+        warning_task = self._warning_task
+        self._warning_task = None
+        if warning_task is not None and not warning_task.done():
+            warning_task.cancel()
+            try:
+                await warning_task
+            except asyncio.CancelledError:
+                pass
         task = self._gateway_task
         self._gateway_task = None
         if task is not None and not task.done():
@@ -503,7 +715,10 @@ class MomentumPaperService:
         self._connected = False
         self._last_snapshot_at = None
         self._condition_feed_verified = False
-        if self._gateway_owner_claimed or self._subscribed_symbols:
+        if (
+            self._gateway_owner_claimed or self._subscribed_symbols
+            or self._warning_subscribed_symbols or self._warning_owner_uncertain
+        ):
             await self._sync_gateway_subscriptions(force=True, desired_override=set())
 
     async def _persist(self, records: Iterable[MomentumTapeRecord]) -> None:

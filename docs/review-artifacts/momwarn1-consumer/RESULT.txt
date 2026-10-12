@@ -1,0 +1,74 @@
+MOMWARN1-W2 G2 Huygens -- LOCAL BUILD CHECKPOINT, NOT WHOLE-CARD ACCEPTANCE
+Source: additive human G2 approval and approved separate ledgers/whole-bucket policy.
+Priority2; owner Huygens; scope paper engine/service/store/new consumer/tests only.
+Next action: main resolves explicit coverage evidence rule; locate actual 324
+warning-generation inputs/algorithm; G3 owns recorded peak/latency measurement.
+Completion criterion: original causal cases, ledger isolation, cap/drop policy,
+actual generation and reviewed G1/G2/G3 composition. Remaining gaps are not waived.
+Queue read, not edited. E rest/O3 remain blocked; no OMS/latebar/SELL-release work.
+
+WORKTREE / SOURCE
+codex/momwarn1-consumer-20261012 on exact b680c2aff50150ea6130b19ccf0db9e05dfb680d.
+G1 reachable commits017c8d05/b5c0125b cherry-picked unchanged as5c3fe586/e8d26b27.
+G2 touches engine.py,models.py,store.py,warning_window.py,warning_consumer.py,
+services/momentum_paper_app.py,tests/unit/test_momentum_warning.py and this report.
+No G1 file, Settings, display, queue or production edits made by G2.
+
+IMPLEMENTED
+Legacy MOMENTUM_STRATEGIES stays exactly momentum_30s/momentum_60s.
+Warning engines explicitly use momentum_30s_warn/momentum_60s_warn.
+Shared MomentumPaperEvent table; distinct strategy/logical/event keys; compatible
+real fill/exit/sip_ts_ms/quantity/pnl/exit_reason fields. No mixed legacy totals.
+Default store session/completed reads exclude warning rows; seeding checks codes.
+Warning restore loads explicit warning codes, handles interrupted warning paths
+separately; it cannot seed legacy engine or enter legacy restored totals.
+Separate A stream/parser v1 preserves bucket bounds and real local timestamp fields.
+Whole in-window bucket lows remain metadata, never synthetic TradePrint/raw history.
+Warnings high>=1.10low Decimal-exact; cold paper signals20% use explicit bucket
+provenance. Partial boundary/future-to-signal buckets cannot become raw references.
+Aggregate high is a signal observation, not a fill. Real eligible prints only.
+Evaluation-end clock fences queued prints and withdraws >1s-late unpersisted proposals.
+Native +5/-15/600, next-strictly-later eligible fill, no overlap/reset preserved.
+Native model retains existing integer-SIP-ms precision, disclosed on warning rows.
+Cap16 shared unique symbols counts legacy paths, warning candidates and full path
+tracking. Lower G1 warning owner cap is separately honored. Reuse costs no shared
+slot; no active path eviction. New candidates refused when capacity is full.
+Retention60s slides on latest warning. Drop requires no active path, both fully
+known window high/low<10% continuously60s, and retention elapsed. Missing proof,
+unknown coverage or >1s quiet-sample gap resets cool proof. Dropped cooldown60s;
+capacity refusal is not queued and does not reserve a slot.
+Warning-only owner momentum-warning replace requests; legacy momentum-paper owner
+unchanged. G1 handles T-only/no Q/no warmup; local tests issue no provider actions.
+Decision/consumer_sample/snapshot_entry metrics separate provenance, actual trade
+SIPns or bucket bounds, UTC decision/observation time, status and ACK=null.
+Separate A reader yields every32 records. Warning reader failure never invalidates
+healthy legacy snapshot feed. Provider batch fairness remains G1-owned.
+
+VERIFICATION
+26 focused controls pass, including cap, cooling/unknown/active/drop, exactthreshold,
+raw incomplete coverage, no backdating, native exits, protocol and store/restore scope.
+G2 flag-ON neighboring suite and staged G1/G2 results are saved under
+/tmp/momwarn1-g2-20261012/{g2-flag-on-tests,g1-g2-combined-tests}.txt.
+In-memory cap-branch removal and strategy seed-filter removal each produce1RED.
+Ruff and diffcheck pass. No new fixture files; controlled test file<500lines.
+
+PRELIMINARY / BLOCKED EVIDENCE
+Retained claude-sig324 exactly matches main zero-delay candidate keys by
+day/code/symbol/signal timestamp;0 keys unmatched either way. The316 denominator
+is fills only:324 candidates=316FINAL+8NO_FILL (M30three/M60five).
+Retained lead output:143M30/181M60; positive medians8.733/18.573s;20/17negative.
+This is population/output reconciliation, NOT independent warning-generation replay.
+Actual historical A inputs/original generation algorithm not found in bounded
+read-only inventory; no REST/provider request used to fill this evidence gap.
+Frozen WFF raw engine independently replays signal08:51:20.927/13.35,
+next-print fill20.928/13.40 and target23.836/14.20. These are historical model
+timestamps, not live arrivals; target confirmation is later native resolution.
+Causal warning arrival/subscription confirmation/tick receipt WFF replay UNKNOWN.
+G1 v1 request/first-event fields are not ACK or fully known-window evidence.
+CoverageEvidence is explicit and defaults UNKNOWN. Service does not silently
+infer complete raw coverage or cool-drop permission from those fields. Coverage
+rule/integration is still required; exact warm raw/drop acceptance NOT complete.
+No current socket entitlement, recorded3x-peak or tomorrow W4 proof claimed.
+Default G1 tests pass. Forcing new flagON over all G1 tests conflicts with two OFF
+fixtures (default-off/settings and warning-off restore); those belong to G1, untouched.
+No live change, subscription, restart, orders, credentials, GitHub or deployment.

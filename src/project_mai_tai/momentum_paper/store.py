@@ -7,7 +7,7 @@ from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import MomentumPaperEvent
-from project_mai_tai.momentum_paper.models import MomentumTapeRecord
+from project_mai_tai.momentum_paper.models import MOMENTUM_STRATEGIES, MomentumTapeRecord
 
 
 TERMINAL_EVENT_TYPES = frozenset({"FINAL", "NO_FILL", "UNANSWERABLE"})
@@ -49,22 +49,30 @@ class MomentumPaperStore:
             session.commit()
         return len(new_records)
 
-    def load_session(self, session_date: date) -> list[MomentumTapeRecord]:
+    def load_session(
+        self, session_date: date, *, strategy_codes: Iterable[str] = MOMENTUM_STRATEGIES,
+    ) -> list[MomentumTapeRecord]:
         with self.session_factory() as session:
             rows = session.scalars(
                 select(MomentumPaperEvent)
-                .where(MomentumPaperEvent.session_date == session_date)
+                .where(
+                    MomentumPaperEvent.session_date == session_date,
+                    MomentumPaperEvent.strategy_code.in_((*strategy_codes, "momentum_paper")),
+                )
                 .order_by(MomentumPaperEvent.observed_at, MomentumPaperEvent.created_at)
             ).all()
         return [self._record(row) for row in rows]
 
-    def load_completed_since(self, start_date: date) -> list[dict[str, object]]:
+    def load_completed_since(
+        self, start_date: date, *, strategy_codes: Iterable[str] = MOMENTUM_STRATEGIES,
+    ) -> list[dict[str, object]]:
         with self.session_factory() as session:
             rows = session.scalars(
                 select(MomentumPaperEvent)
                 .where(
                     MomentumPaperEvent.session_date >= start_date,
                     MomentumPaperEvent.event_type.in_(TERMINAL_EVENT_TYPES),
+                    MomentumPaperEvent.strategy_code.in_(tuple(strategy_codes)),
                 )
                 .order_by(MomentumPaperEvent.observed_at)
             ).all()
