@@ -622,6 +622,8 @@ class MomentumPaperService:
                         await self._warning_metrics(
                             event_type="snapshot_entry", symbol=trade.symbol,
                             observed_ns=observed_ns, signal_sip_ns=stamp_ns,
+                            gateway_instance_id=(self._warning.epoch or (None, None))[0],
+                            generation=(self._warning.epoch or (None, None))[1],
                             strategy_code=record.strategy_code, logical_id=record.logical_id,
                             status=record.event_type, lineage="legacy_snapshot",
                             payload=record.payload,

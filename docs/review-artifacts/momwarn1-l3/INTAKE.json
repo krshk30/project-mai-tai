@@ -1,0 +1,25 @@
+{
+  "id": "OCT12-MASTER-EVENING-L3-MOMWARN1",
+  "source": "Human MASTER OPEN LIST Oct12 evening",
+  "priority": 2,
+  "owner": "Anscombe sole local G1/G2/G3 composition writer",
+  "status": "assessment_complete_metrics_followup_verified_final_head_proofs_running",
+  "next_action": "Pin metrics-only followup, exact-head preservation/allON/unchanged hotpath; recorded/live-source gates remain blocked",
+  "completion_criterion": "Five actual proofs green and reviewed Tuesday bundle; installation only after Tuesday close and independent approval, Wednesday W4 actual receipts",
+  "base": "860fba4c7d59edff18eb23468ba576dcb83f4d57",
+  "preserved_review": "d8e786102659f882f82a9c1ed88aae9a6b95c39f",
+  "preserved_g1": "94de66a1588e5b9d7ab2f530b03220b744cf5bbd",
+  "preserved_g2": "70b68437f350810b895dde1c9a2a72f7c46a0e5a",
+  "preserved_g3": "399d61cf4a17803f91251d6396980fe7374dfb0c",
+  "asks": [
+    {"id": "L3-P1-RECORDED-A", "status": "blocked_unknown", "next_action": "Obtain approved retained recorded A burst and measured expected peak without a new provider probe", "completion_criterion": "Recorded A at 3x measured expected peak, watched T/Q isolated stall below unchanged 50ms"},
+    {"id": "L3-P2-LIVE-HEALTH", "status": "blocked_source_and_policy", "next_action": "Assess actual completed-bar coverage, cadence policy and metric contract before wiring", "completion_criterion": "Source-backed live health and A-only reversion through every required trigger; UNKNOWN fails closed"},
+    {"id": "L3-P3-CAUSAL-WFF", "status": "blocked_unknown", "next_action": "Distinguish retained SIP model controls from actual A/T arrival evidence", "completion_criterion": "Causal WFF 20.x/13.35 signal, next eligible fill separately labelled with true timestamp lineage"},
+    {"id": "L3-P4-324-GENERATION", "status": "blocked_unknown", "next_action": "Locate retained generation inputs and original lead artifact", "completion_criterion": "Regenerate actual 324 population and positive medians 8.7/18.6; no-warning 20/17 with causal and denominator labels"},
+    {"id": "L3-P5-E860-ALLON", "status": "preliminary_79_allon_pass_final_head_proofs_pending", "next_action": "Run exact-head preserved/allON and unchanged60s hotpath once", "completion_criterion": "Exact final composition all-ON controls and unchanged throughput/stall gate green, without calling mocks recorded evidence"}
+  ],
+  "source_followup_scope": ["new momwarn_metric_contract.py", "momwarn_measurements.py bounded native mapping/precision columns/sparse lifecycle handling", "momentum_paper_app.py Snapshot lifecycle metric epoch only", "new dedicated contract tests and L3 docs"],
+  "reported": "Assessment, missing recorded sources and local441/79/15 control results reported in commentary; not whole-card completion",
+  "performance_coordination": "Initial255 selected suite2.80s ended22:06:27.6Z before hold checkpoint22:06:33Z; no benchmarks during hold. Mendel wait_threads receipt explicitly performance activity finished; resumed controls only after observing completed receipt.",
+  "boundary": "No queue edits, new provider/socket/REST acquisition, live writes/deploy, mirror/ORB/v2 trading changes or extra workers. Main L5, Euler B, Mendel F and Huygens data ownership preserved."
+}

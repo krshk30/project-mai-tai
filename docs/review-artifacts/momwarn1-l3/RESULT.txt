@@ -1,0 +1,37 @@
+L3 CHECKPOINT -- local integration ONLY, MOMWARN NOT INSTALLABLE
+
+Own assessment completed; isolated composition on installed-set sourceE860,
+frozen G1/G2/G3/d8 branches preserved. Metrics-only source scope in INTAKE.json
+and METRICS_CONTRACT.txt. No OMS/mirror/v2/ORB trading source delta againstE860.
+No health-v2 runtime schema/policy relax, flags/catalog thresholds unchanged.
+
+Local preliminary verification:
+441 selected preservation/contract/paper/gateway/catalog tests PASS9.03s.
+79 explicit installed69+Sunday3+warningON controls PASS6.00s.
+Latest dedicated metrics contract15controls PASS0.96s.
+Ruff and diffcheck PASS. Exact-head reruns/60s control pending at this checkpoint.
+Receipts:/tmp/momwarn1-l3-e860-preserved-final.xml,
+/tmp/momwarn1-l3-e860-allon.xml,/tmp/momwarn1-l3-contract-final.xml.
+
+Initial255 suite had254PASS/1 subprocess import failure due shared editable
+environment pointing at main checkout; no source repair/assertion weakening.
+Explicit worktree PYTHONPATH=src fixed the environment. One collection command
+used nonexistent test_momentum_trade_conditions.py and ran0; corrected to
+test_momentum_paper_conditions.py. Small through-composition test exposed sparse
+FILLED payload gap:13PASS/1FAIL, fixed mapping rather than weakening test.
+
+BLOCKED proofs P1/P2/P3/P4 remain exactly as ASSESSMENT.txt:
+recorded A burst + measured expected peak + socket entitlement UNKNOWN;
+reviewed OMS cadence/bar expectation and actual complete v2 health unwired;
+actual WFF A/T arrival chronology UNKNOWN (REST SIP model != live arrival);
+actual324 generation inputs/lead JSON absent (retained table summary != replay).
+Dormant empty-window cap release policy still unresolved. Metrics counters and
+clock-driven terminal lifecycle observability remain followup dependencies.
+
+Performance hold honoured after initial focused suite ended; no burst/replay or
+large parsing started during hold. Resumed after Mendel completion receipt
+explicitly reported performance activity finished, not inferred from idle alone.
+Any forthcoming60s control is retained-price/mock OMS, not full-market A proof.
+Tuesday target is not approval; no bundle advertised ready while four proofs
+blocked. WednesdayOct14 W4 NOT RUN. No automatic install/test scheduled here.
+No provider/REST/socket acquisition, live/queue/GitHub writes or extra workers.

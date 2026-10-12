@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import json
 import math
 from collections import OrderedDict, deque
 from datetime import date, datetime, time
 from typing import TextIO
 from zoneinfo import ZoneInfo
+
+from project_mai_tai.momwarn_metric_contract import paper_metric_rows
 
 NS = 1_000_000_000
 STEP_NS = 10 * NS
@@ -50,6 +53,8 @@ DETAIL_FIELDS = (
         "status", "cap_status", "signal_basis", "signal_sip_ns", "signal_sip_start_ns",
         "signal_sip_end_ns", "observeddecision_ns", "warning_obs_ns", "entry_ns",
         "entry_price", "outcome", "exit_ns", "exit_price", "pnl", "clock_status",
+        "entry_timestamp_precision", "entry_sip_start_ns", "entry_sip_end_ns",
+        "exit_timestamp_precision", "exit_sip_start_ns", "exit_sip_end_ns",
         "clock_skew_bound_ns", "sip_latency_raw_ms", "sip_latency_lower_ms",
         "sip_latency_upper_ms",
     )
@@ -104,7 +109,7 @@ def latency(event: dict) -> dict:
         sip = event.get("signal_sip_ns")
         if integer(sip) and 0 < sip <= decision <= event.get("_read_ns", event["observed_ns"]):
             result["sip_latency_raw_ms"] = (decision - sip) / 1_000_000
-    elif event.get("signal_basis") == "bucket_sufficient":
+    elif event.get("signal_basis") in {"bucket_sufficient", "integer_ms_bounds"}:
         start, end = event.get("signal_sip_start_ns"), event.get("signal_sip_end_ns")
         if (
             integer(start) and integer(end)
@@ -155,9 +160,17 @@ class MeasurementCollector:
                 raise ValueError("invalid v1 envelope or future observation")
             # JSON accepts NaN by default; reject it anywhere, including nested coverage.
             json.dumps(event, allow_nan=False)
+            paper_rows = paper_metric_rows(event)
         except (ValueError, TypeError, OverflowError, UnicodeError, RecursionError):
             self.invalid += 1
             return False
+        if paper_rows is not None:
+            # Two native ledger rows at most. Stable child IDs keep Redis replay
+            # deduplication without truncating/colliding long original IDs.
+            results = [self.record(row, read_ns=read_ns, stream_id=hashlib.sha256(
+                f"{stream_id}:{index}".encode()
+            ).hexdigest()) for index, row in enumerate(paper_rows)]
+            return all(results)
         if stream_id in self.seen:
             return False
         event["_read_ns"] = read_ns
@@ -181,7 +194,8 @@ class MeasurementCollector:
                 return False
             if self.last_sample_ns is not None and event["observed_ns"] <= self.last_sample_ns:
                 self.late += 1
-            if kind == "decision" and self.start_ns <= event["observed_ns"] < self.end_ns:
+            if (kind == "decision" and not event.get("native_lifecycle_update")
+                    and self.start_ns <= event["observed_ns"] < self.end_ns):
                 capture = event.get("observeddecision_ns")
                 key = (*epoch(event), event.get("ledger"), event.get("lineage_id"),
                        capture if integer(capture) else event["observed_ns"])
@@ -221,6 +235,10 @@ class MeasurementCollector:
             self.invalid += 1
             return False
         if not prior or event["observed_ns"] > prior["observed_ns"]:
+            if prior and event.get("native_lifecycle_update"):
+                # Sparse native updates may retain known fields only within the
+                # exact source epoch/ledger/logical ID, never a proximity pair.
+                event = {**prior, **{key: item for key, item in event.items() if item is not None}}
             record[side] = event
         self.details.move_to_end(key)
         if len(self.details) > self.comparison_capacity:
