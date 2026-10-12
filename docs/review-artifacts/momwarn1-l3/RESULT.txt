@@ -5,7 +5,7 @@ frozen G1/G2/G3/d8 branches preserved. Metrics-only source scope in INTAKE.json
 and METRICS_CONTRACT.txt. No OMS/mirror/v2/ORB trading source delta againstE860.
 No health-v2 runtime schema/policy relax, flags/catalog thresholds unchanged.
 
-Local preliminary verification:
+Local preliminary verification (superseded by pinned results below):
 441 selected preservation/contract/paper/gateway/catalog tests PASS9.03s.
 79 explicit installed69+Sunday3+warningON controls PASS6.00s.
 Latest dedicated metrics contract15controls PASS0.96s.
@@ -35,3 +35,33 @@ Any forthcoming60s control is retained-price/mock OMS, not full-market A proof.
 Tuesday target is not approval; no bundle advertised ready while four proofs
 blocked. WednesdayOct14 W4 NOT RUN. No automatic install/test scheduled here.
 No provider/REST/socket acquisition, live/queue/GitHub writes or extra workers.
+
+PINNED FINAL CODE VERIFICATION aa355102
+442 preservation tests PASS9.09s,15 warnings retained (deprecations + XMLproperty).
+80 explicit installed69+Sunday3+warningON controls PASS5.83s.
+15 new dedicated contract controls included in both; not additive to442/80.
+Single unchanged60s hotpath PASS61.18s:14400events in60.000354625s,
+239.9985815events/s; max loopstall14.2865141ms, handler4.2007920ms;
+1GC max0.143125ms;1bootstrapDBtransaction,0afterfirstsecond,0buysqueued.
+Scope: offline retained quote/trade prices, controlled in-band gate/200msDBdelay,
+exits mocked. NOT full-market A3xpeak, no measured expected A peak denominator,
+no actual broker/order/execution latency. No threshold/harness changes or retries.
+Receipts:
+/tmp/momwarn1-l3-aa355102-preserved.xml
+/tmp/momwarn1-l3-aa355102-allon.xml
+/tmp/momwarn1-l3-aa355102-hotpath60.xml
+Ruff/diffcheck PASS. Final documentation-only receipt commit changes no runtime
+from tested aa355102. Native allON means explicit retained sanitized configuration,
+not a new live proc-env read or blanket ON over default-OFF control fixtures.
+
+COMPLETED scope: assessment, E860 warning-only composition, bounded lifecycle
+metrics adapter and source-preserving local controls. P5 local controls reported;
+main review still needed. This is NOT whole MOMWARN completion/review/install.
+BLOCKED scope:P1/P2/P3/P4 source/recorded gates above, dormant cap policy.
+QUEUED local followup: exact consumer counter semantics and clock-driven terminal
+metrics, reviewed health source adapter/predicate, actual recorded WFF/324 input
+generation. No claimed actual arrival history reconstructed from REST.
+PAUSED boundary: GitHub remains human-suspended; no publication. Performance hold
+was temporary and ended on explicit Mendel receipt; no unfinished benchmark left.
+No future work execution is scheduled by this checkpoint. TueOct13 afterclose
+and WedOct14 actual test remain targets conditional on genuine five-proof review.
