@@ -15,6 +15,7 @@ from project_mai_tai.oms import service as service_module
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
 from tests.unit import test_ownmix1_entry_binding as mi
+from tests.unit import test_confirmation_exit_fanout as confirmation
 from tests.unit.managed_entry_fixtures import bind_managed_entry
 from tests.unit.test_v2_exit_paper_isolation import _FakeRedis, _make_sf
 
@@ -342,3 +343,70 @@ async def test_recorded_mi_orb_two_and_controlled_v2_180_sell_only_own_shares(re
             mi._entry(session, mi.ORB_COID).strategy_id, mi._entry(session).strategy_id,
         ]
         assert session.get(OmsManagedPosition, row_id).status == "closed"
+
+
+@pytest.mark.asyncio
+async def test_release_stays_durable_when_ownership_read_fails(monkeypatch):
+    service, sessions, clock = confirmation._uncovered_service(monkeypatch)
+    confirmation.set_protect_base(
+        service, sessions, confirmation.WEBULL, confirmation.SYMBOL, "known-protect-base",
+    )
+    with sessions() as session:
+        row = service.store.get_open_managed_position(
+            session, broker_account_name=confirmation.WEBULL, symbol=confirmation.SYMBOL,
+        )
+        row_id, position = row.id, service._hydrate_v2_position(row)
+    service._v2_managed_sell_owned_quantity = AsyncMock(
+        side_effect=RuntimeError("CONTROLLED ownership reader failure"),
+    )
+    assert await service._emit_v2_exit_on_loop_claimed(
+        confirmation.WEBULL, confirmation.SYMBOL, position, 10., kind="HARD",
+        reference_price=9.4, reason="oms_v2_managed_exit:CW_HARD_STOP", bid=9.4,
+        close_on_fill=True, expected_managed_row_id=str(row_id),
+    ) == "refused"
+    assert len(service.broker_adapter.cancel_pair_calls) == 1
+    assert service.broker_adapter.submitted == []
+    fresh = confirmation._restarted(service, sessions)
+    assert await fresh._check_webull_uncovered_shares() == 0
+    clock["now"] += confirmation.timedelta(seconds=31)
+    assert await fresh._check_webull_uncovered_shares() == 1
+    assert confirmation._uncovered_incidents(sessions)[0]["cause"] == "pair_released_not_sold"
+    with sessions() as session:
+        assert session.get(OmsManagedPosition, row_id).status == "open"
+
+
+@pytest.mark.asyncio
+async def test_first_malformed_refusal_stays_durable_if_retry_ownership_read_fails(monkeypatch):
+    adapter = confirmation._FanoutAdapter()
+    adapter.submit_results.append([confirmation.lgps_133416_malformed_client_order_id_reject()])
+    service, sessions = confirmation._service(fanout=True, adapter=adapter)
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    original = service._v2_managed_sell_owned_quantity
+    reads = 0
+
+    async def read(**kwargs):
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            raise RuntimeError("CONTROLLED retry ownership reader failure")
+        return await original(**kwargs)
+
+    service._v2_managed_sell_owned_quantity = read
+    with pytest.raises(RuntimeError, match="CONTROLLED retry ownership reader failure"):
+        with sessions() as session:
+            row = service.store.get_open_managed_position(
+                session, broker_account_name=confirmation.WEBULL, symbol=confirmation.SYMBOL,
+            )
+            await service._emit_v2_managed_sell(
+                session, row, intent_type="close", quantity=1, reference_price=9.9,
+                reason="oms_v2_managed_exit:CONFIRMATION_EXIT", bid=9.9,
+                confirmation_context={"session": "NORMAL"},
+            )
+    assert len(adapter.submitted) == 1
+    with sessions() as session:
+        orders = session.scalars(select(BrokerOrder).where(BrokerOrder.side == "sell")).all()
+        assert len(orders) == 1 and orders[0].status == "rejected"
+        assert orders[0].client_order_id == adapter.submitted[0].client_order_id
+        intent = session.get(TradeIntent, orders[0].intent_id)
+        assert intent is not None and intent.status == "rejected"
+        assert session.scalars(select(Fill)).all() == []

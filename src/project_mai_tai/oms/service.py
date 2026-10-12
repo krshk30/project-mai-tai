@@ -9872,6 +9872,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             "managed_row_id": str(row.id), "strategy_code": row.strategy_code,
             "broker_account_name": row.broker_account_name, "symbol": row.symbol,
         }
+        # Release evidence belongs to this session. Finish its transaction before
+        # opening the independent reader, even if the ownership check refuses the sell.
+        session.commit()
         quantity = await self._v2_managed_sell_owned_quantity(
             **owned_quantity_args, requested_quantity=quantity,
         )
@@ -10028,10 +10031,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             and self._webull_confirmation_close_can_retry_corrected(reports)
         ):
             corrected_request = self._corrected_webull_confirmation_close_request(request)
-            if (corrected_request is not None
-                    and await self._v2_managed_sell_owned_quantity(
-                        **owned_quantity_args, requested_quantity=quantity,
-                    ) == quantity):
+            if corrected_request is not None:
+                # Preserve the first refusal before the new reader or retry can fail.
+                session.commit()
+                if await self._v2_managed_sell_owned_quantity(
+                    **owned_quantity_args, requested_quantity=quantity,
+                ) != quantity:
+                    corrected_request = None
+            if corrected_request is not None:
                 corrected_reports = await self.broker_adapter.submit_order(corrected_request)
                 terminal_events = await self._record_order_reports(
                     session=session,
