@@ -1,7 +1,7 @@
 # EDGEPROT1 lane B: NOT READY
 Base: b680c2aff50150ea6130b19ccf0db9e05dfb680d. Owner: B sole writer; integrator queue untouched.
-Source: operator lane assignment and FULL `/Users/velkris/.codex/attachments/05aa46ac-d3ba-45f4-993a-c47cdfb6aac2/Pasted text.txt`.
-Assessment preceded edits. Later operator scope/peak rulings amend these same IDs.
+Source: integrator lane assignment and diagnostic instructions; operator-approved FULL card `/Users/velkris/.codex/attachments/05aa46ac-d3ba-45f4-993a-c47cdfb6aac2/Pasted text.txt`.
+Assessment preceded edits. Later integrator scope findings and peak diagnostic instructions amend these same IDs; they are not operator rulings.
 
 | ID | Priority | Status | Next action / completion criterion |
 | --- | --- | --- | --- |
@@ -25,7 +25,7 @@ Captured actual OMS PID2431239 flags are sanitized in live-flags.env; no new fla
 
 Scope: software CW_TARGET ceiling for both brokers/all sessions and Webull exit-only pair (E1/existing RTH attach).
 Schwab adapter, Schwab exit_only_oco edge/native-entry rounding, Webull master-combo and realignment retain original source/tests.
-Broader native rounding was explicitly superseded and removed. No stop-type, buy-drift, ORB/shared-account or A worktree change.
+The integrator's scope clarification removed the broader native-rounding proposal. No stop-type, buy-drift, ORB/shared-account or A worktree change.
 E3 safety fix: target is a durable resting order, not an EH sticky retry decision that could replace a newer stop/floor/flip.
 Existing EH test now asserts durable working target/floor and no blind target retry; flip retry remains tested. No waiver/xfail.
 Proof: baseline new controls27F/1P; scoped preservation537P/1 warning; final load13500/60.198050s=224.260/s, stall3.998ms (<50 unchanged).
@@ -33,10 +33,10 @@ Mutations: market target18F; nearest floor2F; serial intake2F. Restored. Peak co
 E1 be7c86b0 + B applies cleanly: controlled CORE120 pair2.62/2.29, conditional target fill/no duplicate PASS; existing E1 fixture2.61 fails.
 Candidate latching NOT implemented: cold read lacks a bound entry threshold; a maximum-bid latch alone cannot establish freshness/episode/safety priority.
 Source assessment: `_managed_v2_symbols` and `_rehydrate_managed_v2_symbols` retain only account/symbol; `_V2ManagedSnapshot` obtains row ID/entry after the await.
-Assessed plan, pending operator review: publish an immutable row-ID/entry cache after committed managed writes, at boot and on poll re-enrollment; invalidate replaced/closed episodes.
+Assessed plan, awaiting human design review requested by main: publish an immutable row-ID/entry cache after committed managed writes, at boot and on poll re-enrollment; invalidate replaced/closed episodes.
 Then capture one fresh target decision in quote intake before any await, bound to that row; before release/submission validate the same row and prioritize latest hard-stop/floor/flip.
 Retain existing dedup/cancellation and target ceiling. Add replacement/rollback, stale/future quote, safety-during-read and concurrent-quote controls; keep the timestamp assertion.
 Alternative bounded quote evidence preserves an observation, not a cold-read target decision; it cannot justify backdating `cw_decided_at`. No cache/latch built.
-Latest operator ruling preserves the RED control and NOT READY build; no deeper mechanism before assessed-plan review. Integrator owns other work/queue.
+Latest integrator diagnostic instruction preserves the RED control and NOT READY build; no deeper mechanism until the human design-review reply. Integrator owns other work/queue.
 Interim assessment, E3/load results and all historical/peak/composition blockers reported. This local candidate is not pin/merge/install-ready.
 Reproduce combined proof by archiving b680, applying E1 and this commit's diff in an isolated copy, then running combined_replay.py with that copy on PYTHONPATH.
