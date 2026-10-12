@@ -18,3 +18,12 @@ Committed-load guards:3 explicit reload controls RED in0.50s beforefix, GREEN in
 Final isolated E1+B:94P/1F/1 load deselected in3.89s; only E1 frozen2.61 fixture fails; controlled CORE120 LIMIT2.62/STOP2.29/no duplicate PASS.
 AST: four crossing controls/decorators, HOTFIX1 60s controls and A-owned edge function unchanged; entire Schwab adapter unchanged. Ruff/diffcheck PASS.
 All-on:69 captured OMS settings, paper routing substituted, both broker controls PASS. Archive arrival substitution is controlled; MNDR20s cause UNKNOWN; no counterfactual recorded acceptance/fill.
+
+THREE-FINDING REVIEW FOLLOW-UP (f368->local repair; main exact-head approval pending):
+Initial6 regressions RED in0.94s onf368;100ms post-reservation SELECT stall109.614/106.444ms. New worker-only DTO reads5.303/2.785ms; main supplied prelim14P/1.12s4.222/2.601ms, not finalreview.
+Final15 dedicated cases include SAVEPOINT ghosts/rollback survival/active-root commit, delayed and lazy SELECT fences/ABA, cleanup, non-ORM frozen DTO/worker Session separation/unbound merge. BoundTargetRow fields remainexact4.
+Final scoped preservation639P/3 load deselected/7 existing warnings in23.44s; original624 retained.
+Final exact-source3 load controls PASS in181.21s: B13500/60.147381s=224.449/s,32.909ms maxstall,1106 evaluations; HOTFIX1 ON239.999/s24.151ms stall22.432ms handler1then0 DBtx0GC;OFF239.997/s35.014ms27.967ms0DBtx0GC.
+Original four-cross full AST unchanged from3b58c569 SHA256bf51097ca83037831034f73d67db77f1e933d3b3a055ee8d9de2e0eefad6028d. OriginalB50ms gate unchanged. Ruff/diffcheck PASS.
+Isolated0dc4d78a+frozenfollowup patch110P/1 load deselected in5.24s; E1pair2.62/stop2.29/no duplicate, all-on/softwaretargets preserved. No main/A/F/queue/prod/GitHub edits.
+Historical MNDR20s/initial68.446ms causes UNKNOWN; new refresh regression is distinct. No O3 cap/latebar/Fmirror scope, cross-process cache observation or listener-detachment claim. Next-install-only independent exact-head review remains required.

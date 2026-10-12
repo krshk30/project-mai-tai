@@ -458,6 +458,15 @@ class _CWTargetDecision:
 
 
 @dataclass(frozen=True)
+class _CWTargetSellSnapshot:
+    managed_row_id: str
+    entry_order_id: str
+    entry_price: Decimal
+    current_quantity: int
+    status: str
+
+
+@dataclass(frozen=True)
 class _CWFlipBinding:
     """One account's ownership answer for an account-neutral ATR observation."""
 
@@ -5338,6 +5347,18 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             and getattr(row, "status", "open") == "open"
         )
 
+    @staticmethod
+    def _read_cw_target_sell_snapshot(session, managed_row_id):
+        value = session.execute(select(
+            OmsManagedPosition.id, OmsManagedPosition.entry_order_id,
+            OmsManagedPosition.entry_price, OmsManagedPosition.current_quantity,
+            OmsManagedPosition.status,
+        ).where(OmsManagedPosition.id == managed_row_id)).one_or_none()
+        if value is None:
+            return None
+        return _CWTargetSellSnapshot(str(value.id), str(value.entry_order_id or ""),
+            Decimal(str(value.entry_price)), int(value.current_quantity), value.status)
+
     def _take_cw_target_decision(self, key, snapshot):
         decision = self.__dict__.get("_cw_target_decisions", {}).pop(key, None)
         if decision is None or self._cw_floor_exit_enabled:
@@ -9953,9 +9974,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             ):
                 return _ManagedSellEvents(reservation=reservation)
         if confirmation_context and "cw_target_bound_row_id" in confirmation_context:
-            # The rare sell path revalidates AFTER the reservation await as well.
-            session.refresh(row)
-            if not self._cw_target_binding_matches(row, confirmation_context):
+            # Fresh ownership read AFTER reservation; no live Session/ORM object crosses threads.
+            managed_row_id = row.id
+            current = await self._run_db(
+                lambda read_session: self._read_cw_target_sell_snapshot(read_session, managed_row_id),
+                commit=False,
+            )
+            if current is None or not self._cw_target_binding_matches(current, confirmation_context):
                 return _ManagedSellEvents(reservation=reservation)
         metadata = {
             "oms_v2_managed_exit": "true",
