@@ -1,5 +1,37 @@
 L3-P2 -- LOCAL SOURCE-WIRING CANDIDATE, MAIN REVIEW REQUIRED, NOT LIVE PROOF
 
+FIRST-DUE FOLLOWUP: human main reviewed f5a and explicitly approved LOCAL
+conditional07:00start/60s interval =>07:01first closed due, not absence inference.
+Implemented/tested1db4edf15218340297569f92ca60ed988bd55c77. Required additional
+source_config keys: v2_first_bar_start_et="07:00",
+v2_bar_interval_seconds=60 (int, not bool), v2_first_bar_source_ref=actual reviewed
+source/settings reference. Existing v2_expectation_ref/kind/start/source lane
+also required. Live nonempty-watchlist source cannot fall back to blanket pre07.
+Only schwab_pricehistory_same_day accepts this conditional predicate; uncalled
+anchored lane cannot prove current activity. Legacy direct pre07 receipts remain
+component-only compatibility controls, not live source setup.
+
+N/A reason=sourced_before_first_due, lateness=null, derived UTC first_due_wall_ns;
+configuration provenance retained through schema2 reader validation. It expires
+at first due both by observation and by validation clock; a fresh old N/A cannot
+extend the exception across due. At/after07:01 expected current07:00bar is
+applicable. Missing completed probe remains null; known lateness is elapsed time
+from explicit due, not fabricated completion0. >5s remains A-only auto-revert.
+Fixed OMS slow-duration5s unchanged;15+5 source-age proposal unchanged, still
+needs actual numeric flag/proc receipt and reviewed instance/baseline evidence.
+
+Exact-head45PASS0F in0.68s, Ruff/diff PASS. Source/proc controlled tests only,
+not a performance timing run or actual production proof.
+Receipt:/tmp/momwarn1-l3-first-due-controls.xml
+Controls:07:00:59N/A;07:01due;07:01:05allowed;07:01:05.000000001missing-bar
+revert A only, other ownerT/Q intact; completed first due probe applicable;
+missing/malformed source refs/start/interval/uncalled lane UNKNOWN; expired N/A
+refused. Initial fixture accidentally placed a future+1s probe at exactdue; fixture
+corrected to actualdue while independent future-evidence refusal test retained.
+Original readiness gap below is historical; local predicate now approved/built.
+Actual source setup/provenance and feature/pin/deployment approval still NOT OWED
+BY THESE CONTROLLED TESTS and remain pending independently.
+
 Source scope: G1 gateway/WarningHealthReader, existing G3 proposed health schema,
 new momwarn_live_health.py, dedicated source controls; no OMS/v2/ORB changes.
 Live read rejects external schema1/2 placeholder receipts. It requires explicit

@@ -1,5 +1,16 @@
 L3 local checkpoint -- NOT FEATURE COMPLETE / NOT INSTALLABLE
 
+LATEST SOURCE FOLLOWUP:1db4edf15218340297569f92ca60ed988bd55c77, explicit
+source_config first-bar start07:00 +interval60s derives first closed due07:01.
+Main approved conditional LOCAL predicate, not actual source setup/live proof.
+45 exact-head source/contract controls PASS0F (XML first-due-controls), Ruff and
+diff PASS. Changes limited to momwarn_health_contract.py, momwarn_live_health.py,
+market_data/momentum_warning_watchdog.py and dedicated live_health tests.
+No performance/timing runs during Euler diagnostic; no new final allON claim.
+Metrics source still byte-identical to reviewed d869; WFF source still1afc.
+Latest documentation commit following this adds no code. Previous code/head
+receipts below remain accurately scoped rather than silently relabelled latest.
+
 Code heads:
 d8698617b169109a0bd96bcc4d990b90b91a24c3 -- metrics-only repair,131PASS0F;
 main independently reviewed/closed R1/R2 as local measurement repair only.
@@ -33,7 +44,8 @@ Genuine missing inputs / review dependencies:
 P1: actual recorded Massive A burst, entitlement/provenance and MEASURED expected
 peak denominator. Cannot substitute synthetic frames or aggregate volume/TQ math.
 P2: reviewed actual PID/start/timezone/cadence/probe setting refs, complete
-watched-bar expectation, first07:00bar ->07:01due predicate. No placeholder health
+watched-bar expectation and first-bar config evidence (predicate now locally
+approved/implemented). No placeholder health
 producer accepted. See LIVE_HEALTH_REVIEW.txt; no runtime setup/install here.
 P4: original c1 aggregate generator/command and retained qualifying1s inputs.
 Recovered outputs reproduce statistics but not original generation/availability.
