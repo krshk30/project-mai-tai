@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, DashboardSnapshot, TradeIntent
+from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, TradeIntent
 from project_mai_tai.fanout_outcome_consumer import FanoutOutcomeJournal, MIRROR_REFUSAL_PREFIX, OUTCOME_SNAPSHOT_TYPE
 from project_mai_tai.oms.mirror_retained_hold import row_id
 from project_mai_tai.settings import Settings
@@ -471,3 +471,67 @@ async def test_final_size_refusal_off_loop_durable_native_and_cold(lane, monkeyp
     assert not s.webull_resting_active and not s.fanout_webull_claimed
     await service._evaluate_webull_mirror_deferred_resubmits(event.payload.symbol)
     assert not queued(lane)
+
+
+@pytest.mark.parametrize("proof", ["filled", "partially_filled", "fill_row"])
+@pytest.mark.asyncio
+async def test_historical_fill_retirement_cannot_pause_or_rearm(lane, proof):
+    from tests.unit.test_mirrorhold1_session_duplicate_scan import prepare, seed_order, dispatch
+
+    service, client, factory, clock = lane
+    event = prepare(lane)
+    order_id = seed_order(lane, event, status="cancelled" if proof == "fill_row" else proof,
+        metadata={k: event.payload.metadata[k] for k in ("fanout_segment_id", "fanout_slot_id")})
+    if proof == "fill_row":
+        with factory() as session:
+            order = session.get(BrokerOrder, order_id)
+            session.add(Fill(order_id=order.id, strategy_id=order.strategy_id,
+                broker_account_id=order.broker_account_id, symbol=order.symbol, side="buy",
+                quantity=Decimal(1), price=Decimal("2.27"), filled_at=clock[0]))
+            session.commit()
+    assert dispatch(lane, event) == "mirrorhold_mirror_filled"
+    assert state(lane, event)["phase"] == "retired"
+    assert state(lane, event)["reason"] == "mirror_filled"
+    clock[0] += timedelta(seconds=1)
+    service._mirrorhold_observe_intent(cancel_for(event, clock))
+    clock[0] += timedelta(seconds=1)
+    fresh = event_for(lane, symbol="AIXI", segment=event.payload.metadata["fanout_segment_id"], stop="2.36")
+    fresh.payload.metadata["fanout_slot_id"] = event.payload.metadata["fanout_slot_id"]
+    quote(lane, fresh, "2.27")
+    await service.process_trade_intent(fresh)
+    assert state(lane, event)["phase"] == "retired"
+    assert state(lane, event)["reason"] == "mirror_filled"
+    assert client.calls.get("place", 0) == 0
+
+
+def test_uncertain_dispatch_retains_wait_but_native_claim_is_not_released(lane):
+    from tests.unit.test_mirrorhold1_session_duplicate_scan import prepare, seed_order, dispatch
+
+    event = prepare(lane)
+    seed_order(lane, event, status="pending")
+    assert dispatch(lane, event) == "mirrorhold_dispatch_uncertain"
+    assert state(lane, event)["phase"] == "held"
+    strategy, native = native_claim(event)
+    FanoutOutcomeJournal(lane[2]).bootstrap(strategy.apply_fanout_outcome,
+        active_segments={event.payload.symbol: native.fanout_segment_id}, now=lane[3][0])
+    assert native.fanout_webull_claimed
+    assert native.fanout_claim_outcome == "mirror_uncertain"
+    assert lane[0]._mirrorhold_prepare_queue("AIXI", [row_id(event)]) == []
+    assert lane[1].calls.get("place", 0) == 0
+
+
+def test_gate_receipt_and_feedback_scan_are_reported_separately(lane, caplog):
+    from tests.unit.test_mirrorhold1_session_duplicate_scan import prepare, seed_order, dispatch
+    from project_mai_tai.fanout_segment_store import SNAPSHOT_TYPE as SEGMENT_SNAPSHOT
+
+    event = prepare(lane)
+    seed_order(lane, event, status="pending")
+    with lane[2]() as session:
+        row = session.scalar(select(DashboardSnapshot).where(DashboardSnapshot.snapshot_type == SEGMENT_SNAPSHOT))
+        row.payload = {**row.payload, "active": None}
+        session.commit()
+    assert dispatch(lane, event) == "mirrorhold_segment_identity_unproven"
+    legacy = "[OMS-MIRRORHOLD1] account=live:orb symbol=AIXI phase=refused reason=mirrorhold_segment_identity_unproven orders_considered=0"
+    assert legacy in caplog.text
+    assert "slot=" + event.payload.metadata["fanout_slot_id"] in caplog.text
+    assert "orders_considered=0 feedback_orders_considered=1 outcome=could_not_tell" in caplog.text
