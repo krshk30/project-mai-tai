@@ -1,0 +1,19 @@
+{
+  "provenance": "Human EDGEPROT1 root card, 2026-10-12. Controlled replay inputs, not raw broker receipts or an actual counterfactual fill.",
+  "account": "live:orb",
+  "symbol": "MNDR",
+  "quantity": "120",
+  "entry_price": "2.49",
+  "entry_at": "2026-10-12T09:06:48-04:00",
+  "edge_attempt_at": "2026-10-12T09:30:06.023-04:00",
+  "target_pct": 5.0,
+  "stop_pct": 8.0,
+  "raw_target": "2.6145",
+  "raw_stop": "2.2908",
+  "wire_target": "2.61",
+  "wire_stop": "2.29",
+  "first_target_print_at": "2026-10-12T09:30:14.567-04:00",
+  "first_target_print_price_floor": "2.6145",
+  "reported_late_fill_at": "2026-10-12T09:30:27.050-04:00",
+  "reported_late_fill_price": "2.3113"
+}

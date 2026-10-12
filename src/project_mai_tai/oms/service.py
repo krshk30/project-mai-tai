@@ -11691,7 +11691,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 self._v2_rth_edge_bracket_last_try[key] = now
                 self._v2_rth_edge_bracket_attempts[key] = attempts + 1
                 try:
-                    await self._emit_v2_rth_edge_bracket(
+                    armed = await self._emit_v2_rth_edge_bracket(
                         acct=acct, symbol=symbol, edge_et=edge, rearm=rearm
                     )
                 except Exception:
@@ -11701,7 +11701,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         acct, symbol, attempts + 1,
                     )
                 else:
-                    self._v2_rth_edge_bracket_done.add(key)
+                    if armed is False:
+                        # A Webull reservation/ownership deferral placed nothing. Preserve
+                        # the attempt budget so an eventual release can still be protected.
+                        self._v2_rth_edge_bracket_attempts[key] = attempts
+                        self._v2_rth_edge_bracket_last_try.pop(key, None)
+                    else:
+                        self._v2_rth_edge_bracket_done.add(key)
 
     def _v2_stand_down_rearm_due(self, acct: str, symbol: str, *, now: datetime) -> bool:
         """True when a bracket CLEARED on a position we still hold — the re-arm case (#646 Part 3).
@@ -11731,9 +11737,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
     async def _emit_v2_rth_edge_bracket(
         self, *, acct: str, symbol: str, edge_et: datetime, rearm: bool = False
-    ) -> None:
+    ) -> bool | None:
         """Place the exit-only OCO for one still-held pre-market position. Raises on failure so the
         caller can count the attempt and leave the software exit in charge."""
+        if self._is_v2_webull_account(acct):
+            return await self._emit_v2_rth_edge_webull_protection(
+                acct=acct, symbol=symbol, edge_et=edge_et, rearm=rearm
+            )
         events: list = []
         with self.session_factory() as session:
             row = self.store.get_open_managed_position(
@@ -11847,6 +11857,61 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             session.commit()
         for ev in events:
             await self._publish_order_event(ev)
+
+    async def _emit_v2_rth_edge_webull_protection(
+        self, *, acct: str, symbol: str, edge_et: datetime, rearm: bool = False
+    ) -> bool:
+        """Reuse the bare-fill attach, including its episode binding and durable pair handle."""
+        key = (acct, symbol.upper())
+        with self.session_factory() as session:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if (row is None or row.strategy_code != "schwab_1m_v2"
+                    or int(row.current_quantity) <= 0 or float(row.entry_price) <= 0):
+                return True
+            entry_time = row.entry_time
+            if entry_time is not None and entry_time.tzinfo is None:
+                entry_time = entry_time.replace(tzinfo=UTC)
+            if not rearm and entry_time is not None and entry_time >= edge_et.astimezone(UTC):
+                return True
+            account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == acct))
+            entry = self._find_oco_entry_order(session, acct, symbol, row=row)
+            if account is None or account.provider != "webull" or entry is None:
+                return False
+            if self.store.get_open_exit_reserved_quantity(
+                session, broker_account_id=account.id, symbol=symbol,
+                include_native_stop_guard=False,
+            ) > 0:
+                self.logger.info(
+                    "[OMS-V2-RTH-EDGE-BRACKET] %s %s deferred: software exit reserves shares",
+                    acct, symbol,
+                )
+                return False
+            # Webull has no armed-OCO reader. A known pair must never be duplicated, even
+            # while its durable handle write is pending or its ownership is unanswerable.
+            base = self._oco_exit_base_for_entry(entry, broker_account_name=acct, symbol=symbol)
+            known = base or self.__dict__.get("_webull_protect_base", {}).get(key)
+            state = dict(entry.payload or {}).get(self._WEBULL_PROTECT_STATE_KEY)
+            if known:
+                if not base:
+                    return False
+                if state != "released":
+                    return True
+            spec = dict(
+                broker_account_name=acct, symbol=symbol, quantity=int(row.current_quantity),
+                entry_price=float(row.entry_price), strategy_code=row.strategy_code,
+                entry_client_order_id=entry.client_order_id,
+            )
+        # Close the read session before the attach's separate binding/persistence transactions.
+        self._exit_reservation_released.discard(key)
+        self._clear_exit_reservation_retry_state(key)
+        task = self._spawn_webull_protection(**spec)
+        if task is None:
+            return False
+        if not await asyncio.shield(task):
+            raise RuntimeError(f"Webull edge attach failed for {acct} {symbol}")
+        return True
 
     def _latest_filled_entry_order_id(self, session, acct: str, symbol: str) -> str | None:
         """Compatibility name: address only this managed row's bound broker parent."""
