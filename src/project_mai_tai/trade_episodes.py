@@ -112,6 +112,7 @@ def collect_completed_trade_cycles(
     # [entry, exit] window is that cycle, not a new trade.
     existing_spans: list[tuple[str, str, str, object, object]] = []
     open_trades_by_account_symbol: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    completed_order_cycles: dict[tuple[str, str, str, tuple[str, ...]], list[dict[str, Any]]] = {}
 
     def append_completed_trade(trade: dict[str, Any]) -> None:
         initial_qty = max(float(trade["initial_qty"]), 0.0001)
@@ -137,6 +138,13 @@ def collect_completed_trade_cycles(
         covering = _find_covering_row(
             completed_rows, strategy_code, trade_account_name, symbol, entry_time
         )
+        identity = None
+        # ORB status-sync times may be later than the close. Match complete
+        # cycles by both order identities and quantity, never one leg alone.
+        if strategy_code == "orb_schwab" and trade.get("entry_order_id") and trade["exit_order_ids"]:
+            identity = (trade_account_name, symbol, trade["entry_order_id"], tuple(sorted(trade["exit_order_ids"])))
+            covering = next((row for row in completed_order_cycles.get(identity, [])
+                             if abs(as_float(row["quantity"]) - initial_qty) <= 0.0001), covering)
         if covering is not None:
             candidate_path = str(trade["path"] or "").strip()
             if candidate_path and is_generic_path(covering.get("path")):
@@ -193,6 +201,8 @@ def collect_completed_trade_cycles(
                 "sort_time": str(trade["exit_time"] or trade["entry_time"]),
             }
         )
+        if identity is not None:
+            completed_order_cycles.setdefault(identity, []).append(completed_rows[-1])
 
     def reconstruct_from_events(
         events: list[dict[str, Any]],
@@ -257,6 +267,9 @@ def collect_completed_trade_cycles(
                         "exit_time": "",
                         "exit_events": [],
                         "false_flip": false_flip,
+                        "entry_order_id": str(item.get("order_id") or "")
+                        if item.get("strategy_code", strategy_code) == strategy_code else "",
+                        "exit_order_ids": set(),
                     }
                 )
                 continue
@@ -278,6 +291,8 @@ def collect_completed_trade_cycles(
                 trade["remaining_qty"] -= applied_qty
                 trade["exit_value"] += applied_qty * event_price
                 trade["exit_time"] = event_time
+                if item.get("order_id") and item.get("strategy_code", strategy_code) == strategy_code:
+                    trade["exit_order_ids"].add(str(item["order_id"]))
                 trade["exit_events"].append(
                     {
                         "qty": applied_qty,
@@ -348,30 +363,18 @@ def collect_completed_trade_cycles(
             if item.get("order_id")
             and item.get("strategy_code", strategy_code) == strategy_code
         }
-        filled_quantities: dict[tuple[str, str, str, str], float] = {}
         display_fills = []
         for item in recent_fills:
             enriched = dict(item)
             key = order_key(item)
             order = orders_by_key.get(key)
-            if (order is not None
-                    and item.get("strategy_code", strategy_code) == strategy_code
-                    and as_float(item.get("price")) > 0):
-                filled_quantities[key] = filled_quantities.get(key, 0.0) + as_float(item.get("quantity"))
+            if order is not None and item.get("strategy_code", strategy_code) == strategy_code:
+                if as_float(enriched.get("price")) <= 0 and as_float(order.get("price")) > 0:
+                    enriched["price"] = order["price"]
                 for field in ("reason", "path"):
                     if not enriched.get(field) or enriched.get(field) == "-":
                         enriched[field] = order.get(field, "")
             display_fills.append(enriched)
-        # Broker update times can be later than both fills. A fully priced order is
-        # already represented, even when its update is outside the fill cycle.
-        display_orders = [
-            item for item in recent_orders
-            if not (
-                item.get("order_id")
-                and as_float(item.get("quantity")) > 0
-                and filled_quantities.get(order_key(item), 0.0) >= as_float(item.get("quantity"))
-            )
-        ]
 
     reconstruct_from_events(
         display_fills,

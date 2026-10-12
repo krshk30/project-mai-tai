@@ -89,6 +89,31 @@ def test_unpriced_fill_cannot_hide_priced_order_fallback():
     assert any(cycle.entry_price == 6.33 for cycle in _cycles(orders, fills))
 
 
+@pytest.mark.parametrize("exit_quantity", ["0", "1"])
+def test_complete_entry_and_incomplete_exit_preserve_order_fallback(exit_quantity):
+    orders, fills = _gixi()
+    fills[1]["quantity"] = exit_quantity
+    cycles = _cycles(orders, fills)
+    assert len(cycles) == 1
+    assert cycles[0].quantity == 2
+
+
+def test_priced_entry_and_unpriced_exit_keep_priced_order_evidence():
+    orders, fills = _gixi()
+    orders[0]["price"], orders[1]["price"] = "6.33", "6.2111"
+    fills[1]["price"] = "0"
+    cycles = _cycles(orders, fills)
+    assert len(cycles) == 1
+    assert (cycles[0].entry_price, cycles[0].exit_price) == (6.33, 6.2111)
+
+
+@pytest.mark.parametrize("entry_quantity", ["0", "1"])
+def test_incomplete_entry_and_complete_exit_preserve_order_fallback(entry_quantity):
+    orders, fills = _gixi()
+    fills[0]["quantity"] = entry_quantity
+    assert any(cycle.quantity == 2 for cycle in _cycles(orders, fills))
+
+
 def test_other_bot_reconstruction_is_unchanged():
     orders, fills = _gixi()
     for item in orders + fills:
