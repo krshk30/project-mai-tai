@@ -566,9 +566,14 @@ class MomentumPaperService:
                     await self._warning_metrics(
                         event_type="snapshot_entry", observed_ns=wall_time.time_ns(),
                         observed_decision_ns=snapshot_decision_ns,
-                        gateway_instance_id=(self._warning.epoch or (None, None))[0],
-                        generation=(self._warning.epoch or (None, None))[1],
-                        signal_sip_ns=normalize_ts_ns(snapshot.last_trade_timestamp_ns),
+                        gateway_instance_id=None, generation=None, source_epoch_status="UNKNOWN",
+                        observer_warning_context=dict(
+                            gateway_instance_id=(self._warning.epoch or (None, None))[0],
+                            generation=(self._warning.epoch or (None, None))[1]),
+                        snapshot_source_event_id=str(event.event_id),
+                        snapshot_source_service=event.source_service,
+                        snapshot_source_produced_at=event.produced_at.isoformat(),
+                        snapshot_last_trade_sip_ns=normalize_ts_ns(snapshot.last_trade_timestamp_ns),
                         strategy_code=row.strategy_code, symbol=row.symbol,
                         logical_id=row.logical_id, status=row.event_type,
                         lineage="legacy_snapshot", payload=row.payload,
@@ -621,9 +626,14 @@ class MomentumPaperService:
                     if record.event_type in {"FILLED", "EXITED"}:
                         await self._warning_metrics(
                             event_type="snapshot_entry", symbol=trade.symbol,
-                            observed_ns=observed_ns, signal_sip_ns=stamp_ns,
-                            gateway_instance_id=(self._warning.epoch or (None, None))[0],
-                            generation=(self._warning.epoch or (None, None))[1],
+                            observed_ns=observed_ns, callback_sip_ns=stamp_ns,
+                            gateway_instance_id=None, generation=None, source_epoch_status="UNKNOWN",
+                            observer_warning_context=dict(
+                                gateway_instance_id=(self._warning.epoch or (None, None))[0],
+                                generation=(self._warning.epoch or (None, None))[1]),
+                            callback_source_event_id=str(event.event_id),
+                            callback_source_service=event.source_service,
+                            callback_source_produced_at=event.produced_at.isoformat(),
                             strategy_code=record.strategy_code, logical_id=record.logical_id,
                             status=record.event_type, lineage="legacy_snapshot",
                             payload=record.payload,
@@ -632,7 +642,10 @@ class MomentumPaperService:
                     if record.event_type in {"DETECTED", "FILLED", "EXITED"}:
                         await self._warning_metrics(
                             event_type="decision", symbol=trade.symbol, observed_ns=observed_ns,
-                            observed_decision_ns=decision_ns, signal_sip_ns=stamp_ns,
+                            observed_decision_ns=decision_ns, callback_sip_ns=stamp_ns,
+                            callback_source_event_id=str(event.event_id),
+                            callback_source_service=event.source_service,
+                            callback_source_produced_at=event.produced_at.isoformat(),
                             gateway_instance_id=(self._warning.epoch or (None, None))[0],
                             generation=(self._warning.epoch or (None, None))[1],
                             status=record.event_type, strategy_code=record.strategy_code,

@@ -12,7 +12,7 @@ def _stamp(value: object) -> bool:
     return type(value) is int and 0 < value < 2**63
 
 
-def _trade_time(result: dict, summary: dict, event: dict, field: str, status: str) -> None:
+def _trade_time(result: dict, summary: dict, field: str) -> None:
     trade = summary.get(field)
     if not isinstance(trade, dict) or not _stamp(trade.get("sip_ts_ms")):
         return
@@ -21,19 +21,14 @@ def _trade_time(result: dict, summary: dict, event: dict, field: str, status: st
     result.update({f"{stem}_sip_start_ns": lower, f"{stem}_sip_end_ns": lower + MS_NS,
                    f"{stem}_price": trade.get("price"),
                    f"{stem}_timestamp_precision": "integer_sip_ms"})
-    # The outer SIP stamp belongs to this callback, NOT necessarily the original
-    # signal/fill/target print. Only use it where the actual stored print matches.
-    sip = event.get("signal_sip_ns")
-    if status == ("FILLED" if field == "fill" else "EXITED") and _stamp(sip):
-        if sip // MS_NS == trade["sip_ts_ms"]:
-            result[f"{stem}_ns"] = sip
-            result[f"{stem}_timestamp_precision"] = "real_sdk_ns"
+    # The native summary has no retained sub-ms print identity. Even equality
+    # of millisecond and price cannot prove it was the callback's exact print.
 
 
 def paper_metric_rows(event: dict) -> tuple[dict, ...] | None:
     """None means already canonical; an empty tuple is a candidate, not a BUY.
 
-    The caller validates size, producer epoch and observation clocks first.
+    The caller validates size, source provenance and observation clocks first.
     Never borrow an epoch, comparison ID, clock assurance or subscription ACK.
     """
     if event.get("source") != "momentum-paper" or "ledger" in event:
@@ -56,6 +51,8 @@ def paper_metric_rows(event: dict) -> tuple[dict, ...] | None:
         summary, status = record.get("payload"), record.get("status")
         if code not in WINDOWS or not isinstance(summary, dict):
             raise ValueError("invalid paper ledger or payload")
+        if event["event_type"] == "snapshot_entry" and code.endswith("_warn"):
+            raise ValueError("warning ledger is not Snapshot provenance")
         if not isinstance(logical_id, str) or not logical_id or status not in {
             "DETECTED", "FILLED", "EXITED", "FINALIZED", "NO_FILL",
         }:
@@ -77,24 +74,24 @@ def paper_metric_rows(event: dict) -> tuple[dict, ...] | None:
                    status=status, outcome=summary.get("status", status), pnl=summary.get("pnl"),
                    native_lifecycle_update=sparse,
                    paper_contract_version=1, signal_sip_ns=None, entry_ns=None, exit_ns=None,
+                   callback_sip_ns=event.get("callback_sip_ns", event.get("signal_sip_ns")),
                    observeddecision_ns=(summary.get("observed_decision_ns")
                                         if code.endswith("_warn")
                                         else event.get("observed_decision_ns")
                                         if status == "DETECTED" else None))
         detection = summary.get("detect")
         if isinstance(detection, dict):
-            ms, sip = detection.get("sip_ts_ms"), event.get("signal_sip_ns")
+            row["signal_price"] = detection.get("price")
+            ms = detection.get("sip_ts_ms")
             if _stamp(ms):
                 row.update(signal_basis="integer_ms_bounds", signal_sip_start_ns=ms * MS_NS,
                            signal_sip_end_ns=(ms + 1) * MS_NS)
-                if status == "DETECTED" and _stamp(sip) and sip // MS_NS == ms:
-                    row.update(signal_basis="raw_exact", signal_sip_ns=sip)
             else:
                 start, end = detection.get("start_ms"), detection.get("end_ms")
                 if _stamp(start) and _stamp(end) and end - start == 1000:
                     row.update(signal_basis="bucket_sufficient", signal_sip_start_ns=start * MS_NS,
                                signal_sip_end_ns=end * MS_NS)
-        _trade_time(row, summary, event, "fill", status)
-        _trade_time(row, summary, event, "exit", status)
+        _trade_time(row, summary, "fill")
+        _trade_time(row, summary, "exit")
         result.append(row)
     return tuple(result)

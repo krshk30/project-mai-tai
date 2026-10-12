@@ -51,10 +51,14 @@ DETAIL_FIELDS = (
         "ledger", "lineage_id", "source", "version", "observed_ns", "coverage_status",
         "dropped_total",
         "status", "cap_status", "signal_basis", "signal_sip_ns", "signal_sip_start_ns",
-        "signal_sip_end_ns", "observeddecision_ns", "warning_obs_ns", "entry_ns",
+        "signal_sip_end_ns", "signal_price", "observeddecision_ns", "warning_obs_ns", "entry_ns",
         "entry_price", "outcome", "exit_ns", "exit_price", "pnl", "clock_status",
         "entry_timestamp_precision", "entry_sip_start_ns", "entry_sip_end_ns",
         "exit_timestamp_precision", "exit_sip_start_ns", "exit_sip_end_ns",
+        "source_epoch_status", "observer_warning_context", "callback_sip_ns",
+        "callback_source_event_id", "callback_source_service", "callback_source_produced_at",
+        "snapshot_source_event_id", "snapshot_source_service", "snapshot_source_produced_at",
+        "snapshot_last_trade_sip_ns",
         "clock_skew_bound_ns", "sip_latency_raw_ms", "sip_latency_lower_ms",
         "sip_latency_upper_ms",
     )
@@ -90,7 +94,7 @@ def session_window(day: date) -> tuple[int, int]:
     )
 
 
-def epoch(event: dict) -> tuple[str, int]:
+def epoch(event: dict) -> tuple[str | None, int | None]:
     return event["gateway_instance_id"], event["generation"]
 
 
@@ -147,12 +151,22 @@ class MeasurementCollector:
             if len(encoded.encode() if isinstance(encoded, str) else encoded) > MAX_BYTES:
                 raise ValueError("oversize record")
             event = json.loads(encoded)
+            unknown_snapshot_epoch = isinstance(event, dict) and (
+                event.get("event_type") == "snapshot_entry"
+                and event.get("source") == "momentum-paper"
+                and event.get("source_epoch_status") == "UNKNOWN"
+                and event.get("ledger", event.get("strategy_code")) in {"momentum_30s", "momentum_60s"}
+                and event.get("gateway_instance_id") is None and event.get("generation") is None
+            )
+            known_epoch = isinstance(event, dict) and (
+                isinstance(event.get("gateway_instance_id"), str)
+                and bool(event["gateway_instance_id"]) and integer(event.get("generation"))
+            )
             if (
                 not isinstance(event, dict) or type(event.get("version")) is not int
                 or event["version"] != 1 or event.get("event_type") not in EVENT_TYPES
                 or not isinstance(event.get("source"), str) or not event["source"]
-                or not isinstance(event.get("gateway_instance_id"), str)
-                or not event["gateway_instance_id"] or not integer(event.get("generation"))
+                or not (known_epoch or unknown_snapshot_epoch)
                 or not integer(event.get("observed_ns")) or not integer(read_ns)
                 or not isinstance(stream_id, str) or not 0 < len(stream_id) <= 64
                 or event["observed_ns"] > read_ns
@@ -379,7 +393,8 @@ class MeasurementCollector:
         rows = []
         for key, sides in self.details.items():
             row = dict.fromkeys(DETAIL_FIELDS, UNKNOWN)
-            row.update(gateway_instance_id=key[0], generation=key[1], symbol=key[2],
+            row.update(gateway_instance_id=UNKNOWN if key[0] is None else key[0],
+                       generation=UNKNOWN if key[1] is None else key[1], symbol=key[2],
                        window_seconds=key[3], comparison_id=key[5] if key[4] == "paired" else UNKNOWN,
                        pair_status="PAIRED" if len(sides) == 2 else "COUNTERPART_UNKNOWN",
                        record_kind="OBSERVATION")

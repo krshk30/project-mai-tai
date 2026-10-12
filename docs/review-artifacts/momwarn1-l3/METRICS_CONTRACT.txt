@@ -1,10 +1,14 @@
 L3 metrics-only compatibility extension -- local, no operational approval
 
+MAIN REVIEW REQUIRED: R1/R2 repair supersedes the aa355102 Snapshot epoch and
+millisecond-match exactness claims below. No feature pin or install approval.
+
 Wire JSON metrics version1 and stream suffixmomentum-warning-metrics unchanged.
 G2 wire native shape retained:source=momentum-paper,strategy_code/logical_id,
 observed_decision_ns,signals array (max2), lifecycle payload summary or sparse
 FILLED/EXITED delta. G3 maps this bounded native shape only after validating the
-original source epoch, UTC observation and read timestamp; no cached-epoch guess.
+source provenance, UTC observation and read timestamp; no cached-epoch guess.
+Snapshot's explicit UNKNOWN epoch is retained, not upgraded from A context.
 
 Canonical fields:ledger=exact strategy_code; window_seconds from the fixed
 30/60 ledger map; lineage_id=exact logical_id. Summary identity fields must
@@ -22,23 +26,33 @@ decision callback. Missing capture with no prior DETECTED remains UNKNOWN.
 Signal provenance:
 - Qualifying close with raw s/e1000-exclusive bounds ->bucket_sufficient.
   No exact high/low/close SIP timestamp manufactured.
-- Real DETECTED callback SIPns, matching the stored detection millisecond,
-  ->raw_exact; keep original ns. Later fill callback is NOT the signal.
+- Callback SIPns is separate callback_sip_ns, not native signal/fill/exit identity.
+  Equal integer millisecond (even equal price) cannot prove the same print.
 - Native historical integer SIPms ->integer_ms_bounds, [ms,ms+1) expressed
   in UTCns. These bounds are not exact SIPns or bucket-low timestamps.
 Missing clock_skew_bound/status remains UNKNOWN, not clock-qualified latency.
 
-entry_ns/exit_ns use real callback SIPns only where the emitted FILLED/EXITED
-print matches the stored print millisecond. Missing historical exactns remains
-UNKNOWN. Companion CSV adds entry/exit_timestamp_precision plus
+Native signal_sip_ns/entry_ns/exit_ns remain null (CSV UNKNOWN). Native summaries
+and TradeTickPayload do not retain trusted sub-ms provider print identity.
+No matching-ms upgrade occurs for DETECTED/FILLED/EXITED. Companion CSV retains
+real callback_sip_ns separately, and entry/exit_timestamp_precision plus
 entry/exit_sip_start_ns,end_ns. Integer-ms model timestamps remain labelled;
 delayed target confirmation cannot become the target print's exact timestamp.
 No nearest-stock/time pairing: absent comparison_id keeps COUNTERPART_UNKNOWN.
 No invented subscriber ACK, cap_status, complete coverage or missing counts=0.
 
-Source repair: Snapshot FILLED/EXITED wire packets now carry the already observed
-warning gateway epoch, like Snapshot DETECTED and warning lifecycle packets.
-If epoch is absent, G3 still refuses; it cannot borrow the latest gateway sample.
+Source repair: EventEnvelope contains event_id/source_service/produced_at, not
+producer gateway_instance_id/generation. Snapshot DETECTED/FILLED/EXITED packets
+therefore carry null gateway_instance_id/generation, source_epoch_status=UNKNOWN.
+The original Snapshot envelope and last_trade ns are retained as Snapshot
+context, NOT an exact signal stamp. Trade callbacks retain their own envelope.
+observer_warning_context carries the currently observed A epoch only; it is
+not source identity or a comparison key. G3 accepts explicit UNKNOWN only for
+momentum-paper Snapshot ledgers; warning/health missing epochs still refuse.
+CSV source epoch stays UNKNOWN, absent comparison COUNTERPART_UNKNOWN. No
+latest gateway substitution or cross-epoch proximity pairing. Logical identity
+does not prove producer generation, including sparse Snapshot lifecycle updates.
+Legacy outer signal_sip_ns is a callback alias only, never canonical exactness.
 This is metrics-only; strategy detection/fill/exit/OMS/provider paths unchanged.
 
 Remaining observability gaps: native consumer_sample has owned/shared symbol
@@ -50,6 +64,7 @@ These are local integration followups, not a reason to fabricate missing values.
 
 CONTROLLED tests cover provider normalizer->fake Redis->actual G2 handler->G3,
 exclusive true bounds, two paper ledgers, next-eligible print, sparse fills,
-immutable decisions, real SDKns vs integer-ms bounds, absent/wrong epoch,
-identity/refuse/size/dedup controls and actual Snapshot fill handler epoch.
+immutable decisions, separate callback ns vs integer-ms bounds, absent/wrong
+epoch, identity/refuse/size/dedup, same-ms different-print lifecycle controls,
+actual service callbacks and queued old Snapshot after new warning generation.
 They are NOT recorded A burst, current entitlement, WFF arrival or324 generation.
