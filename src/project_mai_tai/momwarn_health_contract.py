@@ -14,6 +14,27 @@ from project_mai_tai.momwarn_measurement_probes import BOUND, read_bounded
 from project_mai_tai.momwarn_measurements import NS, integer, nonnegative
 
 
+def sourced_first_due_ns(config: dict, *, observed_ns: int) -> int:
+    """Only reviewed same-day start/interval evidence defines first closed due."""
+    if (
+        not integer(observed_ns)
+        or config.get("v2_source_lane") != "schwab_pricehistory_same_day"
+        or config.get("v2_expectation_kind") != "recorded_first_same_day_0700"
+        or config.get("v2_expected_start_et") != "07:00"
+        or config.get("v2_first_bar_start_et") != "07:00"
+        or type(config.get("v2_bar_interval_seconds")) is not int
+        or config["v2_bar_interval_seconds"] != 60
+        or any(not isinstance(config.get(key), str) or not config[key]
+               for key in ("v2_expectation_ref", "v2_first_bar_source_ref"))
+    ):
+        raise ValueError("UNKNOWN:reviewed first-bar start/interval/source expectation")
+    local = datetime.fromtimestamp(observed_ns // NS, ZoneInfo("America/New_York"))
+    if local.weekday() >= 5 or local.hour < 4:
+        raise ValueError("UNKNOWN:first-due source outside PM trading day")
+    start = local.replace(hour=7, minute=0, second=0, microsecond=0)
+    return int(start.timestamp()) * NS + config["v2_bar_interval_seconds"] * NS
+
+
 def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
     """Preserve completion time; current monitor coverage, not reread time, must be fresh."""
     monitor, end = receipt.get("observed_wall_ns"), receipt.get("oms_measured_wall_ns")
@@ -50,6 +71,14 @@ def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
             and isinstance(reference, str) and bool(reference)
             and local.weekday() < 5 and 4 <= local.hour < 7
         )
+        before_first_due = False
+        if receipt.get("v2_applicability_reason") == "sourced_before_first_due":
+            first_due = sourced_first_due_ns(receipt, observed_ns=monitor)
+            before_first_due = (
+                receipt.get("v2_first_due_wall_ns") == first_due
+                and monitor < first_due and now_ns < first_due
+            )
+            result["v2_first_due_wall_ns"] = first_due
         watch_ns = receipt.get("v2_watchlist_snapshot_ns")
         empty = (
             receipt.get("v2_applicability_reason") == "sourced_empty_watchlist"
@@ -58,7 +87,7 @@ def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
             and receipt.get("v2_watchlist") == [] and integer(watch_ns)
             and 0 <= monitor - watch_ns <= 10 * NS
         )
-        if not (pre07 or empty):
+        if not (pre07 or before_first_due or empty):
             raise ValueError("UNKNOWN:unsourced v2 inapplicability")
         result.update(v2_applicability=applicability, v2_bar_lateness_seconds=None,
                       v2_applicability_reason=receipt["v2_applicability_reason"],
@@ -67,6 +96,7 @@ def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
             "v2_source_lane", "v2_expectation_kind", "v2_expected_start_et",
             "v2_watchlist_source", "v2_watchlist_snapshot_ns", "v2_watchlist_complete",
             "v2_watchlist",
+            "v2_first_bar_start_et", "v2_bar_interval_seconds", "v2_first_bar_source_ref",
         )}
     elif applicability == "APPLICABLE":
         measured, due, completed = (receipt.get(key) for key in (

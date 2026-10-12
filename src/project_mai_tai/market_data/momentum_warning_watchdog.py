@@ -151,6 +151,7 @@ class WarningHealthReader:
                 "v2_source_lane", "v2_expectation_kind", "v2_expected_start_et",
                 "v2_watchlist_source", "v2_watchlist_snapshot_ns", "v2_watchlist_complete",
                 "v2_watchlist",
+                "v2_first_bar_start_et", "v2_bar_interval_seconds", "v2_first_bar_source_ref",
             ) if key in provenance}}
             data = proposed_health_v2(source, now_ns=time.time_ns())
             not_applicable = data["v2_applicability"] == "NOT_APPLICABLE"

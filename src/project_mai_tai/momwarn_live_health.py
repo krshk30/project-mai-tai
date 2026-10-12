@@ -11,7 +11,9 @@ import stat
 import time
 from zoneinfo import ZoneInfo
 
-from project_mai_tai.momwarn_health_contract import OmsLogMonitor, proposed_health_v2
+from project_mai_tai.momwarn_health_contract import (
+    OmsLogMonitor, proposed_health_v2, sourced_first_due_ns,
+)
 from project_mai_tai.momwarn_measurement_probes import read_bounded
 from project_mai_tai.momwarn_measurements import NS, integer
 
@@ -171,17 +173,15 @@ class LiveWarningHealthSource:
                            v2_watchlist=[], v2_watchlist_source="strategy-state-isolated",
                            v2_watchlist_complete=True, v2_watchlist_snapshot_ns=state_ns)
         else:
-            if (self.config.get("v2_expectation_kind") != "recorded_first_same_day_0700"
-                    or self.config.get("v2_expected_start_et") != "07:00"
-                    or self.config.get("v2_source_lane") not in {
-                        "schwab_anchored_current_day", "schwab_pricehistory_same_day"}):
-                raise ValueError("no validated complete watched-bar expectation")
-            local = datetime.fromtimestamp(now / NS, ZoneInfo("America/New_York"))
-            if local.hour < 7:
+            first_due = sourced_first_due_ns(self.config, observed_ns=now)
+            if now < first_due:
                 receipt.update(v2_applicability="NOT_APPLICABLE",
-                               v2_applicability_reason="sourced_pre0700",
+                               v2_applicability_reason="sourced_before_first_due",
+                               v2_first_due_wall_ns=first_due,
                                **{key: self.config[key] for key in (
-                                   "v2_expectation_kind", "v2_expected_start_et", "v2_source_lane")})
+                                   "v2_expectation_kind", "v2_expected_start_et", "v2_source_lane",
+                                   "v2_first_bar_start_et", "v2_bar_interval_seconds",
+                                   "v2_first_bar_source_ref")})
             else:
                 probes = self.config["v2_probe_symbols"]
                 if "*" not in probes and not set(watchlist) <= set(probes):

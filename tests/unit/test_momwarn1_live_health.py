@@ -13,6 +13,7 @@ import pytest
 from project_mai_tai.market_data import gateway, massive_provider
 from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealthReader, WarningWatchdog
 from project_mai_tai.momwarn_live_health import LiveWarningHealthSource, newest_v2_state
+from project_mai_tai.momwarn_health_contract import proposed_health_v2
 from tests.unit.test_momwarn1_gateway import aggregate, event, service
 
 NOW = int(datetime(2026, 10, 13, 12, 51, 4, tzinfo=UTC).timestamp()) * 1_000_000_000
@@ -46,6 +47,8 @@ def setup(tmp_path, monkeypatch):
                    v2_probe_symbols=["*"], v2_probe_source_ref="CONTROLLED-proc-probe-all",
                    v2_expectation_ref="CONTROLLED-same-day-first0700",
                    v2_expectation_kind="recorded_first_same_day_0700",
+                   v2_first_bar_start_et="07:00", v2_bar_interval_seconds=60,
+                   v2_first_bar_source_ref="CONTROLLED-reviewed-first-bar-source",
                    v2_expected_start_et="07:00", v2_source_lane="schwab_pricehistory_same_day")
         config = tmp_path / "health.json"
         config.write_text(json.dumps(cfg))
@@ -248,3 +251,73 @@ def test_future_probe_stamp_never_becomes_completed_bar_evidence(setup):
         out.write(line(NOW+NS, "[V2-MACD-PROBE] sym=BBB ts_ms=123 close=10 "))
     with pytest.raises(ValueError, match="future v2"):
         env.source.read(env.state())
+
+
+@pytest.mark.parametrize("field,value", [
+    ("v2_first_bar_start_et", None), ("v2_bar_interval_seconds", 61),
+    ("v2_bar_interval_seconds", True), ("v2_first_bar_source_ref", ""),
+    ("v2_source_lane", "schwab_anchored_current_day"),
+])
+def test_missing_or_uncalled_lane_first_due_proof_is_unknown(setup, field, value):
+    at = int(datetime(2026, 10, 13, 11, 0, 59, tzinfo=UTC).timestamp())*NS
+    env = setup(now=at)
+    env.source.config[field] = value
+    with pytest.raises(ValueError, match="first-bar"):
+        env.source.read(env.state())
+
+
+@pytest.mark.asyncio
+async def test_reviewed_first_due_boundaries_and_missing_bar_revert_A_only(setup):
+    before = int(datetime(2026, 10, 13, 11, 0, 59, tzinfo=UTC).timestamp())*NS
+    due = before+NS
+    env = setup(now=before)
+    # No future or partial06:59 bar in the source. Baseline still covers first due.
+    (env.directory / "schwab-1m-v2.log").write_text(line(before-90*NS, "controlled baseline"))
+    payload = env.source.read(env.state())
+    assert payload["v2_applicability"] == "NOT_APPLICABLE"
+    assert payload["v2_applicability_reason"] == "sourced_before_first_due"
+    assert payload["v2_first_due_wall_ns"] == due
+    assert payload["v2_bar_lateness_seconds"] is None
+    svc, provider, _, _ = service()
+    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
+    await svc.apply_subscription_event(event("v2", ["WFF"]))
+    await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
+    await svc._warning_monitor_once()
+    assert svc._warning_active
+    for at, expected_lag in ((due, 0), (due+5*NS, 5)):
+        env.clock.ns = at
+        payload = env.source.read(env.state())
+        assert payload["v2_applicability"] == "APPLICABLE"
+        assert payload["v2_completed_wall_ns"] is None
+        assert payload["v2_due_wall_ns"] == due
+        assert payload["v2_bar_lateness_seconds"] == expected_lag
+        await svc._warning_monitor_once()
+        assert svc._warning_active and svc._warning_revert_reason is None
+    env.clock.ns = due+5*NS+1
+    await svc._warning_monitor_once()
+    assert svc._warning_revert_reason == "v2_bar_late" and not svc._warning_active
+    assert provider._ws.removed == ["A.*"]
+    assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
+
+
+def test_actual_first_closed_probe_at_due_is_applicable_not_extended_NA(setup):
+    due = int(datetime(2026, 10, 13, 11, 1, tzinfo=UTC).timestamp())*NS
+    env = setup(now=due)
+    bar_ms = due // 1_000_000-60_000
+    (env.directory / "schwab-1m-v2.log").write_text(
+        line(due-90*NS, "controlled baseline")
+        + line(due, f"[V2-MACD-PROBE] sym=AAA ts_ms={bar_ms} close=10 ")
+        + line(due, f"[V2-MACD-PROBE] sym=BBB ts_ms={bar_ms} close=10 ")
+    )
+    payload = env.source.read(env.state())
+    assert payload["v2_applicability"] == "APPLICABLE"
+    assert payload["v2_completed_wall_ns"] == due and payload["v2_bar_lateness_seconds"] == 0
+
+
+def test_first_due_NA_cannot_remain_applicable_exception_after_boundary(setup):
+    before = int(datetime(2026, 10, 13, 11, 0, 59, tzinfo=UTC).timestamp())*NS
+    env = setup(now=before)
+    payload = env.source.read(env.state())
+    source = {**payload, **payload["v2_applicability_provenance"]}
+    with pytest.raises(ValueError, match="unsourced v2 inapplicability"):
+        proposed_health_v2(source, now_ns=before+NS)
