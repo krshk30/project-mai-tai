@@ -41,6 +41,7 @@ from project_mai_tai.broker_adapters.atr_buy_readback import (
 from project_mai_tai.broker_adapters.webull_order_reads import (
     QueryBudgetUnavailable, shared_budget, shared_reader, terminal_version,
 )
+from project_mai_tai.broker_adapters.target_price import target_limit_price
 
 
 logger = logging.getLogger(__name__)
@@ -2015,7 +2016,7 @@ class WebullBrokerAdapter:
         return [
             {**common, "client_order_id": self._combo_leg_coid(coid, "T"),
              "combo_type": "STOP_PROFIT", "side": "SELL",
-             "order_type": "LIMIT", "limit_price": str(self._round_to_tick(target))},
+             "order_type": "LIMIT", "limit_price": str(target_limit_price(target))},
             {**common, "client_order_id": self._combo_leg_coid(coid, "S"),
              "combo_type": "STOP_LOSS", "side": "SELL",
              "order_type": "STOP_LOSS", "stop_price": str(self._round_to_tick(protect))},

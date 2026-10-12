@@ -8,6 +8,7 @@ the leg level. Precedence hard>floor>scale, one action/quote, sole-writer row.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -298,6 +299,7 @@ async def test_handle_quote_uses_event_time_for_staleness() -> None:
         payload=QuoteTickPayload(symbol=SYM, bid_price=Decimal("9.80"), ask_price=Decimal("9.81")),
     )
     await svc._handle_quote_tick_event(stale)
+    await _drain_quote_legs(svc)
     assert svc._latest_quotes_by_symbol[SYM]["received_at"] == stale.produced_at  # event time, not now()
     assert _sell_intents(sf) == []                # 70s-old event rejected by the guard
     assert _row(sf).status == "open"
@@ -307,6 +309,7 @@ async def test_handle_quote_uses_event_time_for_staleness() -> None:
         payload=QuoteTickPayload(symbol=SYM, bid_price=Decimal("9.80"), ask_price=Decimal("9.81")),
     )
     await svc._handle_quote_tick_event(fresh)
+    await _drain_quote_legs(svc)
     assert len(_sell_intents(sf)) == 1            # fresh event acts → hard stop closes
 
 
@@ -1161,6 +1164,11 @@ def _quote_event(symbol: str, bid: float) -> QuoteTickEvent:
     )
 
 
+async def _drain_quote_legs(svc) -> None:
+    while svc.__dict__.get("_symbol_tick_work", {}):
+        await asyncio.gather(*tuple(svc._symbol_tick_work.values()))
+
+
 @pytest.mark.asyncio
 async def test_flag_off_single_account_evaluates_as_before() -> None:
     """(a) mirror flag OFF: _v2_accounts() == [schwab] and a managed symbol on the schwab
@@ -1171,6 +1179,7 @@ async def test_flag_off_single_account_evaluates_as_before() -> None:
     _arm(svc, sf, entry=10.0, qty=100)
     assert svc._managed_v2_symbols == {(ACCT, SYM)}
     await svc._handle_quote_tick_event(_quote_event(SYM, 9.80))   # hard stop
+    await _drain_quote_legs(svc)
     assert _sell_order_count(sf) == 1
     assert _row(sf).status == "closed"
     assert (ACCT, SYM) not in svc._managed_v2_symbols            # disarmed
@@ -1188,6 +1197,7 @@ async def test_flag_on_tracks_and_exits_both_accounts_independently(tmp_path: Pa
     assert svc._managed_v2_symbols == {(ACCT, SYM), (WEBULL_ACCT, SYM)}
 
     await svc._handle_quote_tick_event(_quote_event(SYM, 9.80))   # hard stop on BOTH legs
+    await _drain_quote_legs(svc)
 
     with sf() as s:
         rows = list(s.scalars(
@@ -1208,6 +1218,7 @@ async def test_dual_leg_quote_is_stable_across_50_runs(tmp_path: Path) -> None:
         _arm_on(svc, sf, WEBULL_ACCT, entry=10.0, qty=100)
 
         await svc._handle_quote_tick_event(_quote_event(SYM, 9.80))
+        await _drain_quote_legs(svc)
 
         with sf() as session:
             rows = list(session.scalars(

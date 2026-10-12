@@ -155,6 +155,7 @@ async def test_slow_database_worker_does_not_delay_tick_or_exit_and_deduplicates
     tick = QuoteTickEvent(source_service="recorded", produced_at=lane[3][0],
         payload=QuoteTickPayload(symbol="BIYA", bid_price=raw["bid_price"], ask_price=raw["ask_price"]))
     await asyncio.wait_for(service._handle_quote_tick_event(tick), 0.05)
+    await asyncio.sleep(0)  # Managed legs are admitted independently of the slow mirror worker.
     exit_calls.assert_awaited_once_with("BIYA")
     assert ladder_calls.await_count == len(service._v2_accounts())
     assert {call.args for call in ladder_calls.await_args_list} == service._managed_v2_symbols

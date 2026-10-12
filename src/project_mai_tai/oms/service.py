@@ -19,6 +19,7 @@ from sqlalchemy import desc, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
+from project_mai_tai.broker_adapters.target_price import target_limit_price
 from project_mai_tai.broker_adapters.protocols import (
     BrokerAdapter,
     ExecutionReport,
@@ -5173,6 +5174,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         has already re-protected or paged, so a quote-rate retry storm buys nothing.
         """
         key = (acct, symbol)
+        close_context = self._cw_exit_decision_context(acct, symbol, tag, ref, bid)
         if not await self._v2_eod_handover_ready(acct, symbol, expected_row_id):
             return "eod_handover_unconfirmed"
         inflight: set[tuple[str, str]] = self.__dict__.setdefault("_webull_cw_exit_inflight", set())
@@ -5187,8 +5189,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return "recovering"
         if time.monotonic() < next_try.get(key, 0.0):
             return "paced"
+        # Resting targets must not replay ahead of a later stop/floor/flip decision.
         eh_ladder = (
-            tag in {"CW_TARGET", "CW_HARD_STOP", "CW_FLOOR", "CW_FLIP"}
+            tag in {"CW_HARD_STOP", "CW_FLOOR", "CW_FLIP"}
             and not _is_regular_market_session()
             and self._market_is_fillable()
         )
@@ -5215,6 +5218,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         exit_tag=tag,
                     ),
                     reference_price=ref,
+                    close_context=close_context,
                 )
             else:
                 outcome = await self._webull_cancel_then_sell(
@@ -5233,6 +5237,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         exit_tag=tag,
                     ),
                     reference_price=ref,
+                    close_context=close_context,
                 )
         finally:
             inflight.discard(key)
@@ -5245,6 +5250,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         else:
             next_try[key] = time.monotonic() + self._WEBULL_CW_EXIT_RETRY_SECONDS
         return outcome
+
+    def _cw_exit_decision_context(self, acct, symbol, tag, ref, bid):
+        decided_at = utcnow().isoformat(timespec="microseconds")
+        quote_at = (self._latest_quotes_by_symbol.get(symbol) or {}).get("received_at")
+        self.logger.info(
+            "[OMS-V2-CW-DECISION] acct=%s sym=%s tag=%s ref=%.4f bid=%.4f "
+            "decided_at=%s quote_at=%s phase=before_protection",
+            acct, symbol, tag, ref, bid, decided_at, quote_at,
+        )
+        return {"cw_decided_at": decided_at}
 
     async def _retry_webull_eh_ladder_pending(self) -> None:
         """Retry an EH safety exit only after its prior sell stopped working."""
@@ -6833,6 +6848,19 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 return
 
             # Phase 2 — DECIDE (on-loop, pure): hydrate + ratchet off the snapshot.
+            if confirmation is None:
+                # Quote intake continues during the row read. Decide on its latest value.
+                quote = self._latest_quotes_by_symbol.get(symbol) or {}
+                received_at = quote.get("received_at")
+                if isinstance(received_at, datetime) and (
+                    utcnow() - received_at
+                ).total_seconds() * 1000 > float(
+                    getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)
+                ):
+                    return
+                bid = float(quote.get("bid") or 0)
+                if bid <= 0:
+                    return
             entry_price = snapshot.entry_price
             position = self._hydrate_v2_position(snapshot)
             position.update_price(bid)
@@ -6840,12 +6868,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if snapshot.dedup_active and (
                 cw_flip_decision is not None
                 or (self._cw_exit_enabled and bid <= entry_price * (1 - self._cw_stop_pct / 100))
+                or (self._cw_exit_enabled and self._cw_floor_exit_enabled
+                    and key in self._cw_floor_armed
+                    and bid <= cw_effective_floor(entry_price, self._cw_floor_pct, position.floor_price))
                 or self._cw_target_release_due(entry_price=entry_price, bid=bid)
             ):
                 expected_row_id = snapshot.managed_row_id
                 reason = (
                     "cw_flip" if cw_flip_decision is not None
                     else "cw_hard_stop" if bid <= entry_price * (1 - self._cw_stop_pct / 100)
+                    else "cw_floor" if self._cw_floor_exit_enabled and key in self._cw_floor_armed
                     else "bid_below_entry_minus_one_percent"
                 )
                 if await self._cancel_active_cw_target(
@@ -7083,6 +7115,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         ),
                         native_release_row_id=(
                             snapshot.managed_row_id if native_oco_stand_down else ""
+                        ),
+                        confirmation_context=self._cw_exit_decision_context(
+                            acct, symbol, tag, ref, bid
                         ),
                     )
                     if native_oco_stand_down and emit_outcome not in {
@@ -9355,7 +9390,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # The decision instant: the caller decided to exit on THIS quote and awaited us
         # directly, so nothing has blocked yet — no session, no DB read, no broker call.
         # Everything downstream (session open, intent write, submit, record) trails this.
-        decided_at = datetime.now(UTC)
+        decided_at = _as_utc((confirmation_context or {}).get("cw_decided_at")) or utcnow()
         events: list = []
         pending_reject_alarm: _V2ExitRejectAlarm | None = None
         flatten_unavailable_row_id = ""
@@ -9761,8 +9796,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         construction invariant that pins routing to the simulated adapter
         (paper-isolation; proven by test_v2_exit_paper_isolation).
 
-        Extended-hours routing (2026-07-05): in RTH the order stays MARKET/NORMAL
-        (byte-identical). In extended hours a MARKET order cannot fill, so route a
+        CW_TARGET uses a target-floor LIMIT in every session. Protective exits in
+        RTH remain MARKET/NORMAL. In extended hours a MARKET order cannot fill, so route a
         LIMIT with session=AM|PM off the live ``bid``: protective legs (hard-stop /
         floor, intent_type="close") price a MARKETABLE buffered limit so they
         reliably cross the spread; scale partials price AT the bid (patient). The
@@ -9811,7 +9846,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             metadata.update(confirmation_context)
         order_type = "market"
         session_code = _stamp_managed_exit_session(metadata)
-        if session_code != "NORMAL" and bid and bid > 0:
+        if reason == "oms_v2_managed_exit:CW_TARGET":
+            # Ceiling on the wire grid: nearest rounding can sell below the target.
+            target = Decimal(str(reference_price))
+            routed = format(target_limit_price(target), "f")
+            order_type = "limit"
+            metadata.update(order_type="limit", limit_price=routed, price_source="target_floor")
+        elif session_code != "NORMAL" and bid and bid > 0:
             if intent_type == "scale":
                 routed = _format_limit_price(bid)  # profit-taking: at the bid, zero buffer
             else:  # "close" = hard-stop / floor: buffered marketable limit that must fill
@@ -9880,6 +9921,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             row.broker_account_name, row.symbol, request.client_order_id,
             metadata["session"], _extended_hours_session() or "NORMAL",
         )
+        if metadata.get("cw_decided_at"):
+            request.metadata["cw_submitted_at"] = utcnow().isoformat(timespec="microseconds")
+            self.logger.info(
+                "[OMS-V2-CW-SUBMISSION] acct=%s sym=%s decided_at=%s submitted_at=%s",
+                row.broker_account_name, row.symbol,
+                metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
+            )
         reports = await self.broker_adapter.submit_order(request)
         events = await self._record_order_reports(
             session=session, intent=intent, strategy_id=strategy.id,
@@ -11297,7 +11345,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if not accounts:
             return
 
-        async def _evaluate_leg(acct: str) -> None:
+        for acct in accounts:
+            self._schedule_v2_quote_leg(acct, symbol)
+
+    def _schedule_v2_quote_leg(self, acct: str, symbol: str) -> None:
+        if (acct, symbol) not in self._managed_v2_symbols or not self._market_is_fillable():
+            return
+
+        async def _evaluate_leg() -> None:
             started = time.monotonic()
             try:
                 await self._evaluate_v2_managed_exit(acct, symbol)
@@ -11309,12 +11364,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     acct, symbol, elapsed_ms, elapsed_ms >= 250,
                 )
 
-        results = await asyncio.gather(
-            *(_evaluate_leg(acct) for acct in accounts), return_exceptions=True
+        # One worker per leg; slow row/protection work cannot stop stream intake.
+        self._schedule_symbol_tick_work(
+            ("managed-exit", (acct, symbol)), _evaluate_leg
         )
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
 
     async def _handle_trade_tick_event(self, event: TradeTickEvent) -> None:
         symbol = str(event.payload.symbol).upper()
@@ -16015,6 +16068,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                             await self._cancel_drifted_working_orders(key[1])
                         elif key[0] == "legacy-mirror":
                             self._schedule_webull_mirror_tick(key[1])
+                        elif key[0] == "managed-exit":
+                            self._schedule_v2_quote_leg(*key[1])
         tasks[key] = asyncio.create_task(execute())
         return True
 

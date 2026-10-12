@@ -354,15 +354,21 @@ async def test_eh_target_and_flip_unfilled_limits_remain_tracked(
 
     assert len([r for r in adapter.submitted if tag in r.reason]) == 1
     assert [r for r in adapter.submitted if tag in r.reason][0].metadata["session"] == session_name
-    assert service._webull_eh_ladder_pending[(WEBULL, SYMBOL)][2] == tag
+    if tag == "CW_TARGET":
+        assert (WEBULL, SYMBOL) not in service.__dict__.get("_webull_eh_ladder_pending", {})
+    else:
+        assert service._webull_eh_ladder_pending[(WEBULL, SYMBOL)][2] == tag
     assert f"[OMS-WEBULL-CANCEL-THEN-SELL] exit={tag}" in "\n".join(service.logger.lines)
     with sf() as session:
         first = session.scalar(select(BrokerOrder).where(BrokerOrder.broker_order_id == f"{tag}-LIMIT-1"))
         assert first is not None
+        if tag == "CW_TARGET":
+            assert first.status == "accepted" and first.payload["limit_price"] == "10.50"
         first.status = "cancelled"
         session.commit()
     await service._retry_webull_eh_ladder_pending()
-    assert len([r for r in adapter.submitted if tag in r.reason]) == 2
+    # Targets remain durable working orders, not sticky safety decisions to replay.
+    assert len([r for r in adapter.submitted if tag in r.reason]) == (1 if tag == "CW_TARGET" else 2)
 
 
 @pytest.mark.asyncio
