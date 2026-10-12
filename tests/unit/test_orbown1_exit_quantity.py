@@ -348,6 +348,16 @@ async def test_recorded_mi_orb_two_and_controlled_v2_180_sell_only_own_shares(re
 @pytest.mark.asyncio
 async def test_release_stays_durable_when_ownership_read_fails(monkeypatch):
     service, sessions, clock = confirmation._uncovered_service(monkeypatch)
+
+    class SessionClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = clock["now"]
+            return value.astimezone(tz) if tz is not None else value.replace(tzinfo=None)
+
+    # The EOD guard uses datetime.now; keep it on the same clock as utcnow.
+    monkeypatch.setattr(service_module, "datetime", SessionClock)
+    assert not service._v2_eod_oco_transition_due()
     confirmation.set_protect_base(
         service, sessions, confirmation.WEBULL, confirmation.SYMBOL, "known-protect-base",
     )
@@ -373,6 +383,8 @@ async def test_release_stays_durable_when_ownership_read_fails(monkeypatch):
     assert confirmation._uncovered_incidents(sessions)[0]["cause"] == "pair_released_not_sold"
     with sessions() as session:
         assert session.get(OmsManagedPosition, row_id).status == "open"
+    clock["now"] = datetime(2026, 9, 21, 20, 0, tzinfo=UTC)
+    assert service._v2_eod_oco_transition_due()
 
 
 @pytest.mark.asyncio
