@@ -61,3 +61,15 @@ reverts A on new live ORB ERROR. Each required live log missing still fails clos
 PASS. Prior717-test broader run is the preserved-head checkpoint, not a new
 full-suite claim. Raw1MiB bound unchanged; W5 recorded3xburst still missing.
 Main confirms G2/G3 received PROTOCOL. No queue edit or production action.
+
+MUSTFIXW1 daily window follow-up:
+Normal09:30 close now unsubscribes and drains pending/late A without failure
+latches or traceback; pending write cancellation does not terminate A writer.
+Next trading04:00 re-primes log/OMS observations and requests A on fresh health,
+with a new generation and unchanged watched T/Q/warning ownership. Safety
+failures stay sticky across windows. Optional on_window_close callback added to
+provider protocol; existing two-callback callers remain compatible.
+277 focused tests PASS, including85 dedicated G1 controls; publisher/provider/
+monitor boundary, stale row, in-flight write, late frame, weekend and sticky
+safety controls verified. Ruff/diffcheck PASS; unchanged50ms synthetic gate.
+W5 recorded3xburst/entitlement/source-health/composed acceptance still pending.

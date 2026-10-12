@@ -328,21 +328,21 @@ class MassiveTradeStream:
         self._warning_failed = False
         self._on_warning_aggregate: Callable[[MomentumWarningAggregateRecord], None] | None = None
         self._on_warning_revert: Callable[[str], None] | None = None
+        self._on_warning_window_close: Callable[[], None] | None = None
 
-    def configure_momentum_warning(self, on_aggregate, on_revert) -> None:
+    def configure_momentum_warning(self, on_aggregate, on_revert, on_window_close=None) -> None:
         self._on_warning_aggregate = on_aggregate
         self._on_warning_revert = on_revert
+        self._on_warning_window_close = on_window_close
 
     async def set_momentum_warning_aggregates(self, enabled: bool) -> bool:
         if not enabled:
-            was_enabled = self._warning_aggregates_enabled
-            self._warning_aggregates_enabled = False
-            if was_enabled and self._ws is not None:
-                self._ws.unsubscribe("A.*")
+            self._close_warning_window()
             return False
         if self._warning_failed or self._on_warning_aggregate is None:
             return False
         if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
+            self._close_warning_window()
             return False
         if self._ws is None or not self._connected:
             return False
@@ -355,6 +355,19 @@ class MassiveTradeStream:
             self._warning_aggregates_enabled = True
             self._warning_wildcard_used = True
         return True
+
+    def _close_warning_window(self) -> None:
+        if not self._warning_aggregates_enabled:
+            return
+        try:
+            if self._ws is not None:
+                self._ws.unsubscribe("A.*")
+        except Exception:
+            self._revert_warning("unsubscribe_error")
+            return
+        self._warning_aggregates_enabled = False
+        if self._on_warning_window_close is not None:
+            self._on_warning_window_close()
 
     def _revert_warning(self, reason: str) -> None:
         if not self._warning_aggregates_enabled:
@@ -546,7 +559,7 @@ class MassiveTradeStream:
                     if not self._warning_aggregates_enabled:
                         continue
                     if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
-                        self._revert_warning("outside_pm_window")
+                        self._close_warning_window()
                     else:
                         if getattr(message, "otc", False):
                             continue

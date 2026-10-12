@@ -60,6 +60,7 @@ class MomentumWarningStreamProvider(TradeStreamProvider, Protocol):
         self,
         on_aggregate: Callable[[MomentumWarningAggregateRecord], None],
         on_revert: Callable[[str], None],
+        on_window_close: Callable[[], None] | None = None,
     ) -> None: ...
 
     async def set_momentum_warning_aggregates(self, enabled: bool) -> bool: ...

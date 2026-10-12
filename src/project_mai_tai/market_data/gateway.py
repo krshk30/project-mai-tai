@@ -106,6 +106,7 @@ class MarketDataGatewayService:
         self._warning_revert_reason: str | None = None
         self._warning_inflight: MomentumWarningAggregateRecord | None = None
         self._warning_publish_task: asyncio.Task | None = None
+        self._warning_write_task: asyncio.Task | None = None
         self._warning_generation = 0
         self._warning_instance_id = str(uuid4())
         self._warning_published = 0
@@ -122,7 +123,9 @@ class MarketDataGatewayService:
         self._warning_redis = None
         self._warning_publisher = None
         if self.settings.market_data_momentum_warning_enabled:
-            self.trade_stream.configure_momentum_warning(self._enqueue_warning, self._latch_warning_revert)
+            self.trade_stream.configure_momentum_warning(
+                self._enqueue_warning, self._latch_warning_revert, self._close_warning_window
+            )
             # A has its own Redis pool/task; stalled A writes never serialize T/Q writes.
             self._warning_redis = warning_redis_client or Redis.from_url(
                 self.settings.redis_url, decode_responses=True,
@@ -648,6 +651,31 @@ class MarketDataGatewayService:
         except Exception:
             self.logger.exception("[MOMWARN1-AUTO-REVERT] A unsubscribe failed; locally latched OFF")
 
+    def _close_warning_window(self) -> None:
+        if self._warning_revert_reason is not None:
+            return
+        was_active = self._warning_active or self._warning_requested_utc_ns is not None
+        self._warning_active = False
+        while not self._warning_queue.empty():
+            self._warning_queue.get_nowait()
+            self._warning_drop_count += 1
+        if self._warning_write_task is not None:
+            self._warning_write_task.cancel()
+        self._warning_requested_utc_ns = None
+        self._warning_first_a_utc_ns = None
+        if was_active and self._warning_revert_reason is None:
+            self._warning_watchdog = WarningWatchdog()
+            reset = getattr(self._warning_health_reader, "reset_window", None)
+            if reset is not None:
+                reset()
+
+    async def _end_warning_window(self) -> None:
+        self._close_warning_window()
+        try:
+            await self.trade_stream.set_momentum_warning_aggregates(False)
+        except Exception:
+            await self._revert_warning("unsubscribe_error")
+
     def _enqueue_warning(self, record: MomentumWarningAggregateRecord) -> None:
         if not self._warning_active or self._warning_revert_reason is not None:
             return
@@ -682,40 +710,45 @@ class MarketDataGatewayService:
                 continue
             self._warning_inflight = record
             try:
+                # A normal daily boundary takes precedence over stale pending rows.
+                if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
+                    self._warning_drop_count += 1
+                    await self._end_warning_window()
+                    continue
                 lag_seconds = (time.monotonic_ns() - record.received_monotonic_ns) / 1e9
                 self._warning_max_publish_lag_ms = max(self._warning_max_publish_lag_ms, lag_seconds * 1000)
                 if lag_seconds > 2:
                     self._warning_drop_count += 1
                     await self._revert_warning("publish_lag")
                     return
-                if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
-                    self._warning_drop_count += 1
-                    await self._revert_warning("outside_pm_window")
-                    return
-                await asyncio.wait_for(
+                self._warning_write_task = asyncio.create_task(
                     self._warning_publisher.publish_momentum_warning_aggregate(
                         record, sequence=seq, dropped_total=self._warning_drop_count,
                         gateway_instance_id=self._warning_instance_id, generation=self._warning_generation,
-                    ), timeout=1,
+                    )
                 )
+                await asyncio.wait_for(self._warning_write_task, timeout=1)
                 self._warning_published += 1
             except asyncio.CancelledError:
                 self._warning_drop_count += 1
-                raise
+                if asyncio.current_task().cancelling() or self._warning_revert_reason is not None:
+                    raise
+                # Only the in-flight A write was cancelled by a normal window close.
+                continue
             except Exception:
                 self._warning_drop_count += 1
                 await self._revert_warning("publish_error")
                 return
             finally:
                 self._warning_inflight = None
+                self._warning_write_task = None
             await asyncio.sleep(0)
 
     async def _warning_monitor_once(self) -> None:
         if self._warning_revert_reason is not None:
             return
         if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
-            self._warning_active = False
-            await self.trade_stream.set_momentum_warning_aggregates(False)
+            await self._end_warning_window()
             return
         try:
             health = await asyncio.wait_for(

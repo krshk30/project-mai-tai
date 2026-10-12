@@ -78,6 +78,10 @@ class WarningHealthReader:
         self.log_directory = Path(log_directory)
         self._logs: dict[str, tuple[int, int, bytes]] = {}
 
+    def reset_window(self) -> None:
+        # Prime live log offsets before the next A request, not across inactive nights.
+        self._logs.clear()
+
     @staticmethod
     def _open_regular(path: Path):
         descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)

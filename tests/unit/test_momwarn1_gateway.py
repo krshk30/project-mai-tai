@@ -233,7 +233,172 @@ async def test_outside_window_unsubscribes_A_and_preserves_watched_owners(monkey
     provider._handle_messages([aggregate()])
     assert provider._ws.removed == ["A.*"]
     assert provider._subscriptions == {"WFF"}
-    assert svc._warning_revert_reason == "outside_pm_window"
+    assert svc._warning_revert_reason is None
+    assert not provider._warning_failed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_path", ["publisher", "provider", "monitor"])
+async def test_normal_0930_close_drains_late_A_and_resumes_next_trading_04(monkeypatch, caplog, close_path):
+    def set_clock(iso):
+        fixed = SimpleNamespace(now=lambda _: datetime.fromisoformat(iso))
+        monkeypatch.setattr(gateway, "datetime", fixed)
+        monkeypatch.setattr(massive_provider, "datetime", fixed)
+    set_clock("2026-10-12T13:29:59+00:00")
+    svc, provider, _, redis = service()
+    await svc.apply_subscription_event(event("v2", ["WFF"]))
+    await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
+    owners = {key: set(value) for key, value in svc._desired_symbols_by_consumer.items()}
+    svc._trade_queue.put_nowait(TradeTickRecord("WFF", 13, 1))
+    svc._quote_queue.put_nowait(QuoteTickRecord("WFF", 13, 14))
+    await svc._warning_monitor_once()
+    provider._handle_messages([aggregate(), aggregate()])
+    assert svc._warning_generation == 1
+    # Stale pending A at the normal boundary is a discard, not a safety trip.
+    seq, row = svc._warning_queue.get_nowait()
+    svc._warning_queue.put_nowait((seq, replace(row, received_monotonic_ns=time.monotonic_ns()-3_000_000_000)))
+    stop = asyncio.Event()
+    publisher = None
+    caplog.clear()
+    set_clock("2026-10-12T13:30:00+00:00")
+    if close_path == "publisher":
+        publisher = asyncio.create_task(svc._warning_publish_loop(stop))
+        while provider._warning_aggregates_enabled:
+            await asyncio.sleep(0)
+    elif close_path == "provider":
+        provider._handle_messages([aggregate()])
+    else:
+        await svc._warning_monitor_once()
+    provider._handle_messages([aggregate()])
+    assert svc._warning_queue.empty() and svc._warning_drop_count == 2
+    assert not svc._warning_active
+    assert svc._warning_revert_reason is None and not provider._warning_failed
+    assert svc.warning_metrics()["watchdog_revert_ns"] is None
+    assert svc._trade_queue.qsize() == svc._quote_queue.qsize() == 1
+    assert svc._bar_queue.empty()
+    assert svc._desired_symbols_by_consumer == owners
+    assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
+    assert provider._ws.removed == ["A.*"]
+    set_clock("2026-10-13T08:00:00+00:00")
+    await svc._warning_monitor_once()
+    assert svc._warning_active and svc._warning_generation == 2
+    start_ms = int(datetime.fromisoformat("2026-10-13T08:00:00+00:00").timestamp() * 1000)
+    provider._handle_messages([aggregate(s=start_ms, e=start_ms+1000)])
+    if publisher is None:
+        publisher = asyncio.create_task(svc._warning_publish_loop(stop))
+    while not redis.entries:
+        await asyncio.sleep(0)
+    stop.set()
+    await publisher
+    assert redis.entries[0][1]["generation"] == 2
+    assert redis.entries[0][1]["start_ms"] == start_ms
+    assert provider._ws.added.count("A.*") == 2
+    assert not any(record.exc_info or record.levelname in {"ERROR", "CRITICAL"}
+                   or "AUTO-REVERT" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_normal_close_cancels_only_inflight_A_write_writer_resumes_next_04(monkeypatch):
+    svc, provider, _, redis = service()
+    await svc._warning_monitor_once()
+    provider._handle_messages([aggregate()])
+    entered, cancelled = asyncio.Event(), asyncio.Event()
+    original_xadd = redis.xadd
+    async def blocked(*args, **kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+    redis.xadd = blocked
+    stop = asyncio.Event()
+    publisher = asyncio.create_task(svc._warning_publish_loop(stop))
+    await entered.wait()
+    closed_clock = SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 13, 30, tzinfo=UTC))
+    monkeypatch.setattr(gateway, "datetime", closed_clock)
+    monkeypatch.setattr(massive_provider, "datetime", closed_clock)
+    await svc._warning_monitor_once()
+    await cancelled.wait()
+    while svc._warning_inflight is not None:
+        await asyncio.sleep(0)
+    assert not publisher.done()
+    assert svc._warning_drop_count == 1
+    assert svc._warning_revert_reason is None and not provider._warning_failed
+    redis.xadd = original_xadd
+    next_clock = SimpleNamespace(now=lambda _: datetime(2026, 10, 13, 8, 0, tzinfo=UTC))
+    monkeypatch.setattr(gateway, "datetime", next_clock)
+    monkeypatch.setattr(massive_provider, "datetime", next_clock)
+    await svc._warning_monitor_once()
+    provider._handle_messages([aggregate()])
+    while not redis.entries:
+        await asyncio.sleep(0)
+    stop.set()
+    await publisher
+    assert redis.entries[0][1]["generation"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["provider", "watchdog"])
+async def test_safety_failure_remains_sticky_across_normal_close_and_next_04(monkeypatch, failure):
+    svc, provider, _, _ = service()
+    await svc._warning_monitor_once()
+    if failure == "provider":
+        provider._revert_warning("policy_1008")
+    else:
+        await svc._revert_warning("load")
+    reason = svc._warning_revert_reason
+    for clock in (datetime(2026, 10, 12, 13, 30, tzinfo=UTC), datetime(2026, 10, 13, 8, 0, tzinfo=UTC)):
+        fixed = SimpleNamespace(now=lambda _: clock)
+        monkeypatch.setattr(gateway, "datetime", fixed)
+        monkeypatch.setattr(massive_provider, "datetime", fixed)
+        await svc._warning_monitor_once()
+    assert svc._warning_revert_reason == reason
+    assert not svc._warning_active
+    assert provider._ws.added.count("A.*") == 1
+    if failure == "provider":
+        assert provider._warning_failed
+
+
+@pytest.mark.asyncio
+async def test_next_window_reprimes_logs_and_sync_baseline_after_inactive_night(health_reader, monkeypatch):
+    reader, path, directory = health_reader
+    svc, provider, _, _ = service()
+    svc._warning_health_reader = reader
+    await svc._warning_monitor_once()
+    assert svc._warning_active and reader._logs
+    closed = SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 13, 30, tzinfo=UTC))
+    monkeypatch.setattr(gateway, "datetime", closed)
+    monkeypatch.setattr(massive_provider, "datetime", closed)
+    await svc._warning_monitor_once()
+    assert not reader._logs
+    for name in reader.LOG_NAMES:
+        (directory / name).write_text("ERROR during inactive night\n")
+    path.write_text(json.dumps(dict(schema_version=1, observed_wall_ns=time.time_ns(),
+        oms_sync_seq=100, oms_sync_seconds=1, v2_bar_lateness_seconds=0)))
+    next_window = SimpleNamespace(now=lambda _: datetime(2026, 10, 13, 8, 0, tzinfo=UTC))
+    monkeypatch.setattr(gateway, "datetime", next_window)
+    monkeypatch.setattr(massive_provider, "datetime", next_window)
+    await svc._warning_monitor_once()
+    assert svc._warning_active and svc._warning_generation == 2
+    assert svc._warning_revert_reason is None and not provider._warning_failed
+
+
+@pytest.mark.asyncio
+async def test_closed_weekend_does_not_reenable_until_next_trading_04(monkeypatch):
+    svc, provider, _, _ = service()
+    await svc._warning_monitor_once()
+    for stamp in ("2026-10-16T13:30:00+00:00", "2026-10-17T08:00:00+00:00", "2026-10-18T08:00:00+00:00"):
+        fixed = SimpleNamespace(now=lambda _: datetime.fromisoformat(stamp))
+        monkeypatch.setattr(gateway, "datetime", fixed)
+        monkeypatch.setattr(massive_provider, "datetime", fixed)
+        await svc._warning_monitor_once()
+        assert not svc._warning_active and svc._warning_revert_reason is None
+    monday = SimpleNamespace(now=lambda _: datetime(2026, 10, 19, 8, 0, tzinfo=UTC))
+    monkeypatch.setattr(gateway, "datetime", monday)
+    monkeypatch.setattr(massive_provider, "datetime", monday)
+    await svc._warning_monitor_once()
+    assert svc._warning_active and provider._ws.added.count("A.*") == 2
 
 
 @pytest.mark.asyncio

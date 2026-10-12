@@ -39,7 +39,7 @@ consumer_name="momentum-warning", symbols=[explicit symbols], mode=replace/add/r
 T-only owner cap16; no Q, historical warmup or REST for warning-only owners.
 Removing/restoring warning owner preserves other owners' T/Q and warmup.
 Warning T trades keep existing trade_tick eligibility/conditions/provenance fields.
-Provider configure_momentum_warning(on_aggregate,on_revert),
+Provider configure_momentum_warning(on_aggregate,on_revert,on_window_close=None),
 set_momentum_warning_aggregates(enabled), sync_warning_trade_symbols(symbols).
 No new provider socket. Only the existing Massive SDK connection is used.
 
@@ -74,6 +74,10 @@ Linux MemAvailable<3GiB, new ERROR in OMS/strategy/v2/ORB logs, bar lateness>5s,
 A publishlag>2s, disconnect/reconnect/policy1008 all latch A off.
 Rotated/truncated/oversized/unreadable logs fail closed. No watchdog service restart.
 Required logs only: oms.log,strategy.log,schwab-1m-v2.log,orb-schwab.log.
+Normal09:30 close quietly unsubscribes/drains A, cancels only its pending write,
+and resets observation baselines for the next trading04:00 fresh-health request.
+It does not set a failure latch or terminate the A writer. Safety failures remain
+sticky across daily windows; disconnect/policy/monitor/publish failures still revert.
 orb.log is the separate paper observer, not the live ORB producer; absent or
 errored retired-paper output does not disable A. Live ORB unit stdout/stderr both
 append to orb-schwab.log (ops/systemd/project-mai-tai-orb-schwab.service).
