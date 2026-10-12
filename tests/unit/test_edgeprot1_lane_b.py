@@ -200,7 +200,8 @@ async def test_all_on_current_proc_flags_controlled_mndr_replay(monkeypatch, acc
     monkeypatch.setattr(svc, "_market_is_fillable", lambda: True)
     # Recorded archive reception, explicitly substituted for missing OMS arrival time.
     now = datetime(2026, 10, 12, 13, 30, 17, 456869, tzinfo=UTC)
-    monkeypatch.setattr(module, "utcnow", lambda: now)
+    from tests.unit.test_edgeprot1_e860_composition import bind_clock
+    bind_clock(monkeypatch, now)
     await svc._handle_quote_tick_event(quote("2.62", at=now))
     await drain(svc)
     request, = broker.requests

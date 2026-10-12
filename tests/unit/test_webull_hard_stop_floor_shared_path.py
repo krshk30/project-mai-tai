@@ -499,7 +499,8 @@ async def test_0930_edge_rearms_prior_rth_webull_share_without_touching_live_pai
 
     await service._v2_rth_edge_bracket()
 
-    pair_requests = [r for r in adapter.submitted if r.reason == "oms_v2_rth_edge_bracket"]
+    pair_requests = [r for r in adapter.submitted
+                     if r.metadata.get("webull_exit_only_pair") == "true"]
     assert [r.broker_account_name for r in pair_requests] == [WEBULL]
 
 

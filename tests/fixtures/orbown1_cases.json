@@ -1,0 +1,34 @@
+{
+  "provenance": "Read-only project_mai_tai fills SQL and retained v2 logs, fetched 2026-10-12. Controlled ownership replay, not broker execution prediction.",
+  "cases": [
+    {
+      "symbol": "GIXI", "strategy": "orb_schwab", "account": "live:schwab_1m_v2",
+      "quantity": 2, "entry_price": "6.33", "exit_price": "6.2111",
+      "entry_at": "2026-10-12T09:30:21-04:00", "exit_at": "2026-10-12T09:31:06-04:00",
+      "poll_at": "2026-10-12T09:30:34.113-04:00",
+      "unknown_reason": "schwab_first_rest_filled_not_first_rest",
+      "entry_order_id": "1238915b-8746-4bd8-ab60-7b05b2f1c266",
+      "exit_order_id": "93c26df6-71db-4df6-addc-4b9f562f76d6"
+    },
+    {
+      "symbol": "JAGX", "strategy": "orb_schwab", "account": "live:schwab_1m_v2",
+      "quantity": 2, "entry_price": "6.67", "exit_price": "6.6001",
+      "entry_at": "2026-10-06T09:30:14-04:00", "exit_at": "2026-10-06T09:31:07-04:00",
+      "poll_at": "2026-10-06T09:30:19.355-04:00",
+      "unknown_reason": "schwab_first_rest_filled_not_first_rest",
+      "entry_order_id": "0be05de1-9744-4d1a-aef2-de19ec5bf2bb",
+      "exit_order_id": "433ad0be-3d50-49eb-b1ac-e820f8faa540"
+    }
+  ],
+  "durable_unknown_rows": [
+    {"created_at": "2026-10-06T13:30:19.355357+00:00", "payload": {"schema_version": 1, "strategy_code": "schwab_1m_v2", "symbol": "JAGX", "opportunity_id": "1791293419343", "phase": "unknown", "flip_bar_ts": "0", "provisional_started_ms": "0", "fill_accounts": [], "position_ids": {}, "position_entry_ms": {}, "retry_segment_id": "0", "retry_closes_at_place": 0, "active": true, "reason": "schwab_first_rest_filled_not_first_rest"}},
+    {"created_at": "2026-10-12T13:30:34.113393+00:00", "payload": {"schema_version": 1, "strategy_code": "schwab_1m_v2", "symbol": "GIXI", "opportunity_id": "1791811834075", "phase": "unknown", "flip_bar_ts": "0", "provisional_started_ms": "0", "fill_accounts": [], "position_ids": {}, "position_entry_ms": {}, "retry_segment_id": "0", "retry_closes_at_place": 0, "active": true, "reason": "schwab_first_rest_filled_not_first_rest"}}
+  ],
+  "gixi_line_control": {
+    "observed_at": "2026-10-12T11:52:02.677-04:00", "line": "6.0171",
+    "wire_trigger": "6.05", "offset_pct": "0.50", "ask": "5.6400",
+    "earlier_eligible_bar_at": "2026-10-12T11:26:02.282-04:00",
+    "earlier_line": "6.6224", "earlier_short_age": 5,
+    "timing_note": "Retained source first shows 6.0171/6.05 at 11:52, not 11:2x. Earlier 11:26 eligible branch was suppressed by the consumed slot."
+  }
+}

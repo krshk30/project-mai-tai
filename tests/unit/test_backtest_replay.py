@@ -10,6 +10,7 @@ too heavy for CI; that lives in the Deliverable-3 VPS reconciliation.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -601,15 +602,37 @@ def test_p3_premarket_reactive_eh_marketable_fill() -> None:
 
 
 # ------------------------------------------------------------------ (c) gap-through EH entry -> ABANDON
-def test_p3_gap_through_resting_eh_entry_abandons() -> None:
-    # Same pre-market day, but the break gaps the whole band: crossing ask 99.00 > band cap ~98.755. The
-    # up-cross fires but the ask is past the band -> ABANDON (no fill), the live no-chase / gap-through-miss.
+def test_p3_gap_through_resting_eh_entry_abandons(monkeypatch) -> None:
+    # Controlled two-source race: the strategy sees an in-band 98.50 decision;
+    # the final execution quote is 99.00 > ~98.755. The final gate still abandons.
+    original = ReplayStrategy._eh_resting_cross_check
+    decision_ms = int((EH_REST_BASE + timedelta(minutes=16, seconds=30)).timestamp() * 1000)
+
+    def in_band_decision(self, state, quote, **kwargs):
+        if quote.quote_time_ms == decision_ms:
+            quote = replace(quote, bid_price=98.40, ask_price=98.50, last_price=98.50)
+        return original(self, state, quote, **kwargs)
+
+    monkeypatch.setattr(ReplayStrategy, "_eh_resting_cross_check", in_band_decision)
     res = _run_eh_rest(99.00)
     assert res.entries == [] and res.trades == [], (
         f"expected a gap-through ABANDON, got {res.entries}"
     )
     assert len(res.misses) == 1 and res.misses[0].reason == "eh_entry_abandoned"
     assert "ASK_PAST_BAND" in res.misses[0].detail
+
+
+def test_p3_past_band_resting_eh_quote_keeps_watching(caplog) -> None:
+    quotes = _eh_rest_quotes(99.00)
+    quotes.append(TapeQuote(ts=EH_REST_BASE + timedelta(minutes=16, seconds=31),
+                            bid=98.40, ask=98.50, last=98.50))
+    source = _MemSource(_eh_rest_bars(), quotes)
+    with caplog.at_level("INFO"):
+        res = replay_symbol_day(source, SYM, DAY, build_replay_settings(eh_enabled=True))
+    assert "source=rest_quote latch_taken=0" in caplog.text
+    assert len(res.entries) == 1
+    assert res.entries[0].fill_price == pytest.approx(98.50)
+    assert res.misses == []
 
 
 # ------------------------------------------------------------------ (d) EH live-bar guard blocks a stale bar

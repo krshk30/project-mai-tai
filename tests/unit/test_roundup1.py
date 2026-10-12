@@ -299,7 +299,7 @@ async def test_recorded_sckt_pa1_resubmit_recomputes_ceiling_then_serial_lane_si
 @pytest.mark.parametrize("stream", [True, False])
 @pytest.mark.parametrize("case,expected", [
     (REAL[10], True), (REAL[11], False), (REAL[12], True), (REAL[13], True),
-    (STRAYS[0], False), (("MI", "2026-10-05T13:15:20.309Z", 2.7288, 2.749, 2.75), True),
+    (STRAYS[0], False), (("MI", "2026-10-05T13:15:20.309Z", 2.7288, 2.749, 2.74), True),
 ], ids=["LGHL", "MEDS", "NXL", "AMOD", "SAIQ", "MI"])
 def test_six_pm_print_proxies_compare_to_rounded_trigger(case, expected, stream):
     strategy, state, clock = armed(case, **{**ACTIVE_FLAGS, FLAG: True})
@@ -310,8 +310,6 @@ def test_six_pm_print_proxies_compare_to_rounded_trigger(case, expected, stream)
         "LGHL": 7.02, "MEDS": 4.65, "NXL": 7.15, "AMOD": 2.57, "SAIQ": 6.80, "MI": 2.73,
     }[case[0]]
     result = cross(strategy, state, clock, case[3], case[4], stream=stream)
-    if case[0] == "MI" and stream:
-        expected = False  # 2.75 ask still exceeds the new final 2.73/2.74 pair.
     assert (result is not None) is expected
     if expected:
         assert Decimal(result.metadata["stop_price"]) == Decimal(str(state.resting_trigger))
@@ -320,6 +318,22 @@ def test_six_pm_print_proxies_compare_to_rounded_trigger(case, expected, stream)
     else:
         assert not state.resting_flip_ms
         assert not strategy.drain_webull_fanout_intents()
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_mi_rounded_trigger_past_cap_twin_keeps_cross_available(stream, caplog):
+    case = ("MI", "2026-10-05T13:15:20.309Z", 2.7288, 2.749, 2.75)
+    strategy, state, clock = armed(case, **{**ACTIVE_FLAGS, FLAG: True})
+    state.resting_active = False
+    strategy._queue_resting_place(state, state.resting_level)
+    with caplog.at_level("INFO"):
+        assert cross(strategy, state, clock, 2.749, 2.75, stream=stream) is None
+    assert state.resting_active and not state.resting_flip_ms
+    assert not strategy.drain_webull_fanout_intents()
+    assert "reason=ask_past_band" in caplog.text
+    result = cross(strategy, state, clock, 2.749, 2.74, stream=stream)
+    assert result is not None
+    assert len(strategy.drain_webull_fanout_intents()) == 1
 
 
 def test_switch_on_alone_preserves_working_sckt_wire_quantity_and_no_buy():
