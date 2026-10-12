@@ -149,11 +149,15 @@ class _ManagedSellEvents(list):
         reservation: ExitPairReleaseResult | None = None,
         terminal_events=None,
         native_fill_row_id: str = "",
+        ownership_refused: bool = False,
+        submitted_quantity: int | None = None,
     ) -> None:
         materialized = list(events)
         super().__init__(materialized)
         self.reservation = reservation
         self.native_fill_row_id = native_fill_row_id
+        self.ownership_refused = ownership_refused
+        self.submitted_quantity = submitted_quantity
         self.terminal_events = list(
             materialized if terminal_events is None else terminal_events
         )
@@ -9391,6 +9395,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         decided_at=decided_at,
                     )
                     events = managed_sell
+                    if getattr(managed_sell, "ownership_refused", False):
+                        session.commit()
+                        return "refused"
                     reservation = getattr(managed_sell, "reservation", None)
                     if reservation is not None and reservation.outcome == "resolved_by_fill":
                         detail = self._exit_pair_fill_detail(reservation)
@@ -9405,12 +9412,20 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         return "refused"
                     else:
                         position.apply_scale(
-                            str(level or ""), int(sell_qty or 0), exit_price=reference_price
+                            str(level or ""),
+                            getattr(managed_sell, "submitted_quantity", None)
+                            if getattr(managed_sell, "submitted_quantity", None) is not None
+                            else int(sell_qty or 0),
+                            exit_price=reference_price,
                         )
                         # #6: fill-gate the scale quantity (write_quantity=False) — the scale fill
                         # decrements current_quantity; on submit persist only the ladder state.
                         self.store.update_managed_position_from_position(
-                            session, row, position, write_quantity=not close_on_fill
+                            session, row, position,
+                            write_quantity=not close_on_fill and (
+                                getattr(managed_sell, "submitted_quantity", None) is None
+                                or managed_sell.submitted_quantity == int(sell_qty or 0)
+                            ),
                         )
                         statuses = {
                             str(getattr(event.payload, "status", "")).strip().lower()
@@ -9455,6 +9470,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         confirmation_context=confirmation_context,
                     )
                     events = managed_sell
+                    if getattr(managed_sell, "ownership_refused", False):
+                        session.commit()
+                        return "refused"
                     key = (acct, symbol)
                     if getattr(managed_sell, "native_fill_row_id", ""):
                         session.commit()
@@ -9592,7 +9610,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                                 "closed" if "filled" in statuses else "close_submitted"
                             )
                         if resolved_oco is None:
-                            if close_on_fill:
+                            if close_on_fill or (
+                                getattr(managed_sell, "submitted_quantity", None) is not None
+                                and managed_sell.submitted_quantity < int(position.quantity)
+                            ):
                                 # #6: do NOT close on submit — the confirmed fill closes the row.
                                 # Persist price-state only; keep the position monitored/protected.
                                 self.store.update_managed_position_from_position(
@@ -9743,6 +9764,48 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             and proof.intent_type == "close"
         )
 
+    async def _v2_managed_sell_owned_quantity(
+        self, *, managed_row_id: str, strategy_code: str,
+        broker_account_name: str, symbol: str, requested_quantity: int,
+    ) -> int:
+        def read(session):
+            current = self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=symbol,
+            )
+            if (strategy_code != "schwab_1m_v2" or current is None
+                    or str(current.id) != managed_row_id
+                    or current.strategy_code != strategy_code):
+                return 0, None, "episode_or_owner_changed"
+            strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
+            account = session.scalar(select(BrokerAccount).where(
+                BrokerAccount.name == broker_account_name
+            ))
+            if strategy is None or account is None:
+                return 0, None, "missing_strategy_or_account"
+            owned = self.store.get_virtual_position(
+                session, strategy_id=strategy.id, broker_account_id=account.id, symbol=symbol,
+            )
+            return int(current.current_quantity), (
+                Decimal(owned.quantity) if owned is not None else None
+            ), ""
+
+        # Read after broker awaits, with a fresh off-loop session: the caller's ORM
+        # identity map and the quote's hydrated Position can both contain old quantities.
+        managed_quantity, ledger_quantity, refusal = await self._run_db(read, commit=False)
+        quantity = max(0, min(int(requested_quantity), managed_quantity))
+        if ledger_quantity is not None:
+            quantity = max(0, min(quantity, int(ledger_quantity)))
+        if refusal or quantity != requested_quantity or ledger_quantity is None:
+            self.logger.warning(
+                "[OMS-V2-EXIT-OWNED-QUANTITY] acct=%s sym=%s row=%s "
+                "requested=%s managed=%s ledger=%s sell=%s reason=%s",
+                broker_account_name, symbol, managed_row_id, requested_quantity,
+                managed_quantity, ledger_quantity, quantity,
+                refusal or ("managed_only_no_ledger" if ledger_quantity is None
+                            else "own_quantity_cap"),
+            )
+        return quantity
+
     async def _emit_v2_managed_sell(
         self,
         session: Session,
@@ -9769,6 +9832,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         leg-level ``reference_price`` is left unchanged so the [OMS-V2-MANAGED-EXIT]
         log and the live-paper re-score stay identical; ``limit_price`` drives the
         live order (adapter prefers limit_price, falls back to reference_price)."""
+        if row.strategy_code != "schwab_1m_v2":
+            self.logger.warning(
+                "[OMS-V2-EXIT-OWNED-QUANTITY] acct=%s sym=%s row=%s "
+                "sell=0 reason=foreign_managed_strategy",
+                row.broker_account_name, row.symbol, row.id,
+            )
+            return _ManagedSellEvents(ownership_refused=True)
         strategy = session.scalar(select(Strategy).where(Strategy.code == row.strategy_code))
         broker_account = session.scalar(
             select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
@@ -9798,6 +9868,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 reservation.outcome in {"reserved", "unanswerable"} and not protective
             ):
                 return _ManagedSellEvents(reservation=reservation)
+        owned_quantity_args = {
+            "managed_row_id": str(row.id), "strategy_code": row.strategy_code,
+            "broker_account_name": row.broker_account_name, "symbol": row.symbol,
+        }
+        quantity = await self._v2_managed_sell_owned_quantity(
+            **owned_quantity_args, requested_quantity=quantity,
+        )
+        if quantity <= 0:
+            return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
         metadata = {
             "oms_v2_managed_exit": "true",
             "reference_price": f"{float(reference_price):.4f}",
@@ -9913,7 +9992,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 )
                 if (release == "released" and current is not None
                         and current.managed_row_id == str(row.id)
-                        and current.current_quantity == quantity and not current.dedup_active):
+                        and current.current_quantity == row.current_quantity
+                        and not current.dedup_active
+                        and await self._v2_managed_sell_owned_quantity(
+                            **owned_quantity_args, requested_quantity=quantity,
+                        ) == quantity):
                     retry_request = replace(
                         request, client_order_id=self._replacement_client_order_id(
                             request.client_order_id
@@ -9945,7 +10028,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             and self._webull_confirmation_close_can_retry_corrected(reports)
         ):
             corrected_request = self._corrected_webull_confirmation_close_request(request)
-            if corrected_request is not None:
+            if (corrected_request is not None
+                    and await self._v2_managed_sell_owned_quantity(
+                        **owned_quantity_args, requested_quantity=quantity,
+                    ) == quantity):
                 corrected_reports = await self.broker_adapter.submit_order(corrected_request)
                 terminal_events = await self._record_order_reports(
                     session=session,
@@ -9983,6 +10069,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             events,
             reservation=reservation,
             terminal_events=terminal_events,
+            submitted_quantity=quantity,
         )
 
     async def _has_active_native_stop_guard_order(

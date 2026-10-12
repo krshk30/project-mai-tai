@@ -25,6 +25,7 @@ from project_mai_tai.broker_adapters.simulated import SimulatedBrokerAdapter
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import (
     BrokerAccount, BrokerOrder, Fill, OmsManagedPosition, Strategy, SystemIncident, TradeIntent,
+    VirtualPosition,
 )
 from project_mai_tai.events import (
     QuoteTickEvent,
@@ -1028,6 +1029,13 @@ async def test_partial_exit_reprices_only_the_remaining_shares(
     svc._cw_target_pct = 5.0
     svc._cw_stop_pct = 8.0
     _arm(svc, sf, entry=10.0, qty=10)
+    with sf.begin() as session:
+        strategy = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
+        account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == ACCT))
+        session.add(VirtualPosition(
+            strategy_id=strategy.id, broker_account_id=account.id, symbol=SYM,
+            quantity=Decimal("10"), average_price=Decimal("10"),
+        ))
     if exit_tag == "CW_FLIP":
         svc._arm_cw_flip_pending(
             (ACCT, SYM), bar_time_ms=int(datetime.now(UTC).timestamp() * 1000) - 1,
