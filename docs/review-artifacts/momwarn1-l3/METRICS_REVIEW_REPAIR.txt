@@ -1,5 +1,9 @@
 L3-R1/R2 -- assessment and local metrics-only repair; MAIN REVIEW PENDING
 
+FOLLOWUP: human main independently reviewed d869 diff/caller tests/XML131P0F
+and explicitly closed both findings as LOCAL MEASUREMENT REPAIR ONLY. No feature
+pin/install/card completion approval. Historical pending assessment below retained.
+
 Reviewed source agrees with both MUST-FIX findings; no provenance guarantee
 justifies the old claims. EventEnvelope has no gateway instance/generation.
 TradeTickPayload lacks provider print identity; paper summary stores integer
