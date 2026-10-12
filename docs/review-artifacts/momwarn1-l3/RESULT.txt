@@ -65,3 +65,8 @@ PAUSED boundary: GitHub remains human-suspended; no publication. Performance hol
 was temporary and ended on explicit Mendel receipt; no unfinished benchmark left.
 No future work execution is scheduled by this checkpoint. TueOct13 afterclose
 and WedOct14 actual test remain targets conditional on genuine five-proof review.
+LATEST CHECKPOINT: see CHECKPOINT.txt, METRICS_REVIEW_REPAIR.txt,
+LIVE_HEALTH_REVIEW.txt, CAUSAL_REPLAY.txt and RETAINED_324.txt.
+Earlier numbers/blocked-causal-arrival rulings below are historical checkpoints;
+WFF causal subgate now independently main-reviewed/closed locally. Metrics
+MUST-FIX findings also closed locally. Entire feature still NOT READY.

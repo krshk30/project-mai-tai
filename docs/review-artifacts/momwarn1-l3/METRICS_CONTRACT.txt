@@ -1,7 +1,8 @@
 L3 metrics-only compatibility extension -- local, no operational approval
 
-MAIN REVIEW REQUIRED: R1/R2 repair supersedes the aa355102 Snapshot epoch and
-millisecond-match exactness claims below. No feature pin or install approval.
+R1/R2 repair supersedes the aa355102 Snapshot epoch and millisecond-match
+exactness claims. Main independently reviewed d869 and closed both as local
+measurement repair only. This is not whole-contract/feature/install approval.
 
 Wire JSON metrics version1 and stream suffixmomentum-warning-metrics unchanged.
 G2 wire native shape retained:source=momentum-paper,strategy_code/logical_id,
