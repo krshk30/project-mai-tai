@@ -14,7 +14,7 @@ decode off-loop and typed normalization/dispatch yield every64. SDK hidden recon
 disabled only for warning-configured client so A never silently resubscribes.
 
 W3 local implementation: A-only sticky revert on1008/disconnect, publish lag>2s,
-two distinct consecutive OMS syncs>5s, actual v2 bar lateness>5s, load1m>6,
+any two distinct OMS syncs>5s, actual v2 bar lateness>5s, load1m>6,
 MemAvailable<3GiB, new ERROR in required live logs. Reader errors, stale/invalid
 health, unreadable/rotated/truncated/oversized logs fail closed. No watchdog restart.
 Actual OMS-duration/v2-lateness evidence input still must be verified by main;
@@ -26,12 +26,14 @@ No invented SIP low timestamp or subscription ACK. Received UTC/monotonic clocks
 upstream exact s/e UTCms, published local attempt wall clock; explicit provenance.
 First provider event is coverage observation distinct from subscription request.
 
-Verification: 716 selected unit/regression tests PASS, 71 dedicated G1 controls.
+Verification: 717 selected unit/regression tests PASS, 72 dedicated G1 controls.
+Final narrow follow-up enforces any two slow syncs and rejects skipped/regressed
+sequence evidence. This count supersedes the earlier716/71 checkpoint.
 Ruff and diffcheck PASS. All service/OMS/strategy_core/momentum_paper source diff
 against b680 is empty. No G2/EulerB/MendelF files edited. No extra proof workers.
 JUnit offline-regressions.xml contains names/results; dedicated-controls XML also
 preserved locally. Synthetic12,000-row callback fairness control observed watched
-T/Q at0.997917ms while A Redis blocked; queue bounded, drop-oldest exercised.
+T/Q at0.982667ms while A Redis blocked; queue bounded, drop-oldest exercised.
 This is SYNTHETIC, NOT a recorded WebSocket burst, NOT3x an unknown peak.
 Raw JSON/SDK parsing and real SDK disconnect also exercised offline with fake transport.
 

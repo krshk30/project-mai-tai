@@ -361,6 +361,16 @@ def test_two_distinct_slow_syncs_duplicate_sample_not_second_sync_and_boundary_v
     assert watchdog.check(healthy(), publish_lag_seconds=2.01) == "publish_lag"
 
 
+def test_two_slow_syncs_revert_even_with_fast_sync_between_and_missing_sync_fails_closed():
+    watchdog = WarningWatchdog()
+    assert watchdog.check(replace(healthy(), oms_sync_seconds=6), publish_lag_seconds=0) is None
+    assert watchdog.check(replace(healthy(), oms_sync_seq=2), publish_lag_seconds=0) is None
+    assert watchdog.check(replace(healthy(), oms_sync_seq=3, oms_sync_seconds=6), publish_lag_seconds=0) == "oms_sync_slow_twice"
+    watchdog = WarningWatchdog()
+    assert watchdog.check(healthy(), publish_lag_seconds=0) is None
+    assert watchdog.check(replace(healthy(), oms_sync_seq=3), publish_lag_seconds=0) == "monitor_sync_gap"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["unreadable", "timeout", "load", "bar", "errors", "lag", "sync"])
 async def test_gateway_auto_revert_A_only_all_monitor_triggers(failure):

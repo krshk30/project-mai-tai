@@ -67,7 +67,8 @@ Atomically replace the configured JSON file with schema_version=1,
 observed_wall_ns:int,oms_sync_seq:int,oms_sync_seconds:measured seconds,
 v2_bar_lateness_seconds:actual completed-bar lateness beyond due time.
 Refresh <=1s; older than5s/future timestamp/missing/invalid evidence fails closed.
-OMS two consecutive >5s distinct sync sequences; repeats never count twice.
+OMS any two >5s distinct observed sync sequences; repeats never count twice.
+Skipped/regressed sync sequence fails closed because intermediate duration is unknown.
 Periodic reads off-loop with bounded bytes and timeout. Load1m>6,
 Linux MemAvailable<3GiB, new ERROR in OMS/strategy/v2/ORB logs, bar lateness>5s,
 A publishlag>2s, disconnect/reconnect/policy1008 all latch A off.

@@ -50,9 +50,12 @@ class WarningWatchdog:
             self.reason = "live_error"
         elif self._last_sync_seq is not None and health.oms_sync_seq < self._last_sync_seq:
             self.reason = "monitor_sync_regressed"
+        elif self._last_sync_seq is not None and health.oms_sync_seq > self._last_sync_seq + 1:
+            self.reason = "monitor_sync_gap"
         elif health.oms_sync_seq != self._last_sync_seq:
             self._last_sync_seq = health.oms_sync_seq
-            self._slow_syncs = self._slow_syncs + 1 if health.oms_sync_seconds > 5 else 0
+            if health.oms_sync_seconds > 5:
+                self._slow_syncs += 1
             if self._slow_syncs >= 2:
                 self.reason = "oms_sync_slow_twice"
         return self.reason
