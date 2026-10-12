@@ -20,6 +20,7 @@ from project_mai_tai.momentum_paper.warning_window import (
     AggregateObservation,
     CandidateOutcome,
     CoverageEvidence,
+    ObservedATransport,
     WarningCandidates,
     WarningWindow,
 )
@@ -40,6 +41,7 @@ class MomentumWarningConsumer:
         self.windows: OrderedDict[str, WarningWindow] = OrderedDict()
         self.max_window_symbols = max_window_symbols
         self.coverage: CoverageEvidence | None = None
+        self.transport = ObservedATransport()
         self._latest: dict[str, AggregateObservation] = {}
         self._raw_first_ms: dict[str, int] = {}
         self._last_raw_ns: dict[str, int] = {}
@@ -49,6 +51,7 @@ class MomentumWarningConsumer:
         self._drops = 0
         self.last_status = "waiting_aggregate"
         self.last_warning_ns: dict[str, int] = {}
+        self.cooling_status: dict[str, str] = {}
 
     def desired_symbols(self, legacy_active: set[str]) -> set[str]:
         return self.candidates.desired_symbols(legacy_active | self.engine.active_symbols)
@@ -56,21 +59,45 @@ class MomentumWarningConsumer:
     def set_coverage(self, evidence: CoverageEvidence | None) -> None:
         # Silence/absence of a bar is not a coverage claim.
         self.coverage = evidence
+        if evidence is None:
+            self.transport.invalidate("coverage_invalidated")
+            self.candidates.invalidate_cooling()
+
+    def invalidate_transport(self, reason: str) -> None:
+        self.coverage = None
+        self.transport.invalidate(reason)
+        self.candidates.invalidate_cooling()
+
+    def complete_read(self, message_id: str, *, observed_ns: int) -> None:
+        self.transport.checkpoint(message_id, observed_ns=observed_ns)
+        self.coverage = self.transport.evidence(observed_ns=observed_ns)
+        if self.coverage is None:
+            self.candidates.invalidate_cooling()
 
     @property
     def epoch(self) -> tuple[str, int] | None:
         return self._stream_epoch
 
     def expire_quiet(self, *, observed_ms: int, legacy_active: set[str]) -> tuple[CandidateOutcome, ...]:
+        if self.coverage is None or self.coverage.lineage == "observed_transport":
+            self.coverage = self.transport.evidence(observed_ns=observed_ms * 1_000_000)
+        if self.coverage is None:
+            self.candidates.invalidate_cooling()
+        at_ms = (
+            min(observed_ms, self.coverage.through_ms) // 1000 * 1000
+            if self.coverage is not None else observed_ms // 1000 * 1000
+        )
         active = legacy_active | self.engine.active_symbols
         outcomes = []
         for symbol in sorted(self.desired_symbols(legacy_active)):
             window = self.windows.get(symbol)
             if window is not None:
                 outcomes.append(self.candidates.observe(
-                    window.evaluate(observed_ms=observed_ms, coverage=self.coverage),
+                    window.evaluate(observed_ms=observed_ms, coverage=self.coverage,
+                                    cooling=True, window_at_ms=at_ms),
                     active_path_symbols=active,
                 ))
+        self.cooling_status = {row.symbol: row.reason for row in outcomes}
         return tuple(outcomes)
 
     def observe_aggregate(
@@ -82,10 +109,12 @@ class MomentumWarningConsumer:
             ZoneInfo("America/New_York")
         )
         if observed_ns < bar.published_utc_ns or observed_ns - bar.received_utc_ns > 1_000_000_000:
+            self.invalidate_transport("aggregate_clock_or_stale")
             return CandidateOutcome(bar.symbol, "REFUSED", "aggregate_clock_or_stale"), ()
         if bar.epoch == self._stream_epoch and bar.sequence <= self._sequence:
             return CandidateOutcome(bar.symbol, "IGNORED", "duplicate_or_reordered_aggregate"), ()
         if bar.epoch == self._stream_epoch and bar.dropped_total < self._drops:
+            self.invalidate_transport("warning_drop_counter_regressed")
             raise ValueError("warning_drop_counter_regressed")
         records: tuple[MomentumTapeRecord, ...] = ()
         if self._stream_epoch is not None and (
@@ -95,7 +124,7 @@ class MomentumWarningConsumer:
             records = self.engine.mark_feed_gap(self.engine.coverage_started_ms, now_ms)
             self.windows.clear()
             self._latest.clear()
-            self.coverage = None
+            self.invalidate_transport("aggregate_coverage_gap")
             self._raw_first_ms.clear()
             self._raw_coverage.clear()
             self.last_warning_ns.clear()
@@ -103,6 +132,7 @@ class MomentumWarningConsumer:
         self._stream_epoch = bar.epoch
         self._sequence = bar.sequence
         self._drops = bar.dropped_total
+        self.transport.observe(bar, observed_ns=observed_ns)
         if (
             not symbol_is_eligible(bar.symbol)
             or self.engine.prior_closes.get(bar.symbol, Decimal("0")) < 1
@@ -125,7 +155,8 @@ class MomentumWarningConsumer:
         self.windows.move_to_end(bar.symbol)
         self._latest[bar.symbol] = bar
         evaluation = window.evaluate(observed_ms=now_ms, coverage=self.coverage)
-        outcome = self.candidates.observe(evaluation, active_path_symbols=active)
+        outcome = self.candidates.observe(evaluation, active_path_symbols=active,
+                                           update_cooling=False)
         if outcome.status in {"ADMITTED", "RETAINED"} and evaluation.warning_windows:
             self.last_warning_ns[bar.symbol] = observed_ns
         if bar.symbol in self.desired_symbols(legacy_active):
@@ -148,13 +179,18 @@ class MomentumWarningConsumer:
                 observed_ms=now_ms, seconds=seconds,
                 after_ms=self.engine.reference_boundary(code, symbol),
             )
+            if trade is None:
+                eligible = tuple(item for item in eligible if (
+                    item.end_ms <= latest.start_ms
+                    or (item.start_ms, item.end_ms) == (latest.start_ms, latest.end_ms)
+                ))
             if not eligible:
                 continue
             reference = min(eligible, key=lambda bar: (bar.low, bar.start_ms))
             records += self.engine.detect_from_bucket(
                 strategy_code=code, symbol=symbol, reference_price=reference.low,
                 reference_start_ms=reference.start_ms, reference_end_ms=reference.end_ms,
-                signal_price=trade.price if trade else latest.high,
+                signal_price=trade.price if trade else latest.close,
                 signal_start_ms=trade.sip_ts_ms if trade else latest.start_ms,
                 signal_end_ms=trade.sip_ts_ms if trade else latest.end_ms,
                 observed_decision_ns=observed_ns, signal_trade=trade,
@@ -195,6 +231,7 @@ class MomentumWarningConsumer:
             self._raw_coverage[symbol] = raw_coverage
         complete = bool(
             raw_coverage is not None and raw_coverage.continuous
+            and raw_coverage.lineage != "observed_transport"
             and raw_coverage.start_ms <= trade.sip_ts_ms - 60_000
             and self._raw_first_ms[symbol] <= trade.sip_ts_ms - 60_000
             and raw_coverage.through_ms >= trade.sip_ts_ms

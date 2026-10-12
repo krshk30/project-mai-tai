@@ -35,6 +35,7 @@ class AggregateObservation:
     generation: int
     sequence: int
     dropped_total: int
+    provider_kind: str = "massive_ws_a"
 
     def __post_init__(self) -> None:
         prices = (self.open, self.high, self.low, self.close)
@@ -44,11 +45,12 @@ class AggregateObservation:
             raise ValueError("invalid_aggregate_ohlc")
         if (
             not self.symbol or self.symbol != self.symbol.upper()
-            or not self.gateway_instance_id or self.start_ms <= 0
-            or self.start_ms % 1000 or self.end_ms - self.start_ms != 1000
+            or not self.gateway_instance_id or self.start_ms < 1_000_000_000_000
+            or self.end_ms - self.start_ms != 1000
             or self.volume < 0 or self.received_utc_ns <= 0
             or self.published_utc_ns < self.received_utc_ns
             or min(self.generation, self.sequence, self.dropped_total) < 0
+            or self.provider_kind != "massive_ws_a"
         ):
             raise ValueError("invalid_aggregate_metadata")
 
@@ -58,7 +60,11 @@ class AggregateObservation:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, object]) -> AggregateObservation:
-        if payload.get("version") != 1 or payload.get("event_type") != "aggregate":
+        if (
+            not isinstance(payload, Mapping) or type(payload.get("version")) is not int
+            or payload.get("version") != 1 or payload.get("event_type") != "aggregate"
+            or payload.get("provider_kind") != "massive_ws_a"
+        ):
             raise ValueError("unsupported_warning_contract")
         integer_fields = (
             "start_ms", "end_ms", "volume", "received_utc_ns", "published_utc_ns",
@@ -71,6 +77,7 @@ class AggregateObservation:
             **{name: payload[name] for name in integer_fields},
             **{name: Decimal(str(payload[name])) for name in ("open", "high", "low", "close")},
             gateway_instance_id=str(payload["gateway_instance_id"]),
+            provider_kind=str(payload["provider_kind"]),
         )
 
 
@@ -83,6 +90,95 @@ class CoverageEvidence:
     through_ms: int
     dropped_total: int
     continuous: bool
+    lineage: str = "explicit"
+
+
+class ObservedATransport:
+    """Accepted A prefix only, never provider ACK, SIP completeness or raw coverage."""
+
+    def __init__(self) -> None:
+        self.epoch: tuple[str, int] | None = None
+        self.sequence = -1
+        self.drops = 0
+        self._start_ns: int | None = None
+        self._received_ns = 0
+        self._read_ns = 0
+        self._checkpoint: tuple[int, int] | None = None
+        self._committed_sequence = -1
+        self._evidence: CoverageEvidence | None = None
+        self.status = "waiting_observed_transport"
+
+    def invalidate(self, reason: str) -> None:
+        self._start_ns = None
+        self._evidence = None
+        self.status = reason
+
+    def observe(self, bar: AggregateObservation, *, observed_ns: int) -> None:
+        if not 0 <= observed_ns - bar.received_utc_ns <= _SECOND_NS:
+            self.invalidate("transport_event_stale_or_future")
+            return
+        if observed_ns < bar.published_utc_ns:
+            self.invalidate("transport_clock_skew")
+            return
+        changed_epoch = bar.epoch != self.epoch
+        if not changed_epoch and bar.sequence <= self.sequence:
+            if bar.sequence < self.sequence:
+                self.invalidate("transport_sequence_regressed")
+            return
+        if not changed_epoch and (
+            bar.sequence != self.sequence + 1 or bar.dropped_total != self.drops
+            or bar.received_utc_ns < self._received_ns
+            or bar.received_utc_ns - self._received_ns > 2 * _SECOND_NS
+        ):
+            self.invalidate("transport_sequence_drop_or_clock_gap")
+        if changed_epoch:
+            self.invalidate("transport_epoch_changed")
+        self.epoch = bar.epoch
+        self.sequence = bar.sequence
+        self.drops = bar.dropped_total
+        self._received_ns = bar.received_utc_ns
+        if self._start_ns is None:
+            self._start_ns = bar.received_utc_ns
+        self.status = "transport_prefix_pending_read_checkpoint"
+
+    def checkpoint(self, message_id: str, *, observed_ns: int) -> None:
+        if self.epoch is None or self._start_ns is None:
+            return
+        try:
+            parts = message_id.split("-")
+            if len(parts) != 2 or any(not part.isdigit() for part in parts):
+                raise ValueError
+            cursor = tuple(int(part) for part in parts)
+        except (AttributeError, ValueError):
+            self.invalidate("transport_invalid_read_checkpoint")
+            return
+        if (
+            (self._checkpoint is not None and cursor < self._checkpoint)
+            or observed_ns < max(self._read_ns, self._received_ns)
+        ):
+            self.invalidate("transport_read_checkpoint_regressed")
+            return
+        self._checkpoint = cursor
+        if self._read_ns and observed_ns - self._read_ns > 2 * _SECOND_NS:
+            self._start_ns = self._received_ns
+        self._read_ns = observed_ns
+        self._committed_sequence = self.sequence
+        self._evidence = CoverageEvidence(
+            self.epoch, (self._start_ns + 999_999) // 1_000_000,
+            self._received_ns // 1_000_000, self.drops, True, "observed_transport",
+        )
+        self.status = "observed_transport"
+
+    def evidence(self, *, observed_ns: int) -> CoverageEvidence | None:
+        if (
+            self._evidence is None or self._committed_sequence != self.sequence
+            or not 0 <= observed_ns - self._read_ns <= 2 * _SECOND_NS
+            or not 0 <= observed_ns - self._received_ns <= 2 * _SECOND_NS
+        ):
+            if self._evidence is not None and self._committed_sequence == self.sequence:
+                self.status = "transport_progress_or_read_stale"
+            return None
+        return self._evidence
 
 
 @dataclass(frozen=True)
@@ -100,6 +196,7 @@ class WarningEvaluation:
     observed_ms: int
     windows: tuple[WindowRange, ...]
     warning_windows: tuple[int, ...]
+    proof_at_ms: int | None = None
 
     @property
     def fully_known_cool(self) -> bool:
@@ -118,6 +215,8 @@ class WarningWindow:
         self._bars: dict[int, AggregateObservation] = {}
         self._latest: AggregateObservation | None = None
         self._observed_ms = 0
+        self._started_ms: int | None = None
+        self._discarded_through_ms = 0
 
     @property
     def retained_buckets(self) -> int:
@@ -146,6 +245,10 @@ class WarningWindow:
             bar.epoch != previous.epoch or bar.dropped_total != previous.dropped_total
         ):
             self._bars.clear()
+            self._started_ms = now_ms
+            self._discarded_through_ms = 0
+        if self._started_ms is None:
+            self._started_ms = now_ms
         self._latest = bar
         self._observed_ms = now_ms
         self._bars = {
@@ -155,24 +258,32 @@ class WarningWindow:
         # A late correction is not a new current-window signal.
         if bar.end_ms > now_ms - 60_000 and bar.start_ms <= now_ms:
             self._bars[bar.start_ms] = bar
+        while len(self._bars) > 64:
+            removed = self._bars.pop(min(self._bars))
+            self._discarded_through_ms = max(self._discarded_through_ms, removed.end_ms)
         return True
 
     def evaluate(
-        self, *, observed_ms: int, coverage: CoverageEvidence | None = None
+        self, *, observed_ms: int, coverage: CoverageEvidence | None = None,
+        cooling: bool = False, window_at_ms: int | None = None,
     ) -> WarningEvaluation:
         if observed_ms < self._observed_ms:
             raise ValueError("warning_clock_order")
         latest = self._latest
+        at_ms = observed_ms if window_at_ms is None else window_at_ms
+        if at_ms > observed_ms:
+            raise ValueError("warning_future_window")
         ranges: list[WindowRange] = []
         warnings: list[int] = []
         for seconds in _WINDOWS:
-            cutoff = observed_ms - seconds * 1000
+            cutoff = at_ms - seconds * 1000
             whole = [
                 bar for bar in self._bars.values()
-                if cutoff <= bar.start_ms and bar.end_ms <= observed_ms
+                if ((bar.start_ms < at_ms and bar.end_ms > cutoff) if cooling
+                    else (cutoff <= bar.start_ms and bar.end_ms <= at_ms))
             ]
             partial = any(
-                bar.start_ms < cutoff < bar.end_ms or bar.start_ms < observed_ms < bar.end_ms
+                bar.start_ms < cutoff < bar.end_ms or bar.start_ms < at_ms < bar.end_ms
                 for bar in self._bars.values()
             )
             low = min((bar.low for bar in whole), default=None)
@@ -181,17 +292,20 @@ class WarningWindow:
                 latest is not None and coverage is not None and coverage.continuous
                 and coverage.epoch == latest.epoch
                 and coverage.dropped_total == latest.dropped_total
-                and coverage.start_ms <= cutoff and coverage.through_ms >= observed_ms
-                and not partial
+                and coverage.start_ms <= cutoff and coverage.through_ms >= at_ms
+                and (self._started_ms or 0) <= cutoff
+                and self._discarded_through_ms <= cutoff
+                and (cooling or not partial)
             )
             ranges.append(WindowRange(seconds, low, high, known, partial))
             if (
-                latest is not None and cutoff <= latest.start_ms
-                and latest.end_ms <= observed_ms <= latest.end_ms + 1000
+                not cooling and latest is not None and cutoff <= latest.start_ms
+                and latest.end_ms <= at_ms <= latest.end_ms + 1000
                 and low is not None and latest.high >= low * _WARNING
             ):
                 warnings.append(seconds)
-        return WarningEvaluation(self.symbol, observed_ms, tuple(ranges), tuple(warnings))
+        return WarningEvaluation(self.symbol, observed_ms, tuple(ranges), tuple(warnings),
+                                 at_ms if cooling else None)
 
 
 @dataclass
@@ -231,8 +345,14 @@ class WarningCandidates:
             raise ValueError("external_active_path_cap_exceeded")
         return desired
 
+    def invalidate_cooling(self) -> None:
+        for candidate in self._candidates.values():
+            candidate.quiet_since_ms = None
+            candidate.last_quiet_sample_ms = None
+
     def observe(
-        self, evaluation: WarningEvaluation, *, active_path_symbols: set[str]
+        self, evaluation: WarningEvaluation, *, active_path_symbols: set[str],
+        update_cooling: bool = True,
     ) -> CandidateOutcome:
         now = evaluation.observed_ms
         if now < self._now_ms:
@@ -259,11 +379,14 @@ class WarningCandidates:
             return CandidateOutcome(symbol, "RETAINED", "warning_refreshed")
         if candidate is None:
             return CandidateOutcome(symbol, "IGNORED", "no_warning_candidate")
+        if not update_cooling:
+            return CandidateOutcome(symbol, "RETAINED", "cooling_requires_read_checkpoint")
+        proof_ms = now if evaluation.proof_at_ms is None else evaluation.proof_at_ms
         if evaluation.fully_known_cool:
             previous = candidate.last_quiet_sample_ms
-            if previous is None or now - previous > 1000:
-                candidate.quiet_since_ms = now
-            candidate.last_quiet_sample_ms = now
+            if previous is None or not 0 <= proof_ms - previous <= 1000:
+                candidate.quiet_since_ms = proof_ms
+            candidate.last_quiet_sample_ms = proof_ms
         else:
             candidate.quiet_since_ms = None
             candidate.last_quiet_sample_ms = None
@@ -271,13 +394,20 @@ class WarningCandidates:
             return CandidateOutcome(symbol, "RETAINED", "active_paper_path")
         quiet = candidate.quiet_since_ms
         if (
-            quiet is not None and now - quiet >= 60_000
+            quiet is not None and proof_ms - quiet >= 60_000
             and now - candidate.last_warning_ms >= self.retention_ms
         ):
             self._candidates.pop(symbol)
             self._cooldowns[symbol] = now + self.cooldown_ms
             return CandidateOutcome(symbol, "DROPPED", "both_windows_cool_60s")
-        return CandidateOutcome(symbol, "RETAINED", "quiet_or_retention_not_proved")
+        reason = "quiet_or_retention_not_proved"
+        if any(window.low is None or window.high is None for window in evaluation.windows):
+            reason = "empty_window_bounds"
+        elif any(not window.fully_known for window in evaluation.windows):
+            reason = "cooling_coverage_unknown"
+        elif not evaluation.fully_known_cool:
+            reason = "cooling_window_hot"
+        return CandidateOutcome(symbol, "RETAINED", reason)
 
 
 @dataclass(frozen=True)
@@ -347,6 +477,7 @@ class ObservedRawPaperPath:
         first = self._first_observed_sip_ms
         complete = bool(
             coverage is not None and coverage.continuous and first is not None
+            and coverage.lineage != "observed_transport"
             and coverage.start_ms <= trade.sip_ts_ms - 60_000
             and first <= trade.sip_ts_ms - 60_000 and coverage.through_ms >= trade.sip_ts_ms
         )

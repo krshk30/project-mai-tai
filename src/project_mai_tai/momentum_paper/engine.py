@@ -440,6 +440,10 @@ class MomentumPaperEngine:
             or signal_price < reference_price * _DETECTION_MULTIPLIER
             or not reference_at_ms - seconds * 1000 <= reference_start_ms < reference_end_ms <= reference_at_ms
             or reference_start_ms <= boundary
+            or (signal_trade is None and not (
+                reference_end_ms <= signal_start_ms
+                or (reference_start_ms, reference_end_ms) == (signal_start_ms, signal_end_ms)
+            ))
             or not (
                 (signal_start_ms == signal_end_ms if signal_trade else signal_start_ms < signal_end_ms)
                 and signal_end_ms <= now_ms <= signal_end_ms + 1000
@@ -461,6 +465,8 @@ class MomentumPaperEngine:
             "symbol": symbol, "price": str(signal_price), "start_ms": signal_start_ms,
             "end_ms": signal_end_ms, "observed_decision_ns": observed_decision_ns,
             "lineage": lineage, "exact_signal_sip_timestamp": None,
+            "signal_field": "trade_price" if signal_trade else "close",
+            "price_provenance": "real_trade" if signal_trade else "qualifying_bucket_last_close",
         }
         event = _ActiveEvent(
             logical_id=f"{strategy_code}:{symbol}:{lineage}:{observed_decision_ns}",

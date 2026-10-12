@@ -187,6 +187,8 @@ class MomentumPaperService:
         self._last_warning_sample_ns = 0
         self._warning_subscribed_symbols: set[str] = set()
         self._warning_owner_uncertain = False
+        self._warning_invalid_messages = 0
+        self._last_warning_invalid_log_ns = 0
 
     async def run(self) -> None:
         if not bool(getattr(self.settings, "momentum_paper_enabled", False)):
@@ -253,7 +255,12 @@ class MomentumPaperService:
                     event_type="consumer_sample", observed_ns=sample_ns,
                     gateway_instance_id=(self._warning.epoch or (None, None))[0],
                     generation=(self._warning.epoch or (None, None))[1],
-                    coverage="UNKNOWN" if self._warning.coverage is None else "EXPLICIT",
+                    coverage=(self._warning.coverage.lineage if self._warning.coverage else "UNKNOWN"),
+                    transport_status=self._warning.transport.status,
+                    transport_start_ms=(self._warning.coverage.start_ms if self._warning.coverage else None),
+                    transport_through_ms=(self._warning.coverage.through_ms if self._warning.coverage else None),
+                    invalid_aggregate_messages=self._warning_invalid_messages,
+                    cooling_status=self._warning.cooling_status,
                     owned_warning_symbols=len(self._warning.desired_symbols(set())),
                     shared_owned_symbols=len(self._warning.desired_symbols(self._engine.active_symbols)),
                     active_warning_paths=len(self._warning.engine.active_events),
@@ -411,6 +418,8 @@ class MomentumPaperService:
     async def _warning_loop(self) -> None:
         stream = stream_name(self.settings.redis_stream_prefix, "momentum-warning-bars")
         offsets = {stream: "$"}
+        if self._warning is not None:
+            self._warning.invalidate_transport("reader_started")
         while True:
             try:
                 messages = await self.redis.xread(offsets, block=1000, count=128)
@@ -420,15 +429,19 @@ class MomentumPaperService:
                         offsets[name] = message_id
                         if fields.get("data"):
                             await self._handle_warning_event(fields["data"])
+                        elif self._warning is not None:
+                            self._refuse_warning_message("missing_aggregate_data")
                         handled += 1
                         if handled % 32 == 0:
                             await asyncio.sleep(0)
+                if self._warning is not None:
+                    self._warning.complete_read(offsets[stream], observed_ns=wall_time.time_ns())
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("[MOMENTUM-WARNING] stream failure; coverage UNKNOWN")
                 if self._warning is not None:
-                    self._warning.set_coverage(None)
+                    self._warning.invalidate_transport("xread_failure")
                     await self._persist(self._warning.engine.mark_feed_gap(
                         self._now_ms(), self._now_ms(),
                     ))
@@ -437,7 +450,11 @@ class MomentumPaperService:
     async def _handle_warning_event(self, data: str | bytes) -> None:
         if self._warning is None or self._engine is None:
             return
-        bar = AggregateObservation.from_payload(json.loads(data))
+        try:
+            bar = AggregateObservation.from_payload(json.loads(data))
+        except (KeyError, TypeError, ValueError, InvalidOperation):
+            self._refuse_warning_message("invalid_aggregate")
+            return
         observed_ns = wall_time.time_ns()
         outcome, records = self._warning.observe_aggregate(
             bar, observed_ns=observed_ns, legacy_active=self._engine.active_symbols,
@@ -461,6 +478,16 @@ class MomentumPaperService:
             )
         if outcome.status in {"ADMITTED", "DROPPED"}:
             await self._sync_gateway_subscriptions()
+
+    def _refuse_warning_message(self, reason: str) -> None:
+        if self._warning is not None:
+            self._warning.invalidate_transport(reason)
+        self._warning_invalid_messages += 1
+        now_ns = wall_time.time_ns()
+        if now_ns - self._last_warning_invalid_log_ns >= 10_000_000_000:
+            self._last_warning_invalid_log_ns = now_ns
+            logger.warning("[MOMENTUM-WARNING] invalid aggregate; refused reason=%s total=%d",
+                           reason, self._warning_invalid_messages)
 
     async def _warning_metrics(self, *, event_type: str, **fields: object) -> None:
         payload = {"version": 1, "event_type": event_type, "source": SERVICE_NAME, **fields}

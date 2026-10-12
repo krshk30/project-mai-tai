@@ -1,0 +1,91 @@
+MOMWARN1-W2 G2 FOLLOWUP -- LOCAL VERIFIED FIXES; WHOLE CARD NOT COMPLETE
+Owner Huygens, priority2, additive human protocol/transport/causality findings.
+Queue read only; no queue, G1 shared-file, display, OMS, v2 or production edits.
+Preserves prior G2 head368aad3b; new followup commit, not amendment.
+
+INTAKE / VERIFIED RESULTS
+W2-PROTOCOL: completed local contract alignment and controls.
+Human correction supersedes the UNPROVEN common-999 inference. Supported contract
+is documented1000ms exclusive: official sample1610144868000->1610144869000.
+Source https://massive.com/docs/websocket/stocks/aggregates-per-second.
+999/short intervals are rejected; no e+1 conversion, low SIP fiction or vendor
+claim that inclusive999 is currently used. SDK s/e preserved byte-for-value.
+Actual G1 normalizer->publisher->G2 parser tests cover doc-aligned and unaligned
+full1000 spans. Removed G2's unsupported alignment assumption; actual bounds still
+must be wholly inside a proof window, never rounded. G1 files were not edited.
+G1 updated reachable lineage through94de66a1 staged intact; health-v2 proposal
+is documentation-only, NOT a runtime policy change or review approval.
+
+W2-CAUSAL-CLOSE: completed local fix and main original-case regression.
+High>=1.10low remains a candidate warning only; candle range is NOT a BUY signal.
+Aggregate entry now uses qualifying last CLOSE versus approved whole-bucket LOW.
+Same-bucket low below last close proves ordering without inventing its timestamp.
+Other references must finish before the signal bucket begins. A late older close
+cannot borrow a subsequent bucket low. Trade signals keep actual Trade.price.
+Future buckets cannot enter whole-bucket references before exclusive end; future
+SIP trades cannot enter raw history. An older close cannot borrow a newer raw low.
+Metadata labels signal_field=close, qualifying_bucket_last_close, bucket bounds,
+unknown exact signal/low SIP. No fabricated high-price fill or backdating.
+Controlled falling10->8->8: raw0/warn0. Rising8->10->10 and recovered10->8->10:
+warn entries qualify and fill only next eligible real print. Main external falling
+test now PASS; original26 test assertions unchanged. HIGH restored mutation1RED.
+Controlled timestamp proof: bucket[1791793200000,1791793201000), observed decision
+1791793201000000000ns, exact close/low SIP UNKNOWN; rising/recovered fill only
+1791793201001ms@10.1. Source=qualifying_bucket_last_close, not historical HIGH.
+These controlled arrivals are NOT recorded WFF arrival/subscription evidence.
+Native fill/exit/reset methods AST identical to368: _new_event,
+_advance_symbol_events,_resolve_pending_target,_set_exit,_finish,_finalize.
+
+W2-OBSERVED-TRANSPORT: positive local cooling integration verified.
+Track one gateway epoch, contiguous accepted-A sequence, unchanged drop counter,
+monotonic receipt time, successful complete XREAD cursor checkpoint. Before that
+checkpoint, pending rows cannot declare coverage. Evidence is observed_transport,
+NOT provider ACK, lossless market/SIP coverage or complete raw-trade history.
+Fresh read and provider progress required within2s. Empty reads never advance
+received watermark. Gaps, invalid rows, read/cursor regressions, changed epoch,
+drops and stale progress reset proof. New prefix starts at fresh observed receipt.
+Read errors/invalid schema do not invalidate healthy legacy snapshot feed.
+Invalid payloads counted/WARN rate limited10s; not an ERROR per malformed frame.
+Cooling uses closed-second watermark and conservative overlapping-bucket high/low
+bounds. Window-local cache birth and discarded history fence completeness;64
+buckets max. Quiet duration advances on data watermark, never empty-read walltime.
+Existing retention60s sliding latest actual warning and dropped cooldown60s remain.
+Active full paths/filled positions never evicted; lower owner cap and shared16 intact.
+Controlled nonempty quiet prefix drops candidate at121s. Service-level tick emits
+warning owner [TEST]->[] while legacy owner remains independently empty.
+Removing successful-checkpoint branch yields2RED. Relaxing strict duration yields4RED.
+Observed A evidence cannot promote the native raw-only path to complete coverage.
+
+W2-DORMANT-CAP: material remaining policy gap, reported BLOCKED.
+Healthy transport does not fabricate high/low bounds for empty stock windows.
+Controlled16 dormant candidates with no active paths remain held after200s of
+contiguous OTHER A events; cooling_status=empty_window_bounds. New warning refused
+warning_cap_full. This is a real controlled cap-exhaustion path, NOT measured live
+occupancy. No idle timeout/release/archive/empty-window waiver added. Main/human
+must decide any empty-window release rule; until then this remains conditional
+permanent occupancy under that dormant input pattern, despite nonempty cooling fix.
+
+VERIFICATION / EVIDENCE
+58 focused tests = original26 + followup32 PASS. New control file375lines; no new
+fixture files. G2/neighbor suite with new flagON206PASS. Staged G1/G2 intended
+fixture suite295PASS. Seven timestamp/look-ahead controls PASS, main falling1PASS.
+Ruff/diffcheck PASS. Three in-memory mutations RED above; no source mutation writes.
+Blanket flagON over all G1 tests still conflicts with11 OFF-specific fixtures
+(class ticker3, injection6, restore1, default1); G1-owned tests untouched.
+/tmp/momwarn1-g2-20261012/followup-flag-on.txt
+/tmp/momwarn1-g2-20261012/followup-combined.txt
+/tmp/momwarn1-g2-20261012/main-falling-control.txt
+/tmp/momwarn1-g2-20261012/causal-timestamp-controls.txt
+/tmp/momwarn1-g2-20261012/{close,checkpoint,duration}-mutation.txt
+Changed G2 files: momentum_paper/{engine,warning_window,warning_consumer}.py,
+services/momentum_paper_app.py,tests/unit/test_momentum_warning_followup.py,this report.
+
+REMAINING / NEXT ACTION
+Main reviews exact head plus G1/G3/display; resolves dormant empty-window policy.
+Actual324 warning-generation replay, receipt-causal WFF and raw completeness still
+UNMEASURED. Earlier324 population keys matched main candidates (316filled+8NO_FILL),
+but that was not generation replay. Frozen WFF model is not live-arrival evidence.
+Current socket entitlement/recorded3x peak, mandatory tonight causal composition
+and tomorrow W4 are not completed. No MOM install until actual gates green.
+No network acquisition, new provider connection, subscriptions, orders, secrets,
+service/flag/box writes, GitHub action or deployment. No whole-W2/W5/MOMDONE claim.
