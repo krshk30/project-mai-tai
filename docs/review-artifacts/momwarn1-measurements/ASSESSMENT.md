@@ -15,6 +15,7 @@ Main owns the durable queue; this worker does not edit it.
 | MOMWARN1-G3-CONTROLS | 2/G3 | done local, reported | 84 new controls +120 unchanged neighbors PASS; operational sources/future receipts remain separate. |
 | MOMWARN1-G3-HEALTH | 2/G3 | v1 prototype rejected by main; v2 policy/source local, operational BLOCKED | Coordinate health v2 with G1; actual applicable v2 source and source expectation reference still missing; CLI launch refused. |
 | MOMWARN1-W4-ACTUAL | 2/G3/main | NOT DONE, future | Actual Oct13 04:11-09:30 ET receipts, independently reviewed; no automatic execution scheduled. |
+| MOMWARN1-G3-HEALTH-ATTRIBUTION | 2/G3 | docs corrected, reported | Latest human correction: main proposed15+5 for assessment, no explicit human approval; docs only, NOT READY/source gaps retained. |
 
 B a8444946 remains untouched; original B 68.4ms and MNDR 20s causes UNKNOWN.
 No authority here over G1 gateway/settings/watchdog, G2 consumer/engine, F mirror,
@@ -212,7 +213,8 @@ authorized setup/install, then actual Oct13 W4 receipt. No execution scheduled.
 Main verified actual proc setting MAI_TAI_OMS_BROKER_SYNC_INTERVAL_SECONDS=15.
 G3 read source control-loop scheduling/dynamic stop-guard shortening. The five-
 second completed-source age prototype falsely fails between normal15s passes.
-Human approved configured15 plus bounded5 allowance, distinct from monitor5s.
+Main proposed configured15 plus bounded5 allowance for assessment, distinct from
+monitor5s. No explicit human approval; controlled tests do not confer approval.
 The first-current-day>=07:00 predicate must be sourced to the recorded card/main
 verified eligibility, not missing data. Actual anchored REST source opens07:00;
 unconditional pre07 lateness requirements would wrongly block04:11-07 trial.

@@ -37,6 +37,7 @@ Original measurement timestamp retained; unchanged old input becomes UNKNOWN.
 No live publisher, no production /run write, no auto task/timer installed.
 
 Main review rejected v1 completion-age<=5s as incompatible with actual live15s.
+Configured15+bounded5 allowance is main's assessment proposal, NOT human approval.
 Proposed healthv2 candidate normal6/15/20s agePASS, >20/fresh monitor unreadableREDgate.
 Original end stamp retained separately from actual EOF/proc monitor stamp.
 Bounded actual OMS log/proc reader implemented, tested controlled files only.

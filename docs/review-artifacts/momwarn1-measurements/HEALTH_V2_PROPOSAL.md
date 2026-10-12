@@ -5,7 +5,9 @@ MAI_TAI_OMS_BROKER_SYNC_INTERVAL_SECONDS=15. No credential/proc-environ probe
 by G3. b680 Settings default5 is NOT the live configuration. Source control
 loop oms/service.py:1145 uses that configured interval; :11235 dynamically
 shortens it when stop guards exist. This is a configured upper cadence, not
-a claim that every pass occurs exactly15s apart. User approved grace15+5s.
+a claim that every pass occurs exactly15s apart. Main proposed configured15s
+plus bounded5s allowance for assessment; no explicit human approval exists.
+Controlled cadence tests are not reviewer/operator approval or live acceptance.
 Original completion timestamp and monotonic duration stay immutable.
 
 Current health v1 prototype is NOT READY: requiring a completed duration <=5s
@@ -27,6 +29,11 @@ Heartbeat secs_since_last_bar includes warmup; isolated state watchlist can prov
 an explicitly empty watchlist, but its payload has no full completed-bar due map.
 Applicable post07 lateness remains unavailable without a source-proven adapter.
 No OMS/v2/ORB trading source changes are authorized in G3.
+The implemented reader is OmsLogMonitor.read in momwarn_health_contract.py:
+bounded supplied OMS log + /proc/<pid>/stat, original end timestamp/duration and
+PID/starttime binding. It has only controlled-file receipts, no box launch and
+no publisher/G1 wiring. It does not read applicable v2 bar coverage. Conditional
+probes or a supplied scalar cannot be advertised as fleet-complete evidence.
 
 ## Proposed exact health envelope
 
