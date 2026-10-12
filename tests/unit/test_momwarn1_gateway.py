@@ -464,6 +464,37 @@ def test_bounded_reader_tracks_only_new_live_errors_even_split_across_reads(heal
     assert not reader.read().new_live_error
 
 
+@pytest.mark.asyncio
+async def test_retired_paper_log_absence_does_not_disable_A_but_live_ORB_error_does(health_reader):
+    reader, _, directory = health_reader
+    assert set(reader.LOG_NAMES) == {
+        "oms.log", "strategy.log", "schwab-1m-v2.log", "orb-schwab.log",
+    }
+    assert not (directory / "orb.log").exists()
+    svc, provider, _, _ = service()
+    svc._warning_health_reader = reader
+    await svc._warning_monitor_once()
+    assert svc._warning_active
+    assert provider._ws.added == ["A.*"]
+    (directory / "orb.log").write_text("ERROR retired paper observer\n")
+    await svc._warning_monitor_once()
+    assert svc._warning_active
+    assert svc._warning_revert_reason is None
+    with (directory / "orb-schwab.log").open("a") as output:
+        output.write("ERROR live ORB\n")
+    await svc._warning_monitor_once()
+    assert svc._warning_revert_reason == "live_error"
+    assert provider._ws.removed == ["A.*"]
+
+
+@pytest.mark.parametrize("name", ["oms.log", "strategy.log", "schwab-1m-v2.log", "orb-schwab.log"])
+def test_each_required_live_log_still_fails_closed_when_missing(health_reader, name):
+    reader, _, directory = health_reader
+    (directory / name).unlink()
+    with pytest.raises(FileNotFoundError):
+        reader.read()
+
+
 @pytest.mark.parametrize("failure", ["health_missing", "health_large", "missing_duration", "invalid_nan",
     "log_missing", "log_truncated", "log_rotated", "log_overflow", "not_regular", "no_RAM"])
 def test_unreadable_or_unbounded_monitor_evidence_is_unknown(health_reader, failure):

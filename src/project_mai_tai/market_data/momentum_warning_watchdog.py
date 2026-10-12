@@ -71,7 +71,7 @@ class WarningHealthReader:
 
     MAX_HEALTH_BYTES = 8192
     MAX_LOG_BYTES = 65536
-    LOG_NAMES = ("oms.log", "strategy.log", "schwab-1m-v2.log", "orb.log", "orb-schwab.log")
+    LOG_NAMES = ("oms.log", "strategy.log", "schwab-1m-v2.log", "orb-schwab.log")
 
     def __init__(self, health_path: str, log_directory: str):
         self.health_path = Path(health_path)

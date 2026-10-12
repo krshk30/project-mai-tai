@@ -73,6 +73,10 @@ Periodic reads off-loop with bounded bytes and timeout. Load1m>6,
 Linux MemAvailable<3GiB, new ERROR in OMS/strategy/v2/ORB logs, bar lateness>5s,
 A publishlag>2s, disconnect/reconnect/policy1008 all latch A off.
 Rotated/truncated/oversized/unreadable logs fail closed. No watchdog service restart.
+Required logs only: oms.log,strategy.log,schwab-1m-v2.log,orb-schwab.log.
+orb.log is the separate paper observer, not the live ORB producer; absent or
+errored retired-paper output does not disable A. Live ORB unit stdout/stderr both
+append to orb-schwab.log (ops/systemd/project-mai-tai-orb-schwab.service).
 Separate A Redis pool/tasks; existing live T/Q writer does not await A writes.
 Existing SDK callbacks normalize/dispatch in chunks64 with async yields.
 Warning-configured SDK uses raw=True: bounded1MiB JSON decode off-loop, SDK typed

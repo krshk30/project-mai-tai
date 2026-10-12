@@ -49,3 +49,15 @@ message API rejected native ancestor; no native collaboration tool exposed here.
 No GitHub operation, production write/service/flag/subscription/order action,
 REST acquisition or provider connection/probe was performed. Gateway restart
 after-close review only, no authority for today's intraday production.
+
+Main preliminary review follow-up MOMWARN1-G1-LOG-SCOPE:
+Preserve b5c0125b295e04c6cc6758e3b7a3d4819aa5d0c5; separate follow-up commit.
+Live ORB unit stdout/stderr both append to orb-schwab.log; orb.log is the
+broker-disconnected paper observer's file, not a live safety dependency.
+Reader now requires only OMS/strategy/v2/orb-schwab logs. Regression proves A
+enables with all required evidence and no orb.log, ignores paper ERROR, and
+reverts A on new live ORB ERROR. Each required live log missing still fails closed.
+171 focused tests PASS, including77 dedicated gateway controls; Ruff/diffcheck
+PASS. Prior717-test broader run is the preserved-head checkpoint, not a new
+full-suite claim. Raw1MiB bound unchanged; W5 recorded3xburst still missing.
+Main confirms G2/G3 received PROTOCOL. No queue edit or production action.
