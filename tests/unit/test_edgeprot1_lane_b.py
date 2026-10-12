@@ -196,7 +196,7 @@ async def test_all_on_current_proc_flags_controlled_mndr_replay(monkeypatch, acc
     assert settings.oms_native_oco_stand_down_enabled
     assert settings.oms_v2_cw_target_pct == 5 and settings.oms_v2_cw_hard_stop_pct == 8
     svc = module.OmsRiskService(settings, redis_client=svc.redis, session_factory=sf, broker_adapter=broker)
-    svc._managed_v2_symbols = {(account, SYM)}
+    svc._rehydrate_managed_v2_symbols()
     monkeypatch.setattr(svc, "_market_is_fillable", lambda: True)
     # Recorded archive reception, explicitly substituted for missing OMS arrival time.
     now = datetime(2026, 10, 12, 13, 30, 17, 456869, tzinfo=UTC)
@@ -297,7 +297,7 @@ async def test_quote_hotpath_225_per_second_60_seconds(monkeypatch):
     initial, sf, broker = setup(monkeypatch)
     svc = module.OmsRiskService(current_settings(), redis_client=initial.redis,
         session_factory=sf, broker_adapter=broker)
-    svc._managed_v2_symbols = {(ACCT, SYM)}
+    svc._rehydrate_managed_v2_symbols()
     monkeypatch.setattr(svc, "_market_is_fillable", lambda: True)
     evaluations = 0
     original = svc._run_db

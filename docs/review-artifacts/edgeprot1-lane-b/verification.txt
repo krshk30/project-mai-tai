@@ -7,3 +7,14 @@ docs/review-artifacts/edgeprot1-lane-b/serial-mutation.log: 2 failed, 46 deselec
 docs/review-artifacts/edgeprot1-lane-b/combined.log: 1 failed, 59 passed, 1 deselected in 2.73s
 docs/review-artifacts/edgeprot1-lane-b/hotpath.log: EDGEPROT1 quotes=13500 seconds=60.198050 rate=224.260 stall_ms=3.998 evaluations=1182
 docs/review-artifacts/edgeprot1-lane-b/hotpath.log: 1 passed, 47 deselected in 60.90s (0:01:00)
+
+APPROVED CACHE (2026-10-12 local, compact receipts; prior lines above are prototype history):
+Focused:82 passed/1 load deselected in3.19s; four crossing controls unchanged GREEN.
+Final preservation:624 passed/3 load deselected/7 disclosed warnings in21.50s.
+Final-source hotpath:13500/60.196111s=224.267/s, stall13.953ms,1100 background evaluations.
+Final-source unchanged HOTFIX1: ON239.982/s24.293ms stall4.663ms handler1then0 DBtx0GC; OFF239.995/s10.357ms6.923ms0DBtx0GC. Combined3 load controls PASS in180.99s. Original68.446ms cause UNKNOWN.
+Final mutations: bound capture removed4F in0.83s; MARKET target18F in0.99s; rejection guards removed2F in0.58s. All restored.
+Committed-load guards:3 explicit reload controls RED in0.50s beforefix, GREEN in final82P; own-transaction writes never become cached committed evidence.
+Final isolated E1+B:94P/1F/1 load deselected in3.89s; only E1 frozen2.61 fixture fails; controlled CORE120 LIMIT2.62/STOP2.29/no duplicate PASS.
+AST: four crossing controls/decorators, HOTFIX1 60s controls and A-owned edge function unchanged; entire Schwab adapter unchanged. Ruff/diffcheck PASS.
+All-on:69 captured OMS settings, paper routing substituted, both broker controls PASS. Archive arrival substitution is controlled; MNDR20s cause UNKNOWN; no counterfactual recorded acceptance/fill.
