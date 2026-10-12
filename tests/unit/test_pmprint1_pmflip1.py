@@ -119,10 +119,14 @@ def test_t1_t2_t3_t9_recorded_stray_cannot_take_state(case, stream, caplog):
 
 
 @pytest.mark.parametrize("case", REAL, ids=[r[0] for r in REAL])
-def test_t4_fourteen_first_leg_price_proxies_emit_both_sized_legs(case):
+def test_t4_fourteen_first_leg_price_proxies_respect_band_and_size_both_legs(case):
     strategy, state, clock = armed(case)
     stream = case[0] in {"MEDS", "NXL", "AMOD"}
     draft = cross(strategy, state, clock, case[3], case[4], stream=stream)
+    if not stream and Decimal(str(case[4])) > Decimal(str(case[2])) * Decimal("1.005"):
+        assert draft is None and state.resting_flip_ms == 0
+        assert strategy.drain_webull_fanout_intents() == []
+        return
     assert draft is not None
     legs = strategy.drain_webull_fanout_intents()
     assert len(legs) == 1
@@ -465,7 +469,11 @@ async def test_mi_recorded_ask_past_band_still_abandoned_by_oms(monkeypatch):
     # Actual MI quote3246088 at09:15:20.309; strategy trigger2.7288/cap2.7424.
     strategy, state, clock = armed(("MI", "2026-10-05T13:15:20.309Z", 2.7288, 2.749, 2.75))
     draft = cross(strategy, state, clock, 2.749, 2.75, stream=False)
-    assert draft is not None  # no new upper cap on the five-second path
+    assert draft is None and state.resting_flip_ms == 0
+    # A controlled in-band decision followed by the recorded out-of-band OMS
+    # quote still exercises its independent, authoritative final gate.
+    draft = cross(strategy, state, clock, 2.74, 2.74, stream=False)
+    assert draft is not None
     service = _oms(strategy_schwab_1m_v2_cw_v2_eh_resting_entry_enabled=True)
     _set_quote(service, "MI", bid=2.73, ask=2.75)
     events = await service.process_trade_intent(_v2_open(draft.metadata, symbol="MI"))

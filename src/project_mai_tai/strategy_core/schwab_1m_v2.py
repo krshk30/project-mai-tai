@@ -7504,6 +7504,20 @@ class SchwabV2Strategy:
             px = (bid + ask0) / 2.0 if (bid > 0.0 and ask0 > 0.0) else 0.0
         if px <= 0.0 or px < trigger:
             return None
+        if ask_source == "rest_quote":
+            cap_decimal = Decimal(str(trigger)) * (
+                Decimal("1") + Decimal(str(self._resting_band_pct_value())) / Decimal("100")
+            )
+            if state.resting_wire_cap > 0:
+                cap_decimal = Decimal(str(self._active_resting_cap(state)))
+            rest_ask = float(quote.ask_price or 0.0)
+            if math.isfinite(rest_ask) and Decimal(str(rest_ask)) > cap_decimal:
+                logger.info(
+                    "[V2-RESTING-EH-STREAM-SKIP] %s reason=ask_past_band ask=%.4f cap=%.4f "
+                    "trigger=%.4f source=rest_quote latch_taken=0",
+                    state.symbol, rest_ask, float(cap_decimal), trigger,
+                )
+                return None
         decision_ask_metadata: dict[str, str] = {}
         if confirm_ask:
             ask = float(quote.ask_price or 0.0)
