@@ -65,6 +65,7 @@ from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.target_cache import BoundTargetRow, ManagedTargetCache
+from project_mai_tai.oms.target_exit_receipt import target_exit_receipt
 from project_mai_tai.oms import wbquiet_shadow
 from project_mai_tai.positions_read_receipt import (
     PositionsReadReceiptWriter,
@@ -5231,6 +5232,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         key = (acct, symbol)
         close_context = decision_context or self._cw_exit_decision_context(acct, symbol, tag, ref, bid)
         if not await self._v2_eod_handover_ready(acct, symbol, expected_row_id):
+            if tag == "CW_TARGET":
+                self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=close_context,
+                    guards=[dict(name="_v2_eod_handover_ready", outcome="unconfirmed", elapsed_ms=None)],
+                    blocked_guard="_v2_eod_handover_ready")
             return "eod_handover_unconfirmed"
         inflight: set[tuple[str, str]] = self.__dict__.setdefault("_webull_cw_exit_inflight", set())
         next_try: dict[tuple[str, str], float] = self.__dict__.setdefault(
@@ -5586,6 +5591,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
             return _done("refused_before_release")
         if not self._cw_target_binding_matches(snapshot, close_context):
+            if exit_tag == "CW_TARGET":
+                self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=close_context or {},
+                    guards=[dict(name="_cw_target_binding_matches", outcome="mismatch", elapsed_ms=None)],
+                    blocked_guard="_cw_target_binding_matches")
             return _done("refused_before_release")
         c3_action = self._post_exit_stale_held_action(acct, symbol, snapshot)
         if c3_action == "fresh_flat":
@@ -5601,6 +5610,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return _done("refused_before_release")
 
         # ---- 2. IRREVERSIBLE: take the pair back ------------------------------------------
+        target_prepare_started = time.monotonic() if exit_tag == "CW_TARGET" else None
         protection = await self._prepare_confirmation_webull_leg(
             acct,
             symbol,
@@ -5608,6 +5618,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             expires_at=expires_at,
             decision=decision,
         )
+        if target_prepare_started is not None:
+            close_context = {**(close_context or {}),
+                "cw_target_prepare_ms": str(round((time.monotonic()-target_prepare_started)*1000, 3)),
+                "cw_target_prepare_outcome": protection}
+            if protection not in {"released", "no_pair"}:
+                self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=close_context,
+                    guards=self._cw_target_prepare_observation(close_context),
+                    blocked_guard="_prepare_confirmation_webull_leg")
         if protection == "released":
             self._start_confirmation_unprotected_interval(decision, acct, symbol)
         if protection == "resolved_by_fill":
@@ -9546,6 +9564,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if not allow_unconfirmed_overnight and not await self._v2_eod_handover_ready(
             acct, symbol, expected_managed_row_id
         ):
+            if reason == "oms_v2_managed_exit:CW_TARGET":
+                self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=confirmation_context or {},
+                    guards=[dict(name="_v2_eod_handover_ready", outcome="unconfirmed", elapsed_ms=None)],
+                    blocked_guard="_v2_eod_handover_ready")
             return "eod_handover_unconfirmed"
         # The decision instant: the caller decided to exit on THIS quote and awaited us
         # directly, so nothing has blocked yet — no session, no DB read, no broker call.
@@ -9579,6 +9601,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     )
                     return "refused"
                 if not self._cw_target_binding_matches(row, confirmation_context):
+                    if reason == "oms_v2_managed_exit:CW_TARGET":
+                        self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=confirmation_context or {},
+                            guards=[dict(name="_cw_target_binding_matches", outcome="mismatch", elapsed_ms=None)],
+                            blocked_guard="_cw_target_binding_matches")
                     return "refused"
                 if kind == "SCALE":
                     protective = self._is_protective_v2_exit(reason)
@@ -10004,6 +10030,44 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
         return quantity
 
+    @staticmethod
+    def _cw_target_prepare_observation(context):
+        if not context or "cw_target_prepare_ms" not in context:
+            return []
+        try:
+            elapsed = float(context["cw_target_prepare_ms"])
+        except (ValueError, TypeError):
+            elapsed = None
+        return [{"name": "_prepare_confirmation_webull_leg",
+                 "elapsed_ms": elapsed,
+                 "outcome": context.get("cw_target_prepare_outcome")}]
+
+    def _log_cw_target_attempt(self, **values):
+        try:
+            if values.get("request") is None:
+                values["metadata"] = dict(values["metadata"])
+                _stamp_managed_exit_session(values["metadata"])
+            self.logger.info("[OMS-V2-CW-TARGET-EXIT] %s",
+                             json.dumps(target_exit_receipt(**values), sort_keys=True))
+        except Exception:
+            pass  # Observability must never change an order, refusal, or original exception.
+
+    async def _submit_cw_target_order(self, request, guards):
+        request.metadata["cw_submitted_at"] = utcnow().isoformat(timespec="microseconds")
+        identity = dict(request=request, account=request.broker_account_name, symbol=request.symbol,
+                        metadata=request.metadata, guards=guards)
+        try:
+            reports = await self.broker_adapter.submit_order(request)
+        except BaseException as exc:
+            self._log_cw_target_attempt(**identity, error_type=type(exc).__name__)
+            raise
+        try:
+            received_at = utcnow()  # Before report recording/DB work: local adapter-result receipt.
+            self._log_cw_target_attempt(**identity, reports=reports, received_at=received_at)
+        except Exception:
+            pass
+        return reports
+
     async def _emit_v2_managed_sell(
         self,
         session: Session,
@@ -10047,24 +10111,34 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 row.strategy_code, row.broker_account_name,
             )
             return _ManagedSellEvents()
+        is_target = reason == "oms_v2_managed_exit:CW_TARGET"
+        target_guards = self._cw_target_prepare_observation(confirmation_context) if is_target else []
+        target_identity = dict(account=row.broker_account_name, symbol=row.symbol,
+                               metadata=confirmation_context or {}, guards=target_guards)
         reservation: ExitPairReleaseResult | None = None
         protective = self._is_protective_v2_exit(reason)
         # Resolve the actual broker state before creating a durable intent. A broker-filled pair
         # always suppresses the redundant sell. Unresolved profit-taking waits; protective exits
         # continue so uncertainty cannot disable the hard stop or another safety close.
         if bool(getattr(self.settings, "oms_v2_exit_release_reservation_enabled", False)):
+            release_started = time.monotonic() if is_target else None
             reservation = await self._release_exit_reservation_before_close(
                 session=session,
                 broker_account_name=row.broker_account_name,
                 symbol=row.symbol,
                 terminal_after_attempt=reason == "V2_OVERNIGHT_FLATTEN",
             )
+            if release_started is not None:
+                target_guards.append(dict(name="_release_exit_reservation_before_close",
+                    elapsed_ms=round((time.monotonic()-release_started)*1000, 3), outcome=reservation.outcome))
             self._sync_exit_release_incident(
                 session, row, reservation, reason=reason, protective=protective
             )
             if reservation.outcome == "resolved_by_fill" or (
                 reservation.outcome in {"reserved", "unanswerable"} and not protective
             ):
+                if is_target:
+                    self._log_cw_target_attempt(**target_identity, blocked_guard="_release_exit_reservation_before_close")
                 return _ManagedSellEvents(reservation=reservation)
         owned_quantity_args = {
             "managed_row_id": str(row.id), "strategy_code": row.strategy_code,
@@ -10077,6 +10151,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             **owned_quantity_args, requested_quantity=quantity, target_context=confirmation_context,
         )
         if quantity <= 0:
+            if is_target:
+                self._log_cw_target_attempt(**target_identity, blocked_guard="_v2_managed_sell_owned_quantity")
             return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
         metadata = {
             "oms_v2_managed_exit": "true",
@@ -10166,14 +10242,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             row.broker_account_name, row.symbol, request.client_order_id,
             metadata["session"], _extended_hours_session() or "NORMAL",
         )
-        if metadata.get("cw_decided_at"):
+        if metadata.get("cw_decided_at") and not is_target:
             request.metadata["cw_submitted_at"] = utcnow().isoformat(timespec="microseconds")
             self.logger.info(
                 "[OMS-V2-CW-SUBMISSION] acct=%s sym=%s decided_at=%s submitted_at=%s",
                 row.broker_account_name, row.symbol,
                 metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
             )
-        reports = await self.broker_adapter.submit_order(request)
+        reports = (await self._submit_cw_target_order(request, target_guards) if is_target
+                   else await self.broker_adapter.submit_order(request))
         events = await self._record_order_reports(
             session=session, intent=intent, strategy_id=strategy.id,
             broker_account_id=broker_account.id, intent_event=event,
@@ -10193,9 +10270,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             # Preserve the refused attempt before an independent readback/recovery transaction.
             session.commit()
             if await self._reserve1_original_close_rejected(request, reports):
+                retry_release_started = time.monotonic() if is_target else None
                 release = await self._release_native_oco_for_cw_flip(
                     row.broker_account_name, row.symbol, expected_row_id=str(row.id),
                 )
+                if retry_release_started is not None:
+                    target_guards.append(dict(name="_release_native_oco_for_cw_flip",
+                        elapsed_ms=round((time.monotonic()-retry_release_started)*1000, 3), outcome=release))
                 if release == "resolved_by_fill":
                     return _ManagedSellEvents(events, native_fill_row_id=str(row.id))
                 current = await self._run_db(
@@ -10223,7 +10304,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         row.symbol, row.broker_account_name, request.client_order_id,
                         retry_request.client_order_id,
                     )
-                    retry_reports = await self.broker_adapter.submit_order(retry_request)
+                    retry_reports = (await self._submit_cw_target_order(retry_request, target_guards) if is_target
+                                     else await self.broker_adapter.submit_order(retry_request))
                     terminal_events = await self._record_order_reports(
                         session=session, intent=intent, strategy_id=strategy.id,
                         broker_account_id=broker_account.id, intent_event=event,
