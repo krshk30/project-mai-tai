@@ -32,5 +32,11 @@ Proof: baseline new controls27F/1P; scoped preservation537P/1 warning; final loa
 Mutations: market target18F; nearest floor2F; serial intake2F. Restored. Peak controls intentionally stay RED.
 E1 be7c86b0 + B applies cleanly: controlled CORE120 pair2.62/2.29, conditional target fill/no duplicate PASS; existing E1 fixture2.61 fails.
 Candidate latching NOT implemented: cold read lacks a bound entry threshold; a maximum-bid latch alone cannot establish freshness/episode/safety priority.
+Source assessment: `_managed_v2_symbols` and `_rehydrate_managed_v2_symbols` retain only account/symbol; `_V2ManagedSnapshot` obtains row ID/entry after the await.
+Assessed plan, pending operator review: publish an immutable row-ID/entry cache after committed managed writes, at boot and on poll re-enrollment; invalidate replaced/closed episodes.
+Then capture one fresh target decision in quote intake before any await, bound to that row; before release/submission validate the same row and prioritize latest hard-stop/floor/flip.
+Retain existing dedup/cancellation and target ceiling. Add replacement/rollback, stale/future quote, safety-during-read and concurrent-quote controls; keep the timestamp assertion.
+Alternative bounded quote evidence preserves an observation, not a cold-read target decision; it cannot justify backdating `cw_decided_at`. No cache/latch built.
+Latest operator ruling preserves the RED control and NOT READY build; no deeper mechanism before assessed-plan review. Integrator owns other work/queue.
 Interim assessment, E3/load results and all historical/peak/composition blockers reported. This local candidate is not pin/merge/install-ready.
 Reproduce combined proof by archiving b680, applying E1 and this commit's diff in an isolated copy, then running combined_replay.py with that copy on PYTHONPATH.
