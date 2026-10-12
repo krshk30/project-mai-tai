@@ -2613,8 +2613,8 @@ class SchwabV2BotService:
     def _fetch_position_maps(self) -> tuple[dict[str, int], dict[str, int]] | None:
         """Returns (union, held).
 
-        `union` is the historical conservative signal -- virtual_positions ∪ in-flight open intents
-        for the configured v2 broker account -- and is what `_fetch_open_positions` still returns.
+        `union` is the conservative signal -- v2 virtual_positions ∪ v2 in-flight open intents
+        for the configured primary broker account -- and is what `_fetch_open_positions` returns.
         Cross-venue fan-out intents must not enter this entry-decision signal: reading A accounts for
         the Webull claim separately from the Schwab primary venue.
 
@@ -2633,12 +2633,14 @@ class SchwabV2BotService:
                 broker = session.scalar(
                     select(BrokerAccount).where(BrokerAccount.name == account_name)
                 )
-                if broker is None:
+                strategy = session.scalar(select(Strategy).where(Strategy.code == STRATEGY_CODE))
+                if broker is None or strategy is None:
                     return positions, held
-                # Virtual positions = mai-tai's authoritative view of what
-                # we own (synchronized by OMS on fills).
+                # A shared-account ORB fill is not a v2 fill and must never consume
+                # a v2 slot or mint an UNKNOWN first-rest owner.
                 for vp in session.scalars(
                     select(VirtualPosition).where(
+                        VirtualPosition.strategy_id == strategy.id,
                         VirtualPosition.broker_account_id == broker.id,
                         VirtualPosition.quantity > 0,
                     )
@@ -2651,9 +2653,6 @@ class SchwabV2BotService:
                         held[symbol] = max(held.get(symbol, 0), int(vp.quantity))
                 # In-flight open intents — block re-entry until OMS resolves
                 # the prior intent (filled / rejected / cancelled).
-                strategy = session.scalar(
-                    select(Strategy).where(Strategy.code == "schwab_1m_v2")
-                )
                 if strategy is not None:
                     for ti in session.scalars(
                         select(TradeIntent).where(
