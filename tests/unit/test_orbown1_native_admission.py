@@ -21,17 +21,10 @@ def test_native_fixture_preserves_all_69_exported_settings():
         assert str(getattr(settings, key)).lower() == value.lower()
 
 
-async def native_case(factory, point, *, stale_quote=False, thin_bar=False, real_gap=False):
-    symbol = point["symbol"]
-    now = int(datetime.fromisoformat(point["at"]).timestamp() * 1000)
-    bars = [ChartBar(symbol, *row[1:6], row[0]) for row in NATIVE["bars"][symbol]
-            if row[0] <= now // 60000 * 60000 - 60000]
-    live_ids = {row[0] for row in NATIVE["bars"][symbol] if row[6] == "live"}
-    if thin_bar:
-        bars[-1].volume = 1
-    case = make_line_restore_case(symbol=symbol, now_ms=bars[0].timestamp_ms + 62000,
+async def _initial_case(factory, symbol, now_ms):
+    case = make_line_restore_case(symbol=symbol, now_ms=now_ms,
                                   settings_overrides=NATIVE["settings"])
-    bot, strategy = case.bot, case.strategy
+    bot = case.bot
     case.schwab.broker_account_name = case.settings.strategy_schwab_1m_v2_account_name
     case.webull.broker_account_name = case.settings.strategy_schwab_1m_v2_webull_account_name
     bot.session_factory = factory
@@ -43,6 +36,19 @@ async def native_case(factory, point, *, stale_quote=False, thin_bar=False, real
             produced_at=datetime.now(UTC), payload=StrategyStateSnapshotPayload(
                 top_confirmed=[{"symbol": symbol}], all_confirmed=[], watchlist=[]))
         bot._apply_strategy_state_event({"data": event.model_dump_json()}, max_watchlist=10)
+    return case
+
+
+async def native_case(factory, point, *, stale_quote=False, thin_bar=False, real_gap=False):
+    symbol = point["symbol"]
+    now = int(datetime.fromisoformat(point["at"]).timestamp() * 1000)
+    bars = [ChartBar(symbol, *row[1:6], row[0]) for row in NATIVE["bars"][symbol]
+            if row[0] <= now // 60000 * 60000 - 60000]
+    live_ids = {row[0] for row in NATIVE["bars"][symbol] if row[6] == "live"}
+    if thin_bar:
+        bars[-1].volume = 1
+    case = await _initial_case(factory, symbol, bars[0].timestamp_ms + 62000)
+    bot, strategy = case.bot, case.strategy
     episode = next(row for row in reads.FIXTURE["cases"] if row["symbol"] == symbol)
     events = [(int(datetime.fromisoformat(episode[key]).timestamp()*1000), quantity)
               for key, quantity in (("poll_at", 2), ("exit_at", 0))]
@@ -144,3 +150,71 @@ async def test_actual_gixi_gap_retains_named_native_retry_identity_refusal(repla
     assert "reason=retry_segment_mismatch" in caplog.text
     print(f"ORBOWN1-NATIVE GIXI real_gap=1 resumed=1 buys=0 refusal=retry_segment_mismatch "
           f"retained_retry={state.retry_one_segment_id} current_short={state.atr_short_flip_bar_ts}")
+
+
+@pytest.mark.asyncio
+async def test_corrected_gixi_full_window_preserves_native_budget_and_reports_remaining_gap(replay, caplog):
+    caplog.set_level("INFO")
+    factory = replay[1]
+    start, end_bar = 1791818460000, 1791822360000  # 11:21 decision through the 12:26 candle.
+    rows = NATIVE["bars"]["GIXI"]
+    case = await _initial_case(factory, "GIXI", rows[0][7])
+    events = [(row[7], "bar", row) for row in rows]
+    episode = next(row for row in reads.FIXTURE["cases"] if row["symbol"] == "GIXI")
+    events.extend((int(datetime.fromisoformat(episode[key]).timestamp()*1000), "position", qty)
+                  for key, qty in (("poll_at", 2), ("exit_at", 0)))
+    gap = NATIVE["gixi_gap"]
+    events.append((gap["detected_at_ms"], "gap", gap))
+    quotes = {tuple(row[1:]) for row in NATIVE["corrected_window_quotes"] if row[4] is not None}
+    events.extend((row[3], "quote", row) for row in quotes)
+    decisions, window_drafts, restored_before_window = [], [], False
+    for event_ms, kind, payload in sorted(events, key=lambda event: event[0]):
+        old_counts = (len(case.schwab.intents), len(case.webull.intents))
+        with case.clock(event_ms):
+            state = case.strategy.watchlist_state("GIXI")
+            if kind == "position":
+                reads._position(factory, "orb_schwab", "GIXI", payload, price=episode["entry_price"])
+                assert reads._apply_maps(case.bot, "GIXI") == ({}, {})
+                assert state.flip_owner_phase == "idle" and not state.cw_resting_taken
+            elif kind == "gap":
+                assert case.hold(**payload)
+            else:
+                if not restored_before_window and event_ms >= start and state.bars:
+                    last = state.bars[-1]
+                    fresh = ChartBar("GIXI", last.open, last.high, last.low, last.close,
+                                     last.volume, last.timestamp_ms)
+                    case.bot._mark_warmed_from_fresh_bar("GIXI", fresh, source="streamer")
+                    case.bot._try_complete_boot_state_restoration({"GIXI"}, new_symbols=set())
+                    case.bot._cw_boot_hold_check()
+                    restored_before_window = case.bot._boot_state_restoration_complete
+                case.strategy.apply_flip_position_book(case.bot._fetch_flip_position_book())
+                if kind == "quote":
+                    bid, ask, last, stamp = payload
+                    case.strategy.on_quote("GIXI", Quote("GIXI", bid or 0, ask, last, stamp))
+                    await case.bot._drain_direct_strategy_intents()
+                else:
+                    bar = ChartBar("GIXI", *payload[1:6], payload[0])
+                    await case.feed_bar(bar, now_ms=event_ms,
+                                        phase="live" if payload[6] == "live" else "replay")
+                    if start - 60000 <= payload[0] <= end_bar:
+                        decisions.append((payload[0], state.atr_state, state.retry_one_segment_id,
+                                          state.atr_short_flip_bar_ts, state.flip_owner_phase))
+        if event_ms >= start:
+            for sink, previous in zip((case.schwab, case.webull), old_counts):
+                window_drafts.extend((event_ms, draft) for draft in sink.intents[previous:]
+                                     if draft.side == "buy" and draft.intent_type == "open")
+    assert restored_before_window and len(decisions) == 67
+    assert not window_drafts and "[V2-FLIP-OWNER-UNKNOWN]" not in caplog.text
+    assert all(row[2] == 1791809880000 for row in decisions)
+    short = [row for row in decisions[5:] if row[1] == "short"]
+    long = [row for row in decisions[5:] if row[1] == "long"]
+    assert short and long and all(row[4] == "idle" for row in decisions)
+    assert all(row[3] == 1791818400000 for row in short)
+    assert all(row[3] == 0 for row in long)
+    assert "reason=retry_segment_mismatch" in caplog.text
+    assert "reason=non_first_producer_disabled" in caplog.text
+    assert not case.strategy.watchlist_state("GIXI").cw_resting_taken
+    print(f"ORBOWN1-CORRECTED-WINDOW bars={len(decisions)} quote_events={len(quotes)} "
+          f"short_evaluations={len(short)} long_evaluations={len(long)} "
+          "first_rest=NONE remaining_gap=retry_segment_mismatch later_reclaim=non_first_producer_disabled "
+          "existing_release=12:28:02")
