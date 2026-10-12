@@ -18,6 +18,20 @@ def load_completed_today(
 ) -> tuple[list[dict[str, Any]], Decimal]:
     if strategy_code not in {"momentum_30s", "momentum_60s"}:
         raise ValueError("Momentum page history is limited to the two Momentum strategies")
+    return _load_completed_today(session_factory, strategy_code, session_date)
+
+
+def load_warning_completed_today(
+    session_factory: sessionmaker[Session], strategy_code: str, session_date: date,
+) -> tuple[list[dict[str, Any]], Decimal]:
+    if strategy_code not in {"momentum_30s_warn", "momentum_60s_warn"}:
+        raise ValueError("Warning page history requires a labelled warning strategy")
+    return _load_completed_today(session_factory, strategy_code, session_date)
+
+
+def _load_completed_today(
+    session_factory: sessionmaker[Session], strategy_code: str, session_date: date,
+) -> tuple[list[dict[str, Any]], Decimal]:
     with session_factory() as session:
         rows = session.scalars(
             select(MomentumPaperEvent)

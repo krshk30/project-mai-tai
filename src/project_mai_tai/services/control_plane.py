@@ -57,7 +57,7 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.broker_adapters.schwab_token_manager import atomic_write_json
 from project_mai_tai.log import configure_logging
-from project_mai_tai.momentum_page_history import load_completed_today
+from project_mai_tai.momentum_page_history import load_completed_today, load_warning_completed_today
 from project_mai_tai.paper_exit_store import PaperExitStore
 from project_mai_tai.runtime_registry import configured_strategy_registrations
 from project_mai_tai.services.schwab_token_refresher import SchwabTokenRefresher
@@ -4222,6 +4222,21 @@ def build_app(
             )
             # Page-local copy: preserve live positions/status and the shared cached snapshot.
             bot = {**bot, "closed_today": closed_today, "daily_pnl": float(daily_pnl)}
+            if getattr(active_settings, "market_data_momentum_warning_enabled", False):
+                warning_code = strategy_code + "_warn"
+                try:
+                    warning_rows, warning_pnl = await asyncio.to_thread(
+                        load_warning_completed_today, active_session_factory, warning_code,
+                        utcnow().astimezone(EASTERN_TZ).date(),
+                    )
+                    warning = {"strategy_code": warning_code, "status": "READABLE",
+                               "closed_today": warning_rows, "daily_pnl": str(warning_pnl)}
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "[MOMWARN1-PAGE] ledger=%s status=UNKNOWN", warning_code, exc_info=True,
+                    )
+                    warning = {"strategy_code": warning_code, "status": "UNKNOWN"}
+                bot = {**bot, "momentum_warning": warning}
             data = {**data, "bots": [bot if item["strategy_code"] == strategy_code else item for item in data["bots"]]}
 
         advisories: list[dict[str, Any]] = []
@@ -6062,6 +6077,33 @@ def _render_scanner_dashboard(
 </html>"""
 
 
+def _render_momentum_warning_panel(warning: dict[str, Any] | None) -> str:
+    if not warning:
+        return ""
+    code = str(warning.get("strategy_code", ""))
+    if code not in {"momentum_30s_warn", "momentum_60s_warn"}:
+        return ""
+    if warning.get("status") != "READABLE":
+        summary = "Warning ledger unreadable: UNKNOWN. No total calculated."
+        rows = '<tr><td colspan="9">Warning comparison unavailable</td></tr>'
+    else:
+        rows, count, _ = _build_completed_position_rows(
+            {"strategy_code": code, "account_name": "paper:momentum",
+             "closed_today": warning.get("closed_today", [])}, [], [],
+        )
+        summary = f"{count} completed warning trades; gross paper P&amp;L ${_as_float(warning.get('daily_pnl')):+,.2f}"
+    return f"""<section class="panel full">
+        <div class="panel-header"><div><h3>Warning Detector - Separate Paper Ledger</h3>
+        <div class="sub">{escape(code)}: {summary}</div></div></div>
+        <div class="panel-copy">Comparison only. Never included in the Snapshot Momentum totals above.
+        Same next-eligible-print fill and +5% / -15% / 600-second exits. Conservative aggregate
+        evidence is labelled by the detector; it is not an invented raw-trade timestamp.</div>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Ticker</th><th>Path</th><th>Qty</th><th>Entry Time</th><th>Entry</th>
+        <th>Exit Time</th><th>Exit</th><th>P&amp;L</th><th>Exit Summary</th></tr></thead>
+        <tbody>{rows}</tbody></table></div></section>"""
+
+
 def _render_bot_detail_page(
     data: dict[str, Any],
     strategy_code: str,
@@ -6402,8 +6444,9 @@ def _render_bot_detail_page(
                     <div class="hero-card"><span>Gross paper P&amp;L</span><strong>${_as_float(momentum.get("gross_pnl")):+,.2f}</strong><small>$500 notional per event; no fees or borrow</small></div>
                     <div class="hero-card"><span>Excluded raw prints</span><strong>{int(momentum.get("excluded_prints", 0) or 0)}</strong><small>Condition metadata failed closed</small></div>
                 </div>
-                <div class="panel-copy"><strong>Frozen rule:</strong> +30% over the trailing {30 if strategy_code == "momentum_30s" else 60}-second eligible-print low; +5% target, -15% stop, then first print after 600 seconds. A quiet day is UNEXERCISED, never a pass.</div>
+                <div class="panel-copy"><strong>Frozen rule:</strong> +20% over the trailing {30 if strategy_code == "momentum_30s" else 60}-second eligible-print low; +5% target, -15% stop, then first print after 600 seconds. A quiet day is UNEXERCISED, never a pass.</div>
             </section>"""
+        momentum_panel += _render_momentum_warning_panel(bot.get("momentum_warning"))
     completed_positions_panel = f"""
             <section class="panel full">
                 <div class="panel-header">
