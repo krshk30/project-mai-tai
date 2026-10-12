@@ -1,0 +1,58 @@
+L3-P2 -- LOCAL SOURCE-WIRING CANDIDATE, MAIN REVIEW REQUIRED, NOT LIVE PROOF
+
+Source scope: G1 gateway/WarningHealthReader, existing G3 proposed health schema,
+new momwarn_live_health.py, dedicated source controls; no OMS/v2/ORB changes.
+Live read rejects external schema1/2 placeholder receipts. It requires explicit
+reviewed source configuration at the existing health input path, reads current
+OMS/v2 /proc instances and bounded actual logs, and uses only the gateway's
+existing A-owned Redis client to read32 newest isolated-state entries. No new
+connection factory/provider/HTTP/DB/producer/service/script restart is added.
+The existing monitor interval is1s; checks run off-loop with existing timeout.
+
+OMS source: oms/service.py sync_broker_state logs actual monotonic pass duration
+and phase=end after _sync_broker_state_pass. Config cadence15 comes from main's
+read-only numeric flag finding, not default Settings5. Original completion time
+is immutable; fresh EOF/process observation has its own timestamp. Candidate
+schema2 source-age allowance15+bounded5 and monitor freshness5 require main's
+review; two distinct passes exceeding5s still revert. Repeated completion cannot
+be restamped. Failed outcome, lost EOF coverage/PID reuse/backlog are UNKNOWN.
+
+V2 predicate proposal: newest explicit schwab-1m-v2 state, fresh<=10s, original
+producer timestamp/start fence, complete typed watchlist and process binding.
+Restored empty watchlist can be explicit N/A. Missing/startup-empty cannot.
+Reviewed same-day first07 source expectation permits pre07 N/A, never zero.
+Applicable latest due minute requires actual probes for EVERY watched symbol
+from verified probe-all or complete probe-symbol configuration. A missing due
+bar with proven expected coverage accrues lateness; unknown expectation fails
+closed. Current minute probes must have original observation at/after closure.
+No generic heartbeat/warmup/mtime substitutes for expected complete coverage.
+
+Source audit: E860 _bar_loop_pass calls ordinary round-robin REST polling.
+_anchored_bar_loop_pass exists but has NO caller; cannot cite it as active lane.
+strategy_core/schwab_1m_v2.py [V2-MACD-PROBE] is diagnostic and config-gated;
+it observes strategy evaluation BEFORE memo update, not broker ACK or completion
+of every downstream action. All watched probes prove evaluated closed-bar
+availability only. Actual probe setting/source timezone/process refs and complete
+same-day expectation have not been recovered here; placeholder refs are not
+operational proof. Event source timestamp/start fence is not a gateway generation.
+
+OPEN READINESS ISSUE: with first bar starting07:00, first closed due is07:01.
+Current inherited pre07 N/A expires07:00. Proposed distinct sourced-before-first-
+due predicate would require reviewed explicit first-start/interval/first-due
+provenance, not infer it from absence. Not silently implemented or waived.
+Until source predicate/config and cadence proposal are reviewed, NOT READY.
+
+Controls:203PASS/0F in2.39s with one existing XML-property warning; Ruff/diff PASS.
+/tmp/momwarn1-l3-health-metrics-final.xml
+Actual bounded CONTROLLED log/proc/state adapter -> G1 checks each health trigger:
+publishlag>2, applicablebar>5, load>6, freeRAM<3GiB, newliveERROR, twoOMS>5,
+unreadability. Existing provider1008/disconnect/reconnect controls retained.
+Each removes A only, drains/drops A and preserves watched T/Q and warning ownerT.
+No retired orb.log dependency; required live logs unchanged. No restart action.
+External receipts, missing config/expectation, subset coverage, stale state,
+restamped completion, source PID reuse and future log evidence refuse.
+Legacy tests now explicitly inject direct component-reader/reset, not pretend
+their external receipt is live source setup; original assertions unchanged.
+
+These tests are source wiring/reversion controls, NOT production health receipts,
+W4 transport evidence, recorded A burst or a feature/install pin.

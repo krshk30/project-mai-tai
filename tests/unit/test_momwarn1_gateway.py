@@ -426,7 +426,8 @@ async def test_safety_failure_remains_sticky_across_normal_close_and_next_04(mon
 async def test_next_window_reprimes_logs_and_sync_baseline_after_inactive_night(health_reader, monkeypatch):
     reader, path, directory = health_reader
     svc, provider, _, _ = service()
-    svc._warning_health_reader = reader
+    # Legacy fixture is a log/reset component control, not actual live source setup.
+    svc._warning_health_reader = SimpleNamespace(read=reader.read, reset_window=reader.reset_window)
     await svc._warning_monitor_once()
     assert svc._warning_active and reader._logs
     closed = SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 13, 30, tzinfo=UTC))
@@ -699,7 +700,8 @@ async def test_retired_paper_log_absence_does_not_disable_A_but_live_ORB_error_d
     }
     assert not (directory / "orb.log").exists()
     svc, provider, _, _ = service()
-    svc._warning_health_reader = reader
+    # This isolates the existing log-scope component, not the new live-source setup.
+    svc._warning_health_reader = SimpleNamespace(read=reader.read)
     await svc._warning_monitor_once()
     assert svc._warning_active
     assert provider._ws.added == ["A.*"]

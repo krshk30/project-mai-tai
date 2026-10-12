@@ -751,8 +751,13 @@ class MarketDataGatewayService:
             await self._end_warning_window()
             return
         try:
+            live_reader = getattr(self._warning_health_reader, "read_live", None)
+            operation = (
+                live_reader(self._warning_redis, self.settings.redis_stream_prefix)
+                if live_reader is not None else asyncio.to_thread(self._warning_health_reader.read)
+            )
             health = await asyncio.wait_for(
-                asyncio.to_thread(self._warning_health_reader.read),
+                operation,
                 timeout=self.settings.market_data_momentum_warning_monitor_timeout_seconds,
             )
             reason = self._warning_watchdog.check(health, publish_lag_seconds=self._warning_publish_lag())

@@ -1,4 +1,4 @@
-"""PROPOSED health v2 policy/source candidate; not wired to G1's v1 reader."""
+"""Health v2 source candidate; local G1 wiring requires review, not installation."""
 
 from __future__ import annotations
 
@@ -43,7 +43,8 @@ def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
         reference = receipt.get("v2_expectation_ref")
         pre07 = (
             receipt.get("v2_applicability_reason") == "sourced_pre0700"
-            and receipt.get("v2_source_lane") == "schwab_anchored_current_day"
+            and receipt.get("v2_source_lane") in {
+                "schwab_anchored_current_day", "schwab_pricehistory_same_day"}
             and receipt.get("v2_expectation_kind") == "recorded_first_same_day_0700"
             and receipt.get("v2_expected_start_et") == "07:00"
             and isinstance(reference, str) and bool(reference)

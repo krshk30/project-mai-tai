@@ -1,5 +1,11 @@
 MOMWARN1 L3 OWN ASSESSMENT -- Oct12 evening, NOT INSTALLABLE
 
+HISTORICAL INITIAL ASSESSMENT below; superseded followup receipts are
+METRICS_REVIEW_REPAIR.txt, LIVE_HEALTH_REVIEW.txt and CAUSAL_REPLAY.txt.
+Human explicitly clarified P3 is controlled causal replay, not impossible
+historical warning transport. The earlier recorded-arrival prerequisite below
+is superseded for P3 only; recorded A3xpeak remains mandatory for P1.
+
 Human transferred frozen G1/G2/G3 local integration to one writer, Anscombe.
 Main owns queue/L5; Euler B, Mendel F, Huygens MOMRAW data stay independent.
 Base installed-set source:860fba4c7d59edff18eb23468ba576dcb83f4d57 (human installed
