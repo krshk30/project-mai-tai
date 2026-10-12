@@ -222,9 +222,30 @@ async def test_A_exact_symbol_filter_separated_no_general_bars_or_TQ_firehose():
 
 @pytest.mark.parametrize("changes", [dict(e=None), dict(s=None), dict(s=1), dict(e=1791809480000),
     dict(e=1791809482000), dict(o=float("nan")), dict(l=14), dict(v=-1),
-    dict(s=1791809480000.5), dict(e=True)])
+    dict(s=1791809480000.5), dict(e=True), dict(e=1791809480001),
+    dict(e=1791809480500), dict(e=1791809480998), dict(e=1791809480999),
+    dict(e=1791809481001)])
 def test_invalid_aggregate_never_fabricates_endpoints(changes):
     assert MassiveTradeStream._normalize_warning_aggregate(aggregate(**changes), "WFF") is None
+
+
+@pytest.mark.asyncio
+async def test_documented_exclusive_1000_bucket_preserves_raw_end_to_Redis():
+    svc, provider, _, redis = service()
+    await svc._warning_monitor_once()
+    message = aggregate(s=1610144868000, e=1610144869000)
+    provider._handle_messages([message])
+    stop = asyncio.Event()
+    publisher = asyncio.create_task(svc._warning_publish_loop(stop))
+    while not redis.entries:
+        await asyncio.sleep(0)
+    stop.set()
+    await publisher
+    payload = redis.entries[0][1]
+    assert payload["start_ms"] == 1610144868000
+    assert payload["end_ms"] == 1610144869000
+    assert payload["end_ms"] - payload["start_ms"] == 1000
+    assert not any(key in payload for key in ("sip_low_at", "sip_timestamp", "timestamp_ns"))
 
 
 @pytest.mark.asyncio

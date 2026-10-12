@@ -630,7 +630,7 @@ class MassiveTradeStream:
         volume = _to_int(field("volume", "v"))
         if any(p is None or not math.isfinite(p) or p <= 0 for p in prices):
             return None
-        if type(start) is not int or type(end) is not int or start < 1_000_000_000_000 or not 0 < end - start <= 1000:
+        if type(start) is not int or type(end) is not int or start < 1_000_000_000_000 or end - start != 1000:
             return None
         if volume is None or volume < 0:
             return None

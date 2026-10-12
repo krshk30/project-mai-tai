@@ -18,6 +18,16 @@ default remains False. Catalog bool inventory increased 137 -> 138.
 Stream <redis_stream_prefix>:momentum-warning-bars:
 Redis entry field data = compact JSON object, with version=1,event_type="aggregate".
 symbol:string, start_ms:int, end_ms:int: exact upstream SDK s/e Unix milliseconds.
+Supported v1 shape: end_ms-start_ms==1000; end_ms is the exclusive closed-bucket
+boundary and is preserved exactly. Official A sample s1610144868000/e1610144869000
+has this shape. Partial spans1..998 and999 inclusive-end input are unsupported
+in this contract; no implicit e+1 conversion or999 compatibility.
+The earlier claim of common captured999 WS bars was withdrawn by the human as
+UNPROVEN inference.999 is not recorded vendor evidence. Any future inclusive-end
+compatibility requires explicit input semantics/version review, preserving raw s/e.
+G2 currently also requires start_ms%1000==0. The official sample is aligned but
+does not establish a universal vendor alignment guarantee. G1 adds no new start
+alignment restriction without that proof; G1 never rounds or manufactures s/e.
 open/high/low/close:number, volume:int: upstream qualifying OHLC/volume.
 received_utc_ns:int: local wall clock at normalization.
 received_monotonic_ns:int: additional local monotonic clock for gateway lag checks.
