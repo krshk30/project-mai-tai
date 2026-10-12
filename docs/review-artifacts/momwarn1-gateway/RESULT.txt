@@ -86,3 +86,23 @@ runtime validator expansion; this follow-up is tests and explanation only.
 synthetic50ms gate observed1.240959ms, NOT recorded3xpeak proof.
 Daily-window fix is41484e5c; preserve80026c6c/b5c0125b as historical reviewed heads.
 No queue/production/GitHub/provider action. G2/G3 protocol already relayed by main.
+
+Shared bucket-contract follow-up (human corrected999 claim):
+G1eab1060c1bad7b810a9c69fd9189e5ba0e20ecb1 now accepts exact1000ms exclusive
+span only, preserving raw s/e. Rejects unsupported1..999 short spans (including
+unproven999inclusive), oversized/reversed/missing endpoints; no implicit e+1.
+Primary stock A doc sample1610144868000/1610144869000 demonstrates supported
+1000ms exclusive shape; it is NOT captured live/vendor burst evidence. Universal
+aligned-start guarantee remains unproven from sample alone, so no new G1 start
+rounding/alignment policy. G2's existing aligned-start requirement is documented.
+292 focused tests PASS,100 dedicated G1 controls;9 composed contract tests PASS
+with exact G1eab1060c plus committed G2368aad3b2d28b8d301c11cc3b14b1bea2a7840b9
+engine/models/warning_window in /tmp/momwarn1-g1-g2-contract-uCo6Lh. Parser exported
+blobecd435108077d96914e8c4847c9fc96ec896630f matches the pinned G2 object.
+Provider SDK normalization->Redis publisher->actual G2 AggregateObservation
+preserves endpoints, qualifying low and no fictional SIP/tick fields. This is
+a narrow offline source composition, NOT main's accepted full/all-ON composition.
+Receipt contract-results.xml in that export; bucket-shape-followup.xml locally.
+Ruff/diffcheck PASS. Existing daily/window/retired-log controls preserved;
+unchanged50ms syntheticgate1.646959ms. Healthv2 remains proposal-only; W5 still
+blocked by missing recorded3xpeak/current entitlement/actual-source/full proofs.
