@@ -332,8 +332,49 @@ def collect_completed_trade_cycles(
                 best_match = row
         return best_match
 
+    display_fills = recent_fills
+    display_orders = recent_orders
+    if strategy_code == "orb_schwab":
+        def order_key(item: dict[str, Any]) -> tuple[str, str, str, str]:
+            return (
+                str(item.get("broker_account_name") or broker_account_name),
+                str(item.get("symbol") or "").upper(),
+                str(item.get("side") or "").lower(),
+                str(item.get("order_id") or ""),
+            )
+
+        orders_by_key = {
+            order_key(item): item for item in recent_orders
+            if item.get("order_id")
+            and item.get("strategy_code", strategy_code) == strategy_code
+        }
+        filled_quantities: dict[tuple[str, str, str, str], float] = {}
+        display_fills = []
+        for item in recent_fills:
+            enriched = dict(item)
+            key = order_key(item)
+            order = orders_by_key.get(key)
+            if (order is not None
+                    and item.get("strategy_code", strategy_code) == strategy_code
+                    and as_float(item.get("price")) > 0):
+                filled_quantities[key] = filled_quantities.get(key, 0.0) + as_float(item.get("quantity"))
+                for field in ("reason", "path"):
+                    if not enriched.get(field) or enriched.get(field) == "-":
+                        enriched[field] = order.get(field, "")
+            display_fills.append(enriched)
+        # Broker update times can be later than both fills. A fully priced order is
+        # already represented, even when its update is outside the fill cycle.
+        display_orders = [
+            item for item in recent_orders
+            if not (
+                item.get("order_id")
+                and as_float(item.get("quantity")) > 0
+                and filled_quantities.get(order_key(item), 0.0) >= as_float(item.get("quantity"))
+            )
+        ]
+
     reconstruct_from_events(
-        recent_fills,
+        display_fills,
         timestamp_key="filled_at",
         price_key="price",
     )
@@ -341,7 +382,7 @@ def collect_completed_trade_cycles(
     reconstruct_from_events(
         [
             item
-            for item in recent_orders
+            for item in display_orders
             if str(item.get("status", "")).lower() == "filled"
         ],
         timestamp_key="updated_at",
