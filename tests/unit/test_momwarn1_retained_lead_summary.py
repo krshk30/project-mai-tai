@@ -28,3 +28,12 @@ def test_positive_only_denominator_is_separate_from_population_and_unknown_metho
 def test_population_key_mismatch_or_nan_refuses_without_repairing_inputs(leads):
     with pytest.raises(ValueError):
         module.summarize("2026-10-12,momentum_30s,TEST,t1\n", leads)
+
+
+def test_reordered_published_outputs_do_not_claim_per_event_alignment():
+    signals = "2026-10-12,momentum_30s,AAA,t1\n2026-10-12,momentum_60s,BBB,t2\n"
+    leads = [["momentum_60s", "2026-10-12", "BBB", 18], ["momentum_30s", "2026-10-12", "AAA", 8]]
+    result = module.summarize(signals, leads)
+    assert result["source_key_multiplicities_match"]
+    assert not result["ordered_source_keys_match"] and result["ordered_source_key_mismatches"] == 2
+    assert result["original_generation_method"] == "UNKNOWN_NOT_RECOVERED"

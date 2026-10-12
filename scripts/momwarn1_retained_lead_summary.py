@@ -18,17 +18,24 @@ def summarize(signals: str, leads: list) -> dict:
     if not rows or not isinstance(leads, list) or len(rows) != len(leads):
         raise ValueError("retained population mismatch")
     values = {}
-    for signal, lead in zip(rows, leads, strict=True):
-        if len(signal) != 4 or not isinstance(lead, list) or len(lead) != 4:
+    for signal in rows:
+        if len(signal) != 4:
             raise ValueError("invalid retained row")
-        if [signal[1], signal[0], signal[2]] != lead[:3]:
-            raise ValueError("ordered source-key mismatch")
         if signal[1] not in {"momentum_30s", "momentum_60s"}:
             raise ValueError("unknown published ledger")
+    for lead in leads:
+        if not isinstance(lead, list) or len(lead) != 4 or lead[0] not in {
+            "momentum_30s", "momentum_60s",
+        }:
+            raise ValueError("invalid retained lead row")
         value = lead[3]
         if type(value) not in (int, float) or not math.isfinite(value):
             raise ValueError("invalid published lead")
-        values.setdefault(signal[1], []).append(value)
+        values.setdefault(lead[0], []).append(value)
+    signal_keys = [(row[1], row[0], row[2]) for row in rows]
+    lead_keys = [tuple(row[:3]) for row in leads]
+    if Counter(signal_keys) != Counter(lead_keys):
+        raise ValueError("source-key population mismatch")
     ledgers = {}
     for code, samples in sorted(values.items()):
         positive = [value for value in samples if value > 0]
@@ -38,7 +45,9 @@ def summarize(signals: str, leads: list) -> dict:
                              all_population_median_s=statistics.median(samples))
     duplicate_keys = sum(count-1 for count in Counter(tuple(row[:3]) for row in leads).values())
     return dict(evidence_kind="RETAINED_PUBLISHED_OUTPUT_SUMMARY_NOT_GENERATION_REPLAY",
-                population=len(rows), ordered_source_keys_match=True,
+                population=len(rows), ordered_source_keys_match=signal_keys == lead_keys,
+                source_key_multiplicities_match=True,
+                ordered_source_key_mismatches=sum(a != b for a, b in zip(signal_keys, lead_keys, strict=True)),
                 repeated_strategy_day_symbol_rows=duplicate_keys, ledgers=ledgers,
                 original_generation_method="UNKNOWN_NOT_RECOVERED",
                 aggregate_start_vs_end_availability="UNKNOWN_NOT_CORRECTED_WITHOUT_METHOD",
