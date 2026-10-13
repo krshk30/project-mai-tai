@@ -604,6 +604,11 @@ class MassiveTradeStream:
                 symbol = getattr(message, "symbol", None) or getattr(message, "sym", None)
                 if not raw_symbol_is_uppercase(symbol):
                     continue
+                # Preferred-share case markers must survive until the warning-A filter.
+                if event_type == "A" and self._warning_wildcard_used and (
+                    not isinstance(symbol, str) or symbol != symbol.upper()
+                ):
+                    continue
                 symbol = str(symbol).upper()
 
                 if event_type == "A" and self._warning_wildcard_used:
@@ -670,6 +675,10 @@ class MassiveTradeStream:
 
     @staticmethod
     def _normalize_warning_aggregate(message, symbol: str) -> MomentumWarningAggregateRecord | None:
+        raw_symbol = getattr(message, "symbol", None) or getattr(message, "sym", None)
+        if not isinstance(raw_symbol, str) or raw_symbol != raw_symbol.upper() or raw_symbol != symbol:
+            return None
+
         def field(long_name, short_name):
             value = getattr(message, long_name, None)
             return value if value is not None else getattr(message, short_name, None)
