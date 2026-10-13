@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import socket
 import time
 from collections import deque
@@ -45,6 +46,24 @@ WARNING_CONSUMER = "momentum-warning"
 # spanning 7.5 seconds. Persistent failures still escape and let systemd make
 # the loss of the heartbeat task visible.
 HEARTBEAT_RELOAD_RETRY_DELAYS_SECONDS = (0.5, 1.0, 2.0, 4.0)
+
+
+def _warning_monitor_diagnostic(exc: Exception) -> str:
+    # Never emit URLs/credential fields or multiline exception text into live logs.
+    try:
+        message = str(exc)[:2048]
+    except Exception:
+        message = "[message unavailable]"
+    message = re.sub(r"[a-zA-Z][a-zA-Z0-9+.-]*://\S+", "[REDACTED_URL]", message)
+    message = re.sub(r"(?i)\b(?:bearer|basic)\s+\S+", "[REDACTED_AUTH]", message)
+    message = re.sub(
+        r"(?i)\b[\w-]*(?:authorization|password|passwd|secret|token|api[_-]?key|chat[_-]?id)"
+        r"[\w-]*[\"']?\s*[:=]\s*(?:[\"'][^\"']*[\"']|[^\s,;]+)",
+        "[REDACTED_CREDENTIAL]", message,
+    )
+    message = re.sub(r"\b\d{6,}:[A-Za-z0-9_-]+", "[REDACTED_TOKEN]", message)
+    return json.dumps({"exception_class": type(exc).__name__[:80],
+                       "message": message[:512]}, ensure_ascii=True)
 
 
 def _is_transient_redis_reload_error(exc: RedisError) -> bool:
@@ -627,11 +646,12 @@ class MarketDataGatewayService:
                             first_trade_sip_ns=record.timestamp_ns, status="provider_event_observed")
         self._enqueue_live(self._trade_queue, record)
 
-    def _latch_warning_revert(self, reason: str) -> None:
+    def _latch_warning_revert(self, reason: str, *, diagnostic: str | None = None) -> None:
         if self._warning_revert_reason is None:
             self._warning_revert_reason = reason
             self._warning_reverted_utc_ns = time.time_ns()
-            self.logger.warning("[MOMWARN1-AUTO-REVERT] reason=%s A_only=true", reason)
+            self.logger.warning("[MOMWARN1-AUTO-REVERT] reason=%s A_only=true%s", reason,
+                                f" detail={diagnostic}" if diagnostic is not None else "")
         self._warning_active = False
         while not self._warning_queue.empty():
             self._warning_queue.get_nowait()
@@ -644,8 +664,8 @@ class MarketDataGatewayService:
         if task is not None and task is not current_task:
             task.cancel()
 
-    async def _revert_warning(self, reason: str) -> None:
-        self._latch_warning_revert(reason)
+    async def _revert_warning(self, reason: str, *, diagnostic: str | None = None) -> None:
+        self._latch_warning_revert(reason, diagnostic=diagnostic)
         try:
             await self.trade_stream.set_momentum_warning_aggregates(False)
         except Exception:
@@ -772,8 +792,8 @@ class MarketDataGatewayService:
                 self._warning_first_a_utc_ns = None
         except asyncio.CancelledError:
             raise
-        except Exception:
-            await self._revert_warning("monitor_unreadable")
+        except Exception as exc:
+            await self._revert_warning("monitor_unreadable", diagnostic=_warning_monitor_diagnostic(exc))
 
     async def _warning_monitor_loop(self, stop_event: asyncio.Event) -> None:
         while not stop_event.is_set() and self._warning_revert_reason is None:
