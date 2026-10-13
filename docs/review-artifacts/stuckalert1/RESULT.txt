@@ -4,7 +4,9 @@ REVIEW HOLD: This historical6de/da10 receipt is insufficient for the card.
 Candidate-minus-contradictions wrongly exempted accepted-looking rows with NO
 positive brokeraccepted event. Main requires broker-origin accepted event; removal
 of freshness did NOT remove positiveACK. Original78PASS/242->1 outputs preserved,
-not approval. Correction and new truthful replay pending; no origin relabelling.
+not approval. New local positiveACK repair/94PASS/replay185retained is separately
+recorded in POSITIVE_ACK_REPAIR.txt. Historical body below remains superseded;
+its marker-only wording is NOT approved policy. No origin relabelling.
 
 EXACT SOURCE / SCOPE
 Tested source6de4a9dbc63836717b9607711745bcce9badd289
