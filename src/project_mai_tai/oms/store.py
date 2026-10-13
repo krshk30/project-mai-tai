@@ -428,8 +428,13 @@ class OmsStore:
             session.flush()
             return order
 
+        from project_mai_tai.oms.webull_order_identity import immutable_report_id
+
+        identity = immutable_report_id(
+            order, broker_order_id, dispatch=getattr(self, "webull_identity_dispatch", None),
+        )
         order.status = status
-        order.broker_order_id = broker_order_id or order.broker_order_id
+        order.broker_order_id = identity
         order.payload = payload
         if order.submitted_at is None:
             order.submitted_at = utcnow()
@@ -529,9 +534,14 @@ class OmsStore:
         metadata: dict[str, str],
         preserve_status: bool = False,
     ) -> BrokerOrder:
+        from project_mai_tai.oms.webull_order_identity import immutable_report_id
+
+        identity = immutable_report_id(
+            order, report.broker_order_id, dispatch=getattr(self, "webull_identity_dispatch", None),
+        )
         if not preserve_status:
             order.status = report.event_type
-        order.broker_order_id = report.broker_order_id or order.broker_order_id
+        order.broker_order_id = identity
         payload = dict(metadata)
         if report.event_type == "rejected" and report.reason:
             payload["reject_reason"] = report.reason

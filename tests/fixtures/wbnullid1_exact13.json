@@ -1,0 +1,533 @@
+{
+  "task": "WBNULLID1-BUILD-PLAN",
+  "kind": "NON_EXECUTABLE_PLAN_NOT_A_DB_REPAIR_COMMAND",
+  "execution_authorized": false,
+  "operator_approval_required": true,
+  "reference_capture_utc": "2026-10-13T10:39:57.804794+00:00",
+  "source_head": "74a830421d3e72450ec7207b383e5d862b32b5df",
+  "source_sha256": {
+    "src/project_mai_tai/oms/service.py": "ae5fea567d977db9e935eab0ca230332c98af9177a119efdd09add96ea4ad426",
+    "src/project_mai_tai/oms/store.py": "5ad377f954368aa644e44004b0ec2deb939b7eda34e559eee10a969cf7e25d17",
+    "src/project_mai_tai/broker_adapters/webull.py": "d877fd91166b685b9bbeade6de23dff9e6570d413b37908215d763e314fdc79e",
+    "src/project_mai_tai/broker_adapters/webull_order_reads.py": "3e802143b8bfa68fcbf3926883a9c92efd0093177a3caff16e0eef06ed208738"
+  },
+  "input_bindings": {
+    "database": {
+      "path": "/Users/velkris/.codex/task-queues/analysis/wbnullid1-20261013/database-20261013.jsonl",
+      "sha256": "4f499b0ab4e80e745dfa4a00344b7081920a64228d9c99064401d2af76fd3f90"
+    },
+    "N101": {
+      "path": "/Users/velkris/.codex/task-queues/analysis/wbnullid1-fermat-20261013/RESULT.json",
+      "sha256": "9642fc058f718399fcf011c180f549f08597a1cd9818cbf83fe720ed71bde3da"
+    },
+    "verified_mappings": {
+      "path": "/Users/velkris/.codex/task-queues/analysis/wbnullid1-fermat-20261013/verified-mappings.json",
+      "sha256": "d2c064e9e0f89b7c11c07a23054b65157b00d1855041299af250e5de3d9f18ca"
+    }
+  },
+  "exact_13": [
+    {
+      "order_id": "95eb60ad-95c0-4df1-9331-a43bc18b71a1",
+      "snapshot_id": "3f6095a6-6168-56db-9b0b-1cbc61eee171",
+      "symbol": "FLYE",
+      "client_order_id": "schwab_1m_v2-FLYE-open-a426f2606163",
+      "broker_order_id": "BRGETJ8410EU9K2639V6AUT0EA",
+      "actual_response_acquired_at": "2026-10-08T15:21:14.378885+00:00",
+      "accepted_origin": "broker",
+      "body_sha256": "023879d7954b76f64989c22584e964398dc37b5c46cb3c08b1e94bd9c7fe6ff2",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "125.0",
+      "expected_intent_id": "6df0d0f2-14a9-4c32-b65c-79a57841c393",
+      "reference_updated_at": "2026-10-08T15:21:10.187128+00:00",
+      "reference_order_payload_sha256": "df07b4723b6e668aefd571466d08cf6b7b52559b708101419f378230b2fc2db4",
+      "proof_version": "1de19fe20a6012448a9ed03992ec340cfce31dc82efe92bd5efd503b6e54d87c",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "broker"
+    },
+    {
+      "order_id": "2fec86fa-5a6e-4c60-8d9c-ec505ae1b875",
+      "snapshot_id": "416ec20c-1caf-58c3-b0e5-8a45a3768baf",
+      "symbol": "FLYE",
+      "client_order_id": "schwab_1m_v2-FLYE-open-378c0780f2b3",
+      "broker_order_id": "A8JAML4KG93HCL5RN4IG2ME49B",
+      "actual_response_acquired_at": "2026-10-08T15:23:15.372889+00:00",
+      "accepted_origin": "broker",
+      "body_sha256": "21dcaf8c59b0dd3f2bd51ccf174075bf717d8d6efdb4efedf3312eb7565c1360",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "127.0",
+      "expected_intent_id": "f334a452-a6f3-47a4-aa73-b4734372318c",
+      "reference_updated_at": "2026-10-08T15:23:09.14561+00:00",
+      "reference_order_payload_sha256": "f6d786802fedb5cf91114a28a3e991b68effbfd19abe0c2d72c68eb4f9f2e2a8",
+      "proof_version": "31e5fd070eb778ce83ecae66322c1ec04aeaa675271e294c29f92edd59f8fac4",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "broker"
+    },
+    {
+      "order_id": "e4d367c9-6e21-4cb2-bcfe-7761e64252ab",
+      "snapshot_id": "cbb941c7-144d-5293-b4b5-2cdfee867c24",
+      "symbol": "FLYE",
+      "client_order_id": "schwab_1m_v2-FLYE-open-e9ff94bfe649",
+      "broker_order_id": "JVGEFV5FI1DPBJ6MU6M1J3TMR8",
+      "actual_response_acquired_at": "2026-10-08T15:31:16.576198+00:00",
+      "accepted_origin": "broker",
+      "body_sha256": "596ff20b86103e6afafc6a4b4fe0d21f8a11570c3bb63f0388045d4fc26d102d",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "128.0",
+      "expected_intent_id": "10ac316c-8ff8-4773-90c2-17d2eb483b25",
+      "reference_updated_at": "2026-10-08T15:31:10.349546+00:00",
+      "reference_order_payload_sha256": "b3e18d881f9017590507c4c7f9949e8d2efd09eb7d96c2cb062ec5bf3b1c7a46",
+      "proof_version": "b75b1f3b903ea2f7c6334f0a36cdf84523cad76bde095a476a4f05c5b530a481",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "broker"
+    },
+    {
+      "order_id": "03a249e3-cc48-4601-9abd-533ac80e1711",
+      "snapshot_id": "0e58858d-2321-5fa9-a0a8-8d4551515c08",
+      "symbol": "FLYE",
+      "client_order_id": "schwab_1m_v2-FLYE-open-d7d2c76dfb8e",
+      "broker_order_id": "JJH08RKMQRHI0DT9NFJNBOAFJ8",
+      "actual_response_acquired_at": "2026-10-08T16:15:16.464451+00:00",
+      "accepted_origin": "broker",
+      "body_sha256": "bbcf4a75e140401c62253a98a6188db0d4b695f304983ee1139b82315e63de71",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "131.0",
+      "expected_intent_id": "32f06837-9caf-4541-81e8-7603b18aa4b4",
+      "reference_updated_at": "2026-10-08T16:15:12.073004+00:00",
+      "reference_order_payload_sha256": "6ec2b8f498d933eea634599331ec5d7d255aa8660c6ef414252033b225bc530c",
+      "proof_version": "412cd04b9d7fed883f6b63d84fdd5408ec98623e0e81e8eb993591fcf00f6bac",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "broker"
+    },
+    {
+      "order_id": "35fda5f0-d062-4544-bd89-1f4ff1f79e16",
+      "snapshot_id": "540d8f67-8518-5753-b704-b93b61a6b395",
+      "symbol": "YMAT",
+      "client_order_id": "schwab_1m_v2-YMAT-open-6f341fb71d7e",
+      "broker_order_id": "36H0SBFB9OS7C0LNB1DKPPFI9B",
+      "actual_response_acquired_at": "2026-10-12T14:08:11.369979+00:00",
+      "accepted_origin": "broker",
+      "body_sha256": "255d9cdfc79290bab62e26b32a31fc44de2de1c280677194527c3a16fc5810f5",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "132.0",
+      "expected_intent_id": "df823214-0dd3-4377-916e-53c7b7b76353",
+      "reference_updated_at": "2026-10-12T14:08:09.190483+00:00",
+      "reference_order_payload_sha256": "c567eb36c4c14b2104e58594df478d650ffe538101cdb044364df04b08010a31",
+      "proof_version": "587b683e1a2ea54df3833c8b708530c85255c567a0e7df482856082f178ac310",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "broker"
+    },
+    {
+      "order_id": "f1b79360-cc08-4164-a78e-f44a21b3dbaa",
+      "snapshot_id": "aa5411d3-16da-5bf0-90f8-95ac4c02dcf7",
+      "symbol": "CLWT",
+      "client_order_id": "schwab_1m_v2-CLWT-open-9bc7e4812899",
+      "broker_order_id": "5GIQ91IIOFJD6GS8DTAJPUDNL8",
+      "actual_response_acquired_at": "2026-10-12T15:01:08.863504+00:00",
+      "accepted_origin": "broker",
+      "body_sha256": "ae88746b1d5dc2b5bc051887b34c7e3e8d39f51f555407a538ca0daa6bc60217",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "145.0",
+      "expected_intent_id": "cea04dd9-0754-4550-ac94-f4c5e6feba5d",
+      "reference_updated_at": "2026-10-12T15:01:05.391766+00:00",
+      "reference_order_payload_sha256": "243a1416b92de936a2f5ec76a41cef9d1bc7580867e27baf6f4768526f875950",
+      "proof_version": "304d198e161307c34ac76e4e136bfc06408543e7f141822b7a120fa065f3307e",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "broker"
+    },
+    {
+      "order_id": "7c71fef3-60ed-4b03-b3ed-d1ed38469ac7",
+      "snapshot_id": "893d0b9e-cda4-57dc-b7e9-30e22b6a432a",
+      "symbol": "YMAT",
+      "client_order_id": "schwab_1m_v2-YMAT-open-e42a93be4a4e",
+      "broker_order_id": "4AIE6AEPBA1QBGVPMBBGFPO878",
+      "actual_response_acquired_at": "2026-10-12T15:28:13.453643+00:00",
+      "accepted_origin": "broker",
+      "body_sha256": "4e92568105c3891aadef0041e24615d366616eb105415994d5b892e36bbab4ad",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "88.0",
+      "expected_intent_id": "f00f5e66-a36c-4f6b-89f6-ee641b62e129",
+      "reference_updated_at": "2026-10-12T15:28:09.260763+00:00",
+      "reference_order_payload_sha256": "b70b8e0d30dbd7382dd679f310292e2740bcc0331749e6818467a5873df3a6c2",
+      "proof_version": "eeb0fb7f3f37a448c99de23ccc7db5b49fdeba65b7671b0c1c7ca7de8911df30",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "broker"
+    },
+    {
+      "order_id": "9a482fc3-89e2-4b89-9fa6-416f280b2647",
+      "snapshot_id": "31e886d0-1dcd-5e80-b0f3-2701e312cd8d",
+      "symbol": "YMAT",
+      "client_order_id": "schwab_1m_v2-YMAT-open-c7ac671866a8",
+      "broker_order_id": "67I8B9PVQO2M52DJOLU079OTMA",
+      "actual_response_acquired_at": "2026-10-12T17:00:22.755831+00:00",
+      "accepted_origin": "broker",
+      "body_sha256": "61ccd1b61c297b2cb797405eeebfbdeff278fdfc2d652b1faa7b3c2d4dde5cdc",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "111.0",
+      "expected_intent_id": "1977806f-dfe5-4c21-a33f-d8fb24c33c39",
+      "reference_updated_at": "2026-10-12T17:00:16.248768+00:00",
+      "reference_order_payload_sha256": "6e6cbaab6e2af9a73afb3acc697989cd3e87916ae19b8b697f7053d7ce35546d",
+      "proof_version": "aa3edf101594d1fb9479c0465bdd5e14fd423b46567fd4bf20a8eefa0f1e1127",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "broker"
+    },
+    {
+      "order_id": "69196194-cbc5-488d-b80e-0cb5f997d470",
+      "snapshot_id": "793de379-a39f-5f17-a117-8863b0b0ccd5",
+      "symbol": "NCPL",
+      "client_order_id": "schwab_1m_v2-NCPL-open-c4a53340355e",
+      "broker_order_id": "MHG8JFOO5OVU1FCGU7GUQ5HMSA",
+      "actual_response_acquired_at": "2026-10-12T17:17:12.305506+00:00",
+      "accepted_origin": "broker",
+      "body_sha256": "b2104fccf8d80496b0fa22f6f8ad81106d5884ceaa591fb2fab7973accc4d6fd",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "156.0",
+      "expected_intent_id": "9573d536-3ff9-4900-9714-7bfecba8c3a6",
+      "reference_updated_at": "2026-10-12T17:17:10.028841+00:00",
+      "reference_order_payload_sha256": "320255d77352664758af012f8f76427f0bc26f06363cf3e48cd52a16bfd1733c",
+      "proof_version": "2f61b8b02960b8607af87e88dbac40e3b08d11bfd28fc32cbc16e89b89ab2033",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "broker"
+    },
+    {
+      "order_id": "8c5fc0d4-aab9-4c69-9f10-2dc75844f17c",
+      "snapshot_id": "16505752-8bf9-5d0d-8b15-ee39f55aa75c",
+      "symbol": "NCPL",
+      "client_order_id": "schwab_1m_v2-NCPL-open-1e683b40ba10",
+      "broker_order_id": "6TG45972O0FU81HI1S24EG1SO9",
+      "actual_response_acquired_at": "2026-10-12T18:36:16.169810+00:00",
+      "accepted_origin": "broker",
+      "body_sha256": "7febcd2ba78abbea872c559ccc14845b5955a9fb404d25aa3a4499247ea65057",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "153.0",
+      "expected_intent_id": "ddb07339-4237-43a1-a56f-02899413cb58",
+      "reference_updated_at": "2026-10-12T18:36:09.974285+00:00",
+      "reference_order_payload_sha256": "72422cad1a240474b11884f036cf7b35be74031b58723354f9840c4e3acd22aa",
+      "proof_version": "531479150a56ab94db41b427087d0a278133da7fcaae2c1ced598565dc1582c1",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "broker"
+    },
+    {
+      "order_id": "7203246c-204d-4f4c-a6ee-b975d0319685",
+      "snapshot_id": "3b68a36d-e457-5c19-bd31-5d21e8bf7d4f",
+      "symbol": "BIYA",
+      "client_order_id": "schwab_1m_v2-BIYA-open-50ce0563e95f",
+      "broker_order_id": "ASH6EAD5CNKLE4HFULRGPSPTT9",
+      "actual_response_acquired_at": "2026-10-07T18:37:11.515722+00:00",
+      "accepted_origin": "unknown",
+      "body_sha256": "5b4098971e4229fe5ca53a9a9ef05e95ef2b1af6602794d3ed3fc9d4ec6eb5f5",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "123.0",
+      "expected_intent_id": "043a97a8-bd17-45d9-bd43-a10417238346",
+      "reference_updated_at": "2026-10-07T18:37:09.258683+00:00",
+      "reference_order_payload_sha256": "299a436ee88fd195123d7779b4b0a815cff11e67a41664141add0f06bd321c57",
+      "proof_version": "199c9b8967845940419d82aece3131441b02e935cfc744df533b725f7bc9bef6",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "unknown"
+    },
+    {
+      "order_id": "88d914bb-5125-4e54-93de-ee99a230734b",
+      "snapshot_id": "32cc68e2-4843-5e3c-a252-185b711bf0f5",
+      "symbol": "BIYA",
+      "client_order_id": "schwab_1m_v2-BIYA-open-9e62e1b9e11d",
+      "broker_order_id": "SBHGTPDRVB474UF8RSD272VQ58",
+      "actual_response_acquired_at": "2026-10-07T18:51:13.072887+00:00",
+      "accepted_origin": "unknown",
+      "body_sha256": "07b8c02012a4322f4329b81453fab44e2487c4ca9726d080d5b050332eae6496",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "126.0",
+      "expected_intent_id": "609b92c0-d133-4007-bf7d-32774c659bff",
+      "reference_updated_at": "2026-10-07T18:51:08.813089+00:00",
+      "reference_order_payload_sha256": "9b71ea9dd83cc7a54044873a2018865ad63913c7186d1861bcd73d6cb78c79e7",
+      "proof_version": "8307ea5342153406734eded2923d8e15406d6ca0d9cbc73ec3d658895a3d9e8b",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "unknown"
+    },
+    {
+      "order_id": "b56e539d-e9bb-4705-9508-854e851e0cd5",
+      "snapshot_id": "3caa6ac1-2a8c-5291-89f9-54b21dceed92",
+      "symbol": "BIYA",
+      "client_order_id": "schwab_1m_v2-BIYA-open-174bbc066d1c",
+      "broker_order_id": "REJUEP6U92OG2SSKN23T2P6L59",
+      "actual_response_acquired_at": "2026-10-07T18:55:14.135082+00:00",
+      "accepted_origin": "unknown",
+      "body_sha256": "2973a5cb34493502fc210cb7afdd27c6d9a353827f6414e3964d30f1d0aed48d",
+      "account": "live:orb",
+      "strategy": "schwab_1m_v2",
+      "side": "buy",
+      "expected_current_id_at_reference_capture": null,
+      "expected_status": "cancelled",
+      "expected_quantity": "127.0",
+      "expected_intent_id": "0ad8a81f-2095-4893-9864-753fbb4d2833",
+      "reference_updated_at": "2026-10-07T18:55:09.70282+00:00",
+      "reference_order_payload_sha256": "3dfa7c6ff02d86c658ab30ea495ca8298e246707c1dbb52da82f9997e9b96637",
+      "proof_version": "d4fb8a2fd3cc7284451a0c9d1b4b948481b043087874357541b439c7711a0177",
+      "proof_account_id_sha256": "84512f03d9816136cfcd95c378635b653890e4febbec83b50f4fe9a5eb35a873",
+      "fresh_preflight_and_operator_approval_required": true,
+      "column_change_allowlist": [
+        "broker_order_id"
+      ],
+      "preserve_updated_at": true,
+      "original_ack_origin_must_not_change": "unknown"
+    }
+  ],
+  "exclude_15_rejects": [
+    {
+      "order_id": "bbad1416-4692-406c-ba31-42f936f1fbb6",
+      "client_order_id": "schwab_1m_v2-MOBX-open-07bc532a7fdc",
+      "symbol": "MOBX",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "a5ebfaf1-44a3-494e-bc4d-4dd7d32e5733",
+      "client_order_id": "schwab_1m_v2-OLOX-open-0f1814197899",
+      "symbol": "OLOX",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "258a2e00-60c6-46ce-a616-d6625b3d1366",
+      "client_order_id": "schwab_1m_v2-OLOX-open-496d3bf92b2a",
+      "symbol": "OLOX",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "ef0fe88b-27cb-4020-9851-c9ee155dce55",
+      "client_order_id": "schwab_1m_v2-MNDR-open-2a0d76bdff4a",
+      "symbol": "MNDR",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "6122203d-8bf7-4ce6-9bcb-e2b96503437f",
+      "client_order_id": "schwab_1m_v2-MNDR-open-09bfb0c192b6",
+      "symbol": "MNDR",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "bfd1156a-c0b6-4cbd-b06b-31121c02abca",
+      "client_order_id": "schwab_1m_v2-MNDR-open-cdf841dbb105",
+      "symbol": "MNDR",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "5267edb1-de0e-478f-afbc-c13adeaf67b3",
+      "client_order_id": "schwab_1m_v2-WBUY-open-69913a05b305",
+      "symbol": "WBUY",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "fb7ec685-e9a6-438f-a843-2b294b842a1d",
+      "client_order_id": "schwab_1m_v2-NCPL-open-16f0bfeb64e3",
+      "symbol": "NCPL",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "70b445bf-bfb3-4fd9-8f9c-cffdd81f84f3",
+      "client_order_id": "schwab_1m_v2-NCPL-open-df0d37366de4",
+      "symbol": "NCPL",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "6289bf4d-d59e-45fe-aee6-5a471755edea",
+      "client_order_id": "schwab_1m_v2-NCPL-open-d67d4a35b417",
+      "symbol": "NCPL",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "1d0525a9-b8d5-4d5c-9562-3b9eaa0aa5b0",
+      "client_order_id": "schwab_1m_v2-MNDR-open-0d533b614570",
+      "symbol": "MNDR",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "37873fbf-c429-4236-a710-9c868f8a2d21",
+      "client_order_id": "schwab_1m_v2-WBUY-open-165745b28de9",
+      "symbol": "WBUY",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "0ba69b03-2e4c-4979-9002-d44b88b12f20",
+      "client_order_id": "schwab_1m_v2-NCPL-open-a2be6b00c566",
+      "symbol": "NCPL",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "2ce309ee-9dc3-4375-be1e-29e91a71b5a3",
+      "client_order_id": "schwab_1m_v2-SKYA-open-65463f23a02e",
+      "symbol": "SKYA",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    },
+    {
+      "order_id": "3b193677-5d7f-48cb-bebe-56baf55f8de3",
+      "client_order_id": "schwab_1m_v2-MNDR-open-a67121be8e91",
+      "symbol": "MNDR",
+      "reason": "broker-rejected/no proven allocated venue identity; never repair by guessing"
+    }
+  ],
+  "exclude_8_unproved": [
+    {
+      "order_id": "73c3c03b-fe1b-4763-af76-4f3a713be602",
+      "client_order_id": "schwab_1m_v2-BIYA-open-0e40052d917c",
+      "symbol": "BIYA",
+      "reason": "accepted-cancelled but no verified retained broker-ID mapping"
+    },
+    {
+      "order_id": "24ca4c7f-a34b-45a0-aa76-04c67730a41d",
+      "client_order_id": "schwab_1m_v2-FLYE-open-b5986d522488",
+      "symbol": "FLYE",
+      "reason": "accepted-cancelled but no verified retained broker-ID mapping"
+    },
+    {
+      "order_id": "79290acb-d283-415a-9186-9acab2d3ad85",
+      "client_order_id": "schwab_1m_v2-FLYE-open-b1305e838a9c",
+      "symbol": "FLYE",
+      "reason": "accepted-cancelled but no verified retained broker-ID mapping"
+    },
+    {
+      "order_id": "6f88c757-d412-432f-8632-15c45d18e452",
+      "client_order_id": "schwab_1m_v2-VEEA-open-b4cdff303504",
+      "symbol": "VEEA",
+      "reason": "accepted-cancelled but no verified retained broker-ID mapping"
+    },
+    {
+      "order_id": "9d9705f5-8af4-4caa-84aa-255c65bc2589",
+      "client_order_id": "schwab_1m_v2-YMAT-open-89180a95234a",
+      "symbol": "YMAT",
+      "reason": "accepted-cancelled but no verified retained broker-ID mapping"
+    },
+    {
+      "order_id": "b3b5431c-c89f-4169-90ba-ca1dc00e8961",
+      "client_order_id": "schwab_1m_v2-MNDR-open-e4b2a879d490",
+      "symbol": "MNDR",
+      "reason": "accepted-cancelled but no verified retained broker-ID mapping"
+    },
+    {
+      "order_id": "513f4225-b5f1-4c47-993c-f58c4fa0b72c",
+      "client_order_id": "schwab_1m_v2-NCPL-open-a673eb61e3e3",
+      "symbol": "NCPL",
+      "reason": "accepted-cancelled but no verified retained broker-ID mapping"
+    },
+    {
+      "order_id": "5752c523-4df5-4e60-9e08-b04691fe9bba",
+      "client_order_id": "schwab_1m_v2-MNDR-open-3dc830bcb7b3",
+      "symbol": "MNDR",
+      "reason": "accepted-cancelled but no verified retained broker-ID mapping"
+    }
+  ],
+  "preflight_now_not_performed": true,
+  "actual_field_values_must_be_checked_at_approved_execution": true,
+  "known_case_collision": "Original CAPTURE-RECEIPT was overwritten by lowercase path before ownership correction; preserved raw DB hash verifies; no reconstruction",
+  "forbidden_actions": [
+    "new API query",
+    "change broker status or quantity",
+    "alter event provenance",
+    "modify fills/positions/slots/owners",
+    "automatic retry/rollback"
+  ]
+}

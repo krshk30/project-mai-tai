@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 from enum import Enum
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -815,6 +815,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self.session_factory = session_factory or build_oms_session_factory(self.settings)
         self.broker_adapter = broker_adapter or self._build_broker_adapter()
         self.store = store or OmsStore()
+        self.store.webull_identity_dispatch = self._queue_webull_order_identities
+        try:
+            self._webull_identity_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._webull_identity_loop = None
         self.strategy_registrations = strategy_registration_map(self.settings)
         self.instance_name = socket.gethostname()
         # Configure root logging so the OMS emits INFO (fills, [HARD-STOP ARMED/
@@ -1053,6 +1058,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         return await asyncio.to_thread(_unit)
 
     async def run(self) -> None:
+        self._webull_identity_loop = asyncio.get_running_loop()
         stop_event = asyncio.Event()
         _install_signal_handlers(stop_event)
 
@@ -1123,6 +1129,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             except asyncio.CancelledError:
                 pass
             await self._shutdown_symbol_tick_work()
+            writer = self.__dict__.get("_webull_identity_writer")
+            if writer is not None:
+                await writer.close()
 
         await self._publish_heartbeat(
             "stopping",
@@ -2788,8 +2797,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 managed_here = self.store.get_open_managed_position(
                     session, broker_account_name=webull_account_name, symbol=symbol
                 )
-                held_qty = self.store.get_account_position_qty_by_name(
-                    session, broker_account_name=webull_account_name, symbol=symbol
+                from project_mai_tai.oms.webull_owned_positions import bot_owned_quantity
+
+                held_qty = bot_owned_quantity(
+                    session, account_name=webull_account_name, symbol=symbol
                 )
                 if armed_here or managed_here is not None or held_qty != 0:
                     self.logger.info(
@@ -3194,6 +3205,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 if report is None:
                     reads_failed += 1
                     continue
+                if (target_order_id is not None
+                        and self.settings.provider_for_account(account_name) == "webull"):
+                    from project_mai_tai.oms.webull_order_identity import IdentityEvidence
+
+                    identity = IdentityEvidence.from_report(
+                        target_order_id, account_name, client_order_id, symbol,
+                        request.side, report, "cancel_verifier",
+                    )
+                    if identity is not None:
+                        self._queue_webull_order_identities([identity])
                 observed = str(getattr(report, "event_type", "") or "")
                 if observed in _CANCEL_TARGET_SETTLED_STATUSES:
                     self.logger.info(
@@ -3463,6 +3484,49 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         )
         return task
 
+    async def _v2_webull_protection_owned_quantity(
+        self, *, managed_row_id: str, broker_account_name: str, symbol: str,
+        entry_client_order_id: str, requested_quantity: int, broker_quantity: Decimal,
+    ) -> int:
+        def read(session):
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=symbol,
+            )
+            if (row is None or str(row.id) != managed_row_id
+                    or row.strategy_code != "schwab_1m_v2"
+                    or row.entry_client_order_id != entry_client_order_id):
+                return 0, "episode_or_owner_changed"
+            strategy = session.scalar(select(Strategy).where(Strategy.code == row.strategy_code))
+            account = session.scalar(select(BrokerAccount).where(
+                BrokerAccount.name == broker_account_name
+            ))
+            if strategy is None or account is None or account.provider != "webull":
+                return 0, "missing_strategy_or_account"
+            if self.store.get_open_exit_reserved_quantity(
+                session, broker_account_id=account.id, symbol=symbol,
+                include_native_stop_guard=False,
+            ) > 0:
+                return 0, "software_exit_reserved"
+            from project_mai_tai.oms.webull_owned_positions import fallback_sell_quantity
+
+            owned = fallback_sell_quantity(
+                session, strategy_id=strategy.id, account_id=account.id, symbol=symbol,
+                requested=Decimal(requested_quantity), broker_available=broker_quantity,
+            )
+            # Protection uses the managed backstop even with an explicit zero
+            # ledger, but a stale virtual lot can never enlarge this exact row.
+            return max(0, min(requested_quantity, int(row.current_quantity), int(owned))), ""
+
+        quantity, refusal = await self._run_db(read, commit=False)
+        if refusal or quantity != requested_quantity:
+            self.logger.warning(
+                "[WEBULL-PROTECT-OWNERSHIP] acct=%s sym=%s row=%s requested=%s "
+                "broker=%s protect=%s reason=%s",
+                broker_account_name, symbol, managed_row_id, requested_quantity,
+                broker_quantity, quantity, refusal or "bound_quantity_cap",
+            )
+        return quantity
+
     async def _attach_webull_protection(
         self, *, broker_account_name: str, symbol: str, quantity: int,
         entry_price: float, strategy_code: str, entry_client_order_id: str = "",
@@ -3527,6 +3591,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             """Seconds to wait AFTER `attempt_number` before the next one."""
             return min(interval * (backoff ** (attempt_number - 1)), max_interval)
 
+        bound_v2 = strategy_code == "schwab_1m_v2" and bool(entry_client_order_id)
         for attempt in range(1, attempts + 1):
             # ⛔ Do not chase a position we no longer own. 2 of 27 refusals on 08-14 were
             # SYMBOL_CAN_NOT_SELL_SHORT: the shares had already gone, so the attach was sending a
@@ -3534,8 +3599,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             # ⛔⭐ ONLY a positively-CONFIRMED flat may stop us. FLAT_INFERRED is the ordinary shape
             # inside the settle window -- live 08-14 CGTL read FLAT_INFERRED (n=0) for 12.7s after
             # a real fill -- and bailing on it would abandon exactly the bare fills this exists to
-            # cover. Same discipline as `_v2_close_reconcile_flat`: HELD and UNKNOWN both continue.
-            state = await self._broker_symbol_position_state(broker_account_name, symbol)
+            # cover. Legacy unbound attaches continue on UNKNOWN; bound attaches
+            # retain retries but require a positive quantity before submission.
+            # Bound attaches read once AFTER quote awaits, retaining the quantity
+            # as well as state. Legacy unbound callers keep their original guard.
+            state = (_PositionRead.UNKNOWN if bound_v2 else
+                     await self._broker_symbol_position_state(broker_account_name, symbol))
             if state is _PositionRead.FLAT_CONFIRMED:
                 self.logger.info(
                     "[WEBULL-PROTECT-ABANDONED] %s %s — the broker CONFIRMS we no longer hold this "
@@ -3560,6 +3629,64 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 if attempt < attempts and interval:
                     await asyncio.sleep(_retry_delay(attempt))
                 continue
+            owned_quantity = quantity
+            if bound_v2:
+                broker_read: dict[str, Decimal | None] = {}
+                state = await self._broker_symbol_position_state(
+                    broker_account_name, symbol, quantity_out=broker_read,
+                )
+                broker_quantity = broker_read.get("quantity")
+                if state is _PositionRead.FLAT_CONFIRMED:
+                    self.logger.info(
+                        "[WEBULL-PROTECT-ABANDONED] %s %s broker confirms flat at attempt %d/%d",
+                        symbol, broker_account_name, attempt, attempts,
+                    )
+                    return False
+                if broker_quantity is None or broker_quantity <= 0:
+                    self.logger.warning(
+                        "[WEBULL-PROTECT-OWNERSHIP] acct=%s sym=%s entry=%s attempt=%d/%d "
+                        "protect=0 reason=broker_quantity_unproven",
+                        broker_account_name, symbol, entry_client_order_id, attempt, attempts,
+                    )
+                    if attempt < attempts and interval:
+                        await asyncio.sleep(_retry_delay(attempt))
+                    continue
+                def _owned_episode(session):
+                    row = self.store.get_open_managed_position(
+                        session, broker_account_name=broker_account_name, symbol=symbol
+                    )
+                    if row is None:
+                        return None
+                    if (row.strategy_code != strategy_code
+                            or row.entry_client_order_id != entry_client_order_id):
+                        return ""
+                    return str(row.id)
+
+                row_id = await self._run_db(_owned_episode, commit=False)
+                if row_id is None:
+                    self.logger.warning(
+                        "[WEBULL-PROTECT-OWNERSHIP] acct=%s sym=%s entry=%s attempt=%d/%d "
+                        "protect=0 reason=no_open_managed_row",
+                        broker_account_name, symbol, entry_client_order_id, attempt, attempts,
+                    )
+                    # The background attach may beat the fill transaction's commit.
+                    if attempt < attempts and interval:
+                        await asyncio.sleep(_retry_delay(attempt))
+                    continue
+                if not row_id:
+                    self.logger.warning(
+                        "[WEBULL-PROTECT-OWNERSHIP] acct=%s sym=%s entry=%s protect=0 "
+                        "reason=episode_or_owner_changed",
+                        broker_account_name, symbol, entry_client_order_id,
+                    )
+                    return False
+                owned_quantity = await self._v2_webull_protection_owned_quantity(
+                    managed_row_id=row_id, entry_client_order_id=entry_client_order_id,
+                    broker_account_name=broker_account_name, symbol=symbol,
+                    requested_quantity=quantity, broker_quantity=broker_quantity,
+                )
+                if owned_quantity <= 0:
+                    break  # Retain the refusal, but account/page it like other failed attaches.
             coid = f"{strategy_code}-{symbol}-protect-{uuid4().hex[:12]}"
             request = OrderRequest(
                 client_order_id=coid,
@@ -3568,7 +3695,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 symbol=symbol,
                 side="sell",
                 intent_type="close",
-                quantity=Decimal(str(quantity)),
+                quantity=Decimal(str(owned_quantity)),
                 reason="webull attach protection after bare resting fill",
                 metadata={
                     "webull_exit_only_pair": "true",
@@ -3608,7 +3735,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     "session=%s (attempt %d) handle_persisted=%d — a real pair is now resting at "
                     "the broker; handle_persisted=1 means child/time/price remain addressable "
                     "after restart",
-                    symbol, broker_account_name, quantity, entry_price, target, protect,
+                    symbol, broker_account_name, owned_quantity, entry_price, target, protect,
                     session_hint, attempt, int(persisted),
                 )
                 return True
@@ -3632,7 +3759,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             "target=%.4f stop=%.4f after %d attempts. THE POSITION IS HELD WITH NO BROKER-SIDE "
             "STOP; the software ladder is the only cover. Place one by hand.",
             symbol, broker_account_name, quantity, entry_price, session_hint,
-            target, protect, attempts,
+            target, protect, attempt,
         )
         # The uncovered-share page reads this: a RE-attach that fails leaves the OLD (cancelled)
         # pair's handle persisted, which would otherwise read as "a pair is resting".
@@ -9207,7 +9334,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     Fill.symbol == symbol.upper(),
                     Fill.side == "sell",
                     Fill.quantity == Decimal(str(qty)),
-                    Fill.price == Decimal(str(detail.get("price"))),
+                    # PG Numeric(18,8) rounds the stored price; match that scale, not raw avg precision.
+                    Fill.price == Decimal(str(detail.get("price"))).quantize(
+                        Decimal("0.00000001"), rounding=ROUND_HALF_UP,
+                    ),
                 )
             ).all() if exit_coid and qty is not None else []
             if not any(
@@ -9382,7 +9512,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                                 Fill.broker_account_id == entry.broker_account_id,
                                 Fill.side == "sell", Fill.symbol == symbol.upper(),
                                 Fill.quantity == Decimal(str(detail["quantity"])),
-                                Fill.price == Decimal(str(detail["price"])),
+                                Fill.price == Decimal(str(detail["price"])).quantize(
+                                    Decimal("0.00000001"), rounding=ROUND_HALF_UP,
+                                ),
                             )
                         ) is not None
             except Exception:
@@ -11098,6 +11230,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # v2-primary buy-open FILLS observed this sync, then fire the async Webull mirror AFTER
         # the session closes (submit_order is async and must not run inside the DB session).
         # `record_fill_if_needed` is idempotent, so each real fill lands here exactly once.
+        from project_mai_tai.oms.webull_order_identity import IdentityEvidence
+
+        identity_evidence = []
         mirror_fill_candidates: list = []
         with self.session_factory() as session:
             if account_names is None:
@@ -11159,6 +11294,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 if report is None:
                     continue
 
+                if account.provider == "webull":
+                    identity = IdentityEvidence.from_report(
+                        order.id, account.name, order.client_order_id, order.symbol,
+                        order.side, report, "order_sync",
+                    )
+                    if identity is not None and identity.broker_order_id != order.broker_order_id:
+                        identity_evidence.append(identity)
                 previous_status = order.status
                 # Section 82 increment 1: a venue status/detail response may omit the
                 # request metadata.  The durable order payload is authoritative for the
@@ -11509,6 +11651,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             session.commit()
 
+        self._queue_webull_order_identities(identity_evidence)
+
         for order_event in published_events:
             await self._publish_order_event(order_event)
 
@@ -11529,6 +11673,37 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             "orders": synced_orders,
             "terminal_orders": terminal_orders,
         }
+
+    def _queue_webull_order_identities(self, evidence) -> None:
+        if not evidence:
+            return
+        from project_mai_tai.oms.webull_order_identity import IdentityWriter
+
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            owned_loop = self.__dict__.get("_webull_identity_loop")
+            if owned_loop is not None and loop is not owned_loop:
+                owned_loop.call_soon_threadsafe(self._queue_webull_order_identities, evidence)
+                return
+            if loop is None:
+                self.logger.error("[WBNULLID1] result=event_loop_unavailable count=%s", len(evidence))
+                return
+            self._webull_identity_loop = loop
+            writer = self.__dict__.get("_webull_identity_writer")
+            if writer is None:
+                writer = IdentityWriter(self.session_factory, self._rpg_owns_old_order)
+                self._webull_identity_writer = writer
+            writer.offer(evidence)
+        except Exception:
+            self.logger.exception("[WBNULLID1] result=enqueue_failed count=%s", len(evidence))
+
+    async def _drain_webull_order_identities(self) -> None:
+        writer = self.__dict__.get("_webull_identity_writer")
+        if writer is not None:
+            await writer.drain()
 
     def _terminalize_orphaned_active_intents(
         self,
@@ -13573,7 +13748,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 )
 
     async def _broker_symbol_position_state(
-        self, broker_account_name: str, symbol: str
+        self, broker_account_name: str, symbol: str,
+        *, quantity_out: dict[str, Decimal | None] | None = None,
     ) -> _PositionRead:
         """Fresh broker read -> FLAT | HELD | UNKNOWN. Only a POSITIVE confirmation is FLAT.
 
@@ -13585,6 +13761,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
         Also logs every read (Fix 0 of the design): the 07-15 root cause could only ever be
         INFERRED because nothing recorded what the broker actually returned."""
+        if quantity_out is not None:
+            quantity_out["quantity"] = None
         try:
             positions = await self.broker_adapter.list_account_positions(broker_account_name)
         except asyncio.CancelledError:
@@ -13597,7 +13775,23 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return _PositionRead.UNKNOWN
         # Shape decision delegated to the shared pure classifier so the live stop path and the
         # settlement probe can never disagree about what a read MEANS.
-        state = self._classify_position_read(positions, symbol)
+        if quantity_out is not None:
+            # Optional output reuses this fresh read; never infer ownership from
+            # the total or issue a second provider read to recover its quantity.
+            matches = [p for p in positions or []
+                       if getattr(p, "broker_account_name", None) == broker_account_name
+                       and str(getattr(p, "symbol", "")).upper() == str(symbol).upper()]
+            state = _PositionRead.FLAT_INFERRED if not matches else _PositionRead.UNKNOWN
+            if len(matches) == 1:
+                try:
+                    quantity = Decimal(str(matches[0].quantity))
+                    if quantity.is_finite():
+                        quantity_out["quantity"] = quantity
+                        state = self._classify_position_read(matches, symbol)
+                except (AttributeError, TypeError, ValueError, ArithmeticError):
+                    state = _PositionRead.UNKNOWN
+        else:
+            state = self._classify_position_read(positions, symbol)
         self.logger.info(
             "[RECONCILE-READ] acct=%s sym=%s result=%s (n=%d)",
             broker_account_name, symbol, state.value.upper(), len(positions or []),
@@ -17943,8 +18137,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         symbol: str,
     ) -> str | None:
         """Dual-broker fan-out collision guard (mirrors the mirror-on-fill guard). Returns a reason
-        string if the shared Webull account already holds this symbol armed / managed / at the
-        broker (never fight ORB or a prior un-flat leg), else None to proceed."""
+        string for an armed / managed / strategy-owned position, not operator holdings
+        in the broker-total book (never fight ORB or a prior un-flat leg)."""
         armed_here = any(
             st.broker_account_name == broker_account_name and st.symbol == symbol
             for st in self._armed_hard_stops.values()
@@ -17958,8 +18152,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             is not None
         ):
             return "fanout_webull_collision_managed"
-        held_qty = self.store.get_account_position_qty_by_name(
-            session, broker_account_name=broker_account_name, symbol=symbol
+        from project_mai_tai.oms.webull_owned_positions import bot_owned_quantity
+
+        held_qty = bot_owned_quantity(
+            session, account_name=broker_account_name, symbol=symbol
         )
         if held_qty != 0:
             return "fanout_webull_collision_held"
@@ -18019,6 +18215,22 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return [self._build_rejected_event(
                 fallback_event, fallback_intent.id, reason="broker_position_unreadable"
             )]
+        if broker_account.provider == "webull" and available_quantity > 0:
+            from project_mai_tai.oms.webull_owned_positions import fallback_sell_quantity
+
+            available_quantity = fallback_sell_quantity(
+                session, strategy_id=strategy.id, account_id=broker_account.id,
+                symbol=original_event.payload.symbol,
+                requested=min(original_event.payload.quantity, original_request.quantity),
+                broker_available=available_quantity,
+            )
+            if available_quantity <= 0:
+                self.logger.warning(
+                    "[WBHOLD1] symbol=%s account=%s reason=fallback_no_owned_shares "
+                    "original_coid=%s sell_submitted=0",
+                    original_event.payload.symbol, broker_account.name,
+                    original_request.client_order_id,
+                )
         if available_quantity <= 0:
             return []
 
