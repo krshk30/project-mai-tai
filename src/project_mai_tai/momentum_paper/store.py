@@ -3,11 +3,14 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Iterable
 
-from sqlalchemy import distinct, select
+from sqlalchemy import distinct, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import MomentumPaperEvent
 from project_mai_tai.momentum_paper.models import MOMENTUM_STRATEGIES, MomentumTapeRecord
+from project_mai_tai.momentum_paper.case_collision_audit import (
+    INVALIDATED, apply_reference_audit, invalidated_logical_ids,
+)
 
 
 TERMINAL_EVENT_TYPES = frozenset({"FINAL", "NO_FILL", "UNANSWERABLE"})
@@ -58,6 +61,10 @@ class MomentumPaperStore:
                 .where(
                     MomentumPaperEvent.session_date == session_date,
                     MomentumPaperEvent.strategy_code.in_((*strategy_codes, "momentum_paper")),
+                    or_(MomentumPaperEvent.event_type != INVALIDATED,
+                        MomentumPaperEvent.logical_id.in_(invalidated_logical_ids())),
+                    or_(MomentumPaperEvent.event_type == INVALIDATED,
+                        MomentumPaperEvent.logical_id.not_in(invalidated_logical_ids())),
                 )
                 .order_by(MomentumPaperEvent.observed_at, MomentumPaperEvent.created_at)
             ).all()
@@ -73,6 +80,7 @@ class MomentumPaperStore:
                     MomentumPaperEvent.session_date >= start_date,
                     MomentumPaperEvent.event_type.in_(TERMINAL_EVENT_TYPES),
                     MomentumPaperEvent.strategy_code.in_(tuple(strategy_codes)),
+                    MomentumPaperEvent.logical_id.not_in(invalidated_logical_ids()),
                 )
                 .order_by(MomentumPaperEvent.observed_at)
             ).all()
@@ -91,15 +99,16 @@ class MomentumPaperStore:
     @staticmethod
     def incomplete_logical_ids(rows: Iterable[MomentumTapeRecord]) -> set[str]:
         detected = {row.logical_id for row in rows if row.event_type == "DETECTED"}
-        terminal = {row.logical_id for row in rows if row.event_type in TERMINAL_EVENT_TYPES}
+        terminal = {row.logical_id for row in rows if row.event_type in TERMINAL_EVENT_TYPES or row.event_type == INVALIDATED}
         return detected - terminal
 
     @staticmethod
     def latest_session_ready(
         rows: Iterable[MomentumTapeRecord],
     ) -> MomentumTapeRecord | None:
-        matches = [row for row in rows if row.event_type == "SESSION_READY"]
-        return matches[-1] if matches else None
+        source = list(rows)
+        matches = [row for row in source if row.event_type == "SESSION_READY"]
+        return apply_reference_audit(matches[-1] if matches else None, source)
 
     @staticmethod
     def _record(row: MomentumPaperEvent) -> MomentumTapeRecord:
