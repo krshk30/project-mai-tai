@@ -10,6 +10,7 @@ from typing import Callable
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.momwarn_health import parse_oms_end
+from project_mai_tai.momwarn_log_cursor import cursor_anchor, cursor_rewritten
 from project_mai_tai.momwarn_measurement_probes import BOUND, read_bounded
 from project_mai_tai.momwarn_measurements import NS, integer, nonnegative
 
@@ -139,6 +140,8 @@ class OmsLogMonitor:
         self.process = None
         self.partial = b""
         self.latest = None
+        self.truncations = 0
+        self.anchor = None
 
     def read(self) -> dict:
         raw = read_bounded(self.proc / str(self.pid) / "stat").decode()
@@ -157,7 +160,10 @@ class OmsLogMonitor:
             if self.identity is not None and identity != self.identity:
                 raise ValueError("OMS log rotated")
             position = max(0, info.st_size - BOUND) if self.position is None else self.position
-            if info.st_size < position or info.st_size - position > BOUND:
+            if self.position is not None and cursor_rewritten(fd, position, self.anchor):
+                self.truncations += 1
+                position, self.partial = 0, b""
+            if info.st_size - position > BOUND:
                 raise ValueError("OMS log truncated/backlog bound")
             os.lseek(fd, position, os.SEEK_SET)
             data = os.read(fd, BOUND + 1)
@@ -184,6 +190,7 @@ class OmsLogMonitor:
                 raise ValueError("no actual completed OMS duration in bounded log")
             self.latest, self.process, self.identity = latest, process, identity
             self.position, self.partial = covered, lines[-1]
+            self.anchor = cursor_anchor(fd, covered)
         finally:
             os.close(fd)
         # Stamps an actual EOF/proc monitor operation, never changes end receipt time.

@@ -135,6 +135,7 @@ async def prove(reader, client, prefix: str, config: dict, timeout: float) -> di
         row["readable"] for row in permissions)
     return {"status": "READ_LIVE_2_OK" if passed else "UNKNOWN",
             "permissions": permissions, "attempts": attempts,
+            "log_observability": reader.log_observability(),
             "health_verdict": "NOT_EVALUATED_NO_GATEWAY_PUBLISH_LAG",
             "redis_scope": "XREVRANGE strategy-state-isolated count32 only; loopback"}
 

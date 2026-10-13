@@ -133,6 +133,8 @@ class MarketDataGatewayService:
         self._warning_reverted_utc_ns: int | None = None
         self._warning_requested_utc_ns: int | None = None
         self._warning_first_a_utc_ns: int | None = None
+        self._warning_window_day = None
+        self._warning_log_gap_counts: dict[str, int] = {}
         self._warning_trade_coverage: dict[str, dict] = {}
         self._warning_watchdog = WarningWatchdog()
         self._warning_health_reader = warning_health_reader or WarningHealthReader(
@@ -771,6 +773,14 @@ class MarketDataGatewayService:
             await self._end_warning_window()
             return
         try:
+            day = datetime.now(UTC).date()
+            if day != self._warning_window_day:
+                reset = getattr(self._warning_health_reader, "reset_window", None)
+                if reset is not None:
+                    reset()
+                self._warning_watchdog = WarningWatchdog()
+                self._warning_window_day = day
+                self._warning_log_gap_counts.clear()
             live_reader = getattr(self._warning_health_reader, "read_live", None)
             operation = (
                 live_reader(self._warning_redis, self.settings.redis_stream_prefix)
@@ -780,6 +790,15 @@ class MarketDataGatewayService:
                 operation,
                 timeout=self.settings.market_data_momentum_warning_monitor_timeout_seconds,
             )
+            observability = getattr(self._warning_health_reader, "log_observability", None)
+            if observability is not None:
+                counts = observability()["copytruncate_counts"]
+                if any(count > self._warning_log_gap_counts.get(name, 0) for name, count in counts.items()):
+                    self.logger.warning(
+                        "[MOMWARN1-LOG-REBASELINE] unobserved_interval=UNKNOWN detail=%s",
+                        json.dumps(counts, sort_keys=True),
+                    )
+                self._warning_log_gap_counts = counts
             reason = self._warning_watchdog.check(health, publish_lag_seconds=self._warning_publish_lag())
             if reason:
                 await self._revert_warning(reason)

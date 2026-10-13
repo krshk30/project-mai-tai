@@ -15,6 +15,7 @@ from project_mai_tai.momwarn_health_contract import (
     OmsLogMonitor, proposed_health_v2, sourced_first_due_ns,
 )
 from project_mai_tai.momwarn_measurement_probes import read_bounded
+from project_mai_tai.momwarn_log_cursor import cursor_anchor, cursor_rewritten
 from project_mai_tai.momwarn_measurements import NS, integer
 
 BOUND = 65536
@@ -82,6 +83,8 @@ class LiveWarningHealthSource:
         self.partial = b""
         self.covered_from_ns = None
         self.bars: dict[tuple[str, int], int] = {}
+        self.truncations = 0
+        self.anchor = None
 
     def _check_v2_process(self) -> None:
         pid = self.config["v2_pid"]
@@ -106,7 +109,10 @@ class LiveWarningHealthSource:
             if not stat.S_ISREG(info.st_mode) or self.identity not in (None, identity):
                 raise ValueError("v2 log unreadable/rotated")
             offset = max(0, info.st_size - BOUND) if self.offset is None else self.offset
-            if info.st_size < offset or info.st_size - offset > BOUND:
+            if self.offset is not None and cursor_rewritten(fd, offset, self.anchor):
+                self.truncations += 1
+                offset, self.partial = 0, b""
+            if info.st_size - offset > BOUND:
                 raise ValueError("v2 log truncation/backlog")
             os.lseek(fd, offset, os.SEEK_SET)
             raw = os.read(fd, BOUND + 1)
@@ -135,6 +141,7 @@ class LiveWarningHealthSource:
                     key = match[1], int(match[2])
                     self.bars.setdefault(key, stamp)
             self.identity, self.offset, self.partial = identity, covered, lines[-1]
+            self.anchor = cursor_anchor(fd, covered)
             if len(self.partial) > BOUND:
                 raise ValueError("v2 partial line bound")
             cutoff = now_ns // 1_000_000 - 120_000
@@ -198,6 +205,8 @@ class LiveWarningHealthSource:
                     raise ValueError("v2 log baseline does not cover current due minute")
                 completed = [self.bars.get((symbol, bar_ms)) for symbol in watchlist]
                 completion = max(completed) if all(item is not None for item in completed) else None
+                if self.truncations and completion is None:
+                    raise ValueError("v2 current-due completion unknown after copytruncate gap")
                 if completion is not None and completion < due:
                     raise ValueError("probe observed unclosed/future bar")
                 receipt.update(

@@ -763,8 +763,15 @@ def test_unreadable_or_unbounded_monitor_evidence_is_unknown(health_reader, fail
         log.mkdir()
     else:
         (directory / "meminfo").write_text("MemFree: 99999 kB\n")
-    with pytest.raises((ValueError, OSError)):
-        reader.read()
+    if failure == "log_truncated":
+        assert not reader.read().new_live_error
+        assert reader.log_observability()["coverage_status"] == "GAP_UNOBSERVED_COPYTRUNCATE"
+        with log.open("a") as out:
+            out.write("ERROR retained after approved rebaseline\n")
+        assert reader.read().new_live_error
+    else:
+        with pytest.raises((ValueError, OSError)):
+            reader.read()
 
 
 @pytest.mark.asyncio

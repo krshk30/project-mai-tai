@@ -70,6 +70,10 @@ def setup(tmp_path, monkeypatch):
         reader._open_regular = lambda path: original_open(mem if path == Path("/proc/meminfo") else path)
         monkeypatch.setattr("os.getloadavg", lambda: (1, 1, 1))
         source = LiveWarningHealthSource(cfg, tmp_path, proc=proc, wall_ns=lambda: clock.ns)
+        # Daily reset constructs a fresh native source; retain controlled proc/clock paths.
+        monkeypatch.setattr("project_mai_tai.momwarn_live_health.LiveWarningHealthSource",
+                            lambda config, directory: LiveWarningHealthSource(
+                                config, directory, proc=proc, wall_ns=lambda: clock.ns))
         reader._source, reader._source_config = source, dict(cfg)
 
         def state(**changes):

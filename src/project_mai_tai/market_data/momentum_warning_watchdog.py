@@ -11,6 +11,7 @@ import stat
 import time
 
 from project_mai_tai.momwarn_health_contract import proposed_health_v2
+from project_mai_tai.momwarn_log_cursor import cursor_anchor, cursor_rewritten
 
 
 @dataclass(frozen=True)
@@ -86,11 +87,26 @@ class WarningHealthReader:
         self._source = None
         self._source_config = None
         self._last_oms_evidence = None
+        self._log_truncations: dict[str, int] = {}
+        self._log_anchors: dict[str, bytes] = {}
 
     def reset_window(self) -> None:
         # Prime live log offsets before the next A request, not across inactive nights.
         self._logs.clear()
         self._source = self._source_config = self._last_oms_evidence = None
+        self._log_truncations.clear()
+        self._log_anchors.clear()
+
+    def log_observability(self) -> dict:
+        counts = dict(self._log_truncations)
+        if self._source is not None:
+            for name, count in (("oms.log", self._source.oms.truncations),
+                                ("schwab-1m-v2.log", self._source.truncations)):
+                if count:
+                    counts[name] = max(counts.get(name, 0), count)
+        return {"copytruncate_counts": counts,
+                "coverage_status": "GAP_UNOBSERVED_COPYTRUNCATE" if counts else (
+                    "OBSERVED_CURSOR_READS_ONLY" if self._logs else "UNKNOWN_NOT_BASELINED")}
 
     @staticmethod
     def _open_regular(path: Path):
@@ -180,10 +196,14 @@ class WarningHealthReader:
                 if previous is None:
                     # Baseline before any A subscription, then examine every new byte.
                     self._logs[name] = (info.st_ino, info.st_size, b"")
+                    self._log_anchors[name] = cursor_anchor(source.fileno(), info.st_size)
                     continue
                 inode, offset, pending = previous
-                if info.st_ino != inode or info.st_size < offset:
-                    raise ValueError("live log rotated/truncated; evidence unknown")
+                if info.st_ino != inode:
+                    raise ValueError("live log replaced; evidence unknown")
+                if cursor_rewritten(source.fileno(), offset, self._log_anchors.get(name)):
+                    self._log_truncations[name] = self._log_truncations.get(name, 0) + 1
+                    offset, pending = 0, b""
                 if info.st_size - offset > self.MAX_LOG_BYTES:
                     raise ValueError("live log read bound exceeded; evidence unknown")
                 source.seek(offset)
@@ -196,6 +216,7 @@ class WarningHealthReader:
                 new_error |= re.search(rb"\bERROR\b", text) is not None
                 tail = text.rsplit(b"\n", 1)[-1]
                 self._logs[name] = (inode, offset + len(chunk), tail)
+                self._log_anchors[name] = cursor_anchor(source.fileno(), offset + len(chunk))
         with self._open_regular(Path("/proc/meminfo")) as source:
             memory = source.read(8192).decode("ascii")
         available = re.search(r"^MemAvailable:\s+(\d+) kB$", memory, re.MULTILINE)
