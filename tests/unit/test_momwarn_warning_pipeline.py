@@ -52,13 +52,28 @@ async def test_partial_reply_never_retries_or_counts_failed_rows(monkeypatch):
 async def test_pipeline_keeps_old_age_gate_and_exact_drop_accounting():
     svc, provider, _, redis = service()
     template = provider._normalize_warning_aggregate(aggregate(), 'WFF')
-    svc._warning_active = True
+    for _ in range(3):
+        await svc._warning_monitor_once()
+    assert svc._warning_active
     for _ in range(35):
         svc._enqueue_warning(replace(template, received_monotonic_ns=time.monotonic_ns()-2_100_000_000))
-    await svc._warning_publish_loop(asyncio.Event())
-    assert svc._warning_revert_reason == 'publish_lag'
+    stop = asyncio.Event()
+    writer = asyncio.create_task(svc._warning_publish_loop(stop))
+    try:
+        await asyncio.wait_for(_wait_for_pause(svc), timeout=1)
+        assert not writer.done()  # Original 2s gate now pauses, not kills.
+    finally:
+        stop.set()
+        writer.cancel()
+        await asyncio.gather(writer, return_exceptions=True)
+    assert svc._warning_revert_reason is None and svc._pauses.reason == 'publish_lag'
     assert svc._warning_drop_count == 35 and svc._warning_published == 0
     assert not redis.entries and svc._warning_queue.empty()
+
+
+async def _wait_for_pause(svc):
+    while svc._pauses.reason != 'publish_lag':
+        await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio

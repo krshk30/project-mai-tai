@@ -33,6 +33,7 @@ from project_mai_tai.market_data.protocols import SnapshotProvider, TradeStreamP
 from project_mai_tai.market_data.publisher import MarketDataPublisher, WarningBatchWriteError
 from project_mai_tai.market_data.reference_cache import ReferenceDataCache
 from project_mai_tai.market_data.stage_diagnostics import StageDiagnostics
+from project_mai_tai.market_data.momwarn_pause_policy import WarningPausePolicy, classify_reason
 from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealthReader, WarningWatchdog
 from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 from project_mai_tai.services.runtime import _install_signal_handlers
@@ -144,6 +145,9 @@ class MarketDataGatewayService:
         self._warning_log_gap_counts: dict[str, int] = {}
         self._warning_trade_coverage: dict[str, dict] = {}
         self._warning_watchdog = WarningWatchdog()
+        self._warning_pause_policy = WarningPausePolicy()
+        self._warning_pause_reporter = None
+        self._warning_health_task = None
         self._stage_diagnostics = StageDiagnostics()
         self.publisher.stage_diagnostics = self._stage_diagnostics
         if isinstance(self.snapshot_provider, MassiveSnapshotProvider):
@@ -154,6 +158,7 @@ class MarketDataGatewayService:
         )
         if isinstance(self._warning_health_reader, WarningHealthReader):
             self._warning_health_reader.stage_diagnostics = self._stage_diagnostics
+            self._warning_health_reader.retain_cancelled_harm = True
         self._warning_redis = None
         self._warning_publisher = None
         if self.settings.market_data_momentum_warning_enabled:
@@ -250,6 +255,12 @@ class MarketDataGatewayService:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            if self._warning_health_task is not None:
+                self._warning_health_task.cancel()
+                await asyncio.gather(self._warning_health_task, return_exceptions=True)
+            if self._warning_pause_reporter is not None:
+                if not await self._warning_pause_reporter.close():
+                    self.logger.warning("[MOMLATCH1-INCIDENT] shutdown_write_pending=1")
             await self.trade_stream.stop()
             if self._warning_redis is not None:
                 await self._warning_redis.aclose()
@@ -361,6 +372,13 @@ class MarketDataGatewayService:
         if diagnostics is None:
             diagnostics = self._stage_diagnostics = StageDiagnostics()
         return diagnostics
+
+    @property
+    def _pauses(self):
+        policy = getattr(self, "_warning_pause_policy", None)
+        if policy is None:
+            policy = self._warning_pause_policy = WarningPausePolicy()
+        return policy
 
     async def publish_snapshot_batch_once(self, snapshots: Iterable[SnapshotRecord]) -> int:
         snapshot_list = list(snapshots)
@@ -685,6 +703,9 @@ class MarketDataGatewayService:
         self._enqueue_live(self._trade_queue, record)
 
     def _latch_warning_revert(self, reason: str, *, diagnostic: str | None = None) -> None:
+        # Provider failures are not recoverable monitor samples. Unknown reasons
+        # remain sticky; only the async sampled-noise route can pause/resume A.
+        self._pauses.observe(reason)
         if self._warning_revert_reason is None:
             self._warning_revert_reason = reason
             self._warning_reverted_utc_ns = time.time_ns()
@@ -703,6 +724,20 @@ class MarketDataGatewayService:
             task.cancel()
 
     async def _revert_warning(self, reason: str, *, diagnostic: str | None = None) -> None:
+        if classify_reason(reason) == "monitor" and self._warning_revert_reason is None:
+            previous_reason = self._pauses.reason
+            decision = self._pauses.observe(reason)
+            self._close_warning_window(reset_monitor=False)
+            if decision.action == "pause" or reason != previous_reason:
+                self.logger.warning("[MOMWARN1-PAUSE] reason=%s A_only=true%s", reason,
+                                    f" detail={diagnostic}" if diagnostic is not None else "")
+            try:
+                await self.trade_stream.set_momentum_warning_aggregates(False)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._latch_warning_revert("unsubscribe_error", diagnostic=_warning_monitor_diagnostic(exc))
+            return
         self._latch_warning_revert(reason, diagnostic=diagnostic)
         try:
             await self.trade_stream.set_momentum_warning_aggregates(False)
@@ -786,7 +821,7 @@ class MarketDataGatewayService:
                 if lag_seconds > 2:
                     self._warning_drop_count += len(pending)
                     await self._revert_warning("publish_lag")
-                    return
+                    continue
                 if len(pending) == 1:
                     write = self._warning_publisher.publish_momentum_warning_aggregate(
                         record, sequence=seq, dropped_total=self._warning_drop_count,
@@ -814,7 +849,7 @@ class MarketDataGatewayService:
                     self._warning_ack_unknown += len(pending)-acknowledged
                 if asyncio.current_task().cancelling() or self._warning_revert_reason is not None:
                     raise
-                # Only the in-flight A write was cancelled by a normal window close.
+                # Only the in-flight A write was cancelled by an A-only pause/window close.
                 continue
             except Exception as exc:
                 self._warning_drop_count += len(pending)-acknowledged
@@ -843,17 +878,26 @@ class MarketDataGatewayService:
                 if reset is not None:
                     reset()
                 self._warning_watchdog = WarningWatchdog()
+                self._warning_pause_policy = WarningPausePolicy()
                 self._warning_window_day = day
                 self._warning_log_gap_counts.clear()
-            live_reader = getattr(self._warning_health_reader, "read_live", None)
-            operation = (
-                live_reader(self._warning_redis, self.settings.redis_stream_prefix)
-                if live_reader is not None else asyncio.to_thread(self._warning_health_reader.read)
-            )
-            health = await asyncio.wait_for(
-                self._timings.asynchronous("health_total", operation),
-                timeout=self.settings.market_data_momentum_warning_monitor_timeout_seconds,
-            )
+            if self._warning_health_task is None:
+                live_reader = getattr(self._warning_health_reader, "read_live", None)
+                operation = (
+                    live_reader(self._warning_redis, self.settings.redis_stream_prefix)
+                    if live_reader is not None else asyncio.to_thread(self._warning_health_reader.read)
+                )
+                self._warning_health_task = asyncio.create_task(self._timings.asynchronous("health_total", operation))
+            # A timed-out to_thread cannot be stopped. Reuse its ONE task until
+            # completion instead of concurrently mutating source/log cursors.
+            try:
+                health = await asyncio.wait_for(
+                    asyncio.shield(self._warning_health_task),
+                    timeout=self.settings.market_data_momentum_warning_monitor_timeout_seconds,
+                )
+            finally:
+                if self._warning_health_task.done():
+                    self._warning_health_task = None
             observability = getattr(self._warning_health_reader, "log_observability", None)
             if observability is not None:
                 counts = observability()["copytruncate_counts"]
@@ -863,7 +907,7 @@ class MarketDataGatewayService:
                         json.dumps(counts, sort_keys=True),
                     )
                 self._warning_log_gap_counts = counts
-            reason = self._warning_watchdog.check(health, publish_lag_seconds=self._warning_publish_lag())
+            reason = self._warning_watchdog.check_recoverable(health, publish_lag_seconds=self._warning_publish_lag())
             if getattr(health, "v2_cohort", None) is not None:
                 metrics = self._warning_watchdog.cohort_metrics()
                 key = (metrics["due_ns"], metrics["status"], metrics["late_streak"], metrics["missing_symbols"])
@@ -879,8 +923,10 @@ class MarketDataGatewayService:
                 await self._revert_warning(reason)
                 return
             if getattr(health, "v2_startup_pending", False):
-                self._close_warning_window(reset_monitor=False)
-                await self.trade_stream.set_momentum_warning_aggregates(False)
+                await self._revert_warning("v2_startup_pending")
+                return
+            decision = self._pauses.observe(ready=True)
+            if decision.state != "active":
                 return
             was_active = self._warning_active
             self._warning_active = await self.trade_stream.set_momentum_warning_aggregates(True)
@@ -888,6 +934,11 @@ class MarketDataGatewayService:
                 self._warning_generation += 1
                 self._warning_requested_utc_ns = time.time_ns()
                 self._warning_first_a_utc_ns = None
+                if decision.action == "resume":
+                    self.logger.info("[MOMWARN1-RESUME] clean_reads=%s generation=%s A_only=true",
+                                     decision.clean_reads, self._warning_generation)
+            elif not self._warning_active:
+                await self._revert_warning("monitor_unreadable", diagnostic="provider not ready; A not subscribed")
         except asyncio.CancelledError:
             # Cancellation is shutdown/control flow, never monitor unreadability.
             raise
@@ -904,6 +955,9 @@ class MarketDataGatewayService:
                 pass
 
     def warning_metrics(self, *, event_type: str = "gateway_sample") -> dict:
+        pause = self._pauses.metrics()
+        pause["history"] = pause["history"][-8:]
+        pause["exported_pause_history_limit"] = 8
         return {
             "version": 1, "source": SERVICE_NAME, "event_type": event_type,
             "observed_ns": time.time_ns(), "gateway_instance_id": self._warning_instance_id,
@@ -913,6 +967,8 @@ class MarketDataGatewayService:
             "A_write_await_samples": list(self._warning_write_waits),
             "A_write_await_scope": "BOUNDED_CLIENT_AWAIT_INCLUDES_ENCODING_CONNECTION_SCHEDULING_NOT_SERVER_RTT",
             "read_stage_timings": self._timings.snapshot(),
+            "pause_state": pause,
+            "observed_monotonic_ns": time.monotonic_ns(),
             "queue_depth": self._warning_queue.qsize(), "queue_drops": self._warning_queue_drop_count,
             "dropped_total": self._warning_drop_count, "lag_ms": self._warning_publish_lag() * 1000,
             "max_publish_lag_ms": self._warning_max_publish_lag_ms,
@@ -922,9 +978,10 @@ class MarketDataGatewayService:
             "A_first_provider_event_ns": self._warning_first_a_utc_ns,
             "A_subscription_confirmed": None,
             "coverage_status": "reverted" if self._warning_revert_reason else (
+                "paused" if pause["state"] == "paused" else (
                 "provider_event_observed" if self._warning_first_a_utc_ns else (
                     "requested" if self._warning_active else "inactive"
-                )
+                ))
             ),
             "watchdog_revert_reason": self._warning_revert_reason,
             "watchdog_revert_ns": self._warning_reverted_utc_ns,
@@ -941,8 +998,9 @@ class MarketDataGatewayService:
                 pass
             try:
                 event_type = "revert" if self._warning_revert_reason and not reported_revert else "gateway_sample"
+                metrics = self.warning_metrics(event_type=event_type)
                 await asyncio.wait_for(
-                    self._warning_publisher.publish_momentum_warning_metric(self.warning_metrics(event_type=event_type)),
+                    self._warning_publisher.publish_momentum_warning_metric(metrics),
                     timeout=1,
                 )
                 reported_revert |= event_type == "revert"
@@ -950,6 +1008,33 @@ class MarketDataGatewayService:
                 raise
             except Exception:
                 await self._revert_warning("metrics_publish_error")
+            else:
+                # Incident reporting has its own bounded, coalesced DB worker.
+                # It must never turn a display/storage failure into an A trip.
+                await self._report_warning_pauses(metrics)
+
+    async def _report_warning_pauses(self, metrics: dict) -> None:
+        if not metrics["pause_state"]["alert_reasons"]:
+            if self._warning_pause_reporter is not None:
+                await self._warning_pause_reporter.observe(metrics, now_ns=time.time_ns())
+            return
+        try:
+            if self._warning_pause_reporter is None:
+                self._warning_pause_reporter = await asyncio.to_thread(self._build_warning_pause_reporter)
+            await self._warning_pause_reporter.observe(metrics, now_ns=time.time_ns())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.warning("[MOMLATCH1-INCIDENT] reporting_unavailable=1 A_unchanged=1", exc_info=True)
+
+    def _build_warning_pause_reporter(self):
+        from sqlalchemy.orm import sessionmaker
+        from project_mai_tai.db.session import build_engine
+        from project_mai_tai.momwarn_pause_incidents import MomwarnPauseIncidentReporter, PauseIncidentStore
+
+        engine = build_engine(self.settings.database_url, connect_timeout_s=2,
+                              statement_timeout_ms=2000, lock_timeout_ms=250, pool_timeout_s=2)
+        return MomwarnPauseIncidentReporter(PauseIncidentStore(sessionmaker(bind=engine, expire_on_commit=False)))
 
     async def _publish_trade_tick_safely(self, trade: TradeTickRecord) -> None:
         try:

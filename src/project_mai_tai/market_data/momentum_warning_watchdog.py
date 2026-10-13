@@ -45,6 +45,46 @@ class WarningWatchdog:
     def cohort_metrics(self) -> dict:
         return self._cohort.metrics()
 
+    def check_recoverable(self, health: WarningHealth, *, publish_lag_seconds: float) -> str | None:
+        """Sample without latching a monitor gap; preserve all harm evidence."""
+        from project_mai_tai.market_data.momwarn_pause_policy import classify_reason
+
+        if self.reason is not None and classify_reason(self.reason) == "monitor":
+            self.reason = None
+        # An A-only queue condition must not mask simultaneous live-system harm.
+        if self.reason is not None:
+            return self.reason
+        if (math.isfinite(health.load_1m) and health.load_1m > 6):
+            self.reason = "load"
+        elif health.ram_available_bytes < 3 * 1024**3:
+            self.reason = "ram"
+        elif health.new_live_error:
+            self.reason = "live_error"
+        reason = self.check(health, publish_lag_seconds=0)
+        if self._cohort.streak >= 2:
+            self.reason = "v2_cohort_late_twice"
+            return self.reason
+        if not math.isfinite(publish_lag_seconds) or publish_lag_seconds < 0:
+            reason = self.reason = "monitor_invalid"
+        if reason is None and publish_lag_seconds > 2:
+            reason = "publish_lag"
+        if reason is None and health.v2_startup_pending:
+            reason = "v2_startup_pending"
+        if reason is not None and classify_reason(reason) == "monitor":
+            if (type(health.oms_sync_seq) is int and health.oms_sync_seq >= 0
+                    and math.isfinite(health.oms_sync_seconds) and health.oms_sync_seconds >= 0
+                    and 0 <= (time.time_ns() - health.observed_wall_ns) / 1e9 <= 5):
+                # Rebaseline to this actual successful source receipt, never a
+                # synthetic completion. A known slow new receipt still counts.
+                if health.oms_sync_seq != self._last_sync_seq and health.oms_sync_seconds > 5:
+                    self._slow_syncs += 1
+                    if self._slow_syncs >= 2:
+                        self.reason = "oms_sync_slow_twice"
+                        return self.reason
+                self._last_sync_seq = health.oms_sync_seq
+            self.reason = None
+        return reason
+
     def check(self, health: WarningHealth, *, publish_lag_seconds: float) -> str | None:
         if self.reason is not None:
             return self.reason
@@ -123,6 +163,7 @@ class WarningHealthReader:
         self._log_truncations: dict[str, int] = {}
         self._log_anchors: dict[str, bytes] = {}
         self._gateway_startup: dict | None = None
+        self._pending_live_error = False
 
     def bind_gateway_start(self, instance_id: str, started_ns: int) -> None:
         if (self._gateway_startup is not None or not isinstance(instance_id, str)
@@ -295,7 +336,7 @@ class WarningHealthReader:
                 continue
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError(f"missing/invalid measured {name}")
-        new_error = False
+        new_error = bool(getattr(self, "retain_cancelled_harm", False) and self._pending_live_error)
         logs, anchors, truncations = dict(self._logs), dict(self._log_anchors), dict(self._log_truncations)
         for name in self.LOG_NAMES:
             with self._open_regular(self.log_directory / name) as source:
@@ -323,7 +364,12 @@ class WarningHealthReader:
                 text = pending + chunk
                 if len(text) > self.MAX_LOG_BYTES:
                     raise ValueError("live log line bound exceeded")
-                new_error |= self._has_live_error(name, text)
+                found_error = self._has_live_error(name, text)
+                new_error |= found_error
+                if found_error and getattr(self, "retain_cancelled_harm", False):
+                    # A timed-out to_thread keeps running. Never consume a real
+                    # ERROR and lose it when its cancelled caller misses the result.
+                    self._pending_live_error = True
                 tail = text.rsplit(b"\n", 1)[-1]
                 logs[name] = (inode, covered, tail)
                 anchors[name] = cursor_anchor(source.fileno(), covered)
