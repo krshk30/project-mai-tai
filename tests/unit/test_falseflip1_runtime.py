@@ -50,7 +50,7 @@ def controlled_proof(row):
     return classify_entry(identity, bar)
 
 
-def runtime(rows=FLYE, *, pm=False, budgets=None, installed_policy=False):
+def runtime(rows=FLYE, *, pm=False, budgets=None, installed_policy=False, falseflip2=False):
     proofs = tuple(controlled_proof(row) for row in rows)
     first = proofs[0]
     # FLYE's recorded causal SELL; other fixtures test the new runtime over recorded
@@ -90,6 +90,8 @@ def runtime(rows=FLYE, *, pm=False, budgets=None, installed_policy=False):
         state.resting_schwab_quantity, state.resting_webull_quantity = 197, 98
         state.cw_armed = pm
     strategy.settings.strategy_schwab_1m_v2_false_flip_enabled = True
+    # Retain the original FF1 cancellation-contract controls under its rollback flag.
+    strategy.settings.strategy_schwab_1m_v2_false_flip2_enabled = falseflip2
     strategy.configure_falseflip(budgets or {}, readable=True)
     strategy._resting_in_window = lambda now=None: True
     strategy._resting_session_is_eh = lambda now=None: pm

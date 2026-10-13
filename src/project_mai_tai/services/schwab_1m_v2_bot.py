@@ -2134,7 +2134,12 @@ class SchwabV2BotService:
         falseflip_poll = getattr(self, "_falseflip_poll", None)
         if (getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is True
                 and callable(falseflip_poll)):
-            await falseflip_poll()
+            self._falseflip_defer_cancel_publication = (
+                getattr(self.settings, "strategy_schwab_1m_v2_false_flip2_enabled", False) is True)
+            try:
+                await falseflip_poll()
+            finally:
+                self._falseflip_defer_cancel_publication = False
         evaluate_gap_holds = getattr(self, "_evaluate_gap_holds", None)
         if callable(evaluate_gap_holds):
             await evaluate_gap_holds()
@@ -2184,6 +2189,10 @@ class SchwabV2BotService:
                 unknown_opportunities,
             )
             self.strategy.apply_flip_position_book(position_book)
+            if (getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True
+                    and getattr(self.settings, "strategy_schwab_1m_v2_false_flip2_enabled", False) is True
+                    and callable(getattr(self, "_falseflip2_poll", None))):
+                await self._falseflip2_poll(position_book)
         fresh_sell_poll = getattr(self, "_fresh_sell_owner_release_poll", None)
         if callable(fresh_sell_poll):
             await fresh_sell_poll()
@@ -3015,6 +3024,7 @@ class SchwabV2BotService:
         entry_classifications = {}
         filled_opportunities = {}
         closed_entry_rows = frozenset()
+        falseflip_release_proofs = {}
         try:
             with self.session_factory() as session:
                 rows = session.scalars(
@@ -3094,6 +3104,10 @@ class SchwabV2BotService:
                         opportunity = int(md.get("fanout_segment_id", 0))
                         if opportunity > 0:
                             filled_opportunities.setdefault(order.symbol, set()).add((account.name, opportunity))
+                    if getattr(self.settings, "strategy_schwab_1m_v2_false_flip2_enabled", False) is True:
+                        from project_mai_tai.v2_falseflip_release import read_release_proofs
+
+                        falseflip_release_proofs = read_release_proofs(session, [*rows, *closed_rows], accounts)
         except Exception:  # noqa: BLE001 - an unreadable owner is an entry refusal
             logger.exception(
                 "[V2-FLIP-OWNER-POSITION-BOOK] evaluated=0 known=0 unknown=1 "
@@ -3234,6 +3248,7 @@ class SchwabV2BotService:
             entry_classifications={key: tuple(value) for key, value in entry_classifications.items()},
             filled_opportunities={key: tuple(value) for key, value in filled_opportunities.items()},
             closed_entry_rows=closed_entry_rows,
+            falseflip_release_proofs=falseflip_release_proofs,
         )
 
     def _terminal_unfilled_first_rest_opportunities(
@@ -6069,13 +6084,97 @@ class SchwabV2BotService:
                     logger.exception("[V2-FALSE-FLIP] sym=%s reason=budget_write_failed", before.symbol)
                     break
                 self.strategy.acknowledge_falseflip_budget(before, after)
+        if self.__dict__.get("_falseflip_defer_cancel_publication", False):
+            return  # Refresh both accounts before deciding whether a cancel is necessary.
         for request in self.strategy.pending_falseflip_cancel_publications():
+            state = self.strategy._symbol_states.get(request.symbol)
+            if (self.strategy._falseflip2_enabled() and state is not None
+                    and self.strategy._falseflip2_proven(state, request.opportunity_id)):
+                continue  # The atomic owner writer closes the exact request, not a broker cancel.
             try:
-                await asyncio.to_thread(self.strategy._removed_wait_persist, request, True)
+                if self.strategy._falseflip2_enabled():
+                    store = getattr(self, "_removed_wait_store", None)
+                    if store is None:
+                        continue
+                    generation = self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(request.symbol, 0)
+
+                    def valid(r=request, g=generation):
+                        return (self.strategy.falseflip2_cancel_valid(r)
+                                and not self.__dict__.get("_clearwait_open_emits", {}).get(r.symbol, 0)
+                                and self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(r.symbol, 0) == g)
+
+                    await asyncio.to_thread(store.record_rules, request, True, valid)
+                    if not valid():
+                        continue
+                else:
+                    await asyncio.to_thread(self.strategy._removed_wait_persist, request, True)
             except Exception:  # noqa: BLE001 - no cancel publication before its durable request
                 logger.exception("[V2-FALSE-FLIP] sym=%s reason=cancel_barrier_write_failed", request.symbol)
                 break
             self.strategy.acknowledge_falseflip_cancel_publication(request)
+
+    async def _falseflip2_poll(self, position_book: FlipPositionBook) -> None:
+        """Existing position task only: commit proof/owner/dispatch before memory rearm."""
+        from project_mai_tai.v2_falseflip_release import persist_owner_transition, unanswered_incidents
+
+        if not self.strategy._falseflip2_enabled() or self.session_factory is None:
+            return
+        accounts = self.strategy._removed_wait_accounts()
+        # Classification, settlement and draft are separate CAS revisions. Applying
+        # the same immutable book between commits does not invent a newer read time.
+        for _ in range(2):
+            await self._falseflip_poll()
+            self.strategy.apply_flip_position_book(position_book)
+
+        def fenced(symbol, check):
+            generation = self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(symbol, 0)
+
+            def valid():
+                return (not self.__dict__.get("_clearwait_open_emits", {}).get(symbol, 0)
+                        and self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(symbol, 0)
+                        == generation and check())
+
+            return valid
+
+        for record in self.strategy.pending_falseflip2_releases():
+            request = self.strategy._removed_wait_requests.get(record.symbol)
+            valid = fenced(record.symbol, lambda r=record: self.strategy.falseflip2_release_valid(r))
+            if not valid():
+                continue
+            try:
+                await asyncio.to_thread(persist_owner_transition, self.session_factory, record,
+                                        accounts, valid, request=request)
+            except Exception:  # noqa: BLE001 - uncommitted proof never grants an entry
+                logger.exception("[V2-FALSEFLIP2] %s reason=release_write_pending", record.symbol)
+                continue
+            if valid():
+                self.strategy.acknowledge_falseflip2_release(record)
+
+        for symbol in tuple(self.strategy.__dict__.get("_falseflip2_rearm", {})):
+            state = self.strategy._symbol_states.get(symbol)
+            if state is not None:
+                self.strategy._falseflip_restoring_track(state)
+        for plan in self.strategy.pending_falseflip2_rearms():
+            record, _, previous = plan
+            valid = fenced(record.symbol, lambda p=plan: self.strategy.falseflip2_rearm_valid(p))
+            if not valid():
+                continue
+            try:
+                await asyncio.to_thread(persist_owner_transition, self.session_factory, record,
+                                        accounts, valid, previous=previous)
+            except Exception:  # noqa: BLE001 - keep the old false opportunity fenced
+                logger.exception("[V2-FALSEFLIP2] %s reason=rearm_write_pending", record.symbol)
+                continue
+            if valid():
+                self.strategy.acknowledge_falseflip2_rearm(plan)
+        await self._falseflip_poll()
+        requests = tuple(request for request in self.strategy._removed_wait_requests.values()
+                         if request.purpose == "false_flip_restore")
+        if requests:
+            try:
+                await asyncio.to_thread(unanswered_incidents, self.session_factory, requests)
+            except Exception:  # noqa: BLE001 - cancellation uncertainty remains blocked
+                logger.exception("[V2-FALSEFLIP2] reason=incident_write_failed")
 
     async def _drain_direct_strategy_intents(self) -> None:
         """Emit strategy-owned resting place/cancel queues without an entry-window gate.

@@ -1112,6 +1112,10 @@ class SchwabV2Strategy:
         )
 
     def _persist_flip_owner(self, state: SymbolState, *, active: bool, reason: str) -> bool:
+        prebound = self.__dict__.get("_falseflip2_prebound", {}).get(state.symbol)
+        if (active and reason == "first_rest_working" and prebound is not None
+                and self._flip_owner_record(state) == prebound):
+            return True  # The exact record committed on the poll worker before placement.
         persist = self._flip_owner_persist
         if persist is None:
             self._set_flip_owner_unknown(state, reason="persistence_unconfigured", persist=False)
@@ -2253,6 +2257,104 @@ class SchwabV2Strategy:
     def _falseflip_enabled(self) -> bool:
         return getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is True
 
+    def _falseflip2_enabled(self) -> bool:
+        return self._falseflip_enabled() and getattr(
+            self.settings, "strategy_schwab_1m_v2_false_flip2_enabled", False) is True
+
+    def _falseflip2_proven(self, state, opportunity):
+        book = self.__dict__.get("_falseflip_book")
+        proof = (book.falseflip_release_proofs.get((state.symbol, opportunity)) if book else None)
+        return bool(proof and proof.complete and 0 <= self._now_ms() - proof.observed_at_ms <= 15000)
+
+    def _falseflip2_all_filled(self, state, opportunity):
+        book = self.__dict__.get("_falseflip_book")
+        proof = book.falseflip_release_proofs.get((state.symbol, opportunity)) if book else None
+        return bool(proof and proof.all_filled)
+
+    def pending_falseflip2_releases(self):
+        return tuple(self.__dict__.get("_falseflip2_releases", {}).values())
+
+    def falseflip2_release_valid(self, record):
+        state = self._symbol_states.get(record.symbol)
+        request = self._removed_wait_requests.get(record.symbol)
+        return bool(self._falseflip2_enabled() and state
+                    and self.__dict__.get("_falseflip2_releases", {}).get(record.symbol) == record
+                    and self._flip_owner_record(state) == record
+                    and self._falseflip2_proven(state, record.opportunity_id)
+                    and self._flip_owner_evidence_fresh(state)
+                    and not state.position_qty and not state.position_qty_held
+                    and not state.flip_owner_open_positions
+                    and record.symbol not in self._removed_scanner_symbols
+                    and (request is None or (request.opportunity_id == record.opportunity_id
+                                             and request.purpose == "false_flip_restore")))
+
+    def acknowledge_falseflip2_release(self, record):
+        if not self.falseflip2_release_valid(record):
+            return False
+        state = self._symbol_states[record.symbol]
+        request = self._removed_wait_requests.get(record.symbol)
+        if request is not None:
+            self._removed_wait_requests.pop(record.symbol)
+        self._falseflip_cancel_publications.pop(record.symbol, None)
+        self._falseflip2_releases.pop(record.symbol, None)
+        state.fanout_last_retired_opportunity_id = max(
+            state.fanout_last_retired_opportunity_id, record.opportunity_id)
+        self._release_fanout_webull_claim(state, reason="false_flip2_closed_episode", persist=False)
+        self._clear_fanout_segment_id(state, reason="false_flip2_closed_episode", persist=False)
+        self._reset_fanout_webull_slots(state)
+        self._clear_cw_slot_claims(state)
+        self._clear_resting_fill_latch(state)
+        state.webull_resting_active = False
+        state.cw_v2_emit_claimed = False
+        state.cw_v2_emit_ms = 0
+        self._clear_flip_owner_memory(state)
+        self.__dict__.setdefault("_falseflip2_rearm", {})[record.symbol] = (
+            state.retry_one_segment_id, record.opportunity_id)
+        self._falseflip_rearm.discard(record.symbol)
+        logger.info("[V2-FALSEFLIP2] %s opportunity_id=%d action=owner_released "
+                    "reason=closed_own_episode cancel_receipt_required=%d", record.symbol,
+                    record.opportunity_id, not self._falseflip2_all_filled(state, record.opportunity_id))
+        return True
+
+    def pending_falseflip2_rearms(self):
+        return tuple(self.__dict__.get("_falseflip2_rearm_plans", {}).values())
+
+    def falseflip2_rearm_valid(self, plan):
+        record, line, previous = plan
+        state = self._symbol_states.get(record.symbol)
+        return bool(self._falseflip2_enabled() and state
+                    and self.__dict__.get("_falseflip2_rearm_plans", {}).get(record.symbol) == plan
+                    and self.__dict__.get("_falseflip2_rearm", {}).get(record.symbol) == previous
+                    and state.flip_owner_phase == "idle" and not state.fanout_segment_id
+                    and not state.flip_owner_opportunity_id and not state.resting_active
+                    and not state.position_qty and not state.position_qty_held
+                    and state.atr_state == "short" and state.atr_trail == line
+                    and state.atr_short_flip_bar_ts == state.retry_one_segment_id == record.retry_segment_id
+                    and state.retry_one_closes_in_segment == record.retry_closes_at_place
+                    and self._falseflip2_proven(state, previous[1])
+                    and self._strict_first_rest_admitted(state, slot="first"))
+
+    def acknowledge_falseflip2_rearm(self, plan):
+        if not self.falseflip2_rearm_valid(plan):
+            return False
+        record, _, _ = plan
+        state = self._symbol_states[record.symbol]
+        state.fanout_segment_id = state.flip_owner_opportunity_id = record.opportunity_id
+        state.flip_owner_phase = "resting"
+        state.flip_owner_retry_segment_id = record.retry_segment_id
+        state.flip_owner_retry_closes_at_place = record.retry_closes_at_place
+        self.__dict__.setdefault("_falseflip2_prebound", {})[record.symbol] = record
+        self._falseflip2_rearm_plans.pop(record.symbol, None)
+        # Normal placement rechecks SHORT/min-bars/liquidity/price after the worker await.
+        self._cw_v2_resting_track(state, None)
+        if state.resting_active:
+            self._falseflip2_rearm.pop(record.symbol, None)
+            budget = self._falseflip_budget(state)
+            if budget.awaiting_rearm:
+                self._falseflip_pending.setdefault((budget.symbol, budget.segment),
+                    (budget, budget.rest_drafted(budget.awaiting_rearm)))
+        return state.resting_active
+
     def configure_falseflip(self, budgets: dict, *, readable: bool) -> None:
         self._falseflip_budgets = dict(budgets)
         self._falseflip_readable = readable
@@ -2260,15 +2362,28 @@ class SchwabV2Strategy:
         self._falseflip_cross_high = {key for key, value in budgets.items() if value.skipped}
         self._falseflip_rearm = set()
         self._falseflip_cancel_publications = {}
+        self._falseflip2_releases = {}
+        self._falseflip2_rearm = {}
+        self._falseflip2_rearm_plans = {}
+        self._falseflip2_prebound = {}
 
     def pending_falseflip_cancel_publications(self) -> tuple[RemovedWait, ...]:
         return tuple(getattr(self, "_falseflip_cancel_publications", {}).values())
+
+    def falseflip2_cancel_valid(self, request: RemovedWait) -> bool:
+        state = self._symbol_states.get(request.symbol)
+        return bool(state and self._falseflip_cancel_publications.get(request.symbol) == request
+                    and request.symbol not in self._removed_wait_requests
+                    and int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) == request.opportunity_id)
 
     def acknowledge_falseflip_cancel_publication(self, request: RemovedWait) -> None:
         state = self._symbol_states.get(request.symbol)
         if (self._falseflip_cancel_publications.get(request.symbol) != request or state is None
                 or request.symbol in self._removed_wait_requests
                 or int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) != request.opportunity_id):
+            if self._falseflip2_enabled():
+                logger.info("[V2-FALSEFLIP2] %s reason=cancel_publication_superseded_retry", request.symbol)
+                return
             self._falseflip_readable = False
             return
         self._falseflip_cancel_publications.pop(request.symbol)
@@ -2332,7 +2447,7 @@ class SchwabV2Strategy:
                 or not math.isfinite(price) or price <= 0 or trigger <= 0):
             return self._falseflip_entry_blocked(state)
         # A sibling may still be wired until this exact episode's cancel receipt.
-        if budget.skip_due and budget.episodes[-1] not in budget.cancelled:
+        if budget.skip_due and budget.episodes[-1] not in (*budget.cancelled, *budget.filled_closed):
             return True
         if price < trigger:
             # Duplicate quote/print/bar deliveries above the skipped level are not another cross.
@@ -2387,10 +2502,31 @@ class SchwabV2Strategy:
             # exact episode and persisted atomically with its false-episode identity.
             refund = 0
             spent = state.flip_owner_retry_closes_at_place + 1
-            if state.flip_owner_phase == "consumed" and state.retry_one_closes_in_segment == spent:
+            compensated_unknown = (self._falseflip2_enabled() and state.flip_owner_phase == "unknown"
+                                   and self._falseflip2_proven(state, opportunity))
+            if (state.flip_owner_phase == "consumed" or compensated_unknown) and state.retry_one_closes_in_segment == spent:
                 refund = spent
             self._falseflip_pending.setdefault(key, (budget, budget.closed(opportunity, refund)))
             return True
+        if self._falseflip2_enabled():
+            if self._falseflip2_proven(state, opportunity):
+                fully_filled = self._falseflip2_all_filled(state, opportunity)
+                settled = budget.filled_closed if fully_filled else budget.cancelled
+                if opportunity not in settled:
+                    after = (budget.fully_filled_closed(opportunity) if fully_filled
+                             else budget.cancellation_confirmed(opportunity))
+                    self._falseflip_pending.setdefault(key, (budget, after))
+                    return True
+                if idle_recovery:
+                    self.__dict__.setdefault("_falseflip2_rearm", {}).setdefault(
+                        state.symbol, (segment, opportunity))
+                else:
+                    self.__dict__.setdefault("_falseflip2_releases", {})[state.symbol] = self._flip_owner_record(state)
+                return True
+            # Working/partial siblings retain the existing bounded same-slot cancel
+            # barrier. A completed cancel is not a substitute for fresh position reads.
+            if opportunity in budget.cancelled:
+                return True
         receipt = (state.symbol, opportunity)
         if opportunity not in budget.cancelled and (
                 receipt in self.__dict__.get("_falseflip_cancel_receipts", set())
@@ -2415,6 +2551,20 @@ class SchwabV2Strategy:
         return True
 
     def _falseflip_restoring_track(self, state: SymbolState) -> None:
+        if self._falseflip2_enabled():
+            previous = self.__dict__.get("_falseflip2_rearm", {}).get(state.symbol)
+            if previous is None:
+                self._falseflip_rearm.discard(state.symbol)
+                return
+            if (state.atr_state != "short" or state.retry_one_segment_id != previous[0]
+                    or state.atr_short_flip_bar_ts != previous[0]):
+                self._falseflip2_rearm.pop(state.symbol, None)
+                self.__dict__.get("_falseflip2_rearm_plans", {}).pop(state.symbol, None)
+                return
+            if not self._falseflip2_proven(state, previous[1]):
+                return
+            self._cw_v2_resting_track(state, None)
+            return
         if (not self._falseflip_enabled() or state.symbol not in getattr(self, "_falseflip_rearm", set())
                 or self._falseflip_entry_blocked(state) or self._entries_held
                 or self.gap_hold_active(state.symbol) or not self._resting_in_window()
@@ -6161,6 +6311,14 @@ class SchwabV2Strategy:
                 self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled)):
             return
         if not self._strict_first_rest_admitted(state, slot=slot):
+            return
+        previous = self.__dict__.get("_falseflip2_rearm", {}).get(state.symbol)
+        if self._falseflip2_enabled() and previous is not None and state.flip_owner_phase == "idle":
+            candidate = max(self._now_ms(), state.fanout_last_retired_opportunity_id + 1)
+            record = FlipEntryOwnershipRecord(state.symbol, candidate, "resting", 0, 0,
+                (), {}, {}, state.retry_one_segment_id, state.retry_one_closes_in_segment)
+            self.__dict__.setdefault("_falseflip2_rearm_plans", {}).setdefault(
+                state.symbol, (record, line, previous))
             return
         if self._flip_owned_first_entry_enabled and self._ensure_flip_owner_opportunity(state) <= 0:
             return

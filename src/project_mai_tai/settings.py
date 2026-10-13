@@ -549,6 +549,8 @@ class Settings(BaseSettings):
     # confirmation-only reset exactly. The count is anchored to the 04:00 ET strategy session.
     strategy_schwab_1m_v2_retry_one_enabled: bool = False
     strategy_schwab_1m_v2_false_flip_enabled: bool = False
+    # FALSEFLIP2 uses fresh owned-episode evidence and the normal SHORT placement path.
+    strategy_schwab_1m_v2_false_flip2_enabled: bool = True
     # CLEARWAIT1: retire only a removed, durably terminal unfilled episode. OFF is rollback.
     strategy_schwab_1m_v2_removed_wait_clear_enabled: bool = True
     strategy_schwab_1m_v2_removed_wait_clear_rules_enabled: bool = True
