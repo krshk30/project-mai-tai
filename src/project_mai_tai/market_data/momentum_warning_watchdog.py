@@ -181,26 +181,32 @@ class WarningHealthReader:
             return False
         if name != "schwab-1m-v2.log" or self._source is None:
             return True
+        pattern = (
+            rb"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d{3}) ERROR "
+            rb"project_mai_tai\.services\.schwab_1m_v2_bot \| "
+            rb"\[V2-CONFIRMATION-EXIT-UNANSWERABLE\] [^\r\n]* "
+            rb"reason=line_unproven\r?\n"
+        )
+        matches = [re.fullmatch(pattern, line) for line in errors]
+        if any(match is None or len(re.findall(rb"\bERROR\b", line)) != 1
+               for line, match in zip(errors, matches, strict=True)):
+            return True
         # Only this closed-fill boot diagnostic is exempt. Identity, timestamp,
         # incomplete lines and every other error remain fail-closed.
         self._source._check_v2_process()
         proc = self._source.proc
         with self._open_regular(proc / str(self._source.config["v2_pid"]) / "stat") as stream:
-            fields = stream.read(8193).decode().rsplit(")", 1)[1].split()
+            raw = stream.read(8193)
+        if len(raw) > 8192:
+            return True
+        fields = raw.decode().rsplit(")", 1)[1].split()
         with self._open_regular(proc / "stat") as stream:
-            boot = re.search(rb"^btime (\d+)$", stream.read(65537), re.MULTILINE)
-        if boot is None:
+            raw_boot = stream.read(65537)
+        boot = re.search(rb"^btime (\d+)$", raw_boot, re.MULTILINE)
+        if boot is None or len(raw_boot) > 65536:
             return True
         started_ns = int(boot[1]) * 1_000_000_000 + int(fields[19]) * 1_000_000_000 // os.sysconf("SC_CLK_TCK")
-        for line in errors:
-            match = re.fullmatch(
-                rb"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d{3}) ERROR "
-                rb"project_mai_tai\.services\.schwab_1m_v2_bot \| "
-                rb"\[V2-CONFIRMATION-EXIT-UNANSWERABLE\] [^\r\n]* "
-                rb"reason=line_unproven\r?\n", line,
-            )
-            if match is None or len(re.findall(rb"\bERROR\b", line)) != 1:
-                return True
+        for match in matches:
             try:
                 stamp = datetime.strptime(match[1].decode(), "%Y-%m-%d %H:%M:%S").replace(
                     tzinfo=self._source.zone)
