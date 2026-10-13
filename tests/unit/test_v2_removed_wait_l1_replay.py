@@ -289,7 +289,8 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
                 await bot._line_source_events_pass()
                 await bot._line_restoration_pass()
         else:
-            bot._strategy_on_bar(symbol, current, observation_phase=phase)
+            bot._strategy_on_bar(symbol, ChartBar(symbol, current.open, current.high, current.low,
+                current.close, current.volume, current.timestamp_ms), observation_phase=phase)
     primary = []
     assert bool(strat._removed_wait_requests) is (not enabled)
     if name == "dki" and native_line:

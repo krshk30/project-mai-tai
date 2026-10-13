@@ -846,7 +846,8 @@ async def test_recorded_flye_completed_bar_database_book_next_live_bar_and_exist
 
     bot.intent_emitter = SchwabV2IntentEmitter(strategy.settings, Redis(), "live:schwab_1m_v2")
     mirror_emitter = SchwabV2IntentEmitter(strategy.settings, Redis(), "live:orb")
-    bot._strategy_on_bar("FLYE", entry_bar, observation_phase="live")
+    from tests.unit.v2_input_control import chart_input
+    bot._strategy_on_bar("FLYE", chart_input("FLYE", entry_bar), observation_phase="live")
     await bot._falseflip_poll()
     event_, = emitted
     assert event_["event_type"] == "v2_entry_bar_close"
@@ -881,7 +882,7 @@ async def test_recorded_flye_completed_bar_database_book_next_live_bar_and_exist
     next_bar = next(bar for bar in bars if bar.timestamp_ms == entry_bar.timestamp_ms+60000)
     clock[0] = next_bar.timestamp_ms+62000
     strategy.apply_flip_position_book(bot._fetch_flip_position_book())
-    bot._strategy_on_bar("FLYE", next_bar, observation_phase="live")
+    bot._strategy_on_bar("FLYE", chart_input("FLYE", next_bar), observation_phase="live")
     primary, = strategy.drain_pending_intents()
     mirror, = strategy.drain_webull_direct_intents()
     for emitter, draft in ((bot.intent_emitter, primary), (mirror_emitter, mirror)):

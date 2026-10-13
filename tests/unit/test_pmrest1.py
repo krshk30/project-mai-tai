@@ -14,6 +14,7 @@ import pytest
 
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, Quote, SchwabV2Strategy
+from tests.unit.v2_input_control import chart_input
 
 RAW = json.loads((Path(__file__).parents[1] / "fixtures/pmrest1/recorded.json").read_text())
 ET = ZoneInfo("America/New_York")
@@ -408,7 +409,7 @@ def test_p7_production_cutoff_disarms_before_reprice_helper(slot, when, monkeypa
     )
     with caplog.at_level(logging.INFO):
         assert strategy.on_bar(
-            "SAIQ", replace(state.bars[-1], timestamp_ms=clock[0] - 60_000)
+            "SAIQ", chart_input("SAIQ", replace(state.bars[-1], timestamp_ms=clock[0] - 60_000))
         ) is None
     assert not state.resting_active
     assert not state.cw_armed
@@ -463,7 +464,7 @@ def test_configured_cutoff_still_disarms_a_moved_rest(caplog):
     with caplog.at_level(logging.INFO):
         strategy._reprice_resting(state, 7.9699)
         assert state.resting_level == 8.2381
-        strategy.on_bar("SAIQ", replace(state.bars[-1], timestamp_ms=clock[0]))
+        strategy.on_bar("SAIQ", chart_input("SAIQ", replace(state.bars[-1], timestamp_ms=clock[0])))
     assert not state.resting_active
     assert any("reason=post-close-entry-disabled" in r.getMessage() for r in caplog.records)
 
