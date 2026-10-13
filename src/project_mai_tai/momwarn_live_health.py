@@ -49,7 +49,7 @@ class LiveWarningHealthSource:
     """Explicit reviewed configuration binds actual source instances and expectations.
 
     Configuration is setup provenance, never an externally restamped health
-    measurement. Every sample actually reads OMS/probe/proc sources at EOF.
+    measurement. Every sample actually reads bounded OMS/probe/proc sources.
     """
 
     def __init__(self, config: dict, log_directory: Path, *, proc: Path = Path("/proc"),

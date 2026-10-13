@@ -6,15 +6,19 @@ CURSOR_BYTES = 256
 
 
 class LogReadRace(ValueError):
-    """Observed bounded append/short cursor race; only read_live may retry once."""
+    """Positive short cursor-read race; ordinary append growth never retries."""
 
 
 def check_read_coverage(descriptor: int, offset: int, covered: int, bound: int, label: str) -> None:
     size = os.fstat(descriptor).st_size
-    if size - offset > bound:
+    if size < covered:
+        # Only an actual short pread may retry into the existing gap rebaseline.
+        cursor_anchor(descriptor, covered)
+        raise ValueError(f"{label} log shrank during read; evidence unknown")
+    # The initial size-offset limit is enforced before reading by each caller.
+    # Appended bytes beyond this sample's cursor remain for the next sample.
+    if size - covered > bound:
         raise ValueError(f"{label} log backlog bound")
-    if size != covered:
-        raise LogReadRace(f"{label} log changed beyond read coverage")
 
 
 def cursor_anchor(descriptor: int, offset: int) -> bytes:

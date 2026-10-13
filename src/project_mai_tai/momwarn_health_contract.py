@@ -207,7 +207,7 @@ class OmsLogMonitor:
             self.truncations += int(rewritten)
         finally:
             os.close(fd)
-        # Stamps an actual EOF/proc monitor operation, never changes end receipt time.
+        # Stamps a bounded cursor/proc read, never changes the original end receipt time.
         return dict(self.latest, observed_wall_ns=self.wall_ns(),
                     oms_monitor_coverage="consecutive_observed_end_sequence",
                     oms_log_byte_coverage=("gap_unobserved_copytruncate" if self.truncations

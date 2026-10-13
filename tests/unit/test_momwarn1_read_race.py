@@ -102,7 +102,7 @@ async def test_exact_original_native_slice_replay_inflight_vs_append_race(setup,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", ["oms.log", "schwab-1m-v2.log"])
-async def test_native_append_race_retries_once_same_tick_without_restamping(setup, monkeypatch, name):
+async def test_native_append_is_deferred_without_retry_or_restamping(setup, monkeypatch, name):
     env = setup(now=BASE)
     recorded(env)
     await env.reader.read_live(env.client, "test")
@@ -110,14 +110,20 @@ async def test_native_append_race_retries_once_same_tick_without_restamping(setu
     calls = append_after_read(monkeypatch, env.directory / name,
                              line(REVERT, "CONTROLLED append during bounded read"))
     health = await env.reader.read_live(env.client, "test")
-    assert len(calls) == 2 and env.client.xrevrange.call_count == 3
+    assert len(calls) == 1 and env.client.xrevrange.call_count == 2
     assert health.oms_sync_seq == 1402 and health.oms_sync_seconds == .520346
     assert env.source.oms.latest["oms_measured_wall_ns"] == LAST_END
     assert health.observed_wall_ns == REVERT and health.v2_not_applicable
+    source = env.source.oms if name == "oms.log" else env.source
+    cursor = source.position if name == "oms.log" else source.offset
+    assert cursor < (env.directory / name).stat().st_size
+    await env.reader.read_live(env.client, "test")
+    cursor = source.position if name == "oms.log" else source.offset
+    assert len(calls) == 2 and cursor == (env.directory / name).stat().st_size
 
 
 @pytest.mark.asyncio
-async def test_native_retry_budget_is_global_not_one_per_source(setup, monkeypatch):
+async def test_two_source_appends_are_normal_no_retry_or_revert(setup, monkeypatch):
     env = setup()
     svc, provider, _ = await start(env)
     original = os.read
@@ -139,19 +145,19 @@ async def test_native_retry_budget_is_global_not_one_per_source(setup, monkeypat
     before = env.client.xrevrange.call_count
     await svc._warning_monitor_once()
     assert calls == ["oms.log", "schwab-1m-v2.log"]
-    assert env.client.xrevrange.call_count == before + 2
-    assert svc._warning_revert_reason == "monitor_unreadable"
-    assert provider._ws.removed == ["A.*"]
+    assert env.client.xrevrange.call_count == before + 1
+    assert svc._warning_revert_reason is None and svc._warning_active
+    assert provider._ws.removed == []
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
 
 
 @pytest.mark.asyncio
-async def test_race_then_real_ERROR_is_not_lost_by_retry(setup, monkeypatch):
+async def test_ERROR_appended_before_error_cursor_read_is_caught_same_sample(setup, monkeypatch):
     env = setup()
     svc, provider, _ = await start(env)
     calls = append_after_read(monkeypatch, env.directory / "oms.log", "ERROR actual observed failure\n")
     await svc._warning_monitor_once()
-    assert len(calls) == 2 and svc._warning_revert_reason == "live_error"
+    assert len(calls) == 1 and svc._warning_revert_reason == "live_error"
     assert provider._ws.removed == ["A.*"]
 
 
@@ -185,14 +191,14 @@ async def test_nonrace_failures_are_never_retried(setup, monkeypatch, failure):
 
 
 @pytest.mark.asyncio
-async def test_repeated_same_source_race_exhausts_one_retry_and_latches_A_only(setup, monkeypatch):
+async def test_repeated_same_source_append_never_retries_or_latches(setup, monkeypatch):
     env = setup()
     svc, provider, _ = await start(env)
     calls = append_after_read(monkeypatch, env.directory / "oms.log", "INFO race\n", times=3)
     await svc._warning_monitor_once()
-    assert len(calls) == 2 and svc._warning_revert_reason == "monitor_unreadable"
+    assert len(calls) == 1 and svc._warning_revert_reason is None and svc._warning_active
     await svc._warning_monitor_once()
-    assert len(calls) == 2 and provider._ws.removed == ["A.*"]
+    assert len(calls) == 2 and provider._ws.removed == [] and svc._warning_active
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
 
 
