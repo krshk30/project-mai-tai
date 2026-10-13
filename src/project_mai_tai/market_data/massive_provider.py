@@ -341,6 +341,7 @@ class MassiveTradeStream:
         self._warning_aggregates_enabled = False
         self._warning_wildcard_used = False
         self._warning_failed = False
+        self._warning_reconnect_pending = False
         self._on_warning_aggregate: Callable[[MomentumWarningAggregateRecord], None] | None = None
         self._on_warning_revert: Callable[[str], None] | None = None
         self._on_warning_window_close: Callable[[], None] | None = None
@@ -360,6 +361,7 @@ class MassiveTradeStream:
 
     async def set_momentum_warning_aggregates(self, enabled: bool) -> bool:
         if not enabled:
+            self._warning_reconnect_pending = False
             self._close_warning_window()
             return False
         if self._warning_failed or self._on_warning_aggregate is None:
@@ -393,14 +395,21 @@ class MassiveTradeStream:
             self._on_warning_window_close()
 
     def _revert_warning(self, reason: str) -> None:
-        if not self._warning_aggregates_enabled:
+        from project_mai_tai.market_data.momwarn_pause_policy import classify_reason
+
+        recoverable = classify_reason(reason) == "monitor"
+        if not self._warning_aggregates_enabled and not (recoverable and self._warning_reconnect_pending):
             return
-        self._warning_failed = True
+        self._warning_reconnect_pending = recoverable
+        self._warning_failed = not recoverable
         self._warning_aggregates_enabled = False
         try:
             if self._ws is not None:
                 self._ws.unsubscribe("A.*")
         except Exception:
+            self._warning_failed = True
+            self._warning_reconnect_pending = False
+            reason = "unsubscribe_error"
             logger.exception("Failed to unsubscribe warning A wildcard")
         finally:
             if self._on_warning_revert is not None:
@@ -507,6 +516,11 @@ class MassiveTradeStream:
                         ws.subscribe(*[f"A.{symbol}" for symbol in sorted(self._subscriptions)])
                     self._mark_coverage_started(self._subscriptions)
                 self._connected = True
+                if self._warning_reconnect_pending and self._warning_window_is_open() and not self._warning_failed:
+                    # Only the desired A subscription returns on the replacement
+                    # client. Gateway acceptance still requires 3 clean reads.
+                    ws.subscribe("A.*")
+                    self._warning_aggregates_enabled = True
 
                 async def _async_processor(messages) -> None:
                     await self._process_messages(messages)

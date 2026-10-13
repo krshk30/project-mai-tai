@@ -16,6 +16,7 @@ from tests.unit import test_momwarn1_gateway as fixture_source
 
 pm_clock = fixture_source.pm_clock
 health_reader = fixture_source.health_reader
+FakeWS = fixture_source.FakeWS
 
 
 async def arm(svc):
@@ -183,6 +184,47 @@ async def test_timed_out_read_reuses_one_worker_until_actual_completion(pm_clock
         await svc._warning_monitor_once()
         assert svc._warning_active is (index == 2)
     assert calls == 3  # Completed result + two genuinely new reads, no overlap.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["disconnect", "policy_1008", "reconnect_1012"])
+async def test_replacement_client_restores_A_and_TQ_but_only_three_clean_reads_resume(pm_clock, reason):
+    svc, provider, _, _ = service()
+    await svc.apply_subscription_event(event("v2", ["WFF"]))
+    await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
+    await arm(svc)
+    provider._connected = False
+    provider._revert_warning(reason)
+    assert not svc._warning_active and not provider._warning_failed
+    await svc._warning_monitor_once()
+    assert not svc._warning_active and svc._pauses.clean_streak == 0
+    replacement = FakeWS()
+    async def connect(_processor):
+        assert set(replacement.added) == {"A.*", "T.WFF", "Q.WFF", "T.NEW"}
+        for index in range(3):
+            await svc._warning_monitor_once()
+            assert svc._warning_active is (index == 2)
+        assert replacement.added.count("A.*") == 1
+        assert svc._warning_generation == 2
+        provider._running = False
+    replacement.connect = connect
+    provider._build_client = lambda: replacement
+    provider._running = True
+    await provider._run_loop()  # Offline fake transport, no provider connection.
+    assert svc._warning_revert_reason is None
+
+
+@pytest.mark.asyncio
+async def test_four_distinct_reconnects_in_ten_minutes_sticky_even_while_A_paused(pm_clock):
+    svc, provider, _, _ = service()
+    await arm(svc)
+    for index in range(4):
+        provider._revert_warning("disconnect")
+        assert svc._warning_revert_reason == ("reconnect_storm" if index == 3 else None)
+    assert provider._warning_failed and not provider._warning_reconnect_pending
+    for _ in range(5):
+        await svc._warning_monitor_once()
+    assert not svc._warning_active
 
 
 @pytest.mark.asyncio

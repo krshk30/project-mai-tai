@@ -705,7 +705,15 @@ class MarketDataGatewayService:
     def _latch_warning_revert(self, reason: str, *, diagnostic: str | None = None) -> None:
         # Provider failures are not recoverable monitor samples. Unknown reasons
         # remain sticky; only the async sampled-noise route can pause/resume A.
-        self._pauses.observe(reason)
+        decision = self._pauses.observe(reason)
+        if classify_reason(reason) == "monitor" and decision.state != "off":
+            self._close_warning_window(reset_monitor=False)
+            self.logger.warning("[MOMLATCH1-PAUSE] reason=%s A_only=true provider_reconnect=1", reason)
+            return
+        if decision.state == "off" and decision.reason == "reconnect_storm":
+            reason = "reconnect_storm"
+            self.trade_stream._warning_failed = True
+            self.trade_stream._warning_reconnect_pending = False
         if self._warning_revert_reason is None:
             self._warning_revert_reason = reason
             self._warning_reverted_utc_ns = time.time_ns()
@@ -732,7 +740,8 @@ class MarketDataGatewayService:
                 self.logger.warning("[MOMWARN1-PAUSE] reason=%s A_only=true%s", reason,
                                     f" detail={diagnostic}" if diagnostic is not None else "")
             try:
-                await self.trade_stream.set_momentum_warning_aggregates(False)
+                if reason != "provider_disconnected":
+                    await self.trade_stream.set_momentum_warning_aggregates(False)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -924,6 +933,9 @@ class MarketDataGatewayService:
                 return
             if getattr(health, "v2_startup_pending", False):
                 await self._revert_warning("v2_startup_pending")
+                return
+            if not getattr(self.trade_stream, "_connected", False):
+                await self._revert_warning("provider_disconnected")
                 return
             decision = self._pauses.observe(ready=True)
             if decision.state != "active":

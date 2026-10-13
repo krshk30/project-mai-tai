@@ -433,7 +433,7 @@ async def test_safety_failure_remains_sticky_across_normal_close_and_next_04(mon
     svc, provider, _, _ = service()
     await arm_warning_with_three_clean_reads(svc)
     if failure == "provider":
-        provider._revert_warning("policy_1008")
+        provider._revert_warning("invalid_aggregate")
     else:
         await svc._revert_warning("load")
     reason = svc._warning_revert_reason
@@ -493,7 +493,7 @@ async def test_closed_weekend_does_not_reenable_until_next_trading_04(monkeypatc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("policy", [False, True])
-async def test_disconnect_or_1008_reverts_A_before_reconnect_without_resubscribe(policy):
+async def test_disconnect_or_1008_pauses_A_until_replacement_connection(policy):
     svc, provider, _, _ = service()
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await arm_warning_with_three_clean_reads(svc)
@@ -508,11 +508,15 @@ async def test_disconnect_or_1008_reverts_A_before_reconnect_without_resubscribe
     provider._running = True
     await provider._run_loop()
     assert "A.*" in ws.removed
-    assert svc._warning_revert_reason == ("policy_1008" if policy else "disconnect")
+    assert svc._warning_revert_reason is None
+    assert svc._pauses.reason == ("policy_1008" if policy else "disconnect")
+    assert not provider._warning_failed and not svc._warning_active
     assert provider._subscriptions == {"WFF"}
     assert set(ws.added) == {"T.WFF", "Q.WFF"}
     provider._ws, provider._connected = first_ws, True
-    assert not await provider.set_momentum_warning_aggregates(True)
+    for index in range(3):
+        await svc._warning_monitor_once()
+        assert svc._warning_active is (index == 2)
 
 
 @pytest.mark.asyncio
