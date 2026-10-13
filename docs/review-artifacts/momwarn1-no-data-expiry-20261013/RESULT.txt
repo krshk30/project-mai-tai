@@ -1,5 +1,30 @@
 MOMWARN1-NO-DATA-EXPIRY-POLICY -- LOCAL BUILD AND FOCUSED CONTROLS, NOT INSTALLED
 
+LATEST EXACT PRESERVATION QUALIFICATION
+Tested66fdcfbe688fb63a15995ef371001c8772f19335:252PASS0FAIL50warnings3.30s,
+36expiry/ownership/preservationcontrols+216regressions. Runtime src identical0b;
+only4extra tests/intake clarify existingpost-exit ten-minute tape tail ownership.
+active_symbols includes pending/open AND exitedbutunfinalizedevidence paths.
+Those EXISTING tail owners remainprotected untilnativepathcomplete (engine.py
+138-143/340-349/519-550), notsilentlytruncated by newdormant-warning lease.
+No engine/strategy/ledger-decision/snapshotfallback/sourceguard change added.
+Newno-data expiry releases idlewarning candidates that do not also own active
+paper/evidence paths. This conservativepreservation is explicit for mainreview.
+It is not an invented openposition nor a newwarning coolingproof.
+Four actualengine controls cover both30/60codes in bothledgers: realcontrolled
+STOP exits retainT/tape duringpath; afteroriginalnativefinalization expiry releases.
+Source hashes window/consumer/app remain final0b hashes below. Newtesthash:
+ea026e1382822876619f1c4f32f89e08e85a5bd3a0bb67583642ec26c9ff8112.
+Final XML /tmp/momwarn1-no-data-expiry-final-preservation-20261013.xml
+7146a3677438c0d8bd858136c93b503a729aeb6b2c61442c4a7453eb74007b6e
+Final log /tmp/momwarn1-no-data-expiry-final-preservation-20261013.log
+9b5ef020897e183f389150774b43bc4ed0a1143b97a7c79f2c9a6911f8429da6
+Final Ruff /tmp/momwarn1-no-data-expiry-final-preservation-ruff-20261013.log
+82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18
+SamefocusedCOMMAND below, final XML/log suffixfinal-preservation. No60sbenchmark.
+OriginalallON3/3 MAIN-owned pendingreview; no production/aftercloseinstall yet.
+Priorad919/4c5247 and0b/53cb248heads/outputs retained ascomponents, notfinalpacket.
+
 AUTHORITATIVE FINAL OWNERSHIP FOLLOWUP
 Tested0b7521528487c557104c03b3c10cc3b09c2e9b25:248PASS0FAIL50warnings3.29s,
 32newexpirycontrols+216regressions. Ruff/diff/scopePASS. No load/60sbenchmark.
