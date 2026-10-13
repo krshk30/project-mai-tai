@@ -116,7 +116,7 @@ def test_next_day_restoration_never_adopts_prior_primary_as_current_proof(native
             session.get(BrokerOrder, order_id).status = 'cancelled'
             session.commit()
     old_book = SchwabV2BotService._fetch_primary_resting_book(bot)
-    assert bool(old_book) is not prior_terminal
+    assert old_book == {}  # Prior session is outside the current primary-book query.
     strategy, state, clock = setup()
     old_anchor = session_start_ts_ms(clock[0])
     state.atr_session_anchor_ms = old_anchor

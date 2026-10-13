@@ -92,6 +92,7 @@ from project_mai_tai.events import (
     IsolatedBotStateEvent,
     MarketDataSubscriptionEvent,
     MarketDataSubscriptionPayload,
+    OrderEventEvent,
     StrategyBotStatePayload,
     StrategyStateSnapshotEvent,
     stream_name,
@@ -1299,6 +1300,7 @@ class SchwabV2BotService:
             self.settings,
             self.redis,
             broker_account_name=self.settings.strategy_schwab_1m_v2_account_name,
+            on_submitted=self.strategy.note_primary_resting_submission,
         )
         # Dual-broker FAN-OUT: build the SECOND emitter bound to the Webull account only when the
         # flag is on AND the account is set. Unset => warn + stay single-leg (never point at nothing).
@@ -1390,6 +1392,10 @@ class SchwabV2BotService:
             "state_publish": asyncio.create_task(self._state_publish_loop()),
         }
         if self.enabled:
+            if self._dual_primary_book_enabled():
+                latest = await self.redis.xrevrange(
+                    stream_name(self.settings.redis_stream_prefix, "order-events"), count=1)
+                self._primary_order_event_cursor = latest[0][0] if latest else "0-0"
             await self._rpg_handoff_pass()
             self._tasks["atr_reprice"] = asyncio.create_task(self._rpg_handoff_loop())
             self._tasks["rest_client"] = asyncio.create_task(self.rest_client.run())
@@ -1398,6 +1404,9 @@ class SchwabV2BotService:
                 self._tasks["line_source_events"] = asyncio.create_task(self._line_source_events_loop())
             self._tasks["scanner"] = asyncio.create_task(self._scanner_consumer_loop())
             self._tasks["position_poll"] = asyncio.create_task(self._position_poll_loop())
+            if self._dual_primary_book_enabled():
+                self._tasks["primary_order_events"] = asyncio.create_task(
+                    self._primary_order_events_loop())
             if self.fanout_outcome_journal is not None:
                 self._tasks["fanout_outcomes"] = asyncio.create_task(
                     self._fanout_outcome_loop()
@@ -2409,7 +2418,8 @@ class SchwabV2BotService:
         if getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False):
             # DB evidence only: no broker call, and no local placement boolean as proof.
             observed_at_ms = int(datetime.now(UTC).timestamp() * 1000)
-            proofs = await asyncio.to_thread(self._fetch_primary_resting_book)
+            scope = self.strategy.primary_resting_scope()
+            proofs = await asyncio.to_thread(self._fetch_primary_resting_book, scope)
             self.strategy.apply_primary_resting_book(
                 observed_at_ms=observed_at_ms, orders=proofs,
             )
@@ -2505,10 +2515,50 @@ class SchwabV2BotService:
             await self._reconcile_pending_restart_rest()
             self._persist_restart_checkpoint()
 
-    def _fetch_primary_resting_book(self) -> dict | None:
+    def _dual_primary_book_enabled(self) -> bool:
+        return bool(self.settings.strategy_schwab_1m_v2_dual_broker_fanout_enabled)
+
+    async def _primary_order_events_loop(self) -> None:
+        # Cursor was captured before starting market data; no historical-book replay.
+        await run_resilient_loop(
+            stop_event=self._stop_event, tracker=self._loop_health,
+            name="primary_order_events", iteration=self._primary_order_events_pass,
+            backoff_secs=self._loop_backoff_secs, logger=logger)
+
+    async def _primary_order_events_pass(self) -> None:
+        stream = stream_name(self.settings.redis_stream_prefix, "order-events")
+        response = await self.redis.xread(
+            streams={stream: self._primary_order_event_cursor}, count=100, block=1000)
+        for _, entries in response or []:
+            for entry_id, data in entries:
+                try:
+                    event = OrderEventEvent.model_validate_json(data["data"])
+                except (ValueError, KeyError, TypeError):
+                    logger.warning("[V2-PRIMARY-ACK] malformed_event=1 provisional_allowed=0")
+                else:
+                    self.strategy.apply_primary_resting_event(event)
+                self._primary_order_event_cursor = entry_id
+
+    def _fetch_primary_resting_book(self, scope: tuple | None = None) -> dict | None:
         if self.session_factory is None:
             return None
         try:
+            now = datetime.now(UTC)
+            anchor = datetime.fromtimestamp(session_start_ts_ms(int(now.timestamp() * 1000)) / 1000, UTC)
+            if scope is None:
+                scope = self.strategy.primary_resting_scope()
+            scope = tuple(row for row in scope if int(anchor.timestamp() * 1000) <= row[2] <= int(now.timestamp() * 1000))
+            if not scope:
+                return {}
+            requested_md = TradeIntent.payload["metadata"]
+            exact_scope = or_(*(and_(
+                TradeIntent.symbol == symbol,
+                requested_md["rpg_resting_generation"].as_string() == generation,
+                requested_md["fanout_segment_id"].as_string() == str(segment),
+                requested_md["fanout_slot"].as_string() == "resting",
+                requested_md["fanout_slot_id"].as_string() == slot_id,
+                requested_md["cw_entry_slot"].as_string() == entry_slot,
+            ) for symbol, generation, segment, slot_id, entry_slot in scope))
             with self.session_factory() as session:
                 if session.get_bind().dialect.name == "postgresql":
                     session.execute(text("SET LOCAL lock_timeout = '250ms'"))
@@ -2544,6 +2594,10 @@ class SchwabV2BotService:
                     .where(BrokerAccount.name == self.settings.strategy_schwab_1m_v2_account_name,
                            BrokerAccount.name == "live:schwab_1m_v2",
                            BrokerAccount.provider == "schwab", Strategy.code == STRATEGY_CODE,
+                           TradeIntent.created_at >= anchor,
+                           requested_md["source"].as_string() == STRATEGY_CODE,
+                           requested_md["resting_entry"].as_string() == "true",
+                           exact_scope,
                            TradeIntent.intent_type == "open", TradeIntent.side == "buy",
                            or_(and_(BrokerOrder.side == "buy",
                                     func.lower(BrokerOrder.order_type) == "stop_limit",
@@ -2557,9 +2611,10 @@ class SchwabV2BotService:
                     .limit(1001)
                 ).all()
                 if len(rows) > 1000:
+                    logger.warning("[V2-PRIMARY-RESTING-BOOK] result=UNKNOWN count=%d cap=1000 "
+                                   "session_anchor=%s webull_cross_allowed=0", len(rows), anchor.isoformat())
                     return None  # A truncated order book is not absence/clearance evidence.
                 proofs = {}
-                now = datetime.now(UTC)
                 for order, intent, event, initial, has_fill, has_terminal in rows:
                     requested = dict((intent.payload or {}).get("metadata") or {})
                     metadata = dict(order.payload or {}) if order is not None else requested

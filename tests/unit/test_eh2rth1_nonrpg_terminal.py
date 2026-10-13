@@ -21,11 +21,13 @@ def armed():
     return strategy, state, clock, primary
 
 
-def align(state, factory, order_id, event_id):
+def align(state, factory, order_id, event_id, bot):
     state.resting_schwab_generation = 'GEN'
     metadata = {**NATIVE_METADATA, 'fanout_segment_id': str(state.fanout_segment_id),
                 'fanout_slot_id': fanout_slot_id(strategy_code='schwab_1m_v2', symbol=state.symbol,
                     segment_id=state.fanout_segment_id, slot='resting')}
+    bot.strategy.primary_resting_scope = lambda: ((state.symbol, 'GEN', state.fanout_segment_id,
+        metadata['fanout_slot_id'], state.last_resting_placed_slot),)
     with factory() as session:
         order = session.get(BrokerOrder, order_id)
         order.payload = metadata
@@ -40,7 +42,7 @@ def align(state, factory, order_id, event_id):
 def test_nonrpg_native_terminal_then_next_bar_replaces_once_same_slot(native_book, status):
     bot, factory, (order_id, event_id) = native_book
     strategy, state, clock, original = armed()
-    align(state, factory, order_id, event_id)
+    align(state, factory, order_id, event_id, bot)
     old_segment = state.fanout_segment_id
     with factory() as session:
         order = session.get(BrokerOrder, order_id)
@@ -72,7 +74,7 @@ def test_nonrpg_native_terminal_then_next_bar_replaces_once_same_slot(native_boo
 def test_oms_positive_pre_wire_refusal_same_slot_replacement_without_order(native_book):
     bot, factory, (order_id, event_id) = native_book
     strategy, state, clock, original = armed()
-    align(state, factory, order_id, event_id)
+    align(state, factory, order_id, event_id, bot)
     with factory() as session:
         order = session.get(BrokerOrder, order_id)
         intent = session.get(TradeIntent, order.intent_id)
@@ -95,7 +97,7 @@ def test_oms_positive_pre_wire_refusal_same_slot_replacement_without_order(nativ
 def test_accepted_idless_submit_ack_before_working_book_no_duplicate(native_book, age, allowed):
     bot, factory, (order_id, event_id) = native_book
     strategy, state, clock, _ = armed()
-    align(state, factory, order_id, event_id)
+    align(state, factory, order_id, event_id, bot)
     with factory() as session:
         order, event = session.get(BrokerOrder, order_id), session.get(BrokerOrderEvent, event_id)
         order.status, order.broker_order_id = 'pending', None
@@ -128,7 +130,7 @@ def test_failed_book_retains_last_good_original_timestamp_only_to_ttl(age, allow
 def test_terminal_unknown_or_fill_never_clears_or_replaces(native_book, bad):
     bot, factory, (order_id, event_id) = native_book
     strategy, state, clock, _ = armed()
-    align(state, factory, order_id, event_id)
+    align(state, factory, order_id, event_id, bot)
     with factory() as session:
         order, event = session.get(BrokerOrder, order_id), session.get(BrokerOrderEvent, event_id)
         order.status = 'cancelled'

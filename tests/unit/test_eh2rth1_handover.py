@@ -232,7 +232,8 @@ def native_book(monkeypatch):
         session.flush()
         metadata = dict(NATIVE_METADATA)
         intent = TradeIntent(strategy_id=strategy.id, broker_account_id=account.id, symbol="TCRT",
-            side="buy", intent_type="open", quantity=Decimal(1), reason="controlled", payload={"metadata": metadata})
+            side="buy", intent_type="open", quantity=Decimal(1), reason="controlled",
+            created_at=NATIVE_AT, payload={"metadata": metadata})
         session.add(intent)
         session.flush()
         order = BrokerOrder(strategy_id=strategy.id, broker_account_id=account.id, intent_id=intent.id,
@@ -246,7 +247,9 @@ def native_book(monkeypatch):
         session.add(event)
         session.commit()
         ids = (order.id, event.id)
-    bot = SimpleNamespace(session_factory=factory, settings=settings, observed=observed)
+    bot = SimpleNamespace(session_factory=factory, settings=settings, observed=observed,
+        strategy=SimpleNamespace(primary_resting_scope=lambda: (("TCRT", "GEN", ms(9, 19),
+            NATIVE_METADATA["fanout_slot_id"], "first"),)))
     yield bot, factory, ids
     engine.dispose()
 
@@ -639,6 +642,9 @@ def test_retained_native_unknown_submit_shape_with_actual_terminal_veto(native_b
     bot, factory, (order_id, event_id) = native_book
     at = datetime.fromisoformat(packet["event_at"])
     bot.observed[0] = at + timedelta(seconds=1)
+    md = packet["payload"]["metadata"]
+    bot.strategy.primary_resting_scope = lambda: ((packet["symbol"], md["rpg_resting_generation"],
+        int(md["fanout_segment_id"]), md["fanout_slot_id"], md["cw_entry_slot"]),)
     with factory() as session:
         order, event = session.get(BrokerOrder, order_id), session.get(BrokerOrderEvent, event_id)
         intent = session.get(TradeIntent, order.intent_id)

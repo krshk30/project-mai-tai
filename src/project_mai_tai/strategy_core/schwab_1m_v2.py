@@ -40,6 +40,7 @@ from zoneinfo import ZoneInfo
 from redis.asyncio import Redis
 
 from project_mai_tai.events import (
+    OrderEventEvent,
     TradeIntentEvent,
     TradeIntentPayload,
     stream_name,
@@ -7312,12 +7313,22 @@ class SchwabV2Strategy:
 
     def _primary_resting_proven(self, state: SymbolState) -> bool:
         observed_at, orders = getattr(self, "_primary_resting_book", (0, None))
-        if not state.resting_is_broker_order or not orders:
+        if not state.resting_is_broker_order or not state.resting_schwab_generation:
             return False
+        submission = self.__dict__.get("_primary_resting_submissions", {}).get(state.symbol)
+        receipt = self.__dict__.get("_primary_resting_ack_events", {}).get(state.symbol)
+        if (submission is not None and receipt is not None
+                and submission[0] == state.resting_schwab_generation
+                and receipt.payload.intent_event_id == submission[1]
+                and receipt.payload.status != "accepted"):
+            return False
+        proof = (orders or {}).get((state.symbol, state.resting_schwab_generation))
+        if proof is None and not (orders is not None and
+                (state.symbol, state.resting_schwab_generation) in orders):
+            return self._primary_resting_ack_proven(state, observed_at)
         if not 0 <= self._now_ms() - observed_at <= PRIMARY_RESTING_BOOK_MAX_AGE_MS:
             return False
-        proof = orders.get((state.symbol, state.resting_schwab_generation))
-        if not state.resting_schwab_generation or not proof or proof.get("status") not in {"accepted", "working"}:
+        if not proof or proof.get("status") not in {"accepted", "working"}:
             return False
         if not self._primary_rest_identity_matches(state, proof):
             return False
@@ -7325,6 +7336,83 @@ class SchwabV2Strategy:
         return bool(str(proof.get("broker_order_id") or "").strip()
                     or (isinstance(submit_at, int) and not isinstance(submit_at, bool)
                         and submit_at > 0 and 0 <= self._now_ms() - submit_at < 15_000))
+
+    def primary_resting_scope(self) -> tuple:
+        return tuple((state.symbol, state.resting_schwab_generation,
+                      int(state.fanout_segment_id), fanout_slot_id(
+                          strategy_code=STRATEGY_CODE, symbol=state.symbol,
+                          segment_id=int(state.fanout_segment_id), slot="resting"),
+                      state.last_resting_placed_slot)
+                     for state in self._symbol_states.values()
+                     if state.resting_is_broker_order and state.resting_schwab_generation
+                     and state.fanout_segment_id
+                     and state.last_resting_placed_slot in {"first", "reclaim"})
+
+    def note_primary_resting_submission(self, draft: TradeIntentDraft, event_id: UUID) -> None:
+        state = self._symbol_states.get(draft.symbol)
+        md = draft.metadata
+        if (state is None or draft.intent_type != "open" or draft.side != "buy"
+                or md.get("order_type") != "STOP_LIMIT"
+                or draft.quantity <= 0
+                or md.get("rpg_resting_generation") != state.resting_schwab_generation):
+            return
+        submissions = self.__dict__.setdefault("_primary_resting_submissions", {})
+        submissions[state.symbol] = (state.resting_schwab_generation, event_id,
+                                     self._now_ms(), draft.quantity)
+
+    def apply_primary_resting_event(self, event: OrderEventEvent) -> None:
+        order = event.payload
+        state = self._symbol_states.get(order.symbol)
+        md = order.metadata
+        if (event.source_service != "oms-risk" or state is None
+                or order.strategy_code != STRATEGY_CODE
+                or order.broker_account_name != self._flip_owner_primary_account
+                or order.broker_account_name != "live:schwab_1m_v2"
+                or order.side != "buy" or order.intent_type != "open"
+                or md.get("source") != STRATEGY_CODE or md.get("resting_entry") != "true"
+                or not state.resting_schwab_generation
+                or md.get("rpg_resting_generation") != state.resting_schwab_generation):
+            return
+        proof = {"segment_id": state.fanout_segment_id,
+                 "slot": md.get("fanout_slot"), "slot_id": md.get("fanout_slot_id"),
+                 "entry_slot": md.get("cw_entry_slot")}
+        if (md.get("fanout_segment_id") != str(state.fanout_segment_id)
+                or not self._primary_rest_identity_matches(state, proof)):
+            return
+        at_ms = int(event.produced_at.timestamp() * 1000)
+        if not 0 <= self._now_ms() - at_ms < 15_000:
+            return
+        receipts = self.__dict__.setdefault("_primary_resting_ack_events", {})
+        prior = receipts.get(state.symbol)
+        if prior is not None and prior.payload.intent_event_id == order.intent_event_id:
+            # A terminal/fill receipt cannot be resurrected by a delayed accepted ACK.
+            if prior.payload.status != "accepted" or prior.produced_at > event.produced_at:
+                return
+        receipts[state.symbol] = event
+
+    def _primary_resting_ack_proven(self, state: SymbolState, observed_at: int) -> bool:
+        submission = self.__dict__.get("_primary_resting_submissions", {}).get(state.symbol)
+        event = self.__dict__.get("_primary_resting_ack_events", {}).get(state.symbol)
+        if submission is None or event is None:
+            return False
+        generation, event_id, submitted_at, quantity = submission
+        order = event.payload
+        ack_at = int(event.produced_at.timestamp() * 1000)
+        return bool(generation == state.resting_schwab_generation
+                    and order.metadata.get("rpg_resting_generation") == generation
+                    and self._primary_rest_identity_matches(state, {
+                        "segment_id": int(order.metadata["fanout_segment_id"]),
+                        "slot": order.metadata.get("fanout_slot"),
+                        "slot_id": order.metadata.get("fanout_slot_id"),
+                        "entry_slot": order.metadata.get("cw_entry_slot")})
+                    and order.intent_event_id == event_id
+                    and order.status == "accepted" and order.order_db_id
+                    and order.client_order_id and order.quantity == quantity
+                    and order.filled_quantity == 0 and not order.broker_fill_id
+                    and session_start_ts_ms(self._now_ms()) <= state.fanout_segment_id <= self._now_ms()
+                    and 0 <= self._now_ms() - submitted_at < 15_000
+                    and 0 <= self._now_ms() - ack_at < 15_000
+                    and observed_at < ack_at)
 
     def _cw_v2_resting_track(self, state: SymbolState, atr_signal: dict | None) -> None:
         """Maintain a STABLE resting buy-stop-limit at the ATR SHORT trail. Redesigned 2026-07-23 from
@@ -8983,10 +9071,13 @@ class SchwabV2IntentEmitter:
         settings: Settings,
         redis: Redis,
         broker_account_name: str,
+        *,
+        on_submitted: Callable[[TradeIntentDraft, UUID], None] | None = None,
     ) -> None:
         self.settings = settings
         self.redis = redis
         self.broker_account_name = broker_account_name
+        self.on_submitted = on_submitted
         self.stream = stream_name(settings.redis_stream_prefix, "strategy-intents")
 
     async def emit(
@@ -9016,6 +9107,8 @@ class SchwabV2IntentEmitter:
             maxlen=self.settings.redis_strategy_intent_stream_maxlen,
             approximate=True,
         )
+        if self.on_submitted is not None:
+            self.on_submitted(draft, event.event_id)
         logger.info(
             "schwab_1m_v2 emitted intent symbol=%s side=%s type=%s qty=%s "
             "reason=%s",
