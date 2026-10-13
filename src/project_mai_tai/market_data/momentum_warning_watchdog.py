@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime
 import json
 import math
 import os
@@ -173,6 +174,43 @@ class WarningHealthReader:
             raise ValueError("health input must be an object")
         return data
 
+    def _has_live_error(self, name: str, text: bytes) -> bool:
+        errors = [line for line in text.splitlines(keepends=True)
+                  if re.search(rb"\bERROR\b", line)]
+        if not errors:
+            return False
+        if name != "schwab-1m-v2.log" or self._source is None:
+            return True
+        # Only this closed-fill boot diagnostic is exempt. Identity, timestamp,
+        # incomplete lines and every other error remain fail-closed.
+        self._source._check_v2_process()
+        proc = self._source.proc
+        with self._open_regular(proc / str(self._source.config["v2_pid"]) / "stat") as stream:
+            fields = stream.read(8193).decode().rsplit(")", 1)[1].split()
+        with self._open_regular(proc / "stat") as stream:
+            boot = re.search(rb"^btime (\d+)$", stream.read(65537), re.MULTILINE)
+        if boot is None:
+            return True
+        started_ns = int(boot[1]) * 1_000_000_000 + int(fields[19]) * 1_000_000_000 // os.sysconf("SC_CLK_TCK")
+        for line in errors:
+            match = re.fullmatch(
+                rb"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d{3}) ERROR "
+                rb"project_mai_tai\.services\.schwab_1m_v2_bot \| "
+                rb"\[V2-CONFIRMATION-EXIT-UNANSWERABLE\] [^\r\n]* "
+                rb"reason=line_unproven\r?\n", line,
+            )
+            if match is None or len(re.findall(rb"\bERROR\b", line)) != 1:
+                return True
+            try:
+                stamp = datetime.strptime(match[1].decode(), "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=self._source.zone)
+            except ValueError:
+                return True
+            stamp_ns = int(stamp.timestamp()) * 1_000_000_000 + int(match[2]) * 1_000_000
+            if not started_ns <= stamp_ns <= min(started_ns + 60_000_000_000, time.time_ns()):
+                return True
+        return False
+
     async def read_live(self, client, prefix: str) -> WarningHealth:
         # One budget for the entire sample, not one retry per file/source.
         try:
@@ -272,7 +310,7 @@ class WarningHealthReader:
                 text = pending + chunk
                 if len(text) > self.MAX_LOG_BYTES:
                     raise ValueError("live log line bound exceeded")
-                new_error |= re.search(rb"\bERROR\b", text) is not None
+                new_error |= self._has_live_error(name, text)
                 tail = text.rsplit(b"\n", 1)[-1]
                 logs[name] = (inode, covered, tail)
                 anchors[name] = cursor_anchor(source.fileno(), covered)

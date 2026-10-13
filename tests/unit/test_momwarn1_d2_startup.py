@@ -2,6 +2,7 @@
 from dataclasses import replace
 from datetime import datetime, UTC
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -162,6 +163,31 @@ async def test_native_pending_reads_real_new_error(setup):
     health = await env.reader.read_live(env.client, 'test')
     assert health.v2_startup_pending and health.new_live_error
     assert WarningWatchdog().check(health, publish_lag_seconds=0) == 'live_error'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['real_twelve', 'five_minutes_later', 'other_error'])
+async def test_v2_boot_unanswerable_exact_sixty_second_exception(setup, monkeypatch, case):
+    started = int(datetime(2026, 10, 13, 17, 50, 42, tzinfo=UTC).timestamp()) * NS
+    now = started + (305 if case == 'five_minutes_later' else 13) * NS
+    env = setup(pending=True, now=now)
+    (env.proc / 'stat').write_text(f'btime {started // NS - 1}\n')
+    monkeypatch.setattr('os.sysconf', lambda name: 101)
+    env.reader.bind_gateway_start('controlled-new-gateway', now)
+    await env.reader.read_live(env.client, 'test')
+    fixture = Path(__file__).parents[1] / 'fixtures/momwarn-v2-boot-errors-20261013.log'
+    records = fixture.read_text().splitlines(keepends=True)
+    assert len(records) == 12
+    if case == 'five_minutes_later':
+        records = [records[0].replace('17:50:49,160', '17:55:42,000')]
+    elif case == 'other_error':
+        records = [records[0].replace('reason=line_unproven', 'reason=unexpected_failure')]
+    with (env.directory / 'schwab-1m-v2.log').open('a') as stream:
+        stream.writelines(records)
+    health = await env.reader.read_live(env.client, 'test')
+    assert health.new_live_error is (case != 'real_twelve')
+    assert WarningWatchdog().check(health, publish_lag_seconds=0) == (
+        None if case == 'real_twelve' else 'live_error')
 
 
 @pytest.mark.asyncio
