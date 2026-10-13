@@ -28,6 +28,31 @@ SAFE_SETTINGS = {
     "MAI_TAI_MARKET_DATA_MOMENTUM_WARNING_HEALTH_PATH",
     "MAI_TAI_MARKET_DATA_MOMENTUM_WARNING_LOG_DIRECTORY", "MAI_TAI_REDIS_STREAM_PREFIX", "TZ",
 }
+STREAM_PROJECT = r'''
+local count=tonumber(ARGV[1])
+if not count or count<1 or count>16 then return redis.error_reply('projection count bound') end
+local entries=redis.call('XREVRANGE',KEYS[1],'+','-','COUNT',count)
+local out={}
+for _,entry in ipairs(entries) do
+  local data=nil
+  for i=1,#entry[2],2 do if entry[2][i]=='data' then data=entry[2][i+1] end end
+  if not data or #data>8388608 then return redis.error_reply('existing payload8MiB bound') end
+  local ok,row=pcall(cjson.decode,data)
+  if not ok or type(row)~='table' or type(row.payload)~='table' then return redis.error_reply('payload unreadable') end
+  local fields,counts={},{}
+  for _,key in ipairs({'cycle_count','completed_at','symbol','tick_type'}) do
+    local v=row.payload[key]
+    if type(v)=='string' and #v<=128 or type(v)=='number' then fields[key]=v end
+  end
+  for _,key in ipairs({'watchlist','five_pillars','top_gainers','snapshots','symbols'}) do
+    local v=row.payload[key]
+    if type(v)=='table' then counts[key]=#v end
+  end
+  out[#out+1]={redis_id=entry[1],event_type=row.event_type,source_service=row.source_service,
+              produced_at=row.produced_at,safe_fields=fields,counts=counts,source_payload_bytes=#data}
+end
+return cjson.encode(out)
+'''
 
 
 def run(args, *, text=None, timeout=5):
@@ -178,30 +203,19 @@ def health():
 
 
 def stream_overview(prefix, name, count=1):
-    raw=run(["redis-cli","--raw","XREVRANGE",prefix+":"+name,"+","-","COUNT",str(count)])
-    rows=[json.loads(line) for line in raw.splitlines() if line.startswith("{")]
-    output=[]
-    for row in rows:
-        payload=row.get("payload",{})
-        output.append({"event_type":row.get("event_type"), "source_service":row.get("source_service"),
-                       "produced_at":row.get("produced_at"),
-                       "safe_fields":{key:payload[key] for key in ("cycle_count","completed_at","symbol","tick_type") if key in payload},
-                       "counts":{key:len(payload[key]) for key in ("watchlist","five_pillars","top_gainers","snapshots","symbols") if isinstance(payload.get(key),list)}})
-    return {"scope":"bounded existing Redis data only; receipt time is not a new provider read", "rows":output}
+    # Project retained fields on Redis before crossing the output byte bound.
+    raw=run(["redis-cli","--raw","EVAL_RO",STREAM_PROJECT,"1",prefix+":"+name,str(count)])
+    rows=json.loads(raw)
+    if rows=={}:
+        rows=[]
+    if not isinstance(rows,list) or len(rows)>count:
+        raise ValueError("projected row bound")
+    return {"scope":"EVAL_RO/XREVRANGE projection of existing payload, no provider/new app API", "rows":rows}
 
 
-def scanner():
-    with urlopen("http://127.0.0.1:8100/api/scanner",timeout=5) as response:
-        raw=response.read(262145)
-    if len(raw)>262144:
-        raise ValueError("scanner byte bound")
-    source=json.loads(raw)["scanner"]
-    keys=("feed_status", "last_updated_at", "produced_at", "source_service", "status",
-          "latest_market_data_at", "latest_snapshot_at", "quote_count", "trade_count")
-    return {"scope":"existing control cached scanner view; not new provider data",
-            "safe_fields":{key:source[key] for key in keys if key in source},
-            "source_keys":sorted(source.keys()),
-            "row_counts":{key:len(value) for key,value in source.items() if isinstance(value,list)}}
+def scanner(streams):
+    return {"scope":"existing control view's strategy-state/snapshot-batches source fields only; no rendered UI live label",
+            "strategy_state":streams["strategy-state"],"snapshot_batches":streams["snapshot-batches"]}
 
 
 def main():
@@ -215,6 +229,8 @@ def main():
     prefix=oms_settings.get("MAI_TAI_REDIS_STREAM_PREFIX","mai_tai")
     database=oms_settings.get("configured_database_name","")
     before={name:guarded(lambda name=name:log_sample(name)) for name in ("oms","strategy","schwab-1m-v2","orb-schwab","market-data","momentum-paper","control")}
+    streams={name:guarded(lambda name=name:stream_overview(prefix,name,16 if name=="market-data" else 1))
+             for name in ("strategy-state","market-data","snapshot-batches","market-data-subscriptions")}
     result={"mode":"READ_ONLY_REHEARSAL_NO_AUTH_REFRESH","observed_at_utc":observed.isoformat(),
             "observed_at_et":observed.astimezone(ZoneInfo("America/New_York")).isoformat(),
             "head":guarded(lambda:run(["git","-C",str(REPO),"rev-parse","HEAD"])),
@@ -222,9 +238,7 @@ def main():
             "timezone":guarded(lambda:run(["timedatectl","show","-p","Timezone","--value"])),
             "load_1m":os.getloadavg()[0],"units":units,"logs_baseline":before,
             "database_gate":guarded(lambda:sql_gate(database)),"v2_state":guarded(lambda:v2_state(prefix)),
-            "health":guarded(health),"scanner":guarded(scanner),
-            "existing_streams":{name:guarded(lambda name=name:stream_overview(prefix,name,16 if name=="market-data" else 1))
-                                for name in ("strategy-state","market-data","snapshot-batches","market-data-subscriptions")},
+            "health":guarded(health),"scanner":scanner(streams),"existing_streams":streams,
             "warning_health_setup":"UNKNOWN_until_reviewed_config_and_live_sources"}
     config_path=Path(gateway_settings.get("MAI_TAI_MARKET_DATA_MOMENTUM_WARNING_HEALTH_PATH",
                                           "/run/project-mai-tai/momentum-warning-health.json"))

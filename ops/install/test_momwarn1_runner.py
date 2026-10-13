@@ -83,6 +83,26 @@ class RunnerControls(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"missing"):
                 collector.sql_gate("project_mai_tai")
 
+    def test_scanner_projection_keeps_counts_not_large_payload(self):
+        row=dict(event_type="snapshot_batch",source_service="market-data-gateway",
+                 produced_at="ORIGINAL_TIME",safe_fields=dict(completed_at="ORIGINAL_TIME"),
+                 counts=dict(snapshots=13270),source_payload_bytes=6129019)
+        with patch.object(collector,"run",return_value=json.dumps([row])) as command:
+            result=collector.stream_overview("mai_tai","snapshot-batches")
+            self.assertEqual(result["rows"],[row])
+            self.assertIn("EVAL_RO",command.call_args.args[0])
+            self.assertNotIn("XADD",collector.STREAM_PROJECT)
+            self.assertNotIn("subscribe",collector.STREAM_PROJECT.lower())
+
+    def test_scanner_projection_empty_is_explicit(self):
+        with patch.object(collector,"run",return_value="{}"):
+            self.assertEqual(collector.stream_overview("mai_tai","snapshot-batches")["rows"],[])
+
+    def test_scanner_projection_unreadable_is_not_zero(self):
+        with patch.object(collector,"run",return_value="ERR existing payload bound"):
+            with self.assertRaises(ValueError):
+                collector.stream_overview("mai_tai","snapshot-batches")
+
     def test_mutation_refused_before_environment_read(self):
         with patch.object(support.os,"geteuid",return_value=0), \
                 patch.object(support,"approval",side_effect=ValueError("not approved")), \
