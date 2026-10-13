@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from dataclasses import asdict
 import json
@@ -78,6 +79,21 @@ class MarketDataPublisher:
         snapshots: Iterable[SnapshotRecord],
         reference_data: Iterable[ReferenceDataPayload],
     ) -> str:
+        # Whole-market model construction and JSON serialization must not block
+        # watched-name T/Q or the independent A publisher on the gateway loop.
+        encoded = await asyncio.to_thread(
+            self._encode_snapshot_batch, tuple(snapshots), tuple(reference_data),
+        )
+        return await self.redis.xadd(
+            stream_name(self.stream_prefix, "snapshot-batches"),
+            {"data": encoded},
+            maxlen=self.snapshot_batch_stream_maxlen,
+            approximate=True,
+        )
+
+    def _encode_snapshot_batch(
+        self, snapshots: Iterable[SnapshotRecord], reference_data: Iterable[ReferenceDataPayload],
+    ) -> str:
         event = SnapshotBatchEvent(
             source_service=self.service_name,
             payload=SnapshotBatchPayload(
@@ -85,12 +101,7 @@ class MarketDataPublisher:
                 reference_data=list(reference_data),
             ),
         )
-        return await self.redis.xadd(
-            stream_name(self.stream_prefix, "snapshot-batches"),
-            {"data": event.model_dump_json()},
-            maxlen=self.snapshot_batch_stream_maxlen,
-            approximate=True,
-        )
+        return event.model_dump_json()
 
     async def publish_trade_tick(self, record: TradeTickRecord) -> str:
         event = TradeTickEvent(

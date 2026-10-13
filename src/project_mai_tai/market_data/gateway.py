@@ -346,7 +346,9 @@ class MarketDataGatewayService:
 
     async def publish_snapshot_batch_once(self, snapshots: Iterable[SnapshotRecord]) -> int:
         snapshot_list = list(snapshots)
-        reference_payloads = self.reference_cache.as_payloads(snapshot.symbol for snapshot in snapshot_list)
+        reference_payloads = await asyncio.to_thread(
+            self.reference_cache.as_payloads, (snapshot.symbol for snapshot in snapshot_list),
+        )
         # Count symbols the scanner will silently drop for want of a reference entry (see __init__).
         # `as_payloads` yields ReferenceDataPayload objects in production; accept plain mappings too
         # so a swapped-in cache (tests, fixtures) can't turn an observability counter into a crash.
@@ -501,9 +503,18 @@ class MarketDataGatewayService:
         interval = max(1, self.settings.market_data_snapshot_interval_seconds)
         while not stop_event.is_set():
             try:
+                fetch_started_ns = time.monotonic_ns()
                 snapshots = await asyncio.to_thread(self.snapshot_provider.fetch_all_snapshots)
+                publish_started_ns = time.monotonic_ns()
                 count = await self.publish_snapshot_batch_once(snapshots)
-                self.logger.info("published snapshot batch with %s records", count)
+                publish_completed_ns = time.monotonic_ns()
+                self.logger.info(
+                    "published snapshot batch with %s records publish_started_monotonic_ns=%s "
+                    "publish_completed_monotonic_ns=%s publish_wall_ms=%.3f fetch_wall_ms=%.3f",
+                    count, publish_started_ns, publish_completed_ns,
+                    (publish_completed_ns - publish_started_ns) / 1e6,
+                    (publish_started_ns - fetch_started_ns) / 1e6,
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:
