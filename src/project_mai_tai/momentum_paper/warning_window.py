@@ -311,6 +311,8 @@ class WarningWindow:
 @dataclass
 class _Candidate:
     last_warning_ms: int
+    admitted_ms: int
+    last_eligible_observed_ms: int | None = None
     quiet_since_ms: int | None = None
     last_quiet_sample_ms: int | None = None
 
@@ -350,6 +352,28 @@ class WarningCandidates:
             candidate.quiet_since_ms = None
             candidate.last_quiet_sample_ms = None
 
+    def observe_eligible_trade(self, symbol: str, *, observed_ms: int) -> None:
+        candidate = self._candidates.get(symbol.upper())
+        if candidate is not None and observed_ms >= candidate.admitted_ms:
+            previous = candidate.last_eligible_observed_ms
+            if previous is None or observed_ms >= previous:
+                candidate.last_eligible_observed_ms = observed_ms
+
+    def expire_no_data(self, *, observed_ms: int, active_path_symbols: set[str]) -> tuple[CandidateOutcome, ...]:
+        if observed_ms < self._now_ms:
+            return ()
+        self._now_ms = observed_ms
+        active = {symbol.upper() for symbol in active_path_symbols}
+        outcomes = []
+        for symbol, candidate in sorted(self._candidates.items()):
+            boundary = (candidate.last_eligible_observed_ms
+                        if candidate.last_eligible_observed_ms is not None else candidate.admitted_ms)
+            if symbol not in active and observed_ms - boundary >= 60_000:
+                self._candidates.pop(symbol)
+                # Silence is lease expiry, not cooling proof; a new warning can re-admit.
+                outcomes.append(CandidateOutcome(symbol, "DROPPED", "expired_no_data"))
+        return tuple(outcomes)
+
     def observe(
         self, evaluation: WarningEvaluation, *, active_path_symbols: set[str],
         update_cooling: bool = True,
@@ -371,7 +395,7 @@ class WarningCandidates:
                     return CandidateOutcome(symbol, "REFUSED", "warning_cap_full")
                 if len(self._candidates) >= self.owner_cap:
                     return CandidateOutcome(symbol, "REFUSED", "warning_owner_cap_full")
-                self._candidates[symbol] = _Candidate(now)
+                self._candidates[symbol] = _Candidate(now, admitted_ms=now)
                 return CandidateOutcome(symbol, "ADMITTED", "observed_warning")
             candidate.last_warning_ms = now
             candidate.quiet_since_ms = None

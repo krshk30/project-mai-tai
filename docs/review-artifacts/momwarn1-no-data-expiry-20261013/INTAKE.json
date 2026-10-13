@@ -1,0 +1,16 @@
+{
+  "id": "MOMWARN1-NO-DATA-EXPIRY-POLICY",
+  "source": "Human new authorizedLATEST01:5x SHA42a09096b133509dd4eb313ed53ea445951896a2d9928a11dd39fc2639b443b1",
+  "priority": 4,
+  "owner": "Anscombe sole local paper-consumer writer",
+  "base": "74a830421d3e72450ec7207b383e5d862b32b5df",
+  "branch": "codex/momwarn1-no-data-expiry-20261013",
+  "status": "local_controls89_PASS_preparing_exact_head_regressions",
+  "assessment": "WarningCandidates owns bounded proposals; consumerexpire_quiet is called by service1Hz tick. Both enginesactive_symbols include pending and open events, unionprotects both ledgers. Warningownerreplace is already T-only gateway lane; no gateway/Settings/OMS change. Emptywindowbounds currentlyneverrelease withoutcoolproof; new humanapproval allows separate60snoeligible lease, NEVER cooled/no cooldown, nextwarningcanreadmit",
+  "clock_policy": "Lease starts actualadmission observationms and resets on lastaccepted eligible rawcallback observationms ONLY after existing SIP/observed nonfuture<=1s and monotonicprint guards. A warning refresh/noneligible/future/stale/duplicate mustnotextend. Clockregressionfailsclosed(no expiry). On expiryreset per-symbolrawcoverage anchors topreventbridgingsubscriptiongap; retain monotonicrawtimestamp fence",
+  "file_plan": ["momentum_paper/warning_window.py boundedcandidate lease", "momentum_paper/warning_consumer.py validatedeligible tracking and expiry", "services/momentum_paper_app.py expiry INFOlog only", "dedicated focusedtests and existingcooling controls suppliedeligibleprints withoutweakening assertions", "own receipts/evidence/localbundle"],
+  "next_action": "Freeze sourcecommit then exactfocusedpaper/warning/snapshot/ownership/defaultOFF/provenance regressions+Ruff/diff. Initial79P2F were testfixtures(1499ms reordered sample hitstaleguard; globalcooling clockguard intentionallyraises); correctedonlynewfixture boundaries, no sourceguard weakening. Controls89PASS1.58s. No60s/loadbenchmark; mainserializesoriginalallON3/3 afterreview. Package locally fornextafterclose, no provider/prod/queue/frozenWT writes",
+  "completion_criterion": "RequiredfocusedactualcontrolsPASS+existingpaper/warning/snapshot/ownergatewayregressions/Ruff/diffscope, recognized-marker localcommit/testedhead/XML/evidence/localbundle; no sourcewiden outsidepaperconsumer, notinstallation/performancequalification",
+  "preserved": "STUCK9a9816cb/H74source/package and MOMinstalledWT untouched; W6 main-owned/disjoint",
+  "attachment_limitation": "NewmanagedH74checkoutcreated, attachmentretry100identitycap; reusepathnoextraWT"
+}

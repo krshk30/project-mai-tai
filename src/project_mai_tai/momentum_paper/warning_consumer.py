@@ -88,7 +88,14 @@ class MomentumWarningConsumer:
             if self.coverage is not None else observed_ms // 1000 * 1000
         )
         active = legacy_active | self.engine.active_symbols
-        outcomes = []
+        outcomes = list(self.candidates.expire_no_data(
+            observed_ms=observed_ms, active_path_symbols=active,
+        ))
+        for outcome in outcomes:
+            self._raw_first_ms.pop(outcome.symbol, None)
+            self._raw_coverage.pop(outcome.symbol, None)
+        if outcomes:
+            self.last_status = "expired_no_data"
         for symbol in sorted(self.desired_symbols(legacy_active)):
             window = self.windows.get(symbol)
             if window is not None:
@@ -214,6 +221,8 @@ class MomentumWarningConsumer:
             self.last_status = "raw_duplicate_or_out_of_order"
             return ()
         self._last_raw_ns[symbol] = sip_timestamp_ns
+        if trade.eligible:
+            self.candidates.observe_eligible_trade(symbol, observed_ms=observed_ns // 1_000_000)
         self._raw_first_ms.setdefault(symbol, trade.sip_ts_ms)
         previous = self._raw_coverage.get(symbol)
         records: tuple[MomentumTapeRecord, ...] = ()

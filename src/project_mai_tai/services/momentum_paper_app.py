@@ -246,6 +246,10 @@ class MomentumPaperService:
             outcomes = self._warning.expire_quiet(
                 observed_ms=self._now_ms(), legacy_active=self._engine.active_symbols,
             )
+            for outcome in outcomes:
+                if outcome.reason == "expired_no_data":
+                    logger.info("[MOMENTUM-WARNING] symbol=%s status=%s reason=expired_no_data",
+                                outcome.symbol, outcome.status)
             if any(outcome.status == "DROPPED" for outcome in outcomes):
                 await self._sync_gateway_subscriptions()
             sample_ns = wall_time.time_ns()

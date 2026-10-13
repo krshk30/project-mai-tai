@@ -239,6 +239,11 @@ def _quiet_prefix(model, *, legacy_active=frozenset(), fault_at=None):
             model.invalidate_transport("controlled_xread_failure")
         else:
             model.complete_read(f"{START+(offset+1)*1000}-0", observed_ns=item.published_utc_ns)
+        if not model.engine.active_symbols:
+            # Keep cooling-proof controls independent of the approved no-data lease.
+            stamp = START+(offset+1)*1000
+            model.observe_trade(trade((offset+1)*1000), sip_timestamp_ns=stamp*1_000_000,
+                                observed_ns=item.published_utc_ns)
         outcomes.extend(model.expire_quiet(observed_ms=START+(offset+1)*1000,
                                            legacy_active=set(legacy_active)))
     return outcomes
@@ -276,7 +281,7 @@ def test_actual_filled_warning_path_is_not_evicted_by_quiet_transport():
     assert all(row["fill"]["price"] == "12.1" for row in model.engine.active_events)
 
 
-def test_empty_window_bounds_hold_can_exhaust_cap_without_unauthorized_idle_release():
+def test_empty_window_bounds_release_after_approved_no_data_lease_admits_seventeenth():
     symbols = {f"S{index}" for index in range(16)}
     model = MomentumWarningConsumer(
         prior_closes={symbol: D("10") for symbol in symbols | {"OTHER", "NEW"}},
@@ -285,19 +290,27 @@ def test_empty_window_bounds_hold_can_exhaust_cap_without_unauthorized_idle_rele
     for index, symbol in enumerate(sorted(symbols)):
         item = replace(bar(high="11"), symbol=symbol, sequence=index+1)
         model.observe_aggregate(item, observed_ns=item.published_utc_ns, legacy_active=set())
-    for offset in range(1, 201):
-        item = replace(bar(offset), symbol="OTHER", sequence=16+offset)
+    early = replace(bar(1, high="11"), symbol="NEW", sequence=17)
+    refused, _ = model.observe_aggregate(early, observed_ns=early.published_utc_ns, legacy_active=set())
+    assert refused.reason == "warning_cap_full" and model.desired_symbols(set()) == symbols
+    dropped = []
+    for offset in range(1, 61):
+        item = replace(bar(offset), symbol="OTHER", sequence=17+offset)
         model.observe_aggregate(item, observed_ns=item.published_utc_ns, legacy_active=set())
         model.complete_read(f"{offset+1}-0", observed_ns=item.published_utc_ns)
-        model.expire_quiet(observed_ms=START+(offset+1)*1000, legacy_active=set())
+        outcomes = model.expire_quiet(observed_ms=START+(offset+1)*1000, legacy_active=set())
+        dropped.extend(row for row in outcomes if row.status == "DROPPED")
+        if offset < 60:
+            assert model.desired_symbols(set()) == symbols
     assert model.coverage.lineage == "observed_transport"
-    assert model.desired_symbols(set()) == symbols
-    assert set(model.cooling_status.values()) == {"empty_window_bounds"}
+    assert model.desired_symbols(set()) == set()
+    assert len(dropped) == 16 and {row.reason for row in dropped} == {"expired_no_data"}
+    assert set(model.cooling_status.values()) == {"expired_no_data"}
     assert not model.engine.active_events
-    item = replace(bar(201, high="11"), symbol="NEW", sequence=217)
-    refusal, _ = model.observe_aggregate(item, observed_ns=item.published_utc_ns, legacy_active=set())
-    assert refusal.reason == "warning_cap_full"
-    print("DORMANT_CAP controlled=16held next=warning_cap_full remaining_gap=empty_window_bounds")
+    item = replace(bar(61, high="11"), symbol="NEW", sequence=78)
+    admitted, _ = model.observe_aggregate(item, observed_ns=item.published_utc_ns, legacy_active=set())
+    assert admitted.status == "ADMITTED" and model.desired_symbols(set()) == {"NEW"}
+    print("DORMANT_CAP controlled=16expired_no_data next=ADMITTED no_cooling_claim=True")
 
 
 def test_observed_a_transport_cannot_be_promoted_to_complete_raw_history():
@@ -363,6 +376,8 @@ async def test_service_cooling_uses_checkpoints_and_emits_warning_owner_release(
                 {**item.__dict__, "version": 1, "event_type": "aggregate"}, default=str,
             ))
             service._warning.complete_read(f"{START+(offset+1)*1000}-0", observed_ns=now_ns)
+            service._warning.observe_trade(trade((offset+1)*1000),
+                sip_timestamp_ns=(START+(offset+1)*1000)*1_000_000, observed_ns=now_ns)
             await service._tick()
     finally:
         service._gateway_task = None
