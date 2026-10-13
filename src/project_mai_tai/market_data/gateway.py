@@ -33,9 +33,10 @@ from project_mai_tai.market_data.protocols import SnapshotProvider, TradeStreamP
 from project_mai_tai.market_data.publisher import MarketDataPublisher
 from project_mai_tai.market_data.reference_cache import ReferenceDataCache
 from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealthReader, WarningWatchdog
+from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
-from project_mai_tai.strategy_core.time_utils import is_fillable_et_session
+from project_mai_tai.strategy_core.time_utils import EASTERN_TZ, is_fillable_et_session
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ class MarketDataGatewayService:
         warning_health_reader: WarningHealthReader | None = None,
     ):
         self.settings = settings or get_settings()
+        self._momentum_validation_window = MomentumValidationWindow.from_settings(self.settings)
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
         self.publisher = MarketDataPublisher(
             self.redis,
@@ -733,7 +735,9 @@ class MarketDataGatewayService:
             self._warning_inflight = record
             try:
                 # A normal daily boundary takes precedence over stale pending rows.
-                if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
+                now = datetime.now(UTC)
+                end = self._momentum_validation_window.gateway_end_for(now.astimezone(EASTERN_TZ).date())
+                if not is_fillable_et_session(now, 4, end.hour, end_minute=end.minute):
                     self._warning_drop_count += 1
                     await self._end_warning_window()
                     continue
@@ -769,7 +773,9 @@ class MarketDataGatewayService:
     async def _warning_monitor_once(self) -> None:
         if self._warning_revert_reason is not None:
             return
-        if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
+        now = datetime.now(UTC)
+        end = self._momentum_validation_window.gateway_end_for(now.astimezone(EASTERN_TZ).date())
+        if not is_fillable_et_session(now, 4, end.hour, end_minute=end.minute):
             await self._end_warning_window()
             return
         try:
