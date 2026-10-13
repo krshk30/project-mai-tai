@@ -106,6 +106,7 @@ async def test_first_monitor_permission_failure_never_subscribes_A(setup, caplog
     mode = path.stat().st_mode & 0o777
     path.chmod(0)
     try:
+        caplog.clear()  # Keep the exact-one diagnostic assertion scoped to monitor calls.
         with caplog.at_level(logging.WARNING, logger="market-data-gateway"):
             await svc._warning_monitor_once()
             await svc._warning_monitor_once()

@@ -36,6 +36,7 @@ async def test_native_in_window_rebaseline_preserves_real_facts_TQ_and_gap(setup
     path.write_text("INFO post-copy retained\n" * (size // 10 + 1) if regrown else "")
     assert path.stat().st_ino == inode
     assert (path.stat().st_size >= size) is regrown
+    caplog.clear()  # Subscription setup is outside the two monitor calls under test.
     with caplog.at_level(logging.WARNING, logger="market-data-gateway"):
         await svc._warning_monitor_once()
         await svc._warning_monitor_once()
