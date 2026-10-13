@@ -1,0 +1,113 @@
+STUCKALERT1 V1 LOCAL VERIFICATION -- OFF BOX, MAIN REVIEW STILL REQUIRED
+
+EXACT SOURCE / SCOPE
+Tested source6de4a9dbc63836717b9607711745bcce9badd289
+Base E860860fba4c7d59edff18eb23468ba576dcb83f4d57
+Branch codex/stuckalert1-reconciler-20261012, clean before/after final test.
+Source commits48a7da714f28f8f80296339e7ff18fed6463cb3e then6de4a9dbc63836717b9607711745bcce9badd289.
+Both recognized Co-Authored-By: OpenAI Codex <noreply@openai.com>.
+Only runtime file reconciliation/service.py. Other additions dedicated tests,
+recorded fixture, own intake/assessment/capture query/receipt. No OMS/quotes/
+trading/Settings/models/schema/MOM/queue/GitHub/provider/production changes.
+
+HUMAN V1 POLICY
+21:2x explicitly removes per-order freshness gate/build. Accepted resting
+marker on BUY STOP/STOP_LIMIT, resting_entry=true or exactrth_resting_mirror
+allows intentional resting orders/their associated intents to stop paging.
+Broker order ID never used as ACK/freshness/exemption proof, including null IDs.
+Live Schwab/Webull account fence; partial/nonresting/sell/unknown shapes stay
+outside exemption. Intent must have matching-account/strategy/symbol/side active
+associated orders and ALL must qualify; mixed noack, no-order or terminal-only
+chains stay alerts. Literal unknown statuses remain explicitly alertable.
+Latest broker-origin contradictory terminal/unknown event prevents exemption.
+Tied broker event timestamps prefer contradiction over accepted, never random
+UUID sorting. Broker timestamps read for contradictory status, NOT freshness.
+Existing accepted marker is used as approved v1; legacy stored event_source
+unknown is not upgraded to broker or claimed as independently proven provenance.
+
+ACTUAL242 RECONSTRUCTION / DENOMINATOR
+Recorded SystemIncident rows openedOct05 00:00ET throughOct13 00:00ET, allstatuses:
+119stuck_order+123stuck_intent=242uniqueincidentIDs. Currentlyclosed was NOT used
+to produce a zero. Replay seeds original alert status/updated_at; associated order
+metadata/status from retained last event_at<=first_opened, then calls actual
+reconciler stuck builders with controlled historicalclock in local SQLite.
+119originalorderaccepted plus123intentsubmitted meet original>180s age/status
+rule, explicitly asserted before counting baseline. Per-case transaction rollback
+isolates repeated identities. No provider/box write or simulated historicalACK.
+Fixture251lines186572bytes,16paged READ ONLY2500ms DB captures; non-atomic capture
+declared. Broker event time lacks software receipt time, so this is RECORDED
+INCIDENT RECONSTRUCTION, NOT causal software-arrival/network replay.
+All242actual incident opening times RTH; PM breadth separately CONTROLLED.
+
+kind          recorded_before    actual_after    suppressed
+stuck_order                119               0           119
+stuck_intent               123               1           122
+TOTAL                      242               1           241
+
+Retained real case1a7fdc71-60e3-410c-8d49-bcea106cb322, GIXI,
+intent371a9463-5d18-4d1d-8487-1392750f8065 status submitted,
+alert_opened2026-10-12T16:42:09.919890Z;
+relatedorder86a0633c-f350-416e-8c9a-1dbff2b9dbb6 broker-cancelled16:42:04Z.
+This is mandatory broker-terminal/book-open preservation. Literal242->0 NOT
+achieved/claimed; do not weaken assertion or count currentclosed status as proof.
+
+Raw retained event-source counts, unchanged:
+accepted broker57(27order+30intentWebull), accepted unknown184(100Schwab+84Webull),
+cancelled broker1(SchwabGIXIintent). Do not claim241independentbroker-originACKs
+from these rows; approved marker-only policy does not fabricate origin/freshness.
+Per-case immutable identity/currentstored order_type and recorded metadata sources
+are visible in fixture; software availability of retained events is UNMEASURED.
+
+CONTROLLED INJECTIONS / OTHER CHECKS
+Five alert shapes pending,submitted,orphan fleet944,unknown,brokerterminal:
+5x2brokers(Schwab/Webull)x2sessions(PM/RTH)=20controls, allPASS. For noack shapes,
+an arbitrary nonnullbrokerID still cannot suppress an alert. Orphan intent stays
+one intentalert, others retain order+intentalerts. Day-old acceptedbroker event
+is a positive v1 control, not an old per-order-freshness failure.
+16positive controls2STOPtypes x2markers x2brokers x2sessions, nullablebrokerID.
+8additional scope/ambiguity guards: unknownbroker event,sell,wrongtype/marker,
+mixednoack sibling,unknownintent,otherprovider,badmetadata.3same-timestamp
+accepted-vs-cancelled/filled/unknown contradictions remain alertable.
+Exactly180s noack notstale;180s+1microsecond still alerts. No threshold change.
+
+OPTIONAL ACCOUNT SYNC ALERT
+GAP / OMITTED per human ruling. No persisted positive per-account OMS successful
+sync-completion metric exists in reviewed E860 DB/reconciler contract. Global OMS
+pass end, heartbeat production, local row/BrokerOrderEvent time and position-read
+receipts are not substitutes. No producer/schema/OMS change or fake>120s sample.
+
+TESTS / EXECUTION
+Initial frozen48a controls75PASS3.85s. Source followup fixes tied-event precedence
+and adds controls (not retry-until-green); final exact6de controls78PASS3.88s.
+Final49S1 nodes include one242replay test plus48injected/edge controls;29existing
+reconciliation/logging/heartbeat tests unchanged. Ruff/diffcheckPASS.
+No broad test,60s hotpath,heavybenchmark,GC/harness edit or production restart.
+Human explicitCLEAR after reviewed8ca installation preceded focused execution.
+
+OUTPUTS / SHA256
+/tmp/stuckalert1-v1-final-20261012.xml
+6a3afb9d606ed5f211e2826f66544167b6550c9a5c9cb61ca2696e1cab9ec76d
+/tmp/stuckalert1-v1-final-20261012.log
+5e3fca6a518d0c9d1b37bc793e094f0419c8a6d3c4e11a5472867bb53277e879
+tests/fixtures/stuckalert1_actual242.json
+b7858e675311f8fdee79f0abb310d2aa203de087cf7074c2b6f37ab8ee850a2b
+src/project_mai_tai/reconciliation/service.py
+36b5c5616b91a5ecfe63e0a5e8c7377f55254747b670bf02cdac8825577dd79b
+tests/unit/test_stuckalert1.py
+c2245665321d6be29576feee94c9fa65ac51499a74c4fa1fe1f1f43ff0085e62
+
+COMMAND (own isolated E860 worktree)
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_stuckalert1.py tests/unit/test_reconciliation_service.py tests/unit/test_reconciler_logging.py tests/unit/test_reconciler_heartbeat_redis_reload.py -q -s --junitxml=/tmp/stuckalert1-v1-final-20261012.xml > /tmp/stuckalert1-v1-final-20261012.log 2>&1
+
+SIDE FINDING, SEPARATE REAL DENOMINATOR
+144Webullv2BUY STOP_LIMIT submittedOct05-Oct12ET;36NULLbrokerID=15brokerrejected,
+17broker-originaccepted->cancelled,4unknown-originaccepted->broker-cancelled.
+Initial response can legitimately have coid only. Why each acceptedrow never
+acquired persistedbrokerID remains UNMEASURED; no OMS fix or claimed root cause.
+Existing raw rollout lines3694/3738/3747 contain read-only SQL/results; current
+241suppression reconstruction is not that144-order population or transport proof.
+
+STATUS
+Local reconciler-only implementation/verification complete for review. Whole
+literal242->0 expectation not met because mandatory actualGIXIalert preserved.
+Off-box only; main owns acceptance/integration/futureinstall. No active tests.
