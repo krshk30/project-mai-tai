@@ -187,6 +187,7 @@ class MomentumPaperService:
         self._last_warning_sample_ns = 0
         self._warning_subscribed_symbols: set[str] = set()
         self._warning_owner_uncertain = False
+        self._warning_subscription_lock = asyncio.Lock()
         self._warning_invalid_messages = 0
         self._last_warning_invalid_log_ns = 0
 
@@ -671,32 +672,34 @@ class MomentumPaperService:
             else (self._engine.active_symbols if self._engine is not None else set())
         )
         if self._warning is not None:
-            shared = self._warning.desired_symbols(desired) if desired_override is None else desired
-            if len(shared) > _MAX_SUBSCRIBED_SYMBOLS:
-                raise RuntimeError("Momentum shared subscription cap breached")
-            warning_desired = (
-                self._warning.desired_symbols(set()) if desired_override is None else set()
-            )
-            if (
-                force or self._warning_owner_uncertain
-                or warning_desired != self._warning_subscribed_symbols
-            ):
-                warning_event = MarketDataSubscriptionEvent(
-                    source_service=SERVICE_NAME,
-                    payload=MarketDataSubscriptionPayload(
-                        consumer_name="momentum-warning", mode="replace",
-                        symbols=sorted(warning_desired),
-                    ),
+            # A rewarning must be requested after an in-flight expiry replacement finishes.
+            async with self._warning_subscription_lock:
+                shared = self._warning.desired_symbols(desired) if desired_override is None else desired
+                if len(shared) > _MAX_SUBSCRIBED_SYMBOLS:
+                    raise RuntimeError("Momentum shared subscription cap breached")
+                warning_desired = (
+                    self._warning.desired_symbols(set()) if desired_override is None else set()
                 )
-                self._warning_owner_uncertain = True
-                await self.redis.xadd(
-                    stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
-                    {"data": warning_event.model_dump_json()},
-                    maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
-                    approximate=True,
-                )
-                self._warning_subscribed_symbols = set(warning_desired)
-                self._warning_owner_uncertain = False
+                if (
+                    force or self._warning_owner_uncertain
+                    or warning_desired != self._warning_subscribed_symbols
+                ):
+                    warning_event = MarketDataSubscriptionEvent(
+                        source_service=SERVICE_NAME,
+                        payload=MarketDataSubscriptionPayload(
+                            consumer_name="momentum-warning", mode="replace",
+                            symbols=sorted(warning_desired),
+                        ),
+                    )
+                    self._warning_owner_uncertain = True
+                    await self.redis.xadd(
+                        stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
+                        {"data": warning_event.model_dump_json()},
+                        maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
+                        approximate=True,
+                    )
+                    self._warning_subscribed_symbols = set(warning_desired)
+                    self._warning_owner_uncertain = False
         if len(desired) > _MAX_SUBSCRIBED_SYMBOLS:
             raise RuntimeError("Momentum subscription cap breached")
         first_announcement = (

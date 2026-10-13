@@ -1,6 +1,7 @@
 """Controlled clocks and fake owner transport; no provider/socket/load benchmark."""
 
 from dataclasses import replace
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal as D
 import json
@@ -232,3 +233,61 @@ async def test_actual_service_logs_expires_rewarns_and_preserves_other_owner_TQ(
     requests = await apply_warning_requests()
     assert [r.payload.symbols for r in requests if r.payload.consumer_name == "momentum-warning"] == [["TEST"]]
     assert provider._warning_trade_symbols == {"TEST"} and provider._subscriptions == {"TEST"}
+
+
+@pytest.mark.asyncio
+async def test_rewarning_during_pending_expiry_write_is_last_owner_replacement(monkeypatch):
+    redis = AsyncMock()
+    service = MomentumPaperService(Settings(_env_file=None), redis_client=redis, store=_store())
+    service._engine = MomentumPaperEngine(prior_closes={"TEST": D("10")}, condition_version="fixture",
+                                          coverage_started_ms=START)
+    service._warning = admitted()
+    now_ms = START+1000
+    service._clock = lambda: datetime.fromtimestamp(now_ms/1000, tz=UTC)
+    service._session_date = service._clock().date()
+    monkeypatch.setattr("project_mai_tai.services.momentum_paper_app.wall_time.time_ns", lambda: now_ms*1_000_000)
+    await service._sync_gateway_subscriptions()
+    redis.reset_mock()
+    release_started, release_finish, rewarning_seen = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    completed_replacements = []
+
+    async def write(stream, fields, **_kwargs):
+        data = json.loads(fields["data"])
+        if stream.endswith(":market-data-subscriptions"):
+            payload = data["payload"]
+            if payload["consumer_name"] == "momentum-warning":
+                if payload["symbols"] == []:
+                    release_started.set()
+                    await release_finish.wait()
+                completed_replacements.append(payload["symbols"])
+        elif data.get("event_type") == "decision" and data.get("status") == "ADMITTED":
+            rewarning_seen.set()
+        return "CONTROLLED-redis-id"
+
+    redis.xadd.side_effect = write
+    service._gateway_task = object()
+    now_ms = START+61_000
+    service._last_heartbeat = service._clock()
+    expiry = asyncio.create_task(service._tick())
+    rewarning = None
+    try:
+        await asyncio.wait_for(release_started.wait(), 1)
+        fresh = replace(bar(61, high="11"), close=D("10"), sequence=2)
+        now_ms = fresh.end_ms
+        rewarning = asyncio.create_task(service._handle_warning_event(
+            json.dumps({**fresh.__dict__, "version": 1, "event_type": "aggregate"}, default=str)))
+        await asyncio.wait_for(rewarning_seen.wait(), 1)
+        await asyncio.sleep(0)
+        assert not rewarning.done() and completed_replacements == []
+        release_finish.set()
+        await asyncio.wait_for(asyncio.gather(expiry, rewarning), 1)
+        assert completed_replacements == [[], ["TEST"]]
+        assert service._warning_subscribed_symbols == {"TEST"}
+        assert not service._warning_owner_uncertain
+    finally:
+        release_finish.set()
+        for task in (expiry, rewarning):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(*(task for task in (expiry, rewarning) if task is not None), return_exceptions=True)
+        service._gateway_task = None
