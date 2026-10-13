@@ -1,6 +1,7 @@
 """Bounded warning proposals and separate paper evaluation; no provider actions."""
 
 from __future__ import annotations
+from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 
 from collections import OrderedDict
 from datetime import UTC, datetime, time
@@ -29,13 +30,15 @@ from project_mai_tai.momentum_paper.warning_window import (
 class MomentumWarningConsumer:
     def __init__(self, *, prior_closes: dict[str, Decimal], condition_version: str,
                  coverage_started_ms: int, max_window_symbols: int = 20_000,
-                 owner_cap: int = 16) -> None:
+                 owner_cap: int = 16,
+                 validation_window: MomentumValidationWindow | None = None) -> None:
         if max_window_symbols < 16:
             raise ValueError("warning_window_symbol_bound")
         self.engine = MomentumPaperEngine(
             prior_closes=prior_closes, condition_version=condition_version,
             coverage_started_ms=coverage_started_ms,
             strategy_windows=MOMENTUM_WARNING_STRATEGIES,
+            validation_window=validation_window,
         )
         self.candidates = WarningCandidates(owner_cap=owner_cap)
         self.windows: OrderedDict[str, WarningWindow] = OrderedDict()
@@ -143,7 +146,8 @@ class MomentumWarningConsumer:
         if (
             not symbol_is_eligible(bar.symbol)
             or self.engine.prior_closes.get(bar.symbol, Decimal("0")) < 1
-            or clock.weekday() >= 5 or not time(4) <= clock.time() < time(9, 30)
+            or clock.weekday() >= 5
+            or not time(4) <= clock.time() < self.engine.validation_window.gateway_end_for(clock.date())
         ):
             return CandidateOutcome(bar.symbol, "IGNORED", "warning_symbol_or_time_filter"), records
         window = self.windows.get(bar.symbol)

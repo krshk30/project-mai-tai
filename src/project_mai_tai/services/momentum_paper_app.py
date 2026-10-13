@@ -1,6 +1,7 @@
 """Isolated, broker-disconnected Momentum 30 / Momentum 60 paper service."""
 
 from __future__ import annotations
+from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 
 import argparse
 import asyncio
@@ -159,6 +160,7 @@ class MomentumPaperService:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.settings = settings or get_settings()
+        self._validation_window = MomentumValidationWindow.from_settings(self.settings)
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
         self.session_factory = session_factory
         self.store = store
@@ -237,7 +239,8 @@ class MomentumPaperService:
             self._historical_completed = []
             self._complete_sessions = 0
             self._session_closed = False
-        if _PREPARE_AT <= et.time() < _CLOSE_AT and self._engine is None:
+        close_at = self._validation_window.paper_close_for(et.date())
+        if _PREPARE_AT <= et.time() < close_at and self._engine is None:
             await self._prepare_session(et.date())
         if self._engine is None:
             return
@@ -276,11 +279,11 @@ class MomentumPaperService:
             and (now - self._last_snapshot_at).total_seconds() > _SNAPSHOT_STALE_SECONDS
         ):
             self._mark_gateway_disconnected()
-        if _STREAM_AT <= et.time() < _CLOSE_AT and self._gateway_task is None:
+        if _STREAM_AT <= et.time() < close_at and self._gateway_task is None:
             await self._start_gateway()
         if self._gateway_task is not None:
             await self._sync_gateway_subscriptions()
-        if et.time() >= _CLOSE_AT and not self._session_closed:
+        if et.time() >= close_at and not self._session_closed:
             await self._persist(self._engine.close_session(self._now_ms()))
             if self._warning is not None:
                 await self._persist(self._warning.engine.close_session(self._now_ms()))
@@ -327,6 +330,7 @@ class MomentumPaperService:
             prior_closes={str(symbol): Decimal(str(price)) for symbol, price in raw_closes.items()},
             condition_version=self._condition_snapshot.version,
             coverage_started_ms=self._now_ms(),
+            validation_window=self._validation_window,
         )
         self._engine.seed_reentry_boundaries(existing)
         warning_rows: list[MomentumTapeRecord] = []
@@ -339,6 +343,7 @@ class MomentumPaperService:
                 condition_version=self._condition_snapshot.version,
                 coverage_started_ms=self._now_ms(),
                 owner_cap=int(getattr(self.settings, "market_data_momentum_warning_owner_cap", 16)),
+                validation_window=self._validation_window,
             )
             self._warning.engine.seed_reentry_boundaries(warning_rows)
             incomplete_warning = self.store.incomplete_logical_ids(warning_rows)

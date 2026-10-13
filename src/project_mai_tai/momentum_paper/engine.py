@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from project_mai_tai.events import MarketSnapshotPayload
 from project_mai_tai.market_data.tick_time import normalize_ts_ns
+from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 from project_mai_tai.momentum_paper.models import (
     MOMENTUM_STRATEGIES,
     MOMENTUM_WARNING_STRATEGIES,
@@ -41,10 +42,13 @@ def symbol_is_eligible(symbol: str) -> bool:
     return bool(value) and "." not in value and len(value) <= 5
 
 
-def detection_time_is_eligible(sip_ts_ms: int) -> bool:
+def detection_time_is_eligible(
+    sip_ts_ms: int, validation_window: MomentumValidationWindow | None = None,
+) -> bool:
     observed = datetime.fromtimestamp(sip_ts_ms / 1000, tz=UTC).astimezone(_ET)
     clock = observed.time().replace(tzinfo=None)
-    return observed.weekday() < 5 and _DETECTION_START <= clock < _DETECTION_END
+    end = validation_window.detection_end_for(observed.date()) if validation_window else _DETECTION_END
+    return observed.weekday() < 5 and _DETECTION_START <= clock < end
 
 
 @dataclass
@@ -114,7 +118,9 @@ class MomentumPaperEngine:
         condition_version: str,
         coverage_started_ms: int,
         strategy_windows: Mapping[str, int] | None = None,
+        validation_window: MomentumValidationWindow | None = None,
     ) -> None:
+        self.validation_window = validation_window or MomentumValidationWindow()
         self.prior_closes = {
             str(symbol).upper(): Decimal(str(price)) for symbol, price in prior_closes.items()
         }
@@ -381,7 +387,7 @@ class MomentumPaperEngine:
     def _can_detect(self, trade: TradePrint) -> bool:
         prior_close = self.prior_closes.get(trade.symbol)
         return (
-            detection_time_is_eligible(trade.sip_ts_ms)
+            detection_time_is_eligible(trade.sip_ts_ms, self.validation_window)
             and symbol_is_eligible(trade.symbol)
             and prior_close is not None
             and prior_close >= Decimal("1.00")
@@ -434,7 +440,7 @@ class MomentumPaperEngine:
         boundary = self._reference_after_ms.get((strategy_code, symbol), 0)
         reference_at_ms = signal_trade.sip_ts_ms if signal_trade is not None else now_ms
         if (
-            not detection_time_is_eligible(now_ms) or not symbol_is_eligible(symbol)
+            not detection_time_is_eligible(now_ms, self.validation_window) or not symbol_is_eligible(symbol)
             or prior_close is None or prior_close < Decimal("1")
             or reference_price <= 0 or not reference_price.is_finite()
             or signal_price < reference_price * _DETECTION_MULTIPLIER
@@ -753,6 +759,10 @@ class MomentumPaperEngine:
             pnl = (exit_price - fill_price) * event.quantity
         return {
             "logical_id": event.logical_id,
+            **({"validation_window": "validation-window"}
+               if self.validation_window.is_validation_clock(
+                   datetime.fromtimestamp(event.detection_ms / 1000, UTC).astimezone(_ET)
+               ) else {}),
             "strategy_code": event.strategy_code,
             "window_seconds": event.window_seconds,
             "session_date": event.session_date.isoformat(),
@@ -808,6 +818,10 @@ class MomentumPaperEngine:
     ) -> MomentumTapeRecord:
         event.sequence += 1
         observed_at = observed.observed_at if isinstance(observed, TradePrint) else observed
+        if self.validation_window.is_validation_clock(
+            datetime.fromtimestamp(event.detection_ms / 1000, UTC).astimezone(_ET)
+        ):
+            payload = {**payload, "validation_window": "validation-window"}
         return MomentumTapeRecord(
             event_key=f"{event.logical_id}:{event.sequence:08d}:{event_type}",
             logical_id=event.logical_id,

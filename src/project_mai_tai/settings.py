@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from functools import lru_cache
 import json
 
@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     market_data_warmup_bar_limit: int = 50_000
     market_data_live_aggregate_stream_enabled: bool = False
     market_data_momentum_warning_enabled: bool = False
+    momentum_validation_session_date: date | None = None
+    market_data_momentum_warning_end_et: time = time(9, 30)
+    momentum_paper_detection_end_et: time = time(9, 30)
+    momentum_paper_guard_end_et: time = time(9, 40)
     market_data_momentum_warning_queue_maxsize: int = Field(default=8192, ge=1, le=65536)
     market_data_momentum_warning_stream_maxlen: int = Field(default=20000, ge=1, le=100000)
     market_data_momentum_warning_owner_cap: int = Field(default=16, ge=1, le=16)
