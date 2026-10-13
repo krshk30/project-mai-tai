@@ -1224,6 +1224,12 @@ class SchwabV2Strategy:
             state.restart_rest_cancel_fields = dict(rest)
         filled_accounts = {account for account in self._flip_owner_accounts if legs.get(account) == "filled"}
         if filled_accounts:
+            if (self._falseflip2_enabled() and self.__dict__.get("_falseflip_readable", False)
+                    and opportunity in self._falseflip_budget(state).episodes):
+                # Historical FALSE fills still veto restoration. Only the existing
+                # fresh classification/closure and durable owner-release path may
+                # settle this episode; the checkpoint must not consume it anew.
+                return refuse("falseflip_episode_requires_existing_reconciliation")
             state.cw_resting_taken = True
             for account in filled_accounts:
                 self._note_flip_owner_fill(state, account_name=account, reason="restart_same_opportunity_fill")

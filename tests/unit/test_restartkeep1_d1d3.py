@@ -312,6 +312,81 @@ def test_aixi_terminal_request_sibling_does_not_orphan_exact_owned_order(other_s
         assert 'symbol=AIXI' in caplog.text and 'other_live_intent' in caplog.text
 
 
+@pytest.mark.parametrize("proof_state", ["fresh", "incomplete", "mid_episode", "stale", "real", "uncommitted"])
+def test_restart_historical_false_fill_defers_only_to_existing_refund_path(proof_state, caplog):
+    from dataclasses import replace
+    from project_mai_tai.falseflip1_runtime import FalseBudget
+    from project_mai_tai.v2_restart_rest_store import checkpoint_state
+    from tests.unit.test_falseflip2_release import (
+        OPPORTUNITY, SEGMENT, apply_book, release, tcrt_runtime,
+    )
+    from tests.unit.test_falseflip1_runtime import ack
+
+    strategy, state, clock, proofs, _ = tcrt_runtime()
+    budget = FalseBudget("TCRT", SEGMENT).closed(OPPORTUNITY, 1).fully_filled_closed(OPPORTUNITY)
+    if proof_state == "mid_episode":
+        budget = FalseBudget("TCRT", SEGMENT).closed(OPPORTUNITY, 1)
+    strategy.configure_falseflip(
+        {} if proof_state == "uncommitted" else {("TCRT", SEGMENT): budget}, readable=True)
+    # A stale pre-fill owner/checkpoint, before the real position poll revalidates
+    # the already-durable refund. Neither this checkpoint nor a filled status is permission.
+    state.flip_owner_phase = "awaiting_fill"
+    state.flip_owner_fill_accounts.clear()
+    state.flip_owner_position_ids.clear()
+    state.flip_owner_position_entry_ms.clear()
+    state.retry_one_closes_in_segment = 1
+    state.cw_resting_taken = False
+    saved = checkpoint_state(state)
+    before = state.retry_one_closes_in_segment
+    assert not strategy.restore_restart_rest(state, saved, {PRIMARY: "filled", WEBULL: "filled"})
+    assert state.restart_rest_evidence_pending and not state.resting_active
+    assert state.cw_resting_taken is (proof_state == "uncommitted")
+    for _ in range(3):
+        strategy._cw_v2_resting_track(state, None)
+    assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
+    assert state.retry_one_closes_in_segment == before
+    assert strategy._falseflip_budget(state) == (
+        FalseBudget("TCRT", SEGMENT) if proof_state == "uncommitted" else budget)
+    if proof_state == "uncommitted":
+        assert "same_opportunity_filled_consumed" in caplog.text
+        return
+
+    assert "falseflip_episode_requires_existing_reconciliation" in caplog.text
+    if proof_state == "real":
+        proofs = (replace(proofs[0], kind="REAL"), *proofs[1:])
+    elif proof_state == "stale":
+        clock[0] += 16000
+    apply_book(strategy, state, clock, proofs, complete=proof_state not in {"incomplete", "mid_episode"})
+    if proof_state == "stale":
+        clock[0] += 16000  # Age the actual immutable proof; do not refresh it at validation.
+    if proof_state != "fresh":
+        assert not any(strategy.falseflip2_release_valid(record)
+                       for record in strategy.pending_falseflip2_releases())
+        assert state.restart_rest_evidence_pending and not state.resting_active
+        assert not strategy.drain_pending_intents() and not strategy.drain_webull_direct_intents()
+        return
+
+    release(strategy, state)
+    assert not state.restart_rest_evidence_pending and not state.cw_resting_taken
+    strategy._falseflip_restoring_track(state)
+    plan, = strategy.pending_falseflip2_rearms()
+    assert strategy.acknowledge_falseflip2_rearm(plan)
+    ack(strategy)
+    assert state.resting_active and state.retry_one_closes_in_segment == before
+    assert strategy._falseflip_effective_closes(state, before) == 0
+    assert not strategy.pending_falseflip2_rearms()
+    from project_mai_tai.strategy_core.schwab_1m_v2 import Quote
+    clock[0] += 17000
+    quote = Quote("TCRT", 1.92, 1.93, 1.93, clock[0], clock[0])
+    draft = strategy.on_quote("TCRT", quote)
+    assert draft is not None and draft.intent_type == "open"
+    mirror, = strategy.drain_webull_fanout_intents()
+    assert draft.metadata["cw_entry_slot"] == mirror.metadata["cw_entry_slot"] == "first"
+    assert strategy.on_quote("TCRT", quote) is None
+    assert not strategy.drain_webull_fanout_intents()
+    assert state.retry_one_closes_in_segment == before
+
+
 @pytest.mark.parametrize('reason', ['native', 'cancel', 'owner', 'position', 'software', 'fields'])
 def test_each_restore_refusal_or_pending_logs_symbol_and_reason(reason, caplog):
     bot, state, saved, _ = case_bot(CASES[3])
