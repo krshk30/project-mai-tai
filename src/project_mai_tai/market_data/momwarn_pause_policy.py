@@ -184,16 +184,7 @@ class WarningPausePolicy:
 
     def snapshot(self, now_ns: int | None = None) -> dict:
         now = self._now(now_ns)
-        self._prune_reconnect_events(now)
-        for events in (self._pause_starts, self._flap_events):
-            while events and events[0] <= now-HOUR_NS:
-                events.popleft()
-        alerts = []
-        if (len(self._pause_starts) > FLAPPING_THRESHOLD
-                or len(self._flap_events) > FLAPPING_THRESHOLD):
-            alerts.append("pause_flapping")
-        if self._current is not None and now-self._current["start_ns"] > LONG_PAUSE_NS:
-            alerts.append("pause_over_10min")
+        alerts = self._alert_reasons(now)
         history = []
         for item in self._history:
             row = dict(item)
@@ -219,7 +210,7 @@ class WarningPausePolicy:
             "recent_counts_saturated": (len(self._flap_events) == FLAPPING_THRESHOLD+1
                                         or len(self._pause_starts) == FLAPPING_THRESHOLD+1),
             "history": history, "history_limit": PAUSE_HISTORY_LIMIT,
-            "alert_reasons": alerts, "clock_domain": "monotonic_ns",
+            "alert_reasons": list(alerts), "clock_domain": "monotonic_ns",
             "reconnect_event_count": self.reconnect_event_count,
             "reconnect_events_last_600s": len(self._reconnect_events),
             "reconnect_event_times_ns": list(self._reconnect_events),
@@ -227,6 +218,20 @@ class WarningPausePolicy:
             "reconnect_window_ns": RECONNECT_WINDOW_NS,
             "reconnect_count_semantics": "distinct_callbacks_only_not_provider_disconnected_polls",
         }
+
+    def _alert_reasons(self, now: int) -> tuple[str, ...]:
+        # Decisions need only the bounded counters, not copied display history.
+        self._prune_reconnect_events(now)
+        for events in (self._pause_starts, self._flap_events):
+            while events and events[0] <= now-HOUR_NS:
+                events.popleft()
+        alerts = []
+        if (len(self._pause_starts) > FLAPPING_THRESHOLD
+                or len(self._flap_events) > FLAPPING_THRESHOLD):
+            alerts.append("pause_flapping")
+        if self._current is not None and now-self._current["start_ns"] > LONG_PAUSE_NS:
+            alerts.append("pause_over_10min")
+        return tuple(alerts)
 
     def metrics(self, now_ns: int | None = None) -> dict:
         return self.snapshot(now_ns)
@@ -248,8 +253,7 @@ class WarningPausePolicy:
         else:
             resumed = self.clean(now_ns)
             action = "resume" if resumed and prior == "paused" else "none"
-        snapshot = self.snapshot(now_ns)
-        alerts = set(snapshot["alert_reasons"])
+        alerts = set(self._alert_reasons(self._now(now_ns)))
         new_alerts = alerts-self._last_alerts
         self._last_alerts = alerts
         return PauseDecision(self.state, action, self.reason, self.clean_streak,
