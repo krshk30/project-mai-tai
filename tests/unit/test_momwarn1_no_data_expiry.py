@@ -152,6 +152,25 @@ def test_new_warning_readmits_and_cannot_bridge_raw_coverage_across_owner_gap():
     assert model._raw_first_ms["TEST"] == stamp and not records
 
 
+@pytest.mark.parametrize("code", [*MOMENTUM_STRATEGIES, *MOMENTUM_WARNING_STRATEGIES])
+def test_existing_post_exit_tape_tail_remains_owned_until_frozen_path_completes(code):
+    model = admitted()
+    engine = ledger(code, state="OPEN")
+    exited = engine.ingest(trade(60_100, "10"))
+    assert any(row.event_type == "EXITED" for row in exited)
+    assert engine.active_events[0]["status"] == "STOP"
+    assert engine.active_symbols == {"TEST"}  # Frozen ten-minute tape, not an open position.
+    legacy = engine.active_symbols
+    if code in MOMENTUM_WARNING_STRATEGIES:
+        model.engine = engine
+        legacy = set()
+    assert not any(row.status == "DROPPED" for row in expire(model, 61_000, legacy_active=legacy))
+    assert model.desired_symbols(legacy) == {"TEST"}
+    engine.advance_clock(START+660_002)
+    assert not engine.active_symbols
+    assert any(row.reason == "expired_no_data" for row in expire(model, 660_002))
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code", [*MOMENTUM_STRATEGIES, *MOMENTUM_WARNING_STRATEGIES])
 @pytest.mark.parametrize("state", ["WAITING_FILL", "OPEN"])
