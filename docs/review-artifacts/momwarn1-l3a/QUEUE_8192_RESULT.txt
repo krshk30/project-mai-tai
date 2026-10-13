@@ -1,0 +1,102 @@
+L3A DEFAULT8192 LOCAL CONTROL RECEIPT -- NOT FEATURE/W4/INSTALL COMPLETION
+
+EXACT TESTED SOURCE / TEST HEAD
+603657caaf0f108bca1c162dbb45cfdc98ea2805
+branch codex/momwarn1-l3-integration-20261012
+worktree /Users/velkris/.codex/worktrees/momwarn1-l3-integration-20261012/project-mai-tai
+Clean before/after tests. Source diff from previously qualified e064 consists
+ONLY of Settings warning_queue_maxsize default4096->8192, validated1..65536
+unchanged. Earlier branch heads are preserved, not rebased/amended.
+Runtime settings overrides still require actual INSTALL verification.
+
+EXECUTED ONCE AFTER MAIN EXPLICIT CLEAR
+Paired XML start2026-10-12T20:06:54.670063-04:00:1PASS/0FAIL,1.347s suite,
+0.758s test body. Existing record_property/xunit2 warning retained, not suppressed.
+34 retained controls PASS/0FAIL,97deselected,0.925s suite,
+start2026-10-12T20:07:17.482497-04:00. No retry/no GC/threshold edits.
+Same64T and64Q per phase, nearest-rank quantiles. Raw monotonic pairs retained.
+
+phase        Areceived/published  queue/totaldrops  loopstall  Amaxcompletionlag
+NO_A                      0/0                 0/0  0.127625ms          0ms
+DERIVED1x           1811/1811                  0/0  1.514625ms  134.517750ms
+DERIVED3x           5433/5433                  0/0  3.502500ms  389.081500ms
+All phases <50ms stall and maxT/Q; both A phases <2000ms pending/start-write/
+completion lag. A defaultqueue8192, separate streammaxlen20000 approximate=false.
+Blocked sample queue_depth1810/5432 plus one inflight; each actual queue_drops0,
+dropped_total0, lag15.609708/40.708ms, A_published0 while writer deliberately held.
+Final samples depth0, lag0, queue_drops0, dropped_total0, A_published1811/5433.
+Max actual gateway start-write lag134.484792/389.054708ms. Completion lag above
+includes the controlled first-write hold. Actual local samples are in receipt;
+there is no invented current production counter or real Redis throughput claim.
+
+CALLBACK-TO-REDIS COMPLETION QUANTILES (milliseconds,64 each)
+phase      type   p50       p95       p99=max
+NO_A       T      .033458   .075833    .091292
+NO_A       Q      .044500   .102583    .112042
+DERIVED1x  T      .035209   .543625   1.069666
+DERIVED1x  Q      .045958   .560041   1.091208
+DERIVED3x  T      .422834   .607416   1.105625
+DERIVED3x  Q      .436000   .630458   1.118250
+
+Signed differences versus no-A:
+1x T p50+.001751 p95+.467792 p99/max+.978374ms
+1x Q p50+.001458 p95+.457458 p99/max+.979166ms
+3x T p50+.389376 p95+.531583 p99/max+1.014333ms
+3x Q p50+.391500 p95+.527875 p99/max+1.006208ms
+NOT literally unchanged latency. Descriptive single sequential control, no
+approved equivalence margin/statistical-equivalence claim. No gate relaxed.
+First observed T/Q since phase entry .228833/3.467084/5.876042ms respectively.
+
+MODEL SCOPE / PARSER / CAUSAL LIMIT
+Same controlled callbacks, actual provider._process_messages A raw JSON parser,
+offloop decode/SDK64chunks, gateway queues and publish loop. Fake WS/Redis only.
+Callbacks are explicitly available at the first A-writer boundary, NOT at the
+raw frame tail or observed historical receive/owner ACK. Baseline ready after
+actual empty-frame parser completion; no fake A writer/subscriber confirmation.
+Callbacks while A parser actually active:27of64 at1x,64of64 at3x. Remaining1x
+callbacks occur after parsing completes; receipt exposes this instead of hiding it.
+Derived A templates valid1000ms exclusive shape project retained real raw prints,
+not reconstructed vendor qualifying OHLC. Maximum1811 observed symbol-second
+cardinality from full8 all-symbol tapes; Oct12 partial4332downloaded symbols and
+04:10-09:30 only, missing04:00-04:10/universe excluded7488 UNKNOWN notzero.
+Source summary SHA unchanged207c3f7b0969aee612f1dada053cf443024505fc52731330129ca08e0ab2c9ab.
+Transport latency UNMEASURED; provider WS capture false; no new A/provider reads.
+
+RETAINED DROP / HEALTH / CLOSE POLICY CONTROLS
+Explicit queue2 receives5:actual queue_drops=dropped_total3, keeps newest A,
+normal T untouched, separate strict streammaxlen3, remains active with no safety
+latch. Counter sample assertion added; all original assertions retained.
+All selected gateway and source-wired health failure controls retain A-only
+unsubscribe/queue discard, sticky failures and other-owner preservation.
+09:29:59pending ->09:30close ->next04resume and cancelled inflight write controls
+pass without durable normal-close safety latch. Disconnect/1008, required live
+log absence, first07:01due boundaries and defaultOFF paths pass as selected.
+Overflow-only auto-revert NO; health/lag/connection safety auto-revert YES A-only.
+Gateway counter/10s metrics export YES; existing HTML queue-drop counter panel NO
+(ledger-only). No unapproved new drop-trigger/rearm policy or dashboard change.
+Actual health config/PID/timezone/baseline/cadence remains INSTALL proof, not
+established by these controlled sources. No watchdog restart/deploy authority.
+
+OUTPUTS / SHA256
+Directory /Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012
+queue8192-paired.xml 8b95fba26394ad089869806f637bce63318e2cee00f12e7cb1b763e4e2670e8c
+queue8192-paired.log a7bedcd376e887b0d98f2bab9e22b5eafeaa4ea980d35a646a99b2eb727d0efc
+queue8192-controls.xml 7b27a73ca18d3b32c6ef47ab1e5c69fbb658db16cf680084763bf8a39ed40217
+queue8192-controls.log 5e2324b0c14642ec2b181ffef128f241695cda9602a4d67f58ba28f3d56639b5
+Original rates.csv/summary.json/04fc burst files remain untouched.
+
+COMMANDS (own worktree)
+MOMWARN_DERIVED_SUMMARY=/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/summary.json PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_momwarn1_derived_a_burst.py -q -s --junitxml=/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/queue8192-paired.xml > /Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/queue8192-paired.log 2>&1
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_momwarn1_gateway.py tests/unit/test_momwarn1_live_health.py -q -k 'settings_default_off_and_bounds or dropoldest or normal_0930 or normal_close_cancels or safety_failure_remains or gateway_auto_revert_A_only or gateway_g3_live_source_wire or first_due_boundaries or disconnect_or_1008 or required_live_log or normal_A_live_path or warning_owner_T_only or restore_warning_owner or warning_off_restores or pending_A_write_cancelled' --junitxml=/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/queue8192-controls.xml > /Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/queue8192-controls.log 2>&1
+
+PERFORMANCE WINDOW
+No L3 heavy tests/scanners/benchmarks20:05:14-20:06:14ET. Source/docs edits,
+static Ruff and Git checks only. Source commit20:06:30ET; paired run begins
+20:06:54.670ET AFTER main explicitCLEAR. Subsequent scoped34controls as timed
+above. All finished; CLEAR reported to main and both peers. No further L3 runs.
+Main exactE860 all69 baseline reserved, no attribution of old full52 resumed.
+
+HANDOFF / REMAINING
+Main sole writer final F+B(b718f070)+MOMWARN exact composition/allON/hotpath.
+Our E860-only qualifier and current narrow control are not that install-set proof.
+Wholefeature/W4/installation NOT completed. No GitHub/production/provider actions.

@@ -34,7 +34,9 @@
       "scope": "services/control_plane.py warning-only helper/branch/panel, dedicated tests and own receipts only; no trading/gateway/health policy changes",
       "result": "One existing-client xrevrange count64/timeout250ms/16KiBperrecord; own gateway source/version/observed_ns/instance/generation, <=20s fresh; conflicting fresh epoch or queued-old order UNKNOWN. Actual producer overflow3 through page preserves Snapshot31.80. Page+old display60PASS/1deselected; settings/gateway/health/window34PASS/97deselected. Ruff/diffcheckPASS; no burst/60s rerun",
       "reported_at": "2026-10-13 00:15:47 UTC",
-      "reported": "Concise page/display60PASS and retained34PASS progress; exact committed head follows receipt"
+      "reported": "Boxed page completion at sourcef9d84ec4, page/display60PASS and retained34PASS; UNKNOWN epoch/stale and no trading change disclosed",
+      "source_head": "f9d84ec4dee8dcb845ad8c12aceea35148347c63",
+      "outputs": "warning-page-focused.xml/log and warning-page-gateway-controls.xml/log in evidence_directory; byte-identical source/test tree committed after runs, no benchmark rerun"
     },
     {
       "id": "L3A-QUEUE-8192",
@@ -67,9 +69,11 @@
       "source": "Human final F+B clean b718f070 request exact warning head/minimal E860..warning cherry-pick sequence after comparison",
       "priority": 2,
       "owner": "Anscombe source handoff; main sole composition writer",
-      "status": "final_page_source_commit_handoff_preparing_after_verified_controls",
+      "status": "done_local_handoff_main_review_composition_pending",
       "next_action": "Identify exact linear E860 descendant chain and touched-file overlap, preserve all originals; send final tested head and ordered dependency-safe commits after paired measurement",
-      "completion_criterion": "Exact warning source/test head and safe ordered commit handoff, no rebase or rewriting old heads; final exact F+B+MOMWARN qualification remains main-owned and not assumed from E860-only controls"
+      "completion_criterion": "Exact warning source/test head and safe ordered commit handoff, no rebase or rewriting old heads; final exact F+B+MOMWARN qualification remains main-owned and not assumed from E860-only controls",
+      "source_head": "f9d84ec4dee8dcb845ad8c12aceea35148347c63",
+      "result": "HANDOFF.txt ordered28linear E860-exclusive commits through final warning-page source; main checkout untouched;603 queue pair preserved; optional later receipts child source/test unchanged"
     }
   ]
 }
