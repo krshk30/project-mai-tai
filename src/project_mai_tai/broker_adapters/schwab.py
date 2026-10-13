@@ -670,6 +670,23 @@ class SchwabBrokerAdapter:
                 )
             ]
 
+        report_metadata = dict(request.metadata)
+        if request.reason == "oms_v2_managed_exit:CW_TARGET":
+            # Observational only: preserve report origin and the existing order flow.
+            for key in tuple(report_metadata):
+                if key.startswith("cw_target_api_"):
+                    report_metadata.pop(key)
+            try:
+                report_metadata["cw_target_api_received_at"] = datetime.now(UTC).isoformat(timespec="microseconds")
+                location = headers.get("location") or headers.get("Location") if headers else None
+                expected_path = f"/accounts/{quote(account.account_hash, safe='')}/orders/"
+                if status_code == 201 and location and expected_path in location:
+                    suffix = location.split(expected_path, 1)[1]
+                    if suffix and "/" not in suffix and "?" not in suffix and "#" not in suffix:
+                        report_metadata.update(cw_target_api_ack_evidence="schwab_http_201_location",
+                            cw_target_api_ack_client_order_id=request.client_order_id)
+            except Exception:
+                pass  # Telemetry failure cannot change the broker response/report.
         if status_code >= 400:
             return [
                 ExecutionReport(
@@ -681,7 +698,7 @@ class SchwabBrokerAdapter:
                     intent_type=request.intent_type,
                     quantity=request.quantity,
                     reason=self._extract_error_reason(response),
-                    metadata=dict(request.metadata),
+                    metadata=report_metadata,
                 )
             ]
 
@@ -696,7 +713,7 @@ class SchwabBrokerAdapter:
                 intent_type=request.intent_type,
                 quantity=request.quantity,
                 reason=request.reason,
-                metadata=dict(request.metadata),
+                metadata=report_metadata,
             )
         ]
 

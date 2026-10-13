@@ -178,9 +178,11 @@ async def test_mndr_edge_submits_core_pair_with_owned_durable_handle_and_target_
     limit = Decimal(target["limit_price"])
     assert Decimal(CASE["first_target_print_price_floor"]) >= limit
     modeled_fill = limit
-    assert modeled_fill >= Decimal(CASE["wire_target"])
+    assert modeled_fill >= Decimal(CASE["raw_target"])
+    assert sum(print_["size"] for print_ in CASE["target_opportunities"]
+               if Decimal(print_["price"]) >= limit) >= request.quantity
     assert NOW < datetime.fromisoformat(CASE["first_target_print_at"])
-    assert (modeled_fill - Decimal(CASE["entry_price"])) * request.quantity == Decimal("14.40")
+    assert (modeled_fill - Decimal(CASE["entry_price"])) * request.quantity == Decimal("15.60")
     await service._v2_rth_edge_bracket()
     assert len(wire.requests) == 1
 

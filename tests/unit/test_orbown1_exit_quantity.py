@@ -129,7 +129,11 @@ async def test_real_v2_evaluator_owns_quantity_and_preserves_exit_shape(
     assert request.quantity == expected
     assert request.strategy_code == "schwab_1m_v2" and request.broker_account_name == account
     assert request.reason == f"oms_v2_managed_exit:{tag}"
-    assert request.order_type == "market" and request.time_in_force == "day"
+    assert request.time_in_force == "day"
+    if tag == "CW_TARGET":
+        assert request.order_type == "limit" and Decimal(request.metadata["limit_price"]) >= Decimal("10.5")
+    else:
+        assert request.order_type == "market"
     assert request.metadata["session"] == "NORMAL"
     with sessions() as session:
         assert session.get(OmsManagedPosition, row_id).current_quantity == managed
