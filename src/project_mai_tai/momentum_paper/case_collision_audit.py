@@ -82,6 +82,8 @@ def apply_reference_audit(ready, rows):
             continue
         source_ok = (p.get('version') == 1 and p.get('source') ==
                      '/v2/aggs/grouped/locale/us/market/stocks/' + str(p.get('source_date')))
+        excluded = []
+        resolved_keys = set(corrections)
         if p.get('version') == 2:
             bindings = p.get('native_price_bindings', {})
             source_ok = (p.get('source') == 'momentum_paper_events:prior_close'
@@ -93,16 +95,38 @@ def apply_reference_audit(ready, rows):
                                  and bool(b.get('event_id')) and bool(b.get('event_key'))
                                  and isinstance(b.get('payload_sha256'), str) and len(b['payload_sha256']) == 64
                                  for s, b in bindings.items()))
+        if p.get('version') == 3:
+            excluded = p.get('excluded_symbols', [])
+            if (not isinstance(excluded, list) or any(not isinstance(s, str) or s not in COLLISION_REASONS for s in excluded)
+                    or len(set(excluded)) != len(excluded) or set(excluded) & set(corrections)):
+                continue
+            resolved_keys |= set(excluded)
+            bindings = p.get('provider_price_bindings', {})
+            source_ok = (p.get('source') == 'massive_snapshot:prevDay.close'
+                         and p.get('reviewer') == 'claude-1' and bool(str(p.get('review_id', '')).strip())
+                         and row.session_date == COLLISION_DAY and p.get('exclusion_scope') == 'THIS_SESSION_ONLY'
+                         and isinstance(bindings, dict) and set(bindings) == set(corrections)
+                         and all(isinstance(b, dict) and b.get('symbol') == s
+                                 and b.get('field') == 'previous_close' and b.get('provider_field') == 'prevDay.close'
+                                 and b.get('value') == corrections[s] and bool(b.get('event_id'))
+                                 and bool(b.get('redis_id')) and bool(b.get('produced_at'))
+                                 and b.get('retention') == 'NORMALIZED_PROVIDER_PREVDAY_NOT_RAW_FRAME'
+                                 and isinstance(b.get('row_sha256'), str) and len(b['row_sha256']) == 64
+                                 for s, b in bindings.items()))
         if (row.session_date != ready.session_date or type(p.get('version')) is not int
                 or p.get('audit_kind') != AUDIT_KIND or not str(p.get('reviewer', '')).strip()
                 or p.get('target_session_key') != ready.event_key
                 or p.get('target_session_payload_sha256') != digest(ready.payload)
                 or p.get('source_date') != ready.payload.get('prior_close_date')
-                or set(corrections) != {'TPC', 'BCPC'} or not valid_prices
+                or resolved_keys != {'TPC', 'BCPC'} or not valid_prices
                 or not source_ok
                 or not isinstance(p.get('source_body_sha256'), str) or len(p['source_body_sha256']) != 64):
             continue
-        result = replace(ready, payload={**ready.payload, 'prior_closes': {
+        closes = {
             **ready.payload['prior_closes'], **corrections,
-        }, 'reference_correction_audit': row.event_key})
+        }
+        for symbol in excluded:
+            closes.pop(symbol, None)
+        result = replace(ready, payload={**ready.payload, 'prior_closes': closes,
+            'case_collision_excluded_symbols': excluded, 'reference_correction_audit': row.event_key})
     return result

@@ -3,9 +3,11 @@
 import argparse
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
+from hashlib import sha256
 import json
 from pathlib import Path
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -116,6 +118,53 @@ def _reference_corrections(rows, ready, manifest, reference):
     return corrections
 
 
+def retained_snapshot_reference(path, prior_close_date):
+    if path.stat().st_size > 16 * 1024**2:
+        raise ValueError('16MiB input bound')
+    body = path.read_bytes()
+    return dict(source='massive_snapshot:prevDay.close', date=prior_close_date,
+                snapshot_path=str(path), snapshot_sha256=sha256(body).hexdigest(), snapshot_body=body.decode('utf-8'))
+
+
+def _snapshot_corrections(rows, ready, manifest, reference):
+    raw = reference.get('snapshot_body')
+    if (not isinstance(raw, str) or len(raw.encode('utf-8')) > 16 * 1024**2
+            or sha256(raw.encode('utf-8')).hexdigest() != reference.get('snapshot_sha256')):
+        raise ValueError('retained snapshot bytes do not match the authorized source hash')
+    capture = json.loads(raw)
+    event = capture.get('event', {})
+    if (reference.get('date') != ready.payload.get('prior_close_date')
+            or reference.get('date') != '2026-10-12'
+            or not isinstance(reference.get('snapshot_sha256'), str) or len(reference['snapshot_sha256']) != 64
+            or reference.get('snapshot_sha256') != manifest.get('reference_body_sha256')
+            or event.get('source_service') != 'market-data-gateway' or not event.get('event_id')
+            or not capture.get('redis_id')):
+        raise ValueError('retained exact snapshot source/session binding required')
+    produced = datetime.fromisoformat(event['produced_at'].replace('Z', '+00:00'))
+    if produced.tzinfo is None or produced.astimezone(ZoneInfo('America/New_York')).date() != COLLISION_DAY:
+        raise ValueError('retained snapshot must be from the collision session')
+    snapshots = event.get('payload', {}).get('snapshots', [])
+    if not isinstance(snapshots, list) or len(snapshots) > MAX_ROWS:
+        raise ValueError('snapshot row bound')
+    corrections, bindings, excluded = {}, {}, []
+    for symbol in COLLISION_REASONS:
+        matches = [item for item in snapshots if isinstance(item, dict) and item.get('symbol') == symbol]
+        value = _positive(matches[0].get('previous_close')) if len(matches) == 1 else None
+        prices = [_positive(row.payload.get(field, {}).get('price'))
+                  for row in rows if _in_scope(row) and row.symbol == symbol
+                  for field in ('detect', 'fill') if isinstance(row.payload.get(field), dict)]
+        if (value is None or value == _positive(ready.payload.get('prior_closes', {}).get(symbol))
+                or any(price is not None and value * 2 < price for price in prices)):
+            excluded.append(symbol)
+            continue
+        corrections[symbol] = str(value)
+        bindings[symbol] = dict(event_id=event['event_id'], redis_id=capture['redis_id'],
+            produced_at=event['produced_at'], symbol=symbol, field='previous_close',
+            provider_field='prevDay.close', row_sha256=digest(matches[0]), value=str(value),
+            retention='NORMALIZED_PROVIDER_PREVDAY_NOT_RAW_FRAME')
+    return corrections, bindings, excluded
+
+
 def prepare_widened_plan(session, manifest, reference=None, *, observed_at):
     rows = session.scalars(select(MomentumPaperEvent).order_by(MomentumPaperEvent.event_key)
                            .limit(MAX_ROWS + 1)).all()
@@ -146,10 +195,14 @@ def prepare_widened_plan(session, manifest, reference=None, *, observed_at):
     ready = [r for r in rows if r.session_date == COLLISION_DAY and r.strategy_code == 'momentum_paper'
              and r.event_type == 'SESSION_READY']
     corrections = None
+    snapshot_bindings, excluded = {}, []
     if reference is not None:
         if len(ready) != 1 or digest(ready[0].payload) != manifest.get('session_payload_sha256'):
             raise ValueError('exact saved session preimage missing or changed')
-        corrections = _reference_corrections(rows, ready[0], manifest, reference)
+        if reference.get('source') == 'massive_snapshot:prevDay.close':
+            corrections, snapshot_bindings, excluded = _snapshot_corrections(rows, ready[0], manifest, reference)
+        else:
+            corrections = _reference_corrections(rows, ready[0], manifest, reference)
     plan_id = digest([manifest, reference, before])
     records = []
     for target in targets:
@@ -166,19 +219,27 @@ def prepare_widened_plan(session, manifest, reference=None, *, observed_at):
         saved = ready[0]
         records.append(dict(event_key=f'momtpc:{plan_id}:REFERENCE_CORRECTED', logical_id=saved.logical_id,
             strategy_code='momentum_paper', event_type=REFERENCE_CORRECTED, session_date=COLLISION_DAY.isoformat(),
-            symbol='*', observed_at=observed_at.isoformat(), payload=dict(version=2, audit_kind=AUDIT_KIND,
+            symbol='*', observed_at=observed_at.isoformat(), payload=dict(
+                version=3 if reference['source'] == 'massive_snapshot:prevDay.close' else 2, audit_kind=AUDIT_KIND,
                 target_session_key=saved.event_key, target_session_payload_sha256=digest(saved.payload),
-                before={s: saved.payload['prior_closes'].get(s) for s in corrections}, corrections=corrections,
-                source=reference['source'], source_date=reference['date'], source_body_sha256=digest(reference),
-                native_price_bindings={s: {**b, 'value': corrections[s]} for s, b in reference['prices'].items()},
+                before={s: saved.payload['prior_closes'].get(s) for s in COLLISION_REASONS}, corrections=corrections,
+                source=reference['source'], source_date=reference['date'],
+                source_body_sha256=reference.get('snapshot_sha256') or digest(reference),
+                **(dict(provider_price_bindings=snapshot_bindings, excluded_symbols=excluded,
+                        exclusion_scope='THIS_SESSION_ONLY', snapshot_path=reference['snapshot_path'])
+                   if reference['source'] == 'massive_snapshot:prevDay.close' else dict(
+                       native_price_bindings={s: {**b, 'value': corrections[s]} for s, b in reference['prices'].items()})),
                 reviewer='claude-1', review_id=manifest['review_id'],
                 plan_id=plan_id)))
     return dict(mode='DRY_RUN_PLAN_ONLY', production_execution_authorized=False, plan_id=plan_id,
                 preimages=before, assessments=assessments, records=records,
-                target_count=len(targets), reference_state=('PREPARED_FROM_NATIVE_PRIOR_CLOSE' if corrections
-                    else 'BLOCKED_MISSING_EXACT_TPC_AND_BCPC_PRIOR_CLOSE'),
+                target_count=len(targets), reference_state=(
+                    'PREPARED_FROM_RETAINED_PREVDAY_WITH_EXCLUSION' if excluded else
+                    'PREPARED_FROM_RETAINED_PREVDAY' if snapshot_bindings else
+                    'PREPARED_FROM_NATIVE_PRIOR_CLOSE' if corrections is not None else
+                    'BLOCKED_MISSING_EXACT_TPC_AND_BCPC_PRIOR_CLOSE'),
                 manifest_sha256=digest(manifest), records_sha256=digest(records),
-                reference_body_sha256=digest(reference) if reference is not None else None,
+                reference_body_sha256=(reference.get('snapshot_sha256') or digest(reference)) if reference is not None else None,
                 known_limit='Ratio approval is not native SIP-cause proof or live repair authorization')
 
 
@@ -188,7 +249,7 @@ def rehearse_widened_copy(session, plan):
     records = plan['records']
     invalid = [r for r in records if r['event_type'] == INVALIDATED]
     references = [r for r in records if r['event_type'] == REFERENCE_CORRECTED]
-    expected_refs = int(plan['reference_state'] == 'PREPARED_FROM_NATIVE_PRIOR_CLOSE')
+    expected_refs = int(plan['reference_state'].startswith('PREPARED_FROM_'))
     if (digest(records) != plan.get('records_sha256') or len(invalid) != plan['target_count']
             or len(references) != expected_refs or len(records) != len(invalid) + len(references)):
         raise ValueError('exact reviewed audit records required')
@@ -229,7 +290,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('capture', 'manifest', 'output'):
         parser.add_argument('--' + name, required=True, type=Path)
-    parser.add_argument('--reference', type=Path)
+    authority = parser.add_mutually_exclusive_group()
+    authority.add_argument('--reference', type=Path)
+    authority.add_argument('--snapshot', type=Path)
     parser.add_argument('--rehearse-copy', action='store_true')
     args = parser.parse_args()
     if args.output.exists():
@@ -247,6 +310,13 @@ def main():
             session.add(MomentumPaperEvent(**row))
     with factory.begin() as session:
         reference = load_json(args.reference) if args.reference else None
+        if args.snapshot:
+            saved = session.scalar(select(MomentumPaperEvent).where(
+                MomentumPaperEvent.event_type == 'SESSION_READY', MomentumPaperEvent.session_date == COLLISION_DAY,
+                MomentumPaperEvent.strategy_code == 'momentum_paper'))
+            if saved is None:
+                raise ValueError('saved SESSION_READY required')
+            reference = retained_snapshot_reference(args.snapshot, saved.payload['prior_close_date'])
         plan = prepare_widened_plan(session, load_json(args.manifest), reference, observed_at=datetime.now(UTC))
         plan['COPY_appends'] = rehearse_widened_copy(session, plan) if args.rehearse_copy else 0
     with args.output.open('x') as handle:
