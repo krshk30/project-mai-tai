@@ -10,7 +10,9 @@ from types import SimpleNamespace
 import pytest
 
 from project_mai_tai.market_data.gateway import _warning_monitor_diagnostic
-from tests.unit.test_momwarn1_gateway import aggregate, event, healthy, service
+from tests.unit.test_momwarn1_gateway import (
+    aggregate, arm_warning_with_three_clean_reads, event, healthy, service,
+)
 from tests.unit.test_momwarn1_live_health import setup as live_setup
 
 setup = live_setup
@@ -18,7 +20,7 @@ setup = live_setup
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("log_name", ["oms.log", "strategy.log", "schwab-1m-v2.log", "orb-schwab.log"])
-async def test_actual_permission_error_one_warning_and_sticky_A_only_revert(setup, caplog, log_name):
+async def test_actual_permission_error_one_warning_A_only_pause_then_three_clean_resume(setup, caplog, log_name):
     if os.geteuid() == 0:
         pytest.skip("OS permission proof requires nonroot; never substitute root success")
     env = setup()
@@ -26,7 +28,7 @@ async def test_actual_permission_error_one_warning_and_sticky_A_only_revert(setu
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
     svc._warning_health_reader, svc._warning_redis = env.reader, env.client
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     provider._handle_messages([aggregate()])
     owners = {key: set(value) for key, value in svc._desired_symbols_by_consumer.items()}
     saved = dict(redis.hashes)
@@ -46,22 +48,28 @@ async def test_actual_permission_error_one_warning_and_sticky_A_only_revert(setu
     rows = [row for row in caplog.records if row.levelno >= logging.WARNING]
     assert len(rows) == 1 and rows[0].levelno == logging.WARNING
     assert rows[0].exc_info is None
-    assert "[MOMWARN1-AUTO-REVERT] reason=monitor_unreadable A_only=true" in rows[0].message
+    assert "[MOMWARN1-PAUSE] reason=monitor_unreadable A_only=true" in rows[0].message
     detail = json.loads(rows[0].message.split("detail=", 1)[1])
     assert detail["exception_class"] == "PermissionError"
     assert "Permission denied" in detail["message"] and str(path) in detail["message"]
     assert "\n" not in rows[0].message and "\r" not in rows[0].message
-    assert svc._warning_revert_reason == "monitor_unreadable"
+    assert svc._warning_revert_reason is None
+    assert svc._pauses.metrics()["state"] == "paused"
     assert not svc._warning_active and not provider._warning_aggregates_enabled
     assert provider._ws.removed == ["A.*"]
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
     assert svc._desired_symbols_by_consumer == owners and redis.hashes == saved
     assert redis.entries == ordinary_entries and warning_redis.entries == []
     assert svc._warning_queue.empty()
-    reverted = svc._warning_reverted_utc_ns
+    assert svc._warning_reverted_utc_ns is None
     await svc._warning_monitor_once()
-    assert svc._warning_reverted_utc_ns == reverted
-    assert provider._ws.added.count("A.*") == 1
+    assert not svc._warning_active and svc._warning_reverted_utc_ns is None
+    await svc._warning_monitor_once()
+    assert not svc._warning_active
+    await svc._warning_monitor_once()
+    assert svc._warning_active and svc._warning_revert_reason is None
+    assert provider._ws.added.count("A.*") == 2
+    assert svc._desired_symbols_by_consumer == owners and redis.hashes == saved
 
 
 @pytest.mark.parametrize("exc", [
@@ -113,10 +121,13 @@ async def test_first_monitor_permission_failure_never_subscribes_A(setup, caplog
     finally:
         path.chmod(mode)
     assert len(caplog.records) == 1 and "PermissionError" in caplog.records[0].message
-    assert svc._warning_revert_reason == "monitor_unreadable" and not svc._warning_active
+    assert svc._warning_revert_reason is None and not svc._warning_active
+    assert svc._pauses.metrics()["state"] == "paused"
     assert "A.*" not in provider._ws.added and provider._ws.removed == []
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
     assert redis.hashes == saved
+    await arm_warning_with_three_clean_reads(svc)
+    assert provider._ws.added.count("A.*") == 1
 
 
 @pytest.mark.asyncio
@@ -138,5 +149,5 @@ async def test_healthy_monitor_does_not_emit_diagnostic(caplog):
     svc, _, _, _ = service()
     svc._warning_health_reader = SimpleNamespace(read=healthy)
     with caplog.at_level(logging.WARNING, logger="market-data-gateway"):
-        await svc._warning_monitor_once()
+        await arm_warning_with_three_clean_reads(svc)
     assert not caplog.records and svc._warning_active

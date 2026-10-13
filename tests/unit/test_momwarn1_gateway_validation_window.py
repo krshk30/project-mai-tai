@@ -15,7 +15,9 @@ from project_mai_tai.market_data import gateway, massive_provider
 from project_mai_tai.market_data.gateway import MarketDataGatewayService
 from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 from project_mai_tai.settings import Settings
-from tests.unit.test_momwarn1_gateway import aggregate, event, healthy, stream
+from tests.unit.test_momwarn1_gateway import (
+    aggregate, arm_warning_with_three_clean_reads, event, healthy, stream,
+)
 from test_market_data_gateway import FakeRedis, FakeSnapshotProvider, FakeReferenceCache
 
 
@@ -55,7 +57,10 @@ async def test_native_provider_shares_daily_clock_or_explicit_override(monkeypat
     svc = MarketDataGatewayService(settings, FakeRedis(), trade_stream=provider,
         snapshot_provider=FakeSnapshotProvider(), reference_cache=FakeReferenceCache(),
         warning_redis_client=FakeRedis(), warning_health_reader=SimpleNamespace(read=healthy))
-    await svc._warning_monitor_once()
+    if active:
+        await arm_warning_with_three_clean_reads(svc)
+    else:
+        await svc._warning_monitor_once()
     assert svc._warning_active is active
     assert provider._warning_aggregates_enabled is active
     assert provider._momentum_warning_window.gateway_end_for(observed.date()) == end
@@ -81,7 +86,10 @@ async def test_monitor_exact_today_end_and_tomorrow_defaults_preserve_eligibilit
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
     owners, saved = dict(svc._desired_symbols_by_consumer), dict(svc.redis.hashes)
-    await svc._warning_monitor_once()
+    if active:
+        await arm_warning_with_three_clean_reads(svc)
+    else:
+        await svc._warning_monitor_once()
     assert svc._warning_active is active and svc._warning_revert_reason is None
     provider.set_momentum_warning_aggregates.assert_awaited_once_with(active)
     assert svc._desired_symbols_by_consumer == owners and svc.redis.hashes == saved

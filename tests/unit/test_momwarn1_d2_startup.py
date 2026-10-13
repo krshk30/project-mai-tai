@@ -10,7 +10,7 @@ import pytest
 from project_mai_tai.market_data import gateway
 from project_mai_tai.market_data.momentum_warning_watchdog import WarningWatchdog
 from project_mai_tai.momwarn_health_contract import proposed_health_v2
-from tests.unit.test_momwarn1_gateway import event, service
+from tests.unit.test_momwarn1_gateway import arm_warning_with_three_clean_reads, event, service
 from tests.unit import test_momwarn1_live_health as native_controls
 from tests.unit.test_momwarn1_live_health import NS, NOW, line
 
@@ -191,7 +191,7 @@ async def test_v2_boot_unanswerable_exact_sixty_second_exception(setup, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_gateway_run_binds_native_reader_pending_A_only_then_fresh_bar_admits(setup, monkeypatch):
+async def test_gateway_native_pending_then_three_clean_admits_uncalibrated_late_pauses_and_recovers(setup, monkeypatch):
     env = setup(pending=True)
     svc, provider, redis, _ = service()
     svc._warning_health_reader = env.reader
@@ -210,12 +210,19 @@ async def test_gateway_run_binds_native_reader_pending_A_only_then_fresh_bar_adm
     assert not svc._warning_active and svc._warning_revert_reason is None
     assert 'A.*' not in provider._ws.added
     advance(env, first_due(NOW) + 2 * NS, symbols=('AAA', 'BBB'))
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     assert svc._warning_active and 'A.*' in provider._ws.added
     advance(env, first_due(NOW) + 66 * NS)
     await svc._warning_monitor_once()
-    assert svc._warning_revert_reason == 'v2_bar_late'
+    assert svc._warning_revert_reason is None and not svc._warning_active
+    assert svc._pauses.metrics()['reason'] == 'v2_bar_late'
     assert provider._ws.removed == ['A.*']
+    assert svc._desired_symbols_by_consumer == owners
+    assert (provider._subscriptions, provider._warning_trade_symbols) == tq
+    advance(env, first_due(NOW) + 122 * NS, symbols=('AAA', 'BBB'))
+    await arm_warning_with_three_clean_reads(svc)
+    assert svc._warning_revert_reason is None and svc._warning_generation == 2
+    assert provider._ws.added.count('A.*') == 2
     assert svc._desired_symbols_by_consumer == owners
     assert (provider._subscriptions, provider._warning_trade_symbols) == tq
 
