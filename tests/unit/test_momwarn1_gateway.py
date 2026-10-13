@@ -78,10 +78,32 @@ def healthy():
     return WarningHealth(time.time_ns(), 1, 1, 0, 1, 4 * 1024**3)
 
 
+async def arm_warning_with_three_clean_reads(svc):
+    """Initial/new-day setup uses actual monitor reads, never policy pre-priming."""
+    for index in range(3):
+        await svc._warning_monitor_once()
+        assert svc._warning_revert_reason is None
+        assert svc._warning_active is (index == 2)
+
+
 def event(owner, symbols, mode="replace"):
     return MarketDataSubscriptionEvent(source_service="offline-test", payload=MarketDataSubscriptionPayload(
         consumer_name=owner, symbols=symbols, mode=mode,
     ))
+
+
+@pytest.mark.asyncio
+async def test_initial_arm_helper_uses_three_actual_health_reads_not_constructor_priming():
+    svc, provider, _, _ = service()
+    reads = []
+    def read():
+        reads.append(time.time_ns())
+        return healthy()
+    svc._warning_health_reader = SimpleNamespace(read=read)
+    assert not svc._warning_active and not reads and not provider._ws.added
+    await arm_warning_with_three_clean_reads(svc)
+    assert len(reads) == 3
+    assert provider._ws.added == ["A.*"] and svc._warning_generation == 1
 
 
 @pytest.mark.asyncio
@@ -232,7 +254,7 @@ def test_invalid_aggregate_never_fabricates_endpoints(changes):
 @pytest.mark.asyncio
 async def test_documented_exclusive_1000_bucket_preserves_raw_end_to_Redis():
     svc, provider, _, redis = service()
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     message = aggregate(s=1610144868000, e=1610144869000)
     provider._handle_messages([message])
     stop = asyncio.Event()
@@ -252,7 +274,7 @@ async def test_documented_exclusive_1000_bucket_preserves_raw_end_to_Redis():
 async def test_A_dropoldest_only_and_contract_v1_strict_stream_bound():
     svc, provider, redis, warning_redis = service(market_data_momentum_warning_queue_maxsize=2,
                                                 market_data_momentum_warning_stream_maxlen=3)
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     normal_trade = TradeTickRecord("WFF", 13, 1)
     svc._trade_queue.put_nowait(normal_trade)
     for _ in range(5):
@@ -295,7 +317,7 @@ def test_pm_trading_days_and_DST(iso, allowed):
 async def test_outside_window_unsubscribes_A_and_preserves_watched_owners(monkeypatch):
     svc, provider, _, _ = service()
     await svc.apply_subscription_event(event("v2", ["WFF"]))
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     monkeypatch.setattr(massive_provider, "datetime", SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 22, 0, tzinfo=UTC)))
     provider._handle_messages([aggregate()])
     assert provider._ws.removed == ["A.*"]
@@ -318,7 +340,7 @@ async def test_daily_1800_close_drains_late_A_and_resumes_next_trading_04(monkey
     owners = {key: set(value) for key, value in svc._desired_symbols_by_consumer.items()}
     svc._trade_queue.put_nowait(TradeTickRecord("WFF", 13, 1))
     svc._quote_queue.put_nowait(QuoteTickRecord("WFF", 13, 14))
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     provider._handle_messages([aggregate(), aggregate()])
     assert svc._warning_generation == 1
     # Stale pending A at the normal boundary is a discard, not a safety trip.
@@ -347,7 +369,7 @@ async def test_daily_1800_close_drains_late_A_and_resumes_next_trading_04(monkey
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
     assert provider._ws.removed == ["A.*"]
     set_clock("2026-10-13T08:00:00+00:00")
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     assert svc._warning_active and svc._warning_generation == 2
     start_ms = int(datetime.fromisoformat("2026-10-13T08:00:00+00:00").timestamp() * 1000)
     provider._handle_messages([aggregate(s=start_ms, e=start_ms+1000)])
@@ -367,7 +389,7 @@ async def test_daily_1800_close_drains_late_A_and_resumes_next_trading_04(monkey
 @pytest.mark.asyncio
 async def test_normal_close_cancels_only_inflight_A_write_writer_resumes_next_04(monkeypatch):
     svc, provider, _, redis = service()
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     provider._handle_messages([aggregate()])
     entered, cancelled = asyncio.Event(), asyncio.Event()
     original_xadd = redis.xadd
@@ -396,7 +418,7 @@ async def test_normal_close_cancels_only_inflight_A_write_writer_resumes_next_04
     next_clock = SimpleNamespace(now=lambda _: datetime(2026, 10, 13, 8, 0, tzinfo=UTC))
     monkeypatch.setattr(gateway, "datetime", next_clock)
     monkeypatch.setattr(massive_provider, "datetime", next_clock)
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     provider._handle_messages([aggregate()])
     while not redis.entries:
         await asyncio.sleep(0)
@@ -409,7 +431,7 @@ async def test_normal_close_cancels_only_inflight_A_write_writer_resumes_next_04
 @pytest.mark.parametrize("failure", ["provider", "watchdog"])
 async def test_safety_failure_remains_sticky_across_normal_close_and_next_04(monkeypatch, failure):
     svc, provider, _, _ = service()
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     if failure == "provider":
         provider._revert_warning("policy_1008")
     else:
@@ -433,7 +455,7 @@ async def test_next_window_reprimes_logs_and_sync_baseline_after_inactive_night(
     svc, provider, _, _ = service()
     # Legacy fixture is a log/reset component control, not actual live source setup.
     svc._warning_health_reader = SimpleNamespace(read=reader.read, reset_window=reader.reset_window)
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     assert svc._warning_active and reader._logs
     closed = SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 22, 0, tzinfo=UTC))
     monkeypatch.setattr(gateway, "datetime", closed)
@@ -447,7 +469,7 @@ async def test_next_window_reprimes_logs_and_sync_baseline_after_inactive_night(
     next_window = SimpleNamespace(now=lambda _: datetime(2026, 10, 13, 8, 0, tzinfo=UTC))
     monkeypatch.setattr(gateway, "datetime", next_window)
     monkeypatch.setattr(massive_provider, "datetime", next_window)
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     assert svc._warning_active and svc._warning_generation == 2
     assert svc._warning_revert_reason is None and not provider._warning_failed
 
@@ -455,7 +477,7 @@ async def test_next_window_reprimes_logs_and_sync_baseline_after_inactive_night(
 @pytest.mark.asyncio
 async def test_closed_weekend_does_not_reenable_until_next_trading_04(monkeypatch):
     svc, provider, _, _ = service()
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     for stamp in ("2026-10-16T22:00:00+00:00", "2026-10-17T08:00:00+00:00", "2026-10-18T08:00:00+00:00"):
         fixed = SimpleNamespace(now=lambda _: datetime.fromisoformat(stamp))
         monkeypatch.setattr(gateway, "datetime", fixed)
@@ -465,7 +487,7 @@ async def test_closed_weekend_does_not_reenable_until_next_trading_04(monkeypatc
     monday = SimpleNamespace(now=lambda _: datetime(2026, 10, 19, 8, 0, tzinfo=UTC))
     monkeypatch.setattr(gateway, "datetime", monday)
     monkeypatch.setattr(massive_provider, "datetime", monday)
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     assert svc._warning_active and provider._ws.added.count("A.*") == 2
 
 
@@ -474,7 +496,7 @@ async def test_closed_weekend_does_not_reenable_until_next_trading_04(monkeypatc
 async def test_disconnect_or_1008_reverts_A_before_reconnect_without_resubscribe(policy):
     svc, provider, _, _ = service()
     await svc.apply_subscription_event(event("v2", ["WFF"]))
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     first_ws = provider._ws
     exc = ConnectionClosedError(Close(1008, "rejected"), None, None) if policy else RuntimeError("offline disconnect")
     class BrokenWS(FakeWS):
@@ -530,7 +552,7 @@ async def test_fair_live_loop_continuous_quote_and_bar_backlogs_cannot_starve_tr
 async def test_huge_synthetic_SDK_batch_yields_and_does_not_wait_on_A_Redis(record_property):
     svc, provider, redis, warning_redis = service(market_data_momentum_warning_queue_maxsize=16)
     await svc.apply_subscription_event(event("v2", ["WFF"]))
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     provider._on_trade = svc._enqueue_trade
     provider._on_quote = lambda r: svc._enqueue_live(svc._quote_queue, r)
     entered = asyncio.Event()
@@ -607,11 +629,11 @@ def test_two_slow_syncs_revert_even_with_fast_sync_between_and_missing_sync_fail
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["unreadable", "timeout", "load", "bar", "errors", "lag", "sync"])
-async def test_gateway_auto_revert_A_only_all_monitor_triggers(failure):
+async def test_gateway_A_only_noise_pauses_three_clean_resume_and_harm_stays_sticky(failure):
     svc, provider, _, _ = service(market_data_momentum_warning_monitor_timeout_seconds=0.01)
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     provider._handle_messages([aggregate()])
     def read():
         if failure == "unreadable":
@@ -630,16 +652,40 @@ async def test_gateway_auto_revert_A_only_all_monitor_triggers(failure):
     if failure == "sync":
         svc._warning_health_reader = SimpleNamespace(read=lambda: replace(healthy(), oms_sync_seq=3, oms_sync_seconds=6))
         await svc._warning_monitor_once()
-    assert svc._warning_revert_reason
+    noise = failure in {"unreadable", "timeout", "bar", "lag"}
+    if noise:
+        assert svc._warning_revert_reason is None and not provider._warning_failed
+        assert svc._pauses.metrics()["state"] == "paused"
+    else:
+        assert svc._warning_revert_reason
     assert provider._ws.removed == ["A.*"]
     assert provider._subscriptions == {"WFF"}
     assert provider._warning_trade_symbols == {"NEW"}
     assert svc._warning_queue.empty()
     assert svc.warning_metrics()["queue_drops"] == 0
     assert svc.warning_metrics()["dropped_total"] >= 1
+    if failure == "timeout":
+        # Main retains ONE timed-out read until it completes. Completing its
+        # controlled task here is not a clean policy/monitor observation.
+        pending = getattr(svc, "_warning_health_task", None)
+        if pending is not None:
+            await asyncio.wait_for(asyncio.shield(pending), timeout=1)
     svc._warning_health_reader = SimpleNamespace(read=healthy)
     await svc._warning_monitor_once()
     assert not svc._warning_active
+    if noise:
+        await svc._warning_monitor_once()
+        assert not svc._warning_active
+        await svc._warning_monitor_once()
+        assert svc._warning_active and svc._warning_revert_reason is None
+        assert provider._ws.added.count("A.*") == 2
+        assert provider._subscriptions == {"WFF"}
+        assert provider._warning_trade_symbols == {"NEW"}
+    else:
+        await svc._warning_monitor_once()
+        await svc._warning_monitor_once()
+        assert not svc._warning_active and svc._warning_revert_reason
+        assert provider._ws.added.count("A.*") == 1
 
 
 @pytest.mark.asyncio
@@ -710,7 +756,7 @@ async def test_retired_paper_log_absence_does_not_disable_A_but_live_ORB_error_d
     svc, provider, _, _ = service()
     # This isolates the existing log-scope component, not the new live-source setup.
     svc._warning_health_reader = SimpleNamespace(read=reader.read)
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     assert svc._warning_active
     assert provider._ws.added == ["A.*"]
     (directory / "orb.log").write_text("ERROR retired paper observer\n")
@@ -803,7 +849,7 @@ async def test_slow_offloop_monitor_does_not_stall_live_publishing():
 @pytest.mark.asyncio
 async def test_pending_A_write_cancelled_on_revert_and_live_quote_survives():
     svc, provider, redis, warning_redis = service()
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     provider._handle_messages([aggregate()])
     entered = asyncio.Event()
     cancelled = asyncio.Event()
@@ -943,7 +989,7 @@ async def test_raw_SDK_normalization_is_chunked_and_preserves_real_trade_provena
     await provider.sync_subscriptions(["WFF"])
     provider._on_trade = svc._enqueue_trade
     provider._on_quote = lambda r: svc._enqueue_live(svc._quote_queue, r)
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     fields = dict(ev="A", sym="WFF", o=13.1, h=13.4, l=13, c=13.35,
                   v=240, s=1791809480000, e=1791809481000)
     records = [fields] * 4096 + [dict(ev="T", sym="WFF", p=13.4, s=100,
