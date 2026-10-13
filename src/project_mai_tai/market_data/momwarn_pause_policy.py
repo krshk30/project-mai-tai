@@ -101,6 +101,15 @@ class WarningPausePolicy:
         self._last_alerts: set[str] = set()
         self._reconnect_events: deque[int] = deque(maxlen=RECONNECT_THRESHOLD+1)
         self.reconnect_event_count = 0
+        self.window_closed = False
+
+    def close_window(self, now_ns: int | None = None) -> None:
+        now = self._now(now_ns)
+        self._finish_pause(now, "window_closed")
+        self.window_closed = True
+        self._last_alerts.clear()
+        if self.state != "off":
+            self.state, self.reason, self.clean_streak = "window_closed", None, 0
 
     def _now(self, now_ns: int | None) -> int:
         value = self._clock_ns() if now_ns is None else now_ns
@@ -132,6 +141,8 @@ class WarningPausePolicy:
         now = self._now(now_ns)
         if self.state == "off":
             return "sticky"
+        if self.window_closed and classify_reason(reason) == ReasonClass.MONITOR:
+            return "pause"  # No episode, counter or recovery is running outside the window.
         if isinstance(reason, str) and reason in RECONNECT_EVENT_REASONS:
             # Caller supplies one callback per actual event, never repeated health polls.
             self._prune_reconnect_events(now)
@@ -172,6 +183,8 @@ class WarningPausePolicy:
         now = self._now(now_ns)
         if self.state == "off":
             return False
+        if self.window_closed:
+            return False
         if self.state == "paused" and self._current is None:
             self._begin_pause("v2_startup_pending", now)
         self.clean_streak = min(RECOVERY_READS, self.clean_streak+1)
@@ -194,6 +207,7 @@ class WarningPausePolicy:
             history.append(row)
         return {
             "state": self.state, "reason": self.reason, "clean_streak": self.clean_streak,
+            "window_closed": self.window_closed,
             "reason_class": classify_reason(self.reason).value if self.reason is not None else None,
             "required_clean_reads": RECOVERY_READS,
             "pause_count": self.pause_count, "pause_events": self.pause_events,
@@ -220,6 +234,8 @@ class WarningPausePolicy:
         }
 
     def _alert_reasons(self, now: int) -> tuple[str, ...]:
+        if self.window_closed:
+            return ()
         # Decisions need only the bounded counters, not copied display history.
         self._prune_reconnect_events(now)
         for events in (self._pause_starts, self._flap_events):

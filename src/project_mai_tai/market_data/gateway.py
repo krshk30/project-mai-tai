@@ -707,6 +707,10 @@ class MarketDataGatewayService:
     def _latch_warning_revert(self, reason: str, *, diagnostic: str | None = None) -> None:
         # Provider failures are not recoverable monitor samples. Unknown reasons
         # remain sticky; only the async sampled-noise route can pause/resume A.
+        if not self._warning_window_open():
+            self._pauses.close_window()
+            if classify_reason(reason) == "monitor":
+                return
         decision = self._pauses.observe(reason)
         if classify_reason(reason) == "monitor" and decision.state != "off":
             self._close_warning_window(reset_monitor=False)
@@ -734,6 +738,10 @@ class MarketDataGatewayService:
             task.cancel()
 
     async def _revert_warning(self, reason: str, *, diagnostic: str | None = None) -> None:
+        if classify_reason(reason) == "monitor" and not self._warning_window_open():
+            self._pauses.close_window()
+            self._close_warning_window(reset_monitor=False)
+            return
         if classify_reason(reason) == "monitor" and self._warning_revert_reason is None:
             previous_reason = self._pauses.reason
             decision = self._pauses.observe(reason)
@@ -773,7 +781,13 @@ class MarketDataGatewayService:
             if reset is not None:
                 reset()
 
+    def _warning_window_open(self) -> bool:
+        now = datetime.now(UTC)
+        end = self._momentum_validation_window.gateway_end_for(now.astimezone(EASTERN_TZ).date())
+        return is_fillable_et_session(now, 4, end.hour, end_minute=end.minute)
+
     async def _end_warning_window(self) -> None:
+        self._pauses.close_window()
         self._close_warning_window()
         try:
             await self.trade_stream.set_momentum_warning_aggregates(False)
@@ -969,6 +983,8 @@ class MarketDataGatewayService:
                 pass
 
     def warning_metrics(self, *, event_type: str = "gateway_sample") -> dict:
+        if not self._warning_window_open():
+            self._pauses.close_window()
         pause = self._pauses.metrics()
         pause["history"] = pause["history"][-8:]
         pause["exported_pause_history_limit"] = 8
@@ -992,11 +1008,12 @@ class MarketDataGatewayService:
             "A_first_provider_event_ns": self._warning_first_a_utc_ns,
             "A_subscription_confirmed": None,
             "coverage_status": "reverted" if self._warning_revert_reason else (
+                "off_by_window" if pause["state"] == "window_closed" else (
                 "paused" if pause["state"] == "paused" else (
                 "provider_event_observed" if self._warning_first_a_utc_ns else (
                     "requested" if self._warning_active else "inactive"
                 ))
-            ),
+            )),
             "watchdog_revert_reason": self._warning_revert_reason,
             "watchdog_revert_ns": self._warning_reverted_utc_ns,
             "v2_cohort": self._warning_watchdog.cohort_metrics(),
