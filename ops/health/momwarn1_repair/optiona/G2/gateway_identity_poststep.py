@@ -93,18 +93,28 @@ def proposal(root, request, manifest_raw, current):
     """The request is a hash-pinned receipt from the reviewed install, not an approval oracle."""
     need(request.get("version") == 1 and type(request.get("version")) is int,
          "restart receipt version invalid")
-    need(request.get("gateway_restart_authorized") is True and request.get("restart_completed") is True,
-         "explicit authorized completed gateway restart receipt required")
+    repair = request.get("operation") == "reviewed_guard_source_repair"
+    if repair:
+        need(request.get("guard_source_repair_authorized") is True,
+             "explicit reviewed guard-source repair authority required")
+    else:
+        need(request.get("operation", "gateway_restart") == "gateway_restart",
+             "unknown publication operation")
+        need(request.get("gateway_restart_authorized") is True and request.get("restart_completed") is True,
+             "explicit authorized completed gateway restart receipt required")
     need(isinstance(request.get("install_id"), str)
          and re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", request["install_id"]), "install ID invalid")
     need(sha(manifest_raw) == digest(request.get("manifest_before_sha256")), "manifest preimage drift")
     before = validate_pin(request.get("before_gateway_identity"))
     after = validate_pin(request.get("after_gateway_identity"))
     need(current == after, "live identity differs from completed restart receipt")
-    need(before["main_pid"] != after["main_pid"] and before["start_ticks"] < after["start_ticks"],
-         "receipt does not prove a new gateway PID and advancing process start")
-    need(before["exec_main_start_timestamp"] != after["exec_main_start_timestamp"],
-         "gateway start timestamp did not change")
+    if repair:
+        need(before == after, "guard-only repair cannot rebaseline gateway identity")
+    else:
+        need(before["main_pid"] != after["main_pid"] and before["start_ticks"] < after["start_ticks"],
+             "receipt does not prove a new gateway PID and advancing process start")
+        need(before["exec_main_start_timestamp"] != after["exec_main_start_timestamp"],
+             "gateway start timestamp did not change")
     checks = request.get("post_checks")
     need(isinstance(checks, dict) and all(checks.get(k) == "PASS" for k in ("identity", "flags", "trading")),
          "post-restart identity/flags/trading evidence absent or not PASS")
@@ -114,14 +124,17 @@ def proposal(root, request, manifest_raw, current):
     need(REQUIRED_ARTIFACTS <= set(artifacts), "guard artifact pins incomplete")
     if "gateway_identity" in manifest:
         need(validate_pin(manifest["gateway_identity"]) == before, "existing gateway baseline drift")
+    elif repair:
+        need(False, "source repair requires existing reviewed gateway baseline")
     reviewed = digest(request.get("reviewed_daily_guard_sha256"))
     old_source = digest(request.get("daily_guard_before_sha256"))
     need(artifacts["daily_guard.py"] == old_source, "old daily guard hash differs from reviewed preimage")
     reviewed_sources = {"daily_guard.py": reviewed}
-    if "reviewed_guard_rules_sha256" in request or "guard_rules_before_sha256" in request:
-        rules_before = digest(request.get("guard_rules_before_sha256"))
-        need(artifacts.get("guard_rules.py") == rules_before, "old guard rules hash differs from reviewed preimage")
-        reviewed_sources["guard_rules.py"] = digest(request.get("reviewed_guard_rules_sha256"))
+    for stem in ("guard_rules", "sampler"):
+        if repair or f"reviewed_{stem}_sha256" in request or f"{stem}_before_sha256" in request:
+            source_before = digest(request.get(f"{stem}_before_sha256"))
+            need(artifacts.get(stem + ".py") == source_before, "old " + stem + " hash differs from reviewed preimage")
+            reviewed_sources[stem + ".py"] = digest(request.get(f"reviewed_{stem}_sha256"))
     for name, expected in artifacts.items():
         need(isinstance(name, str) and Path(name).name == name and name not in {".", ".."},
              "artifact path not a simple filename")

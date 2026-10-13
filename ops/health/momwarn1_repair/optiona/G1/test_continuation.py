@@ -47,7 +47,8 @@ def test_normal_late_start_remains_refused():
         rules.treatment_clock(date(2026, 10, 14), datetime(2026, 10, 14, 11, tzinfo=UTC), MomentumValidationWindow())
 
 
-def test_actual_continuation_running_stop_still_stops_paper_and_audits_gap(monkeypatch, tmp_path):
+@pytest.mark.parametrize("stop_rc", [0, 1])
+def test_actual_continuation_running_stop_still_stops_paper_and_audits_gap(monkeypatch, tmp_path, stop_rc):
     now = datetime(2026, 10, 13, 15, 0, tzinfo=UTC)
     times = iter([now, now, now, now, now, now + timedelta(seconds=5)])
     monkeypatch.setattr(rules, "datetime", SimpleNamespace(
@@ -62,7 +63,7 @@ def test_actual_continuation_running_stop_still_stops_paper_and_audits_gap(monke
     monkeypatch.setattr(rules, "LiveSignals", lambda *_: signals)
     monkeypatch.setattr(rules, "RedisSafety", lambda _: SimpleNamespace(sample=lambda: (None, {})))
     monkeypatch.setattr(rules, "SlowdownRules", lambda: SimpleNamespace(heartbeat=lambda *_: "controlled_stop"))
-    sampler = SimpleNamespace(pid=123, poll=lambda: None, terminate=lambda: None, wait=lambda **_: 0)
+    sampler = SimpleNamespace(pid=123, stderr=None, poll=lambda: None, terminate=lambda: None, wait=lambda **_: 0)
     monkeypatch.setattr(rules.subprocess, "Popen", lambda *_, **__: sampler)
     monkeypatch.setattr(rules, "SamplerEvidence", lambda *_, **__: SimpleNamespace(read=lambda _: None))
     monkeypatch.setattr(rules, "_route_sampler_exit", lambda *_: None)
@@ -72,7 +73,7 @@ def test_actual_continuation_running_stop_still_stops_paper_and_audits_gap(monke
     monkeypatch.setattr(rules.os, "getloadavg", lambda: (0, 0, 0))
     audit, stops = [], []
     monkeypatch.setattr(rules, "_audit", lambda _, row: audit.append(row))
-    monkeypatch.setattr(rules, "stop_paper", lambda reason, *_: stops.append(reason) or 1)
+    monkeypatch.setattr(rules, "stop_paper", lambda reason, *_: stops.append(reason) or stop_rc)
     assert rules.run_guard(date(2026, 10, 13), tmp_path, continuation=True) == 1
     assert stops == ["controlled_stop"]
     assert "earlier gap NOT covered" in audit[0]["coverage"]

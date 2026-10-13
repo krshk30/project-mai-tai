@@ -23,6 +23,43 @@ def state(identity):
 
 
 class PoststepControls(unittest.TestCase):
+    def repair(self):
+        manifest = deepcopy(self.manifest)
+        manifest["gateway_identity"] = self.new_pin
+        old = (json.dumps(manifest) + "\n").encode()
+        request = dict(self.request, operation="reviewed_guard_source_repair",
+            guard_source_repair_authorized=True, manifest_before_sha256=ops.sha(old),
+            before_gateway_identity=self.new_pin, after_gateway_identity=self.new_pin)
+        for stem in ("guard_rules", "sampler"):
+            request[stem + "_before_sha256"] = manifest["artifacts"][stem + ".py"]
+            raw = ("CONTROLLED reviewed " + stem).encode()
+            (self.root / (stem + ".py")).write_bytes(raw)
+            request["reviewed_" + stem + "_sha256"] = ops.sha(raw)
+        return old, request
+
+    def test_authorized_same_identity_source_repair_three_explicit_hashes_only(self):
+        old, request = self.repair()
+        original = json.loads(old)
+        result = json.loads(ops.proposal(self.root, request, old, self.new_pin))
+        self.assertEqual(result["gateway_identity"], original["gateway_identity"])
+        self.assertEqual(result["application_sha"], original["application_sha"])
+        for name, value in original["artifacts"].items():
+            if name not in {"daily_guard.py", "guard_rules.py", "sampler.py"}:
+                self.assertEqual(result["artifacts"][name], value)
+
+    def test_source_repair_refuses_missing_authority_missing_preimages_or_new_identity(self):
+        old, request = self.repair()
+        for change in ({"guard_source_repair_authorized": False}, {"sampler_before_sha256": None},
+                       {"reviewed_sampler_sha256": None}, {"guard_rules_before_sha256": "0" * 64},
+                       {"before_gateway_identity": self.old_pin}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                ops.proposal(self.root, dict(request, **change), old, self.new_pin)
+
+    def test_sampler_cannot_be_blindly_rebaselined_in_ordinary_restart(self):
+        (self.root / "sampler.py").write_bytes(b"unsolicited drift")
+        with self.assertRaisesRegex(ValueError, "sampler.py"):
+            self.build()
+
     def test_explicit_two_source_window_cut_preserves_all_other_pins(self):
         original = json.loads(self.old)
         rules = self.root / "guard_rules.py"

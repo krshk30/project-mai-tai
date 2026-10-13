@@ -11,7 +11,7 @@ import sys
 from zoneinfo import ZoneInfo
 
 OPS_PATH = Path(__file__).resolve().parents[1] / "gateway_identity_poststep.py"
-OPS_SHA = "51c3ea010375b668496f7d81fda570d0f3fdf8a7597c2bb0d77280477a89b8d3"
+OPS_SHA = "5814dd2dc8984de9dc0901fc1a62d8fe87764125e7b57fb4e1550f065c5038f4"
 G1_SHA = "11bcf84be753e4d4cc55d7a682c51d2c7582c238b3f5044cb620bff4584eeff3"
 if hashlib.sha256(OPS_PATH.read_bytes()).hexdigest() != OPS_SHA:
     raise RuntimeError("frozen G2 publisher source drift")

@@ -78,6 +78,18 @@ class IntegrationControls(legacy.PoststepControls):
         self.assertEqual(self.calls, ["redis_closed", "dryrun"])
         self.assertFalse((self.root / "2026-10-13").exists())
 
+    def test_guard_only_three_hash_repair_same_identity_then_readonly_dryrun(self):
+        old, request = self.repair()
+        self.request = request
+        (self.root / "manifest.json").write_bytes(old)
+        result = self.complete()
+        self.assertEqual(result["status"], "IDENTITY_AND_PRESTART_PASS")
+        self.assertEqual(result["gateway_identity"], self.new_pin)
+        self.assertEqual(json.loads((self.root / "manifest.json").read_text())["gateway_identity"],
+                         json.loads(old)["gateway_identity"])
+        self.assertFalse(result["sampler_or_paper_start"])
+        self.assertEqual(self.calls, ["redis_closed", "dryrun"])
+
     def test_failed_dryrun_never_claims_guard_admission_PASS(self):
         result = self.complete(lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="controlled refusal"))
         self.assertEqual(result["status"], "IDENTITY_PUBLISHED_DRYRUN_FAILED")

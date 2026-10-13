@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -619,6 +620,61 @@ def finish_sampler(sampler, evidence, now):
     return evidence.read(now())
 
 
+class SamplerStderr:
+    """Bounded nonblocking diagnostic prefix; original stderr body is never audited."""
+    LIMIT = 8192
+
+    def __init__(self, stream):
+        self.stream, self.raw, self.eof, self.truncated, self.recorded = stream, b"", False, False, False
+        if stream is not None:
+            os.set_blocking(stream.fileno(), False)
+
+    def drain(self):
+        if self.stream is None or self.eof or self.truncated:
+            return
+        try:
+            chunk = os.read(self.stream.fileno(), self.LIMIT - len(self.raw) + 1)
+        except BlockingIOError:
+            return
+        self.eof = not chunk
+        self.raw += chunk
+        self.truncated = len(self.raw) > self.LIMIT
+        self.raw = self.raw[:self.LIMIT]
+
+    def detail(self):
+        message = self.raw.decode("utf-8", errors="replace")
+        if self.truncated:
+            message = "[WITHHELD_TRUNCATED_STDERR]"
+        else:
+            # Same F1 diagnostic policy; quoted values are removed before any text bound.
+            quoted = r'"(?:\\.|[^"\\])*(?:"|\Z)|\'(?:\\.|[^\'\\])*(?:\'|\Z)'
+            value = r'(?:' + quoted + r'|[^\s,;"\']+)'
+            message = re.sub(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+", "[REDACTED_URL]", message)
+            message = re.sub(r"(?i)\b(?:bearer|basic)\s+" + value, "[REDACTED_AUTH]", message)
+            message = re.sub(r"(?i)\b[\w-]*(?:authorization|password|passwd|secret|token|api[_-]?key|"
+                r"app[_-]?key|chat[_-]?id)[\w-]*[\"']?\s*[:=]\s*" + value,
+                "[REDACTED_CREDENTIAL]", message)
+            message = re.sub(r"\b\d{6,}:[A-Za-z0-9_-]+", "[REDACTED_TOKEN]", message)
+            if len(message) > 4096:
+                message = "[WITHHELD_OVERSIZE_STDERR_TEXT]"
+        return {"stderr_redacted": message, "original_prefix_sha256": hashlib.sha256(self.raw).hexdigest(),
+                "original_prefix_bytes": len(self.raw), "truncated": self.truncated,
+                "completeness": "EOF_OBSERVED" if self.eof and not self.truncated else "UNKNOWN_PREFIX_ONLY",
+                "raw_body_retained": False}
+
+
+def retain_sampler_exit(sampler, diagnostics, audit):
+    diagnostics.drain()
+    rc = sampler.poll()
+    if rc is not None and not diagnostics.eof:
+        diagnostics.drain()
+    if (rc is not None or diagnostics.truncated) and not diagnostics.recorded:
+        _audit(audit, {"action": "sampler_exit", "at_utc": datetime.now(UTC).isoformat(),
+                       "sampler_pid": sampler.pid, "returncode": rc, **diagnostics.detail()})
+        diagnostics.recorded = True
+    return rc
+
+
 def treatment_clock(treatment_date, now, validation_window, *, continuation=False):
     if continuation:
         et = now.astimezone(ET)
@@ -658,9 +714,11 @@ def run_guard(treatment_date: date, output_dir: Path, *, continuation=False) -> 
             str(Path(__file__).with_name("sampler.py")),
             "--gateway-log", str(GATEWAY_LOG), "--output", str(sampler_output),
             "--treatment-date", treatment_date.isoformat(), "--end-utc", end.isoformat(),
+            *(["--continue-oct13"] if continuation else []),
         ],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
     )
+    diagnostics = SamplerStderr(sampler.stderr)
     row = {"action": "start", "at_utc": datetime.now(UTC).isoformat(),
            "sampler_pid": sampler.pid, "treatment_date": treatment_date.isoformat()}
     if continuation:
@@ -681,6 +739,10 @@ def run_guard(treatment_date: date, output_dir: Path, *, continuation=False) -> 
     def interrupted(_signum: int, _frame: object) -> None:
         raise Blind("guard interrupted")
 
+    def safety_stop(reason):
+        # A successful harm/blindness STOP is not successful session completion.
+        return stop_paper(reason, redis, settings, audit) or 1
+
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     try:
@@ -695,17 +757,20 @@ def run_guard(treatment_date: date, output_dir: Path, *, continuation=False) -> 
                 raise Blind(f"1Hz monitor tick late at {now.isoformat()}")
             next_tick += 1
             _notify_systemd("WATCHDOG=1")
+            sampler_rc = retain_sampler_exit(sampler, diagnostics, audit)
+            if diagnostics.truncated:
+                raise Blind("1008 sampler stderr exceeded8192byte bound")
             evidence_trigger = sampler_evidence.read(now)
             if evidence_trigger:
-                return stop_paper(evidence_trigger, redis, settings, audit)
+                return safety_stop(evidence_trigger)
             sampler_result = _route_sampler_exit(
-                sampler.poll(), lambda reason: stop_paper(reason, redis, settings, audit),
+                sampler_rc, safety_stop,
             )
             if sampler_result is not None:
                 return sampler_result
             memory_trigger, redis_detail = redis_safety.sample()
             if memory_trigger:
-                return stop_paper(memory_trigger, redis, settings, audit)
+                return safety_stop(memory_trigger)
             if now >= snapshot_warmup_start:
                 signals.sample_snapshot_id(now)
             if now >= start:
@@ -724,7 +789,7 @@ def run_guard(treatment_date: date, output_dir: Path, *, continuation=False) -> 
                 status, age, _event = signals.heartbeat(now)
                 trigger = rules.heartbeat(status, age)
                 if trigger:
-                    return stop_paper(trigger, redis, settings, audit)
+                    return safety_stop(trigger)
                 if now >= next_minute + timedelta(seconds=1):
                     lags, refusals = signals.minute_values(now)
                     trigger, detail = rules.minute(
@@ -739,11 +804,14 @@ def run_guard(treatment_date: date, output_dir: Path, *, continuation=False) -> 
                         warning_load = False
                     _audit(audit, detail)
                     if trigger:
-                        return stop_paper(trigger, redis, settings, audit)
+                        return safety_stop(trigger)
                     next_minute += timedelta(minutes=1)
         final_trigger = finish_sampler(sampler, sampler_evidence, lambda: datetime.now(UTC))
+        retain_sampler_exit(sampler, diagnostics, audit)
+        if diagnostics.truncated:
+            raise Blind("1008 sampler stderr exceeded8192byte bound")
         if final_trigger:
-            return stop_paper(final_trigger, redis, settings, audit)
+            return safety_stop(final_trigger)
         expected = int((end - start).total_seconds())
         if load_count != expected or sampler_evidence.treatment_count != expected:
             raise Blind(
@@ -757,11 +825,14 @@ def run_guard(treatment_date: date, output_dir: Path, *, continuation=False) -> 
         })
         return 0
     except Exception as exc:
-        return stop_paper(f"monitor_UNKNOWN:{type(exc).__name__}:{exc}", redis, settings, audit)
+        return safety_stop(f"monitor_UNKNOWN:{type(exc).__name__}:{exc}")
     finally:
         if sampler.poll() is None:
             sampler.terminate()
             sampler.wait(timeout=5)
+        retain_sampler_exit(sampler, diagnostics, audit)
+        if sampler.stderr is not None:
+            sampler.stderr.close()
         redis.close()
 
 
