@@ -1,0 +1,103 @@
+STUCKALERT1 ASOF STORED BROKER-HISTORY COMPLETION -- LOCAL EVIDENCE, NO INSTALL
+
+TESTED HEAD / RUNTIME INVARIANCE
+caf654dd01080b4406f95fd1ca2d14ffc4370805
+Accepted runtime source8ab987b1fbdd336772756c8a38632e6adb1e8721 is UNCHANGED.
+git diff8ab987b1 --src/project_mai_tai/reconciliation/service.py is EMPTY;
+runtime SHA25617a493f45aeb78193a7a6fcd7ae0d294eebc6150ca3187b10a45c582ce28b166.
+BaseE860860fba4c7d59edff18eb23468ba576dcb83f4d57, sole S1 isolated branch.
+Only new replay input/controls, selected read-only query and own receipt/intake.
+No OMS/quotes/trading/models/Settings/MOM/queue changes, GitHub, provider/credential
+read, production/DB write or benchmark. Recognized Codex co-author marker.
+Previous94PASS/RED12 and latest-only reconstruction outputs preserved/valid.
+
+ACTUAL CAPTURE / DENOMINATORS
+16sequential READ ONLY transactions, statement_timeout2500ms, ON_ERROR_STOP=1,
+ROLLBACK. 15pages16cases plus lastpage2=242original retained incident case IDs,
+123unique order IDs. Exact order IDs and first_opened cutoffs come ONLY from
+unchanged original fixture, not a new current-status incident selection.
+Capture first2026-10-13T02:42:50.195865Z, last02:43:33.917106Z. Allpages succeeded.
+Connection existingSSH mai-tai-vps, peer DB login via sudo -n -u postgres psql
+-X -q -A -t -v ON_ERROR_STOP=1 -d project_mai_tai; no credential/env/provider read.
+BROKER_HISTORY_CAPTURE.sql is the exact executed first16-case query. For pages
+16..240 substitute VALUES from originalfixture.rows[offset:offset+16] and the
+outputoffset, unchanged query/transaction settings. Captured per-page clock/count
+and exact case/order/cutoff keys are preserved in supplemental fixture.
+
+Each query restricts event_source=broker AND event_at<=that casefirst_opened.
+It counts all matched broker events and accepted events, selects one earliest
+accepted event, and latest broker event with the SAME terminal/unknown-over-
+accepted/partial tie priority and UUID ordering as8ab. This is sufficient stored
+history evidence for runtime windowmax(anybrokeraccepted) pluslatestconflict,
+not a claim to retain every broker event/tape. Actual selected UUID/source/type/
+timestamp kept. No payload/account secret or fake/origin-upgraded event needed.
+Zero counts are actual queried stored-history facts, NOT inferred from absence
+of a latest-as-of event. Pages notatomic; capture retention/completeness and
+software receive/availability at historical cutoff remain UNMEASURED.
+Event-time ASOF is NOT causal software-arrival proof; no hindsight beyond cutoff
+is seeded, but a historical event_at is not invented received_at.
+
+ORIGINAL184 UNKNOWN-ORIGIN CASES (92UNIQUE ORDERS)
+4casecutoffs(2unique FLYE orders+theirintents) have positive stored brokeraccepted:
+Exact keys are in supplemental fixture:
+cases1d8f7967-2dab-465c-8385-d416ced571cd andf1f2a80c-0200-4cf9-8e1a-67626bc1e88d
+share actualevent396c6ef3-6990-4375-826c-6194b4206ee0 at2026-10-08T16:18:02Z;
+cases5c9cde8f-f0bf-4b8a-8750-5af8b6933520 andff960503-15e9-460a-8a3d-eed21ad13fee
+share actualeventbe452c58-02ff-44c8-9e68-83faba9de646 at2026-10-08T16:28:02Z.
+Both events are accepted,event_source=broker; latest broker event alsoaccepted.
+Original latestunknown rows/labels are NOT edited or upgraded.
+180casecutoffs(90unique orders):0storedbroker-origin events and0accepted events
+across exactly180queries. Their real historical broker acceptance remains
+UNKNOWN/unproven, NOT a claim that no real ACK ever occurred or history is complete.
+
+ACTUAL RECONCILER REPLAY
+Seed original status/age/marker/origin unchanged; add only selected captured
+brokerhistory facts, preserving UUID/time and deduplicating accepted/latest IDs.
+Allfacts <=eachcasecutoff checked. Run actual stuckorder/stuckintent builders on
+localSQLite with controlled incident-opening clock and per-case rollback.
+Original latest-only reconstruction still asserted119->92 and123->93; new full
+stored-history sufficient-fact reconstruction separately asserted below.
+
+kind           original_alerts   after_history   proven_suppressed
+stuck_order                119              90                  29
+stuck_intent               123              91                  32
+TOTAL                      242             181                  61
+
+61positivebrokeraccepted cases=57previouslycaptured+4new priorACK facts.
+181retained=180legacyunproven(90order/90intent)+1GIXIbrokerterminalintent.
+RealGIXI case1a7fdc71-60e3-410c-8d49-bcea106cb322 has1storedbroker event,
+cancelled393de999-6e10-4ac4-aa89-57517a537640 at2026-10-12T16:42:04Z;
+no acceptedbroker event at/before its16:42:09.919890Z incidentopening.
+No forced242zero, policy change, per-order freshness, fakeACK or fakecausalarrival.
+Allactualincident opening timesRTH; PM/RTH breadth remains CONTROLLED tests.
+Optionalpersisted per-account OMSsynccompletion metric absent/omitted unchanged.
+
+VERIFICATION
+Exactcaf654dd clean before/after run:95PASS0FAIL6.10s=66S1nodes+29existing
+reconciler/logging/heartbeat nodes. Existing94controls retained, plusonehistory
+replay asserting242querycoverage/123orders/16pagebounds/184legacy split4+180/
+actualeventsource/time/cutoff/originalfixturehash/totalfixturelines<=500.
+Ruff --no-cache and git diff --check PASS. No broad/benchmark/run-until-green.
+
+COMMAND
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_stuckalert1.py tests/unit/test_reconciliation_service.py tests/unit/test_reconciler_logging.py tests/unit/test_reconciler_heartbeat_redis_reload.py -q -s --junitxml=/tmp/stuckalert1-broker-history-final-20261012.xml > /tmp/stuckalert1-broker-history-final-20261012.log 2>&1
+
+SHA256 / OUTPUTS
+/tmp/stuckalert1-broker-history-final-20261012.xml
+82a5f2b24d49ec6a7fc92609d03d5672f5f25f0cb84cc10b6ca24a572e856adf
+/tmp/stuckalert1-broker-history-final-20261012.log
+c6c74a3dc771da923b65aee9d04faaee235d04f78bcf09c658fd523360a5ebd5
+tests/fixtures/stuckalert1_actual242.json (UNCHANGED)
+b7858e675311f8fdee79f0abb310d2aa203de087cf7074c2b6f37ab8ee850a2b
+tests/fixtures/stuckalert1_broker_history_asof.json
+a3548c784e4522ff9cb12b0e1a98291ef1fe84b20118c84d51de1add57880b6e
+docs/review-artifacts/stuckalert1/BROKER_HISTORY_CAPTURE.sql
+5005a458419e7018dec4d99ee44818b84c4ae16f1177b2b038e46263c4d3431f
+tests/unit/test_stuckalert1.py
+ab01f1fae6f2b280d825155b7e7352428ca0358b308b8addfd3df56207dbad39
+
+STATUS
+Read-only history fetch/reconstruction locally completed and reported; source
+positiveACK gate mainaccepted. Remaining180realACKproof gap separately reported
+BLOCKED, not forcedzero or cardcompletion. Main owns review/integration/install.
+No active tests/perf. Receipt-only child leaves tested runtime/test/fixture intact.
