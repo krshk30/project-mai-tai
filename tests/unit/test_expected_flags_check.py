@@ -50,13 +50,16 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 138
+    assert len(entries) == 139
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
         if field.annotation is bool or bool in get_args(field.annotation)
     }
     by_name = {entry["name"]: entry for entry in entries}
+    assert by_name["strategy_schwab_1m_v2_false_flip2_enabled"]["expected"] is True
+    assert by_name["strategy_schwab_1m_v2_false_flip2_enabled"]["owning_service"] == "schwab-1m-v2"
+    assert Settings.model_fields["strategy_schwab_1m_v2_false_flip2_enabled"].default is True
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["expected"] is True
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["owning_service"] == "oms"
     assert by_name["webull_list_primary_reads_enabled"]["expected"] is True
