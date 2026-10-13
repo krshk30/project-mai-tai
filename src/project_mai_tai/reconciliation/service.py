@@ -110,7 +110,11 @@ def _accepted_resting_ids(
         BrokerOrderEvent.order_id, BrokerOrderEvent.event_type,
         func.row_number().over(
             partition_by=BrokerOrderEvent.order_id,
-            order_by=(desc(BrokerOrderEvent.event_at), desc(BrokerOrderEvent.id)),
+            order_by=(
+                desc(BrokerOrderEvent.event_at),
+                desc(case((BrokerOrderEvent.event_type.in_({"accepted", "partially_filled"}), 0), else_=1)),
+                desc(BrokerOrderEvent.id),
+            ),
         ).label("rank"),
     ).where(
         BrokerOrderEvent.order_id.in_(candidates), BrokerOrderEvent.event_source == "broker",

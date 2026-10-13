@@ -80,11 +80,15 @@ def test_all_five_negative_shapes_alert_both_brokers_sessions(monkeypatch, provi
     monkeypatch.setattr(reconciler, "utcnow", lambda: now)
     factory = build_test_session_factory()
     with factory() as session:
-        seed(session, provider=provider, now=now,
+        _, order = seed(session, provider=provider, now=now,
              order_status=shape if shape in {"pending", "submitted", "unknown"} else "accepted",
              intent_status="unknown" if shape == "unknown" else "submitted",
              broker_event="cancelled" if shape == "broker_terminal" else None,
              orphan=shape == "orphan")
+        if shape in {"pending", "submitted"}:
+            order.broker_order_id = "CONTROLLED-id-is-not-an-ACK"
+            order.updated_at = now-timedelta(seconds=182)
+            session.flush()
         orders, intents = methods(session, factory)
         assert len(orders) == (0 if shape == "orphan" else 1)
         assert len(intents) == 1
@@ -136,6 +140,25 @@ def test_exact_180s_noack_boundary_remains_strict(monkeypatch):
         assert len(orders) == len(intents) == 1
 
 
+@pytest.mark.parametrize("conflict", ["cancelled", "filled", "unknown"])
+def test_same_timestamp_broker_conflict_cannot_be_hidden_by_accepted_uuid(monkeypatch, conflict):
+    now = datetime(2026, 10, 12, 15, tzinfo=UTC)
+    monkeypatch.setattr(reconciler, "utcnow", lambda: now)
+    factory = build_test_session_factory()
+    with factory() as session:
+        _, order = seed(session, now=now)
+        when = now-timedelta(days=1)
+        session.add_all([
+            BrokerOrderEvent(id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+                order_id=order.id, event_type="accepted", event_source="broker", event_at=when, payload={}),
+            BrokerOrderEvent(id=UUID("00000000-0000-0000-0000-000000000001"),
+                order_id=order.id, event_type=conflict, event_source="broker", event_at=when, payload={}),
+        ])
+        session.flush()
+        orders, intents = methods(session, factory)
+        assert len(orders) == len(intents) == 1
+
+
 def test_recorded242_incident_reconstruction_preserves_real_terminal_intent(monkeypatch):
     raw = FIXTURE.read_bytes()
     assert len(raw) < 1024*1024
@@ -150,6 +173,10 @@ def test_recorded242_incident_reconstruction_preserves_real_terminal_intent(monk
     for row in rows:
         now, updated = at(row["replay_at"]), at(row["alert_updated_at"])
         assert updated < now-timedelta(seconds=180)
+        assert row["alert_status"] in {
+            "stuck_order": {"pending", "submitted", "accepted", "partially_filled"},
+            "stuck_intent": {"pending", "submitted", "accepted"},
+        }[row["kind"]]
         assert at(row["event_at"]) <= now
         monkeypatch.setattr(reconciler, "utcnow", lambda now=now: now)
         with factory() as session:
