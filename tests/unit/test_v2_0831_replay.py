@@ -37,6 +37,7 @@ CASES = [
 ]
 T0 = 1787846400000
 OBSERVED = "[V2-FANOUT-MIRROR-LIVE-CROSS]"
+from tests.unit.resting_book_control import prove_primary_rest
 
 
 def _strategy(symbol: str, level: float):
@@ -60,6 +61,9 @@ def _strategy(symbol: str, level: float):
     st.resting_active = True
     st.resting_level = level
     st.last_resting_placed_slot = "first"
+    # Reachability is conditional on this controlled primary book. Historical
+    # Schwab hard rejections are NOT upgraded to working-order evidence.
+    prove_primary_rest(strategy, st)
     st.bars.append(OHLCVBar(timestamp_ms=T0 - 30_000, open=level * 0.99, high=level,
                             low=level * 0.98, close=level * 0.995, volume=25_000))
     return strategy, st, clock
@@ -95,6 +99,7 @@ def test_0831_duplicate_leg_is_suppressed_by_the_fixed_code(symbol, level, px, a
     assert st.fanout_webull_claimed is True, (
         "the zero-hold erased the claim again — the 08-31 mechanism is back"
     )
+    prove_primary_rest(strategy, st)
 
     # The recorded crossing quote (real px vs the real mirror level).
     with caplog.at_level(logging.INFO, logger="project_mai_tai.strategy_core.schwab_1m_v2"):
@@ -123,3 +128,12 @@ def test_0831_fixture_reaches_the_emit_path_when_unguarded(symbol, level, px, at
     assert len(strategy.drain_webull_fanout_intents()) == 1, (
         f"{symbol} {at}Z: fixture cannot reach the emit path — the suppression test is vacuous"
     )
+
+
+@pytest.mark.parametrize("symbol,level,px,at", CASES, ids=[f"{s}@{t}Z" for s, _, _, t in CASES])
+def test_0831_historical_primary_rejection_is_not_cross_permission(symbol, level, px, at):
+    strategy, st, clock = _strategy(symbol, level)
+    strategy.apply_primary_resting_book(observed_at_ms=clock["now"], orders={})
+    strategy._fanout_rth_resting_cross(st, _quote(symbol, px, clock["now"]))
+    assert strategy.drain_webull_fanout_intents() == []
+    assert not st.fanout_webull_claimed
