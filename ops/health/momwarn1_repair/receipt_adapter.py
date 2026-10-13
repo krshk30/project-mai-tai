@@ -18,7 +18,15 @@ def require(condition, reason):
 def native_health(value, *, final_observed_ns, now):
     fields = {"observed_wall_ns", "oms_sync_seq", "oms_sync_seconds", "v2_bar_lateness_seconds",
               "load_1m", "ram_available_bytes", "new_live_error", "v2_not_applicable"}
-    require(isinstance(value, dict) and set(value) == fields, "native health shape missing or changed")
+    readiness = {"v2_startup_pending", "v2_startup_deadline_ns"}
+    require(isinstance(value, dict) and set(value) in (fields, fields | readiness),
+            "native health shape missing or changed")
+    pending = value.get("v2_startup_pending", False)
+    deadline = value.get("v2_startup_deadline_ns")
+    require(type(pending) is bool and (
+        pending and type(deadline) is int and deadline > 0
+        and value["v2_not_applicable"] is False and value["v2_bar_lateness_seconds"] is None
+        or not pending and deadline is None), "native startup readiness malformed")
     stamp = value["observed_wall_ns"]
     require(type(stamp) is int and 0 < stamp <= final_observed_ns
             and 0 <= now.timestamp() - stamp / 1_000_000_000 <= 30,
@@ -32,7 +40,7 @@ def native_health(value, *, final_observed_ns, now):
         require(type(number) in (int, float) and math.isfinite(number) and number >= 0,
                 "native numeric evidence malformed")
     late = value["v2_bar_lateness_seconds"]
-    require((late is None and value["v2_not_applicable"])
+    require((late is None and (value["v2_not_applicable"] or pending))
             or (type(late) in (int, float) and math.isfinite(late) and late >= 0),
             "native bar observation malformed")
     # This verifies observations, not threshold health: real errors/slow reads remain visible.

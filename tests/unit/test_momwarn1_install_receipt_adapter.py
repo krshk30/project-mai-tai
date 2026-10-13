@@ -52,6 +52,37 @@ def test_success_preserves_reader_only_scope_and_raw_hash(fixture):
     assert "not a gateway health verdict" in result["scope"]
 
 
+@pytest.mark.parametrize("pending", [False, True])
+def test_native_d2_fields_preserve_reader_only_scope(fixture, pending):
+    row, expectations = fixture
+    for attempt in row["attempts"]:
+        attempt["health"].update(v2_startup_pending=pending,
+                                v2_startup_deadline_ns=row["observed_ns"] + 60_000_000_000 if pending else None,
+                                v2_not_applicable=not pending)
+    result = adapter.f3_receipt(json.dumps(row).encode(), **expectations)
+    assert result["status"] == "PASS"
+    assert result["health_verdict"] == "NOT_EVALUATED_NO_GATEWAY_PUBLISH_LAG"
+
+
+@pytest.mark.parametrize("change", [
+    {"v2_startup_pending": True},
+    {"v2_startup_deadline_ns": 1},
+    {"v2_startup_pending": "true", "v2_startup_deadline_ns": 1},
+    {"v2_startup_pending": True, "v2_startup_deadline_ns": True, "v2_not_applicable": False},
+    {"v2_startup_pending": True, "v2_startup_deadline_ns": 1, "v2_not_applicable": True},
+    {"v2_startup_pending": True, "v2_startup_deadline_ns": 1, "v2_not_applicable": False,
+     "v2_bar_lateness_seconds": 0},
+    {"v2_startup_pending": False, "v2_startup_deadline_ns": 1},
+    {"v2_startup_pending": True, "v2_startup_deadline_ns": 0, "v2_not_applicable": False},
+    {"v2_startup_pending": False, "v2_startup_deadline_ns": None, "unknown_health": True},
+])
+def test_malformed_or_partial_d2_fields_are_refused(fixture, change):
+    row, expectations = fixture
+    row["attempts"][0]["health"].update(change)
+    with pytest.raises(ValueError):
+        adapter.f3_receipt(json.dumps(row).encode(), **expectations)
+
+
 @pytest.mark.parametrize("change", [
     {"uid": 0}, {"gid": 0}, {"uid": True}, {"gateway_instance": "12:124"},
     {"source_head": "e" * 40}, {"environment_source": "env-file"},
