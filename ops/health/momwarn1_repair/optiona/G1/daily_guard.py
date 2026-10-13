@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
@@ -121,12 +121,20 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run-prestart", action="store_true")
+    parser.add_argument("--continue-oct13", action="store_true")
     args = parser.parse_args(argv)
     manifest = verify_manifest()
     now = datetime.now(UTC)
     et = now.astimezone(ET)
     settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
     validation_window = MomentumValidationWindow.from_settings(settings)
+    continuation = args.continue_oct13 or (
+        validation_window.session_date == date(2026, 10, 13)
+        and et.date() == date(2026, 10, 13) and time(7) <= et.time() < time(18, 10)
+    )
+    if continuation:
+        # Validate the date/clock even for a read-only prestart; never roll it to tomorrow.
+        load_guard().treatment_clock(et.date(), now, validation_window, continuation=True)
     if args.dry_run_prestart:
         guard = load_guard()
         redis = Redis.from_url(settings.redis_url, decode_responses=True,
@@ -140,11 +148,11 @@ def main(argv=None):
             return 0
         finally:
             redis.close()
-    if closed_timer_day(et, US_MARKET_HOLIDAYS, validation_window):
+    if not continuation and closed_timer_day(et, US_MARKET_HOLIDAYS, validation_window):
         print("SKIP closed trading day", flush=True)
         return 0
     guard = load_guard()
-    day = session_day(et, US_MARKET_HOLIDAYS, validation_window)
+    day = et.date() if continuation else session_day(et, US_MARKET_HOLIDAYS, validation_window)
     output = Path("/home/trader/after-hours") / day.isoformat() / "option-a-daily" / now.strftime("run-%Y%m%dT%H%M%S%fZ")
     output.mkdir(parents=True, mode=0o700)
     redis = Redis.from_url(settings.redis_url, decode_responses=True,
@@ -154,11 +162,12 @@ def main(argv=None):
         gateway, detail = prestart_checks(manifest, guard, settings, redis, now)
         guard._audit(audit, {"action": "daily_window", "at_utc": now.isoformat(),
             "session_date": day.isoformat(),
-            "end_et": datetime.combine(day, validation_window.guard_end_for(day), tzinfo=ET).isoformat(),
+            "end_et": datetime.combine(day, time(18, 10) if continuation else validation_window.guard_end_for(day), tzinfo=ET).isoformat(),
             "gateway": gateway, "redis": detail,
             "rules": "unchanged Option A safety; explicit date-scoped limits; close after guard completes"})
         # READY follows sampler launch; ExecStartPost starts paper only then.
-        rc = guard.run_guard(day, output)
+        rc = (guard.run_guard(day, output, continuation=True) if continuation
+              else guard.run_guard(day, output))
         if rc == 0:
             return guard.stop_paper("scheduled_session_close", redis, settings, audit)
         return rc

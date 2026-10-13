@@ -1,10 +1,10 @@
 """Offline G2 integration controls using actual updated G1 read-only program."""
 from contextlib import redirect_stdout
+from datetime import UTC, datetime
 import importlib.util
 import io
 import json
 from pathlib import Path
-import subprocess
 import sys
 from types import SimpleNamespace
 import unittest
@@ -151,6 +151,26 @@ class IntegrationControls(legacy.PoststepControls):
         with self.assertRaises(ValueError):
             integration.ordered_afterclose(lambda: {"status": "PASS"}, lambda: {"status": "UNKNOWN"}, forbidden, forbidden)
         self.assertEqual(callbacks, [])
+
+    def test_recorded_restart_mode_accepts_logged_open_exposure_not_an_inferred_flat_gate(self):
+        path = Path(self.temp.name) / "before-test.json"
+        row = {"before_gateway_identity": self.request["before_gateway_identity"],
+               "positions_per_account": {"schwab": [{"symbol": "CONTROLLED", "qty": 2}]},
+               "working_orders_per_account": {"webull": [{"client_order_id": "CONTROLLED"}]}}
+        raw = json.dumps(row).encode()
+        path.write_bytes(raw)
+        self.request.update(recorded_restart_test_authorized=True,
+                            restart_test_before={"path": str(path), "sha256": integration.ops.sha(raw)})
+        integration.install_scope(self.request, recorded_test=True,
+                                  now=datetime(2026, 10, 13, 12, tzinfo=UTC))
+        self.assertEqual((self.root / "manifest.json").read_bytes(), self.old)
+        for now in (datetime(2026, 10, 14, 12, tzinfo=UTC), datetime(2026, 10, 13, 13, 30, tzinfo=UTC)):
+            with self.assertRaises(ValueError):
+                integration.install_scope(self.request, recorded_test=True, now=now)
+        path.write_bytes(raw + b" ")
+        with self.assertRaises(ValueError):
+            integration.install_scope(self.request, recorded_test=True,
+                                      now=datetime(2026, 10, 13, 12, tzinfo=UTC))
 
 
 if __name__ == "__main__":

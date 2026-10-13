@@ -619,20 +619,35 @@ def finish_sampler(sampler, evidence, now):
     return evidence.read(now())
 
 
-def run_guard(treatment_date: date, output_dir: Path) -> int:
+def treatment_clock(treatment_date, now, validation_window, *, continuation=False):
+    if continuation:
+        et = now.astimezone(ET)
+        if treatment_date != date(2026, 10, 13) or et.date() != treatment_date:
+            raise Blind("Oct13 continuation cannot start on another date")
+        end = datetime.combine(treatment_date, clock_time(18, 10), tzinfo=ET).astimezone(UTC)
+        # Leave time for the unchanged sampler to establish its pre-treatment baseline.
+        start = now.replace(microsecond=0) + timedelta(seconds=5)
+        if et.time() < clock_time(7) or start >= end:
+            raise Blind("Oct13 continuation clock outside approved window")
+        return start, end
+    start = datetime.combine(treatment_date, clock_time(7), tzinfo=ET).astimezone(UTC)
+    end = datetime.combine(treatment_date, validation_window.guard_end_for(treatment_date),
+                           tzinfo=ET).astimezone(UTC)
+    if now >= start:
+        raise Blind("guard started at or after treatment start")
+    return start, end
+
+
+def run_guard(treatment_date: date, output_dir: Path, *, continuation=False) -> int:
     settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     audit = output_dir / "option-a-guard.jsonl"
     sampler_output = output_dir / "option-a-1008.jsonl"
-    start = datetime.combine(treatment_date, clock_time(7), tzinfo=ET).astimezone(UTC)
-    end = datetime.combine(
-        treatment_date, MomentumValidationWindow.from_settings(settings).guard_end_for(treatment_date),
-        tzinfo=ET,
-    ).astimezone(UTC)
-    snapshot_warmup_start = start - timedelta(minutes=5, seconds=30)
-    if datetime.now(UTC) >= start:
-        raise Blind("guard started at or after treatment start")
+    start, end = treatment_clock(treatment_date, datetime.now(UTC),
+                                 MomentumValidationWindow.from_settings(settings),
+                                 continuation=continuation)
+    snapshot_warmup_start = start if continuation else start - timedelta(minutes=5, seconds=30)
     signals = LiveSignals(redis, settings.redis_stream_prefix)
     redis_safety = RedisSafety(redis)
     rules = SlowdownRules()
@@ -646,8 +661,13 @@ def run_guard(treatment_date: date, output_dir: Path) -> int:
         ],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
     )
-    _audit(audit, {"action": "start", "at_utc": datetime.now(UTC).isoformat(),
-                   "sampler_pid": sampler.pid, "treatment_date": treatment_date.isoformat()})
+    row = {"action": "start", "at_utc": datetime.now(UTC).isoformat(),
+           "sampler_pid": sampler.pid, "treatment_date": treatment_date.isoformat()}
+    if continuation:
+        row.update(mode="oct13_continuation", coverage_starts=start.isoformat(),
+                   coverage=f"coverage starts {start.isoformat()}; earlier gap NOT covered",
+                   hard_end_et=end.astimezone(ET).isoformat())
+    _audit(audit, row)
     sampler_evidence = SamplerEvidence(
         sampler_output, start=start, end=end, launched_at=launched_at,
     )
