@@ -10,6 +10,7 @@ from html import escape
 from io import StringIO
 import json
 import logging
+import math
 from pathlib import Path
 import subprocess
 import time
@@ -4236,6 +4237,10 @@ def build_app(
                         "[MOMWARN1-PAGE] ledger=%s status=UNKNOWN", warning_code, exc_info=True,
                     )
                     warning = {"strategy_code": warning_code, "status": "UNKNOWN"}
+                warning["gateway_metrics"] = await _read_momentum_warning_gateway_metrics(
+                    app.state.repository.redis, active_settings.redis_stream_prefix,
+                    now_ns=time.time_ns(),
+                )
                 bot = {**bot, "momentum_warning": warning}
             data = {**data, "bots": [bot if item["strategy_code"] == strategy_code else item for item in data["bots"]]}
 
@@ -6077,6 +6082,83 @@ def _render_scanner_dashboard(
 </html>"""
 
 
+async def _read_momentum_warning_gateway_metrics(
+    redis: Redis, prefix: str, *, now_ns: int,
+) -> dict[str, Any]:
+    unknown = {"status": "UNKNOWN"}
+    try:
+        # Page-only bounded read of the existing client: no reconnect or control write.
+        entries = await asyncio.wait_for(
+            redis.xrevrange(stream_name(prefix, "momentum-warning-metrics"), count=64),
+            timeout=0.25,
+        )
+        if len(entries) > 64:
+            return unknown
+        selected = None
+        for _message_id, fields in entries:
+            raw = fields.get("data", fields.get(b"data"))
+            if not isinstance(raw, (str, bytes)) or len(raw.encode() if isinstance(raw, str) else raw) > 16384:
+                return unknown
+            sample = json.loads(raw)
+            if not isinstance(sample, dict):
+                return unknown
+            if sample.get("source") != "market-data-gateway" or sample.get("event_type") not in {"gateway_sample", "revert"}:
+                continue
+            json.dumps(sample, allow_nan=False)
+            observed, generation = sample.get("observed_ns"), sample.get("generation")
+            instance = sample.get("gateway_instance_id")
+            if (type(sample.get("version")) is not int or sample["version"] != 1
+                or type(observed) is not int or not 0 < observed <= now_ns
+                or type(generation) is not int or not 0 <= generation < 2**63
+                or not isinstance(instance, str) or not 0 < len(instance) <= 128):
+                return unknown  # Never fall back to an older epoch/sample.
+            if now_ns-observed > 20_000_000_000:
+                if selected is None:
+                    return unknown
+                continue
+            if selected is not None:
+                if (instance != selected["gateway_instance_id"]
+                    or generation != selected["generation"]
+                    or observed > selected["observed_ns"]):
+                    return unknown  # Conflicting fresh epochs/queued-old order are not current proof.
+                continue
+            selected = sample
+        if selected is None:
+            return unknown
+        result = {"status": "READABLE", "observed_ns": selected["observed_ns"],
+                  "age_ms": (now_ns-selected["observed_ns"])/1e6,
+                  "gateway_instance_id": selected["gateway_instance_id"], "generation": selected["generation"]}
+        for field in ("queue_depth", "queue_drops", "dropped_total", "A_received", "A_published"):
+            value = selected.get(field)
+            result[field] = value if type(value) is int and 0 <= value < 2**63 else "UNKNOWN"
+        for field in ("lag_ms", "max_publish_lag_ms"):
+            value = selected.get(field)
+            result[field] = value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else "UNKNOWN"
+        reason = selected.get("watchdog_revert_reason", "UNKNOWN")
+        result["watchdog_revert_reason"] = "NONE" if reason is None else (
+            reason if isinstance(reason, str) and len(reason) <= 128 else "UNKNOWN"
+        )
+        return result
+    except Exception:
+        return unknown
+    return unknown
+
+
+def _render_momentum_warning_gateway_metrics(metrics: dict[str, Any] | None) -> str:
+    readable = metrics is not None and metrics.get("status") == "READABLE"
+    def field(name: str) -> str:
+        return escape(str(metrics.get(name, "UNKNOWN") if readable else "UNKNOWN"))
+    return f"""<div class="panel-copy">A gateway counters ({'fresh' if readable else 'UNKNOWN'}):
+        Queue drops: {field('queue_drops')}; total discarded: {field('dropped_total')};
+        queue depth: {field('queue_depth')}; received/published: {field('A_received')}/{field('A_published')};
+        publish lag/max: {field('lag_ms')}/{field('max_publish_lag_ms')} ms.
+        Source: market-data-gateway; instance: {field('gateway_instance_id')};
+        generation: {field('generation')}; observed UTC ns: {field('observed_ns')}; age: {field('age_ms')} ms.
+        Safety revert: {field('watchdog_revert_reason')}. Overflow-only auto-revert: NO;
+        existing safety auto-revert: YES, A only. Counters are gateway-instance cumulative,
+        not daily totals. Missing, future, conflicting epochs or older-than-20s evidence is UNKNOWN, not zero.</div>"""
+
+
 def _render_momentum_warning_panel(warning: dict[str, Any] | None) -> str:
     if not warning:
         return ""
@@ -6098,6 +6180,7 @@ def _render_momentum_warning_panel(warning: dict[str, Any] | None) -> str:
         <div class="panel-copy">Comparison only. Never included in the Snapshot Momentum totals above.
         Same next-eligible-print fill and +5% / -15% / 600-second exits. Conservative aggregate
         evidence is labelled by the detector; it is not an invented raw-trade timestamp.</div>
+        {_render_momentum_warning_gateway_metrics(warning.get('gateway_metrics'))}
         <div class="table-wrap"><table>
         <thead><tr><th>Ticker</th><th>Path</th><th>Qty</th><th>Entry Time</th><th>Entry</th>
         <th>Exit Time</th><th>Exit</th><th>P&amp;L</th><th>Exit Summary</th></tr></thead>

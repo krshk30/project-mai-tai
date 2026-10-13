@@ -3,9 +3,9 @@
   "source": "Human NEW L3 unblocked Oct12 evening",
   "priority": 1,
   "owner": "Anscombe sole L3a on existing MOMWARN worktree",
-  "status": "rates_and_original_bounded_burst_reported_matched_comparison_preparing_perf_paused",
+  "status": "derived_rates_8192_paired_and_warning_page_controls_done_local_main_review_composition_pending",
   "base": "e064bcc4bbf9c92ba33b94b36224d51c5f86d201",
-  "next_action": "Human20:0x authorizes default Aqueue8192 sole Settings source edit; prepare matched no-A/1x1811/3x5433 measurement and retained induced-overflow controls. Do not execute until main explicitly CLEARS broad/60s window. Then one serialized control, quantile/max deltas, zero-drop/publishlag receipts, immediate CLEAR and exact final head/cherry-pick handoff. Main owns exact final F+B+MOMWARN composition",
+  "next_action": "Main review source/page handoff then main sole writer exact F+B+MOMWARN composition/allON/hotpath. No further L3 performance run, no install claim; actual health setup remains INSTALL",
   "result": "9daytable complete, maxobserved1811 Oct5 ->5433DERIVED Arows. ONEburstPASS: T/Q first5.562334ms,loopstall3.496708<50;64each T p50/.95/.99 .403333/.493625/.955833ms Q .414583/.519292/.969292ms; queue4096/A-only1336drops, separatestream maxlen20000. Runtime src unchanged frome064",
   "tested_burst_head": "04fc4d2b87376bff594e1eeb1beb38651e50cf2c",
   "evidence_directory": "/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012",
@@ -23,33 +23,51 @@
   "boundary": "No queue edits, provider requests/socket/live writes/deploy/GitHub; Mendel offlinelead and main F+B composition/hotpath directories untouched",
   "followups": [
     {
+      "id": "L3A-WARNING-PAGE-COUNTERS",
+      "source": "Human verified603 pair and requests actual counted-on-page bounded read-only metrics inside warning panel only",
+      "priority": 1,
+      "owner": "Anscombe sole L3 warning-only page followup",
+      "status": "done_local_source_and_focused_tests_reported_main_review_pending",
+      "assessment": "ControlPlaneRepository already owns Redis client; a warning-page-only bounded xrevrange can use it without reconnect/new client/subscription. Shared10s momentum-warning-metrics has gateway_sample/revert with original epoch/observed_ns. Latest gateway sample <=20s can show actual counters; missing/stale/future/unreadable becomes UNKNOWN, never zero",
+      "next_action": "Finish preserved bounded warning-panel read; fresh conflicting gateway epochs/queued-old order UNKNOWN without borrowing consumer context. Run focused page/existingdisplay/settings/gateway controls only after explicit resume, no burst or60s rerun; commit reviewed warning-only files with marker and report exact source/test evidence",
+      "completion_criterion": "Exact new source/caller tests confirm fresh actual metrics on warning panel, missing/stale/malformed/foreign/future UNKNOWN, bounded timeout/rows/bytes, no counter inference or write/reconnect/new connection and legacy/other-panel preservation",
+      "scope": "services/control_plane.py warning-only helper/branch/panel, dedicated tests and own receipts only; no trading/gateway/health policy changes",
+      "result": "One existing-client xrevrange count64/timeout250ms/16KiBperrecord; own gateway source/version/observed_ns/instance/generation, <=20s fresh; conflicting fresh epoch or queued-old order UNKNOWN. Actual producer overflow3 through page preserves Snapshot31.80. Page+old display60PASS/1deselected; settings/gateway/health/window34PASS/97deselected. Ruff/diffcheckPASS; no burst/60s rerun",
+      "reported_at": "2026-10-13 00:15:47 UTC",
+      "reported": "Concise page/display60PASS and retained34PASS progress; exact committed head follows receipt"
+    },
+    {
       "id": "L3A-QUEUE-8192",
       "source": "NEW HUMAN20:0x reviewer MUSTFIX: default8192 >=3xobservedpeak; zero queue drops at1x1811 and3x5433",
       "priority": 1,
       "owner": "Anscombe sole L3a Settings/gateway-warning controls",
-      "status": "source_preparation_performance_deliberately_paused",
+      "status": "done_local_603_controls_verified_and_reported",
       "assessment": "Only runtime change is Settings Aqueue default4096->8192. Keep configurable small bounds/induced drop-oldest controls and all A-only safety/window/owner tests. Existing queue-overflow auto-revert is NO; actual safety triggers remain YES. Gateway metrics expose queue_drops/dropped_total; current warning HTML panel is ledger-only and does NOT display those counters",
       "next_action": "Prepare actual parser/publisher1x and3x, complete A drain after controlled T/Q boundary, assert zero queue and total drops/publishlag<2s/stall<50ms; show exported counter samples and explicitly disclose absent counter-page wiring, without inventing new drop-policy approval",
       "completion_criterion": "Exact frozen8192 source with serialized no-A/1811/5433 receipt, retained induced-overflow/A-only-revert/09:30close controls, honest counter-page and auto-revert yes/no report; final F+B+MOMWARN remains main-owned",
-      "supersedes": "4096 default and expected1336 drops for derived5433 burst ONLY; historical04fc result stays immutable and induced overflow/degrade tests remain required"
+      "supersedes": "4096 default and expected1336 drops for derived5433 burst ONLY; historical04fc result stays immutable and induced overflow/degrade tests remain required",
+      "tested_head": "603657caaf0f108bca1c162dbb45cfdc98ea2805",
+      "result": "1x1811/3x5433 actual A received=published,queue/totaldrops0; maxloopstall1.514625/3.5025ms; maximum received-to-write-completionlag134.51775/389.0815ms. Actual inducedqueue2 drops3 retained, health/close34PASS. Prior noHTML finding superseded only by separate warning-page followup",
+      "reported": "Boxed local completion and CLEAR; main independently verified paired1PASS plus34controls and no benchmark overlap"
     },
     {
       "id": "L3A-BASELINE-DELTA",
       "source": "Human review of04fc4d2b: bounded is not latency unchanged; matched no-A callback-to-publish comparison required",
       "priority": 1,
       "owner": "Anscombe sole L3a",
-      "status": "source_preparation_performance_deliberately_paused",
+      "status": "done_descriptive_comparison_reported_no_literal_unchanged_claim",
       "assessment": "Original test invokes actual provider._process_messages for the A frame, but watched T/Q are controlled callbacks available at the first A-writer boundary. It proves bounded callback progress, not frame-tail latency or unchanged latency versus baseline",
       "next_action": "Same64T/Q stimuli and actual publish observers in baseline and derived burst; retain50ms bounds and report signed p50/p95/p99/max differences rather than inventing an equivalence tolerance",
       "completion_criterion": "One serialized native-clock baseline/burst on frozen followup head, receipt containing both phases/deltas/all observations/parser and callback-boundary limitations, XML and immediate windowCLEAR",
-      "performance_hold": "Main final b718f070 broad session50318 then main retained-on60s; no L3 tests/benchmark during either"
+      "performance_hold": "Original main windows respected. Pair started20:06:54.670ET after explicitCLEAR; no L3 heavy work20:05:14-20:06:14. All performance finished andCLEAR reported; no rerun",
+      "result": "3x T/Qmax1.105625/1.11825ms vs noA .091292/.112042; deltas+1.014333/+1.006208ms. Single descriptive pair, not literally unchanged/statistical equivalence. Main verified/reported subproof completed"
     },
     {
       "id": "L3A-FINAL-COMPOSITION-HANDOFF",
       "source": "Human final F+B clean b718f070 request exact warning head/minimal E860..warning cherry-pick sequence after comparison",
       "priority": 2,
       "owner": "Anscombe source handoff; main sole composition writer",
-      "status": "prepare_manifest_exact_head_pending_comparison",
+      "status": "final_page_source_commit_handoff_preparing_after_verified_controls",
       "next_action": "Identify exact linear E860 descendant chain and touched-file overlap, preserve all originals; send final tested head and ordered dependency-safe commits after paired measurement",
       "completion_criterion": "Exact warning source/test head and safe ordered commit handoff, no rebase or rewriting old heads; final exact F+B+MOMWARN qualification remains main-owned and not assumed from E860-only controls"
     }
