@@ -813,7 +813,7 @@ class MarketDataGatewayService:
             if getattr(health, "v2_cohort", None) is not None:
                 metrics = self._warning_watchdog.cohort_metrics()
                 key = (metrics["due_ns"], metrics["status"], metrics["late_streak"], metrics["missing_symbols"])
-                if self.__dict__.get("_warning_cohort_log_key") != key:
+                if metrics["status"] == "INCOMPLETE" and self.__dict__.get("_warning_cohort_log_key") != key:
                     self.logger.info("[MOMWARN1-V2-COHORT] status=%s incomplete_sampled_minutes=%d may_later_complete=1 "
                                      "unobserved_gap_minutes=%d late_streak=%d lateness=%s missing=%s",
                                      metrics["status"], metrics["incomplete_minutes"],
@@ -835,6 +835,7 @@ class MarketDataGatewayService:
                 self._warning_requested_utc_ns = time.time_ns()
                 self._warning_first_a_utc_ns = None
         except asyncio.CancelledError:
+            # Cancellation is shutdown/control flow, never monitor unreadability.
             raise
         except Exception as exc:
             await self._revert_warning("monitor_unreadable", diagnostic=_warning_monitor_diagnostic(exc))
