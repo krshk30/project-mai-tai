@@ -398,9 +398,12 @@ class MassiveTradeStream:
         from project_mai_tai.market_data.momwarn_pause_policy import classify_reason
 
         recoverable = classify_reason(reason) == "monitor"
-        if not self._warning_aggregates_enabled and not (recoverable and self._warning_reconnect_pending):
+        desired = self._warning_aggregates_enabled or self._warning_reconnect_pending
+        if self._on_warning_revert is None or (not desired and not self._warning_window_is_open()):
             return
-        self._warning_reconnect_pending = recoverable
+        # Count actual connection failures even during a health pause; preserve
+        # the separate A intent so a health-paused feed is not eagerly restored.
+        self._warning_reconnect_pending = recoverable and desired
         self._warning_failed = not recoverable
         self._warning_aggregates_enabled = False
         try:
@@ -536,7 +539,17 @@ class MassiveTradeStream:
                 raise
             except Exception as exc:
                 self._connected = False
-                self._revert_warning("policy_1008" if self._is_policy_violation(exc) else "disconnect")
+                from websockets.exceptions import ConnectionClosed
+
+                # Parser/authentication/programming failures are not verified
+                # transport reconnects and must never become recoverable noise.
+                if isinstance(exc, ConnectionClosed):
+                    reason = "policy_1008" if self._is_policy_violation(exc) else "disconnect"
+                elif isinstance(exc, ConnectionError):
+                    reason = "disconnect"
+                else:
+                    reason = "provider_error"
+                self._revert_warning(reason)
                 await self._close_ws()
                 if self._downgrade_aggregate_subscriptions(exc):
                     continue

@@ -228,6 +228,36 @@ async def test_four_distinct_reconnects_in_ten_minutes_sticky_even_while_A_pause
 
 
 @pytest.mark.asyncio
+async def test_four_actual_disconnects_during_health_pause_still_escalate_without_A_restore(pm_clock):
+    svc, provider, _, _ = service()
+    await arm(svc)
+    await svc._revert_warning("monitor_unreadable")
+    assert not provider._warning_reconnect_pending
+    for index in range(4):
+        provider._revert_warning("disconnect")
+        assert svc._warning_revert_reason == ("reconnect_storm" if index == 3 else None)
+        assert not provider._warning_reconnect_pending
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", [ValueError("invalid JSON"), RuntimeError("authentication failed")])
+async def test_unknown_connection_body_failure_stays_sticky_while_health_paused(pm_clock, fault):
+    svc, provider, _, _ = service()
+    await arm(svc)
+    await svc._revert_warning("monitor_unreadable")
+    replacement = FakeWS()
+    async def failed(_processor):
+        provider._running = False
+        raise fault
+    replacement.connect = failed
+    provider._build_client = lambda: replacement
+    provider._running = True
+    await provider._run_loop()
+    assert svc._warning_revert_reason == "provider_error"
+    assert provider._warning_failed and not provider._warning_reconnect_pending
+
+
+@pytest.mark.asyncio
 async def test_gateway_A_240_per_second_60s_original_budget_and_TQ_progress(pm_clock, record_property):
     """Offline real gateway/provider publisher path; not a live provider load proof."""
     svc, provider, redis, warning_redis = service()

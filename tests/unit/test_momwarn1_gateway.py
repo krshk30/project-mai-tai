@@ -498,7 +498,7 @@ async def test_disconnect_or_1008_pauses_A_until_replacement_connection(policy):
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await arm_warning_with_three_clean_reads(svc)
     first_ws = provider._ws
-    exc = ConnectionClosedError(Close(1008, "rejected"), None, None) if policy else RuntimeError("offline disconnect")
+    exc = ConnectionClosedError(Close(1008, "rejected"), None, None) if policy else ConnectionResetError("offline disconnect")
     class BrokenWS(FakeWS):
         async def connect(self, _processor):
             provider._running = False
