@@ -2,10 +2,12 @@
 
 import json
 import logging
+import os
 
 import pytest
 
-from tests.unit.test_momwarn1_gateway import event, service
+from tests.unit.test_momwarn1_gateway import arm_warning_with_three_clean_reads, event, service
+from tests.unit.test_momwarn1_d2_startup import advance
 from tests.unit.test_momwarn1_live_health import NS, line, setup as live_setup
 
 setup = live_setup
@@ -17,8 +19,7 @@ async def start(env):
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
     svc._warning_health_reader, svc._warning_redis = env.reader, env.client
-    await svc._warning_monitor_once()
-    assert svc._warning_active
+    await arm_warning_with_three_clean_reads(svc)
     return svc, provider, redis
 
 
@@ -36,6 +37,8 @@ async def test_native_in_window_rebaseline_preserves_real_facts_TQ_and_gap(setup
     path.write_text("INFO post-copy retained\n" * (size // 10 + 1) if regrown else "")
     assert path.stat().st_ino == inode
     assert (path.stat().st_size >= size) is regrown
+    before = env.client.xrevrange.call_count
+    assert before == 3
     caplog.clear()  # Subscription setup is outside the two monitor calls under test.
     with caplog.at_level(logging.WARNING, logger="market-data-gateway"):
         await svc._warning_monitor_once()
@@ -49,7 +52,7 @@ async def test_native_in_window_rebaseline_preserves_real_facts_TQ_and_gap(setup
     assert provider._ws.removed == [] and provider._ws.added.count("A.*") == 1
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
     assert svc._desired_symbols_by_consumer == owners and redis.hashes == saved
-    assert env.client.xrevrange.call_count == 3
+    assert env.client.xrevrange.call_count == before + 2
 
 
 @pytest.mark.asyncio
@@ -122,6 +125,8 @@ async def test_partial_ERROR_cannot_be_fabricated_across_truncation(setup):
 async def test_native_independent_unknowns_never_hidden_by_rebaseline(setup, caplog, failure):
     env = setup()
     svc, provider, _ = await start(env)
+    original_logs = {name: (env.directory / name).read_bytes() for name in LOGS}
+    original_stats = {pid: (env.proc / pid / "stat").read_text() for pid in ("12", "13")}
     if failure.startswith("inode_"):
         name = {"inode_oms": "oms.log", "inode_v2": "schwab-1m-v2.log",
                 "inode_error_log": "strategy.log"}[failure]
@@ -150,17 +155,44 @@ async def test_native_independent_unknowns_never_hidden_by_rebaseline(setup, cap
         config = dict(env.cfg, source_timezone_ref="changed")
         env.config.write_text(json.dumps(config))
     elif failure == "log_missing":
+        # Keep an exact-inode local alias so repair does not waive identity validation.
+        os.link(env.directory / "strategy.log", env.directory / "missing.log")
         (env.directory / "strategy.log").unlink()
     else:
         (env.directory / "oms.log").write_text(line(env.clock.ns,
             "[OMS-BROKER-SYNC-PASS] id=10 phase=end outcome=ok duration_ms=2000.000 exceeds_note_age=False"))
     with caplog.at_level(logging.WARNING, logger="market-data-gateway"):
         await svc._warning_monitor_once()
-    assert svc._warning_revert_reason == "monitor_unreadable"
+    assert svc._warning_revert_reason is None and not svc._warning_active
+    assert svc._pauses.metrics()["reason"] == "monitor_unreadable"
     assert provider._ws.removed == ["A.*"]
     assert any("exception_class" in row.message for row in caplog.records)
     if failure == "v2_missing_due":
         assert any("completion unknown after copytruncate" in row.message for row in caplog.records)
+    assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
+    if failure.startswith("inode_"):
+        path.unlink()
+        (env.directory / "old.log").rename(path)
+    elif failure == "log_missing":
+        (env.directory / "missing.log").rename(env.directory / "strategy.log")
+    elif failure in {"OMS_dead", "v2_dead"}:
+        path.write_text(original_stats["12" if failure == "OMS_dead" else "13"])
+    elif failure == "config_changed":
+        env.config.write_text(json.dumps(env.cfg))
+    elif failure == "v2_missing_due":
+        # Repair with a real new completion and on-time bars, not restamped old evidence.
+        env.seq = env.reader._source.oms.latest["oms_sync_seq"]
+        advance(env, (env.clock.ns // (60 * NS) + 1) * (60 * NS) + 2 * NS,
+                symbols=("AAA", "BBB"))
+        # The repaired receipt is real, but seq 11 was never validated by the watchdog.
+        await svc._warning_monitor_once()
+        assert not svc._warning_active and svc._warning_revert_reason is None
+        assert svc._pauses.metrics()["reason"] == "monitor_sync_gap"
+    else:
+        for name, raw in original_logs.items():
+            (env.directory / name).write_bytes(raw)
+    await arm_warning_with_three_clean_reads(svc)
+    assert provider._ws.removed == ["A.*"] and provider._ws.added.count("A.*") == 2
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
 
 
@@ -173,7 +205,8 @@ async def test_native_next_day_reset_after_evening_truncate_even_if_A_never_acti
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
     provider._connected = previous_A_active
     svc._warning_health_reader, svc._warning_redis = env.reader, env.client
-    await svc._warning_monitor_once()
+    for _ in range(3):
+        await svc._warning_monitor_once()
     old_source = env.reader._source
     assert bool(svc._warning_active) is previous_A_active and env.reader._logs
     owners, saved = dict(svc._desired_symbols_by_consumer), dict(redis.hashes)
@@ -187,7 +220,7 @@ async def test_native_next_day_reset_after_evening_truncate_even_if_A_never_acti
     (env.directory / "oms.log").write_text(line(env.clock.ns - NS,
         "[OMS-BROKER-SYNC-PASS] id=100 phase=end outcome=ok duration_ms=1000.000 exceeds_note_age=False"))
     provider._connected = True
-    await svc._warning_monitor_once()
+    await arm_warning_with_three_clean_reads(svc)
     assert svc._warning_active and svc._warning_revert_reason is None
     assert env.reader._source is not old_source
     assert env.reader._source.oms.latest["oms_sync_seq"] == 100

@@ -10,6 +10,8 @@ from types import ModuleType
 import pytest
 
 from tests.unit.test_momwarn1_copytruncate import start
+from tests.unit.test_momwarn1_d2_startup import advance
+from tests.unit.test_momwarn1_gateway import arm_warning_with_three_clean_reads
 from tests.unit.test_momwarn1_live_health import NS, line, setup as live_setup
 from project_mai_tai.market_data import momentum_warning_watchdog as reader_module
 from project_mai_tai.momwarn_log_cursor import LogReadRace
@@ -166,6 +168,11 @@ async def test_ERROR_appended_before_error_cursor_read_is_caught_same_sample(set
 async def test_nonrace_failures_are_never_retried(setup, monkeypatch, failure):
     env = setup()
     svc, provider, _ = await start(env)
+    oms_path = env.directory / "oms.log"
+    original_bytes = oms_path.read_bytes()
+    original_stat = (env.proc / "12" / "stat").read_text()
+    original_config = env.config.read_text()
+    original_read = env.reader._source.oms.read
     if failure == "permission":
         def denied():
             raise PermissionError("CONTROLLED no read permission")
@@ -187,7 +194,24 @@ async def test_nonrace_failures_are_never_retried(setup, monkeypatch, failure):
     before = env.client.xrevrange.call_count
     await svc._warning_monitor_once()
     assert env.client.xrevrange.call_count - before == (0 if failure == "config" else 1)
-    assert svc._warning_revert_reason == "monitor_unreadable" and provider._ws.removed == ["A.*"]
+    assert svc._warning_revert_reason is None and not svc._warning_active
+    assert svc._pauses.metrics()["reason"] == "monitor_unreadable"
+    assert provider._ws.removed == ["A.*"]
+    if failure == "permission":
+        monkeypatch.setattr(env.reader._source.oms, "read", original_read)
+    elif failure == "config":
+        env.config.write_text(original_config)
+    elif failure == "identity":
+        (env.proc / "12" / "stat").write_text(original_stat)
+    elif failure == "stale":
+        env.seq = env.reader._source.oms.latest["oms_sync_seq"]
+        advance(env, (env.clock.ns // (60 * NS) + 1) * (60 * NS) + 2 * NS,
+                symbols=("AAA", "BBB"))
+    else:
+        oms_path.write_bytes(original_bytes)
+    await arm_warning_with_three_clean_reads(svc)
+    assert provider._ws.removed == ["A.*"] and provider._ws.added.count("A.*") == 2
+    assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
 
 
 @pytest.mark.asyncio
@@ -206,10 +230,17 @@ async def test_repeated_same_source_append_never_retries_or_latches(setup, monke
 async def test_midread_growth_past_bound_is_backlog_not_retriable_race(setup, monkeypatch):
     env = setup()
     svc, provider, _ = await start(env)
+    path = env.directory / "oms.log"
+    original_bytes, original_read = path.read_bytes(), os.read
     calls = append_after_read(monkeypatch, env.directory / "oms.log", "X" * 65537)
     await svc._warning_monitor_once()
-    assert len(calls) == 1 and svc._warning_revert_reason == "monitor_unreadable"
+    assert len(calls) == 1 and svc._warning_revert_reason is None and not svc._warning_active
+    assert svc._pauses.metrics()["reason"] == "monitor_unreadable"
     assert provider._ws.removed == ["A.*"]
+    monkeypatch.setattr(os, "read", original_read)
+    path.write_bytes(original_bytes)
+    await arm_warning_with_three_clean_reads(svc)
+    assert len(calls) == 1 and provider._ws.added.count("A.*") == 2
 
 
 @pytest.mark.asyncio
