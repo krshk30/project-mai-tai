@@ -1,5 +1,39 @@
 MOMWARN1-NO-DATA-EXPIRY-POLICY -- LOCAL BUILD AND FOCUSED CONTROLS, NOT INSTALLED
 
+AUTHORITATIVE FINAL OWNERSHIP FOLLOWUP
+Tested0b7521528487c557104c03b3c10cc3b09c2e9b25:248PASS0FAIL50warnings3.29s,
+32newexpirycontrols+216regressions. Ruff/diff/scopePASS. No load/60sbenchmark.
+Earlierad919/4c5a247output/body below preserved asCOMPONENT receipt, notfinalhead.
+Beforepackagingfinal, sourceassessment foundexpiry xaddawait canrace withfresh
+warningownerreplace. Paper warningowner-onlyasyncio.Lock serializesrequests and
+recomputescurrentwarningdesired AFTERpriorwrite. Legacyowner/snapshotcode unchanged.
+New controlled paused-write test verifiesre-warning waits, commands complete
+inorder[[],[TEST]], finalwarningownerTEST/uncertainFalse. Existingno-data policy,
+cap16, bothledgerinhibition, snapshotfallback and otherownerTQ preservation kept.
+RED1 on actualoldad919_sync method body (ASTextractedfromGit intoLOCALtestprocess,
+no files/production mutated) FAIL0.55s because rewarning completesbeforeexpirywrite.
+NewracecontrolPASS1.10s; exactcommitted0b248focusedPASS3.29s. Not a timingbenchmark.
+Allpriorhead/source receipts preserved, no amend/rebase/oldWT change.
+
+FINAL OUTPUT SHA256
+/tmp/momwarn1-no-data-expiry-0b752152-focused-20261013.xml
+cb49a4003ab81312920f7e1f899fa8e05f63e8b491ca92ec22ce8dc66d2d2909
+/tmp/momwarn1-no-data-expiry-0b752152-focused-20261013.log
+5f72b17d7d74c14548e874f5f4332a3f659319b0f850fff9a88a47030a2b484a
+/tmp/momwarn1-no-data-expiry-0b752152-ruff-20261013.log
+82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18
+/tmp/momwarn1-no-data-expiry-rewarning-RED-20261013.xml
+e487fdab04dfe63be8a600d9f30f0fde243682be47d90084811276c4921d1728
+FINAL services/momentum_paper_app.py
+9be040538c8e1134bc4fa233920fe2937e01dd279aa25df14c8a43c2cf38bee4
+FINAL tests/unit/test_momwarn1_no_data_expiry.py
+3921d6a64871096ae840a2c3a915edd589280970eacd3222f185b1e45b424b16
+Window/consumer/followup-test source hashes below remainunchanged byserialization.
+SamefocusedCOMMAND below, final XML/log filenamesuse0b752152-focused.
+Mainreview/originalallON3/3/nextaftercloseinstallation still separatelyPENDING.
+
+HISTORICAL AD919/4C5A COMPONENT RECEIPT FOLLOWS
+
 AUTHORITY / EXACT SOURCE
 LATEST2026-10-13 01:5xET SHA
 42a09096b133509dd4eb313ed53ea445951896a2d9928a11dd39fc2639b443b1.
