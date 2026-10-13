@@ -40,8 +40,12 @@
     "source": "Human LATEST23:2x reviewer ruling, SHAa318c66437f4090b42f4487b72bddf2bb7de871718a68b6eb953f658f9708653",
     "priority": 4,
     "owner": "Anscombe sole S1 reconciler writer",
-    "status": "source_and_retained_data_assessment_in_progress",
-    "next_action": "Break181 retained perbroker by exact missingACK/source/marker/NULLid. Trace persisted actual OMSbroker-sync accepted/working provenance before narrow reconciler extension if sound; no blanketunknown upgrade. Preserve61/181 historical receipt/GIXI/negative controls. >=95%target onlyif actual evidence supports it; no OMS/provider/productionwrites/benchmarks",
+    "status": "assessment_controls_completed_reported_target95_blocked_no_positive_sync_origin",
+    "next_action": "Main review OMS_SYNC_ACK_ASSESSMENT.txt/table/102PASS on0484e0ee7fec699212b49b45c2d19d35475ce41a. No runtime widening shipped:0of181queried retainedcases have persisted provenOMSsync/read origin. Need actual trusted read provenance or separately reviewed policy, not an inventedproducer/freshnessgate/unknownupgrade. Preserve61suppressed181retained/GIXI and allnegativecontrols",
+    "tested_head": "0484e0ee7fec699212b49b45c2d19d35475ce41a",
+    "result": "102PASS6.81s=95existing+1actual181census+6controlledrealOMSsync-path controls(2brokersxsamestatus/changedbroker/changedunknown). Allruntime unchanged8ab. Bounded12READONLY2500ms pages181cutoffs/91orders capture03:48:47.510155..03:49:14.235542Z:each181has1unknownacceptedhistoryrow, no absentacceptedrow,0provenreadmarker. Schwab97(48order49intent),Webull84(42+42); snapshotmissingmarker1GIXI, NULLid84Webull notgate. CurrentactualOMSsameacceptedread persistsnoevent; changedread carriesgivenorigin and doesnotstampalternateproof. Ruff/diffPASS/no bench/provider/productionwrite",
+    "outputs": ["/tmp/stuckalert1-sync-provenance-final-20261012.xml", "/tmp/stuckalert1-sync-provenance-final-20261012.log", "docs/review-artifacts/stuckalert1/OMS_SYNC_PROVENANCE_CAPTURE.json", "docs/review-artifacts/stuckalert1/OMS_SYNC_PROVENANCE_CAPTURE.sql", "docs/review-artifacts/stuckalert1/OMS_SYNC_ACK_ASSESSMENT.txt"],
+    "reported": "Boxed COMPLETED localassessment102controls and BLOCKED>=95target61/24225.21%,181retained; sourceextensionNONEabsentpositiveorigin. Mainqueueuntouched/noOMS/productionwrites",
     "completion_criterion": "Proven source/data-supported narrow ACK extension with bounded controls/replay and unchanged mandatory negatives, or exact provenance gap with retained-case denominator; report head/table/artifacts to main, queue untouched"
   },
   "review_followup": {
