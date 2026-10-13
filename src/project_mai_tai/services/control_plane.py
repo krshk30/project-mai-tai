@@ -59,6 +59,7 @@ from project_mai_tai.events import (
 from project_mai_tai.broker_adapters.schwab_token_manager import atomic_write_json
 from project_mai_tai.log import configure_logging
 from project_mai_tai.momentum_page_history import load_completed_today, load_warning_completed_today
+from project_mai_tai.momwarn_pause_incidents import approximate_pause_utc_ns, readable_pause_snapshot
 from project_mai_tai.paper_exit_store import PaperExitStore
 from project_mai_tai.runtime_registry import configured_strategy_registrations
 from project_mai_tai.services.schwab_token_refresher import SchwabTokenRefresher
@@ -6138,6 +6139,10 @@ async def _read_momentum_warning_gateway_metrics(
         result["watchdog_revert_reason"] = "NONE" if reason is None else (
             reason if isinstance(reason, str) and len(reason) <= 128 else "UNKNOWN"
         )
+        pause_state = readable_pause_snapshot(selected, now_ns=now_ns)
+        result["pause_state"] = pause_state if pause_state is not None else "UNKNOWN"
+        mono = selected.get("observed_monotonic_ns")
+        result["observed_monotonic_ns"] = mono if type(mono) is int and mono > 0 else "UNKNOWN"
         return result
     except Exception:
         return unknown
@@ -6148,13 +6153,44 @@ def _render_momentum_warning_gateway_metrics(metrics: dict[str, Any] | None) -> 
     readable = metrics is not None and metrics.get("status") == "READABLE"
     def field(name: str) -> str:
         return escape(str(metrics.get(name, "UNKNOWN") if readable else "UNKNOWN"))
+    pause = metrics.get('pause_state') if readable else None
+    pause_detail = escape(json.dumps(pause, sort_keys=True, allow_nan=False)) if isinstance(pause, dict) else 'UNKNOWN'
+    def pause_field(name: str) -> str:
+        return escape(str(pause.get(name, "UNKNOWN"))) if isinstance(pause, dict) else "UNKNOWN"
+    rows = []
+    history = pause.get('history') if isinstance(pause, dict) else None
+    for episode in history[-8:] if isinstance(history, list) else []:
+        if not isinstance(episode, dict):
+            continue
+        def timestamp(name: str) -> str:
+            if pause.get('clock_domain') != 'monotonic_ns':
+                return 'UNKNOWN'
+            value = approximate_pause_utc_ns(episode.get(name), metrics or {})
+            return str(value) if value is not None else 'UNKNOWN'
+        rows.append('<tr>' + ''.join(f'<td>{escape(str(value))}</td>' for value in (
+            episode.get('latest_reason', episode.get('reason','UNKNOWN')),
+            episode.get('start_ns','UNKNOWN'), episode.get('end_ns','UNKNOWN'),
+            episode.get('duration_seconds','UNKNOWN'), timestamp('start_ns'), timestamp('end_ns'),
+        )) + '</tr>')
+    pause_history = ''.join(rows) or '<tr><td colspan="6">UNKNOWN: no retained pause episodes</td></tr>'
     return f"""<div class="panel-copy">A gateway counters ({'fresh' if readable else 'UNKNOWN'}):
         Queue drops: {field('queue_drops')}; total discarded: {field('dropped_total')};
         queue depth: {field('queue_depth')}; received/published: {field('A_received')}/{field('A_published')};
         publish lag/max: {field('lag_ms')}/{field('max_publish_lag_ms')} ms.
         Source: market-data-gateway; instance: {field('gateway_instance_id')};
         generation: {field('generation')}; observed UTC ns: {field('observed_ns')}; age: {field('age_ms')} ms.
-        Safety revert: {field('watchdog_revert_reason')}. Overflow-only auto-revert: NO;
+        Safety revert: {field('watchdog_revert_reason')}. Pause counts / reason / start / end / duration:
+        state: {pause_field('state')}; reason: {pause_field('reason')} ({pause_field('reason_class')});
+        clean reads: {pause_field('clean_streak')}/{pause_field('required_clean_reads')}; reason segments: {pause_field('pause_count')};
+        pause episodes: {pause_field('pause_episode_count')}; last-hour episode lower bound: {pause_field('pauses_last_hour_lower_bound')};
+        wire pauses: {pause_field('wire_pause_count')}; recovery interruptions: {pause_field('recovery_interruptions')}.
+        <table><thead><tr><th>Reason</th><th>Start mono ns</th><th>End mono ns</th><th>Duration s</th>
+        <th>Start UTC estimate ns</th><th>End UTC estimate ns</th></tr></thead><tbody>{pause_history}</tbody></table>
+        <code>{pause_detail}</code>. Start/end/duration use the policy's monotonic clock.
+        Observed UTC/monotonic ns: {field('observed_ns')}/{field('observed_monotonic_ns')}.
+        Any caller-derived UTC is an observed-offset estimate, not an exact historic clock.
+        Policy snapshot is shown verbatim; absent fields are UNKNOWN, not zero.
+        Overflow-only auto-revert: NO;
         existing safety auto-revert: YES, A only. Counters are gateway-instance cumulative,
         not daily totals. Missing, future, conflicting epochs or older-than-20s evidence is UNKNOWN, not zero.</div>"""
 
