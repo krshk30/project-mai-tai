@@ -89,6 +89,42 @@ def setup(tmp_path, monkeypatch):
     return build
 
 
+async def three_clean_native_reads(svc, env):
+    """Arm/resume from three real source reads, not policy pre-priming."""
+    before = env.client.xrevrange.call_count
+    for index in range(3):
+        await svc._warning_monitor_once()
+        assert env.client.xrevrange.call_count == before + index + 1
+        assert svc._warning_revert_reason is None
+        assert svc._warning_active is (index == 2)
+        assert svc.warning_metrics()["pause_state"]["state"] == (
+            "active" if index == 2 else "paused")
+
+
+async def start_native(env):
+    svc, provider, redis, _ = service()
+    await svc.apply_subscription_event(event("v2", ["WFF"]))
+    await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
+    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
+    await three_clean_native_reads(svc, env)
+    assert provider._ws.added.count("A.*") == 1
+    return svc, provider, redis
+
+
+def complete_next_native_minute(env):
+    """Repair with actual current-minute on-time log receipts and a fresh OMS end."""
+    due = (env.clock.ns // (60 * NS) + 1) * (60 * NS)
+    env.clock.ns = due + 2 * NS
+    seq = env.reader._source.oms.latest["oms_sync_seq"] + 1
+    with (env.directory / "oms.log").open("a") as out:
+        out.write(line(env.clock.ns, f"[OMS-BROKER-SYNC-PASS] id={seq} "
+            "phase=end outcome=ok duration_ms=1000.000 exceeds_note_age=False"))
+    with (env.directory / "schwab-1m-v2.log").open("a") as out:
+        for symbol in ("AAA", "BBB"):
+            out.write(line(env.clock.ns, f"[V2-LINE-RESTORE] sym={symbol} "
+                f"current_bar_ms={due // 1_000_000 - 60_000} outcome=published"))
+
+
 @pytest.mark.asyncio
 async def test_actual_bounded_sources_retain_completion_and_complete_due_coverage(setup):
     env = setup()
@@ -170,12 +206,8 @@ def test_shared_state_selects_newest_actual_v2_not_other_producer(setup):
 ])
 async def test_gateway_g3_live_source_wire_fires_A_only_every_health_trigger(setup, monkeypatch, failure, reason):
     env = setup(pending=failure == "late")
-    svc, provider, _, _ = service()
-    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
-    await svc.apply_subscription_event(event("v2", ["WFF"]))
-    await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
-    await svc._warning_monitor_once()
-    assert svc._warning_active
+    svc, provider, redis = await start_native(env)
+    owners, saved = dict(svc._desired_symbols_by_consumer), dict(redis.hashes)
     provider._handle_messages([aggregate(s=NOW//1_000_000-1000, e=NOW//1_000_000)])
     if failure == "late":
         env.clock.ns += 2*NS
@@ -200,11 +232,37 @@ async def test_gateway_g3_live_source_wire_fires_A_only_every_health_trigger(set
             await svc._warning_monitor_once()
     if failure != "slow_twice":
         await svc._warning_monitor_once()
-    assert svc._warning_revert_reason == reason
+    noise = failure in {"late", "unreadable", "lag"}
+    assert not svc._warning_active
+    assert svc._warning_revert_reason == (None if noise else reason)
+    pause = svc.warning_metrics()["pause_state"]
+    assert pause["state"] == ("paused" if noise else "off")
+    assert pause["reason"] == reason
     assert provider._ws.removed == ["A.*"]
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
     assert svc._warning_queue.empty()
     assert svc.warning_metrics()["dropped_total"] >= 1
+    assert svc._desired_symbols_by_consumer == owners and redis.hashes == saved
+    if noise:
+        if failure == "late":
+            complete_next_native_minute(env)
+        elif failure == "unreadable":
+            env.config.write_text(json.dumps(env.cfg))
+        await three_clean_native_reads(svc, env)
+        assert provider._ws.added.count("A.*") == 2
+        assert provider._ws.removed == ["A.*"]
+        assert svc._desired_symbols_by_consumer == owners and redis.hashes == saved
+        assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
+    else:
+        # Even clean restored resources cannot undo a HARM latch.
+        monkeypatch.setattr("os.getloadavg", lambda: (1, 1, 1))
+        env.mem.write_text("MemAvailable: 4194304 kB\n")
+        before = env.client.xrevrange.call_count
+        for _ in range(3):
+            await svc._warning_monitor_once()
+            assert not svc._warning_active and svc._warning_revert_reason == reason
+        assert env.client.xrevrange.call_count == before
+        assert provider._ws.added.count("A.*") == 1
 
 
 @pytest.mark.asyncio
@@ -317,7 +375,7 @@ def test_missing_or_uncalled_lane_first_due_proof_is_unknown(setup, field, value
 
 
 @pytest.mark.asyncio
-async def test_reviewed_first_due_boundaries_and_missing_bar_revert_A_only(setup):
+async def test_reviewed_first_due_boundaries_and_missing_bar_pause_A_only(setup):
     before = int(datetime(2026, 10, 13, 11, 0, 59, tzinfo=UTC).timestamp())*NS
     due = before+NS
     env = setup(now=before)
@@ -328,12 +386,7 @@ async def test_reviewed_first_due_boundaries_and_missing_bar_revert_A_only(setup
     assert payload["v2_applicability_reason"] == "sourced_before_first_due"
     assert payload["v2_first_due_wall_ns"] == due
     assert payload["v2_bar_lateness_seconds"] is None
-    svc, provider, _, _ = service()
-    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
-    await svc.apply_subscription_event(event("v2", ["WFF"]))
-    await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
-    await svc._warning_monitor_once()
-    assert svc._warning_active
+    svc, provider, _ = await start_native(env)
     for at, expected_lag in ((due, 0), (due+5*NS, 5)):
         env.clock.ns = at
         payload = env.source.read(env.state())
@@ -345,9 +398,15 @@ async def test_reviewed_first_due_boundaries_and_missing_bar_revert_A_only(setup
         assert svc._warning_active and svc._warning_revert_reason is None
     env.clock.ns = due+5*NS+1
     await svc._warning_monitor_once()
-    assert svc._warning_revert_reason == "v2_bar_late" and not svc._warning_active
+    assert svc._warning_revert_reason is None and not svc._warning_active
+    assert svc.warning_metrics()["pause_state"]["state"] == "paused"
+    assert svc.warning_metrics()["pause_state"]["reason"] == "v2_bar_late"
     assert provider._ws.removed == ["A.*"]
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
+    complete_next_native_minute(env)
+    await three_clean_native_reads(svc, env)
+    assert provider._ws.added.count("A.*") == 2
+    assert provider._ws.removed == ["A.*"]
 
 
 def test_actual_first_closed_probe_at_due_is_applicable_not_extended_NA(setup):

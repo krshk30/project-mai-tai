@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from tests.unit.test_momwarn1_copytruncate import start
+from tests.unit.test_momwarn1_live_health import start_native as start, three_clean_native_reads
 from tests.unit.test_momwarn1_live_health import NS, line, setup as live_setup
 from tests.unit.test_momwarn1_read_race import BASE
 
@@ -173,7 +173,15 @@ async def test_postread_backlog_counts_unread_only_exact_bound_not_consumed_pref
     await svc._warning_monitor_once()
     assert len(calls) == 1 and env.client.xrevrange.call_count == before + 1
     if unread_size == 65537:
-        assert svc._warning_revert_reason == "monitor_unreadable" and provider._ws.removed == ["A.*"]
+        assert svc._warning_revert_reason is None and not svc._warning_active
+        assert svc.warning_metrics()["pause_state"]["state"] == "paused"
+        assert svc.warning_metrics()["pause_state"]["reason"] == "monitor_unreadable"
+        assert provider._ws.removed == ["A.*"]
+        # Repair the actual excess backlog; never raise the 65,536-byte bound.
+        path.write_text("")
+        await three_clean_native_reads(svc, env)
+        assert provider._ws.added.count("A.*") == 2
+        assert env.reader.log_observability()["coverage_status"] == "GAP_UNOBSERVED_COPYTRUNCATE"
     else:
         assert svc._warning_revert_reason is None and svc._warning_active
         await svc._warning_monitor_once()
@@ -231,9 +239,14 @@ async def test_only_positive_short_pread_has_one_global_retry_and_truthful_gap(
     assert shortened == targets and env.client.xrevrange.call_count == before + 2
     assert source.oms.latest == end
     if two_short_reads:
-        assert svc._warning_revert_reason == "monitor_unreadable" and provider._ws.removed == ["A.*"]
-        await svc._warning_monitor_once()
-        assert env.client.xrevrange.call_count == before + 2  # Sticky, no third attempt.
+        assert svc._warning_revert_reason is None and not svc._warning_active
+        assert svc.warning_metrics()["pause_state"]["state"] == "paused"
+        assert svc.warning_metrics()["pause_state"]["reason"] == "monitor_unreadable"
+        assert provider._ws.removed == ["A.*"]
+        await three_clean_native_reads(svc, env)
+        assert env.client.xrevrange.call_count == before + 5  # One bounded retry, then 3 clean reads.
+        assert provider._ws.added.count("A.*") == 2
+        assert env.reader.log_observability()["coverage_status"] == "GAP_UNOBSERVED_COPYTRUNCATE"
     else:
         assert svc._warning_active and svc._warning_revert_reason is None
         assert env.reader.log_observability()["coverage_status"] == "GAP_UNOBSERVED_COPYTRUNCATE"
