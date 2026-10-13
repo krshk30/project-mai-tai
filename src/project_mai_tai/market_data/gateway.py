@@ -810,6 +810,17 @@ class MarketDataGatewayService:
                     )
                 self._warning_log_gap_counts = counts
             reason = self._warning_watchdog.check(health, publish_lag_seconds=self._warning_publish_lag())
+            if getattr(health, "v2_cohort", None) is not None:
+                metrics = self._warning_watchdog.cohort_metrics()
+                key = (metrics["due_ns"], metrics["status"], metrics["late_streak"], metrics["missing_symbols"])
+                if self.__dict__.get("_warning_cohort_log_key") != key:
+                    self.logger.info("[MOMWARN1-V2-COHORT] status=%s incomplete_sampled_minutes=%d may_later_complete=1 "
+                                     "unobserved_gap_minutes=%d late_streak=%d lateness=%s missing=%s",
+                                     metrics["status"], metrics["incomplete_minutes"],
+                                     metrics["unobserved_gap_minutes"], metrics["late_streak"],
+                                     metrics["lateness_seconds"] if metrics["lateness_seconds"] is not None else "UNKNOWN",
+                                     metrics["missing_symbols"])
+                    self._warning_cohort_log_key = key
             if reason:
                 await self._revert_warning(reason)
                 return
@@ -857,6 +868,7 @@ class MarketDataGatewayService:
             ),
             "watchdog_revert_reason": self._warning_revert_reason,
             "watchdog_revert_ns": self._warning_reverted_utc_ns,
+            "v2_cohort": self._warning_watchdog.cohort_metrics(),
         }
 
     async def _warning_metrics_loop(self, stop_event: asyncio.Event) -> None:

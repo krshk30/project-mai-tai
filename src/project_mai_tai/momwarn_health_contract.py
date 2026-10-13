@@ -147,6 +147,27 @@ def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
             "v2_watchlist_source", "v2_watchlist_snapshot_ns", "v2_watchlist_complete",
             "v2_watchlist", "v2_first_bar_start_et", "v2_bar_interval_seconds",
             "v2_first_bar_source_ref")}
+    elif applicability == "CALIBRATED_COHORT":
+        from project_mai_tai.momwarn_cohort_lateness import CohortObservation
+
+        cohort = CohortObservation.read(receipt.get("v2_cohort"))
+        watch_ns = receipt.get("v2_watchlist_snapshot_ns")
+        watchlist = receipt.get("v2_watchlist")
+        if (cohort.source != "strategy-state-isolated" or cohort.observed_ns != monitor
+                or receipt.get("v2_source") != "first_completed_bar_cohort_monitor"
+                or not isinstance(receipt.get("v2_instance_id"), str) or not receipt["v2_instance_id"]
+                or receipt.get("v2_watchlist_source") != "strategy-state-isolated"
+                or receipt.get("v2_watchlist_complete") is not True
+                or not integer(watch_ns) or not 0 <= monitor - watch_ns <= 10 * NS
+                or not isinstance(watchlist, list) or not 0 < len(watchlist) <= 256
+                or any(not isinstance(symbol, str) or not symbol for symbol in watchlist)
+                or len(set(watchlist)) != len(watchlist)):
+            raise ValueError("UNKNOWN:CAL current source/watchlist evidence")
+        result.update(v2_applicability=applicability, v2_source=receipt["v2_source"],
+                      v2_instance_id=receipt["v2_instance_id"], v2_cohort=cohort.payload(),
+                      v2_bar_lateness_seconds=cohort.lateness_ns / NS if cohort.lateness_ns is not None else None,
+                      **{key:receipt[key] for key in ("v2_watchlist", "v2_watchlist_source",
+                          "v2_watchlist_complete", "v2_watchlist_snapshot_ns")})
     elif applicability == "APPLICABLE":
         measured, due, completed = (receipt.get(key) for key in (
             "v2_measured_wall_ns", "v2_due_wall_ns", "v2_completed_wall_ns"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from project_mai_tai.momwarn_health_contract import (
 from project_mai_tai.momwarn_measurement_probes import read_bounded
 from project_mai_tai.momwarn_log_cursor import check_read_coverage, cursor_anchor, cursor_rewritten
 from project_mai_tai.momwarn_measurements import NS, integer
+from project_mai_tai.momwarn_cohort_lateness import CohortTracker, POLICY
 
 BOUND = 65536
 MAX_STATE_ROWS = 32
@@ -26,6 +28,7 @@ LINE_PUBLICATION = re.compile(
     r"\[V2-LINE-RESTORE\] sym=(\S+) [^\n]*\bcurrent_bar_ms=(\d+)\b"
     r"[^\n]*\boutcome=published(?:\s|$)"
 )
+SEED = re.compile(r"\[(V2-DB-SEED-GAP|V2-CW-SEED-CAP|V2-WARMUP-LINE)\] (\S+)")
 
 
 def newest_v2_state(entries: list) -> dict:
@@ -85,6 +88,10 @@ class LiveWarningHealthSource:
         self.bars: dict[tuple[str, int], int] = {}
         self.truncations = 0
         self.anchor = None
+        policy = config.get("v2_lateness_policy")
+        if policy is not None and policy != POLICY:
+            raise ValueError("unreviewed v2 lateness policy")
+        self.cohort = CohortTracker() if policy == POLICY else None
 
     def _check_v2_process(self) -> None:
         pid = self.config["v2_pid"]
@@ -127,6 +134,7 @@ class LiveWarningHealthSource:
             observed_after_read = self.wall_ns()
             covered_from = self.covered_from_ns
             bars = dict(self.bars)
+            cohort = deepcopy(self.cohort)
             for line in lines[:-1]:
                 text = line.decode()
                 if not STAMP.match(text):
@@ -143,7 +151,12 @@ class LiveWarningHealthSource:
                 match = PROBE.search(text) or LINE_PUBLICATION.search(text)
                 if match:
                     key = match[1], int(match[2])
+                    if cohort is not None and key[1] % 60000:
+                        raise ValueError("CAL probe bucket is malformed")
                     bars.setdefault(key, stamp)
+                seed = SEED.search(text)
+                if seed and cohort is not None:
+                    cohort.observe_seed(seed[2], stamp, seed[1])
             if rewritten:
                 # Lost bytes cannot prove the past interval. Future due minutes can
                 # use the new contiguous EOF baseline, not a lifetime gap taint.
@@ -157,6 +170,7 @@ class LiveWarningHealthSource:
             anchor = cursor_anchor(fd, covered)
             self.identity, self.offset, self.partial = identity, covered, lines[-1]
             self.covered_from_ns, self.bars, self.anchor = covered_from, bars, anchor
+            self.cohort = cohort
             self.truncations += int(rewritten)
         finally:
             os.close(fd)
@@ -186,6 +200,8 @@ class LiveWarningHealthSource:
                 or any(not isinstance(symbol, str) or not symbol for symbol in watchlist)
                 or len(set(watchlist)) != len(watchlist)):
             raise ValueError("v2 watchlist completeness/freshness unknown")
+        if self.cohort is not None:
+            self.cohort.observe_membership(watchlist, now)
         receipt["observed_wall_ns"] = now
         receipt.update(v2_expectation_ref=self.config["v2_expectation_ref"])
         if not watchlist:
@@ -257,6 +273,20 @@ class LiveWarningHealthSource:
                     raise ValueError("v2 log baseline does not cover current due minute")
                 if completion is not None and completion < due:
                     raise ValueError("probe observed unclosed/future bar")
+                if self.cohort is not None:
+                    if any(minute >= bar_ms and (minute + 60000)*1_000_000 > stamp
+                           for (_, minute), stamp in self.bars.items()):
+                        raise ValueError("CAL current/future receipt precedes bar close")
+                    observed = self.cohort.observation(due, now,
+                        {s:t for (s, minute), t in self.bars.items() if minute == bar_ms},
+                        source="strategy-state-isolated")
+                    receipt.update(
+                        v2_applicability="CALIBRATED_COHORT", v2_source="first_completed_bar_cohort_monitor",
+                        v2_instance_id=self.config["v2_instance_id"],
+                        v2_watchlist=watchlist, v2_watchlist_source="strategy-state-isolated",
+                        v2_watchlist_snapshot_ns=state_ns, v2_watchlist_complete=True,
+                        v2_cohort=observed.payload())
+                    return proposed_health_v2(receipt, now_ns=now)
                 receipt.update(
                     v2_applicability="APPLICABLE", v2_source="completed_bar_due_monitor",
                     v2_instance_id=self.config["v2_instance_id"], v2_coverage="complete_current_due",

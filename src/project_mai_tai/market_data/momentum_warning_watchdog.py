@@ -11,6 +11,7 @@ import stat
 import time
 
 from project_mai_tai.momwarn_health_contract import proposed_health_v2
+from project_mai_tai.momwarn_cohort_lateness import CohortObservation, CompleteCohortPolicy
 from project_mai_tai.momwarn_log_cursor import (
     LogReadRace, check_read_coverage, cursor_anchor, cursor_rewritten,
 )
@@ -28,6 +29,7 @@ class WarningHealth:
     v2_not_applicable: bool = False
     v2_startup_pending: bool = False
     v2_startup_deadline_ns: int | None = None
+    v2_cohort: dict | None = None
 
 
 class WarningWatchdog:
@@ -37,13 +39,30 @@ class WarningWatchdog:
         self.reason: str | None = None
         self._last_sync_seq: int | None = None
         self._slow_syncs = 0
+        self._cohort = CompleteCohortPolicy()
+
+    def cohort_metrics(self) -> dict:
+        return self._cohort.metrics()
 
     def check(self, health: WarningHealth, *, publish_lag_seconds: float) -> str | None:
         if self.reason is not None:
             return self.reason
         numeric = (health.oms_sync_seconds, health.load_1m, publish_lag_seconds)
         lateness = health.v2_bar_lateness_seconds
-        if (lateness is None and not (health.v2_not_applicable or health.v2_startup_pending)
+        calibrated = health.v2_cohort is not None
+        cohort_reason = None
+        if calibrated:
+            try:
+                observation = CohortObservation.read(health.v2_cohort)
+                if (observation.source != "strategy-state-isolated" or observation.observed_ns != health.observed_wall_ns
+                        or health.v2_not_applicable or health.v2_startup_pending
+                        or lateness != (observation.lateness_ns / 1e9 if observation.lateness_ns is not None else None)):
+                    raise ValueError("CAL health envelope changed")
+                cohort_reason = self._cohort.observe(observation)
+            except (ValueError, TypeError):
+                self.reason = "monitor_invalid"
+                return self.reason
+        if (lateness is None and not (health.v2_not_applicable or health.v2_startup_pending or calibrated)
                 or health.v2_startup_pending and (
                     health.v2_not_applicable or lateness is not None
                     or type(health.v2_startup_deadline_ns) is not int
@@ -55,7 +74,9 @@ class WarningWatchdog:
             self.reason = "monitor_stale"
         elif publish_lag_seconds > 2:
             self.reason = "publish_lag"
-        elif lateness is not None and lateness > 5:
+        elif cohort_reason:
+            self.reason = cohort_reason
+        elif not calibrated and lateness is not None and lateness > 5:
             self.reason = "v2_bar_late"
         elif health.load_1m > 6:
             self.reason = "load"
@@ -191,6 +212,7 @@ class WarningHealthReader:
         version = data.get("schema_version")
         not_applicable = False
         startup_pending = False
+        cohort = None
         evidence = self._last_oms_evidence
         if version == 2:
             provenance = data.get("v2_applicability_provenance", {})
@@ -205,6 +227,7 @@ class WarningHealthReader:
             data = proposed_health_v2(source, now_ns=time.time_ns())
             not_applicable = data["v2_applicability"] == "NOT_APPLICABLE"
             startup_pending = data["v2_applicability"] == "STARTUP_PENDING"
+            cohort = data.get("v2_cohort")
             evidence = tuple(data[key] for key in (
                 "oms_instance_id", "oms_sync_seq", "oms_sync_seconds", "oms_measured_wall_ns"))
             prior = self._last_oms_evidence
@@ -217,7 +240,7 @@ class WarningHealthReader:
                 raise ValueError(f"missing/invalid measured {name}")
         for name in ("oms_sync_seconds", "v2_bar_lateness_seconds"):
             value = data.get(name)
-            if name == "v2_bar_lateness_seconds" and (not_applicable or startup_pending) and value is None:
+            if name == "v2_bar_lateness_seconds" and (not_applicable or startup_pending or cohort is not None) and value is None:
                 continue
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError(f"missing/invalid measured {name}")
@@ -269,4 +292,5 @@ class WarningHealthReader:
             v2_not_applicable=not_applicable,
             v2_startup_pending=startup_pending,
             v2_startup_deadline_ns=data.get("v2_startup_deadline_ns") if startup_pending else None,
+            v2_cohort=cohort,
         )
