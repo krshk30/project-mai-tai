@@ -4,9 +4,11 @@ import asyncio
 from collections.abc import Iterable
 from dataclasses import asdict
 import json
+import re
 import time
 
 from redis.asyncio import Redis
+from redis.exceptions import ResponseError
 
 from project_mai_tai.events import (
     HeartbeatEvent,
@@ -28,6 +30,13 @@ from project_mai_tai.market_data.models import (
     SnapshotRecord,
     TradeTickRecord,
 )
+
+
+class WarningBatchWriteError(RuntimeError):
+    def __init__(self, acknowledged: int, unknown: int = 0):
+        super().__init__('warning batch has incomplete or failed acknowledgements')
+        self.acknowledged = acknowledged
+        self.unknown = unknown
 
 
 class MarketDataPublisher:
@@ -73,6 +82,32 @@ class MarketDataPublisher:
             {"data": json.dumps(payload, separators=(",", ":"), allow_nan=False)},
             maxlen=1000, approximate=False,
         )
+
+    async def publish_momentum_warning_batch(
+        self, records: tuple[tuple[int, MomentumWarningAggregateRecord], ...], *, dropped_total: int,
+        gateway_instance_id: str, generation: int,
+    ) -> int:
+        if not 1 <= len(records) <= 32:
+            raise ValueError('warning batch bound')
+        async with self.redis.pipeline(transaction=False) as pipeline:
+            for sequence, record in records:
+                payload = {**asdict(record), 'version': 1, 'event_type': 'aggregate',
+                           'sequence': sequence, 'dropped_total': dropped_total,
+                           'gateway_instance_id': gateway_instance_id, 'generation': generation,
+                           'published_utc_ns': time.time_ns()}
+                pipeline.xadd(stream_name(self.stream_prefix, 'momentum-warning-bars'),
+                              {'data': json.dumps(payload, separators=(',', ':'), allow_nan=False)},
+                              maxlen=self.momentum_warning_stream_maxlen, approximate=False)
+            replies = await pipeline.execute(raise_on_error=False)
+        if not isinstance(replies, list) or len(replies) != len(records):
+            raise WarningBatchWriteError(0, len(records))
+        acknowledged = sum(isinstance(reply, (str, bytes)) and re.fullmatch(
+            rb'\d+-\d+' if isinstance(reply, bytes) else r'\d+-\d+', reply) is not None
+            for reply in replies)
+        if acknowledged != len(records):
+            known_errors = sum(isinstance(reply, ResponseError) for reply in replies)
+            raise WarningBatchWriteError(acknowledged, len(records)-acknowledged-known_errors)
+        return acknowledged
 
     async def publish_snapshot_batch(
         self,

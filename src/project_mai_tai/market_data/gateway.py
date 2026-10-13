@@ -30,7 +30,7 @@ from project_mai_tai.market_data.models import (
     TradeTickRecord,
 )
 from project_mai_tai.market_data.protocols import SnapshotProvider, TradeStreamProvider
-from project_mai_tai.market_data.publisher import MarketDataPublisher
+from project_mai_tai.market_data.publisher import MarketDataPublisher, WarningBatchWriteError
 from project_mai_tai.market_data.reference_cache import ReferenceDataCache
 from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealthReader, WarningWatchdog
 from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
@@ -131,6 +131,8 @@ class MarketDataGatewayService:
         self._warning_generation = 0
         self._warning_instance_id = str(uuid4())
         self._warning_published = 0
+        self._warning_ack_unknown = 0
+        self._warning_write_waits = deque(maxlen=256)
         self._warning_rate_bins: deque[tuple[int, int]] = deque(maxlen=10)
         self._warning_reverted_utc_ns: int | None = None
         self._warning_requested_utc_ns: int | None = None
@@ -735,7 +737,7 @@ class MarketDataGatewayService:
         self._warning_queue.put_nowait((self._warning_seq, record))
 
     def _warning_publish_lag(self) -> float:
-        records = []
+        records = list(getattr(self, '_warning_inflight_records', ()))
         if self._warning_inflight is not None:
             records.append(self._warning_inflight)
         if not self._warning_queue.empty():
@@ -749,40 +751,64 @@ class MarketDataGatewayService:
             except TimeoutError:
                 continue
             self._warning_inflight = record
+            pending = [(seq, record)]
+            while len(pending) < 32 and not self._warning_queue.empty():
+                pending.append(self._warning_queue.get_nowait())
+            self._warning_inflight_records = tuple(item[1] for item in pending)
+            acknowledged = 0
             try:
                 # A normal daily boundary takes precedence over stale pending rows.
                 now = datetime.now(UTC)
                 end = self._momentum_validation_window.gateway_end_for(now.astimezone(EASTERN_TZ).date())
                 if not is_fillable_et_session(now, 4, end.hour, end_minute=end.minute):
-                    self._warning_drop_count += 1
+                    self._warning_drop_count += len(pending)
                     await self._end_warning_window()
                     continue
-                lag_seconds = (time.monotonic_ns() - record.received_monotonic_ns) / 1e9
+                lag_seconds = max((time.monotonic_ns() - item.received_monotonic_ns) / 1e9
+                                  for _, item in pending)
                 self._warning_max_publish_lag_ms = max(self._warning_max_publish_lag_ms, lag_seconds * 1000)
                 if lag_seconds > 2:
-                    self._warning_drop_count += 1
+                    self._warning_drop_count += len(pending)
                     await self._revert_warning("publish_lag")
                     return
-                self._warning_write_task = asyncio.create_task(
-                    self._warning_publisher.publish_momentum_warning_aggregate(
+                if len(pending) == 1:
+                    write = self._warning_publisher.publish_momentum_warning_aggregate(
                         record, sequence=seq, dropped_total=self._warning_drop_count,
-                        gateway_instance_id=self._warning_instance_id, generation=self._warning_generation,
-                    )
-                )
+                        gateway_instance_id=self._warning_instance_id, generation=self._warning_generation)
+                else:
+                    write = self._warning_publisher.publish_momentum_warning_batch(
+                        tuple(pending), dropped_total=self._warning_drop_count,
+                        gateway_instance_id=self._warning_instance_id, generation=self._warning_generation)
+                self._warning_write_task = asyncio.create_task(write)
+                write_started_ns = time.monotonic_ns()
                 await asyncio.wait_for(self._warning_write_task, timeout=1)
-                self._warning_published += 1
+                self._warning_write_waits.append((len(pending), (time.monotonic_ns()-write_started_ns)/1e6))
+                acknowledged = len(pending)
+                self._warning_published += acknowledged
+            except WarningBatchWriteError as exc:
+                acknowledged = exc.acknowledged
+                self._warning_published += acknowledged
+                self._warning_drop_count += len(pending)-acknowledged
+                self._warning_ack_unknown += exc.unknown
+                await self._revert_warning('publish_error', diagnostic=f'acknowledged={acknowledged} unknown_ack={exc.unknown} batch={len(pending)}')
+                return
             except asyncio.CancelledError:
-                self._warning_drop_count += 1
+                self._warning_drop_count += len(pending)-acknowledged
+                if self._warning_write_task is not None:
+                    self._warning_ack_unknown += len(pending)-acknowledged
                 if asyncio.current_task().cancelling() or self._warning_revert_reason is not None:
                     raise
                 # Only the in-flight A write was cancelled by a normal window close.
                 continue
-            except Exception:
-                self._warning_drop_count += 1
-                await self._revert_warning("publish_error")
+            except Exception as exc:
+                self._warning_drop_count += len(pending)-acknowledged
+                if self._warning_write_task is not None:
+                    self._warning_ack_unknown += len(pending)-acknowledged
+                await self._revert_warning("publish_error", diagnostic=_warning_monitor_diagnostic(exc))
                 return
             finally:
                 self._warning_inflight = None
+                self._warning_inflight_records = ()
                 self._warning_write_task = None
             await asyncio.sleep(0)
 
@@ -866,6 +892,9 @@ class MarketDataGatewayService:
             "observed_ns": time.time_ns(), "gateway_instance_id": self._warning_instance_id,
             "generation": self._warning_generation, "A_received": self._warning_seq,
             "A_published": self._warning_published, "A_rate_bins": list(self._warning_rate_bins),
+            "A_ack_unknown": self._warning_ack_unknown,
+            "A_write_await_samples": list(self._warning_write_waits),
+            "A_write_await_scope": "BOUNDED_CLIENT_AWAIT_INCLUDES_ENCODING_CONNECTION_SCHEDULING_NOT_SERVER_RTT",
             "queue_depth": self._warning_queue.qsize(), "queue_drops": self._warning_queue_drop_count,
             "dropped_total": self._warning_drop_count, "lag_ms": self._warning_publish_lag() * 1000,
             "max_publish_lag_ms": self._warning_max_publish_lag_ms,

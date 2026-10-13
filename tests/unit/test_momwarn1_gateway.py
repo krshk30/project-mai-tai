@@ -538,6 +538,7 @@ async def test_huge_synthetic_SDK_batch_yields_and_does_not_wait_on_A_Redis(reco
     async def blocked_A(*args, **kwargs):
         entered.set()
         await release.wait()
+        return '1-0'  # A completed Redis XADD supplies an acknowledgement ID.
     warning_redis.xadd = blocked_A
     stop = asyncio.Event()
     svc._warning_publish_task = asyncio.create_task(svc._warning_publish_loop(stop))
