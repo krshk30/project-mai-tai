@@ -1222,6 +1222,12 @@ class SchwabV2Strategy:
         state.restart_rest_evidence_pending = bool(opportunity)
         if opportunity and rest["resting_is_broker_order"]:
             state.restart_rest_cancel_fields = dict(rest)
+        filled_accounts = {account for account in self._flip_owner_accounts if legs.get(account) == "filled"}
+        if filled_accounts:
+            state.cw_resting_taken = True
+            for account in filled_accounts:
+                self._note_flip_owner_fill(state, account_name=account, reason="restart_same_opportunity_fill")
+            return refuse("same_opportunity_filled_consumed")
         # Never refund a consumed slot from a checkpoint older than a fill/FF2 receipt.
         state.cw_resting_taken |= bool(saved.get("cw_resting_taken"))
         state.cw_reclaim_taken |= bool(saved.get("cw_reclaim_taken"))

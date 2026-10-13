@@ -177,20 +177,24 @@ def test_pending_cancel_checkpoint_retains_original_executable_leg_identity():
 
 @pytest.mark.asyncio
 async def test_bounded_drain_does_not_claim_to_cancel_running_sql(caplog):
-    started, release = threading.Event(), threading.Event()
+    started, release, completed = threading.Event(), threading.Event(), threading.Event()
     def record(value):
         started.set()
         assert release.wait(2)
+        completed.set()
     writer = RestartCheckpointWriter(Mock(record=record))
     try:
         writer.submit(payload(1))
         await reached(started)
         assert not await writer.drain(timeout=.001)
-        assert not writer.task.done() and not writer.task.cancelled()
+        assert writer.task.done() and writer.task.cancelled()
+        assert not release.is_set()  # The cancelled waiter did NOT stop the SQL worker.
         assert 'checkpoint_drain_unproven=1' in caplog.text
     finally:
         release.set()
-        assert await writer.drain()
+        await asyncio.gather(writer.task, return_exceptions=True)
+        assert await asyncio.to_thread(completed.wait, 1)
+        assert not await writer.drain()
 
 
 @pytest.mark.asyncio
@@ -252,7 +256,7 @@ def test_seven_day_cleanup_is_scoped_and_retains_current_removal_tombstone():
     assert store.restore(now=now+timedelta(days=1)) is None
 
 
-@pytest.mark.parametrize('other_status', ['aborted', 'superseded', 'filled', 'working', None])
+@pytest.mark.parametrize('other_status', ['aborted', 'superseded', 'filled', 'partially_filled', 'working', None])
 def test_aixi_terminal_request_sibling_does_not_orphan_exact_owned_order(other_status, caplog):
     # AIXI-shaped ownership control; not reconstruction of the historical broker book.
     bot, state, saved, clock = case_bot(CASES[5])
@@ -290,7 +294,18 @@ def test_aixi_terminal_request_sibling_does_not_orphan_exact_owned_order(other_s
     from project_mai_tai.services.schwab_1m_v2_bot import session_start_ts_ms
     value['session_anchor_ms'] = session_start_ts_ms(clock[0])
     legs = bot._read_restart_rest_legs(value)['AIXI']
-    if other_status in {'aborted', 'superseded', 'filled'}:
+    if other_status in {'filled', 'partially_filled'}:
+        assert legs[PRIMARY] == 'filled'
+        bot._restart_rest_legs = {'AIXI': legs}
+        before = state.retry_one_closes_in_segment
+        assert not bot._restore_restart_rest_after_seed('AIXI')
+        assert not state.resting_active and state.cw_resting_taken
+        assert PRIMARY in state.flip_owner_fill_accounts
+        for _ in range(3):
+            bot.strategy._cw_v2_resting_track(state, None)
+        assert bot.strategy.drain_pending_intents() == []
+        assert state.retry_one_closes_in_segment == before and bot.strategy._retry_one_max_retries == 0
+    elif other_status in {'aborted', 'superseded'}:
         assert legs[PRIMARY] == 'owned'
     else:
         assert PRIMARY not in legs

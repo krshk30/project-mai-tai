@@ -203,11 +203,15 @@ class RestartCheckpointWriter:
         self.closed = True
         self._closing.set()
         if self.task is not None:
+            if self.task.cancelled():
+                return False
             try:
                 await asyncio.wait_for(asyncio.shield(self.task), timeout=timeout)
             except TimeoutError:
                 # Cancelling to_thread cannot stop its SQL; do not pretend it did.
                 logger.error("[V2-RESTART-REST] checkpoint_drain_unproven=1 timeout_seconds=%s", timeout)
+                self.task.cancel()
+                await asyncio.gather(self.task, return_exceptions=True)
                 return False
         if self.pending is not None:
             logger.error("[V2-RESTART-REST] checkpoint_drain_unproven=1 reason=write_failed")

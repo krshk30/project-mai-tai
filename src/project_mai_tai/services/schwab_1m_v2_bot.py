@@ -753,6 +753,14 @@ class SchwabV2BotService:
                     if len(matches) != 1:
                         self._log_restart_restore(symbol, "pending", f"{account}:generation_not_unique")
                         continue
+                    if any(row.symbol == symbol and name == account
+                           and str(row.payload.get("metadata", {}).get("fanout_segment_id", "")) ==
+                               str(state["opportunity_id"])
+                           and row.status in {"filled", "partially_filled", "partial_fill"}
+                           for row, name in rows):
+                        legs[account] = "filled"
+                        self._log_restart_restore(symbol, "refused", f"{account}:same_opportunity_sibling_fill")
+                        continue
                     if any(row.id != matches[0].id and row.symbol == symbol and name == account
                            and str(row.payload.get("metadata", {}).get("fanout_segment_id", "")) ==
                                str(state["opportunity_id"])
