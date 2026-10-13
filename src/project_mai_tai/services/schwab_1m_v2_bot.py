@@ -20,6 +20,8 @@ or flips the enable flag.
 """
 from __future__ import annotations
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 import asyncio
 import json
 import logging
@@ -4348,11 +4350,14 @@ class SchwabV2BotService:
         seen: set[str] = set()
         for item in candidates:
             if isinstance(item, dict):
-                sym = str(item.get("symbol") or item.get("ticker") or "").strip().upper()
+                raw_symbol = item.get("symbol") or item.get("ticker") or ""
             elif isinstance(item, str):
-                sym = item.strip().upper()
+                raw_symbol = item
             else:
-                sym = ""
+                continue
+            if not raw_symbol_is_uppercase(raw_symbol):
+                continue
+            sym = raw_symbol.strip().upper()
             if sym and sym not in seen:
                 symbols.append(sym)
                 seen.add(sym)
@@ -4390,6 +4395,8 @@ class SchwabV2BotService:
           source, or this is a genuine gap fill bar that the streamer
           missed during a disconnect window).
         """
+        if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(bar.symbol):
+            return
         if self._loop_fault_injection_remaining > 0:
             # SPOF Workstream A (v2) controlled survival test (default OFF).
             # Raises on the E1 callback path — v2's real remaining escape — so an
@@ -4454,6 +4461,8 @@ class SchwabV2BotService:
         buffer, caps reconstructed state, and retries boot restoration. Stale
         bars from either source remain gated by the same 300-second bound.
         """
+        if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(bar.symbol):
+            return
         self._observe_line_bar(symbol, bar, source_callback=True)
         self._note_line_live_bar(symbol, bar)
         if symbol not in self._warmup_ready_symbols():
@@ -5321,7 +5330,10 @@ class SchwabV2BotService:
         for item in (*event.payload.top_confirmed, *event.payload.all_confirmed,
                      *event.payload.watchlist):
             if isinstance(item, dict):
-                sym = str(item.get("symbol") or item.get("ticker") or "").strip().upper()
+                raw_symbol = item.get("symbol") or item.get("ticker") or ""
+                if not raw_symbol_is_uppercase(raw_symbol):
+                    continue
+                sym = raw_symbol.strip().upper()
                 identity = str(item.get("confirmed_at") or "").strip()
                 if sym in selected and identity:
                     identities.setdefault(sym, identity)
@@ -6421,6 +6433,8 @@ class SchwabV2BotService:
             return None
 
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
+        if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(quote.symbol):
+            return
         now = datetime.now(UTC)
         self._observe_line_trade(symbol, int(getattr(quote, "trade_time_ms", 0) or 0))
         self._last_tick_at[symbol] = _format_eastern(now)
@@ -6458,6 +6472,8 @@ class SchwabV2BotService:
         await self._emit_webull_fanout_legs()
 
     async def _handle_stream_tick(self, tick: SchwabTick) -> None:
+        if not raw_symbol_is_uppercase(tick.symbol):
+            return
         if tick.kind == "trade":
             self._observe_line_trade(tick.symbol, int(tick.event_ts_ms))
         if self._eh_stream_cross_enabled and tick.service == "LEVELONE_EQUITIES":

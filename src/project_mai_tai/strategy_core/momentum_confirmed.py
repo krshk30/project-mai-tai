@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 import logging
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 from project_mai_tai.strategy_core.config import MomentumConfirmedConfig
 from project_mai_tai.strategy_core.models import MarketSnapshot, ReferenceData
 from project_mai_tai.strategy_core.snapshot_utils import (
@@ -26,6 +28,8 @@ class MomentumConfirmedScanner:
     def seed_confirmed_candidates(self, candidates: Iterable[Mapping[str, object]]) -> None:
         seeded: list[dict[str, object]] = []
         for item in candidates:
+            if not raw_symbol_is_uppercase(item.get("ticker")):
+                continue
             ticker = str(item.get("ticker", "")).upper()
             if not ticker:
                 continue
@@ -44,6 +48,8 @@ class MomentumConfirmedScanner:
     ) -> list[dict[str, object]]:
         revalidated: list[dict[str, object]] = []
         for stock in self._confirmed:
+            if not raw_symbol_is_uppercase(stock.get("ticker")):
+                continue
             ticker = str(stock.get("ticker", "")).upper()
             snapshot = snapshot_lookup.get(ticker)
             if snapshot is None:
@@ -112,6 +118,8 @@ class MomentumConfirmedScanner:
         newly_confirmed: list[dict[str, object]] = []
 
         for alert in fired_alerts:
+            if not raw_symbol_is_uppercase(alert.get("ticker")):
+                continue
             ticker = str(alert.get("ticker", ""))
             alert_type = str(alert.get("type", ""))
             price = float(alert.get("price", 0) or 0)
@@ -327,6 +335,8 @@ class MomentumConfirmedScanner:
         retained: list[dict[str, object]] = []
         faded: list[str] = []
         for stock in self._confirmed:
+            if not raw_symbol_is_uppercase(stock.get("ticker")):
+                continue
             ticker = str(stock.get("ticker", "")).upper()
             if not ticker:
                 continue

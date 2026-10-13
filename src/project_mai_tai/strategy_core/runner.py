@@ -7,6 +7,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
 from project_mai_tai.strategy_core.bar_builder import BarBuilderManager
 from project_mai_tai.strategy_core.indicators import ema
 from project_mai_tai.strategy_core.models import OHLCVBar
@@ -193,11 +194,13 @@ class RunnerStrategyRuntime:
             self._pending_close_symbols.add(str(value).upper())
 
     def set_watchlist(self, symbols: Iterable[str]) -> None:
-        self.watchlist = {symbol.upper() for symbol in symbols if symbol}
+        self.watchlist = {symbol.upper() for symbol in symbols if raw_symbol_is_uppercase(symbol)}
         self._prune_runtime_state()
 
     def update_market_snapshots(self, snapshots: Sequence[object]) -> None:
         for snapshot in snapshots:
+            if not raw_symbol_is_uppercase(getattr(snapshot, "ticker", None)):
+                continue
             ticker = str(getattr(snapshot, "ticker", "")).upper()
             if not ticker:
                 continue
@@ -213,7 +216,8 @@ class RunnerStrategyRuntime:
                 self._latest_quotes[ticker] = quote
 
     def update_candidates(self, candidates: Sequence[dict[str, object]]) -> None:
-        self._candidates = {str(candidate.get("ticker", "")).upper(): dict(candidate) for candidate in candidates}
+        self._candidates = {str(candidate.get("ticker", "")).upper(): dict(candidate)
+                            for candidate in candidates if raw_symbol_is_uppercase(candidate.get("ticker"))}
         self._prune_runtime_state()
 
     def restore_position(
@@ -311,6 +315,8 @@ class RunnerStrategyRuntime:
         cumulative_volume: int | None = None,
     ) -> list[TradeIntentEvent]:
         del cumulative_volume
+        if not raw_symbol_is_uppercase(symbol):
+            return []
         self._roll_day_if_needed()
         normalized = symbol.upper()
         intents: list[TradeIntentEvent] = []

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 import asyncio
 import json
 import logging
@@ -402,7 +404,7 @@ class MarketDataGatewayService:
     async def apply_subscription_event(
         self, event: MarketDataSubscriptionEvent, *, message_id: str | None = None
     ) -> set[str]:
-        symbols = {symbol.upper() for symbol in event.payload.symbols if symbol}
+        symbols = {symbol.upper() for symbol in event.payload.symbols if raw_symbol_is_uppercase(symbol)}
         consumer = event.payload.consumer_name
         mode = event.payload.mode
 
@@ -615,7 +617,7 @@ class MarketDataGatewayService:
                 if not isinstance(symbols, list) or not all(isinstance(item, str) for item in symbols):
                     raise RuntimeError(f"invalid subscription state for {consumer}")
                 self._desired_symbols_by_consumer[consumer] = {
-                    symbol.upper() for symbol in symbols if symbol
+                    symbol.upper() for symbol in symbols if raw_symbol_is_uppercase(symbol)
                 }
                 if consumer == WARNING_CONSUMER:
                     self._desired_symbols_by_consumer[consumer] = self._validated_warning_symbols(
@@ -630,7 +632,7 @@ class MarketDataGatewayService:
                 continue
             event = MarketDataSubscriptionEvent.model_validate(json.loads(data))
             consumer = event.payload.consumer_name
-            symbols = {symbol.upper() for symbol in event.payload.symbols if symbol}
+            symbols = {symbol.upper() for symbol in event.payload.symbols if raw_symbol_is_uppercase(symbol)}
             if not migrated and consumer not in self._desired_symbols_by_consumer and event.payload.mode != "replace":
                 raise RuntimeError(f"retained history for {consumer} does not start with replace")
             current = self._desired_symbols_by_consumer.get(consumer, set())

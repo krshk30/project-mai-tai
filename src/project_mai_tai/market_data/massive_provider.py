@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 import asyncio
 import inspect
 import json
@@ -419,7 +421,7 @@ class MassiveTradeStream:
                 self._on_warning_revert(reason)
 
     async def sync_warning_trade_symbols(self, symbols: Iterable[str]) -> None:
-        desired = {symbol.upper() for symbol in symbols if symbol}
+        desired = {symbol.upper() for symbol in symbols if raw_symbol_is_uppercase(symbol)}
         self._validate_explicit_symbols(desired)
         if len(desired) > 16:
             raise ValueError("momentum-warning T owner exceeds cap16")
@@ -464,7 +466,7 @@ class MassiveTradeStream:
         self._coverage_started_at.clear()
 
     async def sync_subscriptions(self, symbols: Iterable[str]) -> None:
-        desired = {symbol.upper() for symbol in symbols if symbol}
+        desired = {symbol.upper() for symbol in symbols if raw_symbol_is_uppercase(symbol)}
         self._validate_explicit_symbols(desired)
         old_trades = self._subscriptions | self._warning_trade_symbols
         new_trades = desired | self._warning_trade_symbols
@@ -600,7 +602,7 @@ class MassiveTradeStream:
                     self._revert_warning("provider_error")
                     continue
                 symbol = getattr(message, "symbol", None) or getattr(message, "sym", None)
-                if not symbol:
+                if not raw_symbol_is_uppercase(symbol):
                     continue
                 symbol = str(symbol).upper()
 

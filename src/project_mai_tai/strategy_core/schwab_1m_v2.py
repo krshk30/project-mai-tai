@@ -24,6 +24,8 @@ NO imports from: `schwab_native_30s.py`, `bar_builder.py`, `indicators.py`,
 """
 from __future__ import annotations
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 import json
 import logging
 import math
@@ -4220,6 +4222,8 @@ class SchwabV2Strategy:
             self._bar_observation_phase = previous_phase
 
     def on_bar(self, symbol: str, bar: ChartBar) -> TradeIntentDraft | None:
+        if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(bar.symbol):
+            return None
         state = self.watchlist_state(symbol)
         ohlcv = OHLCVBar(
             timestamp_ms=bar.timestamp_ms,
@@ -4380,6 +4384,8 @@ class SchwabV2Strategy:
         return draft
 
     def on_quote(self, symbol: str, quote: Quote) -> TradeIntentDraft | None:
+        if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(quote.symbol):
+            return None
         # v1.32 base: quotes update freshness but never fire entries. Hold-
         # confirmation (default OFF) layers the intrabar trail-touch + N-second
         # net_delta gate on top; with the flag off this is byte-identical to the
