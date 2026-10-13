@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 
@@ -12,6 +13,30 @@ import re
 def require(condition, reason):
     if not condition:
         raise ValueError(reason)
+
+
+def native_health(value, *, final_observed_ns, now):
+    fields = {"observed_wall_ns", "oms_sync_seq", "oms_sync_seconds", "v2_bar_lateness_seconds",
+              "load_1m", "ram_available_bytes", "new_live_error", "v2_not_applicable"}
+    require(isinstance(value, dict) and set(value) == fields, "native health shape missing or changed")
+    stamp = value["observed_wall_ns"]
+    require(type(stamp) is int and 0 < stamp <= final_observed_ns
+            and 0 <= now.timestamp() - stamp / 1_000_000_000 <= 30,
+            "native observation timestamp stale, absent or future")
+    require(type(value["oms_sync_seq"]) is int and value["oms_sync_seq"] > 0
+            and type(value["ram_available_bytes"]) is int and value["ram_available_bytes"] >= 0
+            and type(value["new_live_error"]) is bool and type(value["v2_not_applicable"]) is bool,
+            "native integer or boolean evidence malformed")
+    for key in ("oms_sync_seconds", "load_1m"):
+        number = value[key]
+        require(type(number) in (int, float) and math.isfinite(number) and number >= 0,
+                "native numeric evidence malformed")
+    late = value["v2_bar_lateness_seconds"]
+    require((late is None and value["v2_not_applicable"])
+            or (type(late) in (int, float) and math.isfinite(late) and late >= 0),
+            "native bar observation malformed")
+    # This verifies observations, not threshold health: real errors/slow reads remain visible.
+    return stamp
 
 
 def f3_receipt(raw: bytes, *, expected_head: str, expected_instance: str,
@@ -60,13 +85,17 @@ def f3_receipt(raw: bytes, *, expected_head: str, expected_instance: str,
     require(type(observed) is int and observed > 0, "actual observation clock missing")
     age = now.astimezone(UTC).timestamp() - observed / 1_000_000_000
     require(0 <= age <= max_age_seconds, "actual trader read receipt stale or future")
+    stamps = [native_health(a["health"], final_observed_ns=observed, now=now) for a in attempts]
+    require(stamps[0] < stamps[1], "two distinct native observation clocks required")
+    scope = "NOT_EVALUATED_NO_GATEWAY_PUBLISH_LAG"
+    require(row.get("health_verdict") == scope, "reader receipt cannot assert gateway health")
     return {
         "status": "PASS", "actual_box": True, "service_user": "trader",
         "read_live_calls": 2, "exceptions": [], "own_service_environment": True,
         "gateway_instance": expected_instance, "source_head": expected_head,
         "observed_ns": observed, "raw_sha256": hashlib.sha256(raw).hexdigest(),
         "opened_paths": sorted(expected_paths),
-        "health_verdict": row.get("health_verdict", "UNKNOWN"),
+        "health_verdict": scope,
         "scope": "Actual reader readability only; not a gateway health verdict or deployment authority",
     }
 

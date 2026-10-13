@@ -19,13 +19,18 @@ def fixture():
     now = datetime(2026, 10, 13, 11, 10, tzinfo=UTC)
     paths = {"/run/health.json", "/var/log/oms.log", "/proc/12/stat"}
     sources = {"/repo/reader.py": "a" * 64, "/repo/source.py": "b" * 64}
+    final_stamp = int(now.timestamp() * 1e9)
+    health = dict(oms_sync_seq=123, oms_sync_seconds=0.7, v2_bar_lateness_seconds=None,
+                  load_1m=1.0, ram_available_bytes=4 * 1024**3,
+                  new_live_error=False, v2_not_applicable=True)
     row = {
         "status": "READ_LIVE_2_OK", "identity": {
             "source_head": "c" * 40, "gateway_instance": "12:123", "gateway_pid": 12,
             "uid": 1000, "gid": 1000, "unit": "project-mai-tai-market-data.service",
             "environment_source": "/proc/12/environ (values not exported)",
         },
-        "attempts": [{"attempt": n, "read_status": "OK", "health": {}} for n in (1, 2)],
+        "attempts": [{"attempt": n, "read_status": "OK", "health": dict(
+            health, observed_wall_ns=final_stamp - (3 - n) * 1_000_000_000)} for n in (1, 2)],
         "permissions": [{"path": p, "readable": True} for p in paths],
         "native_sources": [{"path": p, "sha256": h} for p, h in sources.items()],
         "caller_sha256": "d" * 64, "observed_ns": int(now.timestamp() * 1e9),
@@ -90,3 +95,34 @@ def test_midread_error_and_duplicate_paths_cannot_be_promoted(fixture):
             row["permissions"][1] = row["permissions"][0]
         with pytest.raises(ValueError):
             adapter.f3_receipt(json.dumps(row).encode(), **expectations)
+
+
+@pytest.mark.parametrize("change", [
+    {}, {"observed_wall_ns": 0}, {"observed_wall_ns": True}, {"oms_sync_seq": "123"},
+    {"load_1m": float("nan")}, {"new_live_error": "false"}, {"v2_not_applicable": 1},
+    {"v2_bar_lateness_seconds": None, "v2_not_applicable": False},
+])
+def test_empty_or_malformed_native_health_never_promoted(fixture, change):
+    row, expectations = fixture
+    if change:
+        row["attempts"][0]["health"].update(change)
+    else:
+        row["attempts"][0]["health"] = {}
+    with pytest.raises(ValueError):
+        adapter.f3_receipt(json.dumps(row).encode(), **expectations)
+
+
+def test_equal_clocks_and_healthy_verdict_refused_but_real_bad_health_not_hidden(fixture):
+    original, expectations = fixture
+    row = deepcopy(original)
+    row["attempts"][1]["health"] = row["attempts"][0]["health"]
+    with pytest.raises(ValueError, match="distinct"):
+        adapter.f3_receipt(json.dumps(row).encode(), **expectations)
+    row = deepcopy(original)
+    row["health_verdict"] = "HEALTHY"
+    with pytest.raises(ValueError, match="cannot assert"):
+        adapter.f3_receipt(json.dumps(row).encode(), **expectations)
+    row = deepcopy(original)
+    row["attempts"][1]["health"].update(new_live_error=True, load_1m=7, ram_available_bytes=1)
+    result = adapter.f3_receipt(json.dumps(row).encode(), **expectations)
+    assert result["health_verdict"] == "NOT_EVALUATED_NO_GATEWAY_PUBLISH_LAG"
