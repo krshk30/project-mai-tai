@@ -6656,6 +6656,22 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
 
     async def _evaluate_v2_managed_exit(self, acct: str, symbol: str) -> None:
+        # The sync handover and quote consumer can now admit the same EOD leg.
+        # Span the existing read/ownership/submit awaits, not a per-day claim.
+        if not (getattr(self.settings, "oms_v2_eod_oco_transition_enabled", False)
+                and self._v2_eod_oco_transition_due()):
+            return await self._evaluate_v2_managed_exit_claimed(acct, symbol)
+        key = (acct, symbol)
+        inflight = self.__dict__.setdefault("_v2_eod_ladder_inflight", set())
+        if key in inflight:
+            return
+        inflight.add(key)
+        try:
+            await self._evaluate_v2_managed_exit_claimed(acct, symbol)
+        finally:
+            inflight.discard(key)
+
+    async def _evaluate_v2_managed_exit_claimed(self, acct: str, symbol: str) -> None:
         """Run the v2 exit ladder for one symbol on the latest quote. DECISION uses
         the live bid; FILL reference_price is the leg LEVEL (decision B — stop/floor/
         scale level) so live-paper agrees with the re-score by construction. Precedence
@@ -12748,11 +12764,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     "[OMS-V2-EOD-OCO-TRANSITION] %s %s outcome=UNKNOWN reason=row_unreadable",
                     acct, symbol,
                 )
+                await self._page_v2_eod_handover_unreadable(acct, symbol)
                 continue
             if snapshot is None:
                 self._managed_v2_symbols.discard((acct, symbol))
                 continue
             if self._v2_eod_oco_transition_rows.get(key) == snapshot.managed_row_id:
+                await self._evaluate_v2_managed_exit(acct, symbol)
                 continue
             retry_key = (key, snapshot.managed_row_id)
             last_try = self.__dict__.setdefault("_v2_eod_oco_last_try", {}).get(retry_key)
@@ -12830,6 +12848,28 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "[OMS-V2-EOD-OCO-TRANSITION] %s %s row=%s broker_legs=CONFIRMED_GONE "
                 "software_exit=ENABLED",
                 acct, symbol, snapshot.managed_row_id,
+            )
+            await self._evaluate_v2_managed_exit(acct, symbol)
+
+    async def _page_v2_eod_handover_unreadable(self, acct: str, symbol: str) -> None:
+        def _write(session: Session) -> None:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or row.strategy_code != "schwab_1m_v2":
+                return  # No independently readable owner: never invent an incident binding.
+            self._sync_v2_eod_release_incident(
+                session, acct, symbol, str(row.id), ExitPairReleaseResult(outcome="unanswerable")
+            )
+
+        try:
+            await self._run_db(_write, commit=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception(
+                "[OMS-V2-EOD-OCO-TRANSITION] %s %s row_unreadable incident=WRITE_FAILED "
+                "software_sell=BLOCKED; retrying next sync", acct, symbol,
             )
 
     async def _v2_eod_handover_ready(
