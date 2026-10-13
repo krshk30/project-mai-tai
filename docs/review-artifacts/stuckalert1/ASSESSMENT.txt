@@ -1,15 +1,19 @@
 STUCKALERT1 V1 OWN ASSESSMENT / NARROW FILE PLAN -- NO PRODUCTION AUTHORITY
 
-Latest21:2x explicitly supersedes per-order-freshness gate/build. The earlier gap
-finding remains true historically, but does not block this approved marker-only
-v1. Reconciler source only; no OMS/quotes/provider/model/Settings/schema changes.
+CORRECTION: Main held6de4/da10 because candidate-minus-contradictions admitted
+accepted-looking rows without a positive broker-origin accepted event. My earlier
+marker-only interpretation was broader than the human card, NOT approved policy.
+Latest21:2x supersedes ONLY per-order-freshness gate/build, not positive broker ACK.
+Reconciler source only; no OMS/quotes/provider/model/Settings/schema changes.
 Separate E860 branch, frozen MOM source32d5 untouched. Main owns combined perf
 and installation priority; bounded code preparation now, execution waitsCLEAR.
 
 Approved exemption: accepted BUY order, STOP/STOP_LIMIT, exact resting_entry=true
-or fanout_source=rth_resting_mirror. Broker ID is neither required nor proof.
+or fanout_source=rth_resting_mirror AND a broker-origin accepted event.
+Broker ID, local accepted status, client/unknown accepted events and a partial-only
+broker event are neither required ACK evidence nor substitutes for that event.
 Do not suppress a still-open local row whose latest broker event is terminal or
-unknown. Read existing events only to detect contradiction, NOT as freshness.
+unknown. Read existing events for positive ACK and contradiction, NOT freshness.
 For intents require associated active same-account/strategy/symbol orders and
 ALL such orders qualify; no-order/terminal-only/mixed no-ack chains remain alerts.
 Pending/submitted noack>180, orphan fleet944 shape, literal unknown status and
@@ -46,11 +50,17 @@ All alert_opened times RTH. Original119orderaccepted and123intentsubmitted statu
 captured; metadata selected from last retained order event at/before first-opened,
 not current terminal-book projection. No software receive/availability timestamps
 retained; event-time reconstruction explicitly labelled, not causal arrival replay.
-Projected marker population241, not242: real GIXI case1a7fdc71-60e3-410c-8d49-bcea106cb322
+Historical superseded marker-only projection241, not242: real GIXI case1a7fdc71-60e3-410c-8d49-bcea106cb322
 opened16:42:09.919890Z, submitted intent371a9463-5d18-4d1d-8487-1392750f8065;
 related order86a0633c-f350-416e-8c9a-1dbff2b9dbb6 broker-cancelled16:42:04Z.
 Required broker-terminal/book-open preservation means this intent still alerts.
-Prepared replay expectation119order->0,123intent->1. Never weaken to fake242->0.
+Old119order->0,123intent->1 expectation is NOT the approved positive-ACK rule.
+Raw fixture has57brokeraccepted events (27order/30intent),184unknown-origin
+accepted events (92order/92intent), and1broker-cancelled GIXI intent. Fixture only
+retains the latest as-of event, not full history:184unknown entries cannot prove
+an earlier broker ACK, nor prove one never existed. Keep origins untouched.
+New projected replay119order->92,123intent->93;57suppressed,185remain, including
+GIXI and184unproven rows. Actual updated replay execution waits mainCLEAR.
 Negative five shapes pending/submitted/orphan/unknown/terminal injected across both
 brokers PM/RTH; prior stale-per-order read now a positive v1 exemption control.
 Optional account completion metric absent, reported/skipped without new producer.

@@ -105,9 +105,12 @@ def _accepted_resting_ids(
     }
     if not candidates:
         return set()
-    # Read contradictions, not freshness: v1 explicitly permits the accepted marker.
+    # Require positive broker acceptance; timestamps order contradictions, not freshness.
     ranked = select(
         BrokerOrderEvent.order_id, BrokerOrderEvent.event_type,
+        func.max(case((BrokerOrderEvent.event_type == "accepted", 1), else_=0)).over(
+            partition_by=BrokerOrderEvent.order_id,
+        ).label("has_broker_accept"),
         func.row_number().over(
             partition_by=BrokerOrderEvent.order_id,
             order_by=(
@@ -119,12 +122,12 @@ def _accepted_resting_ids(
     ).where(
         BrokerOrderEvent.order_id.in_(candidates), BrokerOrderEvent.event_source == "broker",
     ).subquery()
-    contradictory = {
-        order_id for order_id, event_type in session.execute(
-            select(ranked.c.order_id, ranked.c.event_type).where(ranked.c.rank == 1)
-        ) if event_type not in {"accepted", "partially_filled"}
+    return {
+        order_id for order_id, event_type, has_broker_accept in session.execute(
+            select(ranked.c.order_id, ranked.c.event_type, ranked.c.has_broker_accept)
+            .where(ranked.c.rank == 1)
+        ) if has_broker_accept == 1 and event_type in {"accepted", "partially_filled"}
     }
-    return candidates - contradictory
 
 
 class ReconciliationService:

@@ -74,6 +74,25 @@ def test_accepted_resting_marker_no_id_or_fresh_read_required(monkeypatch, provi
 
 @pytest.mark.parametrize("provider", ["schwab", "webull"])
 @pytest.mark.parametrize("hour", [12, 15], ids=["PM", "RTH"])
+@pytest.mark.parametrize("origin", [None, "client", "unknown"], ids=["no_event", "client_only", "unknown_only"])
+def test_accepted_row_requires_positive_broker_accepted_event(monkeypatch, provider, hour, origin):
+    now = datetime(2026, 10, 12, hour, tzinfo=UTC)
+    monkeypatch.setattr(reconciler, "utcnow", lambda: now)
+    factory = build_test_session_factory()
+    with factory() as session:
+        _, order = seed(session, provider=provider, now=now)
+        order.broker_order_id = "CONTROLLED-id-not-positive-ACK"
+        order.updated_at = now-timedelta(seconds=182)
+        if origin is not None:
+            session.add(BrokerOrderEvent(order_id=order.id, event_type="accepted",
+                event_source=origin, event_at=now-timedelta(days=1), payload={}))
+        session.flush()
+        orders, intents = methods(session, factory)
+        assert (len(orders), len(intents)) == (1, 1)
+
+
+@pytest.mark.parametrize("provider", ["schwab", "webull"])
+@pytest.mark.parametrize("hour", [12, 15], ids=["PM", "RTH"])
 @pytest.mark.parametrize("shape", ["pending", "submitted", "orphan", "unknown", "broker_terminal"])
 def test_all_five_negative_shapes_alert_both_brokers_sessions(monkeypatch, provider, hour, shape):
     now = datetime(2026, 10, 12, hour, tzinfo=UTC)
@@ -104,7 +123,10 @@ def test_no_exemption_for_ambiguous_shape_or_intent_chain(monkeypatch, change):
         intent, order = seed(session, now=now,
             provider="other" if change == "other_provider" else "schwab",
             intent_status="unknown" if change == "unknown_intent" else "submitted",
-            broker_event="unknown" if change == "unknown_broker_event" else None)
+            broker_event="accepted")
+        if change == "unknown_broker_event":
+            session.add(BrokerOrderEvent(order_id=order.id, event_type="unknown",
+                event_source="broker", event_at=now-timedelta(hours=1), payload={}))
         if change == "sell":
             order.side = intent.side = "sell"
         if change == "wrong_type":
@@ -159,7 +181,24 @@ def test_same_timestamp_broker_conflict_cannot_be_hidden_by_accepted_uuid(monkey
         assert len(orders) == len(intents) == 1
 
 
-def test_recorded242_incident_reconstruction_preserves_real_terminal_intent(monkeypatch):
+@pytest.mark.parametrize("provider", ["schwab", "webull"])
+@pytest.mark.parametrize("prior_accept", [False, True])
+def test_partial_broker_event_does_not_replace_positive_accepted_event(monkeypatch, provider, prior_accept):
+    now = datetime(2026, 10, 12, 15, tzinfo=UTC)
+    monkeypatch.setattr(reconciler, "utcnow", lambda: now)
+    factory = build_test_session_factory()
+    with factory() as session:
+        _, order = seed(session, provider=provider, now=now,
+                        broker_event="accepted" if prior_accept else None)
+        session.add(BrokerOrderEvent(order_id=order.id, event_type="partially_filled",
+            event_source="broker", event_at=now-timedelta(hours=1), payload={}))
+        session.flush()
+        orders, intents = methods(session, factory)
+        expected = 0 if prior_accept else 1
+        assert (len(orders), len(intents)) == (expected, expected)
+
+
+def test_recorded242_incident_reconstruction_preserves_unproven_and_terminal_alerts(monkeypatch):
     raw = FIXTURE.read_bytes()
     assert len(raw) < 1024*1024
     fixture = json.loads(raw)
@@ -208,14 +247,23 @@ def test_recorded242_incident_reconstruction_preserves_real_terminal_intent(monk
             counts[row["kind"]]["before"] += 1  # Original age/status rule qualifies every recorded case.
             counts[row["kind"]]["after"] += len(actual)
             if actual:
-                retained.append({key: row[key] for key in ("case_id", "kind", "symbol", "order_status_asof")})
+                retained.append({key: row[key] for key in
+                                 ("case_id", "kind", "symbol", "order_status_asof", "event_source")})
             session.rollback()
-    assert counts == {"stuck_order": {"before": 119, "after": 0}, "stuck_intent": {"before": 123, "after": 1}}
-    assert retained == [{"case_id": "1a7fdc71-60e3-410c-8d49-bcea106cb322", "kind": "stuck_intent",
-                         "symbol": "GIXI", "order_status_asof": "cancelled"}]
+    assert counts == {"stuck_order": {"before": 119, "after": 92}, "stuck_intent": {"before": 123, "after": 93}}
+    unproven = [row for row in retained if row["event_source"] == "unknown"]
+    assert len(unproven) == 184
+    assert all(row["order_status_asof"] == "accepted" for row in unproven)
+    terminal = [row for row in retained if row["event_source"] != "unknown"]
+    assert terminal == [{"case_id": "1a7fdc71-60e3-410c-8d49-bcea106cb322", "kind": "stuck_intent",
+                         "symbol": "GIXI", "order_status_asof": "cancelled", "event_source": "broker"}]
+    assert len(retained) == 185
     print("STUCKALERT1_RECORDED_REPLAY="+json.dumps({
         "evidence_kind": "RECORDED_INCIDENT_RECONSTRUCTION_NOT_SOFTWARE_ARRIVAL_REPLAY",
-        "fixture_sha256": hashlib.sha256(raw).hexdigest(), "counts": counts, "retained": retained,
+        "fixture_sha256": hashlib.sha256(raw).hexdigest(), "counts": counts,
+        "suppressed_positive_broker_accept": 57, "retained_unproven_unknown_origin": len(unproven),
+        "retained_terminal": terminal,
+        "capture_limitation": "Latest as-of event only; unknown origin does not prove absence of an earlier broker ACK",
         "actual_incident_open_session": "RTH only; PM/RTH breadth separately CONTROLLED",
         "per_order_freshness": "NOT_REQUIRED_BY_APPROVED_V1",
         "per_account_completion_metric": "ABSENT_GAP_ALERT_SKIPPED",
