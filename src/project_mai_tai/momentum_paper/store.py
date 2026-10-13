@@ -3,17 +3,22 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Iterable
 
-from sqlalchemy import distinct, or_, select
+from sqlalchemy import distinct, or_, select, tuple_
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import MomentumPaperEvent
 from project_mai_tai.momentum_paper.models import MOMENTUM_STRATEGIES, MomentumTapeRecord
 from project_mai_tai.momentum_paper.case_collision_audit import (
-    INVALIDATED, apply_reference_audit, invalidated_logical_ids,
+    INVALIDATED, apply_reference_audit, invalidated_event_scopes,
 )
 
 
 TERMINAL_EVENT_TYPES = frozenset({"FINAL", "NO_FILL", "UNANSWERABLE"})
+
+
+def _event_scope():
+    return tuple_(MomentumPaperEvent.logical_id, MomentumPaperEvent.strategy_code,
+                  MomentumPaperEvent.symbol, MomentumPaperEvent.session_date)
 
 
 class MomentumPaperStore:
@@ -62,9 +67,9 @@ class MomentumPaperStore:
                     MomentumPaperEvent.session_date == session_date,
                     MomentumPaperEvent.strategy_code.in_((*strategy_codes, "momentum_paper")),
                     or_(MomentumPaperEvent.event_type != INVALIDATED,
-                        MomentumPaperEvent.logical_id.in_(invalidated_logical_ids())),
+                        _event_scope().in_(invalidated_event_scopes())),
                     or_(MomentumPaperEvent.event_type == INVALIDATED,
-                        MomentumPaperEvent.logical_id.not_in(invalidated_logical_ids())),
+                        _event_scope().not_in(invalidated_event_scopes())),
                 )
                 .order_by(MomentumPaperEvent.observed_at, MomentumPaperEvent.created_at)
             ).all()
@@ -80,7 +85,7 @@ class MomentumPaperStore:
                     MomentumPaperEvent.session_date >= start_date,
                     MomentumPaperEvent.event_type.in_(TERMINAL_EVENT_TYPES),
                     MomentumPaperEvent.strategy_code.in_(tuple(strategy_codes)),
-                    MomentumPaperEvent.logical_id.not_in(invalidated_logical_ids()),
+                    _event_scope().not_in(invalidated_event_scopes()),
                 )
                 .order_by(MomentumPaperEvent.observed_at)
             ).all()

@@ -4,11 +4,11 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import MomentumPaperEvent
-from project_mai_tai.momentum_paper.case_collision_audit import invalidated_logical_ids
+from project_mai_tai.momentum_paper.case_collision_audit import invalidated_event_scopes
 
 
 MAX_TERMINAL_ROWS = 4096
@@ -40,7 +40,8 @@ def _load_completed_today(
                 MomentumPaperEvent.session_date == session_date,
                 MomentumPaperEvent.strategy_code == strategy_code,
                 MomentumPaperEvent.event_type.in_(("FILLED", "EXITED", "FINAL")),
-                MomentumPaperEvent.logical_id.not_in(invalidated_logical_ids()),
+                tuple_(MomentumPaperEvent.logical_id, MomentumPaperEvent.strategy_code,
+                       MomentumPaperEvent.symbol, MomentumPaperEvent.session_date).not_in(invalidated_event_scopes()),
             )
             .order_by(MomentumPaperEvent.observed_at, MomentumPaperEvent.created_at, MomentumPaperEvent.event_key)
             .limit(MAX_TERMINAL_ROWS + 1)
