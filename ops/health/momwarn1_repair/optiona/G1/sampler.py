@@ -23,8 +23,8 @@ MARKER = b"1008 (policy violation)"
 
 
 def start_deadline_utc(treatment_date: date) -> datetime:
-    """The treatment day's 07:00 ET boundary, including DST changes."""
-    return datetime.combine(treatment_date, clock_time(7, 0), tzinfo=ET).astimezone(UTC)
+    """The treatment day's 04:00 ET boundary, including DST changes."""
+    return datetime.combine(treatment_date, clock_time(4, 0), tzinfo=ET).astimezone(UTC)
 
 
 def start_is_before_deadline(now: datetime, treatment_date: date) -> bool:
@@ -101,7 +101,7 @@ def main(
                 or not clock_time(7) <= et.time() < clock_time(18, 10) or end != hard_end):
             parser.error("Oct13 continuation requires current Oct13 07:00-18:10 ET and exact hard end18:10")
     elif not start_is_before_deadline(now, args.treatment_date):
-        parser.error(f"start before {args.treatment_date} 07:00 ET to retain full treatment coverage")
+        parser.error(f"start before {args.treatment_date} 04:00 ET to retain full treatment coverage")
 
     cursor = None
     next_sample = time.monotonic()

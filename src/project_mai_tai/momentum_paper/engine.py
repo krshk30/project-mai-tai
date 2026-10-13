@@ -22,7 +22,7 @@ from project_mai_tai.momentum_paper.models import (
 
 _ET = ZoneInfo("America/New_York")
 _DETECTION_START = time(4, 11)
-_DETECTION_END = time(9, 30)
+_DETECTION_END = time(18)
 _DETECTION_MULTIPLIER = Decimal("1.20")
 _TARGET_MULTIPLIER = Decimal("1.05")
 _STOP_MULTIPLIER = Decimal("0.85")

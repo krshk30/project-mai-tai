@@ -43,3 +43,13 @@ def test_measured_hour_nine_thresholds_unchanged():
 
 def test_real_heartbeat_stop_is_not_relaxed():
     assert guard.SlowdownRules().heartbeat("healthy", guard.HEARTBEAT_AGE_BOUND + 1)
+
+
+def test_tomorrow_normal0340_start_uses_daily0400_to1810():
+    from datetime import UTC, date
+    from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
+
+    now = datetime(2026, 10, 14, 3, 40, tzinfo=ZoneInfo("America/New_York")).astimezone(UTC)
+    start, end = guard.treatment_clock(date(2026, 10, 14), now, MomentumValidationWindow())
+    assert start.astimezone(ZoneInfo("America/New_York")).hour == 4
+    assert end.astimezone(ZoneInfo("America/New_York")).strftime("%H:%M") == "18:10"

@@ -43,12 +43,12 @@ def build(monkeypatch, stamp, *, override=True):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stamp,override,active", [
     ("2026-10-13T09:29:59-04:00", False, True),
-    ("2026-10-13T09:30:00-04:00", False, False),
+    ("2026-10-13T09:30:00-04:00", False, True),
     ("2026-10-13T09:30:00-04:00", True, True),
     ("2026-10-13T17:59:59-04:00", True, True),
     ("2026-10-13T18:00:00-04:00", True, False),
     ("2026-10-14T09:29:59-04:00", True, True),
-    ("2026-10-14T09:30:00-04:00", True, False),
+    ("2026-10-14T09:30:00-04:00", True, True),
     ("2026-10-13T03:59:59-04:00", True, False),
     ("2026-10-17T08:30:00-04:00", True, False),
     ("2026-12-25T08:30:00-05:00", True, False),
@@ -68,11 +68,11 @@ async def test_monitor_exact_today_end_and_tomorrow_defaults_preserve_eligibilit
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stamp,override,published", [
-    ("2026-10-13T09:30:00-04:00", False, False),
+    ("2026-10-13T09:30:00-04:00", False, True),
     ("2026-10-13T09:30:00-04:00", True, True),
     ("2026-10-13T17:59:59-04:00", True, True),
     ("2026-10-13T18:00:00-04:00", True, False),
-    ("2026-10-14T09:30:00-04:00", True, False),
+    ("2026-10-14T09:30:00-04:00", True, True),
 ])
 async def test_publish_loop_uses_same_date_scoped_boundary_and_quiet_close(
         monkeypatch, stamp, override, published):

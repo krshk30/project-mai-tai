@@ -22,26 +22,27 @@ def ms(day, clock):
 
 
 @pytest.mark.parametrize("day", [date(2026, 10, 12), date(2026, 10, 13), date(2026, 10, 14)])
-def test_default_window_is_unchanged(day):
+def test_approved_daily_window_without_date_gate(day):
     value = MomentumValidationWindow()
-    assert value.gateway_end_for(day) == time(9, 30)
-    assert value.detection_end_for(day) == time(9, 30)
-    assert value.guard_end_for(day) == time(9, 40)
-    assert value.paper_close_for(day) == time(9, 40, 1)
-    assert not detection_time_is_eligible(ms(day, time(9, 30)), value)
+    assert value.gateway_end_for(day) == time(18)
+    assert value.detection_end_for(day) == time(18)
+    assert value.guard_end_for(day) == time(18, 10)
+    assert value.paper_close_for(day) == time(18, 10, 1)
+    assert detection_time_is_eligible(ms(day, time(9, 30)), value)
+    assert not detection_time_is_eligible(ms(day, time(18)), value)
 
 
-def test_explicit_today_limits_and_tomorrow_auto_expiration():
+def test_explicit_limits_are_daily_even_with_legacy_date():
     value = window()
     assert value.gateway_end_for(DAY) == time(18)
     assert value.detection_end_for(DAY) == time(18)
     assert value.guard_end_for(DAY) == time(18, 10)
     assert value.paper_close_for(DAY) == time(18, 10, 1)
     for other in (date(2026, 10, 12), date(2026, 10, 14)):
-        assert value.gateway_end_for(other) == time(9, 30)
-        assert value.detection_end_for(other) == time(9, 30)
-        assert value.guard_end_for(other) == time(9, 40)
-        assert not detection_time_is_eligible(ms(other, time(12)), value)
+        assert value.gateway_end_for(other) == time(18)
+        assert value.detection_end_for(other) == time(18)
+        assert value.guard_end_for(other) == time(18, 10)
+        assert detection_time_is_eligible(ms(other, time(12)), value)
 
 
 @pytest.mark.parametrize("clock,expected", [
@@ -53,7 +54,7 @@ def test_extended_detection_boundaries(clock, expected):
 
 
 @pytest.mark.parametrize("args", [
-    (None, time(18), time(18), time(18, 10)),
+    (None, time(17), time(18), time(18, 10)),
     (DAY, time(17), time(18), time(18, 10)),
     (DAY, time(18), time(18), time(18, 9)),
     (DAY, time(18, 0, 1), time(18), time(18, 10)),
@@ -89,10 +90,19 @@ def test_post0930_detection_is_labelled_and_next_print_still_fills():
                for row in fills if row.event_type == "FILLED")
 
 
-def test_same_override_cannot_detect_after0930_on_next_day():
+def test_daily_override_detects_next_day_with_unchanged_next_print_rule():
     tomorrow = date(2026, 10, 14)
     value = MomentumPaperEngine(prior_closes={"TEST": Decimal("1")},
                                 condition_version="controlled", coverage_started_ms=ms(tomorrow, time(4)),
                                 validation_window=window())
-    for clock, price in ((time(10), "1"), (time(10, 0, 20), "1.20")):
-        assert not value.ingest(TradePrint("TEST", ms(tomorrow, clock), Decimal(price), 100))
+    assert not value.ingest(TradePrint("TEST", ms(tomorrow, time(10)), Decimal("1"), 100))
+    records = value.ingest(TradePrint("TEST", ms(tomorrow, time(10, 0, 20)), Decimal("1.20"), 100))
+    assert len([row for row in records if row.event_type == "DETECTED"]) == 2
+    records = value.ingest(TradePrint("TEST", ms(tomorrow, time(10, 0, 21)), Decimal("1.21"), 100))
+    assert len([row for row in records if row.event_type == "FILLED"]) == 2
+
+
+def test_explicit_clock_override_needs_no_session_date():
+    value = MomentumValidationWindow(None, time(9, 30), time(9, 30), time(9, 40))
+    assert value.gateway_end_for(date(2026, 10, 14)) == time(9, 30)
+    assert not detection_time_is_eligible(ms(date(2026, 10, 14), time(9, 30)), value)

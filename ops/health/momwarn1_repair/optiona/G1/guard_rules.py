@@ -688,7 +688,7 @@ def treatment_clock(treatment_date, now, validation_window, *, continuation=Fals
         if et.time() < clock_time(7) or start >= end:
             raise Blind("Oct13 continuation clock outside approved window")
         return start, end
-    start = datetime.combine(treatment_date, clock_time(7), tzinfo=ET).astimezone(UTC)
+    start = datetime.combine(treatment_date, clock_time(4), tzinfo=ET).astimezone(UTC)
     end = datetime.combine(treatment_date, validation_window.guard_end_for(treatment_date),
                            tzinfo=ET).astimezone(UTC)
     if now >= start:

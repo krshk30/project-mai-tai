@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent
 
 def session_day(now, holidays, validation_window=None):
     day = now.date()
-    end = validation_window.guard_end_for(day) if validation_window else time(9, 40)
+    end = validation_window.guard_end_for(day) if validation_window else time(18, 10)
     if now.time() >= end:
         day += timedelta(days=1)
     while day.weekday() >= 5 or day in holidays:
@@ -29,7 +29,7 @@ def session_day(now, holidays, validation_window=None):
 
 
 def closed_timer_day(now, holidays, validation_window=None):
-    end = validation_window.guard_end_for(now.date()) if validation_window else time(9, 40)
+    end = validation_window.guard_end_for(now.date()) if validation_window else time(18, 10)
     return now.time() < end and (now.weekday() >= 5 or now.date() in holidays)
 
 
@@ -164,7 +164,7 @@ def main(argv=None):
             "session_date": day.isoformat(),
             "end_et": datetime.combine(day, time(18, 10) if continuation else validation_window.guard_end_for(day), tzinfo=ET).isoformat(),
             "gateway": gateway, "redis": detail,
-            "rules": "unchanged Option A safety; explicit date-scoped limits; close after guard completes"})
+            "rules": "unchanged Option A safety; daily paper limits; close after guard completes"})
         # READY follows sampler launch; ExecStartPost starts paper only then.
         rc = (guard.run_guard(day, output, continuation=True) if continuation
               else guard.run_guard(day, output))
