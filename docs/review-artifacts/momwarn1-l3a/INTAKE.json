@@ -5,7 +5,7 @@
   "owner": "Anscombe sole L3a on existing MOMWARN worktree",
   "status": "derived_rates_8192_paired_and_warning_page_controls_done_local_main_review_composition_pending",
   "base": "e064bcc4bbf9c92ba33b94b36224d51c5f86d201",
-  "next_action": "Main review source/page handoff then main sole writer exact F+B+MOMWARN composition/allON/hotpath. No further L3 performance run, no install claim; actual health setup remains INSTALL",
+  "next_action": "Human20:2x ACCEPTS8192burst/TQ+1/overflowNOauto-revert. Page codef9 complete locally with94focusedcontrols. MOMWARN independent E860 branch is now final candidate base; broad/allON plus60s3of3 deliberately queued until main EXCLUSIVE12x60 performance window explicitCLEAR. F+B+MOM prototype preserved, NOT install candidate. Actual health setup remains INSTALL; no test now",
   "result": "9daytable complete, maxobserved1811 Oct5 ->5433DERIVED Arows. ONEburstPASS: T/Q first5.562334ms,loopstall3.496708<50;64each T p50/.95/.99 .403333/.493625/.955833ms Q .414583/.519292/.969292ms; queue4096/A-only1336drops, separatestream maxlen20000. Runtime src unchanged frome064",
   "tested_burst_head": "04fc4d2b87376bff594e1eeb1beb38651e50cf2c",
   "evidence_directory": "/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012",
@@ -22,6 +22,16 @@
   "coordination": "App messaging rejected native ancestor; direct commentary coordination. Human main explicitly permits rate-analysis reads now, reserves requested60s window; no heavy parsing/burst simultaneous. Own PAUSE file at L3a output permits chunk-bounded quiescence. Burst window still to request after derived peak available",
   "boundary": "No queue edits, provider requests/socket/live writes/deploy/GitHub; Mendel offlinelead and main F+B composition/hotpath directories untouched",
   "followups": [
+    {
+      "id": "L3A-INDEPENDENT-E860-FINAL-GATE",
+      "source": "NEW HUMAN20:2x: accepted8192/TQ+1/no-overflow-revert; independent E860 MOMWARN final page head broad+allON60s3of3 afterCLEAR",
+      "priority": 1,
+      "owner": "Anscombe sole MOMWARN E860 branch; main exclusive current perf window",
+      "status": "queued_deliberately_paused_until_main_explicit_CLEAR",
+      "next_action": "After explicitCLEAR qualify unchanged final E860 warning/page source with scoped allON broad plus3native60s passes, preserving defaultOFF fixtures/native clocks/thresholds/GC and actual69+approvedflags; no benchmark or broad run during main12x60 window",
+      "completion_criterion": "Independent E860 exact final page source/tree broad and scoped allON60s3of3 genuine green receipts; no source attribution/full52 reopening or production action",
+      "supersedes": "Final F+B+MOMWARN composition as MOMWARN install candidate ONLY; that prototype and its evidence remain preserved. Main L1failure16vs251 independent, not a prerequisite for this new E860 MOMWARN gate"
+    },
     {
       "id": "L3A-WARNING-PAGE-COUNTERS",
       "source": "Human verified603 pair and requests actual counted-on-page bounded read-only metrics inside warning panel only",

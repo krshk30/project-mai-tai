@@ -1,5 +1,12 @@
 FINAL WARNING SOURCE / TEST HANDOFF -- MAIN OWNS COMPOSITION
 
+SUPERSEDING HUMAN20:2x RULING
+MOMWARN independent E860 warning/page branch is final candidate base. Final
+F+B+MOMWARN prototype preserved, NOT install candidate.8192burst/TQ+1 and existing
+overflowNOauto-revert ACCEPTED by human. Page locally committed/94controlsPASS.
+Broad/allON60s3of3 after main EXCLUSIVE12x60 window explicitCLEAR, queued notrun.
+Earlier F+B-composition guidance below is historical, not current MOMWARN gate.
+
 Final warning/page source headf9d84ec4dee8dcb845ad8c12aceea35148347c63
 Preserved paired Aqueue test head603657caaf0f108bca1c162dbb45cfdc98ea2805
 E860 base860fba4c7d59edff18eb23468ba576dcb83f4d57

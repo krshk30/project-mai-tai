@@ -1,5 +1,10 @@
 L3A WARNING COUNTER PAGE -- LOCAL REVIEW RESULT, NOT INSTALL/FULL FEATURE PROOF
 
+LATEST HUMAN20:2x:8192burst/TQ+1/overflowNOauto-revertACCEPTED. Independent E860
+warning/page branch is final candidate; F+B+MOM prototype preserved NOT candidate.
+Broad/allON60s3of3 queued after main EXCLUSIVE12x60 window explicitCLEAR; no runs
+now. Historical final F+B dependency below superseded only for MOMWARN gate.
+
 Final code/test commit f9d84ec4dee8dcb845ad8c12aceea35148347c63
 Parent603657caaf0f108bca1c162dbb45cfdc98ea2805 preserved, not rebased/amended.
 Commit marker Co-Authored-By: OpenAI Codex <noreply@openai.com>
