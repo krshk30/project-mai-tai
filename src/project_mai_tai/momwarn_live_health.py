@@ -21,6 +21,10 @@ BOUND = 65536
 MAX_STATE_ROWS = 32
 STAMP = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d{3}) ")
 PROBE = re.compile(r"\[V2-MACD-PROBE\] sym=(\S+) ts_ms=(\d+) ")
+LINE_PUBLICATION = re.compile(
+    r"\[V2-LINE-RESTORE\] sym=(\S+) [^\n]*\bcurrent_bar_ms=(\d+)\b"
+    r"[^\n]*\boutcome=published(?:\s|$)"
+)
 
 
 def newest_v2_state(entries: list) -> dict:
@@ -124,7 +128,9 @@ class LiveWarningHealthSource:
                     continue
                 if self.covered_from_ns is None:
                     self.covered_from_ns = stamp
-                match = PROBE.search(text)
+                # The first restored bar can publish without a MACD diagnostic.
+                # Only successful publication of that exact minute is evidence.
+                match = PROBE.search(text) or LINE_PUBLICATION.search(text)
                 if match:
                     key = match[1], int(match[2])
                     self.bars.setdefault(key, stamp)
@@ -199,6 +205,6 @@ class LiveWarningHealthSource:
                     v2_instance_id=self.config["v2_instance_id"], v2_coverage="complete_current_due",
                     v2_measured_wall_ns=now, v2_due_wall_ns=due, v2_completed_wall_ns=completion,
                     v2_bar_lateness_seconds=((now if completion is None else completion) - due) / NS,
-                    v2_probe_observation="strategy_evaluation_not_broker_ACK",
+                    v2_probe_observation="strategy_evaluation_or_line_publication_not_broker_ACK",
                 )
         return proposed_health_v2(receipt, now_ns=now)

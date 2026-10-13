@@ -253,6 +253,52 @@ def test_future_probe_stamp_never_becomes_completed_bar_evidence(setup):
         env.source.read(env.state())
 
 
+def test_recorded_first0700_line_publication_is_completion_without_macd_probe(setup):
+    # Recorded Oct12 v2 publication times; OMS/proc/Redis wiring stays CONTROLLED.
+    due = int(datetime(2026, 10, 12, 11, 1, tzinfo=UTC).timestamp()) * NS
+    env = setup(now=due + 6 * NS)
+    bar_ms = due // 1_000_000 - 60_000
+    messages = line(due - NS, "[schwab-1m-v2] controlled startup")
+    for symbol, milliseconds in (("LNKS", 3478), ("MEDS", 3736), ("YMAT", 4004)):
+        messages += line(due + milliseconds * 1_000_000,
+            f"[V2-LINE-RESTORE] sym={symbol} epoch=1 revision=1 "
+            f"current_bar_ms={bar_ms} bars=181 outcome=published live_append=0 entry_allowed=0 ")
+    (env.directory / "schwab-1m-v2.log").write_text(messages)
+    state = env.state(watchlist=["LNKS", "MEDS", "YMAT"])
+    health = env.reader.read(measured=env.source.read(state))
+    assert health.v2_bar_lateness_seconds == pytest.approx(4.004)
+    assert WarningWatchdog().check(health, publish_lag_seconds=0) is None
+    env.clock.ns += NS
+    repeated = env.reader.read(measured=env.source.read(state))
+    assert repeated.v2_bar_lateness_seconds == health.v2_bar_lateness_seconds
+
+
+@pytest.mark.parametrize("outcome,minute_offset", [
+    ("waiting", 0), ("failed", 0), ("superseded", 0), ("published", -60_000),
+])
+def test_unpublished_or_stale_line_does_not_prove_current_bar(setup, outcome, minute_offset):
+    env = setup(pending=True)
+    due = NOW // (60 * NS) * (60 * NS)
+    bar_ms = due // 1_000_000 - 60_000 + minute_offset
+    with (env.directory / "schwab-1m-v2.log").open("a") as output:
+        output.write(line(NOW, f"[V2-LINE-RESTORE] sym=BBB current_bar_ms={bar_ms} "
+            f"bars=181 outcome={outcome} live_append=0 entry_allowed=0 "))
+    env.clock.ns += 2 * NS
+    health = env.reader.read(measured=env.source.read(env.state()))
+    assert health.v2_bar_lateness_seconds == 6
+    assert WarningWatchdog().check(health, publish_lag_seconds=0) == "v2_bar_late"
+
+
+def test_future_line_publication_is_not_completion_evidence(setup):
+    env = setup(pending=True)
+    bar_ms = NOW // (60 * NS) * 60_000 - 60_000
+    with (env.directory / "schwab-1m-v2.log").open("a") as output:
+        output.write(line(NOW + NS, f"[V2-LINE-RESTORE] sym=BBB current_bar_ms={bar_ms} "
+            "bars=181 outcome=published live_append=0 entry_allowed=0 "))
+    with pytest.raises(ValueError, match="future v2"):
+        env.source.read(env.state())
+
+
 @pytest.mark.parametrize("field,value", [
     ("v2_first_bar_start_et", None), ("v2_bar_interval_seconds", 61),
     ("v2_bar_interval_seconds", True), ("v2_first_bar_source_ref", ""),
