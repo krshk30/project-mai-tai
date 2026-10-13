@@ -13,19 +13,22 @@ from enum import Enum
 import time
 
 
+RECONNECT_EVENT_REASONS = frozenset({"disconnect", "policy_1008", "reconnect_1012"})
 MONITOR_REASONS = frozenset({
     "monitor_unreadable", "monitor_stale", "monitor_invalid",
     "monitor_sync_regressed", "monitor_sync_gap", "v2_startup_pending",
-    "v2_startup_timeout", "publish_lag", "v2_bar_late",
-})
+    "v2_startup_timeout", "publish_lag", "v2_bar_late", "provider_disconnected",
+}) | RECONNECT_EVENT_REASONS
 HARM_REASONS = frozenset({
-    "oms_sync_slow_twice", "v2_cohort_late_twice", "load", "ram", "live_error",
+    "oms_sync_slow_twice", "v2_cohort_late_twice", "load", "ram", "live_error", "reconnect_storm",
 })
 RECOVERY_READS = 3
 PAUSE_HISTORY_LIMIT = 32
 FLAPPING_THRESHOLD = 6
 HOUR_NS = 3_600_000_000_000
 LONG_PAUSE_NS = 600_000_000_000
+RECONNECT_WINDOW_NS = 600_000_000_000
+RECONNECT_THRESHOLD = 3
 
 
 class ReasonClass(str, Enum):
@@ -38,7 +41,8 @@ def classify_reason(reason: str) -> ReasonClass:
     """Only exact approved noise may resume; HARM/unknown stays sticky.
 
     v2_bar_late is UNCALIBRATED. Validated CAL harm is v2_cohort_late_twice.
-    Watched T/Q lag, disconnect/1008, publication/metrics failures and new reasons
+    Only the exact approved reconnect names are monitor; their fourth callback
+    within 600s becomes reconnect_storm HARM. Watched T/Q lag, publication/metrics failures and new reasons
     are sticky by default. No prefix matching or invented source classification.
     """
     if isinstance(reason, str) and reason in MONITOR_REASONS:
@@ -95,6 +99,8 @@ class WarningPausePolicy:
         self._pause_reason_counts: dict[str, int] = {}
         self._noise_reason_counts: dict[str, int] = {}
         self._last_alerts: set[str] = set()
+        self._reconnect_events: deque[int] = deque(maxlen=RECONNECT_THRESHOLD+1)
+        self.reconnect_event_count = 0
 
     def _now(self, now_ns: int | None) -> int:
         value = self._clock_ns() if now_ns is None else now_ns
@@ -126,6 +132,13 @@ class WarningPausePolicy:
         now = self._now(now_ns)
         if self.state == "off":
             return "sticky"
+        if isinstance(reason, str) and reason in RECONNECT_EVENT_REASONS:
+            # Caller supplies one callback per actual event, never repeated health polls.
+            self._prune_reconnect_events(now)
+            self.reconnect_event_count += 1
+            self._reconnect_events.append(now)
+            if len(self._reconnect_events) > RECONNECT_THRESHOLD:
+                reason = "reconnect_storm"
         classification = classify_reason(reason)
         normalized = reason[:128] if isinstance(reason, str) and reason else "unknown_invalid_reason"
         if classification != ReasonClass.MONITOR:
@@ -150,6 +163,10 @@ class WarningPausePolicy:
         self.state, self.reason, self.clean_streak = "paused", reason, 0
         return "pause"
 
+    def _prune_reconnect_events(self, now: int) -> None:
+        while self._reconnect_events and self._reconnect_events[0] <= now-RECONNECT_WINDOW_NS:
+            self._reconnect_events.popleft()
+
     def clean(self, now_ns: int | None = None) -> bool:
         """Pending/unreadable reads MUST call trip instead; readiness is external."""
         now = self._now(now_ns)
@@ -167,6 +184,7 @@ class WarningPausePolicy:
 
     def snapshot(self, now_ns: int | None = None) -> dict:
         now = self._now(now_ns)
+        self._prune_reconnect_events(now)
         for events in (self._pause_starts, self._flap_events):
             while events and events[0] <= now-HOUR_NS:
                 events.popleft()
@@ -202,6 +220,12 @@ class WarningPausePolicy:
                                         or len(self._pause_starts) == FLAPPING_THRESHOLD+1),
             "history": history, "history_limit": PAUSE_HISTORY_LIMIT,
             "alert_reasons": alerts, "clock_domain": "monotonic_ns",
+            "reconnect_event_count": self.reconnect_event_count,
+            "reconnect_events_last_600s": len(self._reconnect_events),
+            "reconnect_event_times_ns": list(self._reconnect_events),
+            "reconnect_history_limit": RECONNECT_THRESHOLD+1,
+            "reconnect_window_ns": RECONNECT_WINDOW_NS,
+            "reconnect_count_semantics": "distinct_callbacks_only_not_provider_disconnected_polls",
         }
 
     def metrics(self, now_ns: int | None = None) -> dict:

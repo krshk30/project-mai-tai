@@ -7,7 +7,7 @@ import time
 import pytest
 
 from project_mai_tai.market_data.momwarn_pause_policy import (
-    HARM_REASONS, MONITOR_REASONS, PAUSE_HISTORY_LIMIT,
+    HARM_REASONS, MONITOR_REASONS, PAUSE_HISTORY_LIMIT, RECONNECT_EVENT_REASONS,
     ReasonClass, WarningPausePolicy, classify_reason,
 )
 from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealth, WarningWatchdog
@@ -263,3 +263,72 @@ def test_clock_regression_refuses_and_alert_delta_deduplicates():
     assert policy.observe('monitor_unreadable').new_alert_reasons == ()
     with pytest.raises(ValueError, match='regressed'):
         policy.clean(0)
+
+
+@pytest.mark.parametrize('reason', sorted(RECONNECT_EVENT_REASONS))
+def test_one_actual_disconnect_event_pauses_then_three_ready_reads_resume(reason):
+    policy, clock = active()
+    clock.advance()
+    assert policy.observe(reason).action == 'pause'
+    for _ in range(30):
+        clock.advance()
+        assert policy.observe('provider_disconnected').action == 'none'
+    metrics = policy.metrics()
+    assert metrics['reconnect_event_count'] == 1
+    assert metrics['reconnect_events_last_600s'] == 1
+    assert metrics['wire_pause_count'] == 1 and metrics['recovery_interruptions'] == 0
+    assert three_clean(policy, clock) == ['none', 'none', 'resume']
+
+
+def test_four_distinct_callbacks_in_ten_minutes_latch_storm_even_between_clean_recoveries():
+    policy, clock = active()
+    for reason in ('disconnect', 'policy_1008', 'reconnect_1012'):
+        clock.advance(100)
+        assert policy.observe(reason).action == 'pause'
+        assert three_clean(policy, clock)[-1] == 'resume'
+    clock.advance(100)
+    decision = policy.observe('disconnect')
+    assert decision.action == 'sticky_off' and decision.reason == 'reconnect_storm'
+    assert decision.reason_class == ReasonClass.HARM
+    metrics = policy.metrics()
+    assert metrics['reconnect_event_count'] == 4
+    assert len(metrics['reconnect_event_times_ns']) == metrics['reconnect_history_limit'] == 4
+    assert metrics['reconnect_count_semantics'] == 'distinct_callbacks_only_not_provider_disconnected_polls'
+    clock.advance(601)
+    assert three_clean(policy, clock) == ['none', 'none', 'none']
+    assert policy.state == 'off' and policy.reason == 'reconnect_storm'
+    assert policy.metrics()['reconnect_events_last_600s'] == 0
+
+
+def test_four_callbacks_without_clean_reads_still_storm_not_four_wire_pauses():
+    policy, clock = active()
+    for index in range(4):
+        clock.advance()
+        decision = policy.observe('disconnect')
+        assert decision.state == ('off' if index == 3 else 'paused')
+    assert policy.metrics()['wire_pause_count'] == 1
+    assert policy.metrics()['reconnect_event_count'] == 4
+
+
+@pytest.mark.parametrize('elapsed,storm', [(599_999_999_999, True), (600_000_000_000, False)])
+def test_reconnect_rolling_window_exact_boundary(elapsed, storm):
+    policy, clock = active()
+    start = clock.ns
+    for _ in range(3):
+        policy.observe('disconnect')
+    clock.ns = start+elapsed
+    decision = policy.observe('policy_1008')
+    assert decision.state == ('off' if storm else 'paused')
+    assert policy.metrics()['reconnect_events_last_600s'] == (4 if storm else 1)
+
+
+def test_disconnected_polls_alone_never_count_or_storm_and_do_not_bypass_readiness():
+    policy, clock = active()
+    for _ in range(100):
+        clock.advance()
+        policy.observe('provider_disconnected', ready=True)
+    metrics = policy.metrics()
+    assert metrics['state'] == 'paused' and metrics['reconnect_event_count'] == 0
+    assert metrics['reconnect_event_times_ns'] == []
+    assert policy.observe(ready=False).clean_reads == 0
+    assert three_clean(policy, clock)[-1] == 'resume'
