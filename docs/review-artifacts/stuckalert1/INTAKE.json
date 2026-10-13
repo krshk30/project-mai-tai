@@ -35,6 +35,15 @@
     "reported": "Boxed COMPLETED ASOFhistory95PASS/actual90+91retained plus separate BLOCKED180legacyrealACKproof. Main queue untouched/no OMS/provider/productionwrite or benchmark",
     "completion_criterion": "242querydenominator with actual positive/no-stored-fact counts among184legacyunknown, ASOF-only replay and unchanged runtime hash, honest unknown/retention report; local test commit/receipt for main review"
   },
+  "oms_sync_provenance_review": {
+    "id": "STUCKALERT1-OMS-SYNC-ACK",
+    "source": "Human LATEST23:2x reviewer ruling, SHAa318c66437f4090b42f4487b72bddf2bb7de871718a68b6eb953f658f9708653",
+    "priority": 4,
+    "owner": "Anscombe sole S1 reconciler writer",
+    "status": "source_and_retained_data_assessment_in_progress",
+    "next_action": "Break181 retained perbroker by exact missingACK/source/marker/NULLid. Trace persisted actual OMSbroker-sync accepted/working provenance before narrow reconciler extension if sound; no blanketunknown upgrade. Preserve61/181 historical receipt/GIXI/negative controls. >=95%target onlyif actual evidence supports it; no OMS/provider/productionwrites/benchmarks",
+    "completion_criterion": "Proven source/data-supported narrow ACK extension with bounded controls/replay and unchanged mandatory negatives, or exact provenance gap with retained-case denominator; report head/table/artifacts to main, queue untouched"
+  },
   "review_followup": {
     "id": "STUCKALERT1-POSITIVE-ACK",
     "source": "Main source review HOLD6de4/da10: positivebroker accepted event required, not local accepted marker",
