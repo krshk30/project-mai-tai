@@ -116,9 +116,10 @@ class MarketDataPublisher:
     ) -> str:
         # Whole-market model construction and JSON serialization must not block
         # watched-name T/Q or the independent A publisher on the gateway loop.
-        encoded = await asyncio.to_thread(
-            self._encode_snapshot_batch, tuple(snapshots), tuple(reference_data),
-        )
+        diagnostics = getattr(self, "stage_diagnostics", None)
+        args = (self._encode_snapshot_batch, tuple(snapshots), tuple(reference_data))
+        encoded = await (diagnostics.thread("snapshot_encode", *args) if diagnostics is not None
+                         else asyncio.to_thread(*args))
         return await self.redis.xadd(
             stream_name(self.stream_prefix, "snapshot-batches"),
             {"data": encoded},

@@ -32,6 +32,7 @@ from project_mai_tai.market_data.models import (
 from project_mai_tai.market_data.protocols import SnapshotProvider, TradeStreamProvider
 from project_mai_tai.market_data.publisher import MarketDataPublisher, WarningBatchWriteError
 from project_mai_tai.market_data.reference_cache import ReferenceDataCache
+from project_mai_tai.market_data.stage_diagnostics import StageDiagnostics
 from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealthReader, WarningWatchdog
 from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 from project_mai_tai.services.runtime import _install_signal_handlers
@@ -49,7 +50,7 @@ WARNING_CONSUMER = "momentum-warning"
 HEARTBEAT_RELOAD_RETRY_DELAYS_SECONDS = (0.5, 1.0, 2.0, 4.0)
 
 
-def _warning_monitor_diagnostic(exc: Exception) -> str:
+def _warning_monitor_diagnostic(exc: Exception, stages: dict | None = None) -> str:
     # Never emit URLs/credential fields or multiline exception text into live logs.
     try:
         message = str(exc)[:2048]
@@ -63,8 +64,10 @@ def _warning_monitor_diagnostic(exc: Exception) -> str:
         "[REDACTED_CREDENTIAL]", message,
     )
     message = re.sub(r"\b\d{6,}:[A-Za-z0-9_-]+", "[REDACTED_TOKEN]", message)
-    return json.dumps({"exception_class": type(exc).__name__[:80],
-                       "message": message[:512]}, ensure_ascii=True)
+    result = {"exception_class": type(exc).__name__[:80], "message": message[:512]}
+    if stages is not None:
+        result["stages"] = stages
+    return json.dumps(result, ensure_ascii=True)
 
 
 def _is_transient_redis_reload_error(exc: RedisError) -> bool:
@@ -141,10 +144,16 @@ class MarketDataGatewayService:
         self._warning_log_gap_counts: dict[str, int] = {}
         self._warning_trade_coverage: dict[str, dict] = {}
         self._warning_watchdog = WarningWatchdog()
+        self._stage_diagnostics = StageDiagnostics()
+        self.publisher.stage_diagnostics = self._stage_diagnostics
+        if isinstance(self.snapshot_provider, MassiveSnapshotProvider):
+            self.snapshot_provider.stage_diagnostics = self._stage_diagnostics
         self._warning_health_reader = warning_health_reader or WarningHealthReader(
             self.settings.market_data_momentum_warning_health_path,
             self.settings.market_data_momentum_warning_log_directory,
         )
+        if isinstance(self._warning_health_reader, WarningHealthReader):
+            self._warning_health_reader.stage_diagnostics = self._stage_diagnostics
         self._warning_redis = None
         self._warning_publisher = None
         if self.settings.market_data_momentum_warning_enabled:
@@ -346,10 +355,17 @@ class MarketDataGatewayService:
                 )
             return
 
+    @property
+    def _timings(self):
+        diagnostics = getattr(self, "_stage_diagnostics", None)
+        if diagnostics is None:
+            diagnostics = self._stage_diagnostics = StageDiagnostics()
+        return diagnostics
+
     async def publish_snapshot_batch_once(self, snapshots: Iterable[SnapshotRecord]) -> int:
         snapshot_list = list(snapshots)
-        reference_payloads = await asyncio.to_thread(
-            self.reference_cache.as_payloads, (snapshot.symbol for snapshot in snapshot_list),
+        reference_payloads = await self._timings.thread(
+            "snapshot_references", self.reference_cache.as_payloads, (snapshot.symbol for snapshot in snapshot_list),
         )
         # Count symbols the scanner will silently drop for want of a reference entry (see __init__).
         # `as_payloads` yields ReferenceDataPayload objects in production; accept plain mappings too
@@ -506,7 +522,7 @@ class MarketDataGatewayService:
         while not stop_event.is_set():
             try:
                 fetch_started_ns = time.monotonic_ns()
-                snapshots = await asyncio.to_thread(self.snapshot_provider.fetch_all_snapshots)
+                snapshots = await self._timings.thread("snapshot_fetch", self.snapshot_provider.fetch_all_snapshots)
                 publish_started_ns = time.monotonic_ns()
                 count = await self.publish_snapshot_batch_once(snapshots)
                 publish_completed_ns = time.monotonic_ns()
@@ -835,7 +851,7 @@ class MarketDataGatewayService:
                 if live_reader is not None else asyncio.to_thread(self._warning_health_reader.read)
             )
             health = await asyncio.wait_for(
-                operation,
+                self._timings.asynchronous("health_total", operation),
                 timeout=self.settings.market_data_momentum_warning_monitor_timeout_seconds,
             )
             observability = getattr(self._warning_health_reader, "log_observability", None)
@@ -876,7 +892,8 @@ class MarketDataGatewayService:
             # Cancellation is shutdown/control flow, never monitor unreadability.
             raise
         except Exception as exc:
-            await self._revert_warning("monitor_unreadable", diagnostic=_warning_monitor_diagnostic(exc))
+            await self._revert_warning("monitor_unreadable", diagnostic=_warning_monitor_diagnostic(
+                exc, self._timings.snapshot()))
 
     async def _warning_monitor_loop(self, stop_event: asyncio.Event) -> None:
         while not stop_event.is_set() and self._warning_revert_reason is None:
@@ -895,6 +912,7 @@ class MarketDataGatewayService:
             "A_ack_unknown": self._warning_ack_unknown,
             "A_write_await_samples": list(self._warning_write_waits),
             "A_write_await_scope": "BOUNDED_CLIENT_AWAIT_INCLUDES_ENCODING_CONNECTION_SCHEDULING_NOT_SERVER_RTT",
+            "read_stage_timings": self._timings.snapshot(),
             "queue_depth": self._warning_queue.qsize(), "queue_drops": self._warning_queue_drop_count,
             "dropped_total": self._warning_drop_count, "lag_ms": self._warning_publish_lag() * 1000,
             "max_publish_lag_ms": self._warning_max_publish_lag_ms,

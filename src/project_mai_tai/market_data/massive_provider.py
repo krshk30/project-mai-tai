@@ -94,8 +94,22 @@ class MassiveSnapshotProvider:
 
     def fetch_all_snapshots(self) -> list[SnapshotRecord]:
         client = self._get_rest_client()
-        snapshots = client.get_snapshot_all("stocks", include_otc=False)
-        return [self._normalize_snapshot(snapshot) for snapshot in snapshots if getattr(snapshot, "ticker", None)]
+        diagnostics = getattr(self, "stage_diagnostics", None)
+        if diagnostics is None:
+            snapshots = client.get_snapshot_all("stocks", include_otc=False)
+            return [self._normalize_snapshot(snapshot) for snapshot in snapshots if getattr(snapshot, "ticker", None)]
+        # One wrapper on our existing SDK instance; other requests pass through.
+        if getattr(self, "_diagnostic_client", None) is not client:
+            original_decode = client._decode
+            def decode(response):
+                if diagnostics.in_snapshot_fetch():
+                    return diagnostics.sync("snapshot_json_decode", original_decode, response)
+                return original_decode(response)
+            client._decode = decode
+            self._diagnostic_client = client
+        snapshots = diagnostics.sync("snapshot_sdk_fetch_parse", client.get_snapshot_all, "stocks", include_otc=False)
+        return diagnostics.sync("snapshot_normalize", lambda: [
+            self._normalize_snapshot(snapshot) for snapshot in snapshots if getattr(snapshot, "ticker", None)])
 
     def get_grouped_daily_multi(self, days: int = 20) -> dict[str, list[float]]:
         client = self._get_rest_client()

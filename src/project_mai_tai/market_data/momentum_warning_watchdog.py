@@ -235,7 +235,12 @@ class WarningHealthReader:
             LiveWarningHealthSource, MAX_STATE_ROWS, newest_v2_state,
         )
 
-        config = await asyncio.to_thread(self._read_file)
+        diagnostics = getattr(self, "stage_diagnostics", None)
+        async def thread(phase, function, *args, **kwargs):
+            return await (diagnostics.thread(phase, function, *args, **kwargs) if diagnostics is not None
+                          else asyncio.to_thread(function, *args, **kwargs))
+
+        config = await thread("health_config", self._read_file)
         if config.get("source_config_version") != 1:
             raise ValueError("live source setup required; external receipt is not live proof")
         if self._source_config is not None and config != self._source_config:
@@ -243,11 +248,13 @@ class WarningHealthReader:
         if self._source is None:
             self._source = LiveWarningHealthSource(config, self.log_directory)
             self._source_config = dict(config)
-        entries = await client.xrevrange(f"{prefix}:strategy-state-isolated", count=MAX_STATE_ROWS)
-        state = newest_v2_state(entries)
-        measured = await asyncio.to_thread(self._source.read, state, **(
+        operation = client.xrevrange(f"{prefix}:strategy-state-isolated", count=MAX_STATE_ROWS)
+        entries = await (diagnostics.asynchronous("health_redis", operation) if diagnostics is not None else operation)
+        state = (diagnostics.sync("health_state_decode", newest_v2_state, entries) if diagnostics is not None
+                 else newest_v2_state(entries))
+        measured = await thread("health_sources", self._source.read, state, **(
             {"startup": self._gateway_startup} if self._gateway_startup is not None else {}))
-        return await asyncio.to_thread(self.read, measured=measured)
+        return await thread("health_validate", self.read, measured=measured)
 
     def read(self, *, measured: dict | None = None) -> WarningHealth:
         data = self._read_file() if measured is None else measured
