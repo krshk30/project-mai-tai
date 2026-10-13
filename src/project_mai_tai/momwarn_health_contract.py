@@ -40,13 +40,23 @@ def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
     """Preserve completion time; current monitor coverage, not reread time, must be fresh."""
     monitor, end = receipt.get("observed_wall_ns"), receipt.get("oms_measured_wall_ns")
     cadence = receipt.get("oms_sync_interval_seconds")
+    coverage = receipt.get("oms_monitor_coverage")
+    byte_fields = {"oms_log_byte_coverage", "oms_log_copytruncate_count"}
+    legacy_coverage = coverage == "complete_since_baseline" and not byte_fields.intersection(receipt)
+    gaps = receipt.get("oms_log_copytruncate_count")
+    sequence_coverage = (
+        coverage == "consecutive_observed_end_sequence"
+        and integer(gaps)
+        and receipt.get("oms_log_byte_coverage") == (
+            "gap_unobserved_copytruncate" if gaps else "observed_cursor_reads_only")
+    )
     if (
         not integer(monitor) or not integer(end) or not 0 <= now_ns - monitor <= 5 * NS
         or not nonnegative(cadence) or not 0 < cadence <= 15
         or not isinstance(receipt.get("oms_cadence_source"), str)
         or not receipt["oms_cadence_source"] or receipt.get("oms_pass_allowance_seconds") != 5
         or not 0 <= monitor - end <= (cadence + 5) * NS
-        or receipt.get("oms_monitor_coverage") != "complete_since_baseline"
+        or not (legacy_coverage or sequence_coverage)
         or receipt.get("oms_source") != "OMS-BROKER-SYNC-PASS.phase=end"
         or not isinstance(receipt.get("oms_instance_id"), str) or not receipt["oms_instance_id"]
         or not integer(receipt.get("oms_sync_seq")) or receipt["oms_sync_seq"] == 0
@@ -59,6 +69,8 @@ def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
         "oms_instance_id", "oms_source", "oms_monitor_coverage",
     )}
     result.update(schema_version=2, oms_source_age_seconds=(monitor - end) / NS)
+    if sequence_coverage:
+        result.update({key: receipt[key] for key in byte_fields})
     applicability = receipt.get("v2_applicability")
     if applicability == "NOT_APPLICABLE":
         local = datetime.fromtimestamp(monitor / NS, ZoneInfo("America/New_York"))
@@ -195,6 +207,9 @@ class OmsLogMonitor:
             os.close(fd)
         # Stamps an actual EOF/proc monitor operation, never changes end receipt time.
         return dict(self.latest, observed_wall_ns=self.wall_ns(),
-                    oms_monitor_coverage="complete_since_baseline",
+                    oms_monitor_coverage="consecutive_observed_end_sequence",
+                    oms_log_byte_coverage=("gap_unobserved_copytruncate" if self.truncations
+                                           else "observed_cursor_reads_only"),
+                    oms_log_copytruncate_count=self.truncations,
                     oms_sync_interval_seconds=self.cadence,
                     oms_cadence_source=self.cadence_source, oms_pass_allowance_seconds=5)

@@ -109,7 +109,8 @@ class LiveWarningHealthSource:
             if not stat.S_ISREG(info.st_mode) or self.identity not in (None, identity):
                 raise ValueError("v2 log unreadable/rotated")
             offset = max(0, info.st_size - BOUND) if self.offset is None else self.offset
-            if self.offset is not None and cursor_rewritten(fd, offset, self.anchor):
+            rewritten = self.offset is not None and cursor_rewritten(fd, offset, self.anchor)
+            if rewritten:
                 self.truncations += 1
                 offset, self.partial = 0, b""
             if info.st_size - offset > BOUND:
@@ -141,6 +142,10 @@ class LiveWarningHealthSource:
                     key = match[1], int(match[2])
                     self.bars.setdefault(key, stamp)
             self.identity, self.offset, self.partial = identity, covered, lines[-1]
+            if rewritten:
+                # Lost bytes cannot prove the past interval. Future due minutes can
+                # use the new contiguous EOF baseline, not a lifetime gap taint.
+                self.covered_from_ns = observed_after_read
             self.anchor = cursor_anchor(fd, covered)
             if len(self.partial) > BOUND:
                 raise ValueError("v2 partial line bound")
@@ -201,12 +206,13 @@ class LiveWarningHealthSource:
                     raise ValueError("probe setting does not cover complete current watchlist")
                 due = now // (60 * NS) * (60 * NS)
                 bar_ms = due // 1_000_000 - 60_000
-                if self.covered_from_ns is None or self.covered_from_ns > due:
-                    raise ValueError("v2 log baseline does not cover current due minute")
                 completed = [self.bars.get((symbol, bar_ms)) for symbol in watchlist]
                 completion = max(completed) if all(item is not None for item in completed) else None
-                if self.truncations and completion is None:
-                    raise ValueError("v2 current-due completion unknown after copytruncate gap")
+                if self.truncations:
+                    if completion is None and (self.covered_from_ns is None or self.covered_from_ns >= due):
+                        raise ValueError("v2 current-due completion unknown after copytruncate gap")
+                elif self.covered_from_ns is None or self.covered_from_ns > due:
+                    raise ValueError("v2 log baseline does not cover current due minute")
                 if completion is not None and completion < due:
                     raise ValueError("probe observed unclosed/future bar")
                 receipt.update(

@@ -136,10 +136,10 @@ async def test_native_independent_unknowns_never_hidden_by_rebaseline(setup, cap
         (env.directory / "oms.log").write_text(line(env.clock.ns,
             "[OMS-BROKER-SYNC-PASS] id=12 phase=end outcome=ok duration_ms=1000.000 exceeds_note_age=False"))
     elif failure == "v2_missing_due":
-        (env.directory / "schwab-1m-v2.log").write_text("")
-        await svc._warning_monitor_once()
         assert svc._warning_active
         env.clock.ns += 60 * NS
+        # Detection spans this due boundary: completion may be in removed bytes.
+        (env.directory / "schwab-1m-v2.log").write_text("")
         (env.directory / "oms.log").write_text(line(env.clock.ns,
             "[OMS-BROKER-SYNC-PASS] id=11 phase=end outcome=ok duration_ms=1000.000 exceeds_note_age=False"))
     elif failure in {"OMS_dead", "v2_dead"}:
