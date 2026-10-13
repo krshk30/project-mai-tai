@@ -10,7 +10,7 @@ from typing import Callable
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.momwarn_health import parse_oms_end
-from project_mai_tai.momwarn_log_cursor import cursor_anchor, cursor_rewritten
+from project_mai_tai.momwarn_log_cursor import check_read_coverage, cursor_anchor, cursor_rewritten
 from project_mai_tai.momwarn_measurement_probes import BOUND, read_bounded
 from project_mai_tai.momwarn_measurements import NS, integer, nonnegative
 
@@ -172,9 +172,10 @@ class OmsLogMonitor:
             if self.identity is not None and identity != self.identity:
                 raise ValueError("OMS log rotated")
             position = max(0, info.st_size - BOUND) if self.position is None else self.position
-            if self.position is not None and cursor_rewritten(fd, position, self.anchor):
-                self.truncations += 1
-                position, self.partial = 0, b""
+            rewritten = self.position is not None and cursor_rewritten(fd, position, self.anchor)
+            partial = self.partial
+            if rewritten:
+                position, partial = 0, b""
             if info.st_size - position > BOUND:
                 raise ValueError("OMS log truncated/backlog bound")
             os.lseek(fd, position, os.SEEK_SET)
@@ -182,11 +183,10 @@ class OmsLogMonitor:
             if len(data) > BOUND:
                 raise ValueError("OMS log read bound")
             covered = position + len(data)
-            if os.fstat(fd).st_size > covered:
-                raise ValueError("OMS log changed beyond read coverage")
+            check_read_coverage(fd, position, covered, BOUND, "OMS")
             if self.position is None and position:
                 data = data.partition(b"\n")[2]
-            lines = (self.partial + data).split(b"\n")
+            lines = (partial + data).split(b"\n")
             if len(lines[-1]) > BOUND:
                 raise ValueError("OMS partial line bound")
             latest = self.latest
@@ -200,9 +200,11 @@ class OmsLogMonitor:
                 latest = item
             if latest is None:
                 raise ValueError("no actual completed OMS duration in bounded log")
+            anchor = cursor_anchor(fd, covered)
             self.latest, self.process, self.identity = latest, process, identity
             self.position, self.partial = covered, lines[-1]
-            self.anchor = cursor_anchor(fd, covered)
+            self.anchor = anchor
+            self.truncations += int(rewritten)
         finally:
             os.close(fd)
         # Stamps an actual EOF/proc monitor operation, never changes end receipt time.
