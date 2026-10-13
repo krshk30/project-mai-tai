@@ -11,6 +11,7 @@ from sqlalchemy import select
 from project_mai_tai.db.models import OmsManagedPosition, SystemIncident
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, ExitPairReleaseResult, OrderRequest
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.events import QuoteTickEvent, QuoteTickPayload
 from project_mai_tai.oms import service as module
 from tests.unit.managed_entry_fixtures import set_protect_base
@@ -114,6 +115,7 @@ async def test_sync_handover_and_quote_share_one_actual_managed_sell(monkeypatch
     svc, sf, adapter, clock, order = broker_lane(monkeypatch, account)
     # The broker-owned RTH target has authority right up to the boundary.
     await svc._handle_quote_tick_event(tick(clock, 10.51))
+    await drain_quote_workers(svc)
     assert adapter.submitted == [] and adapter.cancel_pair_calls == [] and adapter.native_release_calls == []
     clock["now"] += timedelta(seconds=seconds)
     svc._latest_quotes_by_symbol[SYMBOL] = {"bid": bid, "ask": bid + .01, "received_at": clock["now"]}
@@ -138,13 +140,18 @@ async def test_sync_handover_and_quote_share_one_actual_managed_sell(monkeypatch
         await asyncio.wait_for(entered.wait(), 1)
         await asyncio.wait_for(svc._handle_quote_tick_event(tick(clock, bid)) if first == "sync"
             else svc._v2_eod_oco_transition(), 1)
+        if first == "sync":
+            await drain_quote_workers(svc)
         assert len(admissions) == 1 and adapter.submitted == []
     finally:
         release.set()
         await initial
+        await drain_quote_workers(svc)
     request, = adapter.submitted
     assert request.reason.endswith(kind) and request.quantity == 1
     assert request.order_type == "limit" and request.metadata["session"] == "PM"
+    if kind == "CW_TARGET":
+        assert Decimal(request.metadata["limit_price"]) >= Decimal("10.50")
     assert order.index("fresh_child_read" if account == WEBULL else "native_release_confirm") < order.index("submit")
     await svc._v2_eod_oco_transition()
     assert len(adapter.submitted) == 1 and not svc.__dict__.get("_v2_eod_ladder_inflight")
@@ -166,6 +173,7 @@ async def test_unconfirmed_handover_retries_next_fifteen_second_sync_and_pages(m
     monkeypatch.setattr(svc, "_release_v2_eod_oco", unresolved)
     await svc._v2_eod_oco_transition()
     await svc._handle_quote_tick_event(tick(clock, 10.51))
+    await drain_quote_workers(svc)
     assert len(calls) == 1 and adapter.submitted == []
     elapsed["now"] += 15
     clock["now"] += timedelta(seconds=15)
@@ -230,6 +238,12 @@ async def drain_recovery(svc):
         await asyncio.wait_for(asyncio.gather(*tasks), 1)
 
 
+async def drain_quote_workers(svc):
+    # Accepted B intake schedules its managed leg; handler return is not completion.
+    while svc.__dict__.get("_symbol_tick_work", {}):
+        await asyncio.wait_for(asyncio.gather(*tuple(svc._symbol_tick_work.values())), 1)
+
+
 @pytest.mark.asyncio
 async def test_eod_evaluation_exception_releases_only_temporary_claim(monkeypatch):
     svc, _ = prepared(monkeypatch)
@@ -249,3 +263,54 @@ async def test_pre_eod_evaluation_does_not_add_a_handover_claim(monkeypatch):
     await svc._evaluate_v2_managed_exit(ACCT, SYM)
     original.assert_awaited_once_with(ACCT, SYM)
     assert "_v2_eod_ladder_inflight" not in svc.__dict__
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", [SCHWAB, WEBULL])
+@pytest.mark.parametrize("mode", ["target", "stale", "flip_at_target", "flip_after_capture"])
+async def test_accepted_8ca_target_floor_and_capture_guards_at_handover(monkeypatch, account, mode):
+    svc, sf, adapter, clock, _ = broker_lane(monkeypatch, account)
+    with sf.begin() as session:
+        row = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.broker_account_name == account))
+        row.entry_price = Decimal("2.49")
+        bound_id = str(row.id)
+    await svc._handle_quote_tick_event(tick(clock, 2.64))
+    await drain_quote_workers(svc)
+    assert adapter.submitted == []
+    clock["now"] += timedelta(seconds=1)
+    if mode == "flip_at_target":
+        svc._arm_cw_flip_pending((account, SYMBOL), bar_time_ms=int((clock["now"]-timedelta(seconds=10)).timestamp()*1000),
+            managed_row_id=bound_id)
+    captured = []
+    if mode == "flip_after_capture":
+        original_capture = svc._capture_cw_target_decision
+        def flip_after_bound_peak(acct, symbol, quote):
+            original_capture(acct, symbol, quote)
+            if svc._v2_eod_oco_transitioned and (acct, symbol) in svc._cw_target_decisions:
+                captured.append(svc._cw_target_decisions[(acct, symbol)])
+                # Controlled post-capture quote drop plus a bound bar-close flip.
+                svc._latest_quotes_by_symbol[symbol] = {"bid": 2.50, "ask": 2.51, "received_at": clock["now"]}
+                svc._arm_cw_flip_pending((acct, symbol), bar_time_ms=int((clock["now"]-timedelta(seconds=10)).timestamp()*1000),
+                    managed_row_id=bound_id)
+        monkeypatch.setattr(svc, "_capture_cw_target_decision", flip_after_bound_peak)
+    produced_at = clock["now"] - timedelta(seconds=6) if mode == "stale" else clock["now"]
+    quote = tick({"now": produced_at}, 2.64)
+    await svc._handle_quote_tick_event(quote)
+    await drain_quote_workers(svc)
+    if mode == "stale":
+        assert adapter.submitted == [] and (account, SYMBOL) not in svc._cw_target_decisions
+        return
+    request, = adapter.submitted
+    assert request.quantity == 1 and request.order_type == "limit" and request.metadata["session"] == "PM"
+    if mode == "flip_after_capture":
+        assert captured and request.reason.endswith("CW_FLIP")
+    else:
+        # The unchanged shared helper gives target precedence at/above target, even with a flip.
+        assert request.reason.endswith("CW_TARGET") and request.metadata["limit_price"] == "2.62"
+        assert Decimal(request.metadata["cw_target_entry_price"]) == Decimal("2.49")
+        assert request.metadata["cw_target_quantity"] == "1" and request.metadata["cw_target_bound_row_id"] == bound_id
+        webull_wire, _, _, refusal = WebullBrokerAdapter._prepare_single_leg_prices(
+            request=request, order_type="LIMIT", limit_price=Decimal(request.metadata["limit_price"]), stop_price=None)
+        schwab_wire = Decimal(str(SchwabBrokerAdapter.__new__(SchwabBrokerAdapter)._build_order_payload(request)["price"]))
+        assert refusal is None and webull_wire >= Decimal("2.6145") and schwab_wire >= Decimal("2.6145")
+    await drain_recovery(svc)

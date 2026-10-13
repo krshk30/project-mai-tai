@@ -12849,6 +12849,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "software_exit=ENABLED",
                 acct, symbol, snapshot.managed_row_id,
             )
+            # Intake stood down while the broker pair owned this quote. After confirmed
+            # handover, use the existing bound/fresh capture, never bypass its admission.
+            quote = self._latest_quotes_by_symbol.get(symbol)
+            if quote:
+                self._capture_cw_target_decision(acct, symbol, quote)
             await self._evaluate_v2_managed_exit(acct, symbol)
 
     async def _page_v2_eod_handover_unreadable(self, acct: str, symbol: str) -> None:
