@@ -113,7 +113,7 @@ class Settings(BaseSettings):
     market_data_warmup_bar_limit: int = 50_000
     market_data_live_aggregate_stream_enabled: bool = False
     market_data_momentum_warning_enabled: bool = False
-    market_data_momentum_warning_queue_maxsize: int = Field(default=4096, ge=1, le=65536)
+    market_data_momentum_warning_queue_maxsize: int = Field(default=8192, ge=1, le=65536)
     market_data_momentum_warning_stream_maxlen: int = Field(default=20000, ge=1, le=100000)
     market_data_momentum_warning_owner_cap: int = Field(default=16, ge=1, le=16)
     market_data_publish_round_size: int = Field(default=16, ge=1, le=64)

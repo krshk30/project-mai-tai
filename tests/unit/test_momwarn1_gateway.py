@@ -259,6 +259,11 @@ async def test_A_dropoldest_only_and_contract_v1_strict_stream_bound():
         provider._handle_messages([aggregate()])
     assert svc._warning_queue.qsize() == 2
     assert svc._warning_drop_count == 3
+    counters = svc.warning_metrics()
+    assert counters["queue_drops"] == counters["dropped_total"] == 3
+    # Overflow alone drops oldest A; it is not a newly approved safety latch.
+    assert svc._warning_active and svc._warning_revert_reason is None
+    assert provider._ws.removed == []
     assert svc._trade_queue.get_nowait() == normal_trade
     stop = asyncio.Event()
     task = asyncio.create_task(svc._warning_publish_loop(stop))
@@ -653,7 +658,9 @@ async def test_no_fictional_subscription_confirmation_metrics_and_trade_conditio
 
 
 def test_settings_default_off_and_bounds():
-    assert not Settings(_env_file=None).market_data_momentum_warning_enabled
+    defaults = Settings(_env_file=None)
+    assert not defaults.market_data_momentum_warning_enabled
+    assert defaults.market_data_momentum_warning_queue_maxsize == 8192
     for key, value in dict(market_data_momentum_warning_queue_maxsize=0,
                           market_data_momentum_warning_owner_cap=17,
                           market_data_publish_round_size=1000).items():
