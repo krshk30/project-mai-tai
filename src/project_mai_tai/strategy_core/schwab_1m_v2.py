@@ -90,6 +90,9 @@ VWAP_SESSION_HOUR_ET = 4
 # stale signals while indicators back-fill.
 MAX_BAR_AGE_SECONDS_FOR_EMIT = 180.0
 
+# Three configured 5s polls; age starts before the bounded off-loop read.
+PRIMARY_RESTING_BOOK_MAX_AGE_MS = 15_000
+
 # Positive Webull evidence may outlive a transient Schwab union-zero read. The measured maximum
 # restore lag is 19.119s; one complete 5.000s position-poll interval makes the calibrated hold
 # 24.119s. Re-measure the restore distribution before changing either operand.
@@ -4530,6 +4533,11 @@ class SchwabV2Strategy:
         # OWNS the CW entry via this quote path; the bar-close _cw_entry is a no-op. No-op (returns
         # None like the base) when the sub-flag is off.
         if self._cw_v2_enabled:
+            if self._eh_rest_handover_eligible(state):
+                if state.resting_slot == "first":
+                    self._cw_v2_resting_track(state, None)
+                else:
+                    self._cw_v2_reclaim_resting_track(state)
             # Dual-broker fan-out: in RTH resting mode the broker owns the Schwab cross, so software-
             # detect it here and queue the parallel Webull MARKET leg (once per flip). Side-effect only
             # (appends to _pending_webull_fanout_intents); no-op unless fan-out is on and RTH-resting is
@@ -7250,6 +7258,74 @@ class SchwabV2Strategy:
             )
         return True
 
+    def _eh_rest_handover_eligible(self, state: SymbolState) -> bool:
+        return bool(state.resting_active and not state.resting_is_broker_order
+                    and not state.resting_schwab_retired_generation
+                    and not self._resting_session_is_eh()
+                    and state.position_qty == 0 and not state.resting_flip_ms
+                    and not state.pm_resting_flip_seen_ms and not state.fanout_webull_claimed)
+
+    def _disarm_eh_rest_for_rth(self, state: SymbolState) -> None:
+        # An EH arm is not a broker order. Re-enter the ordinary placement gates,
+        # even when the trail has not moved enough to trigger a stable-rest reprice.
+        if self._eh_rest_handover_eligible(state):
+            self._queue_resting_cancel(state, reason="eh_to_rth_handover")
+
+    def apply_primary_resting_book(self, *, observed_at_ms: int, orders: dict | None) -> None:
+        if orders is None:
+            # A failed refresh does not restamp or extend the last good receipt's TTL.
+            return
+        self._primary_resting_book = (observed_at_ms, orders)
+        if getattr(self.settings, "strategy_schwab_1m_v2_atr_reprice_handoff_enabled", False):
+            return  # Existing exact RPG feedback remains the owner of RPG generations.
+        for state in self._symbol_states.values():
+            proof = orders.get((state.symbol, state.resting_schwab_generation))
+            if (not state.resting_is_broker_order or not proof
+                    or not proof.get("terminal_zero_proven")
+                    or proof.get("status") not in {"cancelled", "canceled", "rejected", "expired", "refused_before_wire"}
+                    or not self._primary_rest_identity_matches(state, proof)
+                    or not 0 <= self._now_ms() - observed_at_ms <= PRIMARY_RESTING_BOOK_MAX_AGE_MS
+                    or state.position_qty_held or state.position_qty or state.flip_owner_fill_accounts
+                    or state.fanout_claim_outcome == "filled"):
+                continue
+            generation = state.resting_schwab_generation
+            state.resting_schwab_retired_generation = generation
+            state.resting_schwab_generation = ""
+            state.resting_schwab_quantity = 0
+            state.resting_is_broker_order = False
+            state.resting_active = bool(state.webull_resting_active or state.resting_webull_quantity)
+            if state.resting_active:
+                state.restart_rest_recover_accounts.add(self._flip_owner_primary_account)
+            else:
+                state.restart_rest_recover_accounts.discard(self._flip_owner_primary_account)
+            logger.info("[V2-PRIMARY-RESTING-TERMINAL] symbol=%s generation=%s status=%s same_slot=1",
+                        state.symbol, generation, proof["status"])
+
+    @staticmethod
+    def _primary_rest_identity_matches(state: SymbolState, proof: dict) -> bool:
+        segment = int(state.fanout_segment_id or 0)
+        slot = fanout_slot_for_source("rth_resting")
+        return bool(segment > 0 and proof.get("segment_id") == segment
+                    and proof.get("slot") == slot and proof.get("entry_slot") == state.last_resting_placed_slot
+                    and proof.get("slot_id") == fanout_slot_id(
+                        strategy_code=STRATEGY_CODE, symbol=state.symbol, segment_id=segment, slot=slot))
+
+    def _primary_resting_proven(self, state: SymbolState) -> bool:
+        observed_at, orders = getattr(self, "_primary_resting_book", (0, None))
+        if not state.resting_is_broker_order or not orders:
+            return False
+        if not 0 <= self._now_ms() - observed_at <= PRIMARY_RESTING_BOOK_MAX_AGE_MS:
+            return False
+        proof = orders.get((state.symbol, state.resting_schwab_generation))
+        if not state.resting_schwab_generation or not proof or proof.get("status") not in {"accepted", "working"}:
+            return False
+        if not self._primary_rest_identity_matches(state, proof):
+            return False
+        submit_at = proof.get("submit_response_at_ms", 0)
+        return bool(str(proof.get("broker_order_id") or "").strip()
+                    or (isinstance(submit_at, int) and not isinstance(submit_at, bool)
+                        and submit_at > 0 and 0 <= self._now_ms() - submit_at < 15_000))
+
     def _cw_v2_resting_track(self, state: SymbolState, atr_signal: dict | None) -> None:
         """Maintain a STABLE resting buy-stop-limit at the ATR SHORT trail. Redesigned 2026-07-23 from
         the live NVVE case (the resting order flickered and missed the cross by ~2%, then spammed ~30
@@ -7320,6 +7396,7 @@ class SchwabV2Strategy:
             state.resting_buy_frozen = False
             state.resting_frozen_floor_bar_ms = 0
             return
+        self._disarm_eh_rest_for_rth(state)
         st = str(atr_signal.get("state")) if atr_signal else str(state.atr_state or "")
         keep_rest = bool(getattr(
             getattr(self, "settings", None), "strategy_schwab_1m_v2_keep_rest_after_buy_enabled", False
@@ -7642,6 +7719,7 @@ class SchwabV2Strategy:
         if state.resting_active and state.resting_slot != "reclaim":
             return          # the FIRST slot owns the live order; stand down (mutual exclusion)
         level = float(state.cw_segment_high)
+        self._disarm_eh_rest_for_rth(state)
         if not state.resting_active:
             if not self._liquidity_floor_ok(state):
                 return      # arm-time floor only, exactly as the first-entry path
@@ -8310,6 +8388,17 @@ class SchwabV2Strategy:
         # The on-fill path (#688) checks this flag; this software cross detector did not — all 5
         # duplicate legs on 2026-08-31 were a mirror-fill + cross-fill pair on one slot.
         if state.webull_resting_active:
+            return
+        if not self._primary_resting_proven(state):
+            marker = self._now_ms() // 60_000
+            logged = self.__dict__.setdefault("_primary_resting_proof_logged", {})
+            if logged.get(state.symbol) != marker:
+                logged[state.symbol] = marker
+                logger.warning(
+                    "[V2-FANOUT-PRIMARY-UNPROVEN] %s generation=%s "
+                    "webull_cross_queued=0 reason=no_fresh_primary_broker_working_proof",
+                    state.symbol, state.resting_schwab_generation or "unknown",
+                )
             return
         # LIVE-BAR guard (#528 mirror): only fire off a live feed, never a warmup-replayed / stale bar.
         bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0

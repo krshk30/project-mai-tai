@@ -354,9 +354,10 @@ def test_rth_move_places_both_brokers_same_evaluation_without_cancel(caplog):
     assert state.resting_active and state.resting_is_broker_order
     assert [d.intent_type for d in strategy.drain_pending_intents()] == ["open"]
     assert [d.intent_type for d in strategy._pending_webull_direct_intents] == ["open"]
-    moves = [r.getMessage() for r in caplog.records if "EH-MOVE" in r.getMessage()]
-    assert len(moves) == 1
-    assert "old_line=8.3599" in moves[0] and "new_line=7.9699" in moves[0]
+    handovers = [r.getMessage() for r in caplog.records if "reason=eh_to_rth_handover" in r.getMessage()]
+    assert len(handovers) == 1
+    assert "line=8.3599" in handovers[0]
+    assert state.resting_level == pytest.approx(7.9699)
 
 
 @pytest.mark.parametrize("streak", [1, 2])

@@ -40,9 +40,9 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from project_mai_tai.db.models import (
     AccountPosition,
@@ -2406,6 +2406,13 @@ class SchwabV2BotService:
         )
 
     async def _position_poll_pass(self) -> None:
+        if getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False):
+            # DB evidence only: no broker call, and no local placement boolean as proof.
+            observed_at_ms = int(datetime.now(UTC).timestamp() * 1000)
+            proofs = await asyncio.to_thread(self._fetch_primary_resting_book)
+            self.strategy.apply_primary_resting_book(
+                observed_at_ms=observed_at_ms, orders=proofs,
+            )
         falseflip_poll = getattr(self, "_falseflip_poll", None)
         if (getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is True
                 and callable(falseflip_poll)):
@@ -2497,6 +2504,152 @@ class SchwabV2BotService:
         if getattr(self, "_restart_rest_store", None) is not None:
             await self._reconcile_pending_restart_rest()
             self._persist_restart_checkpoint()
+
+    def _fetch_primary_resting_book(self) -> dict | None:
+        if self.session_factory is None:
+            return None
+        try:
+            with self.session_factory() as session:
+                if session.get_bind().dialect.name == "postgresql":
+                    session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                    session.execute(text("SET LOCAL statement_timeout = '2s'"))
+                latest_event = (select(BrokerOrderEvent.id)
+                    .where(BrokerOrderEvent.order_id == BrokerOrder.id)
+                    .order_by(BrokerOrderEvent.event_at.desc(), BrokerOrderEvent.id.desc())
+                    .limit(1).correlate(BrokerOrder).scalar_subquery())
+                first_response_id = (select(BrokerOrderEvent.id)
+                    .where(BrokerOrderEvent.order_id == BrokerOrder.id,
+                           BrokerOrderEvent.event_source.in_(["broker", "unknown"]))
+                    .order_by(BrokerOrderEvent.event_at, BrokerOrderEvent.id)
+                    .limit(1).correlate(BrokerOrder).scalar_subquery())
+                first_response = aliased(BrokerOrderEvent)
+                terminal = (select(BrokerOrderEvent.id)
+                    .where(BrokerOrderEvent.order_id == BrokerOrder.id,
+                           BrokerOrderEvent.event_type.in_([
+                               "filled", "cancelled", "canceled", "rejected", "expired"]))
+                    .correlate(BrokerOrder).exists())
+                filled = or_(select(Fill.id).where(Fill.order_id == BrokerOrder.id)
+                    .correlate(BrokerOrder).exists(),
+                    select(BrokerOrderEvent.id).where(BrokerOrderEvent.order_id == BrokerOrder.id,
+                        BrokerOrderEvent.event_type.in_(["filled", "partially_filled", "partial_fill"]))
+                    .correlate(BrokerOrder).exists())
+                rows = session.execute(
+                    select(BrokerOrder, TradeIntent, BrokerOrderEvent, first_response, filled, terminal)
+                    .select_from(TradeIntent)
+                    .join(BrokerAccount, BrokerAccount.id == TradeIntent.broker_account_id)
+                    .join(Strategy, Strategy.id == TradeIntent.strategy_id)
+                    .outerjoin(BrokerOrder, BrokerOrder.intent_id == TradeIntent.id)
+                    .outerjoin(BrokerOrderEvent, BrokerOrderEvent.id == latest_event)
+                    .outerjoin(first_response, first_response.id == first_response_id)
+                    .where(BrokerAccount.name == self.settings.strategy_schwab_1m_v2_account_name,
+                           BrokerAccount.name == "live:schwab_1m_v2",
+                           BrokerAccount.provider == "schwab", Strategy.code == STRATEGY_CODE,
+                           TradeIntent.intent_type == "open", TradeIntent.side == "buy",
+                           or_(and_(BrokerOrder.side == "buy",
+                                    func.lower(BrokerOrder.order_type) == "stop_limit",
+                                    BrokerOrder.quantity > 0,
+                                    TradeIntent.strategy_id == BrokerOrder.strategy_id,
+                                    TradeIntent.broker_account_id == BrokerOrder.broker_account_id,
+                                    TradeIntent.symbol == BrokerOrder.symbol,
+                                    BrokerOrder.status.in_(["accepted", "working", "pending", "submitted",
+                                                           "cancelled", "canceled", "rejected", "expired"])),
+                               and_(BrokerOrder.id.is_(None), TradeIntent.status.in_(["aborted", "rejected"]))))
+                    .limit(1001)
+                ).all()
+                if len(rows) > 1000:
+                    return None  # A truncated order book is not absence/clearance evidence.
+                proofs = {}
+                now = datetime.now(UTC)
+                for order, intent, event, initial, has_fill, has_terminal in rows:
+                    requested = dict((intent.payload or {}).get("metadata") or {})
+                    metadata = dict(order.payload or {}) if order is not None else requested
+                    symbol = order.symbol if order is not None else intent.symbol
+                    identity_keys = ("source", "resting_entry", "rpg_resting_generation",
+                                     "fanout_segment_id", "fanout_slot", "fanout_slot_id",
+                                     "cw_entry_slot")
+                    if any(not metadata.get(k) or metadata[k] != requested.get(k)
+                           for k in identity_keys):
+                        continue
+                    generation = str(metadata.get("rpg_resting_generation") or "")
+                    if (not generation or metadata["resting_entry"] != "true"
+                            or metadata["source"] != STRATEGY_CODE
+                            or metadata["cw_entry_slot"] not in {"first", "reclaim"}):
+                        continue
+                    try:
+                        segment = int(metadata["fanout_segment_id"])
+                        slot_id = fanout_slot_id(strategy_code=STRATEGY_CODE, symbol=symbol,
+                                                segment_id=segment, slot=metadata["fanout_slot"])
+                    except (TypeError, ValueError):
+                        continue
+                    if metadata["fanout_slot_id"] != slot_id:
+                        continue
+                    identity = {"segment_id": segment, "slot_id": slot_id,
+                                "slot": metadata["fanout_slot"], "entry_slot": metadata["cw_entry_slot"]}
+                    key = (symbol, generation)
+                    if key in proofs:
+                        proofs[key] = None
+                        continue
+                    if order is None:
+                        audit = intent.payload or {}
+                        if (audit.get("refusal_origin") == "skipped_before_submit"
+                                and audit.get("refusal_code")):
+                            proofs[key] = {**identity, "status": "refused_before_wire",
+                                           "terminal_zero_proven": True,
+                                           "broker_order_id": "", "submit_response_at_ms": 0}
+                        continue
+                    if event is None or initial is None or has_fill:
+                        continue
+                    initial_at = initial.event_at.replace(tzinfo=UTC) if initial.event_at.tzinfo is None else initial.event_at
+                    event_at = event.event_at.replace(tzinfo=UTC) if event.event_at.tzinfo is None else event.event_at
+                    if event_at > now:
+                        continue
+                    if order.status in {"cancelled", "canceled", "rejected", "expired"}:
+                        receipt = event.payload or {}
+                        try:
+                            # Native audit omits quantity; the same SQL snapshot vetoes
+                            # committed fills/partial events. Explicit conflicting quantity vetoes too.
+                            zero = ("filled_quantity" not in receipt
+                                    or Decimal(str(receipt["filled_quantity"])) == 0)
+                        except (ValueError, ArithmeticError):
+                            zero = False
+                        if (event.event_source == "broker" and event.event_type == order.status
+                                and receipt.get("client_order_id") == order.client_order_id
+                                and isinstance(receipt.get("metadata"), dict)
+                                and all(receipt["metadata"].get(k) == metadata[k] for k in identity_keys) and zero
+                                and not receipt.get("broker_fill_id")):
+                            proofs[key] = {**identity, "status": order.status,
+                                           "terminal_zero_proven": True,
+                                           "broker_order_id": str(order.broker_order_id or ""),
+                                           "submit_response_at_ms": 0}
+                        continue
+                    if has_terminal:
+                        continue
+                    response = dict(initial.payload or {})
+                    response_metadata = response.get("metadata") or {}
+                    # Only the initial real submit ACK may carry unknown origin.
+                    initial_submit = (initial.event_type == "accepted"
+                        and initial.event_source in {"broker", "unknown"}
+                        and response.get("client_order_id") == order.client_order_id
+                        and isinstance(response_metadata, dict)
+                        and all(response_metadata.get(k) == metadata[k] for k in identity_keys))
+                    if (event.event_type not in {"accepted", "working"}
+                            or not (event.event_source == "broker"
+                                    or (event.id == initial.id and initial_submit))):
+                        continue
+                    broker_id = str(order.broker_order_id or "").strip()
+                    submit_ms = int(initial_at.timestamp() * 1000) if initial_submit else 0
+                    fresh_ack = initial_submit and 0 <= (now - initial_at).total_seconds() < 15
+                    if order.status in {"pending", "submitted"} and not fresh_ack:
+                        continue
+                    if not broker_id and not fresh_ack:
+                        continue
+                    proofs[key] = {"broker_order_id": broker_id,
+                                   "status": "accepted" if fresh_ack else order.status,
+                                   "submit_response_at_ms": submit_ms, **identity}
+                return proofs
+        except Exception:  # noqa: BLE001
+            logger.exception("[V2-PRIMARY-RESTING-BOOK] result=UNKNOWN webull_cross_allowed=0")
+            return None
 
     def _startup_gateway_exit_coverage(self) -> set[str]:
         if self.session_factory is None:

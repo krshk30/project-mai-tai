@@ -1,0 +1,30 @@
+{
+  "source": "/Users/velkris/.codex/task-queues/analysis/eh2rth1-20261013/original-case-db.jsonl",
+  "source_sha256": "21ffaa989790fcc6f3ceeb10273066f80666d81c0826051d43b60a50a5e4863b",
+  "provenance": "Selected native PFAI initial accepted event fields only. Positive test projects this ACK into a controlled pre-terminal book; the actual retained order was rejected, not a new live acceptance claim.",
+  "symbol": "PFAI",
+  "id": "d4b0945c-ef46-43fe-943c-47f086ecd492",
+  "order_id": "88e18236-69a4-44f1-a064-aac76fbbdfb0",
+  "event_type": "accepted",
+  "event_source": "unknown",
+  "event_at": "2026-10-13T13:31:03.55147+00:00",
+  "payload": {
+    "client_order_id": "schwab_1m_v2-PFAI-open-7afa85ff8dbb",
+    "broker_order_id": "1008268592828",
+    "metadata": {
+      "source": "schwab_1m_v2",
+      "resting_entry": "true",
+      "rpg_resting_generation": "863ea827-7bf1-4bf3-94b9-8dd33a9bfd20",
+      "fanout_segment_id": "1791897423174",
+      "fanout_slot": "resting",
+      "fanout_slot_id": "751ecd8d-0fa4-5768-8f42-b1e641ccfd75",
+      "cw_entry_slot": "first"
+    }
+  },
+  "retained_terminal": {
+    "id": "0b92e241-d934-4a9c-833d-a4897e1b3981",
+    "event_at": "2026-10-13T13:31:03+00:00",
+    "event_type": "rejected",
+    "event_source": "broker"
+  }
+}
