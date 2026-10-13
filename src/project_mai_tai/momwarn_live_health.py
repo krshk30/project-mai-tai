@@ -244,7 +244,9 @@ class LiveWarningHealthSource:
                         activation = startup["activation_ns"]
                         startup_due = max(first_due, (activation // (60 * NS) + 1) * (60 * NS))
                         deadline = startup_due + 5 * NS
-                        if (completion is not None and now <= deadline
+                        # The original deadline reports timeout, not permanent lockout.
+                        # A later current minute still needs actual on-time receipts.
+                        if (completion is not None
                                 and all(baseline < item and due <= item <= due + 5 * NS
                                         for item in completed)):
                             startup["ready"] = dict(v2_instance_id=self.config["v2_instance_id"],
