@@ -26,6 +26,8 @@ class WarningHealth:
     ram_available_bytes: int
     new_live_error: bool = False
     v2_not_applicable: bool = False
+    v2_startup_pending: bool = False
+    v2_startup_deadline_ns: int | None = None
 
 
 class WarningWatchdog:
@@ -41,7 +43,11 @@ class WarningWatchdog:
             return self.reason
         numeric = (health.oms_sync_seconds, health.load_1m, publish_lag_seconds)
         lateness = health.v2_bar_lateness_seconds
-        if (lateness is None and not health.v2_not_applicable
+        if (lateness is None and not (health.v2_not_applicable or health.v2_startup_pending)
+                or health.v2_startup_pending and (
+                    health.v2_not_applicable or lateness is not None
+                    or type(health.v2_startup_deadline_ns) is not int
+                    or health.v2_startup_deadline_ns <= 0)
                 or lateness is not None and (not math.isfinite(lateness) or lateness < 0)
                 or any(not math.isfinite(x) or x < 0 for x in numeric)):
             self.reason = "monitor_invalid"
@@ -67,6 +73,9 @@ class WarningWatchdog:
                 self._slow_syncs += 1
             if self._slow_syncs >= 2:
                 self.reason = "oms_sync_slow_twice"
+        if (self.reason is None and health.v2_startup_pending
+                and time.time_ns() > health.v2_startup_deadline_ns):
+            self.reason = "v2_startup_timeout"
         return self.reason
 
 
@@ -91,6 +100,15 @@ class WarningHealthReader:
         self._last_oms_evidence = None
         self._log_truncations: dict[str, int] = {}
         self._log_anchors: dict[str, bytes] = {}
+        self._gateway_startup: dict | None = None
+
+    def bind_gateway_start(self, instance_id: str, started_ns: int) -> None:
+        if (self._gateway_startup is not None or not isinstance(instance_id, str)
+                or not instance_id or type(started_ns) is not int or started_ns <= 0):
+            raise ValueError("gateway startup baseline invalid/already bound")
+        self._gateway_startup = dict(gateway_instance_id=instance_id,
+                                    started_ns=started_ns, baseline_ns=started_ns,
+                                    activation_ns=None, empty_seen=False, ready=None)
 
     def reset_window(self) -> None:
         # Prime live log offsets before the next A request, not across inactive nights.
@@ -98,6 +116,9 @@ class WarningHealthReader:
         self._source = self._source_config = self._last_oms_evidence = None
         self._log_truncations.clear()
         self._log_anchors.clear()
+        if self._gateway_startup is not None:
+            self._gateway_startup.update(baseline_ns=time.time_ns(), activation_ns=None,
+                                         empty_seen=False, ready=None)
 
     def log_observability(self) -> dict:
         counts = dict(self._log_truncations)
@@ -159,7 +180,8 @@ class WarningHealthReader:
             self._source_config = dict(config)
         entries = await client.xrevrange(f"{prefix}:strategy-state-isolated", count=MAX_STATE_ROWS)
         state = newest_v2_state(entries)
-        measured = await asyncio.to_thread(self._source.read, state)
+        measured = await asyncio.to_thread(self._source.read, state, **(
+            {"startup": self._gateway_startup} if self._gateway_startup is not None else {}))
         return await asyncio.to_thread(self.read, measured=measured)
 
     def read(self, *, measured: dict | None = None) -> WarningHealth:
@@ -168,6 +190,7 @@ class WarningHealthReader:
             raise ValueError("health evidence exceeds bound")
         version = data.get("schema_version")
         not_applicable = False
+        startup_pending = False
         evidence = self._last_oms_evidence
         if version == 2:
             provenance = data.get("v2_applicability_provenance", {})
@@ -181,6 +204,7 @@ class WarningHealthReader:
             ) if key in provenance}}
             data = proposed_health_v2(source, now_ns=time.time_ns())
             not_applicable = data["v2_applicability"] == "NOT_APPLICABLE"
+            startup_pending = data["v2_applicability"] == "STARTUP_PENDING"
             evidence = tuple(data[key] for key in (
                 "oms_instance_id", "oms_sync_seq", "oms_sync_seconds", "oms_measured_wall_ns"))
             prior = self._last_oms_evidence
@@ -193,7 +217,7 @@ class WarningHealthReader:
                 raise ValueError(f"missing/invalid measured {name}")
         for name in ("oms_sync_seconds", "v2_bar_lateness_seconds"):
             value = data.get(name)
-            if name == "v2_bar_lateness_seconds" and not_applicable and value is None:
+            if name == "v2_bar_lateness_seconds" and (not_applicable or startup_pending) and value is None:
                 continue
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError(f"missing/invalid measured {name}")
@@ -243,4 +267,6 @@ class WarningHealthReader:
             load_1m=os.getloadavg()[0], ram_available_bytes=int(available[1]) * 1024,
             new_live_error=new_error,
             v2_not_applicable=not_applicable,
+            v2_startup_pending=startup_pending,
+            v2_startup_deadline_ns=data.get("v2_startup_deadline_ns") if startup_pending else None,
         )

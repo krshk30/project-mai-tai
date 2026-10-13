@@ -161,7 +161,7 @@ class LiveWarningHealthSource:
         finally:
             os.close(fd)
 
-    def read(self, state: dict) -> dict:
+    def read(self, state: dict, *, startup: dict | None = None) -> dict:
         now = self.wall_ns()
         self._check_v2_process()
         receipt = self.oms.read()
@@ -191,6 +191,8 @@ class LiveWarningHealthSource:
         if not watchlist:
             if payload.get("restoration_complete") is not True:
                 raise ValueError("empty startup is not a restored empty watchlist")
+            if startup is not None and not startup["empty_seen"]:
+                startup.update(baseline_ns=now, activation_ns=None, ready=None, empty_seen=True)
             receipt.update(v2_applicability="NOT_APPLICABLE",
                            v2_applicability_reason="sourced_empty_watchlist",
                            v2_watchlist=[], v2_watchlist_source="strategy-state-isolated",
@@ -213,6 +215,41 @@ class LiveWarningHealthSource:
                 bar_ms = due // 1_000_000 - 60_000
                 completed = [self.bars.get((symbol, bar_ms)) for symbol in watchlist]
                 completion = max(completed) if all(item is not None for item in completed) else None
+                if startup is not None:
+                    startup["empty_seen"] = False
+                    ready = startup.get("ready")
+                    if ready is not None and ready["v2_instance_id"] != self.config["v2_instance_id"]:
+                        raise ValueError("v2 startup readiness belongs to another source instance")
+                    if ready is None:
+                        started = startup["started_ns"]
+                        baseline = startup["baseline_ns"]
+                        if startup["activation_ns"] is None:
+                            startup["activation_ns"] = now
+                        activation = startup["activation_ns"]
+                        startup_due = max(first_due, (activation // (60 * NS) + 1) * (60 * NS))
+                        deadline = startup_due + 5 * NS
+                        if (completion is not None and now <= deadline
+                                and all(baseline < item and due <= item <= due + 5 * NS
+                                        for item in completed)):
+                            startup["ready"] = dict(v2_instance_id=self.config["v2_instance_id"],
+                                                    due_ns=due, completed_ns=completion)
+                        else:
+                            # Pending is missing readiness, never healthy/zero lateness.
+                            receipt.update(
+                                v2_applicability="STARTUP_PENDING",
+                                v2_startup_gateway_instance_id=startup["gateway_instance_id"],
+                                v2_startup_started_ns=started, v2_startup_first_due_ns=startup_due,
+                                v2_startup_baseline_ns=baseline, v2_startup_activation_ns=activation,
+                                v2_startup_deadline_ns=deadline,
+                                v2_instance_id=self.config["v2_instance_id"],
+                                v2_watchlist=watchlist, v2_watchlist_source="strategy-state-isolated",
+                                v2_watchlist_complete=True, v2_watchlist_snapshot_ns=state_ns,
+                                **{key: self.config[key] for key in (
+                                    "v2_expectation_kind", "v2_expected_start_et", "v2_source_lane",
+                                    "v2_first_bar_start_et", "v2_bar_interval_seconds",
+                                    "v2_first_bar_source_ref")},
+                            )
+                            return proposed_health_v2(receipt, now_ns=now)
                 if self.truncations:
                     if completion is None and (self.covered_from_ns is None or self.covered_from_ns >= due):
                         raise ValueError("v2 current-due completion unknown after copytruncate gap")

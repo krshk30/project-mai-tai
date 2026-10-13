@@ -180,6 +180,10 @@ class MarketDataGatewayService:
         )
 
     async def run(self) -> None:
+        if self.settings.market_data_momentum_warning_enabled:
+            bind = getattr(self._warning_health_reader, "bind_gateway_start", None)
+            if bind is not None:
+                bind(self._warning_instance_id, time.time_ns())
         stop_event = asyncio.Event()
         _install_signal_handlers(stop_event)
 
@@ -675,7 +679,7 @@ class MarketDataGatewayService:
         except Exception:
             self.logger.exception("[MOMWARN1-AUTO-REVERT] A unsubscribe failed; locally latched OFF")
 
-    def _close_warning_window(self) -> None:
+    def _close_warning_window(self, *, reset_monitor: bool = True) -> None:
         if self._warning_revert_reason is not None:
             return
         was_active = self._warning_active or self._warning_requested_utc_ns is not None
@@ -687,7 +691,7 @@ class MarketDataGatewayService:
             self._warning_write_task.cancel()
         self._warning_requested_utc_ns = None
         self._warning_first_a_utc_ns = None
-        if was_active and self._warning_revert_reason is None:
+        if was_active and self._warning_revert_reason is None and reset_monitor:
             self._warning_watchdog = WarningWatchdog()
             reset = getattr(self._warning_health_reader, "reset_window", None)
             if reset is not None:
@@ -808,6 +812,10 @@ class MarketDataGatewayService:
             reason = self._warning_watchdog.check(health, publish_lag_seconds=self._warning_publish_lag())
             if reason:
                 await self._revert_warning(reason)
+                return
+            if getattr(health, "v2_startup_pending", False):
+                self._close_warning_window(reset_monitor=False)
+                await self.trade_stream.set_momentum_warning_aggregates(False)
                 return
             was_active = self._warning_active
             self._warning_active = await self.trade_stream.set_momentum_warning_aggregates(True)

@@ -111,6 +111,42 @@ def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
             "v2_watchlist",
             "v2_first_bar_start_et", "v2_bar_interval_seconds", "v2_first_bar_source_ref",
         )}
+    elif applicability == "STARTUP_PENDING":
+        started, due, deadline, watch_ns = (receipt.get(key) for key in (
+            "v2_startup_started_ns", "v2_startup_first_due_ns", "v2_startup_deadline_ns",
+            "v2_watchlist_snapshot_ns"))
+        watchlist = receipt.get("v2_watchlist")
+        baseline, activation = (receipt.get(key) for key in (
+            "v2_startup_baseline_ns", "v2_startup_activation_ns"))
+        first_due = sourced_first_due_ns(receipt, observed_ns=monitor)
+        if (not integer(started) or started == 0 or started > monitor
+                or not integer(due) or not integer(deadline)
+                or not integer(baseline) or not integer(activation)
+                or not started <= baseline <= activation <= monitor
+                or due != max(first_due, (activation // (60 * NS) + 1) * (60 * NS))
+                or deadline != due + 5 * NS or monitor < first_due
+                or not isinstance(receipt.get("v2_startup_gateway_instance_id"), str)
+                or not receipt["v2_startup_gateway_instance_id"]
+                or not isinstance(receipt.get("v2_instance_id"), str) or not receipt["v2_instance_id"]
+                or receipt.get("v2_watchlist_source") != "strategy-state-isolated"
+                or receipt.get("v2_watchlist_complete") is not True
+                or not integer(watch_ns) or not 0 <= monitor - watch_ns <= 10 * NS
+                or not isinstance(watchlist, list) or not 0 < len(watchlist) <= 256
+                or any(not isinstance(symbol, str) or not symbol for symbol in watchlist)
+                or len(set(watchlist)) != len(watchlist)):
+            raise ValueError("UNKNOWN:unsourced v2 startup readiness")
+        result.update(v2_applicability=applicability, v2_bar_lateness_seconds=None,
+                      v2_instance_id=receipt["v2_instance_id"],
+                      v2_expectation_ref=receipt["v2_expectation_ref"])
+        result.update({key: receipt[key] for key in (
+            "v2_startup_gateway_instance_id", "v2_startup_started_ns",
+            "v2_startup_first_due_ns", "v2_startup_deadline_ns",
+            "v2_startup_baseline_ns", "v2_startup_activation_ns")})
+        result["v2_applicability_provenance"] = {key: receipt.get(key) for key in (
+            "v2_source_lane", "v2_expectation_kind", "v2_expected_start_et",
+            "v2_watchlist_source", "v2_watchlist_snapshot_ns", "v2_watchlist_complete",
+            "v2_watchlist", "v2_first_bar_start_et", "v2_bar_interval_seconds",
+            "v2_first_bar_source_ref")}
     elif applicability == "APPLICABLE":
         measured, due, completed = (receipt.get(key) for key in (
             "v2_measured_wall_ns", "v2_due_wall_ns", "v2_completed_wall_ns"
