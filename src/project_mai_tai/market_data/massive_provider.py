@@ -21,6 +21,7 @@ from project_mai_tai.market_data.models import (
     MomentumWarningAggregateRecord,
 )
 from project_mai_tai.strategy_core.time_utils import is_fillable_et_session
+from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 
 logger = logging.getLogger(__name__)
 
@@ -329,11 +330,19 @@ class MassiveTradeStream:
         self._on_warning_aggregate: Callable[[MomentumWarningAggregateRecord], None] | None = None
         self._on_warning_revert: Callable[[str], None] | None = None
         self._on_warning_window_close: Callable[[], None] | None = None
+        self._momentum_warning_window = MomentumValidationWindow()
 
-    def configure_momentum_warning(self, on_aggregate, on_revert, on_window_close=None) -> None:
+    def configure_momentum_warning(self, on_aggregate, on_revert, on_window_close=None, *, window=None) -> None:
         self._on_warning_aggregate = on_aggregate
         self._on_warning_revert = on_revert
         self._on_warning_window_close = on_window_close
+        if window is not None:
+            self._momentum_warning_window = window
+
+    def _warning_window_is_open(self) -> bool:
+        now = datetime.now(UTC)
+        end = self._momentum_warning_window.gateway_end_for(now.date())
+        return is_fillable_et_session(now, 4, end.hour, end_minute=end.minute)
 
     async def set_momentum_warning_aggregates(self, enabled: bool) -> bool:
         if not enabled:
@@ -341,7 +350,7 @@ class MassiveTradeStream:
             return False
         if self._warning_failed or self._on_warning_aggregate is None:
             return False
-        if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
+        if not self._warning_window_is_open():
             self._close_warning_window()
             return False
         if self._ws is None or not self._connected:
@@ -558,7 +567,7 @@ class MassiveTradeStream:
                     # Pending wildcard frames after unsubscribe also stay isolated.
                     if not self._warning_aggregates_enabled:
                         continue
-                    if not is_fillable_et_session(datetime.now(UTC), 4, 9, end_minute=30):
+                    if not self._warning_window_is_open():
                         self._close_warning_window()
                     else:
                         if getattr(message, "otc", False):

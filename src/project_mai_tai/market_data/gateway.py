@@ -147,7 +147,8 @@ class MarketDataGatewayService:
         self._warning_publisher = None
         if self.settings.market_data_momentum_warning_enabled:
             self.trade_stream.configure_momentum_warning(
-                self._enqueue_warning, self._latch_warning_revert, self._close_warning_window
+                self._enqueue_warning, self._latch_warning_revert, self._close_warning_window,
+                window=self._momentum_validation_window,
             )
             # A has its own Redis pool/task; stalled A writes never serialize T/Q writes.
             self._warning_redis = warning_redis_client or Redis.from_url(

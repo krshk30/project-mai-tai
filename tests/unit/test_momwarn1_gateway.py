@@ -296,7 +296,7 @@ async def test_outside_window_unsubscribes_A_and_preserves_watched_owners(monkey
     svc, provider, _, _ = service()
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc._warning_monitor_once()
-    monkeypatch.setattr(massive_provider, "datetime", SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 13, 30, tzinfo=UTC)))
+    monkeypatch.setattr(massive_provider, "datetime", SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 22, 0, tzinfo=UTC)))
     provider._handle_messages([aggregate()])
     assert provider._ws.removed == ["A.*"]
     assert provider._subscriptions == {"WFF"}
@@ -306,12 +306,12 @@ async def test_outside_window_unsubscribes_A_and_preserves_watched_owners(monkey
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("close_path", ["publisher", "provider", "monitor"])
-async def test_normal_0930_close_drains_late_A_and_resumes_next_trading_04(monkeypatch, caplog, close_path):
+async def test_daily_1800_close_drains_late_A_and_resumes_next_trading_04(monkeypatch, caplog, close_path):
     def set_clock(iso):
         fixed = SimpleNamespace(now=lambda _: datetime.fromisoformat(iso))
         monkeypatch.setattr(gateway, "datetime", fixed)
         monkeypatch.setattr(massive_provider, "datetime", fixed)
-    set_clock("2026-10-12T13:29:59+00:00")
+    set_clock("2026-10-12T21:59:59+00:00")
     svc, provider, _, redis = service()
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
@@ -327,7 +327,7 @@ async def test_normal_0930_close_drains_late_A_and_resumes_next_trading_04(monke
     stop = asyncio.Event()
     publisher = None
     caplog.clear()
-    set_clock("2026-10-12T13:30:00+00:00")
+    set_clock("2026-10-12T22:00:00+00:00")
     if close_path == "publisher":
         publisher = asyncio.create_task(svc._warning_publish_loop(stop))
         while provider._warning_aggregates_enabled:
@@ -382,7 +382,7 @@ async def test_normal_close_cancels_only_inflight_A_write_writer_resumes_next_04
     stop = asyncio.Event()
     publisher = asyncio.create_task(svc._warning_publish_loop(stop))
     await entered.wait()
-    closed_clock = SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 13, 30, tzinfo=UTC))
+    closed_clock = SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 22, 0, tzinfo=UTC))
     monkeypatch.setattr(gateway, "datetime", closed_clock)
     monkeypatch.setattr(massive_provider, "datetime", closed_clock)
     await svc._warning_monitor_once()
@@ -415,7 +415,7 @@ async def test_safety_failure_remains_sticky_across_normal_close_and_next_04(mon
     else:
         await svc._revert_warning("load")
     reason = svc._warning_revert_reason
-    for clock in (datetime(2026, 10, 12, 13, 30, tzinfo=UTC), datetime(2026, 10, 13, 8, 0, tzinfo=UTC)):
+    for clock in (datetime(2026, 10, 12, 22, 0, tzinfo=UTC), datetime(2026, 10, 13, 8, 0, tzinfo=UTC)):
         fixed = SimpleNamespace(now=lambda _: clock)
         monkeypatch.setattr(gateway, "datetime", fixed)
         monkeypatch.setattr(massive_provider, "datetime", fixed)
@@ -435,7 +435,7 @@ async def test_next_window_reprimes_logs_and_sync_baseline_after_inactive_night(
     svc._warning_health_reader = SimpleNamespace(read=reader.read, reset_window=reader.reset_window)
     await svc._warning_monitor_once()
     assert svc._warning_active and reader._logs
-    closed = SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 13, 30, tzinfo=UTC))
+    closed = SimpleNamespace(now=lambda _: datetime(2026, 10, 12, 22, 0, tzinfo=UTC))
     monkeypatch.setattr(gateway, "datetime", closed)
     monkeypatch.setattr(massive_provider, "datetime", closed)
     await svc._warning_monitor_once()
@@ -456,7 +456,7 @@ async def test_next_window_reprimes_logs_and_sync_baseline_after_inactive_night(
 async def test_closed_weekend_does_not_reenable_until_next_trading_04(monkeypatch):
     svc, provider, _, _ = service()
     await svc._warning_monitor_once()
-    for stamp in ("2026-10-16T13:30:00+00:00", "2026-10-17T08:00:00+00:00", "2026-10-18T08:00:00+00:00"):
+    for stamp in ("2026-10-16T22:00:00+00:00", "2026-10-17T08:00:00+00:00", "2026-10-18T08:00:00+00:00"):
         fixed = SimpleNamespace(now=lambda _: datetime.fromisoformat(stamp))
         monkeypatch.setattr(gateway, "datetime", fixed)
         monkeypatch.setattr(massive_provider, "datetime", fixed)

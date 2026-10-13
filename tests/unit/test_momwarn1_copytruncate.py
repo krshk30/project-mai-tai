@@ -177,8 +177,8 @@ async def test_native_next_day_reset_after_evening_truncate_even_if_A_never_acti
     old_source = env.reader._source
     assert bool(svc._warning_active) is previous_A_active and env.reader._logs
     owners, saved = dict(svc._desired_symbols_by_consumer), dict(redis.hashes)
-    # 09:30 close then actual reviewed 20:00-ET copytruncate phase, CONTROLLED clocks.
-    env.clock.ns = env.clock.ns // (86400 * NS) * (86400 * NS) + 13 * 3600 * NS + 30 * 60 * NS
+    # Daily 18:00 close then 20:00-ET copytruncate, CONTROLLED clocks.
+    env.clock.ns = env.clock.ns // (86400 * NS) * (86400 * NS) + 22 * 3600 * NS
     await svc._warning_monitor_once()
     env.clock.ns = env.clock.ns // (86400 * NS) * (86400 * NS) + 86400 * NS
     for name in LOGS:

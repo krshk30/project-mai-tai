@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from project_mai_tai.market_data import gateway
+from project_mai_tai.market_data import gateway, massive_provider
 from project_mai_tai.market_data.gateway import MarketDataGatewayService
 from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 from project_mai_tai.settings import Settings
@@ -38,6 +38,28 @@ def build(monkeypatch, stamp, *, override=True):
         snapshot_provider=FakeSnapshotProvider(), reference_cache=FakeReferenceCache(),
         warning_redis_client=FakeRedis(), warning_health_reader=SimpleNamespace(read=healthy))
     return svc, provider
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("end,active", [(time(18), True), (time(9, 30), False)])
+async def test_native_provider_shares_daily_clock_or_explicit_override(monkeypatch, end, active):
+    observed = datetime.fromisoformat("2026-10-14T10:00:00-04:00")
+    fixed = SimpleNamespace(now=lambda _: observed)
+    monkeypatch.setattr(gateway, "datetime", fixed)
+    monkeypatch.setattr(massive_provider, "datetime", fixed)
+    settings = Settings(_env_file=None, market_data_momentum_warning_enabled=True,
+                        market_data_momentum_warning_end_et=end,
+                        momentum_paper_detection_end_et=end,
+                        momentum_paper_guard_end_et=time(18, 10))
+    provider = stream()
+    svc = MarketDataGatewayService(settings, FakeRedis(), trade_stream=provider,
+        snapshot_provider=FakeSnapshotProvider(), reference_cache=FakeReferenceCache(),
+        warning_redis_client=FakeRedis(), warning_health_reader=SimpleNamespace(read=healthy))
+    await svc._warning_monitor_once()
+    assert svc._warning_active is active
+    assert provider._warning_aggregates_enabled is active
+    assert provider._momentum_warning_window.gateway_end_for(observed.date()) == end
+    assert svc._warning_revert_reason is None
 
 
 @pytest.mark.asyncio
