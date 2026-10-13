@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Mapping
 
-from project_mai_tai.momentum_paper.engine import MomentumPaperEngine
+from project_mai_tai.momentum_paper.engine import MomentumPaperEngine, symbol_is_eligible
 from project_mai_tai.momentum_paper.models import (
     MOMENTUM_WARNING_STRATEGIES,
     MomentumTapeRecord,
@@ -211,7 +211,9 @@ class WarningWindow:
     """One-symbol, bounded aggregate history; lows retain bucket bounds only."""
 
     def __init__(self, symbol: str) -> None:
-        self.symbol = symbol.upper()
+        if not symbol_is_eligible(symbol):
+            raise ValueError("ineligible_warning_symbol")
+        self.symbol = symbol
         self._bars: dict[int, AggregateObservation] = {}
         self._latest: AggregateObservation | None = None
         self._observed_ms = 0
@@ -451,7 +453,9 @@ class ObservedRawPaperPath:
     """
 
     def __init__(self, *, symbol: str, prior_close: Decimal, condition_version: str) -> None:
-        self.symbol = symbol.upper()
+        if not symbol_is_eligible(symbol):
+            raise ValueError("ineligible_warning_symbol")
+        self.symbol = symbol
         self._prior_close = prior_close
         self._condition_version = condition_version
         self._engine: MomentumPaperEngine | None = None
@@ -469,7 +473,7 @@ class ObservedRawPaperPath:
         self, trade: TradePrint, *, sip_timestamp_ns: int, observed_ns: int,
         coverage: CoverageEvidence | None,
     ) -> RawPathOutcome:
-        if trade.symbol.upper() != self.symbol or sip_timestamp_ns // 1_000_000 != trade.sip_ts_ms:
+        if trade.symbol != self.symbol or sip_timestamp_ns // 1_000_000 != trade.sip_ts_ms:
             raise ValueError("raw_trade_identity_mismatch")
         if observed_ns < self._last_observed_ns:
             raise ValueError("raw_observation_clock_order")

@@ -38,8 +38,11 @@ def is_warrant_like(symbol: str) -> bool:
 
 
 def symbol_is_eligible(symbol: str) -> bool:
-    value = symbol.strip().upper()
-    return bool(value) and "." not in value and len(value) <= 5
+    # Lowercase markers identify distinct share classes, not aliases of common tickers.
+    return (
+        isinstance(symbol, str) and bool(symbol) and symbol == symbol.upper()
+        and symbol == symbol.strip() and "." not in symbol and len(symbol) <= 5
+    )
 
 
 def detection_time_is_eligible(
@@ -122,7 +125,8 @@ class MomentumPaperEngine:
     ) -> None:
         self.validation_window = validation_window or MomentumValidationWindow()
         self.prior_closes = {
-            str(symbol).upper(): Decimal(str(price)) for symbol, price in prior_closes.items()
+            symbol: Decimal(str(price)) for symbol, price in prior_closes.items()
+            if symbol_is_eligible(symbol)
         }
         self.condition_version = condition_version
         self.coverage_started_ms = int(coverage_started_ms)
@@ -162,6 +166,8 @@ class MomentumPaperEngine:
 
     def seed_reentry_boundaries(self, rows: Iterable[MomentumTapeRecord]) -> None:
         for row in rows:
+            if not symbol_is_eligible(row.symbol):
+                continue
             if row.strategy_code not in self.strategy_windows:
                 continue
             if row.event_type not in {"FINAL", "NO_FILL", "UNANSWERABLE"}:
@@ -174,7 +180,7 @@ class MomentumPaperEngine:
                 boundary_ms = int(row.payload.get("terminal_boundary_sip_ts_ms", 0) or 0)
             if not boundary_ms:
                 boundary_ms = int(row.observed_at.timestamp() * 1000)
-            key = (row.strategy_code, row.symbol.upper())
+            key = (row.strategy_code, row.symbol)
             self._reference_after_ms[key] = max(
                 boundary_ms,
                 self._reference_after_ms.get(key, 0),
@@ -184,8 +190,10 @@ class MomentumPaperEngine:
         self, trade: TradePrint, *, allow_detection: bool = True,
         observed_decision_ns: int | None = None,
     ) -> tuple[MomentumTapeRecord, ...]:
+        if not symbol_is_eligible(trade.symbol):
+            return ()
         trade = TradePrint(
-            symbol=trade.symbol.upper(),
+            symbol=trade.symbol,
             sip_ts_ms=trade.sip_ts_ms,
             participant_ts_ms=trade.participant_ts_ms,
             price=trade.price,
@@ -227,7 +235,8 @@ class MomentumPaperEngine:
                 reference_pool = [
                     item
                     for item in history
-                    if trade.sip_ts_ms - window_seconds * 1000 <= item.sip_ts_ms
+                    if item.symbol == trade.symbol
+                    and trade.sip_ts_ms - window_seconds * 1000 <= item.sip_ts_ms
                     and item.sip_ts_ms < trade.sip_ts_ms
                     and item.sip_ts_ms > reference_after_ms
                 ]
@@ -273,7 +282,7 @@ class MomentumPaperEngine:
         completed_ms = int(completed_at.timestamp() * 1000)
         proposals: list[tuple[Decimal, str, str, TradePrint, TradePrint, list[TradePrint]]] = []
         for snapshot in snapshots:
-            symbol = snapshot.symbol.upper()
+            symbol = snapshot.symbol
             if symbol not in self.prior_closes or not symbol_is_eligible(symbol):
                 continue
             raw_ns = normalize_ts_ns(snapshot.last_trade_timestamp_ns)
@@ -301,7 +310,8 @@ class MomentumPaperEngine:
                     boundary = self._reference_after_ms.get((strategy_code, symbol), 0)
                     reference_pool = [
                         item for item in history
-                        if sip_ms - window_seconds * 1000 <= item.sip_ts_ms < sip_ms
+                        if item.symbol == symbol
+                        and sip_ms - window_seconds * 1000 <= item.sip_ts_ms < sip_ms
                         and item.sip_ts_ms > boundary
                     ]
                     if not reference_pool:

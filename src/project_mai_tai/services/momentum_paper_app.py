@@ -37,7 +37,7 @@ from project_mai_tai.momentum_paper.conditions import (
     build_condition_snapshot,
     condition_snapshot_from_payload,
 )
-from project_mai_tai.momentum_paper.engine import MomentumPaperEngine
+from project_mai_tai.momentum_paper.engine import MomentumPaperEngine, symbol_is_eligible
 from project_mai_tai.momentum_paper.models import (
     MOMENTUM_ACCOUNT_NAME,
     MOMENTUM_STRATEGIES,
@@ -115,7 +115,9 @@ def normalize_raw_trade(row: object, *, conditions: ConditionSnapshot) -> TradeP
     event_type = str(_raw_value(row, "ev", "event_type") or "")
     if event_type != "T":
         return None
-    symbol = str(_raw_value(row, "sym", "symbol") or "").upper()
+    symbol = _raw_value(row, "sym", "symbol")
+    if not symbol_is_eligible(symbol):
+        return None
     price_raw = _raw_value(row, "p", "price")
     sip_raw = _raw_value(row, "t", "sip_timestamp", "timestamp")
     if not symbol or price_raw is None or sip_raw is None:
@@ -327,7 +329,8 @@ class MomentumPaperService:
             raise RuntimeError("persisted Momentum session evidence is malformed")
         self._condition_snapshot = condition_snapshot_from_payload(raw_conditions)
         self._engine = MomentumPaperEngine(
-            prior_closes={str(symbol): Decimal(str(price)) for symbol, price in raw_closes.items()},
+            prior_closes={symbol: Decimal(str(price)) for symbol, price in raw_closes.items()
+                          if symbol_is_eligible(symbol)},
             condition_version=self._condition_snapshot.version,
             coverage_started_ms=self._now_ms(),
             validation_window=self._validation_window,
@@ -401,7 +404,9 @@ class MomentumPaperService:
         grouped = client.get_grouped_daily_aggs(prior_day, adjusted=True)
         closes: dict[str, Decimal] = {}
         for row in grouped:
-            symbol = str(_raw_value(row, "ticker", "T") or "").upper()
+            symbol = _raw_value(row, "ticker", "T")
+            if not symbol_is_eligible(symbol):
+                continue
             close = _raw_value(row, "close", "c")
             if not symbol or close is None:
                 continue
@@ -572,7 +577,7 @@ class MomentumPaperService:
             await self._persist(records)
             if self._warning is not None:
                 for row in records:
-                    snapshot = next(item for item in event.payload.snapshots if item.symbol.upper() == row.symbol)
+                    snapshot = next(item for item in event.payload.snapshots if item.symbol == row.symbol)
                     await self._warning_metrics(
                         event_type="snapshot_entry", observed_ns=wall_time.time_ns(),
                         observed_decision_ns=snapshot_decision_ns,
@@ -592,7 +597,8 @@ class MomentumPaperService:
                 await self._sync_gateway_subscriptions()
         elif event_type == "trade_tick":
             raw_payload = envelope.get("payload") or {}
-            if str(raw_payload.get("symbol", "")).upper() not in (
+            symbol = raw_payload.get("symbol", "")
+            if not symbol_is_eligible(symbol) or symbol not in (
                 self._subscribed_symbols | self._warning_subscribed_symbols
             ):
                 return
@@ -617,7 +623,7 @@ class MomentumPaperService:
             self._condition_feed_verified = True
             eligible, reason = self._condition_snapshot.classify(codes)
             trade = TradePrint(
-                symbol=payload.symbol.upper(), sip_ts_ms=stamp_ns // 1_000_000,
+                symbol=payload.symbol, sip_ts_ms=stamp_ns // 1_000_000,
                 price=payload.price, size=payload.size,
                 conditions=codes, eligible=eligible, exclusion_reason=reason,
             )

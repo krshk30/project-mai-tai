@@ -212,7 +212,10 @@ class MomentumWarningConsumer:
         self, trade: TradePrint, *, sip_timestamp_ns: int, observed_ns: int,
         raw_coverage: CoverageEvidence | None = None,
     ) -> tuple[MomentumTapeRecord, ...]:
-        symbol = trade.symbol.upper()
+        symbol = trade.symbol
+        if not symbol_is_eligible(symbol):
+            self.last_status = "raw_symbol_ineligible"
+            return ()
         if symbol not in self.candidates.desired_symbols(self.engine.active_symbols):
             self.last_status = "raw_symbol_not_warning_owned"
             return ()
