@@ -81,9 +81,11 @@ def nearest_p95(values: list[float]) -> float:
 
 def hour_index(now: datetime) -> int:
     hour = now.astimezone(ET).hour
-    if hour not in (7, 8, 9):
+    et = now.astimezone(ET)
+    if not 4 <= hour <= 18 or (hour == 18 and et.time() >= clock_time(18, 10)):
         raise Blind(f"outside treatment hour: {hour}")
-    return hour - 7
+    # Later hours reuse the measured 09:00 set; do not invent new baselines.
+    return min(2, max(0, hour - 7))
 
 
 @dataclass
