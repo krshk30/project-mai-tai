@@ -22,6 +22,15 @@
   "outputs": ["/tmp/stuckalert1-positive-ack-RED-20261012.xml", "/tmp/stuckalert1-positive-ack-RED-20261012.log", "/tmp/stuckalert1-positive-ack-final-20261012.xml", "/tmp/stuckalert1-positive-ack-final-20261012.log"],
   "reported": "Boxed localpositiveACKrepair94PASS/RED12/replay119->92+123->93;57proven suppressed/184unproven+GIXIretained. Main review pending, no production/whole242zero claim",
   "historical_held_outputs": "6de4a9db/da10e34b78PASS3.88s outputs unchanged in /tmp/stuckalert1-v1-final-20261012.xml/.log and historicalRESULT.txt. That run omitted requiredpositiveACK and is NOT cardacceptance",
+  "history_completion": {
+    "id": "STUCKALERT1-ASOF-HISTORY",
+    "source": "Human main accepts8ab/94controls, requests actual priorbrokerACK plus latestbrokercontradiction ASOF each242incident",
+    "priority": 4,
+    "owner": "Anscombe sole reconciler replay writer",
+    "status": "bounded_capture_completed_focused_replay_pending",
+    "next_action": "Verify actual unchanged8ab runtime with supplemental ASOF broker-history sufficient facts on all242cases. All16pages READ ONLY2500ms succeeded:61positive accepted cases,180zero storedbroker-events,GIXIcancelled. Original184unknown labels unchanged:4now positive(2FLYE orders/theirintents),180unproven=0storedfacts/180queried cutoffs. Expected replay119->90/123->91; no causal-arrival/zero proof. Commit controls/data then bounded focused verification",
+    "completion_criterion": "242querydenominator with actual positive/no-stored-fact counts among184legacyunknown, ASOF-only replay and unchanged runtime hash, honest unknown/retention report; local test commit/receipt for main review"
+  },
   "review_followup": {
     "id": "STUCKALERT1-POSITIVE-ACK",
     "source": "Main source review HOLD6de4/da10: positivebroker accepted event required, not local accepted marker",

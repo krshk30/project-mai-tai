@@ -15,6 +15,7 @@ from project_mai_tai.settings import Settings
 from test_reconciliation_service import FakeRedis, build_test_session_factory
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "stuckalert1_actual242.json"
+HISTORY_FIXTURE = FIXTURE.with_name("stuckalert1_broker_history_asof.json")
 
 
 def at(value):
@@ -199,13 +200,40 @@ def test_partial_broker_event_does_not_replace_positive_accepted_event(monkeypat
 
 
 def test_recorded242_incident_reconstruction_preserves_unproven_and_terminal_alerts(monkeypatch):
+    replay_recorded242(monkeypatch)
+
+
+def test_recorded242_with_prior_broker_history_asof_each_incident(monkeypatch):
+    raw = HISTORY_FIXTURE.read_bytes()
+    assert len(raw) < 1024*1024
+    assert len(raw.splitlines()) + len(FIXTURE.read_bytes().splitlines()) <= 500
+    history = json.loads(raw)
+    assert history["original_fixture_sha256"] == hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
+    assert history["query_cases"] == len(history["rows"]) == 242
+    assert history["unique_order_ids"] == len({row["order_id"] for row in history["rows"]}) == 123
+    assert [page["offset"] for page in history["pages"]] == list(range(0, 242, 16))
+    assert [page["count"] for page in history["pages"]] == [16]*15 + [2]
+    replay_recorded242(monkeypatch, history=history, history_sha256=hashlib.sha256(raw).hexdigest())
+
+
+def replay_recorded242(monkeypatch, *, history=None, history_sha256=None):
     raw = FIXTURE.read_bytes()
     assert len(raw) < 1024*1024
+    assert hashlib.sha256(raw).hexdigest() == "b7858e675311f8fdee79f0abb310d2aa203de087cf7074c2b6f37ab8ee850a2b"
     fixture = json.loads(raw)
     rows = fixture["rows"]
     assert len(rows) == len({row["case_id"] for row in rows}) == 242
     assert fixture["scope"].endswith("paged read-only capture, not atomic")
     assert sum(row["kind"] == "stuck_order" for row in rows) == 119
+    evidence = {row["case_id"]: row for row in history["rows"]} if history is not None else {}
+    if history is not None:
+        assert set(evidence) == {row["case_id"] for row in rows}
+        assert sum(row["accepted"] is not None for row in evidence.values()) == 61
+        legacy = [evidence[row["case_id"]] for row in rows if row["event_source"] == "unknown"]
+        assert len(legacy) == 184
+        assert sum(row["accepted"] is not None for row in legacy) == 4
+        assert sum(row["broker_event_count"] == 0 for row in legacy) == 180
+        assert sum(row["broker_accepted_count"] == 0 for row in legacy) == 180
     factory = build_test_session_factory()
     counts = {kind: {"before": 0, "after": 0} for kind in ("stuck_order", "stuck_intent")}
     retained = []
@@ -217,6 +245,19 @@ def test_recorded242_incident_reconstruction_preserves_unproven_and_terminal_ale
             "stuck_intent": {"pending", "submitted", "accepted"},
         }[row["kind"]]
         assert at(row["event_at"]) <= now
+        history_events = {}
+        if history is not None:
+            captured = evidence[row["case_id"]]
+            assert captured["order_id"] == row["order_id"] and at(captured["replay_at"]) == now
+            assert 0 <= captured["broker_accepted_count"] <= captured["broker_event_count"]
+            assert (captured["accepted"] is not None) == (captured["broker_accepted_count"] > 0)
+            assert (captured["latest"] is not None) == (captured["broker_event_count"] > 0)
+            if captured["accepted"] is not None:
+                assert captured["accepted"]["event_type"] == "accepted"
+            for event in (captured["accepted"], captured["latest"]):
+                if event is not None:
+                    assert event["event_source"] == "broker" and at(event["event_at"]) <= now
+                    history_events[event["id"]] = event
         monkeypatch.setattr(reconciler, "utcnow", lambda now=now: now)
         with factory() as session:
             account = BrokerAccount(name=row["account_name"], provider=row["provider"], environment="production")
@@ -241,6 +282,10 @@ def test_recorded242_incident_reconstruction_preserves_unproven_and_terminal_ale
             session.flush()
             session.add(BrokerOrderEvent(order_id=order.id, event_type=row["order_status_asof"],
                 event_source=row["event_source"], event_at=at(row["event_at"]), payload={}))
+            for event in history_events.values():
+                session.add(BrokerOrderEvent(id=UUID(event["id"]), order_id=order.id,
+                    event_type=event["event_type"], event_source=event["event_source"],
+                    event_at=at(event["event_at"]), payload={}))
             session.flush()
             orders, intents = methods(session, factory)
             actual = orders if row["kind"] == "stuck_order" else intents
@@ -250,20 +295,31 @@ def test_recorded242_incident_reconstruction_preserves_unproven_and_terminal_ale
                 retained.append({key: row[key] for key in
                                  ("case_id", "kind", "symbol", "order_status_asof", "event_source")})
             session.rollback()
-    assert counts == {"stuck_order": {"before": 119, "after": 92}, "stuck_intent": {"before": 123, "after": 93}}
+    assert counts == {"stuck_order": {"before": 119, "after": 90 if history is not None else 92},
+                      "stuck_intent": {"before": 123, "after": 91 if history is not None else 93}}
     unproven = [row for row in retained if row["event_source"] == "unknown"]
-    assert len(unproven) == 184
+    assert len(unproven) == (180 if history is not None else 184)
     assert all(row["order_status_asof"] == "accepted" for row in unproven)
     terminal = [row for row in retained if row["event_source"] != "unknown"]
     assert terminal == [{"case_id": "1a7fdc71-60e3-410c-8d49-bcea106cb322", "kind": "stuck_intent",
                          "symbol": "GIXI", "order_status_asof": "cancelled", "event_source": "broker"}]
-    assert len(retained) == 185
+    assert len(retained) == (181 if history is not None else 185)
     print("STUCKALERT1_RECORDED_REPLAY="+json.dumps({
         "evidence_kind": "RECORDED_INCIDENT_RECONSTRUCTION_NOT_SOFTWARE_ARRIVAL_REPLAY",
         "fixture_sha256": hashlib.sha256(raw).hexdigest(), "counts": counts,
-        "suppressed_positive_broker_accept": 57, "retained_unproven_unknown_origin": len(unproven),
+        "history_fixture_sha256": history_sha256,
+        "query_denominator": 242 if history is not None else None,
+        "legacy_unknown_cases": 184,
+        "legacy_now_positive_broker_accept": 4 if history is not None else None,
+        "legacy_zero_stored_broker_events": 180 if history is not None else None,
+        "suppressed_positive_broker_accept": 61 if history is not None else 57,
+        "retained_unproven_unknown_origin": len(unproven),
         "retained_terminal": terminal,
-        "capture_limitation": "Latest as-of event only; unknown origin does not prove absence of an earlier broker ACK",
+        "capture_limitation": (
+            "Stored broker history queried ASOF each cutoff; zero stored facts does not prove no real broker ACK"
+            if history is not None else
+            "Latest as-of event only; unknown origin does not prove absence of an earlier broker ACK"
+        ),
         "actual_incident_open_session": "RTH only; PM/RTH breadth separately CONTROLLED",
         "per_order_freshness": "NOT_REQUIRED_BY_APPROVED_V1",
         "per_account_completion_metric": "ABSENT_GAP_ALERT_SKIPPED",
