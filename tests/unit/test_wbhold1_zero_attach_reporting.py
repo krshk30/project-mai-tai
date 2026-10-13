@@ -9,7 +9,7 @@ from project_mai_tai.db.models import BrokerOrder, SystemIncident
 from project_mai_tai.oms import service as module
 from project_mai_tai.oms.service import OmsRiskService
 from tests.unit import test_edgeprot1_webull_edge as edge
-from tests.unit.test_wbhold1_attach_backstop import attach, ledger, controlled_clock
+from tests.unit.test_wbhold1_attach_backstop import attach, ledger, controlled_clock as controlled_clock
 
 replay = edge.replay
 
