@@ -15,7 +15,7 @@ from project_mai_tai.momwarn_health_contract import (
     OmsLogMonitor, proposed_health_v2, sourced_first_due_ns,
 )
 from project_mai_tai.momwarn_measurement_probes import read_bounded
-from project_mai_tai.momwarn_log_cursor import cursor_anchor, cursor_rewritten
+from project_mai_tai.momwarn_log_cursor import check_read_coverage, cursor_anchor, cursor_rewritten
 from project_mai_tai.momwarn_measurements import NS, integer
 
 BOUND = 65536
@@ -110,20 +110,23 @@ class LiveWarningHealthSource:
                 raise ValueError("v2 log unreadable/rotated")
             offset = max(0, info.st_size - BOUND) if self.offset is None else self.offset
             rewritten = self.offset is not None and cursor_rewritten(fd, offset, self.anchor)
+            partial = self.partial
             if rewritten:
-                self.truncations += 1
-                offset, self.partial = 0, b""
+                offset, partial = 0, b""
             if info.st_size - offset > BOUND:
                 raise ValueError("v2 log truncation/backlog")
             os.lseek(fd, offset, os.SEEK_SET)
             raw = os.read(fd, BOUND + 1)
             covered = offset + len(raw)
-            if len(raw) > BOUND or os.fstat(fd).st_size > covered:
+            if len(raw) > BOUND:
                 raise ValueError("v2 log EOF coverage exceeded")
+            check_read_coverage(fd, offset, covered, BOUND, "v2")
             if self.offset is None and offset:
                 raw = raw.partition(b"\n")[2]
-            lines = (self.partial + raw).split(b"\n")
+            lines = (partial + raw).split(b"\n")
             observed_after_read = self.wall_ns()
+            covered_from = self.covered_from_ns
+            bars = dict(self.bars)
             for line in lines[:-1]:
                 text = line.decode()
                 if not STAMP.match(text):
@@ -133,26 +136,28 @@ class LiveWarningHealthSource:
                     raise ValueError("future v2 log evidence")
                 if stamp < self.config["v2_started_ns"]:
                     continue
-                if self.covered_from_ns is None:
-                    self.covered_from_ns = stamp
+                if covered_from is None:
+                    covered_from = stamp
                 # The first restored bar can publish without a MACD diagnostic.
                 # Only successful publication of that exact minute is evidence.
                 match = PROBE.search(text) or LINE_PUBLICATION.search(text)
                 if match:
                     key = match[1], int(match[2])
-                    self.bars.setdefault(key, stamp)
-            self.identity, self.offset, self.partial = identity, covered, lines[-1]
+                    bars.setdefault(key, stamp)
             if rewritten:
                 # Lost bytes cannot prove the past interval. Future due minutes can
                 # use the new contiguous EOF baseline, not a lifetime gap taint.
-                self.covered_from_ns = observed_after_read
-            self.anchor = cursor_anchor(fd, covered)
-            if len(self.partial) > BOUND:
+                covered_from = observed_after_read
+            if len(lines[-1]) > BOUND:
                 raise ValueError("v2 partial line bound")
             cutoff = now_ns // 1_000_000 - 120_000
-            self.bars = {key: stamp for key, stamp in self.bars.items() if key[1] >= cutoff}
-            if len(self.bars) > 1024:
+            bars = {key: stamp for key, stamp in bars.items() if key[1] >= cutoff}
+            if len(bars) > 1024:
                 raise ValueError("v2 probe map bound")
+            anchor = cursor_anchor(fd, covered)
+            self.identity, self.offset, self.partial = identity, covered, lines[-1]
+            self.covered_from_ns, self.bars, self.anchor = covered_from, bars, anchor
+            self.truncations += int(rewritten)
         finally:
             os.close(fd)
 

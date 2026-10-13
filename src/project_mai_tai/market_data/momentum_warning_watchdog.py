@@ -11,7 +11,9 @@ import stat
 import time
 
 from project_mai_tai.momwarn_health_contract import proposed_health_v2
-from project_mai_tai.momwarn_log_cursor import cursor_anchor, cursor_rewritten
+from project_mai_tai.momwarn_log_cursor import (
+    LogReadRace, check_read_coverage, cursor_anchor, cursor_rewritten,
+)
 
 
 @dataclass(frozen=True)
@@ -130,6 +132,13 @@ class WarningHealthReader:
         return data
 
     async def read_live(self, client, prefix: str) -> WarningHealth:
+        # One budget for the entire sample, not one retry per file/source.
+        try:
+            return await self._read_live_once(client, prefix)
+        except LogReadRace:
+            return await self._read_live_once(client, prefix)
+
+    async def _read_live_once(self, client, prefix: str) -> WarningHealth:
         """Only configured sources use the existing A-owned Redis client.
 
         Legacy direct reads remain compatible for controlled component tests.
@@ -159,6 +168,7 @@ class WarningHealthReader:
             raise ValueError("health evidence exceeds bound")
         version = data.get("schema_version")
         not_applicable = False
+        evidence = self._last_oms_evidence
         if version == 2:
             provenance = data.get("v2_applicability_provenance", {})
             if not isinstance(provenance, dict):
@@ -176,7 +186,6 @@ class WarningHealthReader:
             prior = self._last_oms_evidence
             if prior and (evidence[0] != prior[0] or evidence[1] == prior[1] and evidence != prior):
                 raise ValueError("OMS instance/completion altered or restamped")
-            self._last_oms_evidence = evidence
         elif version != 1:
             raise ValueError("unknown warning health schema")
         for name in ("observed_wall_ns", "oms_sync_seq"):
@@ -189,20 +198,21 @@ class WarningHealthReader:
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError(f"missing/invalid measured {name}")
         new_error = False
+        logs, anchors, truncations = dict(self._logs), dict(self._log_anchors), dict(self._log_truncations)
         for name in self.LOG_NAMES:
             with self._open_regular(self.log_directory / name) as source:
                 info = os.fstat(source.fileno())
                 previous = self._logs.get(name)
                 if previous is None:
                     # Baseline before any A subscription, then examine every new byte.
-                    self._logs[name] = (info.st_ino, info.st_size, b"")
-                    self._log_anchors[name] = cursor_anchor(source.fileno(), info.st_size)
+                    logs[name] = (info.st_ino, info.st_size, b"")
+                    anchors[name] = cursor_anchor(source.fileno(), info.st_size)
                     continue
                 inode, offset, pending = previous
                 if info.st_ino != inode:
                     raise ValueError("live log replaced; evidence unknown")
                 if cursor_rewritten(source.fileno(), offset, self._log_anchors.get(name)):
-                    self._log_truncations[name] = self._log_truncations.get(name, 0) + 1
+                    truncations[name] = truncations.get(name, 0) + 1
                     offset, pending = 0, b""
                 if info.st_size - offset > self.MAX_LOG_BYTES:
                     raise ValueError("live log read bound exceeded; evidence unknown")
@@ -210,18 +220,22 @@ class WarningHealthReader:
                 chunk = source.read(self.MAX_LOG_BYTES + 1)
                 if len(chunk) > self.MAX_LOG_BYTES:
                     raise ValueError("live log read bound exceeded")
+                covered = offset + len(chunk)
+                check_read_coverage(source.fileno(), offset, covered, self.MAX_LOG_BYTES, name)
                 text = pending + chunk
                 if len(text) > self.MAX_LOG_BYTES:
                     raise ValueError("live log line bound exceeded")
                 new_error |= re.search(rb"\bERROR\b", text) is not None
                 tail = text.rsplit(b"\n", 1)[-1]
-                self._logs[name] = (inode, offset + len(chunk), tail)
-                self._log_anchors[name] = cursor_anchor(source.fileno(), offset + len(chunk))
+                logs[name] = (inode, covered, tail)
+                anchors[name] = cursor_anchor(source.fileno(), covered)
         with self._open_regular(Path("/proc/meminfo")) as source:
             memory = source.read(8192).decode("ascii")
         available = re.search(r"^MemAvailable:\s+(\d+) kB$", memory, re.MULTILINE)
         if available is None:
             raise ValueError("RAM evidence unavailable")
+        self._logs, self._log_anchors, self._log_truncations = logs, anchors, truncations
+        self._last_oms_evidence = evidence
         return WarningHealth(
             observed_wall_ns=data["observed_wall_ns"], oms_sync_seq=data["oms_sync_seq"],
             oms_sync_seconds=data["oms_sync_seconds"],
