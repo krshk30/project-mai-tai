@@ -9,6 +9,8 @@ import json
 from typing import Iterable, Mapping
 from zoneinfo import ZoneInfo
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 from project_mai_tai.events import MarketSnapshotPayload
 from project_mai_tai.market_data.tick_time import normalize_ts_ns
 from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
@@ -40,7 +42,7 @@ def is_warrant_like(symbol: str) -> bool:
 def symbol_is_eligible(symbol: str) -> bool:
     # Lowercase markers identify distinct share classes, not aliases of common tickers.
     return (
-        isinstance(symbol, str) and bool(symbol) and symbol == symbol.upper()
+        raw_symbol_is_uppercase(symbol)
         and symbol == symbol.strip() and "." not in symbol and len(symbol) <= 5
     )
 

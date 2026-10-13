@@ -151,7 +151,7 @@ async def test_default_OFF_normal_owners_accept_and_restore_stock_class_tickers(
     assert not settings.market_data_momentum_warning_enabled
     svc = MarketDataGatewayService(settings, redis, snapshot_provider=FakeSnapshotProvider(),
         trade_stream=provider, reference_cache=FakeReferenceCache())
-    await svc.apply_subscription_event(event("v2", [symbol.lower()]))
+    await svc.apply_subscription_event(event("v2", [symbol]))
     assert svc.active_symbols() == {symbol}
     assert set(provider._ws.added) == {f"T.{symbol}", f"Q.{symbol}"}
     assert WebSocketClient._parse_subscription(f"T.{symbol}") == ["T", symbol]

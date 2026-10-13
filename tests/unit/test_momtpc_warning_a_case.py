@@ -1,4 +1,4 @@
-"""Case filtering is warning-A-only; preserve legacy watched T/Q/A behavior."""
+"""W3 composes warning-A guards with approved broader C raw-case ingestion."""
 
 from types import SimpleNamespace
 
@@ -52,7 +52,7 @@ def test_common_A_shape_failure_still_trips_existing_gate(monkeypatch):
 
 
 @pytest.mark.parametrize('warning_used', [False, True])
-def test_legacy_watched_TQ_normalization_behavior_is_unchanged(warning_used):
+def test_approved_C_watched_TQ_drops_mixed_and_preserves_real_common(warning_used):
     provider = stream()
     provider._warning_wildcard_used = warning_used
     provider._warning_aggregates_enabled = warning_used
@@ -61,15 +61,20 @@ def test_legacy_watched_TQ_normalization_behavior_is_unchanged(warning_used):
     provider._on_trade, provider._on_quote = trades.append, quotes.append
     provider._handle_messages([SimpleNamespace(ev='T', symbol='TpC', price=15.73, size=1),
                               SimpleNamespace(ev='Q', symbol='TpC', bid_price=15.72, ask_price=15.74)])
+    assert not trades and not quotes
+    provider._handle_messages([SimpleNamespace(ev='T', symbol='TPC', price=82.77, size=1),
+                              SimpleNamespace(ev='Q', symbol='TPC', bid_price=82.76, ask_price=82.78)])
     assert len(trades) == len(quotes) == 1
     assert trades[0].symbol == quotes[0].symbol == 'TPC'
-    assert trades[0].price == 15.73 and quotes[0].ask_price == 15.74
+    assert trades[0].price == 82.77 and quotes[0].ask_price == 82.78
 
 
-def test_legacy_explicit_A_normalization_behavior_is_unchanged():
+def test_approved_C_explicit_A_drops_mixed_and_preserves_common():
     provider = stream()
     provider._subscriptions = {'TPC'}
     bars = []
     provider._on_agg = bars.append
     provider._handle_messages([aggregate(sym='TpC')])
+    assert not bars
+    provider._handle_messages([aggregate(sym='TPC')])
     assert len(bars) == 1 and bars[0].symbol == 'TPC'
