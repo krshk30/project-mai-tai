@@ -30,9 +30,9 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SchwabV2Strategy,
     SymbolState,
 )
+from tests.unit.resting_book_control import prove_primary_rest
 
 SEGMENT = 1787846400000
-from tests.unit.resting_book_control import prove_primary_rest
 
 
 def _strategy() -> tuple[SchwabV2Strategy, SymbolState]:

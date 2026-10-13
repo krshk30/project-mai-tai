@@ -25,6 +25,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     OHLCVBar,
     SchwabV2Strategy,
 )
+from tests.unit.resting_book_control import prove_primary_rest
 
 # (symbol, mirror resting_level, crossing px, emission UTC on 2026-08-31) — from the box log
 # lines whose legs FILLED as duplicates on live:orb, reconciled with broker_orders+fills.
@@ -37,7 +38,6 @@ CASES = [
 ]
 T0 = 1787846400000
 OBSERVED = "[V2-FANOUT-MIRROR-LIVE-CROSS]"
-from tests.unit.resting_book_control import prove_primary_rest
 
 
 def _strategy(symbol: str, level: float):
