@@ -9,6 +9,8 @@ import math
 from pathlib import Path
 import re
 
+from project_mai_tai.momwarn_cohort_lateness import CohortObservation, NS
+
 
 def require(condition, reason):
     if not condition:
@@ -19,7 +21,8 @@ def native_health(value, *, final_observed_ns, now):
     fields = {"observed_wall_ns", "oms_sync_seq", "oms_sync_seconds", "v2_bar_lateness_seconds",
               "load_1m", "ram_available_bytes", "new_live_error", "v2_not_applicable"}
     readiness = {"v2_startup_pending", "v2_startup_deadline_ns"}
-    require(isinstance(value, dict) and set(value) in (fields, fields | readiness),
+    require(isinstance(value, dict) and set(value) in (
+        fields, fields | readiness, fields | readiness | {"v2_cohort"}),
             "native health shape missing or changed")
     pending = value.get("v2_startup_pending", False)
     deadline = value.get("v2_startup_deadline_ns")
@@ -40,7 +43,16 @@ def native_health(value, *, final_observed_ns, now):
         require(type(number) in (int, float) and math.isfinite(number) and number >= 0,
                 "native numeric evidence malformed")
     late = value["v2_bar_lateness_seconds"]
-    require((late is None and (value["v2_not_applicable"] or pending))
+    cohort = value.get("v2_cohort")
+    if cohort is not None:
+        observation = CohortObservation.read(cohort)
+        require(observation.source == "strategy-state-isolated"
+                and observation.observed_ns == stamp
+                and value["v2_not_applicable"] is False and pending is False
+                and deadline is None
+                and late == (observation.lateness_ns / NS if observation.lateness_ns is not None else None),
+                "native CAL source, clock or readiness incoherent")
+    require((late is None and (value["v2_not_applicable"] or pending or cohort is not None))
             or (type(late) in (int, float) and math.isfinite(late) and late >= 0),
             "native bar observation malformed")
     # This verifies observations, not threshold health: real errors/slow reads remain visible.

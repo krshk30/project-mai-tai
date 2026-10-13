@@ -10,6 +10,7 @@ from project_mai_tai.momwarn_cohort_lateness import (
     POLICY, first_eligible_bar_ns, replay_events,
 )
 from project_mai_tai.momwarn_live_health import LiveWarningHealthSource
+from project_mai_tai.momwarn_health_contract import proposed_health_v2
 from project_mai_tai.market_data.momentum_warning_watchdog import WarningWatchdog
 from tests.unit.test_momwarn1_live_health import setup as setup, NOW, line
 from tests.unit.test_momwarn1_d2_startup import advance
@@ -182,6 +183,32 @@ async def test_cal_does_not_change_d2_startup_readiness_timeout(setup):
     advance(env, deadline+NS)
     health = await env.reader.read_live(env.client, "test")
     assert WarningWatchdog().check(health, publish_lag_seconds=0) == "v2_startup_timeout"
+
+
+@pytest.mark.asyncio
+async def test_offline_cohort_is_valid_only_for_replay_never_native_live_receipt(setup):
+    env = cal_env(setup)
+    live = env.source.read(env.state())
+    offline = dict(live, v2_cohort=dict(live["v2_cohort"], source="retained_watchlist_log"))
+    # Pure policy/replay accepts retained log evidence but the LIVE adapters do not.
+    assert CohortObservation.read(offline["v2_cohort"]).source == "retained_watchlist_log"
+    with pytest.raises(ValueError, match="current source/watchlist"):
+        proposed_health_v2(offline, now_ns=env.clock.ns)
+    health = await env.reader.read_live(env.client, "test")
+    assert WarningWatchdog().check(replace(health, v2_cohort=offline["v2_cohort"]),
+                                   publish_lag_seconds=0) == "monitor_invalid"
+
+
+@pytest.mark.asyncio
+async def test_actual_local_native_read_serializes_through_cal_f3_adapter_without_health_claim(setup):
+    from dataclasses import asdict
+    from tests.unit.test_momwarn1_install_receipt_adapter import adapter
+
+    env = cal_env(setup)
+    health = await env.reader.read_live(env.client, "test")
+    assert health.v2_cohort["status"] == "INCOMPLETE" and health.v2_bar_lateness_seconds is None
+    now = datetime.fromtimestamp(env.clock.ns / NS, UTC)
+    assert adapter.native_health(asdict(health), final_observed_ns=env.clock.ns, now=now) == env.clock.ns
 
 
 @pytest.mark.asyncio

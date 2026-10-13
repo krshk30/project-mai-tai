@@ -1,12 +1,16 @@
 """Controlled receipts only; no actual box or live-health claim."""
 
 from copy import deepcopy
+from dataclasses import asdict
 from datetime import UTC, datetime
 import importlib.util
 import json
 from pathlib import Path
 
 import pytest
+
+from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealth
+from project_mai_tai.momwarn_cohort_lateness import CohortObservation, MINUTE_NS, NS
 
 PATH = Path(__file__).parents[2] / "ops/health/momwarn1_repair/receipt_adapter.py"
 SPEC = importlib.util.spec_from_file_location("momwarn_receipt_adapter", PATH)
@@ -62,6 +66,78 @@ def test_native_d2_fields_preserve_reader_only_scope(fixture, pending):
     result = adapter.f3_receipt(json.dumps(row).encode(), **expectations)
     assert result["status"] == "PASS"
     assert result["health_verdict"] == "NOT_EVALUATED_NO_GATEWAY_PUBLISH_LAG"
+
+
+@pytest.mark.parametrize("mode", ["not_applicable", "startup", "legacy_applicable"])
+def test_exact_new_dataclass_with_none_cohort_preserves_existing_native_modes(fixture, mode):
+    row, expectations = fixture
+    for attempt in row["attempts"]:
+        health = dict(attempt["health"], v2_startup_pending=mode == "startup",
+                      v2_startup_deadline_ns=row["observed_ns"] + 60 * NS if mode == "startup" else None,
+                      v2_not_applicable=mode == "not_applicable",
+                      v2_bar_lateness_seconds=2 if mode == "legacy_applicable" else None)
+        attempt["health"] = asdict(WarningHealth(**health))
+        assert len(attempt["health"]) == 11 and attempt["health"]["v2_cohort"] is None
+    result = adapter.f3_receipt(json.dumps(row).encode(), **expectations)
+    assert result["status"] == "PASS"
+    assert result["health_verdict"] == "NOT_EVALUATED_NO_GATEWAY_PUBLISH_LAG"
+
+
+def cal_health(value, status):
+    stamp = value["observed_wall_ns"]
+    due = stamp // MINUTE_NS * MINUTE_NS
+    eligible = ("AAA",) if status != "EXCLUDED" else ()
+    observation = CohortObservation(due, stamp, "strategy-state-isolated", True,
+        eligible, ("AAA",) if status == "EXCLUDED" else (),
+        eligible if status == "INCOMPLETE" else (),
+        (("AAA", due + NS),) if status == "COMPLETE" else (), "controlled_native_schema")
+    value.update(v2_cohort=observation.payload(), v2_not_applicable=False,
+                 v2_startup_pending=False, v2_startup_deadline_ns=None,
+                 v2_bar_lateness_seconds=observation.lateness_ns / NS if status == "COMPLETE" else None)
+    return value
+
+
+@pytest.mark.parametrize("status", ["COMPLETE", "INCOMPLETE", "EXCLUDED"])
+def test_cal_exact_native_shape_does_not_claim_gateway_health_or_zero_missingness(fixture, status):
+    row, expectations = fixture
+    # Mid-minute clocks leave room for real completion evidence in the schema control.
+    for attempt in row["attempts"]:
+        attempt["health"]["observed_wall_ns"] -= 20 * NS
+        cal_health(attempt["health"], status)
+    result = adapter.f3_receipt(json.dumps(row).encode(), **expectations)
+    assert result["status"] == "PASS"
+    assert result["health_verdict"] == "NOT_EVALUATED_NO_GATEWAY_PUBLISH_LAG"
+    if status != "COMPLETE":
+        assert row["attempts"][0]["health"]["v2_bar_lateness_seconds"] is None
+
+
+@pytest.mark.parametrize("fault", ["offline", "clock", "pending", "not_applicable", "invented_zero",
+                                  "extra_field", "missing_readiness", "malformed", "future"])
+def test_cal_native_adapter_refuses_incoherent_or_offline_receipts(fixture, fault):
+    row, expectations = fixture
+    health = row["attempts"][0]["health"]
+    health["observed_wall_ns"] -= 20 * NS
+    cal_health(health, "INCOMPLETE")
+    if fault == "offline":
+        health["v2_cohort"]["source"] = "retained_watchlist_log"
+    elif fault == "clock":
+        health["v2_cohort"]["observed_ns"] -= NS
+    elif fault == "pending":
+        health.update(v2_startup_pending=True, v2_startup_deadline_ns=row["observed_ns"] + NS)
+    elif fault == "not_applicable":
+        health["v2_not_applicable"] = True
+    elif fault == "invented_zero":
+        health["v2_bar_lateness_seconds"] = 0
+    elif fault == "extra_field":
+        health["assumed_healthy"] = True
+    elif fault == "missing_readiness":
+        health.pop("v2_startup_pending")
+    elif fault == "malformed":
+        health["v2_cohort"] = {}
+    else:
+        health["v2_cohort"]["due_ns"] += MINUTE_NS
+    with pytest.raises(ValueError):
+        adapter.f3_receipt(json.dumps(row).encode(), **expectations)
 
 
 @pytest.mark.parametrize("change", [
