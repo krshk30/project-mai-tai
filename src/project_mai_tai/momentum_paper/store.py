@@ -25,7 +25,9 @@ class MomentumPaperStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 
-    def append_many(self, records: Iterable[MomentumTapeRecord]) -> int:
+    def append_many(self, records: Iterable[MomentumTapeRecord], *, session: Session | None = None) -> int:
+        if session is not None:
+            return self._append_many_in_transaction(session, records)
         pending = list({record.event_key: record for record in records}.values())
         if not pending:
             return 0
@@ -55,6 +57,19 @@ class MomentumPaperStore:
                 ]
             )
             session.commit()
+        return len(new_records)
+
+    def _append_many_in_transaction(self, session: Session, records: Iterable[MomentumTapeRecord]) -> int:
+        """Normal append shape without committing the caller's guarded transaction."""
+        pending = list({record.event_key: record for record in records}.values())
+        if not pending:
+            return 0
+        existing = set(session.scalars(select(MomentumPaperEvent.event_key).where(
+            MomentumPaperEvent.event_key.in_([record.event_key for record in pending]))).all())
+        new_records = [record for record in pending if record.event_key not in existing]
+        session.add_all([MomentumPaperEvent(event_key=r.event_key, logical_id=r.logical_id,
+            strategy_code=r.strategy_code, event_type=r.event_type, session_date=r.session_date,
+            symbol=r.symbol, observed_at=r.observed_at, payload=dict(r.payload)) for r in new_records])
         return len(new_records)
 
     def load_session(
