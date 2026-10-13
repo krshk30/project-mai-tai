@@ -45,7 +45,8 @@ async def _measure_phase(templates, amount, *, with_A):
     svc, provider, redis, warning_redis = service()  # Actual approved default A queue8192.
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
-    await svc._warning_monitor_once()
+    for _ in range(3):
+        await svc._warning_monitor_once()
     assert svc._warning_active and svc._warning_queue.maxsize == 8192
     assert amount <= svc._warning_queue.maxsize
     provider._on_trade = svc._enqueue_trade

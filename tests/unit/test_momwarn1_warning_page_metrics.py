@@ -152,7 +152,8 @@ async def test_actual_gateway_overflow_counter_through_page_preserves_snapshot(m
     monkeypatch.setattr(gateway, "datetime", clock)
     monkeypatch.setattr(massive_provider, "datetime", clock)
     svc, provider, _, _ = service(market_data_momentum_warning_queue_maxsize=2)
-    await svc._warning_monitor_once()
+    for _ in range(3):
+        await svc._warning_monitor_once()
     for _ in range(5):
         provider._handle_messages([aggregate()])
     produced = svc.warning_metrics()
