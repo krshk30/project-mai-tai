@@ -19,6 +19,7 @@ from project_mai_tai.db.models import (
     Fill,
     OmsManagedPosition,
     Strategy,
+    SystemIncident,
     TradeIntent,
     VirtualPosition,
 )
@@ -79,6 +80,12 @@ class RemovedWaitClear:
     retirements: tuple[tuple[str, dict], ...]
     memory_fence: tuple
     validate: Callable[[], bool] | None = field(default=None, compare=False, repr=False)
+
+
+def request_only_retirement(proof: RemovedWaitProof) -> bool:
+    """End removal bookkeeping without granting an unfilled/owner-clear permission."""
+    return (not proof.clear and proof.reason == "own_fill_stays_owned"
+            and proof.request.purpose == "scanner_removal")
 
 
 
@@ -597,6 +604,23 @@ class RemovedWaitStore:
     def record_dispatch(self, payload: dict) -> None:
         with self.session_factory() as session:
             session.add(DashboardSnapshot(snapshot_type=DISPATCH_SNAPSHOT_TYPE, payload=payload))
+            session.commit()
+
+    def record_clear_failure(self, request: RemovedWait, attempts: int, error_class: str) -> None:
+        with self.session_factory() as session:
+            if session.bind.dialect.name == "postgresql":
+                session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                session.execute(text("SET LOCAL statement_timeout = '2s'"))
+            title = f"RWLOOP1 removal request retirement failed: {request.symbol} {request.token}"
+            incident = session.scalar(select(SystemIncident).where(SystemIncident.title == title))
+            payload = {"source": "RWLOOP1", "symbol": request.symbol, "request_token": request.token,
+                       "opportunity_id": request.opportunity_id, "attempts": attempts,
+                       "max_attempts": 5, "error_class": error_class[:80], "owner_kept": True}
+            if incident is None:
+                session.add(SystemIncident(service_name="schwab-1m-v2", severity="warning", status="open",
+                                           title=title, payload=payload))
+            else:
+                incident.payload = payload
             session.commit()
 
     def record(self, request: RemovedWait, active: bool) -> None:

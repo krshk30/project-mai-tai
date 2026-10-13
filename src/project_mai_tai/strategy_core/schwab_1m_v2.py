@@ -58,7 +58,7 @@ from project_mai_tai.v2_flip_entry_ownership import (
     FlipPositionBook,
     FlipPositionLeg,
 )
-from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitClear, RemovedWaitProof, RemovalPersist
+from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitClear, RemovedWaitProof, RemovalPersist, request_only_retirement
 from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.falseflip1 import Classification, false_episode_proven_closed
 from project_mai_tai.falseflip1_runtime import FalseBudget
@@ -1350,7 +1350,9 @@ class SchwabV2Strategy:
     ) -> bool:
         """Pure staging/ack API. Bars may call this, but never perform a clear write."""
         request = proof.request
-        if not proof.clear:
+        if not proof.clear and not (self._removed_wait_clear_rules_enabled and request_only_retirement(proof)):
+            return False
+        if request_only_retirement(proof) and retire_owner:
             return False
         retirements = ()
         state = self._symbol_states.get(request.symbol)
@@ -1447,6 +1449,11 @@ class SchwabV2Strategy:
             if (self._removed_wait_enabled and proof.reason == "own_fill_stays_owned"
                     and not proof.clear and self._removed_wait_requests.get(request.symbol) == request
                     and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+                if self._removed_wait_clear_rules_enabled:
+                    committed = self.__dict__.get("_removed_wait_committed_clears", {}).get(request)
+                    if (committed is None or not self.removed_wait_clear_valid(committed)
+                            or committed.retirements):
+                        continue  # The poll commits a request-only plan; bars never write it.
                 try:
                     self._removed_wait_clear_receipt(request)
                 except Exception:  # noqa: BLE001

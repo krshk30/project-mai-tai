@@ -140,7 +140,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     TradeIntentDraft,
     session_start_ts_ms,
 )
-from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitStore
+from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitStore, request_only_retirement
 
 logger = logging.getLogger(__name__)
 
@@ -910,8 +910,17 @@ class SchwabV2BotService:
                 else:
                     self.strategy.retry_superseded_removed_wait(proof.request)
             proofs = tuple(fresh)
+            failures = self.__dict__.setdefault("_rwloop1_failures", {})
+            active = set(self.strategy._removed_wait_requests.values())
+            for request in tuple(failures):
+                if request not in active:
+                    failures.pop(request)
             for proof in proofs:
-                if not proof.clear:
+                if not proof.clear and not request_only_retirement(proof):
+                    continue
+                failure = failures.get(proof.request)
+                if request_only_retirement(proof) and failure and (
+                        failure["attempts"] >= 5 or self.strategy._now_ms() < failure["next_ms"]):
                     continue
                 pending = self.strategy.__dict__.get("_removed_wait_pending_clears", {}).get(proof.request)
                 committed = self.strategy.__dict__.get("_removed_wait_committed_clears", {}).get(proof.request)
@@ -939,12 +948,27 @@ class SchwabV2BotService:
                     await asyncio.to_thread(store.commit_clear, plan, valid)
                     if valid():
                         self.strategy.__dict__.setdefault("_removed_wait_committed_clears", {})[request] = plan
+                        failures.pop(request, None)
                     else:
                         # A committed but superseded acknowledgement must never authorize entry.
                         self.strategy.retry_superseded_removed_wait(request)
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     if not valid():
                         self.strategy.retry_superseded_removed_wait(request)
+                    elif request_only_retirement(plan.proof):
+                        failure = failures.setdefault(request, {"attempts": 0, "next_ms": 0})
+                        failure["attempts"] += 1
+                        delay_ms = min(300000, 15000 * 2 ** (failure["attempts"] - 1))
+                        failure["next_ms"] = self.strategy._now_ms() + delay_ms
+                        if failure["attempts"] == 1:
+                            logger.warning("[RWLOOP1] %s reason=request_only_commit_failed "
+                                           "error_class=%s retry_backoff=1 max_attempts=5 owner_kept=1",
+                                           request.symbol, type(exc).__name__)
+                        try:
+                            await asyncio.to_thread(store.record_clear_failure, request,
+                                                    failure["attempts"], type(exc).__name__)
+                        except Exception:  # noqa: BLE001 - DB unavailable; warning is retained, no log storm
+                            pass
                     else:
                         logger.exception("[V2-REMOVED-WAIT] %s reason=offloop_clear_failed", request.symbol)
                 finally:
