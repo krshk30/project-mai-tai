@@ -49,3 +49,9 @@ PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m py
 ```
 
 Actual F3 is still NOT RUN: main-only after F2 actual after-close permissions/copy-rotation proof, target weekday16:30-19:00 ET before midnight, current service user/environment, two native reads without clock override, before gateway restart. Read success is not healthy. Main owns exact final composition broad/original60s3/3, then reviewed install/restart/guard rebaseline/dry-run/postcheck. This packet confers no production authority.
+
+## Pre-install Caller Compatibility Follow-up
+
+The full current05:2x ruling explicitly orders F2, then F3, then final composition qualification/install. Therefore the caller may be staged readably OUTSIDE the unchanged actual H74 checkout and run against that installed native source; it must NOT require the future composition HEAD or a pre-proof code checkout. Pass the current independently reviewed installed HEAD in `--expected-head` (H74 if still installed), and retain actual native WarningHealthReader/LiveWarningHealthSource file hashes emitted by the caller. This supersedes the old F3 packet's ambiguous requirement to stage final composed source before its proof; no early code installation is authorized.
+
+The installed reader lacks new `log_observability`; caller now reports `UNKNOWN_NOT_INSTRUMENTED` and `copytruncate_counts=null` for that optional instrument, never invented zero. Two actual native reads and file readability remain the required proof, healthy remains unevaluated. An extra controlled compatibility test brings final selected controls to200, with unchanged health/truncation rules. Actual H74 two-read box proof is still pending and must not be inferred from this interface control.

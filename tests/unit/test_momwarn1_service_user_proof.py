@@ -126,6 +126,20 @@ async def test_readable_files_with_unknown_health_do_not_pass(setup, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_installed_reader_without_new_observability_is_unknown_not_zero(setup, monkeypatch):
+    env = setup()
+    permission_mapping(monkeypatch, env)
+    installed_interface = SimpleNamespace(health_path=env.reader.health_path,
+        log_directory=env.reader.log_directory, LOG_NAMES=env.reader.LOG_NAMES,
+        read_live=env.reader.read_live)
+    result = await proof.prove(installed_interface, env.client, "test", env.cfg, 1)
+    assert result["status"] == "READ_LIVE_2_OK"
+    assert result["log_observability"] == {
+        "coverage_status": "UNKNOWN_NOT_INSTRUMENTED", "copytruncate_counts": None}
+    assert env.client.xrevrange.call_count == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("pid", [0, True, "../secret"])
 async def test_malformed_pid_cannot_broaden_file_reads(monkeypatch, pid):
     receipt = Mock(side_effect=AssertionError("no path reads"))

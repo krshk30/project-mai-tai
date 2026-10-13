@@ -11,6 +11,7 @@ import asyncio
 from dataclasses import asdict
 import grp
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -133,9 +134,11 @@ async def prove(reader, client, prefix: str, config: dict, timeout: float) -> di
             await asyncio.sleep(1)
     passed = all(row["read_status"] == "OK" for row in attempts) and all(
         row["readable"] for row in permissions)
+    observability = getattr(reader, "log_observability", None)
     return {"status": "READ_LIVE_2_OK" if passed else "UNKNOWN",
             "permissions": permissions, "attempts": attempts,
-            "log_observability": reader.log_observability(),
+            "log_observability": observability() if observability is not None else {
+                "coverage_status": "UNKNOWN_NOT_INSTRUMENTED", "copytruncate_counts": None},
             "health_verdict": "NOT_EVALUATED_NO_GATEWAY_PUBLISH_LAG",
             "redis_scope": "XREVRANGE strategy-state-isolated count32 only; loopback"}
 
@@ -144,6 +147,7 @@ async def run(args) -> dict:
     identity = adopt_service_environment(args.repository, args.expected_head)
     from redis.asyncio import Redis
     from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealthReader
+    from project_mai_tai.momwarn_live_health import LiveWarningHealthSource
     from project_mai_tai.settings import Settings
 
     settings = Settings(_env_file=None)
@@ -167,6 +171,14 @@ async def run(args) -> dict:
         result["identity_changed"] = True
     result.update(identity=identity, observed_ns=time.time_ns(),
                   caller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
+    result["native_sources"] = []
+    for source_class in (WarningHealthReader, LiveWarningHealthSource):
+        path = Path(inspect.getfile(source_class))
+        with path.open("rb") as source:
+            raw = source.read(262145)
+        if len(raw) > 262144:
+            raise ValueError("native source hash bound")
+        result["native_sources"].append({"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()})
     return result
 
 
