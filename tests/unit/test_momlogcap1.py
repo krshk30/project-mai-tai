@@ -9,6 +9,7 @@ from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealthR
 from tests.unit.test_momwarn1_gateway import health_reader as reader_fixture
 
 health_reader = reader_fixture
+ACTUAL_PREFIX = Path("/Users/velkris/.codex/task-queues/analysis/momwarn1-wed-no-warnings-20261014/v2-log-prefix-0525.txt")
 
 
 def catch_up(reader, policy, *, limit=12):
@@ -28,15 +29,17 @@ def catch_up(reader, policy, *, limit=12):
     assert policy.state == "active"
 
 
-def burst_control(reader, directory):
+def burst_control(reader, directory, *, size=None):
     reader.read()
     policy = WarningPausePolicy()
     for _ in range(3):
         policy.clean()
     path = directory / "strategy.log"
     before = reader._logs[path.name][1]
+    if size is None:
+        size = reader.MAX_LOG_PASS_BYTES + 402 * 1024
     with path.open("ab") as stream:
-        stream.write(b"INFO replay\n" * (402 * 1024 // 12))
+        stream.write(b"INFO replay\n" * (size // 12))
     with pytest.raises(ValueError, match="catch-up incomplete"):
         reader.read()
     policy.trip("monitor_unreadable")
@@ -49,9 +52,68 @@ def burst_control(reader, directory):
     assert reader._logs[path.name][1] == path.stat().st_size
 
 
-def test_402kb_pause_then_three_clean_resume(health_reader):
+def test_over_budget_pause_then_three_clean_resume(health_reader):
     reader, _, directory = health_reader
     burst_control(reader, directory)
+
+
+def test_historical_256kb_budget_402kb_pause_then_three_clean_resume(health_reader, monkeypatch):
+    reader, _, directory = health_reader
+    monkeypatch.setattr(reader, "MAX_LOG_PASS_BYTES", 4 * reader.MAX_LOG_BYTES)
+    burst_control(reader, directory, size=402 * 1024)
+
+
+@pytest.mark.parametrize("size", [402 * 1024, 982809, 1024 * 1024, 2 * 1024 * 1024])
+def test_observed_burst_sizes_clear_one_pass_without_pause(health_reader, size):
+    reader, _, directory = health_reader
+    reader.read()
+    policy = WarningPausePolicy()
+    for _ in range(3):
+        policy.clean()
+    path = directory / "schwab-1m-v2.log"
+    with path.open("ab") as stream:
+        stream.write(b"INFO replay\n" * (size // 12) + b" " * (size % 12))
+    assert not reader.read().new_live_error
+    policy.clean()
+    assert policy.state == "active" and policy.wire_pause_count == 0
+    assert reader._logs[path.name][1] == path.stat().st_size
+
+
+def test_real_19mb_copy_cursor_1mb_behind_catches_up_one_pass(health_reader):
+    import hashlib
+    from project_mai_tai.momwarn_log_cursor import cursor_anchor
+
+    raw = ACTUAL_PREFIX.read_bytes()
+    assert len(raw) == 19022548
+    assert hashlib.sha256(raw).hexdigest() == "6cbecdd9ec5c47e43ef0702f5aea1d63bcded0d110ba8b7432b340095ba5bd59"
+    reader, _, directory = health_reader
+    path = directory / "schwab-1m-v2.log"
+    path.write_bytes(raw)
+    reader.read()
+    offset = len(raw) - 1024 * 1024
+    with path.open("rb") as stream:
+        reader._log_anchors[path.name] = cursor_anchor(stream.fileno(), offset)
+    reader._logs[path.name] = (path.stat().st_ino, offset, b"")
+    assert not reader.read().new_live_error
+    assert reader._logs[path.name][1] == len(raw)
+
+
+def test_actual_GRML_090720_lines_clear_without_pause(health_reader):
+    raw = b"".join(line for line in ACTUAL_PREFIX.read_bytes().splitlines(keepends=True)
+                   if line.startswith(b"2026-10-14 09:07:20,"))
+    assert 350000 <= len(raw) <= 500000
+    reader, _, directory = health_reader
+    reader.read()
+    policy = WarningPausePolicy()
+    for _ in range(3):
+        policy.clean()
+    path = directory / "schwab-1m-v2.log"
+    with path.open("ab") as stream:
+        stream.write(raw)
+    assert not reader.read().new_live_error
+    policy.clean()
+    assert policy.state == "active" and policy.wire_pause_count == 0
+    assert reader._logs[path.name][1] == path.stat().st_size
 
 
 def test_old_64kb_plus_one_and_huge_line_converge(health_reader):
@@ -133,7 +195,7 @@ def test_raise_without_advance_mutation_kills_positive_control(health_reader, mo
         burst_control(reader, directory)
 
 
-@pytest.mark.parametrize("position", [10, 65533, 262141, 350000])
+@pytest.mark.parametrize("position", [10, 65533, 262141, 350000, 2097149])
 def test_error_inside_burst_and_chunk_or_pass_split_stays_sticky(health_reader, position):
     reader, _, directory = health_reader
     reader.retain_cancelled_harm = True
@@ -201,7 +263,7 @@ def timing_helper(prefix):
     assert len(raw) == 19022548
     assert hashlib.sha256(raw).hexdigest() == "6cbecdd9ec5c47e43ef0702f5aea1d63bcded0d110ba8b7432b340095ba5bd59"
     rows = []
-    for size in (1024 * 1024, len(raw)):
+    for size in (402 * 1024, 982809, 1024 * 1024, 2 * 1024 * 1024, len(raw)):
         with tempfile.TemporaryDirectory(prefix="momlogcap1-offline-") as temporary:
             directory = Path(temporary)
             reader = WarningHealthReader("unused", temporary)
@@ -224,8 +286,30 @@ def timing_helper(prefix):
                 if complete:
                     break
             assert complete and offset == size
-            rows.append(dict(bytes=size, passes=passes, max_pass_seconds=max(p["seconds"] for p in passes),
+            rows.append(dict(bytes=size, budget=reader.MAX_LOG_PASS_BYTES, passes=passes,
+                             max_pass_seconds=max(p["seconds"] for p in passes),
                              scanner_only=True, full_live_read_qualification=False))
+    with tempfile.TemporaryDirectory(prefix="momlogcap1-tail-offline-") as temporary:
+        directory = Path(temporary)
+        reader = WarningHealthReader("unused", temporary)
+        for name in reader.LOG_NAMES:
+            (directory / name).touch()
+        path = directory / "schwab-1m-v2.log"
+        path.write_bytes(raw)
+        reader._scan_live_logs()
+        from project_mai_tai.momwarn_log_cursor import cursor_anchor
+        offset = len(raw) - 1024 * 1024
+        with path.open("rb") as stream:
+            reader._log_anchors[path.name] = cursor_anchor(stream.fileno(), offset)
+        reader._logs[path.name] = (path.stat().st_ino, offset, b"")
+        started = time.perf_counter()
+        error = reader._scan_live_logs()
+        elapsed = time.perf_counter() - started
+        assert reader._logs[path.name][1] == len(raw)
+        rows.append(dict(scenario="real_19mb_cursor_1mb_behind", bytes=1024 * 1024,
+                         budget=reader.MAX_LOG_PASS_BYTES, passes=1, seconds=elapsed,
+                         final_offset=len(raw), error=error, scanner_only=True,
+                         full_live_read_qualification=False))
     print(json.dumps(rows, indent=2))
 
 

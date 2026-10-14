@@ -151,7 +151,8 @@ class WarningHealthReader:
 
     MAX_HEALTH_BYTES = 8192
     MAX_LOG_BYTES = 65536
-    MAX_LOG_PASS_BYTES = 4 * MAX_LOG_BYTES
+    # Offline retained-log scan: 2 MiB / 23 ms; >2x the 982,809-byte peak second.
+    MAX_LOG_PASS_BYTES = 32 * MAX_LOG_BYTES
     LOG_NAMES = ("oms.log", "strategy.log", "schwab-1m-v2.log", "orb-schwab.log")
 
     def __init__(self, health_path: str, log_directory: str):
