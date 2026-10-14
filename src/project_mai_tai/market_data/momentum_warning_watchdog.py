@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
 import json
 import math
 import os
@@ -26,7 +25,7 @@ class WarningHealth:
     v2_bar_lateness_seconds: float | None
     load_1m: float
     ram_available_bytes: int
-    new_live_error: bool = False
+    new_live_error: bool = False  # Other-service observation only, never an A trip.
     v2_not_applicable: bool = False
     v2_startup_pending: bool = False
     v2_startup_deadline_ns: int | None = None
@@ -58,8 +57,6 @@ class WarningWatchdog:
             self.reason = "load"
         elif health.ram_available_bytes < 3 * 1024**3:
             self.reason = "ram"
-        elif health.new_live_error:
-            self.reason = "live_error"
         reason = self.check(health, publish_lag_seconds=0)
         if self._cohort.streak >= 2:
             self.reason = "v2_cohort_late_twice"
@@ -123,8 +120,6 @@ class WarningWatchdog:
             self.reason = "load"
         elif health.ram_available_bytes < 3 * 1024**3:
             self.reason = "ram"
-        elif health.new_live_error:
-            self.reason = "live_error"
         elif self._last_sync_seq is not None and health.oms_sync_seq < self._last_sync_seq:
             self.reason = "monitor_sync_regressed"
         elif self._last_sync_seq is not None and health.oms_sync_seq > self._last_sync_seq + 1:
@@ -168,6 +163,10 @@ class WarningHealthReader:
         self._pending_live_error = False
         self._long_log_lines: set[str] = set()
         self._log_scan_start = 0
+        self._error_lines_by_log = dict.fromkeys(self.LOG_NAMES, 0)
+        self._traceback_lines_by_log = dict.fromkeys(self.LOG_NAMES, 0)
+        self._log_line_observations: dict[str, tuple[bool, bool, str | None]] = {}
+        self._last_error_tag: str | None = None
 
     def bind_gateway_start(self, instance_id: str, started_ns: int) -> None:
         if (self._gateway_startup is not None or not isinstance(instance_id, str)
@@ -185,6 +184,7 @@ class WarningHealthReader:
         self._log_anchors.clear()
         self._long_log_lines.clear()
         self._log_scan_start = 0
+        self._log_line_observations.clear()
         if self._gateway_startup is not None:
             self._gateway_startup.update(baseline_ns=time.time_ns(), activation_ns=None,
                                          empty_seen=False, ready=None)
@@ -222,47 +222,38 @@ class WarningHealthReader:
         return data
 
     def _has_live_error(self, name: str, text: bytes) -> bool:
-        errors = [line for line in text.splitlines(keepends=True)
-                  if re.search(rb"\bERROR\b", line)]
-        if not errors:
-            return False
-        if name != "schwab-1m-v2.log" or self._source is None:
-            return True
-        pattern = (
-            rb"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d{3}) ERROR "
-            rb"project_mai_tai\.services\.schwab_1m_v2_bot \| "
-            rb"\[V2-CONFIRMATION-EXIT-UNANSWERABLE\] [^\r\n]* "
-            rb"reason=line_unproven\r?\n"
-        )
-        matches = [re.fullmatch(pattern, line) for line in errors]
-        if any(match is None or len(re.findall(rb"\bERROR\b", line)) != 1
-               for line, match in zip(errors, matches, strict=True)):
-            return True
-        # Only this closed-fill boot diagnostic is exempt. Identity, timestamp,
-        # incomplete lines and every other error remain fail-closed.
-        self._source._check_v2_process()
-        proc = self._source.proc
-        with self._open_regular(proc / str(self._source.config["v2_pid"]) / "stat") as stream:
-            raw = stream.read(8193)
-        if len(raw) > 8192:
-            return True
-        fields = raw.decode().rsplit(")", 1)[1].split()
-        with self._open_regular(proc / "stat") as stream:
-            raw_boot = stream.read(65537)
-        boot = re.search(rb"^btime (\d+)$", raw_boot, re.MULTILINE)
-        if boot is None or len(raw_boot) > 65536:
-            return True
-        started_ns = int(boot[1]) * 1_000_000_000 + int(fields[19]) * 1_000_000_000 // os.sysconf("SC_CLK_TCK")
-        for match in matches:
-            try:
-                stamp = datetime.strptime(match[1].decode(), "%Y-%m-%d %H:%M:%S").replace(
-                    tzinfo=self._source.zone)
-            except ValueError:
-                return True
-            stamp_ns = int(stamp.timestamp()) * 1_000_000_000 + int(match[2]) * 1_000_000
-            if not started_ns <= stamp_ns <= min(started_ns + 60_000_000_000, time.time_ns()):
-                return True
-        return False
+        # Other services' log ERRORs are observations, never A-impact decisions.
+        del name
+        return bool(re.search(rb"\bERROR\b", text))
+
+    def error_observations(self) -> dict:
+        # Cumulative for this reader instance, including across window rebaselines.
+        return {"error_lines_by_log": dict(self._error_lines_by_log),
+                "traceback_lines_by_log": dict(self._traceback_lines_by_log),
+                "last_error_tag": self._last_error_tag}
+
+    @staticmethod
+    def _observe_log_lines(text: bytes, state: tuple[bool, bool, str | None]):
+        error_seen, trace_seen, tag = state
+        errors = traces = 0
+        last_tag = None
+        for part in text.splitlines(keepends=True):
+            if tag is None:
+                found = re.search(rb"\[([A-Z][A-Z0-9_-]{1,95})\]", part)
+                if found:
+                    tag = found[1].decode("ascii")
+            # Wait for a right-boundary byte when ERROR ends an unfinished chunk.
+            known_error = any(match.end() < len(part) for match in re.finditer(rb"\bERROR\b", part))
+            if known_error and not error_seen:
+                errors += 1
+                error_seen = True
+                last_tag = tag or "UNTAGGED"
+            if b"Traceback (most recent call last):" in part and not trace_seen:
+                traces += 1
+                trace_seen = True
+            if part.endswith(b"\n"):
+                error_seen, trace_seen, tag = False, False, None
+        return (error_seen, trace_seen, tag), errors, traces, last_tag
 
     async def read_live(self, client, prefix: str) -> WarningHealth:
         # One budget for the entire sample, not one retry per file/source.
@@ -388,6 +379,7 @@ class WarningHealthReader:
                     self._log_truncations[name] = self._log_truncations.get(name, 0) + 1
                     offset, pending = 0, b""
                     self._long_log_lines.discard(name)
+                    self._log_line_observations.pop(name, None)
                 source.seek(offset)
                 while budget:
                     requested = min(self.MAX_LOG_BYTES, budget, max(0, info.st_size - offset))
@@ -396,13 +388,15 @@ class WarningHealthReader:
                         cursor_anchor(source.fileno(), offset + requested)
                         raise ValueError("live log short read; evidence unknown")
                     text = pending + chunk
+                    observation, error_count, traceback_count, last_tag = self._observe_log_lines(
+                        text, self._log_line_observations.get(name, (False, False, None)))
                     long_line = name in self._long_log_lines
                     for part in text.splitlines(keepends=True):
                         oversized = long_line or len(part) > self.MAX_LOG_BYTES
                         found_error = self._has_live_error("" if oversized else name, part)
                         new_error |= found_error
                         if found_error:
-                            # Retain harm even if this pass/caller never receives a result.
+                            # Retain the observation even if this caller misses the result.
                             self._pending_live_error = True
                         if part.endswith(b"\n"):
                             long_line = False
@@ -411,8 +405,8 @@ class WarningHealthReader:
                     tail = text.rsplit(b"\n", 1)[-1]
                     if long_line or len(tail) > self.MAX_LOG_BYTES:
                         long_line = True
-                        # ERROR plus its left word-boundary byte crosses any chunk.
-                        tail = tail[-6:]
+                        # Preserve ERROR and Traceback tokens across oversized-line chunks.
+                        tail = tail[-64:]
                     covered = offset + len(chunk)
                     after_size = os.fstat(source.fileno()).st_size
                     check_read_coverage(source.fileno(), offset, covered,
@@ -421,6 +415,11 @@ class WarningHealthReader:
                     # A complete scan commits independently of sample readiness.
                     self._logs[name] = (inode, covered, tail)
                     self._log_anchors[name] = anchor
+                    self._log_line_observations[name] = observation
+                    self._error_lines_by_log[name] += error_count
+                    self._traceback_lines_by_log[name] += traceback_count
+                    if last_tag is not None:
+                        self._last_error_tag = last_tag
                     if long_line:
                         self._long_log_lines.add(name)
                     else:

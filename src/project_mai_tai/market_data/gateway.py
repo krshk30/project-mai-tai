@@ -987,9 +987,14 @@ class MarketDataGatewayService:
         if not self._warning_window_open():
             self._pauses.close_window()
         pause = self._pauses.metrics()
+        observe_errors = getattr(self._warning_health_reader, "error_observations", None)
+        log_errors = observe_errors() if observe_errors is not None else {
+            "error_lines_by_log": None, "traceback_lines_by_log": None, "last_error_tag": None,
+        }
         pause["history"] = pause["history"][-8:]
         pause["exported_pause_history_limit"] = 8
         return {
+            **log_errors,
             "version": 1, "source": SERVICE_NAME, "event_type": event_type,
             "observed_ns": time.time_ns(), "gateway_instance_id": self._warning_instance_id,
             "generation": self._warning_generation, "A_received": self._warning_seq,
