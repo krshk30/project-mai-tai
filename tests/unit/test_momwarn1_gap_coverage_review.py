@@ -110,14 +110,14 @@ async def test_fully_observed_postgap_minute_missing_bar_exact5_allowed_gt5_paus
         assert source.read(env.state())["v2_bar_lateness_seconds"] == delay
     env.clock.ns = due + 5 * NS + 1
     await svc._warning_monitor_once()
-    assert not svc._warning_active and svc._warning_revert_reason is None
-    assert svc.warning_metrics()["pause_state"]["state"] == "paused"
-    assert svc.warning_metrics()["pause_state"]["reason"] == "v2_bar_late"
-    assert provider._ws.removed == ["A.*"]
+    assert svc._warning_active and svc._warning_revert_reason is None
+    assert svc.warning_metrics()["pause_state"]["state"] == "active"
+    assert svc.warning_metrics()["watchdog_observed_reason"] == "v2_bar_late"
+    assert provider._ws.removed == []
     complete_next_native_minute(env)
     await three_clean_native_reads(svc, env)
-    assert provider._ws.added.count("A.*") == 2
-    assert provider._ws.removed == ["A.*"]
+    assert provider._ws.added.count("A.*") == 1
+    assert provider._ws.removed == []
     assert env.reader.log_observability()["coverage_status"] == "GAP_UNOBSERVED_COPYTRUNCATE"
 
 
@@ -134,20 +134,20 @@ async def test_required_completion_inside_gap_is_unknown_not_grace_or_fake_cover
         await env.reader.read_live(env.client, "test")
     assert env.reader._source.covered_from_ns == env.clock.ns
     await svc._warning_monitor_once()
-    assert not svc._warning_active and svc._warning_revert_reason is None
-    assert svc.warning_metrics()["pause_state"]["state"] == "paused"
-    assert svc.warning_metrics()["pause_state"]["reason"] == "monitor_unreadable"
-    assert provider._ws.removed == ["A.*"]
+    assert svc._warning_active and svc._warning_revert_reason is None
+    assert svc.warning_metrics()["pause_state"]["state"] == "active"
+    assert svc.warning_metrics()["watchdog_observed_reason"] == "monitor_unreadable"
+    assert provider._ws.removed == []
     complete_next_native_minute(env)
     # The invalid due read never delivered OMS 11 to the watchdog. Actual 12
     # first reports/rebaselines that sequence gap; it is not a clean read.
     before = env.client.xrevrange.call_count
     await svc._warning_monitor_once()
     assert env.client.xrevrange.call_count == before + 1
-    assert not svc._warning_active and svc._warning_revert_reason is None
-    assert svc.warning_metrics()["pause_state"]["reason"] == "monitor_sync_gap"
+    assert svc._warning_active and svc._warning_revert_reason is None
+    assert svc.warning_metrics()["watchdog_observed_reason"] == "monitor_sync_gap"
     assert svc.warning_metrics()["pause_state"]["clean_streak"] == 0
     await three_clean_native_reads(svc, env)
-    assert provider._ws.added.count("A.*") == 2
-    assert provider._ws.removed == ["A.*"]
+    assert provider._ws.added.count("A.*") == 1
+    assert provider._ws.removed == []
     assert env.reader.log_observability()["coverage_status"] == "GAP_UNOBSERVED_COPYTRUNCATE"

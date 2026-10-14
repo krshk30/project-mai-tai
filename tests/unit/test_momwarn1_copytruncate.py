@@ -62,8 +62,9 @@ async def test_native_retained_ERROR_after_copytruncate_still_reverts_A_only(set
     svc, provider, _ = await start(env)
     (env.directory / name).write_text("ERROR retained live failure\n")
     await svc._warning_monitor_once()
-    assert svc._warning_revert_reason == "live_error"
-    assert provider._ws.removed == ["A.*"]
+    assert svc._warning_revert_reason is None and svc._warning_active
+    assert env.reader.error_observations()["error_lines_by_log"][name] == 1
+    assert provider._ws.removed == []
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
 
 
@@ -79,8 +80,9 @@ async def test_native_two_actual_slow_completions_across_truncations_still_rever
         await svc._warning_monitor_once()
         if seq == 11:
             assert svc._warning_active and svc._warning_revert_reason is None
-    assert svc._warning_revert_reason == "oms_sync_slow_twice"
-    assert provider._ws.removed == ["A.*"]
+    assert svc._warning_revert_reason is None and svc._warning_active
+    assert svc.warning_metrics()["watchdog_observed_reason"] == "oms_sync_slow_twice"
+    assert provider._ws.removed == []
 
 
 @pytest.mark.asyncio
@@ -164,9 +166,9 @@ async def test_native_independent_unknowns_never_hidden_by_rebaseline(setup, cap
             "[OMS-BROKER-SYNC-PASS] id=10 phase=end outcome=ok duration_ms=2000.000 exceeds_note_age=False"))
     with caplog.at_level(logging.WARNING, logger="market-data-gateway"):
         await svc._warning_monitor_once()
-    assert svc._warning_revert_reason is None and not svc._warning_active
-    assert svc._pauses.metrics()["reason"] == "monitor_unreadable"
-    assert provider._ws.removed == ["A.*"]
+    assert svc._warning_revert_reason is None and svc._warning_active
+    assert svc.warning_metrics()["watchdog_observed_reason"] == "monitor_unreadable"
+    assert provider._ws.removed == []
     assert any("exception_class" in row.message for row in caplog.records)
     if failure == "v2_missing_due":
         assert any("completion unknown after copytruncate" in row.message for row in caplog.records)
@@ -187,13 +189,13 @@ async def test_native_independent_unknowns_never_hidden_by_rebaseline(setup, cap
                 symbols=("AAA", "BBB"))
         # The repaired receipt is real, but seq 11 was never validated by the watchdog.
         await svc._warning_monitor_once()
-        assert not svc._warning_active and svc._warning_revert_reason is None
-        assert svc._pauses.metrics()["reason"] == "monitor_sync_gap"
+        assert svc._warning_active and svc._warning_revert_reason is None
+        assert svc.warning_metrics()["watchdog_observed_reason"] == "monitor_sync_gap"
     else:
         for name, raw in original_logs.items():
             (env.directory / name).write_bytes(raw)
     await arm_warning_with_three_clean_reads(svc)
-    assert provider._ws.removed == ["A.*"] and provider._ws.added.count("A.*") == 2
+    assert provider._ws.removed == [] and provider._ws.added.count("A.*") == 1
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
 
 

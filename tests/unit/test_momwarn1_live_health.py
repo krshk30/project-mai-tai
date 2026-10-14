@@ -232,15 +232,19 @@ async def test_gateway_g3_live_source_wire_fires_A_only_every_health_trigger(set
     if failure != "slow_twice":
         await svc._warning_monitor_once()
     noise = failure in {"late", "unreadable", "lag"}
-    assert not svc._warning_active
-    assert svc._warning_revert_reason == (None if noise else reason)
+    assert svc._warning_active
+    assert svc._warning_revert_reason is None
     pause = svc.warning_metrics()["pause_state"]
-    assert pause["state"] == ("paused" if noise else "off")
-    assert pause["reason"] == reason
-    assert provider._ws.removed == ["A.*"]
+    assert pause["state"] == "active"
+    assert pause["reason"] is None
+    if failure == "error":
+        assert svc.warning_metrics()["error_lines_by_log"]["strategy.log"] == 1
+    else:
+        assert svc.warning_metrics()["watchdog_observed_reason"] == reason
+    assert provider._ws.removed == []
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
-    assert svc._warning_queue.empty()
-    assert svc.warning_metrics()["dropped_total"] >= 1
+    assert svc._warning_queue.qsize() == 1
+    assert svc.warning_metrics()["dropped_total"] == 0
     assert svc._desired_symbols_by_consumer == owners and redis.hashes == saved
     if noise:
         if failure == "late":
@@ -248,8 +252,8 @@ async def test_gateway_g3_live_source_wire_fires_A_only_every_health_trigger(set
         elif failure == "unreadable":
             env.config.write_text(json.dumps(env.cfg))
         await three_clean_native_reads(svc, env)
-        assert provider._ws.added.count("A.*") == 2
-        assert provider._ws.removed == ["A.*"]
+        assert provider._ws.added.count("A.*") == 1
+        assert provider._ws.removed == []
         assert svc._desired_symbols_by_consumer == owners and redis.hashes == saved
         assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
     else:
@@ -259,8 +263,8 @@ async def test_gateway_g3_live_source_wire_fires_A_only_every_health_trigger(set
         before = env.client.xrevrange.call_count
         for _ in range(3):
             await svc._warning_monitor_once()
-            assert not svc._warning_active and svc._warning_revert_reason == reason
-        assert env.client.xrevrange.call_count == before
+            assert svc._warning_active and svc._warning_revert_reason is None
+        assert env.client.xrevrange.call_count == before + 3
         assert provider._ws.added.count("A.*") == 1
 
 
@@ -397,15 +401,15 @@ async def test_reviewed_first_due_boundaries_and_missing_bar_pause_A_only(setup)
         assert svc._warning_active and svc._warning_revert_reason is None
     env.clock.ns = due+5*NS+1
     await svc._warning_monitor_once()
-    assert svc._warning_revert_reason is None and not svc._warning_active
-    assert svc.warning_metrics()["pause_state"]["state"] == "paused"
-    assert svc.warning_metrics()["pause_state"]["reason"] == "v2_bar_late"
-    assert provider._ws.removed == ["A.*"]
+    assert svc._warning_revert_reason is None and svc._warning_active
+    assert svc.warning_metrics()["pause_state"]["state"] == "active"
+    assert svc.warning_metrics()["watchdog_observed_reason"] == "v2_bar_late"
+    assert provider._ws.removed == []
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
     complete_next_native_minute(env)
     await three_clean_native_reads(svc, env)
-    assert provider._ws.added.count("A.*") == 2
-    assert provider._ws.removed == ["A.*"]
+    assert provider._ws.added.count("A.*") == 1
+    assert provider._ws.removed == []
 
 
 def test_actual_first_closed_probe_at_due_is_applicable_not_extended_NA(setup):

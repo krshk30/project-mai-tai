@@ -46,29 +46,29 @@ async def test_actual_permission_error_one_warning_A_only_pause_then_three_clean
     finally:
         path.chmod(original_mode)
     rows = [row for row in caplog.records if row.levelno >= logging.WARNING]
-    assert len(rows) == 1 and rows[0].levelno == logging.WARNING
+    assert len(rows) == 2 and all(row.levelno == logging.WARNING for row in rows)
     assert rows[0].exc_info is None
-    assert "[MOMWARN1-PAUSE] reason=monitor_unreadable A_only=true" in rows[0].message
+    assert "[MOMSIMPLE1-OBSERVATION] reason=monitor_unreadable action=none" in rows[0].message
     detail = json.loads(rows[0].message.split("detail=", 1)[1])
     assert detail["exception_class"] == "PermissionError"
     assert "Permission denied" in detail["message"] and str(path) in detail["message"]
     assert "\n" not in rows[0].message and "\r" not in rows[0].message
     assert svc._warning_revert_reason is None
-    assert svc._pauses.metrics()["state"] == "paused"
-    assert not svc._warning_active and not provider._warning_aggregates_enabled
-    assert provider._ws.removed == ["A.*"]
+    assert svc.warning_metrics()["pause_state"]["state"] == "active"
+    assert svc._warning_active and provider._warning_aggregates_enabled
+    assert provider._ws.removed == []
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
     assert svc._desired_symbols_by_consumer == owners and redis.hashes == saved
     assert redis.entries == ordinary_entries and warning_redis.entries == []
-    assert svc._warning_queue.empty()
+    assert svc._warning_queue.qsize() == 1
     assert svc._warning_reverted_utc_ns is None
     await svc._warning_monitor_once()
-    assert not svc._warning_active and svc._warning_reverted_utc_ns is None
+    assert svc._warning_active and svc._warning_reverted_utc_ns is None
     await svc._warning_monitor_once()
-    assert not svc._warning_active
+    assert svc._warning_active
     await svc._warning_monitor_once()
     assert svc._warning_active and svc._warning_revert_reason is None
-    assert provider._ws.added.count("A.*") == 2
+    assert provider._ws.added.count("A.*") == 1
     assert svc._desired_symbols_by_consumer == owners and redis.hashes == saved
 
 
@@ -120,10 +120,10 @@ async def test_first_monitor_permission_failure_never_subscribes_A(setup, caplog
             await svc._warning_monitor_once()
     finally:
         path.chmod(mode)
-    assert len(caplog.records) == 1 and "PermissionError" in caplog.records[0].message
-    assert svc._warning_revert_reason is None and not svc._warning_active
-    assert svc._pauses.metrics()["state"] == "paused"
-    assert "A.*" not in provider._ws.added and provider._ws.removed == []
+    assert len(caplog.records) == 2 and all("PermissionError" in row.message for row in caplog.records)
+    assert svc._warning_revert_reason is None and svc._warning_active
+    assert svc.warning_metrics()["pause_state"]["state"] == "active"
+    assert "A.*" in provider._ws.added and provider._ws.removed == []
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
     assert redis.hashes == saved
     await arm_warning_with_three_clean_reads(svc)

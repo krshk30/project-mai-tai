@@ -114,12 +114,12 @@ async def test_main_monitor_contract_noise_three_clean_no_duplicate_SUB(clock):
             raise PermissionError('CONTROLLED original first-trip class; not a native successor read')
         svc._warning_health_reader = SimpleNamespace(read=unavailable)
         await svc._warning_monitor_once()
-        assert not svc._warning_active and svc._warning_revert_reason is None
-        assert provider._ws.removed.count('A.*') == 1
+        assert svc._warning_active and svc._warning_revert_reason is None
+        assert provider._ws.removed.count('A.*') == 0
         svc._warning_health_reader = SimpleNamespace(read=healthy)
         for index in range(3):
             await svc._warning_monitor_once()
-            assert svc._warning_active is (index == 2)
+            assert svc._warning_active
         for _ in range(3):
             await svc._warning_monitor_once()
         provider._handle_messages([aggregate(c=13.4)])
@@ -129,7 +129,7 @@ async def test_main_monitor_contract_noise_three_clean_no_duplicate_SUB(clock):
             await asyncio.sleep(0)
         assert [row[1]['sequence'] for row in redis.entries] == [1, 2]
         assert [row[1]['close'] for row in redis.entries] == [13.35, 13.4]
-        assert provider._ws.added.count('A.*') == 2 and provider._ws.removed.count('A.*') == 1
+        assert provider._ws.added.count('A.*') == 1 and provider._ws.removed.count('A.*') == 0
         assert provider._subscriptions == {'WFF'} and 'T.WFF' not in provider._ws.removed
     finally:
         stop.set()
@@ -148,7 +148,7 @@ async def test_pause_does_not_remove_watched_trade_quote_feed(clock, policy):
     await svc.publisher.publish_quote_tick(QuoteTickRecord(symbol='WFF', bid_price=13.34, ask_price=13.35))
     assert [row[1]['event_type'] for row in redis.entries[-2:]] == ['trade_tick', 'quote_tick']
     assert provider._subscriptions == {'WFF'}
-    assert provider._ws.removed == ['A.*']
+    assert provider._ws.removed == ['A.*']  # Explicit pure-policy adapter, not gateway monitor.
 
 
 @pytest.mark.asyncio

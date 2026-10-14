@@ -129,9 +129,9 @@ async def test_night_restart_arms_after_three_reads_without_utc_day_change(
     stamp[0] = datetime.fromisoformat(opening)
     for index in range(3):
         await svc._warning_monitor_once()
-        assert svc._warning_active is (index == 2)
+        assert svc._warning_active
     assert svc._warning_window_day == stamp[0].date()
-    assert svc._pauses.state == "active"
+    assert svc.warning_metrics()["pause_state"]["state"] == "active"
 
 
 @pytest.mark.asyncio
@@ -155,4 +155,4 @@ async def test_eighteen_close_then_next_et_day_open_requires_three_reads(monkeyp
     stamp[0] = datetime.fromisoformat("2026-10-14T04:00:00-04:00")
     for index in range(3):
         await svc._warning_monitor_once()
-        assert svc._warning_active is (index == 2)
+        assert svc._warning_active

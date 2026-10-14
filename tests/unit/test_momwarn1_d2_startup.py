@@ -111,7 +111,7 @@ async def test_late_first_bar_does_not_arm_or_restamp(setup):
 @pytest.mark.parametrize('change,lag,reason', [
     ({'load_1m': 6.01}, 0, 'load'),
     ({'ram_available_bytes': 3 * 1024**3 - 1}, 0, 'ram'),
-    ({'new_live_error': True}, 0, 'live_error'),
+    ({'new_live_error': True}, 0, None),
     ({}, 2.001, 'publish_lag'),
 ])
 async def test_other_watchdog_gates_remain_live_while_native_startup_pending(setup, change, lag, reason):
@@ -162,7 +162,8 @@ async def test_native_pending_reads_real_new_error(setup):
         stream.write('ERROR controlled new ORB failure\n')
     health = await env.reader.read_live(env.client, 'test')
     assert health.v2_startup_pending and health.new_live_error
-    assert WarningWatchdog().check(health, publish_lag_seconds=0) == 'live_error'
+    assert WarningWatchdog().check(health, publish_lag_seconds=0) is None
+    assert env.reader.error_observations()['error_lines_by_log']['orb-schwab.log'] == 1
 
 
 @pytest.mark.asyncio
@@ -185,9 +186,9 @@ async def test_v2_boot_unanswerable_exact_sixty_second_exception(setup, monkeypa
     with (env.directory / 'schwab-1m-v2.log').open('a') as stream:
         stream.writelines(records)
     health = await env.reader.read_live(env.client, 'test')
-    assert health.new_live_error is (case != 'real_twelve')
-    assert WarningWatchdog().check(health, publish_lag_seconds=0) == (
-        None if case == 'real_twelve' else 'live_error')
+    assert health.new_live_error
+    assert env.reader.error_observations()['error_lines_by_log']['schwab-1m-v2.log'] == len(records)
+    assert WarningWatchdog().check(health, publish_lag_seconds=0) is None
 
 
 @pytest.mark.asyncio
@@ -207,22 +208,22 @@ async def test_gateway_native_pending_then_three_clean_admits_uncalibrated_late_
     owners = {key: set(value) for key, value in svc._desired_symbols_by_consumer.items()}
     tq = set(provider._subscriptions), set(provider._warning_trade_symbols)
     await svc._warning_monitor_once()
-    assert not svc._warning_active and svc._warning_revert_reason is None
-    assert 'A.*' not in provider._ws.added
+    assert svc._warning_active and svc._warning_revert_reason is None
+    assert 'A.*' in provider._ws.added
     advance(env, first_due(NOW) + 2 * NS, symbols=('AAA', 'BBB'))
     await arm_warning_with_three_clean_reads(svc)
     assert svc._warning_active and 'A.*' in provider._ws.added
     advance(env, first_due(NOW) + 66 * NS)
     await svc._warning_monitor_once()
-    assert svc._warning_revert_reason is None and not svc._warning_active
-    assert svc._pauses.metrics()['reason'] == 'v2_bar_late'
-    assert provider._ws.removed == ['A.*']
+    assert svc._warning_revert_reason is None and svc._warning_active
+    assert svc.warning_metrics()['watchdog_observed_reason'] == 'v2_bar_late'
+    assert provider._ws.removed == []
     assert svc._desired_symbols_by_consumer == owners
     assert (provider._subscriptions, provider._warning_trade_symbols) == tq
     advance(env, first_due(NOW) + 122 * NS, symbols=('AAA', 'BBB'))
     await arm_warning_with_three_clean_reads(svc)
-    assert svc._warning_revert_reason is None and svc._warning_generation == 2
-    assert provider._ws.added.count('A.*') == 2
+    assert svc._warning_revert_reason is None and svc._warning_generation == 1
+    assert provider._ws.added.count('A.*') == 1
     assert svc._desired_symbols_by_consumer == owners
     assert (provider._subscriptions, provider._warning_trade_symbols) == tq
 

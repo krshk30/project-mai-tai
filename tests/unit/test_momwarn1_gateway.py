@@ -443,10 +443,9 @@ async def test_safety_failure_remains_sticky_across_normal_close_and_next_04(mon
         monkeypatch.setattr(massive_provider, "datetime", fixed)
         await svc._warning_monitor_once()
     assert svc._warning_revert_reason == reason
-    assert not svc._warning_active
-    assert provider._ws.added.count("A.*") == 1
-    if failure == "provider":
-        assert provider._warning_failed
+    assert svc._warning_active
+    assert provider._ws.added.count("A.*") == 2
+    assert not provider._warning_failed
 
 
 @pytest.mark.asyncio
@@ -507,16 +506,16 @@ async def test_disconnect_or_1008_pauses_A_until_replacement_connection(policy):
     provider._build_client = lambda: ws
     provider._running = True
     await provider._run_loop()
-    assert "A.*" in ws.removed
+    assert "A.*" not in ws.removed
     assert svc._warning_revert_reason is None
-    assert svc._pauses.reason == ("policy_1008" if policy else "disconnect")
-    assert not provider._warning_failed and not svc._warning_active
+    assert svc.warning_metrics()["watchdog_observed_reason"] == ("policy_1008" if policy else "disconnect")
+    assert not provider._warning_failed and svc._warning_active
     assert provider._subscriptions == {"WFF"}
     assert set(ws.added) == {"T.WFF", "Q.WFF"}
     provider._ws, provider._connected = first_ws, True
     for index in range(3):
         await svc._warning_monitor_once()
-        assert svc._warning_active is (index == 2)
+        assert svc._warning_active
 
 
 @pytest.mark.asyncio
@@ -600,7 +599,7 @@ async def test_huge_synthetic_SDK_batch_yields_and_does_not_wait_on_A_Redis(reco
 
 @pytest.mark.parametrize("field,value,reason", [
     ("load_1m", 6.1, "load"), ("ram_available_bytes", 3 * 1024**3 - 1, "ram"),
-    ("v2_bar_lateness_seconds", 5.1, "v2_bar_late"), ("new_live_error", True, "live_error"),
+    ("v2_bar_lateness_seconds", 5.1, "v2_bar_late"), ("new_live_error", True, None),
     ("observed_wall_ns", 1, "monitor_stale"), ("load_1m", float("nan"), "monitor_invalid"),
 ])
 def test_watchdog_triggers_are_latched(field, value, reason):
@@ -656,18 +655,14 @@ async def test_gateway_A_only_noise_pauses_three_clean_resume_and_harm_stays_sti
     if failure == "sync":
         svc._warning_health_reader = SimpleNamespace(read=lambda: replace(healthy(), oms_sync_seq=3, oms_sync_seconds=6))
         await svc._warning_monitor_once()
-    noise = failure in {"unreadable", "timeout", "bar", "lag"}
-    if noise:
-        assert svc._warning_revert_reason is None and not provider._warning_failed
-        assert svc._pauses.metrics()["state"] == "paused"
-    else:
-        assert svc._warning_revert_reason
-    assert provider._ws.removed == ["A.*"]
+    assert svc._warning_revert_reason is None and not provider._warning_failed
+    assert svc.warning_metrics()["pause_state"]["state"] == "active"
+    assert provider._ws.removed == []
     assert provider._subscriptions == {"WFF"}
     assert provider._warning_trade_symbols == {"NEW"}
-    assert svc._warning_queue.empty()
+    assert svc._warning_queue.qsize() == 1
     assert svc.warning_metrics()["queue_drops"] == 0
-    assert svc.warning_metrics()["dropped_total"] >= 1
+    assert svc.warning_metrics()["dropped_total"] == 0
     if failure == "timeout":
         # Main retains ONE timed-out read until it completes. Completing its
         # controlled task here is not a clean policy/monitor observation.
@@ -676,20 +671,13 @@ async def test_gateway_A_only_noise_pauses_three_clean_resume_and_harm_stays_sti
             await asyncio.wait_for(asyncio.shield(pending), timeout=1)
     svc._warning_health_reader = SimpleNamespace(read=healthy)
     await svc._warning_monitor_once()
-    assert not svc._warning_active
-    if noise:
-        await svc._warning_monitor_once()
-        assert not svc._warning_active
-        await svc._warning_monitor_once()
-        assert svc._warning_active and svc._warning_revert_reason is None
-        assert provider._ws.added.count("A.*") == 2
-        assert provider._subscriptions == {"WFF"}
-        assert provider._warning_trade_symbols == {"NEW"}
-    else:
-        await svc._warning_monitor_once()
-        await svc._warning_monitor_once()
-        assert not svc._warning_active and svc._warning_revert_reason
-        assert provider._ws.added.count("A.*") == 1
+    assert svc._warning_active
+    await svc._warning_monitor_once()
+    await svc._warning_monitor_once()
+    assert svc._warning_active and svc._warning_revert_reason is None
+    assert provider._ws.added.count("A.*") == 1
+    assert provider._subscriptions == {"WFF"}
+    assert provider._warning_trade_symbols == {"NEW"}
 
 
 @pytest.mark.asyncio
@@ -770,8 +758,9 @@ async def test_retired_paper_log_absence_does_not_disable_A_but_live_ORB_error_d
     with (directory / "orb-schwab.log").open("a") as output:
         output.write("ERROR live ORB\n")
     await svc._warning_monitor_once()
-    assert svc._warning_revert_reason == "live_error"
-    assert provider._ws.removed == ["A.*"]
+    assert svc._warning_revert_reason is None and svc._warning_active
+    assert reader.error_observations()["error_lines_by_log"]["orb-schwab.log"] == 1
+    assert provider._ws.removed == []
 
 
 @pytest.mark.parametrize("name", ["oms.log", "strategy.log", "schwab-1m-v2.log", "orb-schwab.log"])
@@ -869,9 +858,12 @@ async def test_pending_A_write_cancelled_on_revert_and_live_quote_survives():
     svc._warning_publish_task = asyncio.create_task(svc._warning_publish_loop(stop))
     await entered.wait()
     await svc._revert_warning("live_error")
+    assert not svc._warning_publish_task.done() and not cancelled.is_set()
+    assert svc._warning_active and svc._warning_revert_reason is None
+    assert provider._ws.removed == []
+    svc._warning_publish_task.cancel()
     await asyncio.gather(svc._warning_publish_task, return_exceptions=True)
-    assert cancelled.is_set()
-    assert provider._ws.removed == ["A.*"]
+    assert cancelled.is_set()  # Explicit test teardown, not an automatic trip.
     assert not warning_redis.entries
     svc._quote_queue.put_nowait(QuoteTickRecord("WFF", 13, 14))
     live = asyncio.create_task(svc._stream_publish_loop(stop))
@@ -1015,5 +1007,6 @@ async def test_raw_SDK_normalization_is_chunked_and_preserves_real_trade_provena
     assert trade.conditions == ("12",) and trade.conditions_present
     assert svc._quote_queue.qsize() == 1
     await provider._process_messages('[{"ev":"status","status":"not_authorized"}]')
-    assert svc._warning_revert_reason == "provider_error"
-    assert provider._ws.removed == ["A.*"]
+    assert svc._warning_revert_reason is None
+    assert svc.warning_metrics()["watchdog_observed_reason"] == "provider_error"
+    assert provider._ws.removed == []

@@ -135,7 +135,8 @@ async def test_ERROR_appended_after_error_read_detected_next_native_sample(setup
     assert svc._warning_active and svc._warning_revert_reason is None and writes == [name]
     assert env.client.xrevrange.call_count == before + 1
     await svc._warning_monitor_once()
-    assert svc._warning_revert_reason == "live_error" and provider._ws.removed == ["A.*"]
+    assert svc._warning_revert_reason is None and svc._warning_active and provider._ws.removed == []
+    assert env.reader.error_observations()["error_lines_by_log"][name] == 1
     assert env.client.xrevrange.call_count == before + 2
     assert svc._desired_symbols_by_consumer == owners and redis.hashes == saved
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
@@ -228,13 +229,13 @@ async def test_only_positive_short_pread_has_one_global_retry_and_truthful_gap(
     assert shortened == targets and env.client.xrevrange.call_count == before + 2
     assert source.oms.latest == end
     if two_short_reads:
-        assert svc._warning_revert_reason is None and not svc._warning_active
-        assert svc.warning_metrics()["pause_state"]["state"] == "paused"
-        assert svc.warning_metrics()["pause_state"]["reason"] == "monitor_unreadable"
-        assert provider._ws.removed == ["A.*"]
+        assert svc._warning_revert_reason is None and svc._warning_active
+        assert svc.warning_metrics()["pause_state"]["state"] == "active"
+        assert svc.warning_metrics()["watchdog_observed_reason"] == "monitor_unreadable"
+        assert provider._ws.removed == []
         await three_clean_native_reads(svc, env)
         assert env.client.xrevrange.call_count == before + 5  # One bounded retry, then 3 clean reads.
-        assert provider._ws.added.count("A.*") == 2
+        assert provider._ws.added.count("A.*") == 1
         assert env.reader.log_observability()["coverage_status"] == "GAP_UNOBSERVED_COPYTRUNCATE"
     else:
         assert svc._warning_active and svc._warning_revert_reason is None

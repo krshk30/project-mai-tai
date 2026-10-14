@@ -66,13 +66,14 @@ async def test_pipeline_keeps_old_age_gate_and_exact_drop_accounting():
         stop.set()
         writer.cancel()
         await asyncio.gather(writer, return_exceptions=True)
-    assert svc._warning_revert_reason is None and svc._pauses.reason == 'publish_lag'
+    assert svc._warning_revert_reason is None and svc.warning_metrics()['watchdog_observed_reason'] == 'publish_lag'
+    assert svc._warning_active
     assert svc._warning_drop_count == 35 and svc._warning_published == 0
     assert not redis.entries and svc._warning_queue.empty()
 
 
 async def _wait_for_pause(svc):
-    while svc._pauses.reason != 'publish_lag':
+    while svc.warning_metrics()['watchdog_observed_reason'] != 'publish_lag':
         await asyncio.sleep(0)
 
 
@@ -92,8 +93,17 @@ async def test_pipeline_partial_revert_counts_acknowledged_and_retired_once(monk
             raise ValueError('controlled failed command')
         return await original(*args, **kwargs)
     redis.xadd = fail_second
-    await svc._warning_publish_loop(asyncio.Event())
-    assert svc._warning_revert_reason == 'publish_error'
+    stop = asyncio.Event()
+    writer = asyncio.create_task(svc._warning_publish_loop(stop))
+    try:
+        while svc.warning_metrics()['watchdog_observed_reason'] != 'publish_error':
+            await asyncio.sleep(0)
+        assert not writer.done() and svc._warning_active
+    finally:
+        stop.set()
+        writer.cancel()
+        await asyncio.gather(writer, return_exceptions=True)
+    assert svc._warning_revert_reason is None
     assert calls == 3 and svc._warning_published == 2 and svc._warning_drop_count == 1
     assert svc._warning_ack_unknown == 1
     assert [item[1]['sequence'] for item in redis.entries] == [1, 3]

@@ -159,8 +159,8 @@ async def test_ERROR_appended_before_error_cursor_read_is_caught_same_sample(set
     svc, provider, _ = await start(env)
     calls = append_after_read(monkeypatch, env.directory / "oms.log", "ERROR actual observed failure\n")
     await svc._warning_monitor_once()
-    assert len(calls) == 1 and svc._warning_revert_reason == "live_error"
-    assert provider._ws.removed == ["A.*"]
+    assert len(calls) == 1 and svc._warning_revert_reason is None and svc._warning_active
+    assert provider._ws.removed == []
 
 
 @pytest.mark.asyncio
@@ -194,9 +194,9 @@ async def test_nonrace_failures_are_never_retried(setup, monkeypatch, failure):
     before = env.client.xrevrange.call_count
     await svc._warning_monitor_once()
     assert env.client.xrevrange.call_count - before == (0 if failure == "config" else 1)
-    assert svc._warning_revert_reason is None and not svc._warning_active
-    assert svc._pauses.metrics()["reason"] == "monitor_unreadable"
-    assert provider._ws.removed == ["A.*"]
+    assert svc._warning_revert_reason is None and svc._warning_active
+    assert svc.warning_metrics()["watchdog_observed_reason"] == "monitor_unreadable"
+    assert provider._ws.removed == []
     if failure == "permission":
         monkeypatch.setattr(env.reader._source.oms, "read", original_read)
     elif failure == "config":
@@ -210,7 +210,7 @@ async def test_nonrace_failures_are_never_retried(setup, monkeypatch, failure):
     else:
         oms_path.write_bytes(original_bytes)
     await arm_warning_with_three_clean_reads(svc)
-    assert provider._ws.removed == ["A.*"] and provider._ws.added.count("A.*") == 2
+    assert provider._ws.removed == [] and provider._ws.added.count("A.*") == 1
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
 
 
@@ -236,13 +236,13 @@ async def test_midread_growth_past_bound_is_backlog_not_retriable_race(setup, mo
     calls = append_after_read(monkeypatch, env.directory / "oms.log",
                              "X" * (env.reader.MAX_LOG_PASS_BYTES + 1))
     await svc._warning_monitor_once()
-    assert len(calls) == 1 and svc._warning_revert_reason is None and not svc._warning_active
-    assert svc._pauses.metrics()["reason"] == "monitor_unreadable"
-    assert provider._ws.removed == ["A.*"]
+    assert len(calls) == 1 and svc._warning_revert_reason is None and svc._warning_active
+    assert svc.warning_metrics()["watchdog_observed_reason"] == "monitor_unreadable"
+    assert provider._ws.removed == []
     monkeypatch.setattr(os, "read", original_read)
     path.write_bytes(original_bytes)
     await arm_warning_with_three_clean_reads(svc)
-    assert len(calls) == 1 and provider._ws.added.count("A.*") == 2
+    assert len(calls) == 1 and provider._ws.added.count("A.*") == 1
 
 
 @pytest.mark.asyncio
@@ -314,8 +314,8 @@ async def test_error_seen_before_later_cursor_race_is_not_consumed_or_lost(setup
 
     monkeypatch.setattr(reader_module, "cursor_anchor", anchor)
     await svc._warning_monitor_once()
-    assert calls == [size] and svc._warning_revert_reason == "live_error"
-    assert provider._ws.removed == ["A.*"]
+    assert calls == [size] and svc._warning_revert_reason is None and svc._warning_active
+    assert provider._ws.removed == []
     assert env.reader.log_observability()["copytruncate_counts"] == {"strategy.log": 1}
 
 

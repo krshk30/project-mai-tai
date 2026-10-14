@@ -59,7 +59,7 @@ async def test_0430_three_actual_native_clean_reads_arm_A_without_v2_readiness_f
     svc, provider, redis = await start_native(env)
     assert env.client.xrevrange.call_count == 3
     assert svc._warning_active and svc._warning_revert_reason is None
-    assert svc.warning_metrics()['pause_state']['clean_streak'] == 3
+    assert svc.warning_metrics()['pause_state']['clean_streak'] == 0
     assert provider._ws.added.count('A.*') == 1
     assert provider._ws.removed == []
     assert provider._subscriptions == {'WFF'} and provider._warning_trade_symbols == {'NEW'}
@@ -121,7 +121,7 @@ async def test_2000_cohort_still_enforced_then_2001_NA(cohort_setup):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('fault,reason', [('load', 'load'), ('ram', 'ram'), ('error', 'live_error'),
+@pytest.mark.parametrize('fault,reason', [('load', 'load'), ('ram', 'ram'), ('error', None),
                                        ('lag', 'publish_lag'), ('slow', 'oms_sync_slow_twice')])
 async def test_independent_health_gates_still_enforced_on_real_outside_window_reads(cohort_setup, monkeypatch, fault, reason):
     env = cohort_setup()
@@ -203,7 +203,7 @@ async def test_NA_does_not_clear_existing_sticky_harm(cohort_setup):
     env = cohort_setup()
     health = await env.reader.read_live(env.client, 'test')
     watchdog = WarningWatchdog()
-    assert watchdog.check_recoverable(replace(health, new_live_error=True), publish_lag_seconds=0) == 'live_error'
+    assert watchdog.check_recoverable(replace(health, new_live_error=True), publish_lag_seconds=0) is None
     for _ in range(3):
         assert watchdog.check_recoverable(await env.reader.read_live(env.client, 'test'),
-                                          publish_lag_seconds=0) == 'live_error'
+                                          publish_lag_seconds=0) is None

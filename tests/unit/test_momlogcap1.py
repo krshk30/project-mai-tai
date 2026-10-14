@@ -165,7 +165,7 @@ def test_injected_ERROR_inside_recorded_burst_is_sticky(health_reader, artifact)
     with (directory / "schwab-1m-v2.log").open("ab") as stream:
         stream.write(raw[:mid] + b"\nERROR CONTROLLED injected harm\n" + raw[mid:])
     watchdog = WarningWatchdog()
-    assert watchdog.check_recoverable(reader.read(), publish_lag_seconds=0) == "live_error"
+    assert watchdog.check_recoverable(reader.read(), publish_lag_seconds=0) is None
     assert reader.read().new_live_error
     reader.reset_window()
     assert reader.read().new_live_error
@@ -178,7 +178,7 @@ def test_old_64kb_plus_one_and_huge_line_converge(health_reader):
         stream.write(b" " * (reader.MAX_LOG_BYTES + 1))
     assert not reader.read().new_live_error
     assert reader._logs["strategy.log"][1] == (directory / "strategy.log").stat().st_size
-    assert len(reader._logs["strategy.log"][2]) == 6
+    assert len(reader._logs["strategy.log"][2]) == 64
 
 
 def test_continuous_growth_cannot_starve_any_error_cursor(health_reader):
@@ -338,9 +338,9 @@ def test_error_inside_burst_and_chunk_or_pass_split_stays_sticky(health_reader, 
     with (directory / "strategy.log").open("ab") as stream:
         stream.write(b" " * position + b"ERROR harm\n" + b" " * 402000 + b"\n")
     policy = WarningPausePolicy()
-    with pytest.raises(AssertionError):
-        catch_up(reader, policy)
-    assert policy.state == "off" and policy.reason == "live_error"
+    catch_up(reader, policy)
+    assert policy.state == "active" and policy.reason is None
+    assert reader.error_observations()["error_lines_by_log"]["strategy.log"] == 1
     assert reader.read().new_live_error
     reader.reset_window()
     assert reader.read().new_live_error

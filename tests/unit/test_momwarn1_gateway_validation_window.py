@@ -91,7 +91,8 @@ async def test_monitor_exact_today_end_and_tomorrow_defaults_preserve_eligibilit
     else:
         await svc._warning_monitor_once()
     assert svc._warning_active is active and svc._warning_revert_reason is None
-    provider.set_momentum_warning_aggregates.assert_awaited_once_with(active)
+    assert provider.set_momentum_warning_aggregates.await_count == (3 if active else 1)
+    assert all(call.args == (active,) for call in provider.set_momentum_warning_aggregates.await_args_list)
     assert svc._desired_symbols_by_consumer == owners and svc.redis.hashes == saved
     assert provider._subscriptions == {"WFF"} and provider._warning_trade_symbols == {"NEW"}
 
