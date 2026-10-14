@@ -3,7 +3,55 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-## PRODUCTION NOW — as of 2026-10-14 01:00 ET (claude-1, verified on the box; GitHub suspended → local branch only)
+## PRODUCTION NOW — as of 2026-10-14 14:15 ET (claude-1, verified on the box; GitHub suspended → local branch + bundles)
+
+| Item | State now | Evidence (as-of) |
+|---|---|---|
+| Box checkout | `7d36f7e8` (fbbeb0cd + MOMAGE1/MOMLOGCAP1 → MOMSIMPLE1 → FEEDGAP1/2 → MOMPAGE2 → PAPERLAG1 → items 2/3/6) | `git rev-parse` 14:1x |
+| Services (UTC starts) | OMS 3356648 (10-13 23:42Z) · reconciler 3358640 (23:47Z) · strategy 3372452 (10-14 00:29Z) · v2 3409611 (04:46Z) · control 3497337 (13:10Z, MOMPAGE2) · gateway 3567580 (16:31Z, items 2/3/6) · paper 3569596 + dated guard 3569590 (16:34Z) · ORB 2356722 (10-09) | systemctl 14:1x |
+| Trading | ATR (v2) closed day **−$66.34 by broker fills** (GLND 9 trades ≈ +$0.69, GENK −$67.03); ATR PAGE WRONG (−94.11: ATRPNL1). Flat except GLND #9 Schwab 163 (OCO live) at 13:50 | fills 13:48 |
+| Momentum warning | ON, minimal safety (MOMSIMPLE1: no auto pause/revert; manual switch `MAI_TAI_MARKET_DATA_MOMENTUM_WARNING_ENABLED`). Paper running 04:00–18:00 via dated 10-14 guard continuation | metrics 14:0x |
+
+### Installed today 10-14 (all reviewed by claude-1, verified on the box)
+| Time ET | Item | What |
+|---|---|---|
+| 06:42 | MOMAGE1 + MOMLOGCAP1 | A-bar source-age bound 7,601 ms (provider sends bars ~2 s late); watchdog/live-health/OMS-log readers catch up in chunks (no 64 KB self-lock) |
+| 07:06 | paper back | guard refused mid-session start → 10-14 dated continuation (10-13 precedent) |
+| 07:52 | MOMSIMPLE1 | operator: minimal safety — all trip reasons log-only; A on whole window |
+| 08:38 | FEEDGAP1 | one FEED_GAP row per event; stale-raw scoped to its symbol (73k junk rows stopped) |
+| 09:10 | MOMPAGE2 | momentum page: PAPER ONLY banner, two ledgers (warning new / snapshot old), one-line feed status — operator: "good and clean" |
+| 09:45 | FEEDGAP2 | late (>1 s) prints ignored + counted, never a gap |
+| 11:39 | PAPERLAG1 | sequence tracked before the stale check; stale bar clears only its symbol; stale metric coalesced → 0 gaps at 5-min marks |
+| 12:31/12:35 | items 2/3/6 (7d36f7e8) | A Redis pools split (publish 2 / metrics 1 / health 1, retry-once before send), open-burst counters (A_open_sample), observation-log dedupe. Runbook lesson: wait for the gateway's first heartbeat before the dated dry-run |
+
+### Operator rulings today (also in memory rule cards)
+- MOMAGE1 approved (bound 7.6 s). Other bots' ERROR lines never stop momentum. **MOMSIMPLE1: minimal safety, measure + daily review; add a guard only after measured live impact.** Keep momentum ON; switch nothing off until the trading path breaks (sync-pass slowness alone is not a break).
+- Momentum volume floor for live: **50k** day volume at detection. Stop study (8 sessions, tick tape): keep −15%.
+- **MOMLIVE1 approved + resumed 13:0x** ($100/trade; Webull 04:00–16:00, Schwab 07:00–16:00, 04–07 all Webull; known-not-Schwab (persistent ineligible list + foreign types) → Webull else Schwab with refusal→Webull re-send; marketable LIMIT ≤ signal×1.015; send once, cancel unfilled at 2 s, keep partials; +5% / −15% / 5-min exit; 30 s cooldown; max 2 open; no loss limit; no price floor; same accounts, own strategy code `momentum_warn_live`; guard admits literal owner `momentum-live` ≤2 quotes; flag OFF blocks new entries only). **Build in progress; install AFTER CLOSE when flat** (touches OMS).
+- One track: momentum first; non-momentum items wait (board O-1014-1…12).
+- WBMIRRORCXL1 (GLND stale Webull buy): operator cancelled by hand; **no fix now**, board O-1014-12; fix if it hits another symbol.
+
+### Open / next (in order)
+1. MOMLIVE1 — review frozen build → after-close install (runbook in codex `MOMLIVE1-AFTER-CLOSE-RUNBOOK-PREP.txt`), first live entries 04:00 tomorrow (Webull).
+2. Item 5 (after close): paper as plain unit 03:55 prepare / 04:00–18:00 detect / 18:10 drain; gateway restart must not stop paper.
+3. ATRPNL1 (paused): ATR page drops the OCO-target row after a rejected duplicate close (+$30 GLND 09:53) and shows the order price not the fill price (GLND #8).
+4. Board O-1014-2…12: duplicate close after OCO fill; WBNULLID1 identity conflict (GENK 26 s); false CRITICAL protection-failed on a flat position; false "stuck accepted" for resting STOP_LIMIT buys; operator-shares alert noise; v2 prior-session closed-fill ERRORs; OMS stage timing; POLL-REENROLL; 19 fleet crons at the same second; MOMLIVE1; WBMIRRORCXL1.
+5. MOMOPEN1: measure 09:29–09:32 tomorrow from A_open_sample (keep 8192/32/2 s).
+
+### Restart safety (lessons today)
+- A gateway restart stops paper via the dated guard → use runbook C: paper-flat gate → planned guard+paper stop → gateway once → ORIGINAL + dated manifests → **wait for gateway heartbeat** → dated dry-run → one guard start (ExecStartPost starts paper).
+- Never restart v2/OMS with an open position unless the runbook says so; check `broker_orders` working + `oms_managed_positions` open first.
+
+### Tools (claude-1)
+- Full scan every 15 min: `~/.claude/tools/mai-tai-fullscan/run.sh` (now with #ORDER HYGIENE: reprice pairing, stale working buys, exits; PNL CHECK page vs fills).
+- Momentum impact watch: `~/.claude/tools/momwatch/box.sh` (OMS vs 10-12 base, A in/out, paper gaps, warn trades).
+- Codex channel: `~/.codex/task-queues/analysis/claude1-reviews/LATEST.md` (rulings, newest on top) + `CODEX_STATUS.md`.
+- Backups: git bundles in iCloud `project-mai-tai-backup/` and box `/var/backups/project-mai-tai/repo/`.
+
+---
+
+## PREVIOUS: PRODUCTION as of 2026-10-14 01:00 ET
+
 
 | Item | State now | Evidence (as-of) |
 |---|---|---|
