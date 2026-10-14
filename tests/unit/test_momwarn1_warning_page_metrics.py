@@ -141,7 +141,7 @@ async def test_bytes_fields_revert_sample_and_html_escape():
     before = deepcopy(result)
     html = cp._render_momentum_warning_gateway_metrics(result)
     assert "&lt;unsafe&gt;" in html and "&lt;gateway&gt;" in html
-    assert "Overflow-only auto-revert: NO" in html and "existing safety auto-revert: YES" in html
+    assert "Feed details" in html and "existing safety auto-revert: YES" not in html
     assert result == before
 
 
@@ -168,7 +168,7 @@ async def test_actual_gateway_overflow_counter_through_page_preserves_snapshot(m
     assert "Queue drops: 3" in page.text and "total discarded: 3" in page.text
     assert "queue depth: 2" in page.text and produced["gateway_instance_id"] in page.text
     assert "$+31.80" in page.text  # Unchanged legacy Snapshot total.
-    assert "Overflow-only auto-revert: NO" in page.text
+    assert "Feed details" in page.text and "existing safety auto-revert: YES" not in page.text
     assert len(client.metric_calls) == 1
 
 

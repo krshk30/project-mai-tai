@@ -11,6 +11,7 @@ from io import StringIO
 import json
 import logging
 import math
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -59,7 +60,7 @@ from project_mai_tai.events import (
 from project_mai_tai.broker_adapters.schwab_token_manager import atomic_write_json
 from project_mai_tai.log import configure_logging
 from project_mai_tai.momentum_page_history import load_completed_today, load_warning_completed_today
-from project_mai_tai.momwarn_pause_incidents import approximate_pause_utc_ns, readable_pause_snapshot
+from project_mai_tai.momwarn_pause_incidents import readable_pause_snapshot
 from project_mai_tai.paper_exit_store import PaperExitStore
 from project_mai_tai.runtime_registry import configured_strategy_registrations
 from project_mai_tai.services.schwab_token_refresher import SchwabTokenRefresher
@@ -4218,31 +4219,39 @@ def build_app(
             )
 
         if strategy_code in {"momentum_30s", "momentum_60s"}:
-            closed_today, daily_pnl = await asyncio.to_thread(
-                load_completed_today, active_session_factory, strategy_code,
-                utcnow().astimezone(EASTERN_TZ).date(),
-            )
+            try:
+                closed_today, daily_pnl = await asyncio.to_thread(
+                    load_completed_today, active_session_factory, strategy_code,
+                    utcnow().astimezone(EASTERN_TZ).date(),
+                )
+                snapshot_status = "READABLE"
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "[MOMPAGE2] ledger=%s status=UNKNOWN", strategy_code, exc_info=True,
+                )
+                closed_today, daily_pnl, snapshot_status = [], 0, "UNKNOWN"
             # Page-local copy: preserve live positions/status and the shared cached snapshot.
-            bot = {**bot, "closed_today": closed_today, "daily_pnl": float(daily_pnl)}
+            bot = {**bot, "closed_today": closed_today, "daily_pnl": float(daily_pnl),
+                   "momentum_snapshot_status": snapshot_status}
+            warning_code = strategy_code + "_warn"
+            try:
+                warning_rows, warning_pnl = await asyncio.to_thread(
+                    load_warning_completed_today, active_session_factory, warning_code,
+                    utcnow().astimezone(EASTERN_TZ).date(),
+                )
+                warning = {"strategy_code": warning_code, "status": "READABLE",
+                           "closed_today": warning_rows, "daily_pnl": str(warning_pnl)}
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "[MOMWARN1-PAGE] ledger=%s status=UNKNOWN", warning_code, exc_info=True,
+                )
+                warning = {"strategy_code": warning_code, "status": "UNKNOWN"}
             if getattr(active_settings, "market_data_momentum_warning_enabled", False):
-                warning_code = strategy_code + "_warn"
-                try:
-                    warning_rows, warning_pnl = await asyncio.to_thread(
-                        load_warning_completed_today, active_session_factory, warning_code,
-                        utcnow().astimezone(EASTERN_TZ).date(),
-                    )
-                    warning = {"strategy_code": warning_code, "status": "READABLE",
-                               "closed_today": warning_rows, "daily_pnl": str(warning_pnl)}
-                except Exception:
-                    logging.getLogger(__name__).warning(
-                        "[MOMWARN1-PAGE] ledger=%s status=UNKNOWN", warning_code, exc_info=True,
-                    )
-                    warning = {"strategy_code": warning_code, "status": "UNKNOWN"}
                 warning["gateway_metrics"] = await _read_momentum_warning_gateway_metrics(
                     app.state.repository.redis, active_settings.redis_stream_prefix,
                     now_ns=time.time_ns(),
                 )
-                bot = {**bot, "momentum_warning": warning}
+            bot = {**bot, "momentum_warning": warning}
             data = {**data, "bots": [bot if item["strategy_code"] == strategy_code else item for item in data["bots"]]}
 
         advisories: list[dict[str, Any]] = []
@@ -6143,6 +6152,17 @@ async def _read_momentum_warning_gateway_metrics(
         result["pause_state"] = pause_state if pause_state is not None else "UNKNOWN"
         mono = selected.get("observed_monotonic_ns")
         result["observed_monotonic_ns"] = mono if type(mono) is int and mono > 0 else "UNKNOWN"
+        coverage = selected.get("coverage_status")
+        result["coverage_status"] = coverage if coverage in {
+            "requested", "provider_event_observed", "inactive", "off_by_window", "paused", "reverted",
+        } else "UNKNOWN"
+        requested = selected.get("A_subscription_requested_ns")
+        result["A_subscription_requested_ns"] = (
+            requested if type(requested) is int and 0 < requested <= selected["observed_ns"] else "UNKNOWN"
+        )
+        for field in ("watchdog_mode", "watchdog_observed_reason"):
+            value = selected.get(field)
+            result[field] = value if isinstance(value, str) and len(value) <= 128 else "UNKNOWN"
         return result
     except Exception:
         return unknown
@@ -6151,76 +6171,111 @@ async def _read_momentum_warning_gateway_metrics(
 
 def _render_momentum_warning_gateway_metrics(metrics: dict[str, Any] | None) -> str:
     readable = metrics is not None and metrics.get("status") == "READABLE"
+
     def field(name: str) -> str:
         return escape(str(metrics.get(name, "UNKNOWN") if readable else "UNKNOWN"))
-    pause = metrics.get('pause_state') if readable else None
-    pause_detail = escape(json.dumps(pause, sort_keys=True, allow_nan=False)) if isinstance(pause, dict) else 'UNKNOWN'
-    def pause_field(name: str) -> str:
-        return escape(str(pause.get(name, "UNKNOWN"))) if isinstance(pause, dict) else "UNKNOWN"
-    rows = []
-    history = pause.get('history') if isinstance(pause, dict) else None
-    for episode in history[-8:] if isinstance(history, list) else []:
-        if not isinstance(episode, dict):
-            continue
-        def timestamp(name: str) -> str:
-            if pause.get('clock_domain') != 'monotonic_ns':
-                return 'UNKNOWN'
-            value = approximate_pause_utc_ns(episode.get(name), metrics or {})
-            return str(value) if value is not None else 'UNKNOWN'
-        rows.append('<tr>' + ''.join(f'<td>{escape(str(value))}</td>' for value in (
-            episode.get('latest_reason', episode.get('reason','UNKNOWN')),
-            episode.get('start_ns','UNKNOWN'), episode.get('end_ns','UNKNOWN'),
-            episode.get('duration_seconds','UNKNOWN'), timestamp('start_ns'), timestamp('end_ns'),
-        )) + '</tr>')
-    pause_history = ''.join(rows) or '<tr><td colspan="6">UNKNOWN: no retained pause episodes</td></tr>'
-    return f"""<div class="panel-copy">A gateway counters ({'fresh' if readable else 'UNKNOWN'}):
+
+    coverage = metrics.get("coverage_status") if readable else None
+    if coverage in {"requested", "provider_event_observed"}:
+        requested = metrics.get("A_subscription_requested_ns")
+        since = (datetime.fromtimestamp(requested / 1e9, tz=UTC).astimezone(EASTERN_TZ).strftime("%H:%M")
+                 if type(requested) is int and requested > 0 else "UNKNOWN")
+        state = f"ON since {since} ET"
+    elif coverage == "off_by_window":
+        state = "OFF &mdash; window closed"
+    elif coverage == "inactive":
+        state = "OFF &mdash; not subscribed"
+    elif coverage in {"paused", "reverted"}:
+        reason = metrics.get("watchdog_revert_reason", "UNKNOWN")
+        if reason in {"NONE", "UNKNOWN"}:
+            pause = metrics.get("pause_state")
+            reason = pause.get("reason", "UNKNOWN") if isinstance(pause, dict) else "UNKNOWN"
+        state = f"OFF &mdash; {escape(str(reason))}"
+    else:
+        state = "UNKNOWN &mdash; current subscription evidence unavailable"
+    details = escape(json.dumps(metrics or {"status": "UNKNOWN"}, sort_keys=True, allow_nan=False))
+    return f"""<div class="panel-copy warning-feed-status">Warning feed: {state}
+        &middot; bars in/out {field('A_received')}/{field('A_published')}
+        &middot; delay max {field('max_publish_lag_ms')} ms</div>
+        <details class="panel-copy warning-feed-details"><summary>Feed details</summary>
         Queue drops: {field('queue_drops')}; total discarded: {field('dropped_total')};
-        queue depth: {field('queue_depth')}; received/published: {field('A_received')}/{field('A_published')};
-        publish lag/max: {field('lag_ms')}/{field('max_publish_lag_ms')} ms.
+        queue depth: {field('queue_depth')}; publish lag: {field('lag_ms')} ms.
         Source: market-data-gateway; instance: {field('gateway_instance_id')};
         generation: {field('generation')}; observed UTC ns: {field('observed_ns')}; age: {field('age_ms')} ms.
-        Safety revert: {field('watchdog_revert_reason')}. Pause counts / reason / start / end / duration:
-        state: {pause_field('state')}; reason: {pause_field('reason')} ({pause_field('reason_class')});
-        clean reads: {pause_field('clean_streak')}/{pause_field('required_clean_reads')}; reason segments: {pause_field('pause_count')};
-        pause episodes: {pause_field('pause_episode_count')}; last-hour episode lower bound: {pause_field('pauses_last_hour_lower_bound')};
-        wire pauses: {pause_field('wire_pause_count')}; recovery interruptions: {pause_field('recovery_interruptions')}.
-        <table><thead><tr><th>Reason</th><th>Start mono ns</th><th>End mono ns</th><th>Duration s</th>
-        <th>Start UTC estimate ns</th><th>End UTC estimate ns</th></tr></thead><tbody>{pause_history}</tbody></table>
-        <code>{pause_detail}</code>. Start/end/duration use the policy's monotonic clock.
-        Observed UTC/monotonic ns: {field('observed_ns')}/{field('observed_monotonic_ns')}.
-        Any caller-derived UTC is an observed-offset estimate, not an exact historic clock.
-        Policy snapshot is shown verbatim; absent fields are UNKNOWN, not zero.
-        Overflow-only auto-revert: NO;
-        existing safety auto-revert: YES, A only. Counters are gateway-instance cumulative,
-        not daily totals. Missing, future, conflicting epochs or older-than-20s evidence is UNKNOWN, not zero.</div>"""
+        Counters are gateway-instance cumulative, not daily totals.
+        Missing, future, conflicting epochs or older-than-20s evidence is UNKNOWN, not zero.
+        <pre>{details}</pre></details>"""
 
 
-def _render_momentum_warning_panel(warning: dict[str, Any] | None) -> str:
-    if not warning:
+_MOMENTUM_LEDGER_COLUMNS = "<tr><th>Ticker</th><th>Entry Time</th><th>Entry</th><th>Exit Time</th><th>Exit</th><th>P&amp;L</th><th>Exit Reason</th></tr>"
+
+
+def _momentum_entry_comparison(row: dict[str, Any], other_rows: list[dict[str, Any]], method: str) -> str:
+    raw_entry = str(row.get("entry_time") or "")
+    if not re.match(r"^\d{4}-\d\d-\d\d[ T]", raw_entry):
         return ""
-    code = str(warning.get("strategy_code", ""))
-    if code not in {"momentum_30s_warn", "momentum_60s_warn"}:
+    entered = parse_et_timestamp(raw_entry)
+    if entered.year <= 1:
         return ""
-    if warning.get("status") != "READABLE":
-        summary = "Warning ledger unreadable: UNKNOWN. No total calculated."
-        rows = '<tr><td colspan="9">Warning comparison unavailable</td></tr>'
+    matches = []
+    for other in other_rows:
+        if str(other.get("ticker") or other.get("symbol") or "") != str(row.get("ticker") or row.get("symbol") or ""):
+            continue
+        raw_other = str(other.get("entry_time") or "")
+        if not re.match(r"^\d{4}-\d\d-\d\d[ T]", raw_other):
+            continue
+        other_time = parse_et_timestamp(raw_other)
+        if other_time.year > 1 and other_time.date() == entered.date():
+            matches.append((other_time - entered).total_seconds())
+    if not matches:
+        return ""
+    nearest = min(abs(delta) for delta in matches)
+    closest = [delta for delta in matches if abs(delta) == nearest]
+    if len(closest) != 1:
+        return "Entry comparison UNKNOWN: ambiguous same-day ticker match"
+    delta = closest[0]
+    if delta == 0:
+        return "Same filled entry time"
+    return f"{method} caught {abs(delta):g}s {'earlier' if delta > 0 else 'later'} (filled entry times)"
+
+
+def _render_momentum_ledger(
+    ledger: dict[str, Any], *, title: str, method: str, other_rows: list[dict[str, Any]],
+) -> str:
+    readable = ledger.get("status", "READABLE") == "READABLE"
+    closed = list(ledger.get("closed_today") or []) if readable else []
+    rows = []
+    for row in sorted(closed, key=lambda item: parse_et_timestamp(str(item.get("entry_time") or "")), reverse=True)[:25]:
+        pnl = _as_float(row.get("pnl"))
+        note = _momentum_entry_comparison(row, other_rows, method)
+        ticker = escape(str(row.get("ticker") or row.get("symbol") or "UNKNOWN"))
+        if note:
+            ticker += f'<br><small>{escape(note)}</small>'
+        cells = (ticker, escape(_datetime_str(str(row.get("entry_time") or "UNKNOWN"))),
+                 escape(str(row.get("entry_price") or "UNKNOWN")),
+                 escape(_datetime_str(str(row.get("exit_time") or "UNKNOWN"))),
+                 escape(str(row.get("exit_price") or "UNKNOWN")),
+                 f"${pnl:+.2f}", escape(str(row.get("exit_reason") or "UNKNOWN")))
+        rows.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>")
+    if not readable:
+        summary = "UNKNOWN. No total calculated."
+        body = f'<tr><td colspan="7">{escape(method)} ledger unreadable: UNKNOWN</td></tr>'
     else:
-        rows, count, _ = _build_completed_position_rows(
-            {"strategy_code": code, "account_name": "paper:momentum",
-             "closed_today": warning.get("closed_today", [])}, [], [],
-        )
-        summary = f"{count} completed warning trades; gross paper P&amp;L ${_as_float(warning.get('daily_pnl')):+,.2f}"
-    return f"""<section class="panel full">
-        <div class="panel-header"><div><h3>Warning Detector - Separate Paper Ledger</h3>
-        <div class="sub">{escape(code)}: {summary}</div></div></div>
-        <div class="panel-copy">Comparison only. Never included in the Snapshot Momentum totals above.
-        Same next-eligible-print fill and +5% / -15% / 600-second exits. Conservative aggregate
-        evidence is labelled by the detector; it is not an invented raw-trade timestamp.</div>
-        {_render_momentum_warning_gateway_metrics(warning.get('gateway_metrics'))}
-        <div class="table-wrap"><table>
-        <thead><tr><th>Ticker</th><th>Path</th><th>Qty</th><th>Entry Time</th><th>Entry</th>
-        <th>Exit Time</th><th>Exit</th><th>P&amp;L</th><th>Exit Summary</th></tr></thead>
-        <tbody>{rows}</tbody></table></div></section>"""
+        total = _as_float(ledger.get("daily_pnl"))
+        summary = f"Day total: ${total:+.2f} &middot; {len(closed)} completed paper trades"
+        body = "".join(rows) or '<tr><td colspan="7">No completed positions</td></tr>'
+    return f"""<section class="panel full momentum-ledger">
+        <div class="panel-header"><div><h3>{escape(title)}</h3>
+        <div class="sub">{summary}</div></div></div>
+        <div class="table-wrap"><table><thead>{_MOMENTUM_LEDGER_COLUMNS}</thead>
+        <tbody>{body}</tbody></table></div></section>"""
+
+
+def _render_momentum_warning_panel(warning: dict[str, Any] | None, *, snapshot_rows: list[dict[str, Any]] | None = None) -> str:
+    if not warning or warning.get("strategy_code") not in {"momentum_30s_warn", "momentum_60s_warn"}:
+        return ""
+    return _render_momentum_ledger(warning, title="Warning method (new, 1-second bars)",
+                                  method="Warning", other_rows=snapshot_rows or [])
 
 
 def _render_bot_detail_page(
@@ -6251,6 +6306,10 @@ def _render_bot_detail_page(
         recent_fills = list(bot.get("recent_fills", []))
         recent_orders = list(bot.get("recent_orders", []))
     position_rows = _build_bot_position_rows(data, bot)
+    paper_broker_notice = '<p class="panel-copy">Paper bot &mdash; no broker orders.</p>'
+    open_positions_body = paper_broker_notice if strategy_code in {"momentum_30s", "momentum_60s"} else f"""<table>
+        <thead><tr><th>Ticker</th><th style="text-align:right">Bot Qty<br>Entry Time</th><th style="text-align:right">Entry Price</th><th style="text-align:right">Virtual Qty<br>Avg Price</th><th style="text-align:right">Broker Qty<br>Current Price</th><th style="text-align:right">Open P&amp;L</th><th>Sync Status</th></tr></thead>
+        <tbody>{position_rows}</tbody></table>"""
     completed_rows, completed_count, completed_pnl = _build_completed_position_rows(bot, recent_orders, recent_fills)
     trade_coach_rows = ""
     trade_coach_count = 0
@@ -6273,6 +6332,9 @@ def _render_bot_detail_page(
             live_trade_coach_advisories
         )
     order_rows, order_count = _build_order_history_rows(recent_orders, recent_fills)
+    order_history_body = paper_broker_notice if strategy_code in {"momentum_30s", "momentum_60s"} else f"""<table>
+        <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Side</th><th style="text-align:right">Qty</th><th style="text-align:right">Price</th><th>Status</th><th>Reason</th></tr></thead>
+        <tbody>{order_rows}</tbody></table>"""
     tos_parity = bot.get("tos_parity", {})
     tos_parity_rows = _build_tos_parity_rows(tos_parity)
     decision_rows = _build_bot_decision_rows(recent_decisions)
@@ -6543,29 +6605,24 @@ def _render_bot_detail_page(
                 </div>
             </section>"""
     momentum_panel = ""
-    if strategy_code in {"momentum_30s", "momentum_60s"}:
-        momentum = dict(data_health.get("momentum_paper", {}) or {})
-        detector_status = str(momentum.get("detector_status", "UNEXERCISED"))
+    momentum_banner = ""
+    is_momentum = strategy_code in {"momentum_30s", "momentum_60s"}
+    if is_momentum:
+        warning = bot.get("momentum_warning") or {"strategy_code": strategy_code + "_warn", "status": "UNKNOWN"}
+        momentum_banner = '<section class="panel full accent-panel"><div class="panel-copy"><strong>PAPER ONLY &mdash; no real orders. Two methods side by side.</strong></div></section>'
+        snapshot_panel = _render_momentum_ledger(
+            {**bot, "status": bot.get("momentum_snapshot_status", "READABLE")},
+            title="Snapshot method (old, 5-second snapshots)", method="Snapshot",
+            other_rows=list(warning.get("closed_today") or []) if warning.get("status") == "READABLE" else [],
+        )
         momentum_panel = f"""
-            <section class="panel full accent-panel">
-                <div class="panel-header">
-                    <div>
-                        <h2>{escape(meta["title"])} Paper Study</h2>
-                        <div class="sub">Broker-disconnected Massive raw-trade observation. This page cannot place or route an order.</div>
-                    </div>
-                    <span class="count accent">{escape(detector_status)}</span>
-                </div>
-                <div class="hero-grid">
-                    <div class="hero-card"><span>Events</span><strong>{int(momentum.get("events", 0) or 0)}</strong><small>More than 10 in one morning is DETECTOR_SUSPECT</small></div>
-                    <div class="hero-card"><span>Filled</span><strong>{int(momentum.get("filled", 0) or 0)}</strong><small>First eligible print strictly after detection</small></div>
-                    <div class="hero-card"><span>Open paths</span><strong>{int(momentum.get("open", 0) or 0)}</strong><small>Evidence continues through fill + 600 seconds</small></div>
-                    <div class="hero-card"><span>Closed</span><strong>{int(momentum.get("closed", 0) or 0)}</strong><small>{int(momentum.get("no_fill", 0) or 0)} no-fill · {int(momentum.get("unanswerable", 0) or 0)} unanswerable</small></div>
-                    <div class="hero-card"><span>Gross paper P&amp;L</span><strong>${_as_float(momentum.get("gross_pnl")):+,.2f}</strong><small>$500 notional per event; no fees or borrow</small></div>
-                    <div class="hero-card"><span>Excluded raw prints</span><strong>{int(momentum.get("excluded_prints", 0) or 0)}</strong><small>Condition metadata failed closed</small></div>
-                </div>
-                <div class="panel-copy"><strong>Frozen rule:</strong> +20% over the trailing {30 if strategy_code == "momentum_30s" else 60}-second eligible-print low; +5% target, -15% stop, then first print after 600 seconds. A quiet day is UNEXERCISED, never a pass.</div>
-            </section>"""
-        momentum_panel += _render_momentum_warning_panel(bot.get("momentum_warning"))
+            <section class="panel full">{_render_momentum_warning_gateway_metrics(warning.get('gateway_metrics'))}</section>
+            {_render_momentum_warning_panel(warning, snapshot_rows=list(bot.get('closed_today') or []))}
+            {snapshot_panel}
+            <details class="panel-copy"><summary>Paper rules</summary>
+            <strong>Frozen rule:</strong> +20% over the trailing {30 if strategy_code == "momentum_30s" else 60}-second eligible-print low;
+            +5% target, -15% stop, then first print after 600 seconds. Both ledgers are paper only; their day totals stay separate.
+            A quiet day is UNEXERCISED, never a pass.</details>"""
     completed_positions_panel = f"""
             <section class="panel full">
                 <div class="panel-header">
@@ -6582,6 +6639,12 @@ def _render_bot_detail_page(
                 </table>
             </div>
         </section>"""
+    if is_momentum:
+        completed_positions_panel = ""  # The two paper ledgers are adjacent above.
+        overview_pnl_label = "Snapshot day P&L"
+        overview_closed_label = "Snapshot trades"
+        if bot.get("momentum_snapshot_status") == "UNKNOWN":
+            overview_pnl_value = "UNKNOWN"
     trade_forensics_panel = (
         _build_trade_forensics_panel(dict(bot.get("trade_forensics", {}) or {}))
         if trade_coach_enabled
@@ -7186,6 +7249,7 @@ def _render_bot_detail_page(
         </aside>
 
         <main class="workspace">
+            {momentum_banner}
             <section class="panel full accent-panel">
                 <div class="panel-header">
                     <div>
@@ -7207,15 +7271,12 @@ def _render_bot_detail_page(
                 <div class="panel-header">
                     <div>
                         <h3>Open Positions{section_date}</h3>
-                        <div class="sub">Live bot, virtual, and broker quantities side by side.</div>
+                        <div class="sub">{"Paper ledger, not a broker account." if is_momentum else "Live bot, virtual, and broker quantities side by side."}</div>
                     </div>
-                    <span class="count">{bot["position_count"]}</span>
+                    <span class="count">{"PAPER" if is_momentum else bot["position_count"]}</span>
                 </div>
                 <div class="table-wrap">
-                    <table>
-                        <thead><tr><th>Ticker</th><th style="text-align:right">Bot Qty<br>Entry Time</th><th style="text-align:right">Entry Price</th><th style="text-align:right">Virtual Qty<br>Avg Price</th><th style="text-align:right">Broker Qty<br>Current Price</th><th style="text-align:right">Open P&amp;L</th><th>Sync Status</th></tr></thead>
-                        <tbody>{position_rows}</tbody>
-                    </table>
+                    {open_positions_body}
                 </div>
             </section>
 
@@ -7228,15 +7289,12 @@ def _render_bot_detail_page(
                 <div class="panel-header">
                     <div>
                         <h3>Order History{section_date}</h3>
-                        <div class="sub">Entry, scale, and exit orders with fill price, status, and reason.</div>
+                        <div class="sub">{"Paper ledger, not broker executions." if is_momentum else "Entry, scale, and exit orders with fill price, status, and reason."}</div>
                     </div>
-                    <span class="count accent">{order_count}</span>
+                    <span class="count accent">{"PAPER" if is_momentum else order_count}</span>
                 </div>
                 <div class="table-wrap">
-                    <table>
-                        <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Side</th><th style="text-align:right">Qty</th><th style="text-align:right">Price</th><th>Status</th><th>Reason</th></tr></thead>
-                        <tbody>{order_rows}</tbody>
-                    </table>
+                    {order_history_body}
                 </div>
             </section>
 

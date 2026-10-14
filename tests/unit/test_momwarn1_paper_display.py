@@ -55,7 +55,8 @@ def test_panel_does_not_mutate_input_or_merge_totals():
     before = deepcopy(warning)
     panel = cp._render_momentum_warning_panel(warning)
     assert warning == before
-    assert "Separate Paper Ledger" in panel and "Never included in the Snapshot Momentum totals" in panel
+    assert "Warning method (new, 1-second bars)" in panel
+    assert "Snapshot method" not in panel  # Totals remain in distinct renderers.
     assert "$+25.00" in panel
 
 
@@ -84,7 +85,8 @@ def test_warning_page_row_never_changes_legacy_pnl(monkeypatch):
         page = client.get("/bot/momentum-30")
     assert page.status_code == 200
     assert "$+31.80" in page.text and "$+25.00" in page.text
-    assert "Separate Paper Ledger" in page.text and "WARN" in page.text
+    assert "Warning method (new, 1-second bars)" in page.text and "WARN" in page.text
+    assert "Snapshot method (old, 5-second snapshots)" in page.text
     assert "Frozen rule:</strong> +20%" in page.text
     assert rendered[0]["daily_pnl"] == float(Decimal("31.8044"))
     assert len(rendered[0]["closed_today"]) == 5
