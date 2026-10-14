@@ -98,6 +98,15 @@ def test_duplicate_episode_refuses():
         validate(row)
 
 
+def test_two_proven_existing_episodes_keep_their_shared_symbol_quotes():
+    row = proof(False)
+    second = deepcopy(row["episodes"][0])
+    second["episode_id"] = "00000000-0000-0000-0000-000000000002"
+    row["episodes"].append(second)
+    result = validate(row, enabled=False)
+    assert result["episode_count"] == 2 and result["quote_symbol_count"] == 1
+
+
 @pytest.mark.parametrize("raw", [None, "[1]", "bad", "x" * 16_385])
 def test_missing_malformed_or_oversize_proof_refuses(raw):
     with pytest.raises(ValueError):

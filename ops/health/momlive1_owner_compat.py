@@ -77,7 +77,6 @@ def validate_live_owner(symbols: set[str], proof: dict, *, enabled: bool,
         except ValueError:
             valid_id = False
         if (not valid_id or identity in ids or row.get("symbol") not in symbols
-                or row.get("symbol") in owned_symbols
                 or row.get("account_name") not in expected_accounts
                 or row.get("state") not in ACTIVE):
             raise ValueError("live owner episode identity unproven")
