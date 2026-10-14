@@ -276,6 +276,7 @@ class MomentumPaperService:
                     active_warning_paths=len(self._warning.engine.active_events),
                     status=self._warning.last_status, subscription_confirmed_ns=None,
                     **self._warning.late_raw_ignored_metrics(),
+                    **self._warning.take_transport_stale_metrics(),
                     **self._warning.source_age_stats.take_sample(observed_ns=sample_ns),
                 )
         if (
@@ -476,10 +477,15 @@ class MomentumPaperService:
         outcome, records = self._warning.observe_aggregate(
             bar, observed_ns=observed_ns, legacy_active=self._engine.active_symbols,
         )
+        emit_decision = outcome.status != "IGNORED"
+        if (outcome.reason == "aggregate_clock_or_stale"
+                and observed_ns >= bar.published_utc_ns
+                and observed_ns - bar.received_utc_ns > 1_000_000_000):
+            emit_decision = self._warning.transport_stale_by_symbol.get(bar.symbol, 0) == 1
         decision_ns = wall_time.time_ns()
         records = self._warning.engine.seal_warning_decisions(records, observed_decision_ns=decision_ns)
         await self._persist(records)
-        if outcome.status != "IGNORED":
+        if emit_decision:
             await self._warning_metrics(
                 event_type="decision", symbol=bar.symbol, observed_ns=observed_ns,
                 observed_decision_ns=decision_ns,

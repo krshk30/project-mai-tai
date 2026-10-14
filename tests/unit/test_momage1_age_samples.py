@@ -46,7 +46,9 @@ def test_counter_partition_duplicates_are_age_pass_not_paper_entries():
     assert first.reason == "no_warning_candidate" and duplicate.reason == "duplicate_or_reordered_aggregate"
     stale, at = delayed_bar(age_ms=7602)
     model.observe_aggregate(stale, observed_ns=at, legacy_active=set())
-    bad_transport = replace(stale, received_utc_ns=at - 1_000_000_001)
+    # PAPERLAG1 checks duplicates first; use an in-order row for the age partition.
+    bad_transport = replace(stale, sequence=model._sequence + 1,
+                            received_utc_ns=at - 1_000_000_001)
     refused, _ = model.observe_aggregate(bad_transport, observed_ns=at, legacy_active=set())
     assert refused.reason == "aggregate_clock_or_stale"
     sample = model.source_age_stats.take_sample(observed_ns=at)

@@ -65,6 +65,25 @@ class MomentumWarningConsumer:
         self.cooling_status: dict[str, str] = {}
         self.source_age_stats = AggregateSourceAgeStats()
         self.late_raw_ignored_by_symbol: Counter[str] = Counter()
+        self.transport_stale_by_symbol: Counter[str] = Counter()
+        self._transport_stale_total = 0
+        self._transport_stale_untracked = 0
+
+    def take_transport_stale_metrics(self) -> dict[str, object]:
+        metrics = {
+            "transport_stale_total": self._transport_stale_total,
+            "transport_stale_by_symbol": dict(sorted(
+                self.transport_stale_by_symbol.items(), key=lambda item: (-item[1], item[0]),
+            )[:5]),
+            "transport_stale_untracked": self._transport_stale_untracked,
+            "transport_stale_symbol_limit": self.max_window_symbols,
+            "transport_stale_scope": "SAMPLE_WINDOW_RESET_ON_EMISSION_ATTEMPT",
+            "transport_stale_count_semantics": "SEQUENCE_ADVANCED_RECEIVE_STALE_NOT_FUTURE_OR_DUPLICATE",
+            "transport_stale_top5_complete": self._transport_stale_untracked == 0,
+        }
+        self.transport_stale_by_symbol.clear()
+        self._transport_stale_total = self._transport_stale_untracked = 0
+        return metrics
 
     def late_raw_ignored_metrics(self) -> dict[str, object]:
         return {
@@ -140,11 +159,12 @@ class MomentumWarningConsumer:
         clock = datetime.fromtimestamp(now_ms / 1000, tz=UTC).astimezone(
             ZoneInfo("America/New_York")
         )
-        transport_bad = observed_ns < bar.published_utc_ns or observed_ns - bar.received_utc_ns > 1_000_000_000
+        future_clock = observed_ns < bar.published_utc_ns
+        receive_stale = observed_ns - bar.received_utc_ns > 1_000_000_000
         age_reason = aggregate_source_age_reason(end_ms=bar.end_ms, observed_ms=now_ms)
         self.source_age_stats.observe(end_ms=bar.end_ms, observed_ns=observed_ns,
-            refusal_reason="aggregate_clock_or_stale" if transport_bad else age_reason)
-        if transport_bad:
+            refusal_reason="aggregate_clock_or_stale" if future_clock or receive_stale else age_reason)
+        if future_clock:
             self.invalidate_transport("aggregate_clock_or_stale")
             return CandidateOutcome(bar.symbol, "REFUSED", "aggregate_clock_or_stale"), ()
         if bar.epoch == self._stream_epoch and bar.sequence <= self._sequence:
@@ -175,6 +195,22 @@ class MomentumWarningConsumer:
         self._stream_epoch = bar.epoch
         self._sequence = bar.sequence
         self._drops = bar.dropped_total
+        if receive_stale:
+            # Reading a stale row advances the stream, but is not fresh coverage.
+            self._transport_stale_total += 1
+            if bar.symbol in self.transport_stale_by_symbol or len(self.transport_stale_by_symbol) < self.max_window_symbols:
+                self.transport_stale_by_symbol[bar.symbol] += 1
+            else:
+                self._transport_stale_untracked += 1
+            window = self.windows.get(bar.symbol)
+            latest_start = window.newest_bucket_start_ms if window is not None else None
+            if latest_start is None or bar.start_ms > latest_start:
+                self.windows.pop(bar.symbol, None)
+                self._latest.pop(bar.symbol, None)
+                self.last_warning_ns.pop(bar.symbol, None)
+            self.invalidate_transport("aggregate_clock_or_stale")
+            self.last_status = "aggregate_clock_or_stale"
+            return CandidateOutcome(bar.symbol, "REFUSED", "aggregate_clock_or_stale"), records
         self.transport.observe(bar, observed_ns=observed_ns)
         if age_reason is not None:
             window = self.windows.get(bar.symbol)
