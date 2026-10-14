@@ -370,9 +370,13 @@ class MomentumPaperEngine:
                 records.extend(self._finalize(event, now_ms))
         return tuple(records)
 
-    def mark_feed_gap(self, started_ms: int, ended_ms: int) -> tuple[MomentumTapeRecord, ...]:
+    def mark_feed_gap(
+        self, started_ms: int, ended_ms: int, *, symbol: str | None = None,
+    ) -> tuple[MomentumTapeRecord, ...]:
         records: list[MomentumTapeRecord] = []
         for event in self._active.values():
+            if symbol is not None and event.symbol != symbol:
+                continue
             if event.feed_gap or ended_ms < event.detection_ms or started_ms > event.path_deadline_ms:
                 continue
             event.feed_gap = True
