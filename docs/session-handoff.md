@@ -3,7 +3,32 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-## PRODUCTION NOW — as of 2026-10-08 20:30 ET (claude-1 close-out sweep against the box)
+## PRODUCTION NOW — as of 2026-10-14 01:00 ET (claude-1, verified on the box; GitHub suspended → local branch only)
+
+| Item | State now | Evidence (as-of) |
+|---|---|---|
+| Box checkout | `fbbeb0cd` (contains 6ad4f143 W1, 9dcd34a1 W3, c6d5929b K+C, 266a/49ba/26be G1+off-window, fbbeb0cd R) | `git log` on box 01:00 |
+| Services | OMS 3356648 (19:42:59), reconciler 3358640 (19:47:12), strategy 3372452 / paper / control (20:29:43; paper 21:53:23), gateway 3393091 (21:53:06), v2 3409611 (00:46:03) | systemctl 01:00 |
+| v2 switches (/proc) | FALSE_FLIP2 on, FLIP_OWNED_FIRST on, RETRY_ONE on max 0, REACTIVE on, RECLAIM off, REPRICE_HANDOFF off, LINE on, VOL_FLOOR 10000 | /proc 00:46 |
+| State | flat, 0 working orders, 0 open managed rows; 0 ERROR overnight except a Massive reconnect 00:01 | 00:03 read |
+| Momentum warning (A) | MOMLATCH1 + G1 + off-window installed; pause_state window_closed; arms after 3 clean reads at 04:00 | metrics 21:55 |
+
+### Installed 10-13 evening (all reviewed by claude-1, verified on the box)
+- W1 (OMS + reconciler): EXITFILLPREC1, WBHOLD1 (owned-share backstop), WBNULLID1 runtime, STUCKALERT1/expiry; JBDI stale incident closed 19:49:57.
+- W3 (gateway/strategy/paper/control): TICKCASE1 scanner/paper, TPC fix; 213 TPC/BCPC paper events invalidated + prior-close correction.
+- W2 (v2): RESTARTKEEP1 (+N1 filled-sibling, AIXI client-terminal predicate) + TICKCASE1 v2 guards; EH2RTH1 (non-RPG terminal re-place, session-scoped book).
+- MOMLATCH1 (harm=sticky, noise=pause/resume), publish-lag pipeline, G1 cohort-window N/A outside 07:01–20:00, off-window reopen on the ET session.
+
+### Open / next
+- PARA1: Gate A 3/3 pass; Gate B run 1 failed (279 ms stall; 6 unpaired legs refused segment_identity_unproven) — attribution; not installed unless A+B 3/3 by 02:45.
+- REPLACE1: read-only done — reprice gap ≈60 s, ≤6/889 proxy misses (2/221 since 10-07), lost buys UNMEASURED → recommend no build (operator card).
+- Follow-ups: v2 boot warm-up timeout logs ERROR (would trip A live_error in-window); EH2RTH1 15 s book TTL vs poll cadence; hard-coded account name; standard-time anchor test; guard survives gateway restart; snapshot GIL/process split; DRIFT1 standing allowance (parked item, alert only).
+- RESTARTKEEP1 positive restore path NOT yet exercised live (needs an in-session restart after a live SELL).
+
+### Backups (GitHub suspended)
+- git bundle --all: iCloud `project-mai-tai-backup/` + server `/var/backups/project-mai-tai/repo/` (latest sha256 dd3b8656…, includes fbbeb0cd).
+
+## PREVIOUS STATE — as of 2026-10-08 20:30 ET (claude-1 close-out sweep against the box)
 
 | Item | State now | Evidence (as-of) |
 |---|---|---|
