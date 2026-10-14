@@ -1,0 +1,22 @@
+[Unit]
+Description=Bounded SEC-index preparation for Momentum live country routing
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=trader
+Group=trader
+WorkingDirectory=/home/trader/project-mai-tai
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/trader/project-mai-tai/src
+ExecStart=/home/trader/project-mai-tai/.venv/bin/python -B /home/trader/project-mai-tai/ops/momlive1/sec_nightly_runner.py --repo /home/trader/project-mai-tai --state /var/lib/project-mai-tai-momlive-sec --approved-head ${MOMLIVE_SEC_APPROVED_HEAD}
+StateDirectory=project-mai-tai-momlive-sec
+StateDirectoryMode=0700
+UMask=0077
+Nice=19
+CPUQuota=100%
+MemoryMax=1G
+TimeoutStartSec=3700
+TimeoutStopSec=10
+KillMode=control-group
+Restart=no
