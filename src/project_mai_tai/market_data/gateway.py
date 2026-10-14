@@ -156,6 +156,14 @@ class MarketDataGatewayService:
         self._warning_ack_unknown = 0
         self._warning_write_waits = deque(maxlen=256)
         self._warning_rate_bins: deque[tuple[int, int]] = deque(maxlen=10)
+        self._warning_sample_started_ns = time.monotonic_ns()
+        self._warning_sample_arrival_second = None
+        self._warning_sample_second_count = 0
+        self._warning_sample_arrivals = 0
+        self._warning_sample_arrivals_per_second_high_water = 0
+        self._warning_sample_queue_high_water = 0
+        self._warning_sample_discards = {"lag": 0, "queue": 0, "publish_error": 0}
+        self._warning_sample_ack_unknown = 0
         self._warning_reverted_utc_ns: int | None = None
         self._warning_requested_utc_ns: int | None = None
         self._warning_first_a_utc_ns: int | None = None
@@ -793,6 +801,14 @@ class MarketDataGatewayService:
         if not self._warning_active or self._warning_revert_reason is not None:
             return
         self._warning_seq += 1
+        second_now = time.monotonic_ns() // 1_000_000_000
+        if second_now != self._warning_sample_arrival_second:
+            self._warning_sample_arrival_second = second_now
+            self._warning_sample_second_count = 0
+        self._warning_sample_second_count += 1
+        self._warning_sample_arrivals += 1
+        self._warning_sample_arrivals_per_second_high_water = max(
+            self._warning_sample_arrivals_per_second_high_water, self._warning_sample_second_count)
         if self._warning_first_a_utc_ns is None:
             self._warning_first_a_utc_ns = record.received_utc_ns
         second = record.received_utc_ns // 1_000_000_000
@@ -805,7 +821,10 @@ class MarketDataGatewayService:
             self._warning_queue.get_nowait()
             self._warning_drop_count += 1
             self._warning_queue_drop_count += 1
+            self._warning_sample_discards["queue"] += 1
         self._warning_queue.put_nowait((self._warning_seq, record))
+        self._warning_sample_queue_high_water = max(
+            self._warning_sample_queue_high_water, self._warning_queue.qsize())
 
     def _warning_publish_lag(self) -> float:
         records = list(getattr(self, '_warning_inflight_records', ()))
@@ -840,6 +859,7 @@ class MarketDataGatewayService:
                 self._warning_max_publish_lag_ms = max(self._warning_max_publish_lag_ms, lag_seconds * 1000)
                 if lag_seconds > 2:
                     self._warning_drop_count += len(pending)
+                    self._warning_sample_discards["lag"] += len(pending)
                     await self._revert_warning("publish_lag")
                     continue
                 if len(pending) == 1:
@@ -861,20 +881,25 @@ class MarketDataGatewayService:
                 self._warning_published += acknowledged
                 self._warning_drop_count += len(pending)-acknowledged
                 self._warning_ack_unknown += exc.unknown
+                self._warning_sample_discards["publish_error"] += len(pending)-acknowledged
+                self._warning_sample_ack_unknown += exc.unknown
                 await self._revert_warning('publish_error', diagnostic=f'acknowledged={acknowledged} unknown_ack={exc.unknown} batch={len(pending)}')
                 continue
             except asyncio.CancelledError:
                 self._warning_drop_count += len(pending)-acknowledged
                 if self._warning_write_task is not None:
                     self._warning_ack_unknown += len(pending)-acknowledged
+                    self._warning_sample_ack_unknown += len(pending)-acknowledged
                 if asyncio.current_task().cancelling() or self._warning_revert_reason is not None:
                     raise
                 # Only the in-flight A write was cancelled by an A-only pause/window close.
                 continue
             except Exception as exc:
                 self._warning_drop_count += len(pending)-acknowledged
+                self._warning_sample_discards["publish_error"] += len(pending)-acknowledged
                 if self._warning_write_task is not None:
                     self._warning_ack_unknown += len(pending)-acknowledged
+                    self._warning_sample_ack_unknown += len(pending)-acknowledged
                 await self._revert_warning("publish_error", diagnostic=_warning_monitor_diagnostic(exc))
                 continue
             finally:
@@ -976,6 +1001,17 @@ class MarketDataGatewayService:
             except TimeoutError:
                 pass
 
+    def _reset_warning_sample(self) -> None:
+        # Called only at emission attempt, before await, so new events belong to the next sample.
+        self._warning_sample_started_ns = time.monotonic_ns()
+        self._warning_sample_arrival_second = None
+        self._warning_sample_second_count = 0
+        self._warning_sample_arrivals = 0
+        self._warning_sample_arrivals_per_second_high_water = 0
+        self._warning_sample_queue_high_water = self._warning_queue.qsize()
+        self._warning_sample_discards = {"lag": 0, "queue": 0, "publish_error": 0}
+        self._warning_sample_ack_unknown = 0
+
     def warning_metrics(self, *, event_type: str = "gateway_sample") -> dict:
         if not self._warning_window_open():
             self._pauses.close_window()
@@ -1005,6 +1041,18 @@ class MarketDataGatewayService:
             "generation": self._warning_generation, "A_received": self._warning_seq,
             "A_published": self._warning_published, "A_rate_bins": list(self._warning_rate_bins),
             "A_ack_unknown": self._warning_ack_unknown,
+            "A_open_sample": {
+                "started_monotonic_ns": self._warning_sample_started_ns,
+                "ended_monotonic_ns": time.monotonic_ns(),
+                "arrivals": self._warning_sample_arrivals,
+                "arrivals_per_second_high_water": self._warning_sample_arrivals_per_second_high_water,
+                "queue_depth_high_water": self._warning_sample_queue_high_water,
+                "discards_by_reason": dict(self._warning_sample_discards),
+                "ack_unknown": self._warning_sample_ack_unknown,
+                "scope": "LOCAL_ENQUEUE_MONOTONIC_SECOND_BUCKETS_SAMPLE_BOUNDARY_SECONDS_PARTIAL",
+                "reset": "EXISTING_METRIC_EMISSION_ATTEMPT_NOT_DELIVERY_OR_GETTER",
+                "discard_scope": "CLIENT_DROP_ACCOUNTING_NOT_PROVEN_WIRE_LOSS_WINDOW_CLOSE_CANCEL_EXCLUDED",
+            },
             "A_write_await_samples": list(self._warning_write_waits),
             "A_write_await_scope": "BOUNDED_CLIENT_AWAIT_INCLUDES_ENCODING_CONNECTION_SCHEDULING_NOT_SERVER_RTT",
             "read_stage_timings": self._timings.snapshot(),
@@ -1041,6 +1089,7 @@ class MarketDataGatewayService:
             try:
                 event_type = "revert" if self._warning_revert_reason and not reported_revert else "gateway_sample"
                 metrics = self.warning_metrics(event_type=event_type)
+                self._reset_warning_sample()
                 await asyncio.wait_for(
                     self._warning_metrics_publisher.publish_momentum_warning_metric(metrics),
                     timeout=1,
