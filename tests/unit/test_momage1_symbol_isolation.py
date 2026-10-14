@@ -36,7 +36,9 @@ def assert_symbol_only_refusal():
     y_window = model.windows["YYYY"]
     y_active = model.engine.active_events
     y_warning = model.last_warning_ns["YYYY"]
-    stale, now = observation("XXXX", 3, stale=True)
+    stale, now = observation("XXXX", 3)
+    now += 8_000_000_000
+    stale = replace(stale, received_utc_ns=now, published_utc_ns=now)
     outcome, records = model.observe_aggregate(stale, observed_ns=now, legacy_active=set())
     assert outcome.reason == "aggregate_source_end_stale"
     assert not records
@@ -47,6 +49,9 @@ def assert_symbol_only_refusal():
     assert model.last_warning_ns["YYYY"] == y_warning
     model.complete_read(f"{now // 1_000_000}-0", observed_ns=now)
     good, now = observation("YYYY", 4)
+    now += 8_000_000_000
+    good = replace(good, start_ms=good.start_ms + 8000, end_ms=good.end_ms + 8000,
+                   received_utc_ns=now, published_utc_ns=now)
     _, records = model.observe_aggregate(good, observed_ns=now, legacy_active=set())
     assert not records
     assert model.windows["YYYY"] is y_window
@@ -56,6 +61,40 @@ def assert_symbol_only_refusal():
 
 def test_g_stale_x_preserves_y_window_and_active_warning_path():
     assert_symbol_only_refusal()
+
+
+def test_j_stale_revision_keeps_window_and_counts_once():
+    model = model_with_live_y()
+    window = model.windows["YYYY"]
+    existing = window.retained_buckets
+    revision, now = observation("YYYY", 3, stale=True)
+    outcome, records = model.observe_aggregate(revision, observed_ns=now, legacy_active=set())
+    assert outcome.reason == "aggregate_late_revision" and outcome.status == "IGNORED"
+    assert not records
+    assert model.windows["YYYY"] is window and window.retained_buckets == existing
+    assert model._sequence == 3
+    sample = model.source_age_stats.take_sample(observed_ns=now)
+    assert sample["source_age_late_revision_bars"] == 1
+    assert sample["source_age_refused_bars"] == 1  # Source-age failure, not a new trade.
+
+
+def test_k_fresh_revision_overwrites_held_start_without_new_bucket():
+    model = model_with_live_y()
+    original = model._latest["YYYY"]
+    now = original.published_utc_ns + 2_000_000_000
+    revision = replace(original, sequence=3, high=Decimal("12.5"),
+                       received_utc_ns=now, published_utc_ns=now)
+    window = model.windows["YYYY"]
+    before = window.retained_buckets
+    model.observe_aggregate(revision, observed_ns=now, legacy_active=set())
+    assert model.windows["YYYY"] is window and window.retained_buckets == before
+    assert window._bars[original.start_ms].high == Decimal("12.5")
+
+
+def test_j_mutation_without_revision_guard_breaks_retention(monkeypatch):
+    monkeypatch.setattr(module.WarningWindow, "newest_bucket_start_ms", property(lambda self: None))
+    with pytest.raises(AssertionError):
+        test_j_stale_revision_keeps_window_and_counts_once()
 
 
 def test_h_real_sequence_gap_still_resets_fleet():
@@ -70,14 +109,9 @@ def test_h_real_sequence_gap_still_resets_fleet():
 
 def test_i_mutation_refusal_before_sequence_advance_breaks_isolation(monkeypatch):
     source = textwrap.dedent(inspect.getsource(MomentumWarningConsumer.observe_aggregate))
-    block = '''    if age_reason is not None:
-        # An in-order late bucket is a symbol hole, not a transport gap.
-        self.windows.pop(bar.symbol, None)
-        self._latest.pop(bar.symbol, None)
-        self.last_warning_ns.pop(bar.symbol, None)
-        self.last_status = age_reason
-        return CandidateOutcome(bar.symbol, "REFUSED", age_reason), records
-'''
+    begin = source.index("    if age_reason is not None:\n")
+    end = source.index("    if (\n", begin)
+    block = source[begin:end]
     assert source.count(block) == 1
     early = '''    if age_reason is not None:
         self.invalidate_transport(age_reason)

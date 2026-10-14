@@ -153,6 +153,12 @@ class MomentumWarningConsumer:
         self._drops = bar.dropped_total
         self.transport.observe(bar, observed_ns=observed_ns)
         if age_reason is not None:
+            window = self.windows.get(bar.symbol)
+            latest_start = window.newest_bucket_start_ms if window is not None else None
+            if age_reason == "aggregate_source_end_stale" and latest_start is not None and latest_start >= bar.start_ms:
+                self.source_age_stats.late_revisions += 1
+                self.last_status = "aggregate_late_revision"
+                return CandidateOutcome(bar.symbol, "IGNORED", "aggregate_late_revision"), records
             # An in-order late bucket is a symbol hole, not a transport gap.
             self.windows.pop(bar.symbol, None)
             self._latest.pop(bar.symbol, None)

@@ -27,6 +27,7 @@ class AggregateSourceAgeStats:
         self.start_ns: int | None = None
         self.total = self.admitted = self.source_refused = self.transport_refused = 0
         self.incomplete = self.nonnegative = self.overflow = 0
+        self.late_revisions = 0
         self.max_ms: int | None = None
 
     def observe(self, *, end_ms: int, observed_ns: int, refusal_reason: str | None) -> None:
@@ -72,6 +73,7 @@ class AggregateSourceAgeStats:
             "source_age_admitted_bars": self.admitted,
             "source_age_refused_bars": self.source_refused,
             "source_age_incomplete_bars": self.incomplete,
+            "source_age_late_revision_bars": self.late_revisions,
             "source_age_transport_refused_bars": self.transport_refused,
             "source_end_age_max_ms": self.max_ms,
             "source_end_age_p99_ms": p99,

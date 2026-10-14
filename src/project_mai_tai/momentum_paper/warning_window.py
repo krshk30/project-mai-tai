@@ -225,6 +225,10 @@ class WarningWindow:
     def retained_buckets(self) -> int:
         return len(self._bars)
 
+    @property
+    def newest_bucket_start_ms(self) -> int | None:
+        return max(self._bars, default=None)
+
     def whole_buckets(
         self, *, observed_ms: int, seconds: int, after_ms: int = 0,
     ) -> tuple[AggregateObservation, ...]:
