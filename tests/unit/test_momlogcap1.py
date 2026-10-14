@@ -87,6 +87,37 @@ def test_error_at_partial_chunk_end_is_conservative_harm(health_reader):
     assert reader.read().new_live_error
 
 
+def test_large_append_after_snapshot_commits_scanned_chunk_and_defers_bytes(health_reader, monkeypatch):
+    from tests.unit.test_momwarn1_append_growth import ReadTap
+
+    reader, _, directory = health_reader
+    reader.read()
+    path = directory / "strategy.log"
+    before = reader._logs[path.name][1]
+    with path.open("ab") as stream:
+        stream.write(b"INFO scanned\n")
+    original = reader._open_regular
+    writes = []
+
+    def open_regular(open_path):
+        source = original(open_path)
+        if open_path != path:
+            return source
+
+        def after(_):
+            if not writes:
+                writes.append(True)
+                with path.open("ab") as stream:
+                    stream.write(b" " * 100000 + b" ERROR deferred\n")
+        return ReadTap(source, after)
+
+    monkeypatch.setattr(reader, "_open_regular", open_regular)
+    with pytest.raises(ValueError, match="catch-up incomplete"):
+        reader.read()
+    assert reader._logs[path.name][1] == before + len(b"INFO scanned\n")
+    assert reader.read().new_live_error
+
+
 def test_raise_without_advance_mutation_kills_positive_control(health_reader, monkeypatch):
     reader, _, directory = health_reader
     original = reader._scan_live_logs

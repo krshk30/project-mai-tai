@@ -413,8 +413,9 @@ class WarningHealthReader:
                         # ERROR plus its left word-boundary byte crosses any chunk.
                         tail = tail[-6:]
                     covered = offset + len(chunk)
+                    after_size = os.fstat(source.fileno()).st_size
                     check_read_coverage(source.fileno(), offset, covered,
-                                        max(self.MAX_LOG_BYTES, info.st_size - covered), name)
+                                        max(self.MAX_LOG_BYTES, after_size - covered), name)
                     anchor = cursor_anchor(source.fileno(), covered)
                     # A complete scan commits independently of sample readiness.
                     self._logs[name] = (inode, covered, tail)
@@ -425,6 +426,7 @@ class WarningHealthReader:
                         self._long_log_lines.discard(name)
                     offset, pending = covered, tail
                     budget -= len(chunk)
+                    backlog |= after_size - max(covered, info.st_size) > self.MAX_LOG_BYTES
                     if covered >= info.st_size:
                         break
                 backlog |= offset < info.st_size
