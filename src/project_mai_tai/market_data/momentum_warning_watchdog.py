@@ -151,6 +151,7 @@ class WarningHealthReader:
 
     MAX_HEALTH_BYTES = 8192
     MAX_LOG_BYTES = 65536
+    MAX_LOG_PASS_BYTES = 4 * MAX_LOG_BYTES
     LOG_NAMES = ("oms.log", "strategy.log", "schwab-1m-v2.log", "orb-schwab.log")
 
     def __init__(self, health_path: str, log_directory: str):
@@ -164,6 +165,8 @@ class WarningHealthReader:
         self._log_anchors: dict[str, bytes] = {}
         self._gateway_startup: dict | None = None
         self._pending_live_error = False
+        self._long_log_lines: set[str] = set()
+        self._log_scan_start = 0
 
     def bind_gateway_start(self, instance_id: str, started_ns: int) -> None:
         if (self._gateway_startup is not None or not isinstance(instance_id, str)
@@ -179,6 +182,8 @@ class WarningHealthReader:
         self._source = self._source_config = self._last_oms_evidence = None
         self._log_truncations.clear()
         self._log_anchors.clear()
+        self._long_log_lines.clear()
+        self._log_scan_start = 0
         if self._gateway_startup is not None:
             self._gateway_startup.update(baseline_ns=time.time_ns(), activation_ns=None,
                                          empty_seen=False, ready=None)
@@ -336,51 +341,14 @@ class WarningHealthReader:
                 continue
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError(f"missing/invalid measured {name}")
-        new_error = bool(getattr(self, "retain_cancelled_harm", False) and self._pending_live_error)
-        logs, anchors, truncations = dict(self._logs), dict(self._log_anchors), dict(self._log_truncations)
-        for name in self.LOG_NAMES:
-            with self._open_regular(self.log_directory / name) as source:
-                info = os.fstat(source.fileno())
-                previous = self._logs.get(name)
-                if previous is None:
-                    # Baseline before any A subscription, then examine every new byte.
-                    logs[name] = (info.st_ino, info.st_size, b"")
-                    anchors[name] = cursor_anchor(source.fileno(), info.st_size)
-                    continue
-                inode, offset, pending = previous
-                if info.st_ino != inode:
-                    raise ValueError("live log replaced; evidence unknown")
-                if cursor_rewritten(source.fileno(), offset, self._log_anchors.get(name)):
-                    truncations[name] = truncations.get(name, 0) + 1
-                    offset, pending = 0, b""
-                if info.st_size - offset > self.MAX_LOG_BYTES:
-                    raise ValueError("live log read bound exceeded; evidence unknown")
-                source.seek(offset)
-                chunk = source.read(self.MAX_LOG_BYTES + 1)
-                if len(chunk) > self.MAX_LOG_BYTES:
-                    raise ValueError("live log read bound exceeded")
-                covered = offset + len(chunk)
-                check_read_coverage(source.fileno(), offset, covered, self.MAX_LOG_BYTES, name)
-                text = pending + chunk
-                if len(text) > self.MAX_LOG_BYTES:
-                    raise ValueError("live log line bound exceeded")
-                found_error = self._has_live_error(name, text)
-                new_error |= found_error
-                if found_error and getattr(self, "retain_cancelled_harm", False):
-                    # A timed-out to_thread keeps running. Never consume a real
-                    # ERROR and lose it when its cancelled caller misses the result.
-                    self._pending_live_error = True
-                tail = text.rsplit(b"\n", 1)[-1]
-                logs[name] = (inode, covered, tail)
-                anchors[name] = cursor_anchor(source.fileno(), covered)
+        new_error = self._scan_live_logs()
         with self._open_regular(Path("/proc/meminfo")) as source:
             memory = source.read(8192).decode("ascii")
         available = re.search(r"^MemAvailable:\s+(\d+) kB$", memory, re.MULTILINE)
         if available is None:
             raise ValueError("RAM evidence unavailable")
-        self._logs, self._log_anchors, self._log_truncations = logs, anchors, truncations
         self._last_oms_evidence = evidence
-        return WarningHealth(
+        health = WarningHealth(
             observed_wall_ns=data["observed_wall_ns"], oms_sync_seq=data["oms_sync_seq"],
             oms_sync_seconds=data["oms_sync_seconds"],
             v2_bar_lateness_seconds=data["v2_bar_lateness_seconds"],
@@ -391,3 +359,75 @@ class WarningHealthReader:
             v2_startup_deadline_ns=data.get("v2_startup_deadline_ns") if startup_pending else None,
             v2_cohort=cohort,
         )
+        if not getattr(self, "retain_cancelled_harm", False):
+            self._pending_live_error = False
+        return health
+
+    def _scan_live_logs(self) -> bool:
+        new_error = self._pending_live_error
+        budget = self.MAX_LOG_PASS_BYTES
+        backlog = False
+        start = self._log_scan_start
+        self._log_scan_start = (start + 1) % len(self.LOG_NAMES)
+        names = self.LOG_NAMES[start:] + self.LOG_NAMES[:start]
+        for name in names:
+            with self._open_regular(self.log_directory / name) as source:
+                info = os.fstat(source.fileno())
+                previous = self._logs.get(name)
+                if previous is None:
+                    # Baseline before any A subscription, then examine every new byte.
+                    anchor = cursor_anchor(source.fileno(), info.st_size)
+                    self._logs[name] = (info.st_ino, info.st_size, b"")
+                    self._log_anchors[name] = anchor
+                    continue
+                inode, offset, pending = previous
+                if info.st_ino != inode:
+                    raise ValueError("live log replaced; evidence unknown")
+                if cursor_rewritten(source.fileno(), offset, self._log_anchors.get(name)):
+                    self._log_truncations[name] = self._log_truncations.get(name, 0) + 1
+                    offset, pending = 0, b""
+                    self._long_log_lines.discard(name)
+                source.seek(offset)
+                while budget:
+                    requested = min(self.MAX_LOG_BYTES, budget, max(0, info.st_size - offset))
+                    chunk = source.read(requested)
+                    if len(chunk) != requested:
+                        cursor_anchor(source.fileno(), offset + requested)
+                        raise ValueError("live log short read; evidence unknown")
+                    text = pending + chunk
+                    long_line = name in self._long_log_lines
+                    for part in text.splitlines(keepends=True):
+                        oversized = long_line or len(part) > self.MAX_LOG_BYTES
+                        found_error = self._has_live_error("" if oversized else name, part)
+                        new_error |= found_error
+                        if found_error:
+                            # Retain harm even if this pass/caller never receives a result.
+                            self._pending_live_error = True
+                        if part.endswith(b"\n"):
+                            long_line = False
+                        elif oversized:
+                            long_line = True
+                    tail = text.rsplit(b"\n", 1)[-1]
+                    if long_line or len(tail) > self.MAX_LOG_BYTES:
+                        long_line = True
+                        # ERROR plus its left word-boundary byte crosses any chunk.
+                        tail = tail[-6:]
+                    covered = offset + len(chunk)
+                    check_read_coverage(source.fileno(), offset, covered,
+                                        max(self.MAX_LOG_BYTES, info.st_size - covered), name)
+                    anchor = cursor_anchor(source.fileno(), covered)
+                    # A complete scan commits independently of sample readiness.
+                    self._logs[name] = (inode, covered, tail)
+                    self._log_anchors[name] = anchor
+                    if long_line:
+                        self._long_log_lines.add(name)
+                    else:
+                        self._long_log_lines.discard(name)
+                    offset, pending = covered, tail
+                    budget -= len(chunk)
+                    if covered >= info.st_size:
+                        break
+                backlog |= offset < info.st_size
+        if backlog:
+            raise ValueError("live log catch-up incomplete; evidence unknown")
+        return new_error

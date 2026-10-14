@@ -808,7 +808,7 @@ def test_unreadable_or_unbounded_monitor_evidence_is_unknown(health_reader, fail
         log.write_text("new log\n")
     elif failure == "log_overflow":
         with log.open("a") as out:
-            out.write("X" * (reader.MAX_LOG_BYTES + 1))
+            out.write("X" * (reader.MAX_LOG_PASS_BYTES + 1))
     elif failure == "not_regular":
         log.unlink()
         log.mkdir()

@@ -137,7 +137,8 @@ async def test_native_independent_unknowns_never_hidden_by_rebaseline(setup, cap
     elif failure.startswith("backlog_"):
         name = {"backlog_oms": "oms.log", "backlog_v2": "schwab-1m-v2.log",
                 "backlog_error_log": "strategy.log"}[failure]
-        (env.directory / name).write_text("X" * 65537)
+        size = env.reader.MAX_LOG_PASS_BYTES + 1 if failure == "backlog_error_log" else 65537
+        (env.directory / name).write_text("X" * size)
     elif failure == "sequence_gap":
         (env.directory / "oms.log").write_text(line(env.clock.ns,
             "[OMS-BROKER-SYNC-PASS] id=12 phase=end outcome=ok duration_ms=1000.000 exceeds_note_age=False"))
