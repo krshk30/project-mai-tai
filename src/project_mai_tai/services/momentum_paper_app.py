@@ -275,6 +275,7 @@ class MomentumPaperService:
                     shared_owned_symbols=len(self._warning.desired_symbols(self._engine.active_symbols)),
                     active_warning_paths=len(self._warning.engine.active_events),
                     status=self._warning.last_status, subscription_confirmed_ns=None,
+                    **self._warning.late_raw_ignored_metrics(),
                     **self._warning.source_age_stats.take_sample(observed_ns=sample_ns),
                 )
         if (

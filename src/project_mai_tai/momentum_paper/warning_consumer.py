@@ -3,9 +3,10 @@
 from __future__ import annotations
 from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from datetime import UTC, datetime, time
 from decimal import Decimal
+import logging
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.momentum_paper.engine import (
@@ -29,6 +30,9 @@ from project_mai_tai.momentum_paper.warning_source_age import (
     AggregateSourceAgeStats,
     aggregate_source_age_reason,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class MomentumWarningConsumer:
@@ -60,6 +64,19 @@ class MomentumWarningConsumer:
         self.last_warning_ns: dict[str, int] = {}
         self.cooling_status: dict[str, str] = {}
         self.source_age_stats = AggregateSourceAgeStats()
+        self.late_raw_ignored_by_symbol: Counter[str] = Counter()
+
+    def late_raw_ignored_metrics(self) -> dict[str, object]:
+        return {
+            "late_raw_ignored_total": sum(self.late_raw_ignored_by_symbol.values()),
+            "late_raw_ignored_by_symbol": dict(sorted(
+                self.late_raw_ignored_by_symbol.items(), key=lambda item: (-item[1], item[0]),
+            )[:5]),
+            "late_raw_ignored_scope": "CONSUMER_INSTANCE_CUMULATIVE_NOT_FULL_DAY",
+            "late_raw_ignored_since_ms": self.engine.coverage_started_ms,
+            "late_raw_ignored_current_epoch": self._stream_epoch,
+            "late_raw_ignored_epoch_semantics": "CURRENT_EPOCH_NOT_COUNTER_RESET",
+        }
 
     def desired_symbols(self, legacy_active: set[str]) -> set[str]:
         return self.candidates.desired_symbols(legacy_active | self.engine.active_symbols)
@@ -140,6 +157,13 @@ class MomentumWarningConsumer:
             bar.epoch != self._stream_epoch or bar.sequence != self._sequence + 1
             or bar.dropped_total != self._drops
         ):
+            logger.info(
+                "[FEEDGAP2-AGGREGATE-GAP] callsite=warning_consumer.observe_aggregate "
+                "old_sequence=%d new_sequence=%d old_epoch=%r new_epoch=%r "
+                "old_dropped_total=%d new_dropped_total=%d observed_ms=%d scope=global",
+                self._sequence, bar.sequence, self._stream_epoch, bar.epoch,
+                self._drops, bar.dropped_total, now_ms,
+            )
             records = self.engine.mark_feed_gap(self.engine.coverage_started_ms, now_ms)
             self.windows.clear()
             self._latest.clear()
@@ -245,7 +269,12 @@ class MomentumWarningConsumer:
             return ()
         if sip_timestamp_ns // 1_000_000 != trade.sip_ts_ms:
             raise ValueError("raw_timestamp_mismatch")
-        if not 0 <= observed_ns - sip_timestamp_ns <= 1_000_000_000:
+        age_ns = observed_ns - sip_timestamp_ns
+        if age_ns > 1_000_000_000:
+            self.late_raw_ignored_by_symbol[symbol] += 1
+            self.last_status = "raw_future_or_stale"
+            return ()
+        if age_ns < 0:
             self.last_status = "raw_future_or_stale"
             # An unusable print compromises only its symbol's forward-path evidence.
             return self.engine.mark_feed_gap(
