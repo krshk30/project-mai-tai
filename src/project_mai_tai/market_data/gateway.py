@@ -897,7 +897,7 @@ class MarketDataGatewayService:
             await self._end_warning_window()
             return
         try:
-            day = datetime.now(UTC).date()
+            day = now.astimezone(EASTERN_TZ).date()
             if day != self._warning_window_day:
                 reset = getattr(self._warning_health_reader, "reset_window", None)
                 if reset is not None:
@@ -906,6 +906,7 @@ class MarketDataGatewayService:
                 self._warning_pause_policy = WarningPausePolicy()
                 self._warning_window_day = day
                 self._warning_log_gap_counts.clear()
+            self._pauses.open_window()
             if self._warning_health_task is None:
                 live_reader = getattr(self._warning_health_reader, "read_live", None)
                 operation = (

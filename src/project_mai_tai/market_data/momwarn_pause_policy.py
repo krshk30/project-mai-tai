@@ -111,6 +111,14 @@ class WarningPausePolicy:
         if self.state != "off":
             self.state, self.reason, self.clean_streak = "window_closed", None, 0
 
+    def open_window(self, now_ns: int | None = None) -> None:
+        if not self.window_closed:
+            return
+        self._now(now_ns)
+        self.window_closed = False
+        if self.state != "off":
+            self.state, self.reason, self.clean_streak = "paused", "v2_startup_pending", 0
+
     def _now(self, now_ns: int | None) -> int:
         value = self._clock_ns() if now_ns is None else now_ns
         if type(value) is not int or value < 0:

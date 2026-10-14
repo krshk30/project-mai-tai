@@ -58,6 +58,22 @@ def test_new_window_still_requires_three_real_clean_reads():
     assert policy.metrics(3)["state"] == "active"
 
 
+def test_explicit_reopen_preserves_sticky_harm_and_restarts_clean_streak():
+    policy = WarningPausePolicy(clock_ns=lambda: 0)
+    policy.trip("monitor_unreadable", 0)
+    policy.clean(1)
+    policy.close_window(2)
+    policy.open_window(3)
+    assert not policy.clean(4)
+    assert not policy.clean(5)
+    assert policy.clean(6)
+    policy.trip("live_error", 7)
+    policy.close_window(8)
+    policy.open_window(9)
+    assert not policy.clean(10)
+    assert policy.metrics(11)["reason"] == "live_error"
+
+
 def test_closed_window_sample_does_not_open_db_incident():
     class NoSession:
         def __call__(self):
@@ -89,3 +105,54 @@ async def test_gateway_window_close_reports_off_by_window_not_pause(monkeypatch)
     svc._latch_warning_revert("disconnect")
     assert svc.warning_metrics()["pause_state"]["pause_count"] == before
     assert svc._warning_revert_reason is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("night,opening", [
+    ("2026-10-13T23:00:00-04:00", "2026-10-14T04:00:00-04:00"),
+    ("2026-11-01T23:00:00-05:00", "2026-11-02T04:00:00-05:00"),
+])
+async def test_night_restart_arms_after_three_reads_without_utc_day_change(
+        monkeypatch, night, opening):
+    from types import SimpleNamespace
+    from project_mai_tai.market_data import gateway, massive_provider
+    from tests.unit.test_momwarn1_gateway import service
+    stamp = [datetime.fromisoformat(night)]
+    clock = SimpleNamespace(now=lambda tz: stamp[0].astimezone(tz))
+    monkeypatch.setattr(gateway, "datetime", clock)
+    monkeypatch.setattr(massive_provider, "datetime", clock)
+    svc, _, _, _ = service()
+    await svc._warning_monitor_once()
+    assert svc._pauses.state == "window_closed"
+    assert not svc._warning_active
+    assert stamp[0].astimezone(UTC).date() == datetime.fromisoformat(opening).astimezone(UTC).date()
+    stamp[0] = datetime.fromisoformat(opening)
+    for index in range(3):
+        await svc._warning_monitor_once()
+        assert svc._warning_active is (index == 2)
+    assert svc._warning_window_day == stamp[0].date()
+    assert svc._pauses.state == "active"
+
+
+@pytest.mark.asyncio
+async def test_eighteen_close_then_next_et_day_open_requires_three_reads(monkeypatch):
+    from types import SimpleNamespace
+    from project_mai_tai.market_data import gateway, massive_provider
+    from tests.unit.test_momwarn1_gateway import service
+    stamp = [datetime.fromisoformat("2026-10-13T17:59:00-04:00")]
+    clock = SimpleNamespace(now=lambda tz: stamp[0].astimezone(tz))
+    monkeypatch.setattr(gateway, "datetime", clock)
+    monkeypatch.setattr(massive_provider, "datetime", clock)
+    svc, _, _, _ = service()
+    for _ in range(3):
+        await svc._warning_monitor_once()
+    assert svc._warning_active
+    stamp[0] = datetime.fromisoformat("2026-10-13T18:00:00-04:00")
+    await svc._warning_monitor_once()
+    assert svc._pauses.state == "window_closed"
+    stamp[0] = datetime.fromisoformat("2026-10-13T23:00:00-04:00")
+    await svc._warning_monitor_once()
+    stamp[0] = datetime.fromisoformat("2026-10-14T04:00:00-04:00")
+    for index in range(3):
+        await svc._warning_monitor_once()
+        assert svc._warning_active is (index == 2)
