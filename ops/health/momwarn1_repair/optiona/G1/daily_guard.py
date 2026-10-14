@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time as wall_time
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -92,6 +93,50 @@ def verify_owners(owners, *, warning_enabled):
         raise ValueError("paper warning union slot contested")
 
 
+def verify_live_owner_scope(manifest, settings, redis, guard, owners, *, proc_root=Path("/proc")):
+    enabled = getattr(settings, "momentum_live_enabled", False)
+    if type(enabled) is not bool:
+        raise ValueError("live flag unreadable")
+    if not enabled and "momentum-live" not in owners:
+        return owners
+    path = REPO / "ops/health/momlive1_owner_compat.py"
+    expected = manifest.get("momlive_owner_compat_sha256")
+    if not isinstance(expected, str) or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        raise ValueError("live owner verifier source unproven")
+    spec = importlib.util.spec_from_file_location("momlive_owner_scope", path)
+    compat = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(compat)
+    oms = state("project-mai-tai-oms.service")
+    if oms.get("ActiveState") != "active" or not str(oms.get("MainPID", "")).isdigit():
+        raise ValueError("live owner OMS process unreadable")
+    pid = int(oms["MainPID"])
+    if pid <= 0:
+        raise ValueError("live owner OMS process absent")
+    raw = (proc_root / str(pid) / "stat").read_bytes()
+    if len(raw) > 4096:
+        raise ValueError("live owner OMS process stat oversized")
+    fields = raw.decode().rsplit(")", 1)[1].split()
+    if fields[0] in {"Z", "X"}:
+        raise ValueError("live owner OMS process dead")
+    instance = str(pid) + ":" + str(int(fields[19]))
+    rows = redis.xrevrange(settings.redis_stream_prefix + ":momentum-live-owner-proof", count=1)
+    if len(rows) != 1 or "data" not in rows[0][1]:
+        raise ValueError("live owner proof absent")
+    proof = compat.decode_proof(rows[0][1]["data"])
+    accounts = {settings.strategy_schwab_1m_v2_account_name,
+                settings.strategy_schwab_1m_v2_webull_account_name}
+    compat.validate_live_owner(owners.get("momentum-live", set()), proof,
+        enabled=enabled, now_ns=wall_time.time_ns(),
+        max_age_ns=int(guard.HEARTBEAT_AGE_BOUND * 1_000_000_000),
+        expected_instance=instance, expected_accounts=accounts)
+    current = state("project-mai-tai-oms.service")
+    if any(current.get(key) != oms.get(key) for key in
+           ("MainPID", "ActiveState", "ExecMainStartTimestamp")):
+        raise ValueError("live owner OMS identity changed during proof")
+    # Only the independently verified literal owner is removed from the old gate.
+    return {name: symbols for name, symbols in owners.items() if name != "momentum-live"}
+
+
 def prestart_checks(manifest, guard, settings, redis, now):
     gateway = state("project-mai-tai-market-data.service")
     try:
@@ -100,6 +145,7 @@ def prestart_checks(manifest, guard, settings, redis, now):
         raise guard.Blind("gateway identity drift") from exc
     owners = guard._owners(redis, settings.redis_stream_prefix)
     try:
+        owners = verify_live_owner_scope(manifest, settings, redis, guard, owners)
         verify_owners(owners, warning_enabled=settings.market_data_momentum_warning_enabled)
     except (KeyError, ValueError, TypeError) as exc:
         raise guard.Blind("gateway owners incomplete or paper slot contested") from exc
