@@ -126,7 +126,10 @@ async def test_native_unknown_receipt_and_health_line_counted_without_revert(set
     svc._warning_health_reader, svc._warning_redis = env.reader, env.client
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     caplog.set_level(logging.INFO)
-    await svc._warning_monitor_once()
+    for index in range(3):
+        await svc._warning_monitor_once()
+        assert not svc._warning_revert_reason
+        assert svc._warning_active is (index == 2)
     assert svc._warning_active and not svc._warning_revert_reason
     health = await env.reader.read_live(env.client, "test")
     assert health.v2_bar_lateness_seconds is None

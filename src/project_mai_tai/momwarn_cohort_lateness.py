@@ -29,10 +29,12 @@ def first_eligible_bar_ns(observed_join_or_seed_ns: int) -> int:
 
 
 def window(due_ns):
+    if not integer(due_ns):
+        raise ValueError("cohort due invalid")
     local = datetime.fromtimestamp(due_ns // NS, ZoneInfo("America/New_York"))
     minute = local.hour * 60 + local.minute
     if local.weekday() >= 5 or not 7 * 60 + 1 <= minute <= 20 * 60:
-        raise ValueError("cohort outside sourced first-due/trading window")
+        return None
     return "PM" if minute < 570 else "RTH" if minute < 960 else "AH"
 
 
@@ -94,7 +96,8 @@ class CohortObservation:
             raise ValueError("cohort completion evidence invalid")
         if not self.known and (self.eligible or self.excluded or self.missing or self.first_receipts):
             raise ValueError("unknown membership must not invent a cohort")
-        window(self.due_ns)
+        if window(self.due_ns) is None:
+            raise ValueError("cohort outside sourced first-due/trading window")
 
 
 class CohortTracker:

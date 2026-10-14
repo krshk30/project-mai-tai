@@ -18,7 +18,7 @@ from project_mai_tai.momwarn_health_contract import (
 from project_mai_tai.momwarn_measurement_probes import read_bounded
 from project_mai_tai.momwarn_log_cursor import check_read_coverage, cursor_anchor, cursor_rewritten
 from project_mai_tai.momwarn_measurements import NS, integer
-from project_mai_tai.momwarn_cohort_lateness import CohortTracker, POLICY
+from project_mai_tai.momwarn_cohort_lateness import CohortTracker, POLICY, window
 
 BOUND = 65536
 MAX_STATE_ROWS = 32
@@ -204,6 +204,7 @@ class LiveWarningHealthSource:
             self.cohort.observe_membership(watchlist, now)
         receipt["observed_wall_ns"] = now
         receipt.update(v2_expectation_ref=self.config["v2_expectation_ref"])
+        due = now // (60 * NS) * (60 * NS)
         if not watchlist:
             if payload.get("restoration_complete") is not True:
                 raise ValueError("empty startup is not a restored empty watchlist")
@@ -212,6 +213,15 @@ class LiveWarningHealthSource:
             receipt.update(v2_applicability="NOT_APPLICABLE",
                            v2_applicability_reason="sourced_empty_watchlist",
                            v2_watchlist=[], v2_watchlist_source="strategy-state-isolated",
+                           v2_watchlist_complete=True, v2_watchlist_snapshot_ns=state_ns)
+        elif self.cohort is not None and window(due) is None:
+            # CAL is not trading here; all bounded source reads above still apply.
+            receipt.update(v2_applicability="NOT_APPLICABLE",
+                           v2_applicability_reason="sourced_cal_outside_trading_window",
+                           v2_lateness_policy=POLICY, v2_due_wall_ns=due,
+                           v2_source="first_completed_bar_cohort_monitor",
+                           v2_instance_id=self.config["v2_instance_id"],
+                           v2_watchlist=watchlist, v2_watchlist_source="strategy-state-isolated",
                            v2_watchlist_complete=True, v2_watchlist_snapshot_ns=state_ns)
         else:
             first_due = sourced_first_due_ns(self.config, observed_ns=now)
@@ -227,7 +237,6 @@ class LiveWarningHealthSource:
                 probes = self.config["v2_probe_symbols"]
                 if "*" not in probes and not set(watchlist) <= set(probes):
                     raise ValueError("probe setting does not cover complete current watchlist")
-                due = now // (60 * NS) * (60 * NS)
                 bar_ms = due // 1_000_000 - 60_000
                 completed = [self.bars.get((symbol, bar_ms)) for symbol in watchlist]
                 completion = max(completed) if all(item is not None for item in completed) else None

@@ -100,7 +100,31 @@ def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
             and receipt.get("v2_watchlist") == [] and integer(watch_ns)
             and 0 <= monitor - watch_ns <= 10 * NS
         )
-        if not (pre07 or before_first_due or empty):
+        cal_outside = False
+        if receipt.get("v2_applicability_reason") == "sourced_cal_outside_trading_window":
+            from project_mai_tai.momwarn_cohort_lateness import MINUTE_NS, POLICY, window
+
+            due = receipt.get("v2_due_wall_ns")
+            watchlist = receipt.get("v2_watchlist")
+            cal_outside = (
+                receipt.get("v2_lateness_policy") == POLICY
+                and integer(due) and due == monitor // MINUTE_NS * MINUTE_NS
+                and window(due) is None and window(now_ns // MINUTE_NS * MINUTE_NS) is None
+                and receipt.get("v2_source") == "first_completed_bar_cohort_monitor"
+                and isinstance(reference, str) and bool(reference)
+                and isinstance(receipt.get("v2_instance_id"), str) and bool(receipt["v2_instance_id"])
+                and receipt.get("v2_watchlist_source") == "strategy-state-isolated"
+                and receipt.get("v2_watchlist_complete") is True
+                and integer(watch_ns) and 0 <= monitor - watch_ns <= 10 * NS
+                and isinstance(watchlist, list) and 0 < len(watchlist) <= 256
+                and all(isinstance(symbol, str) and symbol for symbol in watchlist)
+                and len(set(watchlist)) == len(watchlist)
+            )
+            if cal_outside:
+                result.update({key: receipt[key] for key in (
+                    "v2_lateness_policy", "v2_due_wall_ns", "v2_source", "v2_instance_id",
+                    "v2_watchlist", "v2_watchlist_source", "v2_watchlist_complete", "v2_watchlist_snapshot_ns")})
+        if not (pre07 or before_first_due or empty or cal_outside):
             raise ValueError("UNKNOWN:unsourced v2 inapplicability")
         result.update(v2_applicability=applicability, v2_bar_lateness_seconds=None,
                       v2_applicability_reason=receipt["v2_applicability_reason"],
