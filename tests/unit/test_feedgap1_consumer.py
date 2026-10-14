@@ -1,10 +1,16 @@
 """Controlled call-site distinctions, not proof of the live flood's origin."""
 
 from dataclasses import replace
+from decimal import Decimal
+import inspect
+import textwrap
 
 import pytest
 
 from project_mai_tai.momentum_paper.warning_window import CoverageEvidence
+from project_mai_tai.momentum_paper import engine as engine_runtime
+from project_mai_tai.momentum_paper.models import TradePrint
+from project_mai_tai.momentum_paper.warning_consumer import MomentumWarningConsumer
 from tests.unit.test_momentum_warning import START, EPOCH, bar, consumer, trade
 
 
@@ -100,3 +106,76 @@ def test_real_aggregate_discontinuity_clears_windows_and_records_fixed_start_gap
     _, next_records = model.observe_aggregate(next_item, observed_ns=next_item.published_utc_ns, legacy_active=set())
     assert not any(record.event_type == "FEED_GAP" for record in next_records)
     assert model.windows["TEST"].retained_buckets == 2
+
+
+# Exact retained integer-ms pairs/event fields from the bounded SCNI sample.
+# Distinct event IDs sharing SIP ms are NOT classified as duplicate trades.
+RECORDED_SCNI_CALLS = (
+    ("c4826492-bb21-404d-8cb6-28331a690875", 1791979824819, 1791979826826, "0.9363", 300, (12,)),
+    ("f310af71-821d-4a35-a31a-18587b2e93eb", 1791979825119, 1791979826877, "0.9399", 1, (12, 37)),
+    ("4ca78ed3-f83d-42a4-b3a7-6a6abaddce73", 1791979825712, 1791979826890, "0.9389", 1, (12, 37)),
+    ("bef73538-a5c8-4a86-b46e-8d0d9c2216b2", 1791979825712, 1791979826915, "0.9388", 10, (12, 37)),
+    ("09774ce3-1e03-465a-b176-d499ff71927f", 1791979825712, 1791979826928, "0.9388", 2, (12, 37)),
+)
+
+
+def test_recorded_five_scni_stale_callbacks_twenty_old_rows_two_scoped_windows_intact(monkeypatch):
+    def replay(*, legacy=False):
+        # CONTROLLED four active paths; only the five raw callbacks/times are real.
+        seed_ms = RECORDED_SCNI_CALLS[0][1] - 30_000
+        model = MomentumWarningConsumer(prior_closes={"SCNI": Decimal("1"), "DLXY": Decimal("1")},
+            condition_version="CONTROLLED-feedgap1", coverage_started_ms=seed_ms)
+        for seq, (offset, symbol, high) in enumerate(
+            ((0, "SCNI", "10"), (0, "DLXY", "10"),
+             (1, "SCNI", "12"), (1, "DLXY", "12")), 1
+        ):
+            start = seed_ms + offset * 1000
+            item = replace(bar(high=high), symbol=symbol, sequence=seq,
+                           start_ms=start, end_ms=start + 1000,
+                           received_utc_ns=(start + 1000) * 1_000_000,
+                           published_utc_ns=(start + 1000) * 1_000_000)
+            model.observe_aggregate(item, observed_ns=item.published_utc_ns, legacy_active=set())
+        model.complete_read(f"{seed_ms + 2000}-0", observed_ns=(seed_ms + 2000) * 1_000_000)
+        assert len(model.engine.active_events) == 4
+        for symbol in ("SCNI", "DLXY"):
+            model.engine.ingest(TradePrint(symbol, seed_ms + 2001, Decimal("12.1"), 100,
+                                           trade_id=f"CONTROLLED-fill-{symbol}"), allow_detection=False)
+        assert all(event.fill is not None for event in model.engine._active.values())
+        before = window_state(model)
+        bucket_counts = {name: window.retained_buckets for name, window in model.windows.items()}
+        rows = []
+        for event_id, sip_ms, ended_ms, price, size, conditions in RECORDED_SCNI_CALLS:
+            # Both times have only stored-ms precision; conversion is not new ns evidence.
+            item = TradePrint("SCNI", sip_ms, Decimal(price), size, trade_id=event_id,
+                              conditions=conditions, eligible=False,
+                              exclusion_reason="CONTROLLED-unused-on-stale-branch")
+            result = model.observe_trade(item, sip_timestamp_ns=sip_ms * 1_000_000,
+                                         observed_ns=ended_ms * 1_000_000)
+            assert model.last_status == "raw_future_or_stale" and model._last_raw_ns == {}
+            assert all(record.event_type == "FEED_GAP" and record.payload == {
+                "started_ms": sip_ms, "ended_ms": ended_ms} for record in result)
+            rows.extend(result)
+            assert window_state(model) == before
+            assert {name: window.retained_buckets for name, window in model.windows.items()} == bucket_counts
+        assert {(event.symbol, event.strategy_code) for event in model.engine._active.values()} == {
+            (symbol, strategy) for symbol in ("SCNI", "DLXY")
+            for strategy in ("momentum_30s_warn", "momentum_60s_warn")}
+        assert all(event.feed_gap is (legacy or event.symbol == "SCNI") for event in model.engine._active.values())
+        return rows
+
+    assert [end - sip for _, sip, end, *_ in RECORDED_SCNI_CALLS] == [2007, 1758, 1178, 1203, 1216]
+    assert len({row[0] for row in RECORDED_SCNI_CALLS}) == 5
+    rows = replay()
+    assert len(rows) == 2 and len({row.logical_id for row in rows}) == 2
+    assert {row.symbol for row in rows} == {"SCNI"}
+    source = textwrap.dedent(inspect.getsource(engine_runtime.MomentumPaperEngine.mark_feed_gap))
+    scoped_guard = "        if symbol is not None and event.symbol != symbol:\n            continue\n"
+    assert scoped_guard in source
+    namespace = dict(engine_runtime.__dict__)
+    old_source = source.replace("event.feed_gap or ", "").replace(scoped_guard, "")
+    exec(compile(old_source, "<feedgap1-old-engine-replay>", "exec"), namespace)
+    with monkeypatch.context() as mutation:
+        mutation.setattr(engine_runtime.MomentumPaperEngine, "mark_feed_gap", namespace["mark_feed_gap"])
+        old_rows = replay(legacy=True)
+    assert len(old_rows) == 20
+    assert len({row.logical_id for row in old_rows}) == 4
