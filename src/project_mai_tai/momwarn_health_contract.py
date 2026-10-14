@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import codecs
 import os
+import re
 import stat
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +15,29 @@ from project_mai_tai.momwarn_health import parse_oms_end
 from project_mai_tai.momwarn_log_cursor import check_read_coverage, cursor_anchor, cursor_rewritten
 from project_mai_tai.momwarn_measurement_probes import BOUND, read_bounded
 from project_mai_tai.momwarn_measurements import NS, integer, nonnegative
+
+_LONG_OMS_END = re.compile(
+    rb"\[OMS-BROKER-SYNC-PASS\] id=\d+ phase=end outcome=(?:ok|failed|cancelled) "
+    rb"duration_ms=\d+(?:\.\d+)?\b"
+)
+
+
+def _long_oms_fragment(state: dict, fragment: bytes, *, final: bool) -> bytes | None:
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    decoder.setstate(state.get("utf8", (b"", 0)))
+    decoder.decode(fragment, final=final)
+    state["utf8"] = decoder.getstate()
+    combined = state["tail"] + fragment
+    start = state["length"] - len(state["tail"])
+    for match in _LONG_OMS_END.finditer(combined):
+        end = start + match.end()
+        if end <= state["parsed"] or (not final and match.end() == len(combined)):
+            continue
+        # The original greedy receipt parser selects the last complete end token.
+        state["end"], state["parsed"] = match[0], end
+    state["length"] += len(fragment)
+    state["tail"] = combined[-BOUND:]
+    return state["prefix"] + b" " + state["end"] if final and "end" in state else None
 
 
 def sourced_first_due_ns(config: dict, *, observed_ns: int) -> int:
@@ -219,6 +244,8 @@ def proposed_health_v2(receipt: dict, *, now_ns: int) -> dict:
 class OmsLogMonitor:
     """Actual bounded log/proc reader. No credentials, DB, provider or connection."""
 
+    MAX_LOG_PASS_BYTES = 2 * 1024 * 1024
+
     def __init__(self, log: Path, pid: int, *, verified_timezone: str, cadence_seconds: float,
                  cadence_source: str, wall_ns: Callable[[], int], proc: Path = Path("/proc")):
         if type(pid) is not int or pid <= 0 or not cadence_source:
@@ -235,6 +262,7 @@ class OmsLogMonitor:
         self.latest = None
         self.truncations = 0
         self.anchor = None
+        self._long_line = None
 
     def read(self) -> dict:
         raw = read_bounded(self.proc / str(self.pid) / "stat").decode()
@@ -257,35 +285,64 @@ class OmsLogMonitor:
             partial = self.partial
             if rewritten:
                 position, partial = 0, b""
-            if info.st_size - position > BOUND:
-                raise ValueError("OMS log truncated/backlog bound")
             os.lseek(fd, position, os.SEEK_SET)
-            data = os.read(fd, BOUND + 1)
-            if len(data) > BOUND:
-                raise ValueError("OMS log read bound")
-            covered = position + len(data)
-            check_read_coverage(fd, position, covered, BOUND, "OMS")
-            if self.position is None and position:
-                data = data.partition(b"\n")[2]
-            lines = (partial + data).split(b"\n")
-            if len(lines[-1]) > BOUND:
-                raise ValueError("OMS partial line bound")
             latest = self.latest
-            for line in lines[:-1]:
-                text = line.decode("utf-8")
-                if "[OMS-BROKER-SYNC-PASS]" not in text or "phase=end" not in text:
-                    continue
-                item = parse_oms_end(text, verified_timezone=self.timezone, instance_id=process)
-                if latest and item["oms_sync_seq"] != latest["oms_sync_seq"] + 1:
-                    raise ValueError("OMS completion sequence gap/regression")
-                latest = item
+            budget = self.MAX_LOG_PASS_BYTES
+            first_fragment = self.position is None and position > 0
+            long_line = None if rewritten else self._long_line
+            oversized = False
+            while budget:
+                requested = min(BOUND, budget, max(0, info.st_size - position))
+                data = os.read(fd, requested)
+                if len(data) != requested:
+                    raise ValueError("OMS log short read")
+                covered = position + len(data)
+                if first_fragment:
+                    data = data.partition(b"\n")[2]
+                    first_fragment = False
+                text = partial + data
+                pieces = text.split(b"\n")
+                for index, line in enumerate(pieces):
+                    final = index < len(pieces) - 1
+                    if long_line is None and len(line) > BOUND:
+                        long_line = dict(prefix=line[:29], tail=b"", length=0, parsed=0)
+                    if long_line is not None:
+                        oversized = True
+                        candidate = _long_oms_fragment(long_line, line, final=final)
+                        if final:
+                            long_line = None
+                        if candidate is None:
+                            continue
+                        line = candidate
+                    elif not final:
+                        continue
+                    decoded = line.decode("utf-8")
+                    if "[OMS-BROKER-SYNC-PASS]" in decoded and "phase=end" in decoded:
+                        item = parse_oms_end(decoded, verified_timezone=self.timezone,
+                                             instance_id=process)
+                        if latest and item["oms_sync_seq"] != latest["oms_sync_seq"] + 1:
+                            raise ValueError("OMS completion sequence gap/regression")
+                        latest = item
+                tail = b"" if long_line is not None else pieces[-1]
+                check_read_coverage(fd, position, covered,
+                                    max(BOUND, os.fstat(fd).st_size - covered), "OMS")
+                anchor = cursor_anchor(fd, covered)
+                # Commit parsed evidence even when this pass still has unread backlog.
+                self.latest, self.process, self.identity = latest, process, identity
+                self.position, self.partial, self.anchor = covered, tail, anchor
+                self._long_line = long_line
+                self.truncations += int(rewritten)
+                rewritten = False
+                position, partial = covered, tail
+                budget -= requested
+                if covered >= info.st_size:
+                    break
+            if position < info.st_size:
+                raise ValueError("OMS log catch-up incomplete")
+            if oversized:
+                raise ValueError("OMS partial line bound; oversized evidence parsed")
             if latest is None:
                 raise ValueError("no actual completed OMS duration in bounded log")
-            anchor = cursor_anchor(fd, covered)
-            self.latest, self.process, self.identity = latest, process, identity
-            self.position, self.partial = covered, lines[-1]
-            self.anchor = anchor
-            self.truncations += int(rewritten)
         finally:
             os.close(fd)
         # Stamps a bounded cursor/proc read, never changes the original end receipt time.
