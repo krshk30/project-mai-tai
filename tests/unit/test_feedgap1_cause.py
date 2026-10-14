@@ -74,21 +74,18 @@ def replay_real_callbacks():
 
 
 def test_five_real_scni_callbacks_mark_only_two_scni_paths():
+    # Keep the qualified case identity; FEEDGAP2 supersedes late-gap marking.
     model, before, records = replay_real_callbacks()
-    assert len(records) == 2
-    assert {row.event_type for row in records} == {"FEED_GAP"}
-    assert {row.symbol for row in records} == {"SCNI"}
-    assert all(row.payload == {"started_ms": REAL_CALLBACKS[0][1],
-                               "ended_ms": REAL_CALLBACKS[0][2]} for row in records)
+    assert records == []
+    assert model.late_raw_ignored_by_symbol == {"SCNI": 5}
     assert state(model, include_paths=False) == before
-    assert all(event.feed_gap == (event.symbol == "SCNI")
-               for event in model.engine._active.values())
+    assert not any(event.feed_gap for event in model.engine._active.values())
     assert model._raw_coverage == {}  # No complete raw-tape claim is manufactured.
     terminal = model.engine.close_session(1791979831001)
     scni = [row for row in terminal if row.symbol == "SCNI"]
     assert len(scni) == 2
     assert {row.event_type for row in scni} == {"UNANSWERABLE"}
-    assert {row.payload["reason"] for row in scni} == {"feed_gap"}
+    assert {row.payload["reason"] for row in scni} == {"session_tail_closed_before_complete_path"}
     assert {row.payload["path_complete"] for row in scni} == {False}
     # No complete tape is invented for the controlled DLXY path either.
     assert all(row.payload["reason"] != "feed_gap" for row in terminal if row.symbol == "DLXY")
@@ -100,6 +97,8 @@ def restore_global_raw_call(monkeypatch):
         'return self.engine.mark_feed_gap(\n            trade.sip_ts_ms, observed_ns // 1_000_000, symbol=symbol,\n        )',
         'return self.engine.mark_feed_gap(trade.sip_ts_ms, observed_ns // 1_000_000)',
     )
+    mutated = mutated.replace('self.last_status = "raw_future_or_stale"\n        return ()',
+        'self.last_status = "raw_future_or_stale"\n        return self.engine.mark_feed_gap(trade.sip_ts_ms, observed_ns // 1_000_000)')
     assert mutated != source
     namespace = dict(runtime.__dict__)
     exec(compile(mutated, "<feedgap1-old-stale-branch>", "exec"), namespace)
@@ -140,9 +139,14 @@ def test_stale_and_future_refusal_never_ingest_fill_detect_or_claim_coverage(age
     item = trade(2001, "100")
     stamp = item.sip_ts_ms * 1_000_000
     records = model.observe_trade(item, sip_timestamp_ns=stamp, observed_ns=stamp + age_ns)
-    assert len(records) == 2
-    assert {row.symbol for row in records} == {"TEST"}
-    assert all(event.feed_gap for event in model.engine._active.values())
+    if age_ns > 1_000_000_000:
+        assert records == () and model.late_raw_ignored_by_symbol == {"TEST": 1}
+        assert not any(event.feed_gap for event in model.engine._active.values())
+    else:
+        assert len(records) == 2
+        assert {row.symbol for row in records} == {"TEST"}
+        assert all(event.feed_gap for event in model.engine._active.values())
+        assert not model.late_raw_ignored_by_symbol
     assert model.last_status == "raw_future_or_stale"
     assert state(model, include_paths=False) == before
 
@@ -157,8 +161,10 @@ def test_exact_one_second_usable_and_stale_repeat_marks_only_its_symbol_once():
     before = state(model, include_paths=False)
     assert not any(event.feed_gap for event in model.engine._active.values())
     records = model.observe_trade(item, sip_timestamp_ns=stamp, observed_ns=stamp + 1_000_000_001)
-    assert len(records) == 2 and all(row.event_type == "FEED_GAP" for row in records)
+    assert records == ()
     assert model.observe_trade(item, sip_timestamp_ns=stamp, observed_ns=stamp + 1_000_000_002) == ()
+    assert model.late_raw_ignored_by_symbol == {"TEST": 2}
+    assert not any(event.feed_gap for event in model.engine._active.values())
     assert state(model, include_paths=False) == before
     assert model._raw_coverage == {}
 

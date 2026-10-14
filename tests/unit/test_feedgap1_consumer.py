@@ -9,6 +9,7 @@ import pytest
 
 from project_mai_tai.momentum_paper.warning_window import CoverageEvidence
 from project_mai_tai.momentum_paper import engine as engine_runtime
+from project_mai_tai.momentum_paper import warning_consumer as consumer_runtime
 from project_mai_tai.momentum_paper.models import TradePrint
 from project_mai_tai.momentum_paper.warning_consumer import MomentumWarningConsumer
 from tests.unit.test_momentum_warning import START, EPOCH, bar, consumer, trade
@@ -39,14 +40,13 @@ def test_stale_duplicate_precedes_duplicate_filter_emits_once_and_preserves_wind
     assert model.last_status == "raw_duplicate_or_out_of_order"
     records = model.observe_trade(item, sip_timestamp_ns=sip_ns, observed_ns=sip_ns + 1_000_000_001)
     assert model.last_status == "raw_future_or_stale"
-    assert len(records) == 2 and all(record.event_type == "FEED_GAP" for record in records)
-    assert all(record.payload == {"started_ms": item.sip_ts_ms,
-                                  "ended_ms": item.sip_ts_ms + 1000} for record in records)
+    assert records == ()
     assert model._last_raw_ns == {"TEST": sip_ns}
     for _ in range(5):
         assert model.observe_trade(item, sip_timestamp_ns=sip_ns, observed_ns=sip_ns + 1_000_000_001) == ()
     assert window_state(model) == before
-    assert all(event.feed_gap for event in model.engine._active.values())
+    assert not any(event.feed_gap for event in model.engine._active.values())
+    assert model.late_raw_ignored_by_symbol == {"TEST": 6}
 
 
 @pytest.mark.parametrize("age_ns,refused", [(1_000_000_000, False), (1_000_000_001, True)])
@@ -57,9 +57,10 @@ def test_raw_freshness_exact_one_second_and_one_ns_over(age_ns, refused):
     before = window_state(model)
     records = model.observe_trade(item, sip_timestamp_ns=sip_ns, observed_ns=sip_ns + age_ns)
     assert (model.last_status == "raw_future_or_stale") is refused
-    assert bool([record for record in records if record.event_type == "FEED_GAP"]) is refused
+    assert not any(record.event_type == "FEED_GAP" for record in records)
     assert ("TEST" in model._last_raw_ns) is not refused
-    assert all(event.feed_gap is refused for event in model.engine._active.values())
+    assert not any(event.feed_gap for event in model.engine._active.values())
+    assert model.late_raw_ignored_by_symbol == ({"TEST": 1} if refused else {})
     assert window_state(model) == before
 
 
@@ -160,14 +161,14 @@ def test_recorded_five_scni_stale_callbacks_twenty_old_rows_two_scoped_windows_i
         assert {(event.symbol, event.strategy_code) for event in model.engine._active.values()} == {
             (symbol, strategy) for symbol in ("SCNI", "DLXY")
             for strategy in ("momentum_30s_warn", "momentum_60s_warn")}
-        assert all(event.feed_gap is (legacy or event.symbol == "SCNI") for event in model.engine._active.values())
+        assert all(event.feed_gap is legacy for event in model.engine._active.values())
+        assert model.late_raw_ignored_by_symbol == {"SCNI": 5}
         return rows
 
     assert [end - sip for _, sip, end, *_ in RECORDED_SCNI_CALLS] == [2007, 1758, 1178, 1203, 1216]
     assert len({row[0] for row in RECORDED_SCNI_CALLS}) == 5
     rows = replay()
-    assert len(rows) == 2 and len({row.logical_id for row in rows}) == 2
-    assert {row.symbol for row in rows} == {"SCNI"}
+    assert rows == []
     source = textwrap.dedent(inspect.getsource(engine_runtime.MomentumPaperEngine.mark_feed_gap))
     scoped_guard = "        if symbol is not None and event.symbol != symbol:\n            continue\n"
     assert scoped_guard in source
@@ -176,6 +177,15 @@ def test_recorded_five_scni_stale_callbacks_twenty_old_rows_two_scoped_windows_i
     exec(compile(old_source, "<feedgap1-old-engine-replay>", "exec"), namespace)
     with monkeypatch.context() as mutation:
         mutation.setattr(engine_runtime.MomentumPaperEngine, "mark_feed_gap", namespace["mark_feed_gap"])
+        consumer_source = textwrap.dedent(inspect.getsource(MomentumWarningConsumer.observe_trade))
+        old_consumer_source = consumer_source.replace(
+            'self.last_status = "raw_future_or_stale"\n        return ()',
+            'self.last_status = "raw_future_or_stale"\n        return self.engine.mark_feed_gap(trade.sip_ts_ms, observed_ns // 1_000_000, symbol=symbol)',
+        )
+        assert old_consumer_source != consumer_source
+        consumer_namespace = dict(consumer_runtime.__dict__)
+        exec(compile(old_consumer_source, "<feedgap1-old-late-replay>", "exec"), consumer_namespace)
+        mutation.setattr(MomentumWarningConsumer, "observe_trade", consumer_namespace["observe_trade"])
         old_rows = replay(legacy=True)
     assert len(old_rows) == 20
     assert len({row.logical_id for row in old_rows}) == 4

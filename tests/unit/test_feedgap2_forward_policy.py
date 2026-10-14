@@ -186,6 +186,45 @@ def test_restore_late_gap_marking_mutation_fails_positive_control(monkeypatch):
         assert_late_no_evidence()
 
 
+def test_remove_late_counter_mutation_fails_positive_control(monkeypatch):
+    source = textwrap.dedent(inspect.getsource(runtime.MomentumWarningConsumer.observe_trade))
+    mutated = source.replace("self.late_raw_ignored_by_symbol[symbol] += 1", "pass")
+    assert mutated != source
+    namespace = dict(runtime.__dict__)
+    exec(compile(mutated, "<feedgap2-remove-late-counter>", "exec"), namespace)
+    monkeypatch.setattr(runtime.MomentumWarningConsumer, "observe_trade", namespace["observe_trade"])
+    with pytest.raises(AssertionError):
+        assert_late_no_evidence()
+
+
+def test_remove_future_gap_mutation_fails_future_twin(monkeypatch):
+    source = textwrap.dedent(inspect.getsource(runtime.MomentumWarningConsumer.observe_trade))
+    mutated = source.replace(
+        'return self.engine.mark_feed_gap(\n            trade.sip_ts_ms, observed_ns // 1_000_000, symbol=symbol,\n        )',
+        'return ()',
+    )
+    assert mutated != source
+    namespace = dict(runtime.__dict__)
+    exec(compile(mutated, "<feedgap2-remove-future-gap>", "exec"), namespace)
+    monkeypatch.setattr(runtime.MomentumWarningConsumer, "observe_trade", namespace["observe_trade"])
+    with pytest.raises(AssertionError):
+        test_future_refusal_remains_scoped_gap_and_never_late_count(1)
+
+
+def test_remove_global_gap_mutation_fails_genuine_gap_twin(monkeypatch, caplog):
+    source = textwrap.dedent(inspect.getsource(runtime.MomentumWarningConsumer.observe_aggregate))
+    mutated = source.replace(
+        'records = self.engine.mark_feed_gap(self.engine.coverage_started_ms, now_ms)',
+        'records = ()',
+    )
+    assert mutated != source
+    namespace = dict(runtime.__dict__)
+    exec(compile(mutated, "<feedgap2-remove-global-gap>", "exec"), namespace)
+    monkeypatch.setattr(runtime.MomentumWarningConsumer, "observe_aggregate", namespace["observe_aggregate"])
+    with pytest.raises(AssertionError):
+        test_genuine_aggregate_gap_preserved_logs_exact_old_new_values_once("sequence", caplog)
+
+
 @pytest.mark.asyncio
 async def test_existing_ten_second_sample_exports_cumulative_counts_without_extra_io(monkeypatch):
     redis = AsyncMock()
