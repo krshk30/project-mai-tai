@@ -232,7 +232,9 @@ async def test_midread_growth_past_bound_is_backlog_not_retriable_race(setup, mo
     svc, provider, _ = await start(env)
     path = env.directory / "oms.log"
     original_bytes, original_read = path.read_bytes(), os.read
-    calls = append_after_read(monkeypatch, env.directory / "oms.log", "X" * 65537)
+    # The reviewed pass budget replaced the old single-chunk backlog limit.
+    calls = append_after_read(monkeypatch, env.directory / "oms.log",
+                             "X" * (env.reader.MAX_LOG_PASS_BYTES + 1))
     await svc._warning_monitor_once()
     assert len(calls) == 1 and svc._warning_revert_reason is None and not svc._warning_active
     assert svc._pauses.metrics()["reason"] == "monitor_unreadable"
@@ -241,6 +243,19 @@ async def test_midread_growth_past_bound_is_backlog_not_retriable_race(setup, mo
     path.write_bytes(original_bytes)
     await arm_warning_with_three_clean_reads(svc)
     assert len(calls) == 1 and provider._ws.added.count("A.*") == 2
+
+
+@pytest.mark.asyncio
+async def test_midread_growth_over_old_chunk_bound_is_deferred_without_pause(setup, monkeypatch):
+    env = setup()
+    svc, provider, _ = await start(env)
+    calls = append_after_read(monkeypatch, env.directory / "oms.log", "INFO replay\n" * 6000)
+    await svc._warning_monitor_once()
+    assert len(calls) == 1 and svc._warning_revert_reason is None and svc._warning_active
+    assert provider._ws.removed == []
+    assert env.reader._source.oms.position < (env.directory / "oms.log").stat().st_size
+    await svc._warning_monitor_once()
+    assert svc._warning_active and provider._ws.removed == []
 
 
 @pytest.mark.asyncio

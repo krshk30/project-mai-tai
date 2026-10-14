@@ -1,4 +1,8 @@
 from pathlib import Path
+import hashlib
+import os
+import threading
+import time
 
 import pytest
 
@@ -117,3 +121,75 @@ def test_mutation_raise_without_progress_fails_catchup_control(tmp_path, monkeyp
         reader.read()
     with pytest.raises(AssertionError):
         assert reader.position > before
+
+
+def writer_growth_control(tmp_path, monkeypatch, *, old_growth_check=False):
+    path = Path("/Users/velkris/.codex/task-queues/analysis/momwarn1-wed-no-warnings-20261014/"
+                "v2-real-GRML-20261014T090720-21.txt")
+    if not path.exists():
+        pytest.skip("requires retained real GRML bytes; no synthetic evidence substitution")
+    raw = path.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == "bccff8b4cd148fe0f84bdaf38eab8e8e5e98514e276cf1d37415127a9782a831"
+    reader, log = monitor(tmp_path)
+    begin, enough = threading.Event(), threading.Event()
+    original = os.read
+    inode = log.stat().st_ino
+    armed = False
+
+    def writer():
+        assert begin.wait(2)
+        start = time.monotonic()
+        with log.open("ab", buffering=0) as output:
+            for index in range(15):
+                output.write(raw[len(raw) * index // 15:len(raw) * (index + 1) // 15])
+                if index >= 3:
+                    enough.set()
+                time.sleep(max(0, start + (index + 1) * .010 - time.monotonic()))
+
+    def read(fd, size):
+        nonlocal armed
+        result = original(fd, size)
+        if not armed and os.fstat(fd).st_ino == inode:
+            armed = True
+            begin.set()
+            assert enough.wait(2)  # Force real growth after START fstat, before the read returns.
+        return result
+
+    monkeypatch.setattr(os, "read", read)
+    if old_growth_check:
+        native_read = reader.read
+
+        def restored_growth_check():
+            result = native_read()
+            if log.stat().st_size - reader.position > 65536:
+                raise ValueError("OMS postread growth bound restored by mutation")
+            return result
+
+        monkeypatch.setattr(reader, "read", restored_growth_check)
+    worker = threading.Thread(target=writer)
+    worker.start()
+    try:
+        start = time.monotonic()
+        for index in range(3):
+            time.sleep(max(0, start + index - time.monotonic()))
+            error = None
+            try:
+                reader.read()
+            except ValueError as exc:
+                error = str(exc)
+            assert error is None, error
+        assert reader.position == log.stat().st_size
+        assert reader.latest["oms_sync_seq"] == 10
+    finally:
+        begin.set()
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+
+
+def test_l_real_writer_growth_is_next_pass_without_failure(tmp_path, monkeypatch):
+    writer_growth_control(tmp_path, monkeypatch)
+
+
+def test_l_mutation_postread_growth_guard_breaks_clean_pass(tmp_path, monkeypatch):
+    with pytest.raises(AssertionError):
+        writer_growth_control(tmp_path, monkeypatch, old_growth_check=True)
