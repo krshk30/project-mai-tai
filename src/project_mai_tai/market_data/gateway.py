@@ -942,10 +942,16 @@ class MarketDataGatewayService:
         }
         pause["history"] = pause["history"][-8:]
         pause["exported_pause_history_limit"] = 8
+        health_observed_ns = getattr(getattr(self, "_warning_health_sample", None), "observed_wall_ns", None)
         return {
             **log_errors,
             "watchdog_mode": "log_only",
             "watchdog_observed_reason": getattr(self, "_warning_observed_reason", None),
+            "last_successful_health_observed_wall_ns": health_observed_ns,
+            "health_measurement_age_seconds": (
+                (time.time_ns() - health_observed_ns) / 1e9 if health_observed_ns is not None else None
+            ),
+            "reconnect_count_scope": "LIFETIME_CALLBACK_COUNT_NOT_600S_WINDOW",
             "oms_sync_pass_seconds": getattr(getattr(self, "_warning_health_sample", None), "oms_sync_seconds", None),
             "v2_bar_lateness_seconds": getattr(getattr(self, "_warning_health_sample", None), "v2_bar_lateness_seconds", None),
             "version": 1, "source": SERVICE_NAME, "event_type": event_type,

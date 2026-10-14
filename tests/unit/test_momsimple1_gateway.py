@@ -119,3 +119,30 @@ async def test_metrics_preserve_measurements_and_actual_error_counts():
     assert metrics["traceback_lines_by_log"] == {"oms.log": 1}
     assert metrics["last_error_tag"] == "CONTROLLED"
     assert all(key in metrics for key in ("A_received", "A_published", "queue_drops", "lag_ms"))
+    assert metrics["last_successful_health_observed_wall_ns"] is not None
+    assert metrics["health_measurement_age_seconds"] >= 0
+    assert metrics["reconnect_count_scope"] == "LIFETIME_CALLBACK_COUNT_NOT_600S_WINDOW"
+
+
+@pytest.mark.asyncio
+async def test_retained_measurement_reports_original_timestamp_and_age(monkeypatch):
+    import time
+    clock = [time.time_ns()]
+    monkeypatch.setattr(time, "time_ns", lambda: clock[0])
+    svc, _, _, _ = service()
+    assert svc.warning_metrics()["last_successful_health_observed_wall_ns"] is None
+    assert svc.warning_metrics()["health_measurement_age_seconds"] is None
+    await svc._warning_monitor_once()
+    observed = svc.warning_metrics()["last_successful_health_observed_wall_ns"]
+    clock[0] += 30_000_000_000
+
+    def unreadable():
+        raise ValueError("CONTROLLED unreadable")
+
+    svc._warning_health_reader = SimpleNamespace(read=unreadable)
+    await svc._warning_monitor_once()
+    metrics = svc.warning_metrics()
+    assert metrics["last_successful_health_observed_wall_ns"] == observed
+    assert metrics["health_measurement_age_seconds"] == 30
+    assert metrics["watchdog_observed_reason"] == "monitor_unreadable"
+    assert svc._warning_active
