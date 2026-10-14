@@ -25,7 +25,10 @@ from project_mai_tai.momentum_paper.warning_window import (
     WarningCandidates,
     WarningWindow,
 )
-from project_mai_tai.momentum_paper.warning_source_age import aggregate_source_age_reason
+from project_mai_tai.momentum_paper.warning_source_age import (
+    AggregateSourceAgeStats,
+    aggregate_source_age_reason,
+)
 
 
 class MomentumWarningConsumer:
@@ -56,6 +59,7 @@ class MomentumWarningConsumer:
         self.last_status = "waiting_aggregate"
         self.last_warning_ns: dict[str, int] = {}
         self.cooling_status: dict[str, str] = {}
+        self.source_age_stats = AggregateSourceAgeStats()
 
     def desired_symbols(self, legacy_active: set[str]) -> set[str]:
         return self.candidates.desired_symbols(legacy_active | self.engine.active_symbols)
@@ -119,10 +123,13 @@ class MomentumWarningConsumer:
         clock = datetime.fromtimestamp(now_ms / 1000, tz=UTC).astimezone(
             ZoneInfo("America/New_York")
         )
-        if observed_ns < bar.published_utc_ns or observed_ns - bar.received_utc_ns > 1_000_000_000:
+        transport_bad = observed_ns < bar.published_utc_ns or observed_ns - bar.received_utc_ns > 1_000_000_000
+        age_reason = aggregate_source_age_reason(end_ms=bar.end_ms, observed_ms=now_ms)
+        self.source_age_stats.observe(end_ms=bar.end_ms, observed_ns=observed_ns,
+            refusal_reason="aggregate_clock_or_stale" if transport_bad else age_reason)
+        if transport_bad:
             self.invalidate_transport("aggregate_clock_or_stale")
             return CandidateOutcome(bar.symbol, "REFUSED", "aggregate_clock_or_stale"), ()
-        age_reason = aggregate_source_age_reason(end_ms=bar.end_ms, observed_ms=now_ms)
         if age_reason is not None:
             self.invalidate_transport(age_reason)
             self.last_status = age_reason

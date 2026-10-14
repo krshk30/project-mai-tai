@@ -15,7 +15,7 @@ from tests.unit.test_momentum_warning import START, bar
 
 @pytest.fixture
 def controlled_bound():
-    assert age.MAX_AGGREGATE_SOURCE_END_AGE_MS == 4790
+    assert age.MAX_AGGREGATE_SOURCE_END_AGE_MS == 7601
 
 
 def delayed_bar(*, age_ms=2000, high="12", close="12", receive_age_ms=0):
@@ -51,7 +51,7 @@ def test_a_two_second_source_age_fresh_receive_admits_and_detects(controlled_bou
     assert model.coverage is None  # Initial admission does not borrow cooling coverage.
 
 
-@pytest.mark.parametrize("age_ms,reason", [(4791, "aggregate_source_end_stale"),
+@pytest.mark.parametrize("age_ms,reason", [(7602, "aggregate_source_end_stale"),
                                          (-1, "aggregate_bucket_incomplete")])
 def test_b_above_bound_or_incomplete_refused(controlled_bound, age_ms, reason):
     item, observed = delayed_bar(age_ms=age_ms)
@@ -75,8 +75,8 @@ def test_d_mutation_original_one_second_bound_breaks_positive_control(controlled
 
 
 def test_exact_source_boundary_inclusive_without_deleting_gate(controlled_bound):
-    assert age.aggregate_source_age_reason(end_ms=START, observed_ms=START + 4790) is None
-    assert age.aggregate_source_age_reason(end_ms=START, observed_ms=START + 4791) == "aggregate_source_end_stale"
+    assert age.aggregate_source_age_reason(end_ms=START, observed_ms=START + 7601) is None
+    assert age.aggregate_source_age_reason(end_ms=START, observed_ms=START + 7602) == "aggregate_source_end_stale"
 
 
 def test_window_and_engine_independently_enforce_same_bound(controlled_bound):
@@ -84,14 +84,14 @@ def test_window_and_engine_independently_enforce_same_bound(controlled_bound):
     window = WarningWindow("TEST")
     window.observe(item, observed_ns=observed)
     assert window.evaluate(observed_ms=observed // 1_000_000).warning_windows
-    assert not window.evaluate(observed_ms=item.end_ms + 4791).warning_windows
+    assert not window.evaluate(observed_ms=item.end_ms + 7602).warning_windows
     engine = fresh_consumer().engine
     arguments = dict(strategy_code="momentum_30s_warn", symbol="TEST", reference_price=Decimal("10"),
                      reference_start_ms=item.start_ms, reference_end_ms=item.end_ms,
                      signal_price=item.close, signal_start_ms=item.start_ms, signal_end_ms=item.end_ms,
                      aggregate_received_utc_ns=item.received_utc_ns,
                      aggregate_published_utc_ns=item.published_utc_ns)
-    late = (item.end_ms + 4791) * 1_000_000
+    late = (item.end_ms + 7602) * 1_000_000
     assert not engine.detect_from_bucket(**{**arguments, "aggregate_received_utc_ns": late,
                                             "aggregate_published_utc_ns": late}, observed_decision_ns=late)
     assert engine.detect_from_bucket(**arguments, observed_decision_ns=observed)
@@ -170,11 +170,11 @@ def test_no_queued_earlier_print_can_fill_delayed_bucket_decision(controlled_bou
 
 def test_e_retained_aehl_and_whole_replay_counts_are_conditional_not_real_entries():
     root = Path("/Users/velkris/.codex/task-queues/analysis/momwarn1-wed-no-warnings-20261014")
-    if not (root / "MOMAGE1-candidate-replay-v2.json").exists():
+    if not (root / "MOMAGE1-candidate-7601-replay.json").exists():
         pytest.skip("retained offline replay receipt unavailable; no fabricated tape")
-    candidate = json.loads((root / "MOMAGE1-candidate-replay-v2.json").read_text())
+    candidate = json.loads((root / "MOMAGE1-candidate-7601-replay.json").read_text())
     base = json.loads((root / "MOMAGE1-base-replay.json").read_text())
-    assert candidate["source_age_bound_ms"] == 4790 and base["source_age_bound_ms"] == 1000
+    assert candidate["source_age_bound_ms"] == 7601 and base["source_age_bound_ms"] == 1000
     assert candidate["input_sha256"] == base["input_sha256"]
     assert candidate["aehl_561"]["counts"]["bars"] == 561
     assert candidate["whole_20000"]["counts"]["bars"] == 20000
