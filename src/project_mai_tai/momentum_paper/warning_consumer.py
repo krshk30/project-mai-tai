@@ -247,7 +247,10 @@ class MomentumWarningConsumer:
             raise ValueError("raw_timestamp_mismatch")
         if not 0 <= observed_ns - sip_timestamp_ns <= 1_000_000_000:
             self.last_status = "raw_future_or_stale"
-            return self.engine.mark_feed_gap(trade.sip_ts_ms, observed_ns // 1_000_000)
+            # An unusable print compromises only its symbol's forward-path evidence.
+            return self.engine.mark_feed_gap(
+                trade.sip_ts_ms, observed_ns // 1_000_000, symbol=symbol,
+            )
         if sip_timestamp_ns <= self._last_raw_ns.get(symbol, 0):
             self.last_status = "raw_duplicate_or_out_of_order"
             return ()
