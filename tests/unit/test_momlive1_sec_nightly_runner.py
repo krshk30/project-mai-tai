@@ -46,7 +46,9 @@ def test_missing_calendar_coverage_and_naive_time_refused():
 
 def report(**changes):
     return {"status": "FULL", "cohort": "SEC_INDEX", "security_type": "TYPE_UNKNOWN",
-            "http_errors": {"403": 0, "429": 0}, "counts": {"FETCH_FAILED": 0}, **changes}
+            "http_errors": {"403": 0, "429": 0}, "counts": {"FETCH_FAILED": 0},
+            "sec_index_count": 2, "requested_symbols": 2, "completed_symbols": 2,
+            "pending_symbols": 0, "sec_index_sha256": "b" * 64, **changes}
 
 
 class Job:
@@ -88,6 +90,11 @@ def test_first_run_and_same_session_success_dedupe(tmp_path):
     (report(security_type="COMMON"), 0),
     (report(http_errors={"403": False, "429": 0}), 0),
     (report(), 2),
+    (report(requested_symbols=0, completed_symbols=0, sec_index_count=0), 0),
+    (report(completed_symbols=1), 0),
+    (report(pending_symbols=1), 0),
+    (report(sec_index_count=True), 0),
+    (report(sec_index_sha256=None), 0),
 ])
 def test_full_or_failed_result_never_invents_success_or_retries(tmp_path, data, code):
     job = Job(data, code)

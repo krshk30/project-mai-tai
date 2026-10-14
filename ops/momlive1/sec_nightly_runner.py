@@ -33,6 +33,17 @@ def target_session(now, holidays):
 
 
 def successful(report):
+    if not isinstance(report, dict):
+        return False
+    requested = report.get("requested_symbols")
+    completed = report.get("completed_symbols")
+    index = report.get("sec_index_count")
+    if (type(requested) is not int or not 0 < requested <= 30_000
+            or type(completed) is not int or completed != requested
+            or type(index) is not int or not requested <= index <= 40_000
+            or type(report.get("pending_symbols")) is not int or report["pending_symbols"] != 0
+            or not re.fullmatch(r"[0-9a-f]{64}", str(report.get("sec_index_sha256", "")))):
+        return False
     return (isinstance(report, dict) and report.get("status") == "FULL"
             and report.get("cohort") == "SEC_INDEX"
             and report.get("security_type") == "TYPE_UNKNOWN"
