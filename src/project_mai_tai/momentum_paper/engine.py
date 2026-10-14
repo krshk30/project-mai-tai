@@ -20,6 +20,7 @@ from project_mai_tai.momentum_paper.models import (
     MomentumTapeRecord,
     TradePrint,
 )
+from project_mai_tai.momentum_paper.warning_source_age import aggregate_source_age_reason
 
 
 _ET = ZoneInfo("America/New_York")
@@ -86,6 +87,8 @@ class _ActiveEvent:
     observed_decision_ns: int | None = None
     aggregate_reference: dict[str, object] | None = None
     aggregate_signal: dict[str, object] | None = None
+    aggregate_received_utc_ns: int | None = None
+    aggregate_published_utc_ns: int | None = None
 
     @property
     def detection_ms(self) -> int:
@@ -442,6 +445,8 @@ class MomentumPaperEngine:
         reference_start_ms: int, reference_end_ms: int, signal_price: Decimal,
         signal_start_ms: int, signal_end_ms: int, observed_decision_ns: int,
         signal_trade: TradePrint | None = None,
+        aggregate_received_utc_ns: int | None = None,
+        aggregate_published_utc_ns: int | None = None,
     ) -> tuple[MomentumTapeRecord, ...]:
         """Warning ledger only: observed bucket evidence is never a fictional print."""
         if strategy_code not in MOMENTUM_WARNING_STRATEGIES or strategy_code not in self.strategy_windows:
@@ -462,10 +467,14 @@ class MomentumPaperEngine:
                 reference_end_ms <= signal_start_ms
                 or (reference_start_ms, reference_end_ms) == (signal_start_ms, signal_end_ms)
             ))
-            or not (
-                (signal_start_ms == signal_end_ms if signal_trade else signal_start_ms < signal_end_ms)
-                and signal_end_ms <= now_ms <= signal_end_ms + 1000
-            )
+            or not (signal_start_ms == signal_end_ms if signal_trade else signal_start_ms < signal_end_ms)
+            or (signal_trade is not None and not signal_end_ms <= now_ms <= signal_end_ms + 1000)
+            or (signal_trade is None and (
+                aggregate_source_age_reason(end_ms=signal_end_ms, observed_ms=now_ms) is not None
+                or aggregate_received_utc_ns is None or aggregate_published_utc_ns is None
+                or not 0 <= observed_decision_ns - aggregate_received_utc_ns <= 1_000_000_000
+                or observed_decision_ns < aggregate_published_utc_ns
+            ))
             or self._has_unresolved_event((strategy_code, symbol))
             or (signal_trade is not None and (
                 not signal_trade.eligible or signal_trade.symbol != symbol
@@ -495,6 +504,8 @@ class MomentumPaperEngine:
             window_share_count=0, warrant_like=is_warrant_like(symbol),
             observed_decision_ns=observed_decision_ns,
             aggregate_reference=reference, aggregate_signal=signal,
+            aggregate_received_utc_ns=aggregate_received_utc_ns,
+            aggregate_published_utc_ns=aggregate_published_utc_ns,
         )
         self._active[event.logical_id] = event
         return (self._record(event, "DETECTED", datetime.fromtimestamp(now_ms / 1000, tz=UTC),
@@ -520,7 +531,13 @@ class MomentumPaperEngine:
             now_ms = observed_decision_ns // 1_000_000
             reference_start = (event.aggregate_reference or {}).get("start_ms")
             if (
-                now_ms > signal_end + 1000
+                (event.detection is not None and now_ms > signal_end + 1000)
+                or (event.detection is None and (
+                    aggregate_source_age_reason(end_ms=signal_end, observed_ms=now_ms) is not None
+                    or event.aggregate_received_utc_ns is None or event.aggregate_published_utc_ns is None
+                    or not 0 <= observed_decision_ns - event.aggregate_received_utc_ns <= 1_000_000_000
+                    or observed_decision_ns < event.aggregate_published_utc_ns
+                ))
                 or (event.detection is None and reference_start is not None
                     and int(reference_start) < now_ms - event.window_seconds * 1000)
             ):

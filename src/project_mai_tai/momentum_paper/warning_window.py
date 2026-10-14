@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Mapping
 
 from project_mai_tai.momentum_paper.engine import MomentumPaperEngine, symbol_is_eligible
+from project_mai_tai.momentum_paper.warning_source_age import aggregate_source_age_reason
 from project_mai_tai.momentum_paper.models import (
     MOMENTUM_WARNING_STRATEGIES,
     MomentumTapeRecord,
@@ -302,7 +303,7 @@ class WarningWindow:
             ranges.append(WindowRange(seconds, low, high, known, partial))
             if (
                 not cooling and latest is not None and cutoff <= latest.start_ms
-                and latest.end_ms <= at_ms <= latest.end_ms + 1000
+                and aggregate_source_age_reason(end_ms=latest.end_ms, observed_ms=at_ms) is None
                 and low is not None and latest.high >= low * _WARNING
             ):
                 warnings.append(seconds)

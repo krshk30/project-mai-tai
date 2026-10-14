@@ -25,6 +25,7 @@ from project_mai_tai.momentum_paper.warning_window import (
     WarningCandidates,
     WarningWindow,
 )
+from project_mai_tai.momentum_paper.warning_source_age import aggregate_source_age_reason
 
 
 class MomentumWarningConsumer:
@@ -121,6 +122,11 @@ class MomentumWarningConsumer:
         if observed_ns < bar.published_utc_ns or observed_ns - bar.received_utc_ns > 1_000_000_000:
             self.invalidate_transport("aggregate_clock_or_stale")
             return CandidateOutcome(bar.symbol, "REFUSED", "aggregate_clock_or_stale"), ()
+        age_reason = aggregate_source_age_reason(end_ms=bar.end_ms, observed_ms=now_ms)
+        if age_reason is not None:
+            self.invalidate_transport(age_reason)
+            self.last_status = age_reason
+            return CandidateOutcome(bar.symbol, "REFUSED", age_reason), ()
         if bar.epoch == self._stream_epoch and bar.sequence <= self._sequence:
             return CandidateOutcome(bar.symbol, "IGNORED", "duplicate_or_reordered_aggregate"), ()
         if bar.epoch == self._stream_epoch and bar.dropped_total < self._drops:
@@ -205,6 +211,8 @@ class MomentumWarningConsumer:
                 signal_start_ms=trade.sip_ts_ms if trade else latest.start_ms,
                 signal_end_ms=trade.sip_ts_ms if trade else latest.end_ms,
                 observed_decision_ns=observed_ns, signal_trade=trade,
+                aggregate_received_utc_ns=latest.received_utc_ns,
+                aggregate_published_utc_ns=latest.published_utc_ns,
             )
         return records
 
