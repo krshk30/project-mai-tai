@@ -19,7 +19,7 @@ from project_mai_tai.market_data.schwab_streamer import SchwabStreamerClient
 from project_mai_tai.services import scanner_confirmed_capture, strategy_engine_app
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
-from project_mai_tai.strategy_core import five_pillars, top_gainers
+from project_mai_tai.strategy_core import five_pillars, snapshot_utils, top_gainers
 from project_mai_tai.strategy_core.config import MomentumAlertConfig, MomentumConfirmedConfig
 from project_mai_tai.strategy_core.models import ReferenceData
 from project_mai_tai.strategy_core.momentum_alerts import MomentumAlertEngine
@@ -87,6 +87,7 @@ def test_retained13269_rawcase_filter_and_scanner_uppercase_content_parity(monke
     assert five_pillars.apply_five_pillars(snapshots,refs,config,now=NOW) == expected
     assert five_pillars.apply_five_pillars(uppercase,refs,config,now=NOW) == expected
     monkeypatch.setattr(top_gainers,'now_eastern',lambda: NOW)
+    monkeypatch.setattr(snapshot_utils, 'time', SimpleNamespace(time=lambda: NOW.timestamp()))
     old = frozen_namespace('src/project_mai_tai/strategy_core/top_gainers.py', top_gainers)
     old['now_eastern'] = lambda: NOW
     expected = old['TopGainersTracker']().update(uppercase,refs,now=NOW)
