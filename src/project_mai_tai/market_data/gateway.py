@@ -35,7 +35,7 @@ from project_mai_tai.market_data.protocols import SnapshotProvider, TradeStreamP
 from project_mai_tai.market_data.publisher import MarketDataPublisher, WarningBatchWriteError
 from project_mai_tai.market_data.reference_cache import ReferenceDataCache
 from project_mai_tai.market_data.stage_diagnostics import StageDiagnostics
-from project_mai_tai.market_data.momwarn_pause_policy import WarningPausePolicy, classify_reason
+from project_mai_tai.market_data.momwarn_pause_policy import WarningPausePolicy
 from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealthReader, WarningWatchdog
 from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 from project_mai_tai.services.runtime import _install_signal_handlers
@@ -166,6 +166,7 @@ class MarketDataGatewayService:
         if self.settings.market_data_momentum_warning_enabled:
             self.trade_stream.configure_momentum_warning(
                 self._enqueue_warning, self._latch_warning_revert, self._close_warning_window,
+                log_only=True,
                 window=self._momentum_validation_window,
             )
             # A has its own Redis pool/task; stalled A writes never serialize T/Q writes.
@@ -705,63 +706,14 @@ class MarketDataGatewayService:
         self._enqueue_live(self._trade_queue, record)
 
     def _latch_warning_revert(self, reason: str, *, diagnostic: str | None = None) -> None:
-        # Provider failures are not recoverable monitor samples. Unknown reasons
-        # remain sticky; only the async sampled-noise route can pause/resume A.
-        if not self._warning_window_open():
-            self._pauses.close_window()
-            if classify_reason(reason) == "monitor":
-                return
-        decision = self._pauses.observe(reason)
-        if classify_reason(reason) == "monitor" and decision.state != "off":
-            self._close_warning_window(reset_monitor=False)
-            self.logger.warning("[MOMLATCH1-PAUSE] reason=%s A_only=true provider_reconnect=1", reason)
-            return
-        if decision.state == "off" and decision.reason == "reconnect_storm":
-            reason = "reconnect_storm"
-            self.trade_stream._warning_failed = True
-            self.trade_stream._warning_reconnect_pending = False
-        if self._warning_revert_reason is None:
-            self._warning_revert_reason = reason
-            self._warning_reverted_utc_ns = time.time_ns()
-            self.logger.warning("[MOMWARN1-AUTO-REVERT] reason=%s A_only=true%s", reason,
-                                f" detail={diagnostic}" if diagnostic is not None else "")
-        self._warning_active = False
-        while not self._warning_queue.empty():
-            self._warning_queue.get_nowait()
-            self._warning_drop_count += 1
-        task = self._warning_publish_task
-        try:
-            current_task = asyncio.current_task()
-        except RuntimeError:
-            current_task = None
-        if task is not None and task is not current_task:
-            task.cancel()
+        self._warning_observed_reason = reason
+        if reason in {"disconnect", "policy_1008", "reconnect_1012"}:
+            self._pauses.reconnect_event_count += 1
+        self.logger.warning("[MOMSIMPLE1-OBSERVATION] reason=%s action=none%s", reason,
+                            f" detail={diagnostic}" if diagnostic is not None else "")
 
     async def _revert_warning(self, reason: str, *, diagnostic: str | None = None) -> None:
-        if classify_reason(reason) == "monitor" and not self._warning_window_open():
-            self._pauses.close_window()
-            self._close_warning_window(reset_monitor=False)
-            return
-        if classify_reason(reason) == "monitor" and self._warning_revert_reason is None:
-            previous_reason = self._pauses.reason
-            decision = self._pauses.observe(reason)
-            self._close_warning_window(reset_monitor=False)
-            if decision.action == "pause" or reason != previous_reason:
-                self.logger.warning("[MOMWARN1-PAUSE] reason=%s A_only=true%s", reason,
-                                    f" detail={diagnostic}" if diagnostic is not None else "")
-            try:
-                if reason != "provider_disconnected":
-                    await self.trade_stream.set_momentum_warning_aggregates(False)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self._latch_warning_revert("unsubscribe_error", diagnostic=_warning_monitor_diagnostic(exc))
-            return
         self._latch_warning_revert(reason, diagnostic=diagnostic)
-        try:
-            await self.trade_stream.set_momentum_warning_aggregates(False)
-        except Exception:
-            self.logger.exception("[MOMWARN1-AUTO-REVERT] A unsubscribe failed; locally latched OFF")
 
     def _close_warning_window(self, *, reset_monitor: bool = True) -> None:
         if self._warning_revert_reason is not None:
@@ -867,7 +819,7 @@ class MarketDataGatewayService:
                 self._warning_drop_count += len(pending)-acknowledged
                 self._warning_ack_unknown += exc.unknown
                 await self._revert_warning('publish_error', diagnostic=f'acknowledged={acknowledged} unknown_ack={exc.unknown} batch={len(pending)}')
-                return
+                continue
             except asyncio.CancelledError:
                 self._warning_drop_count += len(pending)-acknowledged
                 if self._warning_write_task is not None:
@@ -881,7 +833,7 @@ class MarketDataGatewayService:
                 if self._warning_write_task is not None:
                     self._warning_ack_unknown += len(pending)-acknowledged
                 await self._revert_warning("publish_error", diagnostic=_warning_monitor_diagnostic(exc))
-                return
+                continue
             finally:
                 self._warning_inflight = None
                 self._warning_inflight_records = ()
@@ -893,7 +845,7 @@ class MarketDataGatewayService:
             return
         now = datetime.now(UTC)
         end = self._momentum_validation_window.gateway_end_for(now.astimezone(EASTERN_TZ).date())
-        if not is_fillable_et_session(now, 4, end.hour, end_minute=end.minute):
+        if not self.settings.market_data_momentum_warning_enabled or not is_fillable_et_session(now, 4, end.hour, end_minute=end.minute):
             await self._end_warning_window()
             return
         try:
@@ -907,6 +859,14 @@ class MarketDataGatewayService:
                 self._warning_window_day = day
                 self._warning_log_gap_counts.clear()
             self._pauses.open_window()
+            # Subscription intent is independent of measurement availability.
+            was_active = self._warning_active
+            subscribed = await self.trade_stream.set_momentum_warning_aggregates(True)
+            self._warning_active = subscribed or was_active
+            if subscribed and not was_active:
+                self._warning_generation += 1
+                self._warning_requested_utc_ns = time.time_ns()
+                self._warning_first_a_utc_ns = None
             if self._warning_health_task is None:
                 live_reader = getattr(self._warning_health_reader, "read_live", None)
                 operation = (
@@ -934,6 +894,8 @@ class MarketDataGatewayService:
                     )
                 self._warning_log_gap_counts = counts
             reason = self._warning_watchdog.check_recoverable(health, publish_lag_seconds=self._warning_publish_lag())
+            self._warning_health_sample = health
+            self._warning_observed_reason = reason
             if getattr(health, "v2_cohort", None) is not None:
                 metrics = self._warning_watchdog.cohort_metrics()
                 key = (metrics["due_ns"], metrics["status"], metrics["late_streak"], metrics["missing_symbols"])
@@ -947,26 +909,11 @@ class MarketDataGatewayService:
                     self._warning_cohort_log_key = key
             if reason:
                 await self._revert_warning(reason)
-                return
             if getattr(health, "v2_startup_pending", False):
                 await self._revert_warning("v2_startup_pending")
-                return
             if not getattr(self.trade_stream, "_connected", False):
                 await self._revert_warning("provider_disconnected")
-                return
-            decision = self._pauses.observe(ready=True)
-            if decision.state != "active":
-                return
-            was_active = self._warning_active
-            self._warning_active = await self.trade_stream.set_momentum_warning_aggregates(True)
-            if self._warning_active and not was_active:
-                self._warning_generation += 1
-                self._warning_requested_utc_ns = time.time_ns()
-                self._warning_first_a_utc_ns = None
-                if decision.action == "resume":
-                    self.logger.info("[MOMWARN1-RESUME] clean_reads=%s generation=%s A_only=true",
-                                     decision.clean_reads, self._warning_generation)
-            elif not self._warning_active:
+            if not self._warning_active:
                 await self._revert_warning("monitor_unreadable", diagnostic="provider not ready; A not subscribed")
         except asyncio.CancelledError:
             # Cancellation is shutdown/control flow, never monitor unreadability.
@@ -987,6 +934,8 @@ class MarketDataGatewayService:
         if not self._warning_window_open():
             self._pauses.close_window()
         pause = self._pauses.metrics()
+        if self._warning_window_open():
+            pause.update(state="active" if self._warning_active else "inactive", reason=None)
         observe_errors = getattr(self._warning_health_reader, "error_observations", None)
         log_errors = observe_errors() if observe_errors is not None else {
             "error_lines_by_log": None, "traceback_lines_by_log": None, "last_error_tag": None,
@@ -995,6 +944,10 @@ class MarketDataGatewayService:
         pause["exported_pause_history_limit"] = 8
         return {
             **log_errors,
+            "watchdog_mode": "log_only",
+            "watchdog_observed_reason": getattr(self, "_warning_observed_reason", None),
+            "oms_sync_pass_seconds": getattr(getattr(self, "_warning_health_sample", None), "oms_sync_seconds", None),
+            "v2_bar_lateness_seconds": getattr(getattr(self, "_warning_health_sample", None), "v2_bar_lateness_seconds", None),
             "version": 1, "source": SERVICE_NAME, "event_type": event_type,
             "observed_ns": time.time_ns(), "gateway_instance_id": self._warning_instance_id,
             "generation": self._warning_generation, "A_received": self._warning_seq,

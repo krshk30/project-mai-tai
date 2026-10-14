@@ -90,15 +90,14 @@ def setup(tmp_path, monkeypatch):
 
 
 async def three_clean_native_reads(svc, env):
-    """Arm/resume from three real source reads, not policy pre-priming."""
+    """MOMSIMPLE1 subscribes immediately; retain three real source reads."""
     before = env.client.xrevrange.call_count
     for index in range(3):
         await svc._warning_monitor_once()
         assert env.client.xrevrange.call_count == before + index + 1
         assert svc._warning_revert_reason is None
-        assert svc._warning_active is (index == 2)
-        assert svc.warning_metrics()["pause_state"]["state"] == (
-            "active" if index == 2 else "paused")
+        assert svc._warning_active
+        assert svc.warning_metrics()["pause_state"]["state"] == "active"
 
 
 async def start_native(env):

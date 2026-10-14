@@ -79,11 +79,11 @@ def healthy():
 
 
 async def arm_warning_with_three_clean_reads(svc):
-    """Initial/new-day setup uses actual monitor reads, never policy pre-priming."""
+    """MOMSIMPLE1 subscribes immediately; retain three real measurement reads."""
     for index in range(3):
         await svc._warning_monitor_once()
         assert svc._warning_revert_reason is None
-        assert svc._warning_active is (index == 2)
+        assert svc._warning_active
 
 
 def event(owner, symbols, mode="replace"):

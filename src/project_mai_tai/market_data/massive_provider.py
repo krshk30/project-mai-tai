@@ -349,7 +349,8 @@ class MassiveTradeStream:
         self._on_warning_window_close: Callable[[], None] | None = None
         self._momentum_warning_window = MomentumValidationWindow()
 
-    def configure_momentum_warning(self, on_aggregate, on_revert, on_window_close=None, *, window=None) -> None:
+    def configure_momentum_warning(self, on_aggregate, on_revert, on_window_close=None, *, window=None, log_only=False) -> None:
+        self._warning_log_only = log_only
         self._on_warning_aggregate = on_aggregate
         self._on_warning_revert = on_revert
         self._on_warning_window_close = on_window_close
@@ -397,6 +398,14 @@ class MassiveTradeStream:
             self._on_warning_window_close()
 
     def _revert_warning(self, reason: str) -> None:
+        if getattr(self, "_warning_log_only", False):
+            if self._on_warning_revert is not None:
+                self._on_warning_revert(reason)
+            # A replacement socket must restore intent, not the old socket's state.
+            if reason in {"disconnect", "policy_1008", "provider_error"}:
+                self._warning_reconnect_pending = self._warning_aggregates_enabled or self._warning_reconnect_pending
+                self._warning_aggregates_enabled = False
+            return
         from project_mai_tai.market_data.momwarn_pause_policy import classify_reason
 
         recoverable = classify_reason(reason) == "monitor"
