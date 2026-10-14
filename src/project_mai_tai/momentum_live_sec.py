@@ -369,12 +369,14 @@ class SecClient:
             clock,
         )
 
-    def _get(self, url: str, lease: _SecLease) -> tuple[Mapping, str]:
+    def _get(self, url: str, lease: _SecLease, *, before_request=None) -> tuple[Mapping, str]:
         if url != "https://www.sec.gov/files/company_tickers.json" and not re.fullmatch(
             r"https://data\.sec\.gov/submissions/CIK\d{10}\.json", url
         ):
             raise SecError("sec_url_refused")
         lease.wait()
+        if before_request is not None:
+            before_request()
         try:
             headers = {
                 "User-Agent": self._user_agent,
@@ -471,10 +473,42 @@ class SecClient:
             raise SecError("empty_common_universe")
         started, requests, completed = time.monotonic(), 0, 0
         counts = {"US": 0, "NON_US": 0, "NO_CIK": 0, "UNKNOWN": 0}
+        index_sha = None
+
+        def request_guard():
+            nonlocal requests
+            local_now = _aware(self.clock()).astimezone(_ET)
+            if wall_time(3, 55) <= local_now.time() < wall_time(16):
+                raise SecError("nightly_window_closed")
+            if requests >= max_requests or time.monotonic() - started >= max_seconds:
+                raise SecError("nightly_bound_reached")
+            requests += 1
+
+        def report():
+            return {
+                "status": "FULL" if completed == len(universe) else "PARTIAL",
+                "requested_symbols": len(universe),
+                "completed_symbols": completed,
+                "pending_symbols": len(universe) - completed,
+                "requests": requests,
+                "counts": counts,
+                "universe_provenance": universe_provenance,
+                "sec_index_sha256": index_sha,
+                "coverage_scope": "caller_supplied_common_universe_not_sec_index",
+            }
+
         with self.store.sec_job() as lease:
             self.store.invalidate_for_prepare(lookup_day)
-            index, index_sha = self._get("https://www.sec.gov/files/company_tickers.json", lease)
-            requests += 1
+            try:
+                index, index_sha = self._get(
+                    "https://www.sec.gov/files/company_tickers.json",
+                    lease,
+                    before_request=request_guard,
+                )
+            except SecError as error:
+                if str(error) in {"nightly_window_closed", "nightly_bound_reached"}:
+                    return report()
+                raise
             mapping, conflicts = parse_ticker_map(index)
             groups = {}
             for symbol in sorted(universe):
@@ -495,9 +529,12 @@ class SecClient:
                     or wall_time(3, 55) <= local_now.time() < wall_time(16)
                 ):
                     break
-                requests += 1
                 try:
-                    body, sha = self._get(f"https://data.sec.gov/submissions/CIK{cik}.json", lease)
+                    body, sha = self._get(
+                        f"https://data.sec.gov/submissions/CIK{cik}.json",
+                        lease,
+                        before_request=request_guard,
+                    )
                     records = [
                         classify_submission(
                             symbol,
@@ -507,6 +544,13 @@ class SecClient:
                             lookup_day=lookup_day,
                             source_sha256=sha,
                         )
+                        for symbol in names
+                    ]
+                except SecError as error:
+                    if str(error) in {"nightly_window_closed", "nightly_bound_reached"}:
+                        break
+                    records = [
+                        self._unknown(symbol, lookup_day, "FETCH_FAILED", cik=cik)
                         for symbol in names
                     ]
                 except Exception:
@@ -524,17 +568,7 @@ class SecClient:
                         else "UNKNOWN"
                     ] += 1
                     completed += 1
-        return {
-            "status": "FULL" if completed == len(universe) else "PARTIAL",
-            "requested_symbols": len(universe),
-            "completed_symbols": completed,
-            "pending_symbols": len(universe) - completed,
-            "requests": requests,
-            "counts": counts,
-            "universe_provenance": universe_provenance,
-            "sec_index_sha256": index_sha,
-            "coverage_scope": "caller_supplied_common_universe_not_sec_index",
-        }
+        return report()
 
 
 class CountryRouter:
@@ -555,14 +589,28 @@ class CountryRouter:
         self._max_seen, self._worker = max_seen, None
         self._unknown_logged: set[str] = set()
         self._closing = False
+        self._reload_lock = asyncio.Lock()
 
     async def start(self) -> None:
         if self._worker is not None:
             return
         self._closing = False
-        self._records = await asyncio.to_thread(self.store.load)
+        await self.reload_async()
         if self.client is not None and self._worker is None:
             self._worker = asyncio.create_task(self._run())
+
+    async def reload_async(self) -> int:
+        """Caller schedules at 03:55; atomically reload without blocking detection.
+
+        Lookup commits may occur during the DB read, but their memory updates wait
+        for this swap, so a late snapshot cannot overwrite a newer lookup result.
+        """
+        async with self._reload_lock:
+            records = await asyncio.to_thread(self.store.load)
+            self._records = records
+            self._seen.clear()
+            self._unknown_logged.clear()
+            return len(records)
 
     def route_for(self, symbol: str, now: datetime) -> CountryRoute:
         symbol, now = _symbol(symbol), _aware(now)
@@ -631,7 +679,8 @@ class CountryRouter:
                 if symbol is None:
                     return
                 record = await asyncio.to_thread(self.client.lookup, symbol)
-                self._records[symbol] = record
+                async with self._reload_lock:
+                    self._records[symbol] = record
             except Exception:
                 logger.warning("[MOMLIVE-SEC-LOOKUP] symbol=%s status=unavailable", symbol)
             finally:

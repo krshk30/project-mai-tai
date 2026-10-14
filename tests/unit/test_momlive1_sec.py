@@ -281,6 +281,7 @@ def test_nightly_0355_boundary_stops_partial(store):
     ticks = iter(
         [
             NOW.replace(hour=7, minute=54),
+            NOW.replace(hour=7, minute=54),
             NOW.replace(hour=7, minute=55),
         ]
     )
@@ -551,3 +552,90 @@ def test_retained_current_sec_fields_not_morning_availability(
     # Morning classification cannot be retrofitted from an afternoon lookup.
     assert router.route_for(symbol, NOW).is_us is None
     assert router.route_for(symbol, NOW).status == "FUTURE"
+
+
+def test_reload_async_refreshes_after_overnight_job(store):
+    async def run():
+        store.put(record())
+        router = CountryRouter(store)
+        await router.start()
+        assert router.route_for("TEST", NOW).broker == "schwab"
+        store.put(record("F4", "E9"))
+        assert router.route_for("TEST", NOW).broker == "schwab"
+        assert await router.reload_async() == 1
+        assert router.route_for("TEST", NOW).broker == "webull"
+
+    asyncio.run(run())
+
+
+def test_reload_does_not_overwrite_lookup_completed_during_read(store, monkeypatch):
+    reading, release, committed = threading.Event(), threading.Event(), threading.Event()
+    store.put(CountryRecord("TEST", None, None, None, None, NOW, "PENDING", DAY))
+    original_load = store.load
+
+    class Client:
+        def lookup(self, symbol):
+            result = record(symbol=symbol)
+            store.put(result)
+            committed.set()
+            return result
+
+    def delayed_load():
+        snapshot = original_load()
+        reading.set()
+        assert release.wait(3)
+        return snapshot
+
+    async def run():
+        router = CountryRouter(store, Client())
+        await router.start()
+        monkeypatch.setattr(store, "load", delayed_load)
+        reload = asyncio.create_task(router.reload_async())
+        assert await asyncio.to_thread(reading.wait, 3)
+        assert router.prefetch("TEST")
+        assert router.route_for("TEST", NOW).broker == "webull"
+        assert await asyncio.to_thread(committed.wait, 3)
+        release.set()
+        await reload
+        await router._queue.join()
+        assert router.route_for("TEST", NOW).broker == "schwab"
+        await router.close()
+
+    asyncio.run(run())
+
+
+def test_0355_crossed_during_rate_wait_refuses_before_http(store, monkeypatch):
+    from project_mai_tai.momentum_live_sec import _SecLease
+
+    clock = [NOW.replace(hour=7, minute=54, second=59)]
+
+    def wait(lease):
+        clock[0] = NOW.replace(hour=7, minute=55)
+
+    monkeypatch.setattr(_SecLease, "wait", wait)
+    get, calls = fake_provider()
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: clock[0]).nightly(
+        ["TEST"], lookup_day=DAY, universe_provenance="Controlled"
+    )
+    assert calls == [] and result["requests"] == 0 and result["status"] == "PARTIAL"
+
+
+def test_0355_crossed_waiting_second_request_keeps_completed_progress(store, monkeypatch):
+    from project_mai_tai.momentum_live_sec import _SecLease
+
+    clock = [NOW.replace(hour=7, minute=54, second=59)]
+    waits = [0]
+
+    def wait(lease):
+        waits[0] += 1
+        if waits[0] == 2:
+            clock[0] = NOW.replace(hour=7, minute=55)
+
+    monkeypatch.setattr(_SecLease, "wait", wait)
+    get, calls = fake_provider()
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: clock[0]).nightly(
+        ["TEST", "MISSING"], lookup_day=DAY, universe_provenance="Controlled"
+    )
+    assert calls == [INDEX] and result["requests"] == 1
+    assert result["completed_symbols"] == 1 and result["pending_symbols"] == 1
+    assert store.get("MISSING").status == "NO_CIK"
