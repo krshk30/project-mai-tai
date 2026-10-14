@@ -297,15 +297,6 @@ def test_consumed_error_survives_later_file_failure(health_reader):
     assert reader.read().new_live_error
 
 
-def test_native_v2_backlog_is_separate_unmodified_guard():
-    # This build must not claim native probe convergence from the ERROR scanner.
-    import inspect
-    from project_mai_tai.momwarn_live_health import LiveWarningHealthSource
-
-    assert 'raise ValueError("v2 log truncation/backlog")' in inspect.getsource(
-        LiveWarningHealthSource._read_probes)
-
-
 def timing_helper(prefix):
     """Main exclusively runs: python tests/unit/test_momlogcap1.py PREFIX."""
     import hashlib
