@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from copy import deepcopy
+import codecs
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ from project_mai_tai.momwarn_measurements import NS, integer
 from project_mai_tai.momwarn_cohort_lateness import CohortTracker, POLICY, window
 
 BOUND = 65536
+MAX_LOG_PASS_BYTES = 2 * 1024 * 1024
 MAX_STATE_ROWS = 32
 STAMP = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d{3}) ")
 PROBE = re.compile(r"\[V2-MACD-PROBE\] sym=(\S+) ts_ms=(\d+) ")
@@ -29,6 +31,45 @@ LINE_PUBLICATION = re.compile(
     r"[^\n]*\boutcome=published(?:\s|$)"
 )
 SEED = re.compile(r"\[(V2-DB-SEED-GAP|V2-CW-SEED-CAP|V2-WARMUP-LINE)\] (\S+)")
+LONG_TOKEN = re.compile(
+    rb"\[V2-MACD-PROBE\] sym=\S+ ts_ms=\d+ "
+    rb"|\[(?:V2-DB-SEED-GAP|V2-CW-SEED-CAP|V2-WARMUP-LINE)\] \S+(?=\s|$)"
+    rb"|\[V2-LINE-RESTORE\] sym=\S+(?=\s)"
+    rb"|\bcurrent_bar_ms=\d+(?=\s)|\boutcome=published(?=\s|$)"
+)
+
+
+def _long_probe_fragment(state: dict, fragment: bytes, *, final: bool) -> bytes:
+    """Compact evidence tokens in order while retaining bounded cross-chunk overlap."""
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    decoder.setstate(state.get("utf8", (b"", 0)))
+    decoder.decode(fragment, final=final)
+    state["utf8"] = decoder.getstate()
+    combined = state["tail"] + fragment
+    start = state["length"] - len(state["tail"])
+    for match in LONG_TOKEN.finditer(combined):
+        end = start + match.end()
+        if end <= state["parsed"] or (not final and match.end() == len(combined)):
+            continue
+        token = match[0]
+        if token.startswith(b"[V2-MACD-PROBE]"):
+            state.setdefault("probe", token)
+        elif token.startswith((b"[V2-DB-SEED-GAP]", b"[V2-CW-SEED-CAP]", b"[V2-WARMUP-LINE]")):
+            state.setdefault("seed", token)
+        elif token.startswith(b"[V2-LINE-RESTORE]"):
+            state.setdefault("publication", token)
+        elif "publication" in state and token.startswith(b"current_bar_ms="):
+            state["minute"] = token
+        elif "minute" in state and token == b"outcome=published":
+            state["published"] = token
+            state["completed_minute"] = state["minute"]
+        state["parsed"] = end
+    state["length"] += len(fragment)
+    state["tail"] = combined[-BOUND:]
+    evidence = [state["prefix"]]
+    evidence.extend(state[key] for key in ("probe", "seed", "publication", "completed_minute", "published")
+                    if key in state)
+    return b" ".join(evidence)
 
 
 def newest_v2_state(entries: list) -> dict:
@@ -84,6 +125,7 @@ class LiveWarningHealthSource:
         )
         self.identity = self.offset = None
         self.partial = b""
+        self.long_line = None
         self.covered_from_ns = None
         self.bars: dict[tuple[str, int], int] = {}
         self.truncations = 0
@@ -118,62 +160,98 @@ class LiveWarningHealthSource:
             offset = max(0, info.st_size - BOUND) if self.offset is None else self.offset
             rewritten = self.offset is not None and cursor_rewritten(fd, offset, self.anchor)
             partial = self.partial
+            long_line = deepcopy(self.long_line)
             if rewritten:
                 offset, partial = 0, b""
-            if info.st_size - offset > BOUND:
-                raise ValueError("v2 log truncation/backlog")
+                long_line = None
             os.lseek(fd, offset, os.SEEK_SET)
-            raw = os.read(fd, BOUND + 1)
-            covered = offset + len(raw)
-            if len(raw) > BOUND:
-                raise ValueError("v2 log EOF coverage exceeded")
-            check_read_coverage(fd, offset, covered, BOUND, "v2")
-            if self.offset is None and offset:
-                raw = raw.partition(b"\n")[2]
-            lines = (partial + raw).split(b"\n")
-            observed_after_read = self.wall_ns()
+            first_tail = self.offset is None and offset > 0
+            budget = MAX_LOG_PASS_BYTES
+            oversized = False
             covered_from = self.covered_from_ns
             bars = dict(self.bars)
             cohort = deepcopy(self.cohort)
-            for line in lines[:-1]:
-                text = line.decode()
-                if not STAMP.match(text):
-                    continue
-                stamp = self._log_stamp(text)
-                if stamp > observed_after_read:
-                    raise ValueError("future v2 log evidence")
-                if stamp < self.config["v2_started_ns"]:
-                    continue
-                if covered_from is None:
-                    covered_from = stamp
-                # The first restored bar can publish without a MACD diagnostic.
-                # Only successful publication of that exact minute is evidence.
-                match = PROBE.search(text) or LINE_PUBLICATION.search(text)
-                if match:
-                    key = match[1], int(match[2])
-                    if cohort is not None and key[1] % 60000:
-                        raise ValueError("CAL probe bucket is malformed")
-                    bars.setdefault(key, stamp)
-                seed = SEED.search(text)
-                if seed and cohort is not None:
-                    cohort.observe_seed(seed[2], stamp, seed[1])
-            if rewritten:
-                # Lost bytes cannot prove the past interval. Future due minutes can
-                # use the new contiguous EOF baseline, not a lifetime gap taint.
-                covered_from = observed_after_read
-            if len(lines[-1]) > BOUND:
-                raise ValueError("v2 partial line bound")
-            cutoff = now_ns // 1_000_000 - 120_000
-            bars = {key: stamp for key, stamp in bars.items() if key[1] >= cutoff}
-            if len(bars) > 1024:
-                raise ValueError("v2 probe map bound")
-            anchor = cursor_anchor(fd, covered)
-            self.identity, self.offset, self.partial = identity, covered, lines[-1]
-            self.covered_from_ns, self.bars, self.anchor = covered_from, bars, anchor
-            self.cohort = cohort
-            self.truncations += int(rewritten)
+            while True:
+                requested = min(BOUND, budget, max(0, info.st_size - offset))
+                raw = os.read(fd, requested)
+                covered = offset + len(raw)
+                if len(raw) != requested:
+                    cursor_anchor(fd, offset + requested)
+                    raise ValueError("v2 log short read; evidence unknown")
+                if first_tail:
+                    raw = raw.partition(b"\n")[2]
+                    first_tail = False
+                observed_after_read = self.wall_ns()
+                lines = (partial + raw).split(b"\n")
+                complete = []
+                for index, line in enumerate(lines):
+                    final = index < len(lines) - 1
+                    if long_line is None and len(line) > BOUND:
+                        long_line = dict(prefix=line[:24], tail=b"", length=0, parsed=0)
+                    if long_line is not None:
+                        oversized = True
+                        compact = _long_probe_fragment(long_line, line, final=final)
+                        # Future evidence remains invalid even before the newline arrives.
+                        if STAMP.match(compact.decode()) and self._log_stamp(compact.decode()) > observed_after_read:
+                            raise ValueError("future v2 log evidence")
+                        if final:
+                            complete.append(compact)
+                            long_line = None
+                    elif final:
+                        complete.append(line)
+                partial = b"" if long_line is not None else lines[-1]
+                for line in complete:
+                    covered_from = self._parse_probe_line(
+                        line, observed_after_read, covered_from, bars, cohort)
+                if rewritten:
+                    covered_from = observed_after_read
+                cutoff = now_ns // 1_000_000 - 120_000
+                bars = {key: stamp for key, stamp in bars.items() if key[1] >= cutoff}
+                if len(bars) > 1024:
+                    raise ValueError("v2 probe map bound")
+                after_size = os.fstat(fd).st_size
+                check_read_coverage(fd, offset, covered, max(BOUND, after_size - covered), "v2")
+                anchor = cursor_anchor(fd, covered)
+                self.identity, self.offset, self.partial = identity, covered, partial
+                self.covered_from_ns, self.bars, self.anchor = covered_from, bars, anchor
+                self.cohort, self.long_line = cohort, long_line
+                self.truncations += int(rewritten)
+                rewritten = False
+                budget -= covered - offset
+                offset = covered
+                if covered >= info.st_size or not budget:
+                    break
+                bars, cohort, long_line = dict(bars), deepcopy(cohort), deepcopy(long_line)
+            if offset < info.st_size or os.fstat(fd).st_size - offset > BOUND:
+                raise ValueError("v2 log catch-up incomplete; evidence unknown")
+            if oversized:
+                raise ValueError("v2 partial line bound; oversized evidence parsed")
         finally:
             os.close(fd)
+
+    def _parse_probe_line(self, line, observed_after_read, covered_from, bars, cohort):
+        text = line.decode()
+        if not STAMP.match(text):
+            return covered_from
+        stamp = self._log_stamp(text)
+        if stamp > observed_after_read:
+            raise ValueError("future v2 log evidence")
+        if stamp < self.config["v2_started_ns"]:
+            return covered_from
+        if covered_from is None:
+            covered_from = stamp
+        # The first restored bar can publish without a MACD diagnostic.
+        # Only successful publication of that exact minute is evidence.
+        match = PROBE.search(text) or LINE_PUBLICATION.search(text)
+        if match:
+            key = match[1], int(match[2])
+            if cohort is not None and key[1] % 60000:
+                raise ValueError("CAL probe bucket is malformed")
+            bars.setdefault(key, stamp)
+        seed = SEED.search(text)
+        if seed and cohort is not None:
+            cohort.observe_seed(seed[2], stamp, seed[1])
+        return covered_from
 
     def read(self, state: dict, *, startup: dict | None = None) -> dict:
         now = self.wall_ns()
