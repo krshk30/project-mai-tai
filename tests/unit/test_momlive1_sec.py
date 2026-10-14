@@ -9,6 +9,7 @@ import threading
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 from sqlalchemy import create_engine
@@ -238,21 +239,30 @@ def test_nightly_deduplicates_cik_and_reports_denominator(store):
         {"0": {"ticker": "TEST", "cik_str": 1}, "1": {"ticker": "ALIAS", "cik_str": 1}},
         submission(tickers=["TEST", "ALIAS"]),
     )
-    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT).nightly(
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT)._nightly(
         ["TEST", "ALIAS", "TEST", "MISSING"],
         lookup_day=DAY,
-        universe_provenance="Controlled COMMON universe",
+        universe_provenance="Controlled test subset",
     )
     assert len(calls) == result["requests"] == 2
     assert result["requested_symbols"] == result["completed_symbols"] == 3
-    assert result["counts"] == {"US": 2, "NON_US": 0, "NO_CIK": 1, "UNKNOWN": 0}
-    assert result["coverage_scope"] == "caller_supplied_common_universe_not_sec_index"
+    assert result["counts"] == {
+        "US": 2,
+        "NON_US": 0,
+        "NO_CIK": 1,
+        "UNKNOWN": 0,
+        "INCOMPLETE": 0,
+        "CIK_CONFLICT": 0,
+        "FETCH_FAILED": 0,
+    }
+    assert result["coverage_scope"] == "supplied_cohort_attempt_coverage_not_all_listed_common"
+    assert result["cohort"] == "CONTROLLED_TEST_SUBSET"
 
 
 def test_partial_batch_cannot_route_prior_ready_as_current(store):
     store.put(record())
     get, calls = fake_provider()
-    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT).nightly(
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT)._nightly(
         ["TEST"], lookup_day=DAY, universe_provenance="Controlled", max_requests=1
     )
     assert calls == [INDEX] and result["status"] == "PARTIAL" and result["pending_symbols"] == 1
@@ -261,7 +271,7 @@ def test_partial_batch_cannot_route_prior_ready_as_current(store):
 
 def test_failed_submission_counts_one_request(store):
     get, calls = fake_provider(body=submission(cik="2"))
-    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT).nightly(
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT)._nightly(
         ["TEST"], lookup_day=DAY, universe_provenance="Controlled"
     )
     assert result["requests"] == len(calls) == 2
@@ -271,7 +281,7 @@ def test_failed_submission_counts_one_request(store):
 def test_nightly_daytime_refuses_before_any_request(store):
     get, calls = fake_provider()
     with pytest.raises(SecError, match="window_closed"):
-        SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NOW).nightly(
+        SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NOW)._nightly(
             ["TEST"], lookup_day=DAY, universe_provenance="Controlled"
         )
     assert not calls
@@ -286,7 +296,7 @@ def test_nightly_0355_boundary_stops_partial(store):
         ]
     )
     get, calls = fake_provider()
-    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: next(ticks)).nightly(
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: next(ticks))._nightly(
         ["TEST"], lookup_day=DAY, universe_provenance="Controlled"
     )
     assert calls == [INDEX] and result["status"] == "PARTIAL"
@@ -400,7 +410,7 @@ def test_new_day_refreshes_unknown_without_relabeling_refusal(store):
 def test_nightly_bounds_refuse_before_fetch(store, kwargs):
     get, calls = fake_provider()
     with pytest.raises(SecError, match="bounds"):
-        SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT).nightly(
+        SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT)._nightly(
             ["TEST"], lookup_day=DAY, **({"universe_provenance": "Controlled"} | kwargs)
         )
     assert not calls
@@ -409,7 +419,7 @@ def test_nightly_bounds_refuse_before_fetch(store, kwargs):
 def test_empty_universe_does_not_claim_full(store):
     get, calls = fake_provider()
     with pytest.raises(SecError, match="empty"):
-        SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT).nightly(
+        SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT)._nightly(
             [], lookup_day=DAY, universe_provenance="Controlled"
         )
     assert not calls
@@ -508,7 +518,15 @@ def test_missing_contact_prepare_refuses_without_db(monkeypatch, tmp_path, caplo
     monkeypatch.setattr(
         sys,
         "argv",
-        ["sec", "--common-universe", str(tmp_path / "absent.json"), "--lookup-day", "2026-10-15"],
+        [
+            "sec",
+            "--cohort",
+            "SEC_INDEX",
+            "--security-type",
+            "TYPE_UNKNOWN",
+            "--lookup-day",
+            "2026-10-15",
+        ],
     )
     monkeypatch.setattr(
         prepare, "get_settings", lambda: pytest.fail("read settings without contact")
@@ -614,7 +632,7 @@ def test_0355_crossed_during_rate_wait_refuses_before_http(store, monkeypatch):
 
     monkeypatch.setattr(_SecLease, "wait", wait)
     get, calls = fake_provider()
-    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: clock[0]).nightly(
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: clock[0])._nightly(
         ["TEST"], lookup_day=DAY, universe_provenance="Controlled"
     )
     assert calls == [] and result["requests"] == 0 and result["status"] == "PARTIAL"
@@ -633,9 +651,166 @@ def test_0355_crossed_waiting_second_request_keeps_completed_progress(store, mon
 
     monkeypatch.setattr(_SecLease, "wait", wait)
     get, calls = fake_provider()
-    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: clock[0]).nightly(
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: clock[0])._nightly(
         ["TEST", "MISSING"], lookup_day=DAY, universe_provenance="Controlled"
     )
     assert calls == [INDEX] and result["requests"] == 1
     assert result["completed_symbols"] == 1 and result["pending_symbols"] == 1
     assert store.get("MISSING").status == "NO_CIK"
+
+
+def test_sec_index_public_population_exactly_index_no_file_or_union(store):
+    index = {
+        "0": {"ticker": "TEST", "cik_str": 1},
+        "1": {"ticker": "ALIAS", "cik_str": 1},
+        "2": {"ticker": "FOREIGN", "cik_str": 2},
+    }
+    calls = []
+
+    def get(url, headers):
+        calls.append(url)
+        body = (
+            index
+            if url == INDEX
+            else submission(tickers=["TEST", "ALIAS"])
+            if "0000000001" in url
+            else submission(cik="2", tickers=["FOREIGN"], business="F4", incorporation="E9")
+        )
+        return json.dumps(body).encode()
+
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT).nightly(
+        lookup_day=DAY, cohort="SEC_INDEX", security_type="TYPE_UNKNOWN"
+    )
+    assert result["cohort"] == "SEC_INDEX" and result["security_type"] == "TYPE_UNKNOWN"
+    assert result["all_listed_common_completeness"] == "UNKNOWN"
+    assert (
+        result["sec_index_count"]
+        == result["requested_symbols"]
+        == result["attempted_symbols"]
+        == result["completed_symbols"]
+        == 3
+    )
+    assert result["unique_ciks"] == result["attempted_ciks"] == result["completed_ciks"] == 2
+    assert calls.count(INDEX) == 1 and len(calls) == 3
+    assert result["counts"]["US"] == 2 and result["counts"]["NON_US"] == 1
+    assert result["http_errors"] == {"403": 0, "429": 0} and result["runtime_seconds"] >= 0
+    assert result["status"] == "FULL"
+
+
+@pytest.mark.parametrize(
+    "cohort,security_type",
+    [
+        ("SEC_INDEX", "COMMON"),
+        ("COMMON", "TYPE_UNKNOWN"),
+        ("GATEWAY_UNION", "TYPE_UNKNOWN"),
+        ("SEC_INDEX", "UNKNOWN"),
+    ],
+)
+def test_fake_common_or_undeclared_cohort_refused_before_io(store, cohort, security_type):
+    get, calls = fake_provider()
+    with pytest.raises(SecError, match="sec_index_type_unknown_required"):
+        SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT).nightly(
+            lookup_day=DAY, cohort=cohort, security_type=security_type
+        )
+    assert not calls
+
+
+def test_sec_index_incomplete_conflict_and_raw_unique_cik_denominators(store):
+    index = {
+        "0": {"ticker": "TEST", "cik_str": 1},
+        "1": {"ticker": "TEST", "cik_str": 2},
+        "2": {"ticker": "OTHER", "cik_str": 3},
+    }
+    get, calls = fake_provider(index, submission(cik="3", tickers=["OTHER"], business=None))
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT).nightly(
+        lookup_day=DAY, cohort="SEC_INDEX", security_type="TYPE_UNKNOWN"
+    )
+    assert result["sec_index_count"] == result["unique_ciks"] == 3
+    assert (
+        result["requested_symbols"]
+        == result["attempted_symbols"]
+        == result["completed_symbols"]
+        == 2
+    )
+    assert result["attempted_ciks"] == result["completed_ciks"] == 1
+    assert result["counts"]["INCOMPLETE"] == result["counts"]["CIK_CONFLICT"] == 1
+    assert result["counts"]["NO_CIK"] == 0 and len(calls) == 2
+
+
+@pytest.mark.parametrize("code", [403, 429])
+@pytest.mark.parametrize("fail_index", [True, False])
+def test_http_access_refusal_reported_and_stops_without_retry(store, code, fail_index):
+    calls = []
+    index = {"0": {"ticker": "TEST", "cik_str": 1}, "1": {"ticker": "OTHER", "cik_str": 2}}
+
+    def get(url, headers):
+        calls.append(url)
+        if fail_index or url != INDEX:
+            raise HTTPError(url, code, CONTACT, None, None)
+        return json.dumps(index).encode()
+
+    result = SecClient(store, user_agent=CONTACT, http_get=get, clock=lambda: NIGHT).nightly(
+        lookup_day=DAY, cohort="SEC_INDEX", security_type="TYPE_UNKNOWN"
+    )
+    assert len(calls) == result["requests"] == (1 if fail_index else 2)
+    assert result["http_errors"][str(code)] == 1 and sum(result["http_errors"].values()) == 1
+    assert result["stop_reason"] == f"sec_http_{code}" and result["status"] == "PARTIAL"
+    assert result["completed_ciks"] == 0 and CONTACT not in json.dumps(result)
+    if fail_index:
+        assert result["sec_index_count"] is None and result["requested_symbols"] is None
+    else:
+        assert result["counts"]["FETCH_FAILED"] == 1 and result["pending_symbols"] == 1
+
+
+def test_sec_index_cli_accepted_controlled_no_db_or_provider(monkeypatch, capsys):
+    from project_mai_tai.services import momentum_live_sec_prepare as prepare
+
+    monkeypatch.setenv("MAI_TAI_SEC_USER_AGENT", CONTACT)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sec",
+            "--cohort",
+            "SEC_INDEX",
+            "--security-type",
+            "TYPE_UNKNOWN",
+            "--lookup-day",
+            "2026-10-15",
+        ],
+    )
+    monkeypatch.setattr(prepare, "get_settings", lambda: object())
+    monkeypatch.setattr(prepare, "build_timed_session_factory", lambda *args, **kwargs: object())
+    monkeypatch.setattr(prepare, "CountryStore", lambda factory: object())
+
+    class Client:
+        def __init__(self, store, *, user_agent):
+            assert user_agent == CONTACT
+
+        def nightly(self, **kwargs):
+            assert kwargs["cohort"] == "SEC_INDEX" and kwargs["security_type"] == "TYPE_UNKNOWN"
+            return {
+                "status": "FULL",
+                "cohort": kwargs["cohort"],
+                "http_errors": {"403": 0, "429": 0},
+                "counts": {"FETCH_FAILED": 0},
+            }
+
+    monkeypatch.setattr(prepare, "SecClient", Client)
+    assert prepare.main() == 0
+    assert json.loads(capsys.readouterr().out)["cohort"] == "SEC_INDEX"
+
+
+def test_cli_fake_common_refused_before_settings_or_db(monkeypatch, caplog):
+    from project_mai_tai.services import momentum_live_sec_prepare as prepare
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["sec", "--cohort", "SEC_INDEX", "--security-type", "COMMON", "--lookup-day", "2026-10-15"],
+    )
+    monkeypatch.setattr(
+        prepare, "get_settings", lambda: pytest.fail("opened settings for fake COMMON")
+    )
+    assert prepare.main() == 2
+    assert "sec_index_type_unknown_required" in caplog.text

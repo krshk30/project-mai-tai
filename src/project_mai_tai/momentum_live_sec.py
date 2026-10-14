@@ -41,6 +41,11 @@ class SecError(ValueError):
     """Fixed error codes only; contact headers and responses are never logged."""
 
 
+def validate_sec_cohort(cohort: str, security_type: str) -> None:
+    if cohort != "SEC_INDEX" or security_type != "TYPE_UNKNOWN":
+        raise SecError("sec_index_type_unknown_required")
+
+
 def _symbol(symbol: str) -> str:
     if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9][A-Z0-9.-]{0,15}", symbol):
         raise SecError("invalid_symbol")
@@ -444,7 +449,28 @@ class SecClient:
 
     def nightly(
         self,
-        symbols: Iterable[str],
+        *,
+        lookup_day: date,
+        cohort: str,
+        security_type: str,
+        max_symbols: int = 30_000,
+        max_requests: int = 20_000,
+        max_seconds: float = 3600,
+    ) -> dict:
+        """Production population is the fetched SEC index only, never a COMMON list."""
+        validate_sec_cohort(cohort, security_type)
+        return self._nightly(
+            None,
+            lookup_day=lookup_day,
+            universe_provenance="https://www.sec.gov/files/company_tickers.json",
+            max_symbols=max_symbols,
+            max_requests=max_requests,
+            max_seconds=max_seconds,
+        )
+
+    def _nightly(
+        self,
+        symbols: Iterable[str] | None,
         *,
         lookup_day: date,
         universe_provenance: str,
@@ -465,36 +491,68 @@ class SecClient:
         ):
             raise SecError("nightly_bounds_or_provenance_missing")
         universe = set()
-        for symbol in symbols:
+        for symbol in symbols or ():
             universe.add(_symbol(symbol))
             if len(universe) > max_symbols:
                 raise SecError("nightly_symbol_bound")
-        if not universe:
-            raise SecError("empty_common_universe")
-        started, requests, completed = time.monotonic(), 0, 0
-        counts = {"US": 0, "NON_US": 0, "NO_CIK": 0, "UNKNOWN": 0}
+        if symbols is not None and not universe:
+            raise SecError("empty_controlled_subset")
+        started, requests, attempted, completed = time.monotonic(), 0, 0, 0
+        counts = {
+            "US": 0,
+            "NON_US": 0,
+            "INCOMPLETE": 0,
+            "NO_CIK": 0,
+            "CIK_CONFLICT": 0,
+            "FETCH_FAILED": 0,
+            "UNKNOWN": 0,
+        }
         index_sha = None
+        index_count, unique_ciks = None, None
+        attempted_ciks, completed_ciks = 0, 0
+        http_errors = {"403": 0, "429": 0}
+        stop_reason = None
+        current_names = []
 
         def request_guard():
-            nonlocal requests
+            nonlocal requests, attempted, attempted_ciks
             local_now = _aware(self.clock()).astimezone(_ET)
             if wall_time(3, 55) <= local_now.time() < wall_time(16):
                 raise SecError("nightly_window_closed")
             if requests >= max_requests or time.monotonic() - started >= max_seconds:
                 raise SecError("nightly_bound_reached")
             requests += 1
+            attempted += len(current_names)
+            attempted_ciks += bool(current_names)
 
         def report():
             return {
-                "status": "FULL" if completed == len(universe) else "PARTIAL",
-                "requested_symbols": len(universe),
+                "status": "FULL"
+                if index_sha is not None and stop_reason is None and completed == len(universe)
+                else "PARTIAL",
+                "cohort": "SEC_INDEX" if symbols is None else "CONTROLLED_TEST_SUBSET",
+                "security_type": "TYPE_UNKNOWN",
+                "all_listed_common_completeness": "UNKNOWN",
+                "sec_index_count": index_count,
+                "unique_ciks": unique_ciks,
+                "attempted_ciks": attempted_ciks,
+                "completed_ciks": completed_ciks,
+                "requested_symbols": len(universe)
+                if symbols is not None or index_count is not None
+                else None,
+                "attempted_symbols": attempted,
                 "completed_symbols": completed,
-                "pending_symbols": len(universe) - completed,
+                "pending_symbols": len(universe) - completed
+                if symbols is not None or index_count is not None
+                else None,
                 "requests": requests,
                 "counts": counts,
                 "universe_provenance": universe_provenance,
                 "sec_index_sha256": index_sha,
-                "coverage_scope": "caller_supplied_common_universe_not_sec_index",
+                "coverage_scope": "supplied_cohort_attempt_coverage_not_all_listed_common",
+                "runtime_seconds": time.monotonic() - started,
+                "http_errors": http_errors,
+                "stop_reason": stop_reason,
             }
 
         with self.store.sec_job() as lease:
@@ -506,10 +564,21 @@ class SecClient:
                     before_request=request_guard,
                 )
             except SecError as error:
-                if str(error) in {"nightly_window_closed", "nightly_bound_reached"}:
-                    return report()
-                raise
+                stop_reason = str(error)
+                if stop_reason in {"sec_http_403", "sec_http_429"}:
+                    http_errors[stop_reason.rsplit("_", 1)[1]] += 1
+                return report()
+            index_count = len(index)
             mapping, conflicts = parse_ticker_map(index)
+            unique_ciks = len({_cik(row["cik_str"]) for row in index.values()})
+            if symbols is None:
+                universe = set(mapping) | set(conflicts)
+                if len(universe) > max_symbols:
+                    stop_reason = "nightly_symbol_bound"
+                    return report()
+                if not universe:
+                    stop_reason = "empty_sec_index"
+                    return report()
             groups = {}
             for symbol in sorted(universe):
                 cik = mapping.get(symbol)
@@ -517,7 +586,10 @@ class SecClient:
                     status = "CIK_CONFLICT" if symbol in conflicts else "NO_CIK"
                     record = self._unknown(symbol, lookup_day, status, sha=index_sha)
                     self.store.put(record)
-                    counts["NO_CIK" if status == "NO_CIK" else "UNKNOWN"] += 1
+                    counts[status] += 1
+                    if status != "NO_CIK":
+                        counts["UNKNOWN"] += 1
+                    attempted += 1
                     completed += 1
                 else:
                     groups.setdefault(cik, []).append(symbol)
@@ -528,7 +600,13 @@ class SecClient:
                     or time.monotonic() - started >= max_seconds
                     or wall_time(3, 55) <= local_now.time() < wall_time(16)
                 ):
+                    stop_reason = (
+                        "nightly_window_closed"
+                        if wall_time(3, 55) <= local_now.time() < wall_time(16)
+                        else "nightly_bound_reached"
+                    )
                     break
+                current_names = names
                 try:
                     body, sha = self._get(
                         f"https://data.sec.gov/submissions/CIK{cik}.json",
@@ -546,9 +624,14 @@ class SecClient:
                         )
                         for symbol in names
                     ]
+                    completed_ciks += 1
                 except SecError as error:
                     if str(error) in {"nightly_window_closed", "nightly_bound_reached"}:
+                        stop_reason = str(error)
                         break
+                    if str(error) in {"sec_http_403", "sec_http_429"}:
+                        stop_reason = str(error)
+                        http_errors[stop_reason.rsplit("_", 1)[1]] += 1
                     records = [
                         self._unknown(symbol, lookup_day, "FETCH_FAILED", cik=cik)
                         for symbol in names
@@ -568,6 +651,10 @@ class SecClient:
                         else "UNKNOWN"
                     ] += 1
                     completed += 1
+                    if record.status in {"INCOMPLETE", "FETCH_FAILED"}:
+                        counts[record.status] += 1
+                if stop_reason in {"sec_http_403", "sec_http_429"}:
+                    break
         return report()
 
 
