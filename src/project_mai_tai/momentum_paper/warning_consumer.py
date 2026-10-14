@@ -130,10 +130,6 @@ class MomentumWarningConsumer:
         if transport_bad:
             self.invalidate_transport("aggregate_clock_or_stale")
             return CandidateOutcome(bar.symbol, "REFUSED", "aggregate_clock_or_stale"), ()
-        if age_reason is not None:
-            self.invalidate_transport(age_reason)
-            self.last_status = age_reason
-            return CandidateOutcome(bar.symbol, "REFUSED", age_reason), ()
         if bar.epoch == self._stream_epoch and bar.sequence <= self._sequence:
             return CandidateOutcome(bar.symbol, "IGNORED", "duplicate_or_reordered_aggregate"), ()
         if bar.epoch == self._stream_epoch and bar.dropped_total < self._drops:
@@ -156,6 +152,13 @@ class MomentumWarningConsumer:
         self._sequence = bar.sequence
         self._drops = bar.dropped_total
         self.transport.observe(bar, observed_ns=observed_ns)
+        if age_reason is not None:
+            # An in-order late bucket is a symbol hole, not a transport gap.
+            self.windows.pop(bar.symbol, None)
+            self._latest.pop(bar.symbol, None)
+            self.last_warning_ns.pop(bar.symbol, None)
+            self.last_status = age_reason
+            return CandidateOutcome(bar.symbol, "REFUSED", age_reason), records
         if (
             not symbol_is_eligible(bar.symbol)
             or self.engine.prior_closes.get(bar.symbol, Decimal("0")) < 1
