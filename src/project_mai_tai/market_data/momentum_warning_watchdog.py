@@ -427,7 +427,6 @@ class WarningHealthReader:
                         self._long_log_lines.discard(name)
                     offset, pending = covered, tail
                     budget -= len(chunk)
-                    backlog |= after_size - max(covered, info.st_size) > self.MAX_LOG_BYTES
                     if covered >= info.st_size:
                         break
                 backlog |= offset < info.st_size

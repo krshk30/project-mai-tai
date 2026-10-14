@@ -229,10 +229,90 @@ def test_large_append_after_snapshot_commits_scanned_chunk_and_defers_bytes(heal
         return ReadTap(source, after)
 
     monkeypatch.setattr(reader, "_open_regular", open_regular)
-    with pytest.raises(ValueError, match="catch-up incomplete"):
-        reader.read()
+    assert not reader.read().new_live_error
     assert reader._logs[path.name][1] == before + len(b"INFO scanned\n")
     assert reader.read().new_live_error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", [False, True], ids=["START_snapshot", "restore_growth_failure"])
+async def test_l_real_GRML_thread_150ms_during_shielded_read_zero_pauses(health_reader, monkeypatch, mutation):
+    import asyncio
+    import threading
+    import time
+    from tests.unit.test_momwarn1_append_growth import ReadTap
+
+    raw = recorded_burst(RECORDED_BURSTS[1])
+    reader, _, directory = health_reader
+    reader.read()
+    policy = WarningPausePolicy()
+    for _ in range(3):
+        policy.clean()
+    path = directory / "schwab-1m-v2.log"
+    first, _, remaining = raw.partition(b"\n")
+    with path.open("ab") as stream:
+        stream.write(first + b"\n")
+    release, finished = threading.Event(), threading.Event()
+    original = reader._open_regular
+    tapped = []
+
+    def writer():
+        assert release.wait(1)
+        pieces = 3
+        for index in range(pieces):
+            time.sleep(.05)
+            with path.open("ab") as stream:
+                stream.write(remaining[len(remaining)*index//pieces:len(remaining)*(index+1)//pieces])
+        finished.set()
+
+    def open_regular(open_path):
+        source = original(open_path)
+        if open_path != path:
+            return source
+
+        def after(_):
+            if not tapped:
+                tapped.append(True)
+                release.set()
+                assert finished.wait(1)
+        return ReadTap(source, after)
+
+    monkeypatch.setattr(reader, "_open_regular", open_regular)
+    if mutation:
+        scan = reader._scan_live_logs
+
+        def old_growth_check():
+            result = scan()
+            if path.stat().st_size - reader._logs[path.name][1] > reader.MAX_LOG_BYTES:
+                raise ValueError("live log catch-up incomplete; evidence unknown")
+            return result
+        monkeypatch.setattr(reader, "_scan_live_logs", old_growth_check)
+    producer = threading.Thread(target=writer)
+    producer.start()
+
+    async def positive():
+        try:
+            health = await asyncio.wait_for(asyncio.shield(asyncio.create_task(asyncio.to_thread(reader.read))), 1)
+        except ValueError:
+            policy.trip("monitor_unreadable")
+        else:
+            assert not health.new_live_error
+            policy.clean()
+        assert policy.state == "active" and policy.wire_pause_count == 0
+        await asyncio.sleep(1)  # The next actual one-second poll consumes deferred bytes.
+        assert not (await asyncio.to_thread(reader.read)).new_live_error
+        assert reader._logs[path.name][1] == path.stat().st_size
+
+    try:
+        if mutation:
+            with pytest.raises(AssertionError):
+                await positive()
+        else:
+            await positive()
+    finally:
+        release.set()
+        await asyncio.to_thread(producer.join, 1)
+        assert not producer.is_alive() and finished.is_set()
 
 
 def test_raise_without_advance_mutation_kills_positive_control(health_reader, monkeypatch):
