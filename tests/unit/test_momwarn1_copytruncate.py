@@ -18,7 +18,7 @@ async def start(env):
     svc, provider, redis, _ = service()
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
-    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
+    svc._warning_health_reader, svc._warning_health_redis = env.reader, env.client
     await arm_warning_with_three_clean_reads(svc)
     return svc, provider, redis
 
@@ -207,7 +207,7 @@ async def test_native_next_day_reset_after_evening_truncate_even_if_A_never_acti
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
     provider._connected = previous_A_active
-    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
+    svc._warning_health_reader, svc._warning_health_redis = env.reader, env.client
     for _ in range(3):
         await svc._warning_monitor_once()
     old_source = env.reader._source

@@ -27,12 +27,13 @@ async def test_actual_permission_error_one_warning_A_only_pause_then_three_clean
     svc, provider, redis, warning_redis = service()
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
-    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
+    svc._warning_health_reader, svc._warning_health_redis = env.reader, env.client
     await arm_warning_with_three_clean_reads(svc)
     provider._handle_messages([aggregate()])
     owners = {key: set(value) for key, value in svc._desired_symbols_by_consumer.items()}
     saved = dict(redis.hashes)
     ordinary_entries = list(redis.entries)
+    source_reads_before = env.client.xrevrange.call_count
     path = env.directory / log_name
     original_mode = path.stat().st_mode & 0o777
     path.chmod(0)
@@ -46,7 +47,8 @@ async def test_actual_permission_error_one_warning_A_only_pause_then_three_clean
     finally:
         path.chmod(original_mode)
     rows = [row for row in caplog.records if row.levelno >= logging.WARNING]
-    assert len(rows) == 2 and all(row.levelno == logging.WARNING for row in rows)
+    assert len(rows) == 1 and all(row.levelno == logging.WARNING for row in rows)
+    assert env.client.xrevrange.call_count == source_reads_before + 2
     assert rows[0].exc_info is None
     assert "[MOMSIMPLE1-OBSERVATION] reason=monitor_unreadable action=none" in rows[0].message
     detail = json.loads(rows[0].message.split("detail=", 1)[1])
@@ -108,8 +110,9 @@ async def test_first_monitor_permission_failure_never_subscribes_A(setup, caplog
     svc, provider, redis, _ = service()
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
-    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
+    svc._warning_health_reader, svc._warning_health_redis = env.reader, env.client
     saved = dict(redis.hashes)
+    source_reads_before = env.client.xrevrange.call_count
     path = env.directory / "oms.log"
     mode = path.stat().st_mode & 0o777
     path.chmod(0)
@@ -120,7 +123,8 @@ async def test_first_monitor_permission_failure_never_subscribes_A(setup, caplog
             await svc._warning_monitor_once()
     finally:
         path.chmod(mode)
-    assert len(caplog.records) == 2 and all("PermissionError" in row.message for row in caplog.records)
+    assert len(caplog.records) == 1 and all("PermissionError" in row.message for row in caplog.records)
+    assert env.client.xrevrange.call_count == source_reads_before + 2
     assert svc._warning_revert_reason is None and svc._warning_active
     assert svc.warning_metrics()["pause_state"]["state"] == "active"
     assert "A.*" in provider._ws.added and provider._ws.removed == []

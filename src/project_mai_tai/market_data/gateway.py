@@ -13,7 +13,7 @@ from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from redis.asyncio import Redis
+from redis.asyncio import ConnectionPool, Redis
 from redis.exceptions import (
     BusyLoadingError,
     ConnectionError as RedisConnectionError,
@@ -82,6 +82,20 @@ def _is_transient_redis_reload_error(exc: RedisError) -> bool:
     )
 
 
+class WarningPublishConnectionPool(ConnectionPool):
+    """Retry only capacity acquisition, before any publication can be sent."""
+
+    async def get_connection(self, *args, **kwargs):
+        try:
+            return await super().get_connection(*args, **kwargs)
+        except RedisConnectionError as exc:
+            if str(exc) != "Too many connections":
+                raise
+            self.known_unsent_retries = getattr(self, "known_unsent_retries", 0) + 1
+            await asyncio.sleep(0)
+            return await super().get_connection(*args, **kwargs)
+
+
 class MarketDataGatewayService:
     def __init__(
         self,
@@ -92,6 +106,8 @@ class MarketDataGatewayService:
         trade_stream: TradeStreamProvider | None = None,
         reference_cache: ReferenceDataCache | None = None,
         warning_redis_client: Redis | None = None,
+        warning_metrics_redis_client: Redis | None = None,
+        warning_health_redis_client: Redis | None = None,
         warning_health_reader: WarningHealthReader | None = None,
     ):
         self.settings = settings or get_settings()
@@ -162,20 +178,38 @@ class MarketDataGatewayService:
             self._warning_health_reader.stage_diagnostics = self._stage_diagnostics
             self._warning_health_reader.retain_cancelled_harm = True
         self._warning_redis = None
+        self._warning_metrics_redis = None
+        self._warning_health_redis = None
         self._warning_publisher = None
+        self._warning_metrics_publisher = None
+        self._warning_observation_log_reason = None
+        self._warning_observation_log_ns = 0
         if self.settings.market_data_momentum_warning_enabled:
             self.trade_stream.configure_momentum_warning(
                 self._enqueue_warning, self._latch_warning_revert, self._close_warning_window,
                 log_only=True,
                 window=self._momentum_validation_window,
             )
-            # A has its own Redis pool/task; stalled A writes never serialize T/Q writes.
-            self._warning_redis = warning_redis_client or Redis.from_url(
+            # Separate A roles cannot consume each other's slots or the T/Q pool.
+            self._warning_redis = warning_redis_client or Redis.from_pool(WarningPublishConnectionPool.from_url(
                 self.settings.redis_url, decode_responses=True,
                 max_connections=2, socket_timeout=1, socket_connect_timeout=1,
+                retry_on_error=[],
+            ))
+            self._warning_metrics_redis = warning_metrics_redis_client or warning_redis_client or Redis.from_url(
+                self.settings.redis_url, decode_responses=True,
+                max_connections=1, socket_timeout=1, socket_connect_timeout=1,
+            )
+            self._warning_health_redis = warning_health_redis_client or warning_redis_client or Redis.from_url(
+                self.settings.redis_url, decode_responses=True,
+                max_connections=1, socket_timeout=1, socket_connect_timeout=1,
             )
             self._warning_publisher = MarketDataPublisher(
                 self._warning_redis, self.settings.redis_stream_prefix, SERVICE_NAME,
+                momentum_warning_stream_maxlen=self.settings.market_data_momentum_warning_stream_maxlen,
+            )
+            self._warning_metrics_publisher = MarketDataPublisher(
+                self._warning_metrics_redis, self.settings.redis_stream_prefix, SERVICE_NAME,
                 momentum_warning_stream_maxlen=self.settings.market_data_momentum_warning_stream_maxlen,
             )
         self._live_aggregate_stream_enabled = (
@@ -265,8 +299,11 @@ class MarketDataGatewayService:
                 if not await self._warning_pause_reporter.close():
                     self.logger.warning("[MOMLATCH1-INCIDENT] shutdown_write_pending=1")
             await self.trade_stream.stop()
-            if self._warning_redis is not None:
-                await self._warning_redis.aclose()
+            closed_warning_clients = set()
+            for client in (self._warning_redis, self._warning_metrics_redis, self._warning_health_redis):
+                if client is not None and id(client) not in closed_warning_clients:
+                    closed_warning_clients.add(id(client))
+                    await client.aclose()
             await self._publish_heartbeat(
                 "stopping",
                 {"active_symbols": str(len(self._active_symbols))},
@@ -709,6 +746,12 @@ class MarketDataGatewayService:
         self._warning_observed_reason = reason
         if reason in {"disconnect", "policy_1008", "reconnect_1012"}:
             self._pauses.reconnect_event_count += 1
+        now = time.monotonic_ns()
+        if (reason == self._warning_observation_log_reason
+                and now - self._warning_observation_log_ns < 60_000_000_000):
+            return
+        self._warning_observation_log_reason = reason
+        self._warning_observation_log_ns = now
         self.logger.warning("[MOMSIMPLE1-OBSERVATION] reason=%s action=none%s", reason,
                             f" detail={diagnostic}" if diagnostic is not None else "")
 
@@ -870,7 +913,7 @@ class MarketDataGatewayService:
             if self._warning_health_task is None:
                 live_reader = getattr(self._warning_health_reader, "read_live", None)
                 operation = (
-                    live_reader(self._warning_redis, self.settings.redis_stream_prefix)
+                    live_reader(self._warning_health_redis, self.settings.redis_stream_prefix)
                     if live_reader is not None else asyncio.to_thread(self._warning_health_reader.read)
                 )
                 self._warning_health_task = asyncio.create_task(self._timings.asynchronous("health_total", operation))
@@ -915,6 +958,9 @@ class MarketDataGatewayService:
                 await self._revert_warning("provider_disconnected")
             if not self._warning_active:
                 await self._revert_warning("monitor_unreadable", diagnostic="provider not ready; A not subscribed")
+            if (not reason and not getattr(health, "v2_startup_pending", False)
+                    and getattr(self.trade_stream, "_connected", False) and self._warning_active):
+                self._warning_observation_log_reason = None
         except asyncio.CancelledError:
             # Cancellation is shutdown/control flow, never monitor unreadability.
             raise
@@ -996,7 +1042,7 @@ class MarketDataGatewayService:
                 event_type = "revert" if self._warning_revert_reason and not reported_revert else "gateway_sample"
                 metrics = self.warning_metrics(event_type=event_type)
                 await asyncio.wait_for(
-                    self._warning_publisher.publish_momentum_warning_metric(metrics),
+                    self._warning_metrics_publisher.publish_momentum_warning_metric(metrics),
                     timeout=1,
                 )
                 reported_revert |= event_type == "revert"

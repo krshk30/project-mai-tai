@@ -104,7 +104,7 @@ async def start_native(env):
     svc, provider, redis, _ = service()
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     await svc.apply_subscription_event(event("momentum-warning", ["NEW"]))
-    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
+    svc._warning_health_reader, svc._warning_health_redis = env.reader, env.client
     await three_clean_native_reads(svc, env)
     assert provider._ws.added.count("A.*") == 1
     return svc, provider, redis

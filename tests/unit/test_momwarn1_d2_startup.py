@@ -196,7 +196,7 @@ async def test_gateway_native_pending_then_three_clean_admits_uncalibrated_late_
     env = setup(pending=True)
     svc, provider, redis, _ = service()
     svc._warning_health_reader = env.reader
-    svc._warning_redis = env.client
+    svc._warning_health_redis = env.client
     monkeypatch.setattr(gateway, '_install_signal_handlers', lambda stop: None)
     svc._ensure_reference_data = AsyncMock(side_effect=RuntimeError('controlled stop before provider or Redis'))
     with pytest.raises(RuntimeError, match='controlled stop'):

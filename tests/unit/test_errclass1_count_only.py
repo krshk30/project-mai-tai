@@ -194,7 +194,7 @@ def test_reconnect_storm_harm_and_threshold_mutation(monkeypatch):
 async def test_A_queue_drop_policy_and_mutation_unchanged(setup, monkeypatch):
     env = setup()
     svc, provider, _, _ = service(market_data_momentum_warning_queue_maxsize=1)
-    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
+    svc._warning_health_reader, svc._warning_health_redis = env.reader, env.client
     from tests.unit.test_momwarn1_live_health import three_clean_native_reads
     await three_clean_native_reads(svc, env)
     record = provider._normalize_warning_aggregate(aggregate(), "WFF")
