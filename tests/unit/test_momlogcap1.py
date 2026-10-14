@@ -10,6 +10,26 @@ from tests.unit.test_momwarn1_gateway import health_reader as reader_fixture
 
 health_reader = reader_fixture
 ACTUAL_PREFIX = Path("/Users/velkris/.codex/task-queues/analysis/momwarn1-wed-no-warnings-20261014/v2-log-prefix-0525.txt")
+RECORDED_BURSTS = (
+    ("v2-real-peak-20261013T080643.txt", 982821, 5334,
+     "26e2af2abefa343205cc66708da83268b0450fef6790a1c4b8a28a1dac5a8b93", "peak_second_filter"),
+    ("v2-real-GRML-20261014T090720-21.txt", 399106, 953,
+     "bccff8b4cd148fe0f84bdaf38eab8e8e5e98514e276cf1d37415127a9782a831", "full_GRML_two_second_filter"),
+    ("v2-real-GRML-20261014T090720.txt", 360041, 860,
+     "f493b759912726d355269de4dc310a3ec29dbe23e8c9dbc530b34d8795dd4b9d", "partial_GRML_single_second_filter"),
+    ("v2-real-GRML-20261014T090719-20.txt", 360331, 861,
+     "e76b385fd7e8c6899202aa4a2d5dcc0288f68cd38d1296f776112b548337d57e", "partial_GRML_two_second_filter"),
+)
+
+
+def recorded_burst(artifact):
+    import hashlib
+
+    name, size, lines, digest, _ = artifact
+    raw = ACTUAL_PREFIX.with_name(name).read_bytes()
+    assert len(raw) == size and raw.count(b"\n") == lines
+    assert hashlib.sha256(raw).hexdigest() == digest
+    return raw
 
 
 def catch_up(reader, policy, *, limit=12):
@@ -98,7 +118,7 @@ def test_real_19mb_copy_cursor_1mb_behind_catches_up_one_pass(health_reader):
     assert reader._logs[path.name][1] == len(raw)
 
 
-def test_actual_GRML_090720_lines_clear_without_pause(health_reader):
+def test_partial_GRML_090720_timestamp_slice_clears_without_pause(health_reader):
     raw = b"".join(line for line in ACTUAL_PREFIX.read_bytes().splitlines(keepends=True)
                    if line.startswith(b"2026-10-14 09:07:20,"))
     assert 350000 <= len(raw) <= 500000
@@ -114,6 +134,41 @@ def test_actual_GRML_090720_lines_clear_without_pause(health_reader):
     policy.clean()
     assert policy.state == "active" and policy.wire_pause_count == 0
     assert reader._logs[path.name][1] == path.stat().st_size
+
+
+@pytest.mark.parametrize("artifact", RECORDED_BURSTS, ids=[a[4] for a in RECORDED_BURSTS])
+def test_recorded_burst_bytes_clear_one_pass_zero_pauses(health_reader, artifact):
+    raw = recorded_burst(artifact)
+    reader, _, directory = health_reader
+    reader.read()
+    policy = WarningPausePolicy()
+    for _ in range(3):
+        policy.clean()
+    path = directory / "schwab-1m-v2.log"
+    before = reader._logs[path.name][1]
+    with path.open("ab") as stream:
+        stream.write(raw)
+    health = reader.read()
+    assert WarningWatchdog().check_recoverable(health, publish_lag_seconds=0) is None
+    policy.clean()
+    assert policy.state == "active" and policy.wire_pause_count == 0
+    assert reader._logs[path.name][1] == before + len(raw) == path.stat().st_size
+
+
+@pytest.mark.parametrize("artifact", RECORDED_BURSTS[:2], ids=[a[4] for a in RECORDED_BURSTS[:2]])
+def test_injected_ERROR_inside_recorded_burst_is_sticky(health_reader, artifact):
+    raw = recorded_burst(artifact)
+    mid = len(raw) // 2
+    reader, _, directory = health_reader
+    reader.retain_cancelled_harm = True
+    reader.read()
+    with (directory / "schwab-1m-v2.log").open("ab") as stream:
+        stream.write(raw[:mid] + b"\nERROR CONTROLLED injected harm\n" + raw[mid:])
+    watchdog = WarningWatchdog()
+    assert watchdog.check_recoverable(reader.read(), publish_lag_seconds=0) == "live_error"
+    assert reader.read().new_live_error
+    reader.reset_window()
+    assert reader.read().new_live_error
 
 
 def test_old_64kb_plus_one_and_huge_line_converge(health_reader):
@@ -310,6 +365,25 @@ def timing_helper(prefix):
                          budget=reader.MAX_LOG_PASS_BYTES, passes=1, seconds=elapsed,
                          final_offset=len(raw), error=error, scanner_only=True,
                          full_live_read_qualification=False))
+    for artifact in RECORDED_BURSTS:
+        burst = recorded_burst(artifact)
+        with tempfile.TemporaryDirectory(prefix="momlogcap1-recorded-offline-") as temporary:
+            directory = Path(temporary)
+            reader = WarningHealthReader("unused", temporary)
+            for name in reader.LOG_NAMES:
+                (directory / name).touch()
+            reader._scan_live_logs()
+            path = directory / "schwab-1m-v2.log"
+            path.write_bytes(burst)
+            started = time.perf_counter()
+            error = reader._scan_live_logs()
+            elapsed = time.perf_counter() - started
+            assert reader._logs[path.name][1] == len(burst)
+            rows.append(dict(scenario=artifact[4], source=artifact[0], bytes=len(burst),
+                             lines=artifact[2], sha256=artifact[3],
+                             budget=reader.MAX_LOG_PASS_BYTES, passes=1, seconds=elapsed,
+                             error=error, scanner_only=True, full_live_read_qualification=False,
+                             filtered_timestamp_slice_not_contiguous_prefix=True))
     print(json.dumps(rows, indent=2))
 
 
