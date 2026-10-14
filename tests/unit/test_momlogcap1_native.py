@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import os
 from pathlib import Path
+from threading import Event, Thread
 import time
 
 import pytest
@@ -271,6 +272,94 @@ def test_regular_growth_during_each_chunk_keeps_bounded_progress(setup, monkeypa
     monkeypatch.setattr(live.os, "read", original)
     env.source._read_probes(NOW)
     assert "GROWTH" in {symbol for symbol, _ in env.source.bars}
+
+
+def _real_grml_thread_control(setup, monkeypatch, *, mutated=False):
+    path = Path("/Users/velkris/.codex/task-queues/analysis/momwarn1-wed-no-warnings-20261014/"
+                "v2-real-GRML-20261014T090720-21.txt")
+    if not path.exists():
+        pytest.skip("retained real GRML packet required for reviewer control (l)")
+    raw = path.read_bytes()
+    assert len(raw) == 399_106
+    assert hashlib.sha256(raw).hexdigest() == "bccff8b4cd148fe0f84bdaf38eab8e8e5e98514e276cf1d37415127a9782a831"
+    # CONTROLLED UTC process/clock, before/after the unchanged retained body.
+    now = 1_791_968_842 * NS  # 2026-10-14 09:07:22 UTC
+    env = setup(now=now)
+    before = baseline(env)
+    rows = raw.splitlines(keepends=True)
+    prefix = b"".join(rows[:20])
+    append(env, prefix)
+    started, finished, stop = Event(), Event(), Event()
+    failures = []
+
+    def writer():
+        try:
+            assert started.wait(3), "reader never reached the start snapshot"
+            chunks = [b"".join(rows[index:index + 32]) for index in range(20, len(rows), 32)]
+            start = time.monotonic()
+            for index, chunk in enumerate(chunks):
+                if stop.wait(max(0, start + 0.150 * (index + 1) / len(chunks) - time.monotonic())):
+                    return
+                append(env, chunk)
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            finished.set()
+
+    original_read = live.os.read
+    captured = []
+
+    def overlap_read(fd, requested):
+        data = original_read(fd, requested)
+        if not captured:
+            captured.append(env.source.log.stat().st_size)
+            started.set()
+            # Force a mid-burst pass to observe >64 KiB of post-snapshot growth.
+            assert finished.wait(3), "writer did not finish its 150 ms burst"
+        return data
+
+    read = env.source._read_probes
+    if mutated:
+        source = inspect.getsource(type(env.source)._read_probes)
+        source = source.replace("    def _read_probes", "def mutated", 1)
+        source = "\n".join(row[4:] if row.startswith("    ") else row for row in source.splitlines())
+        assert "if offset < info.st_size:" in source
+        source = source.replace("if offset < info.st_size:",
+                                "if offset < info.st_size or os.fstat(fd).st_size - offset > BOUND:")
+        namespace = dict(vars(live))
+        exec(compile(source, "<post-read-growth-mutation>", "exec"), namespace)
+        def read(now):
+            return namespace["mutated"](env.source, now)
+    monkeypatch.setattr(live.os, "read", overlap_read)
+    thread = Thread(target=writer, name="CONTROLLED-real-GRML-writer")
+    thread.start()
+    pauses, offsets = [], []
+    start = time.monotonic()
+    try:
+        for index in range(2):
+            if index:
+                stop.wait(max(0, start + index - time.monotonic()))
+            try:
+                read(now)
+            except ValueError as exc:
+                pauses.append(str(exc))
+            offsets.append(env.source.offset)
+    finally:
+        stop.set()
+        thread.join(3)
+    assert not thread.is_alive() and not failures
+    assert offsets == [before + len(prefix), before + len(raw)]
+    assert env.source.log.stat().st_size - captured[0] > live.BOUND
+    assert pauses == [], f"post-snapshot growth caused monitor pauses: {pauses}"
+
+
+def test_l_real_grml_150ms_writer_one_second_passes_zero_native_pauses(setup, monkeypatch):
+    _real_grml_thread_control(setup, monkeypatch)
+
+
+def test_l_restore_growth_guard_mutation_fails_zero_pause_control(setup, monkeypatch):
+    with pytest.raises(AssertionError, match="post-snapshot growth caused monitor pauses"):
+        _real_grml_thread_control(setup, monkeypatch, mutated=True)
 
 
 async def offline_native_chain(reader, client, *, stream="CONTROLLED-OFFLINE", passes=32):

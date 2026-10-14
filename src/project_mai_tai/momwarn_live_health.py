@@ -222,7 +222,8 @@ class LiveWarningHealthSource:
                 if covered >= info.st_size or not budget:
                     break
                 bars, cohort, long_line = dict(bars), deepcopy(cohort), deepcopy(long_line)
-            if offset < info.st_size or os.fstat(fd).st_size - offset > BOUND:
+            # Appends after the start snapshot belong to the next monitor pass.
+            if offset < info.st_size:
                 raise ValueError("v2 log catch-up incomplete; evidence unknown")
             if oversized:
                 raise ValueError("v2 partial line bound; oversized evidence parsed")
