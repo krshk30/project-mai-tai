@@ -76,11 +76,12 @@ def apply_committed(strat, store, proof):
 
 
 def order_row(db, req, *, account=PRIMARY, own=False, status="accepted", side="buy", updated=None,
-              submitted=None):
+              submitted=None, broker_order_id=None):
     _, factory, accounts, strategies = db
     row = BrokerOrder(id=uuid4(), strategy_id=strategies["schwab_1m_v2" if own else "orb_schwab"],
         broker_account_id=accounts[account], symbol=req.symbol, side=side, order_type="limit",
         time_in_force="gtc", quantity=100, status=status, client_order_id=str(uuid4()),
+        broker_order_id=broker_order_id,
         submitted_at=submitted or NOW - timedelta(days=2), updated_at=updated or NOW - timedelta(seconds=20),
         payload={"fanout_segment_id": str(req.opportunity_id)} if own else {})
     with factory() as session:
@@ -112,7 +113,8 @@ def test_any_strategy_and_account_working_buy_blocks_including_old_gtc(db, accou
     store, _, _, _ = db
     req = request()
     store.record_rules(req, True)
-    order_row(db, req, account=account, own=own, status=status)
+    order_row(db, req, account=account, own=own, status=status,
+              broker_order_id="controlled-broker-id" if status == "aborted" else None)
     proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
     assert not proof.clear
 

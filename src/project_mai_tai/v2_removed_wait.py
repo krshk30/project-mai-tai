@@ -126,8 +126,14 @@ def assess_clear_rules(
     if has_position:
         return result("position_stays_managed")
     prior = previous_session_request(request, now)
+    broker_observed_ids = {event.order_id for event in order_events if event.event_source == "broker"}
     for order in orders:
-        if (prior or str(order.side).lower() == "buy") and order.status not in ORDER_TERMINAL:
+        # A settled client refusal never placed a wire order; an id or any
+        # broker-sourced event retains the existing terminal-evidence rules.
+        client_terminal = (order.status in {"aborted", "rejected"}
+                           and order.broker_order_id is None and order.id not in broker_observed_ids)
+        if ((prior or str(order.side).lower() == "buy")
+                and order.status not in ORDER_TERMINAL and not client_terminal):
             return result("working_order" if prior else "opening_order_not_terminal")
     if any(i.intent_type == "open"
            and i.status not in INTENT_TERMINAL for i in intents):
