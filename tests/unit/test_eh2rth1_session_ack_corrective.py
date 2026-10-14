@@ -1,4 +1,5 @@
 """R-only controlled database/stream proofs; no provider or performance claims."""
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -253,3 +254,18 @@ async def test_malformed_stream_entry_advances_without_granting_or_poisoning_fol
     assert bot._primary_order_event_cursor == "3-0"
     assert strategy._primary_resting_proven(state)
     assert "malformed_event=1 provisional_allowed=0" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_approved_shared_redis_fixture_matches_cursor_read_api_and_io_yield():
+    from tests.unit.test_oms_webull_mirror_deferred_resubmit import _FakeRedis
+    redis = _FakeRedis()
+    assert await redis.xrevrange("mai_tai:order-events", count=1) == []
+    progress = []
+    async def peer():
+        progress.append("scheduled")
+    task = asyncio.create_task(peer())
+    assert await redis.xread(streams={"mai_tai:order-events": "0-0"}, count=100, block=1000) == []
+    assert progress == ["scheduled"]
+    await task
+    assert await redis.xread({"mai_tai:order-events": "0-0"}, block=1000, count=100) == []
