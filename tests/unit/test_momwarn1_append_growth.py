@@ -144,7 +144,7 @@ async def test_ERROR_appended_after_error_read_detected_next_native_sample(setup
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", ["oms.log", "schwab-1m-v2.log"])
 @pytest.mark.parametrize("unread_size", [65536, 65537])
-async def test_postread_backlog_counts_unread_only_exact_bound_not_consumed_prefix(
+async def test_postread_growth_belongs_to_next_pass_without_pausing(
         setup, monkeypatch, name, unread_size):
     env = setup()
     svc, provider, _ = await start(env)
@@ -172,23 +172,12 @@ async def test_postread_backlog_counts_unread_only_exact_bound_not_consumed_pref
     before = env.client.xrevrange.call_count
     await svc._warning_monitor_once()
     assert len(calls) == 1 and env.client.xrevrange.call_count == before + 1
-    if unread_size == 65537:
-        assert svc._warning_revert_reason is None and not svc._warning_active
-        assert svc.warning_metrics()["pause_state"]["state"] == "paused"
-        assert svc.warning_metrics()["pause_state"]["reason"] == "monitor_unreadable"
-        assert provider._ws.removed == ["A.*"]
-        # Repair the actual excess backlog; never raise the 65,536-byte bound.
-        path.write_text("")
-        await three_clean_native_reads(svc, env)
-        assert provider._ws.added.count("A.*") == 2
-        assert env.reader.log_observability()["coverage_status"] == "GAP_UNOBSERVED_COPYTRUNCATE"
-    else:
-        assert svc._warning_revert_reason is None and svc._warning_active
-        await svc._warning_monitor_once()
-        assert svc._warning_revert_reason is None and svc._warning_active
-        source = env.reader._source.oms if name == "oms.log" else env.reader._source
-        offset = source.position if name == "oms.log" else source.offset
-        assert offset == path.stat().st_size and provider._ws.removed == []
+    assert svc._warning_revert_reason is None and svc._warning_active
+    await svc._warning_monitor_once()
+    assert svc._warning_revert_reason is None and svc._warning_active
+    source = env.reader._source.oms if name == "oms.log" else env.reader._source
+    offset = source.position if name == "oms.log" else source.offset
+    assert offset == path.stat().st_size and provider._ws.removed == []
 
 
 @pytest.mark.asyncio
