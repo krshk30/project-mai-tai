@@ -77,6 +77,29 @@ def test_sequence_gap_in_later_chunk_stays_unknown(tmp_path):
     assert reader.latest["oms_sync_seq"] == 11
 
 
+def test_copytruncate_identical_completion_keeps_original_stamp(tmp_path):
+    reader, log = monitor(tmp_path)
+    original = reader.read()["oms_measured_wall_ns"]
+    with log.open("ab") as output:
+        output.write(b"INFO noise\n" * 10000)
+    reader.read()
+    log.write_bytes(completed(10))
+    result = reader.read()
+    assert result["oms_sync_seq"] == 10
+    assert result["oms_measured_wall_ns"] == original
+    assert result["oms_log_copytruncate_count"] == 1
+
+
+def test_copytruncate_changed_same_sequence_is_still_refused(tmp_path):
+    reader, log = monitor(tmp_path)
+    with log.open("ab") as output:
+        output.write(b"INFO noise\n" * 10000)
+    reader.read()
+    log.write_bytes(completed(10).replace(b"duration_ms=1000.000", b"duration_ms=2000.000"))
+    with pytest.raises(ValueError, match="sequence gap"):
+        reader.read()
+
+
 def test_mutation_raise_without_progress_fails_catchup_control(tmp_path, monkeypatch):
     reader, log = monitor(tmp_path)
     original = OmsLogMonitor.read

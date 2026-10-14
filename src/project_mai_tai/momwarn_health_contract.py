@@ -320,6 +320,9 @@ class OmsLogMonitor:
                     if "[OMS-BROKER-SYNC-PASS]" in decoded and "phase=end" in decoded:
                         item = parse_oms_end(decoded, verified_timezone=self.timezone,
                                              instance_id=process)
+                        if (rewritten or self.truncations) and item == latest:
+                            # A copytruncate replay cannot mint a new completion or stamp.
+                            continue
                         if latest and item["oms_sync_seq"] != latest["oms_sync_seq"] + 1:
                             raise ValueError("OMS completion sequence gap/regression")
                         latest = item
