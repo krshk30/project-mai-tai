@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "artifacts": [
+    {
+      "commit": "20266cdfc614905eb62d309fa99e472058ccec99",
+      "path": "src/project_mai_tai/oms/service.py",
+      "function": "_v2_managed_sell_owned_quantity",
+      "original_blob_sha256": "45835d06bfa77c3bfefa20e8d1b96ece1ad7a063865c242463c7315d6c6779f0",
+      "original_blob_bytes": 939554,
+      "verbatim_segment_sha256": "ec9bf2f657a20d348b27b865559639c216faad7396e64ffe9c30c8696f5a13e5",
+      "segment_bytes": 2470,
+      "fixture": "20266cdfc614905eb62d309fa99e472058ccec99.txt"
+    },
+    {
+      "commit": "1781e549f218f66ff387ebc43a811817aa25e753",
+      "path": "src/project_mai_tai/momentum_paper/engine.py",
+      "function": "symbol_is_eligible",
+      "original_blob_sha256": "7944592c6ac3049e348c6dd44ce46ce3329d6b923c20a98d1b05f68bc42ae541",
+      "original_blob_bytes": 36748,
+      "verbatim_segment_sha256": "d13cd1993a114f8a806f53c79435d9cb732788e727be61231f31b281aa4bf65f",
+      "segment_bytes": 309,
+      "fixture": "1781e549f218f66ff387ebc43a811817aa25e753.txt"
+    },
+    {
+      "commit": "d2769d2dc5580eecad3a5fd617dc2755e9997415",
+      "path": "src/project_mai_tai/momentum_paper/engine.py",
+      "function": "symbol_is_eligible",
+      "original_blob_sha256": "7944592c6ac3049e348c6dd44ce46ce3329d6b923c20a98d1b05f68bc42ae541",
+      "original_blob_bytes": 36748,
+      "verbatim_segment_sha256": "d13cd1993a114f8a806f53c79435d9cb732788e727be61231f31b281aa4bf65f",
+      "segment_bytes": 309,
+      "fixture": "d2769d2dc5580eecad3a5fd617dc2755e9997415.txt"
+    }
+  ]
+}

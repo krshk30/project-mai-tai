@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
+from tests.c7_history import historical_source
 from types import SimpleNamespace
 
 import pytest
@@ -214,7 +215,7 @@ async def test_strategy_redis_input_drops_mixed_before_parsing_or_state(event_ty
 
 @pytest.mark.parametrize('head', ['1781e549', 'd2769d2'])
 def test_shared_case_helper_matches_stable_T_without_broadening_paper_eligibility(head):
-    source = subprocess.check_output(['git', 'show', head+':src/project_mai_tai/momentum_paper/engine.py'], text=True)
+    source = historical_source(head, 'src/project_mai_tai/momentum_paper/engine.py')
     function = next(node for node in ast.parse(source).body
                     if isinstance(node, ast.FunctionDef) and node.name == 'symbol_is_eligible')
     namespace = {}

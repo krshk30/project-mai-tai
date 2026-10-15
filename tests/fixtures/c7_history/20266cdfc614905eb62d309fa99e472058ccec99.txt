@@ -1,0 +1,44 @@
+async def _v2_managed_sell_owned_quantity(
+        self, *, managed_row_id: str, strategy_code: str,
+        broker_account_name: str, symbol: str, requested_quantity: int,
+        target_context: dict[str, str] | None = None,
+    ) -> int:
+        def read(session):
+            current = self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=symbol,
+            )
+            if (strategy_code != "schwab_1m_v2" or current is None
+                    or str(current.id) != managed_row_id
+                    or current.strategy_code != strategy_code):
+                return 0, None, "episode_or_owner_changed"
+            if not self._cw_target_binding_matches(current, target_context):
+                return 0, None, "target_binding_changed"
+            strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
+            account = session.scalar(select(BrokerAccount).where(
+                BrokerAccount.name == broker_account_name
+            ))
+            if strategy is None or account is None:
+                return 0, None, "missing_strategy_or_account"
+            owned = self.store.get_virtual_position(
+                session, strategy_id=strategy.id, broker_account_id=account.id, symbol=symbol,
+            )
+            return int(current.current_quantity), (
+                Decimal(owned.quantity) if owned is not None else None
+            ), ""
+
+        # Read after broker awaits, with a fresh off-loop session: the caller's ORM
+        # identity map and the quote's hydrated Position can both contain old quantities.
+        managed_quantity, ledger_quantity, refusal = await self._run_db(read, commit=False)
+        quantity = max(0, min(int(requested_quantity), managed_quantity))
+        if ledger_quantity is not None:
+            quantity = max(0, min(quantity, int(ledger_quantity)))
+        if refusal or quantity != requested_quantity or ledger_quantity is None:
+            self.logger.warning(
+                "[OMS-V2-EXIT-OWNED-QUANTITY] acct=%s sym=%s row=%s "
+                "requested=%s managed=%s ledger=%s sell=%s reason=%s",
+                broker_account_name, symbol, managed_row_id, requested_quantity,
+                managed_quantity, ledger_quantity, quantity,
+                refusal or ("managed_only_no_ledger" if ledger_quantity is None
+                            else "own_quantity_cap"),
+            )
+        return quantity
