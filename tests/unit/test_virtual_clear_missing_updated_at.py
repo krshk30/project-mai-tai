@@ -24,6 +24,9 @@ class _Session:
     def scalars(self, _query):
         return _ScalarRows([self.virtual_position])
 
+    def execute(self, _query):
+        return _ScalarRows([(self.virtual_position, "schwab_1m_v2")])
+
     def scalar(self, _query):
         return None
 

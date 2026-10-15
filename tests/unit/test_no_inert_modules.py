@@ -62,6 +62,12 @@ LAUNCHED_NOT_IMPORTED: dict[str, str] = {
 
 # ⛔⭐⭐ IMPORTED BY NOTHING **AND** LAUNCHED BY NOTHING. Findings, not exemptions.
 KNOWN_INERT: dict[str, str] = {
+    "project_mai_tai.momentum_live_routing": (
+        "2026-10-15 00:1x reviewed temporary finding: the former type/ineligible routing "
+        "proposal was superseded before deployment by momentum_live_sec.CountryRouter. "
+        "No runtime imports this module and its policy is not active. Remove in 10-15 close PR; "
+        "do not wire it back or change installed source tonight."
+    ),
     "project_mai_tai.trade_reasons": (
         "Parses `trade_intents.reason` and exists to BAN substring-matching on it — a bug that "
         "produced a wrong answer twice in 24 hours (08-04 inflated a headline 75%; 08-05 reported "
@@ -146,7 +152,10 @@ def test_no_new_module_is_imported_by_nothing():
 
 def test_known_inert_set_may_only_shrink():
     """⛔ Pinned so adding one is a deliberate, reviewed edit rather than a way to silence the lint."""
-    assert len(KNOWN_INERT) == 1
+    # One dated exception explicitly approved for removal in the 10-15 close PR.
+    assert set(KNOWN_INERT) == {
+        "project_mai_tai.trade_reasons", "project_mai_tai.momentum_live_routing",
+    }
     assert all(len(reason) > 120 for reason in KNOWN_INERT.values()), (
         "a KNOWN_INERT entry must explain what the module was for and what is lost while it is dead"
     )

@@ -1,0 +1,8 @@
+// Keep security origins enabled. Downloads run daily; installation is gated.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::Unattended-Upgrade "1";
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::InstallOnShutdown "false";
+DPkg::Pre-Invoke { "/usr/local/libexec/project-mai-tai-maintenance install"; };
+DPkg::Post-Invoke { "/usr/local/libexec/project-mai-tai-maintenance audit"; };

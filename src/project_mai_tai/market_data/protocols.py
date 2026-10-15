@@ -6,6 +6,7 @@ from typing import Protocol
 from project_mai_tai.market_data.models import (
     HistoricalBarRecord,
     LiveBarRecord,
+    MomentumWarningAggregateRecord,
     QuoteTickRecord,
     SnapshotRecord,
     TradeTickRecord,
@@ -52,3 +53,18 @@ class TradeStreamProvider(Protocol):
 
     async def sync_subscriptions(self, symbols: Iterable[str]) -> None:
         """Replace the current live subscription set."""
+
+
+class MomentumWarningStreamProvider(TradeStreamProvider, Protocol):
+    def configure_momentum_warning(
+        self,
+        on_aggregate: Callable[[MomentumWarningAggregateRecord], None],
+        on_revert: Callable[[str], None],
+        on_window_close: Callable[[], None] | None = None,
+        *,
+        window: object | None = None,
+    ) -> None: ...
+
+    async def set_momentum_warning_aggregates(self, enabled: bool) -> bool: ...
+
+    async def sync_warning_trade_symbols(self, symbols: Iterable[str]) -> None: ...

@@ -25,6 +25,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     OHLCVBar,
     SchwabV2Strategy,
 )
+from tests.unit.resting_book_control import prove_primary_rest
 
 
 SEGMENT = 1787846400000
@@ -297,6 +298,7 @@ def _resting_cross_strategy() -> tuple[SchwabV2Strategy, object, list[int]]:
     state = strategy.watchlist_state("YYGH")
     state.resting_active = True
     state.resting_level = 1.25
+    prove_primary_rest(strategy, state)
     state.bars.append(
         OHLCVBar(
             timestamp_ms=SEGMENT,
@@ -320,6 +322,7 @@ def test_absent_positive_evidence_releases_after_grace_and_can_emit_again() -> N
     assert state.fanout_claim_outcome == "queued"
 
     now[0] += 31_000
+    prove_primary_rest(strategy, state)  # Keep primary proof fresh; vary only the mirror claim.
     strategy._fanout_rth_resting_cross(state, quote)
 
     assert len(strategy.drain_webull_fanout_intents()) == 1
@@ -338,6 +341,7 @@ def test_positive_working_evidence_holds_beyond_grace_and_suppresses_duplicate()
     assert strategy.apply_fanout_outcome(_outcome(identity, "working")) == "held"
 
     now[0] += 31_000
+    prove_primary_rest(strategy, state)
     strategy._fanout_rth_resting_cross(state, quote)
 
     assert strategy.drain_webull_fanout_intents() == []

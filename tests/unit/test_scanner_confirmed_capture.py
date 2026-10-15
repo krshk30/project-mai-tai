@@ -57,7 +57,7 @@ def _sample_confirmed() -> list[dict]:
             "change_pct": 42.3,
         },
         {
-            "ticker": "bbbb",
+            "ticker": "BBBB",
             "confirmed_at": "10:01:00 AM ET",
             "confirmation_path": "PATH_B_TWO_SQUEEZE",
             "force_watchlist": False,
@@ -79,7 +79,7 @@ def test_capture_events_writes_confirm_fade_retention_rows():
         trade_date=now.date(),
         now=now,
         all_confirmed=_sample_confirmed(),
-        faded_symbols=["cccc"],
+        faded_symbols=["CCCC"],
         dropped_retention_symbols=["DDDD"],
     )
 
@@ -102,7 +102,7 @@ def test_capture_events_writes_confirm_fade_retention_rows():
     # confirmed_at parsed onto trade_date in ET
     assert aaaa["event_at"] == datetime(2026, 7, 10, 9, 46, 52, tzinfo=EASTERN)
 
-    bbbb = by_symbol["BBBB"]  # symbol upper-cased
+    bbbb = by_symbol["BBBB"]  # exact common symbol
     assert bbbb["event_type"] == "CONFIRM"
     assert bbbb["confirm_path"] == "PATH_B_TWO_SQUEEZE"
     assert bbbb["force_watchlist"] is False
@@ -165,7 +165,7 @@ def test_repeat_fade_suppressed_when_symbol_already_faded():
         trade_date=now.date(),
         now=now,
         all_confirmed=[],
-        faded_symbols=["aaaa", "bbbb"],
+        faded_symbols=["AAAA", "BBBB"],
         dropped_retention_symbols=[],
     )
 
@@ -184,7 +184,7 @@ def test_fade_recorded_when_symbol_last_confirmed_or_new():
         trade_date=now.date(),
         now=now,
         all_confirmed=[],
-        faded_symbols=["aaaa", "bbbb"],
+        faded_symbols=["AAAA", "BBBB"],
         dropped_retention_symbols=[],
     )
 

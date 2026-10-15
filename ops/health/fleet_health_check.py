@@ -1039,6 +1039,27 @@ def check_stops_armed() -> tuple[str, str, str]:
     )
 
 
+def check_momentum_owned_backing() -> tuple[str, str, str]:
+    """Expose retained MOM ownership vs fresh broker-zero in existing fullscan."""
+    mature = (
+        "FROM virtual_positions vp JOIN strategies s ON s.id=vp.strategy_id "
+        "LEFT JOIN account_positions ap ON ap.broker_account_id=vp.broker_account_id AND ap.symbol=vp.symbol "
+        "WHERE s.code='momentum_warn_live' AND vp.quantity>0 "
+        "AND (vp.updated_at IS NULL OR vp.updated_at<now()-interval '24.119 seconds') "
+    )
+    fresh = "ap.source_updated_at BETWEEN now()-interval '45 seconds' AND now()"
+    mismatches = _scalar_int(f"SELECT count(*) {mature} AND vp.updated_at IS NOT NULL AND ({fresh}) AND ap.quantity<=0")
+    unknown = _scalar_int(f"SELECT count(*) {mature} AND "
+                          f"(vp.updated_at IS NULL OR ap.quantity IS NULL OR NOT coalesce(({fresh}),false))")
+    if mismatches is None or unknown is None:
+        return "AMBER", "momentum-owned-backing", "UNKNOWN: could not read independent ownership/backing evidence"
+    if mismatches:
+        return "RED", "momentum-owned-backing", f"{mismatches} broker-zero/owned-positive mismatch(es); ownership retained, reconcile exact exits"
+    if unknown:
+        return "AMBER", "momentum-owned-backing", f"UNKNOWN: {unknown} mature owned row(s) lack fresh broker evidence"
+    return "GREEN", "momentum-owned-backing", "no mature owned-positive/fresh-broker-zero mismatch (not overall actor health)"
+
+
 def classify_bar_continuity(
     worst_gap_min: int | None,
     gap_symbols: int | None,
@@ -1134,6 +1155,7 @@ RUNTIME_CHECKS = (
 FUNCTION_CHECKS = (
     CheckSpec(check_oms_order_lifecycle, LIVE_MONEY),
     CheckSpec(check_stops_armed, LIVE_MONEY),
+    CheckSpec(check_momentum_owned_backing, DIAGNOSTIC),
     CheckSpec(check_bar_continuity, DIAGNOSTIC),
     CheckSpec(check_d6_status_freshness, SCOREBOARD),
 )

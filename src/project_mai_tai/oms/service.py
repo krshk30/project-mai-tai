@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 from enum import Enum
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -19,6 +19,7 @@ from sqlalchemy import desc, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
+from project_mai_tai.broker_adapters.target_price import target_limit_price
 from project_mai_tai.broker_adapters.protocols import (
     BrokerAdapter,
     ExecutionReport,
@@ -38,6 +39,7 @@ from project_mai_tai.db.models import (
     BrokerOrderEvent,
     DashboardSnapshot,
     Fill,
+    OmsManagedPosition,
     Strategy,
     StrategyBarHistory,
     SystemIncident,
@@ -62,6 +64,8 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms.target_cache import BoundTargetRow, ManagedTargetCache
+from project_mai_tai.oms.target_exit_receipt import target_exit_receipt
 from project_mai_tai.oms import wbquiet_shadow
 from project_mai_tai.positions_read_receipt import (
     PositionsReadReceiptWriter,
@@ -149,11 +153,15 @@ class _ManagedSellEvents(list):
         reservation: ExitPairReleaseResult | None = None,
         terminal_events=None,
         native_fill_row_id: str = "",
+        ownership_refused: bool = False,
+        submitted_quantity: int | None = None,
     ) -> None:
         materialized = list(events)
         super().__init__(materialized)
         self.reservation = reservation
         self.native_fill_row_id = native_fill_row_id
+        self.ownership_refused = ownership_refused
+        self.submitted_quantity = submitted_quantity
         self.terminal_events = list(
             materialized if terminal_events is None else terminal_events
         )
@@ -434,6 +442,7 @@ class _V2ManagedSnapshot:
     account_position_quantity: float | None
     account_position_source_updated_at: datetime | None
     broker_provider: str | None
+    entry_order_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -443,6 +452,23 @@ class _CWFlipDecision:
     bar_time_ms: int
     managed_row_id: str
     decision_id: str
+
+
+@dataclass(frozen=True)
+class _CWTargetDecision:
+    bound: BoundTargetRow
+    quote_at: datetime
+    decided_at: datetime
+    reference_price: Decimal
+
+
+@dataclass(frozen=True)
+class _CWTargetSellSnapshot:
+    managed_row_id: str
+    entry_order_id: str
+    entry_price: Decimal
+    current_quantity: int
+    status: str
 
 
 @dataclass(frozen=True)
@@ -522,9 +548,25 @@ class _DriftCancelCandidate:
     terminal_cancel_reports: int
 
 
+def _finalize_retained_mirror_after_intent(method):
+    @wraps(method)
+    async def finalized(self, event):
+        retained_owned = self._mirrorhold_scope(event)
+        results = await method(self, event)
+        if (retained_owned or self._mirrorhold_scope(event)) and (
+            not results or any(r.payload.intent_event_id == event.event_id and r.payload.status == "rejected"
+                               for r in results)
+        ):
+            await self._run_db(lambda session: self._mirrorhold_finalize_refusal(session, event, results))
+        return results
+    return finalized
+
+
 def _refresh_working_cache_after_intent(method):
     @wraps(method)
     async def refreshed(self, event):
+        if str(getattr(event.payload, "strategy_code", "")).strip().lower() == "momentum_warn_live":
+            return await method(self, event)
         try:
             return await method(self, event)
         finally:
@@ -775,7 +817,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self.session_factory = session_factory or build_oms_session_factory(self.settings)
         self.broker_adapter = broker_adapter or self._build_broker_adapter()
         self.store = store or OmsStore()
+        self.store.webull_identity_dispatch = self._queue_webull_order_identities
+        try:
+            self._webull_identity_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._webull_identity_loop = None
         self.strategy_registrations = strategy_registration_map(self.settings)
+        self._momentum_live_quote_dispatch = None
+        self._momentum_live_actor = None
         self.instance_name = socket.gethostname()
         # Configure root logging so the OMS emits INFO (fills, [HARD-STOP ARMED/
         # TRIGGERED/CLEARED], exits) — not just default-WARNING. Without this the
@@ -983,6 +1032,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self._v2_rth_edge_bracket_attempts: dict[tuple[str, str, str], int] = {}
         self._v2_rth_edge_bracket_done: set[tuple[str, str, str]] = set()
         self._v2_rth_edge_bracket_last_try: dict[tuple[str, str, str], datetime] = {}
+        self._cw_target_decisions: dict[tuple[str, str], _CWTargetDecision] = {}
+        self._target_row_cache = (
+            ManagedTargetCache(self.session_factory, self._v2_accounts())
+            if isinstance(self.session_factory, sessionmaker)
+            and self.settings.oms_v2_exit_management_enabled else None
+        )
 
     async def _run_db(self, fn, *, commit: bool = True):
         """Run a PURE-SYNC unit of DB work on a worker thread, off the event loop.
@@ -1007,6 +1062,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         return await asyncio.to_thread(_unit)
 
     async def run(self) -> None:
+        self._webull_identity_loop = asyncio.get_running_loop()
         stop_event = asyncio.Event()
         _install_signal_handlers(stop_event)
 
@@ -1034,6 +1090,31 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # + broker-backed BEFORE the tick consumer starts — never serve ticks with an
         # OMS-owned position unprotected. OMS-owned only (manual holdings untouched).
         await self._reconcile_protection_before_serving()
+        live_runtime = None
+        live_start_completed = False
+        try:
+            from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
+            live_runtime = OmsLiveRuntime(self)
+            if await live_runtime.start():
+                self._momentum_live_actor = live_runtime.actor
+                self._momentum_live_quote_dispatch = live_runtime.actor.dispatch
+            live_start_completed = True
+        except Exception as exc:
+            self._momentum_live_actor = None
+            self._momentum_live_quote_dispatch = None
+            exposures = getattr(live_runtime, "boot_owned_exposures", {}).values() or (
+                {"symbol": "UNKNOWN", "quantity": "UNKNOWN", "account": "UNKNOWN"},)
+            for exposure in exposures:
+                self.logger.critical(
+                    "[MOMLIVE1-BOOT-REFUSED] reason=%s:%s symbol=%s quantity=%s account=%s "
+                    "exposure_source=inspected_owned_fills_or_UNKNOWN ATR_boot=continues",
+                    type(exc).__name__, exc, exposure["symbol"], exposure["quantity"], exposure["account"],
+                )
+        finally:
+            if not live_start_completed:
+                self._momentum_live_actor = None
+                self._momentum_live_quote_dispatch = None
+                await self._close_momentum_live_runtime(live_runtime)
         # Track-2 intrabar fix: a DEDICATED tick consumer evaluates quote-driven exits
         # within milliseconds of the live tick. It is decoupled from the control loop so
         # the periodic broker-sync REST (and intent processing) can NEVER starve it — the
@@ -1063,6 +1144,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             await self._run_control_loop(stop_event)
         finally:
             stop_event.set()
+            self._momentum_live_quote_dispatch = None
+            self._momentum_live_actor = None
+            await self._close_momentum_live_runtime(live_runtime)
             tick_task.cancel()
             rpg_task.cancel()
             if receipt_task is not None:
@@ -1077,6 +1161,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             except asyncio.CancelledError:
                 pass
             await self._shutdown_symbol_tick_work()
+            writer = self.__dict__.get("_webull_identity_writer")
+            if writer is not None:
+                await writer.close()
 
         await self._publish_heartbeat(
             "stopping",
@@ -1086,6 +1173,39 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             },
         )
         await self.redis.aclose()
+
+    async def _close_momentum_live_runtime(self, runtime) -> None:
+        if runtime is None:
+            return
+        actor = getattr(runtime, "actor", None)
+        handles = list(getattr(actor, "tasks", ()))[:4]
+        publication = getattr(runtime, "publication_task", None)
+        if publication is not None:
+            handles.append(publication)
+        tasks = {task for task in handles if isinstance(task, asyncio.Task) and task is not asyncio.current_task()}
+        if actor is not None:
+            actor.restored = False
+        # Known MOM handles only; cancel before close can fail or be interrupted.
+        for task in tasks:
+            task.cancel()
+        try:
+            async with asyncio.timeout(1):
+                await runtime.close()
+        except Exception as exc:
+            self.logger.critical("[MOMLIVE1-BOOT-REFUSED] reason=cleanup_%s:%s ATR_isolation=preserved",
+                                 type(exc).__name__, exc)
+        finally:
+            if tasks:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                done, pending = await asyncio.wait(tasks, timeout=1)
+                for task in done:
+                    if not task.cancelled():
+                        task.exception()
+                if pending:
+                    self.logger.critical("[MOMLIVE1-BOOT-REFUSED] reason=own_task_cleanup_UNKNOWN pending=%s",
+                                         len(pending))
 
     async def _run_control_loop(self, stop_event: asyncio.Event) -> None:
         """Intents + periodic broker-sync + heartbeat. Reads ONLY the strategy-intents
@@ -1627,7 +1747,18 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return
 
     @_refresh_working_cache_after_intent
+    @_finalize_retained_mirror_after_intent
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
+        if str(getattr(event.payload, "strategy_code", "")).strip().lower() == "momentum_warn_live":
+            actor = self.__dict__.get("_momentum_live_actor")
+            if actor is None:
+                self.logger.warning("[MOMLIVE1-REFUSED] symbol=%s reason=actor_not_restored generic_dispatch=never",
+                                    event.payload.symbol)
+            elif event.payload.intent_type == "open" and not self.settings.momentum_live_enabled:
+                self.logger.info("[MOMLIVE1-REFUSED] symbol=%s reason=manual_off", event.payload.symbol)
+            else:
+                actor.offer_intent(event)
+            return []
         if self._rpg_external_retry(event):
             return []
         strategy_code = str(event.payload.strategy_code).strip().lower()
@@ -1703,7 +1834,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 event.event_id,
             )
             return []
-        if not self._mirrorhold_admit(event):
+        if (self._mirrorhold_enabled() and event.payload.side == "buy"
+                and event.payload.intent_type in {"open", "scale"}):
+            mirrorhold_admitted = await asyncio.to_thread(self._mirrorhold_admit, event)
+        else:
+            mirrorhold_admitted = self._mirrorhold_admit(event)
+        if not mirrorhold_admitted:
             return []
         if not self._claim_nfq_retry(event):
             return []
@@ -2736,8 +2872,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 managed_here = self.store.get_open_managed_position(
                     session, broker_account_name=webull_account_name, symbol=symbol
                 )
-                held_qty = self.store.get_account_position_qty_by_name(
-                    session, broker_account_name=webull_account_name, symbol=symbol
+                from project_mai_tai.oms.webull_owned_positions import bot_owned_quantity
+
+                held_qty = bot_owned_quantity(
+                    session, account_name=webull_account_name, symbol=symbol
                 )
                 if armed_here or managed_here is not None or held_qty != 0:
                     self.logger.info(
@@ -3142,6 +3280,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 if report is None:
                     reads_failed += 1
                     continue
+                if (target_order_id is not None
+                        and self.settings.provider_for_account(account_name) == "webull"):
+                    from project_mai_tai.oms.webull_order_identity import IdentityEvidence
+
+                    identity = IdentityEvidence.from_report(
+                        target_order_id, account_name, client_order_id, symbol,
+                        request.side, report, "cancel_verifier",
+                    )
+                    if identity is not None:
+                        self._queue_webull_order_identities([identity])
                 observed = str(getattr(report, "event_type", "") or "")
                 if observed in _CANCEL_TARGET_SETTLED_STATUSES:
                     self.logger.info(
@@ -3411,6 +3559,49 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         )
         return task
 
+    async def _v2_webull_protection_owned_quantity(
+        self, *, managed_row_id: str, broker_account_name: str, symbol: str,
+        entry_client_order_id: str, requested_quantity: int, broker_quantity: Decimal,
+    ) -> int:
+        def read(session):
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=symbol,
+            )
+            if (row is None or str(row.id) != managed_row_id
+                    or row.strategy_code != "schwab_1m_v2"
+                    or row.entry_client_order_id != entry_client_order_id):
+                return 0, "episode_or_owner_changed"
+            strategy = session.scalar(select(Strategy).where(Strategy.code == row.strategy_code))
+            account = session.scalar(select(BrokerAccount).where(
+                BrokerAccount.name == broker_account_name
+            ))
+            if strategy is None or account is None or account.provider != "webull":
+                return 0, "missing_strategy_or_account"
+            if self.store.get_open_exit_reserved_quantity(
+                session, broker_account_id=account.id, symbol=symbol,
+                include_native_stop_guard=False,
+            ) > 0:
+                return 0, "software_exit_reserved"
+            from project_mai_tai.oms.webull_owned_positions import fallback_sell_quantity
+
+            owned = fallback_sell_quantity(
+                session, strategy_id=strategy.id, account_id=account.id, symbol=symbol,
+                requested=Decimal(requested_quantity), broker_available=broker_quantity,
+            )
+            # Protection uses the managed backstop even with an explicit zero
+            # ledger, but a stale virtual lot can never enlarge this exact row.
+            return max(0, min(requested_quantity, int(row.current_quantity), int(owned))), ""
+
+        quantity, refusal = await self._run_db(read, commit=False)
+        if refusal or quantity != requested_quantity:
+            self.logger.warning(
+                "[WEBULL-PROTECT-OWNERSHIP] acct=%s sym=%s row=%s requested=%s "
+                "broker=%s protect=%s reason=%s",
+                broker_account_name, symbol, managed_row_id, requested_quantity,
+                broker_quantity, quantity, refusal or "bound_quantity_cap",
+            )
+        return quantity
+
     async def _attach_webull_protection(
         self, *, broker_account_name: str, symbol: str, quantity: int,
         entry_price: float, strategy_code: str, entry_client_order_id: str = "",
@@ -3475,6 +3666,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             """Seconds to wait AFTER `attempt_number` before the next one."""
             return min(interval * (backoff ** (attempt_number - 1)), max_interval)
 
+        bound_v2 = strategy_code == "schwab_1m_v2" and bool(entry_client_order_id)
         for attempt in range(1, attempts + 1):
             # ⛔ Do not chase a position we no longer own. 2 of 27 refusals on 08-14 were
             # SYMBOL_CAN_NOT_SELL_SHORT: the shares had already gone, so the attach was sending a
@@ -3482,8 +3674,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             # ⛔⭐ ONLY a positively-CONFIRMED flat may stop us. FLAT_INFERRED is the ordinary shape
             # inside the settle window -- live 08-14 CGTL read FLAT_INFERRED (n=0) for 12.7s after
             # a real fill -- and bailing on it would abandon exactly the bare fills this exists to
-            # cover. Same discipline as `_v2_close_reconcile_flat`: HELD and UNKNOWN both continue.
-            state = await self._broker_symbol_position_state(broker_account_name, symbol)
+            # cover. Legacy unbound attaches continue on UNKNOWN; bound attaches
+            # retain retries but require a positive quantity before submission.
+            # Bound attaches read once AFTER quote awaits, retaining the quantity
+            # as well as state. Legacy unbound callers keep their original guard.
+            state = (_PositionRead.UNKNOWN if bound_v2 else
+                     await self._broker_symbol_position_state(broker_account_name, symbol))
             if state is _PositionRead.FLAT_CONFIRMED:
                 self.logger.info(
                     "[WEBULL-PROTECT-ABANDONED] %s %s — the broker CONFIRMS we no longer hold this "
@@ -3508,6 +3704,64 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 if attempt < attempts and interval:
                     await asyncio.sleep(_retry_delay(attempt))
                 continue
+            owned_quantity = quantity
+            if bound_v2:
+                broker_read: dict[str, Decimal | None] = {}
+                state = await self._broker_symbol_position_state(
+                    broker_account_name, symbol, quantity_out=broker_read,
+                )
+                broker_quantity = broker_read.get("quantity")
+                if state is _PositionRead.FLAT_CONFIRMED:
+                    self.logger.info(
+                        "[WEBULL-PROTECT-ABANDONED] %s %s broker confirms flat at attempt %d/%d",
+                        symbol, broker_account_name, attempt, attempts,
+                    )
+                    return False
+                if broker_quantity is None or broker_quantity <= 0:
+                    self.logger.warning(
+                        "[WEBULL-PROTECT-OWNERSHIP] acct=%s sym=%s entry=%s attempt=%d/%d "
+                        "protect=0 reason=broker_quantity_unproven",
+                        broker_account_name, symbol, entry_client_order_id, attempt, attempts,
+                    )
+                    if attempt < attempts and interval:
+                        await asyncio.sleep(_retry_delay(attempt))
+                    continue
+                def _owned_episode(session):
+                    row = self.store.get_open_managed_position(
+                        session, broker_account_name=broker_account_name, symbol=symbol
+                    )
+                    if row is None:
+                        return None
+                    if (row.strategy_code != strategy_code
+                            or row.entry_client_order_id != entry_client_order_id):
+                        return ""
+                    return str(row.id)
+
+                row_id = await self._run_db(_owned_episode, commit=False)
+                if row_id is None:
+                    self.logger.warning(
+                        "[WEBULL-PROTECT-OWNERSHIP] acct=%s sym=%s entry=%s attempt=%d/%d "
+                        "protect=0 reason=no_open_managed_row",
+                        broker_account_name, symbol, entry_client_order_id, attempt, attempts,
+                    )
+                    # The background attach may beat the fill transaction's commit.
+                    if attempt < attempts and interval:
+                        await asyncio.sleep(_retry_delay(attempt))
+                    continue
+                if not row_id:
+                    self.logger.warning(
+                        "[WEBULL-PROTECT-OWNERSHIP] acct=%s sym=%s entry=%s protect=0 "
+                        "reason=episode_or_owner_changed",
+                        broker_account_name, symbol, entry_client_order_id,
+                    )
+                    return False
+                owned_quantity = await self._v2_webull_protection_owned_quantity(
+                    managed_row_id=row_id, entry_client_order_id=entry_client_order_id,
+                    broker_account_name=broker_account_name, symbol=symbol,
+                    requested_quantity=quantity, broker_quantity=broker_quantity,
+                )
+                if owned_quantity <= 0:
+                    break  # Retain the refusal, but account/page it like other failed attaches.
             coid = f"{strategy_code}-{symbol}-protect-{uuid4().hex[:12]}"
             request = OrderRequest(
                 client_order_id=coid,
@@ -3516,7 +3770,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 symbol=symbol,
                 side="sell",
                 intent_type="close",
-                quantity=Decimal(str(quantity)),
+                quantity=Decimal(str(owned_quantity)),
                 reason="webull attach protection after bare resting fill",
                 metadata={
                     "webull_exit_only_pair": "true",
@@ -3556,7 +3810,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     "session=%s (attempt %d) handle_persisted=%d — a real pair is now resting at "
                     "the broker; handle_persisted=1 means child/time/price remain addressable "
                     "after restart",
-                    symbol, broker_account_name, quantity, entry_price, target, protect,
+                    symbol, broker_account_name, owned_quantity, entry_price, target, protect,
                     session_hint, attempt, int(persisted),
                 )
                 return True
@@ -3580,7 +3834,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             "target=%.4f stop=%.4f after %d attempts. THE POSITION IS HELD WITH NO BROKER-SIDE "
             "STOP; the software ladder is the only cover. Place one by hand.",
             symbol, broker_account_name, quantity, entry_price, session_hint,
-            target, protect, attempts,
+            target, protect, attempt,
         )
         # The uncovered-share page reads this: a RE-attach that fails leaves the OLD (cancelled)
         # pair's handle persisted, which would otherwise read as "a pair is resting".
@@ -4564,8 +4818,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             symbols: set[tuple[str, str]] = set()
             with self.session_factory() as session:
                 for acct in self._v2_accounts():
-                    for sym in self.store.list_open_managed_symbols(session, broker_account_name=acct):
-                        symbols.add((acct, sym))
+                    for row in session.scalars(select(OmsManagedPosition).where(
+                        OmsManagedPosition.broker_account_name == acct,
+                        OmsManagedPosition.strategy_code == "schwab_1m_v2",
+                        OmsManagedPosition.status == "open",
+                    )):
+                        symbols.add((acct, row.symbol))
             self._managed_v2_symbols = symbols
         except Exception as exc:  # noqa: BLE001
             self.logger.warning("v2 managed-symbol rehydrate failed: %s", exc)
@@ -4688,6 +4946,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         has no virtual_positions row, so it is never returned (scoping invariant)."""
         out: list = []
         for sc, ban, sym, qty in self.store.list_owned_open_positions(session):
+            if sc == "momentum_warn_live":
+                continue  # Its exact episode/protection restore runs before ticks in the owned actor.
             if qty <= 0:
                 continue
             broker_qty = self.store.get_account_position_qty_by_name(
@@ -5165,6 +5425,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         ref: float,
         bid: float,
         expected_row_id: str,
+        decision_context: dict[str, str] | None = None,
     ) -> str:
         """Webull full CW closes use the shared cancel-then-sell recovery path.
 
@@ -5173,7 +5434,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         has already re-protected or paged, so a quote-rate retry storm buys nothing.
         """
         key = (acct, symbol)
+        close_context = decision_context or self._cw_exit_decision_context(acct, symbol, tag, ref, bid)
         if not await self._v2_eod_handover_ready(acct, symbol, expected_row_id):
+            if tag == "CW_TARGET":
+                self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=close_context,
+                    guards=[dict(name="_v2_eod_handover_ready", outcome="unconfirmed", elapsed_ms=None)],
+                    blocked_guard="_v2_eod_handover_ready")
             return "eod_handover_unconfirmed"
         inflight: set[tuple[str, str]] = self.__dict__.setdefault("_webull_cw_exit_inflight", set())
         next_try: dict[tuple[str, str], float] = self.__dict__.setdefault(
@@ -5187,8 +5453,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return "recovering"
         if time.monotonic() < next_try.get(key, 0.0):
             return "paced"
+        # Resting targets must not replay ahead of a later stop/floor/flip decision.
         eh_ladder = (
-            tag in {"CW_TARGET", "CW_HARD_STOP", "CW_FLOOR", "CW_FLIP"}
+            tag in {"CW_HARD_STOP", "CW_FLOOR", "CW_FLIP"}
             and not _is_regular_market_session()
             and self._market_is_fillable()
         )
@@ -5215,6 +5482,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         exit_tag=tag,
                     ),
                     reference_price=ref,
+                    close_context=close_context,
                 )
             else:
                 outcome = await self._webull_cancel_then_sell(
@@ -5233,6 +5501,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         exit_tag=tag,
                     ),
                     reference_price=ref,
+                    close_context=close_context,
                 )
         finally:
             inflight.discard(key)
@@ -5245,6 +5514,95 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         else:
             next_try[key] = time.monotonic() + self._WEBULL_CW_EXIT_RETRY_SECONDS
         return outcome
+
+    def _cw_exit_decision_context(self, acct, symbol, tag, ref, bid):
+        decided_at = utcnow().isoformat(timespec="microseconds")
+        quote_at = (self._latest_quotes_by_symbol.get(symbol) or {}).get("received_at")
+        self.logger.info(
+            "[OMS-V2-CW-DECISION] acct=%s sym=%s tag=%s ref=%.4f bid=%.4f "
+            "decided_at=%s quote_at=%s phase=before_protection",
+            acct, symbol, tag, ref, bid, decided_at, quote_at,
+        )
+        return {"cw_decided_at": decided_at}
+
+    def _capture_cw_target_decision(self, acct, symbol, quote):
+        cache = getattr(self, "_target_row_cache", None)
+        key = (acct, symbol)
+        pending = self.__dict__.setdefault("_cw_target_decisions", {})
+        if (cache is None or not self._cw_exit_enabled or self._cw_floor_exit_enabled
+                or key in self.__dict__.get("_confirmation_exit_pending", {})
+                or self._native_oco_stand_down_active(acct, symbol)):
+            pending.pop(key, None)
+            return
+        bound = cache.get(key)
+        quote_at, now = quote.get("received_at"), utcnow()
+        if bound is None or not isinstance(quote_at, datetime):
+            pending.pop(key, None)
+            return
+        age = (now - quote_at).total_seconds() * 1000
+        if not 0 <= age <= float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)):
+            return
+        reference = bound.entry_price * (Decimal("1") + Decimal(str(self._cw_target_pct)) / 100)
+        if Decimal(str(quote.get("bid") or 0)) < reference:
+            return
+        previous = pending.get(key)
+        if previous is not None and previous.bound is bound and (
+            now - previous.quote_at
+        ).total_seconds() * 1000 <= float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)):
+            return
+        pending[key] = _CWTargetDecision(bound, quote_at, now, reference)
+        self.logger.info(
+            "[OMS-V2-CW-DECISION] acct=%s sym=%s tag=CW_TARGET ref=%s "
+            "decided_at=%s quote_at=%s row=%s phase=quote_intake",
+            acct, symbol, reference, now.isoformat(timespec="microseconds"),
+            quote_at, bound.managed_row_id,
+        )
+
+    @staticmethod
+    def _cw_target_decision_context(decision):
+        return {
+            "cw_decided_at": decision.decided_at.isoformat(timespec="microseconds"),
+            "cw_target_bound_row_id": decision.bound.managed_row_id,
+            "cw_target_entry_order_id": decision.bound.entry_order_id,
+            "cw_target_entry_price": str(decision.bound.entry_price),
+            "cw_target_quantity": str(decision.bound.quantity),
+        }
+
+    @staticmethod
+    def _cw_target_binding_matches(row, context):
+        if not context or "cw_target_bound_row_id" not in context:
+            return True
+        return (
+            str(getattr(row, "managed_row_id", getattr(row, "id", ""))) == context["cw_target_bound_row_id"]
+            and str(row.entry_order_id or "") == context["cw_target_entry_order_id"]
+            and Decimal(str(row.entry_price)) == Decimal(context["cw_target_entry_price"])
+            and int(row.current_quantity) == int(context["cw_target_quantity"])
+            and getattr(row, "status", "open") == "open"
+        )
+
+    @staticmethod
+    def _read_cw_target_sell_snapshot(session, managed_row_id):
+        value = session.execute(select(
+            OmsManagedPosition.id, OmsManagedPosition.entry_order_id,
+            OmsManagedPosition.entry_price, OmsManagedPosition.current_quantity,
+            OmsManagedPosition.status,
+        ).where(OmsManagedPosition.id == managed_row_id)).one_or_none()
+        if value is None:
+            return None
+        return _CWTargetSellSnapshot(str(value.id), str(value.entry_order_id or ""),
+            Decimal(str(value.entry_price)), int(value.current_quantity), value.status)
+
+    def _take_cw_target_decision(self, key, snapshot):
+        decision = self.__dict__.get("_cw_target_decisions", {}).pop(key, None)
+        if decision is None or self._cw_floor_exit_enabled:
+            return None
+        age = (utcnow() - decision.quote_at).total_seconds() * 1000
+        cache = getattr(self, "_target_row_cache", None)
+        if (cache is None or cache.get(key) is not decision.bound
+                or not 0 <= age <= float(getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000))
+                or not self._cw_target_binding_matches(snapshot, self._cw_target_decision_context(decision))):
+            return None
+        return decision
 
     async def _retry_webull_eh_ladder_pending(self) -> None:
         """Retry an EH safety exit only after its prior sell stopped working."""
@@ -5436,6 +5794,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             self._finish_confirmation_fanout_leg(decision, acct, outcome="refused")
             return _done("refused_before_release")
+        if not self._cw_target_binding_matches(snapshot, close_context):
+            if exit_tag == "CW_TARGET":
+                self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=close_context or {},
+                    guards=[dict(name="_cw_target_binding_matches", outcome="mismatch", elapsed_ms=None)],
+                    blocked_guard="_cw_target_binding_matches")
+            return _done("refused_before_release")
         c3_action = self._post_exit_stale_held_action(acct, symbol, snapshot)
         if c3_action == "fresh_flat":
             await self._close_post_exit_stale_held_row(acct, symbol)
@@ -5450,6 +5814,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return _done("refused_before_release")
 
         # ---- 2. IRREVERSIBLE: take the pair back ------------------------------------------
+        target_prepare_started = time.monotonic() if exit_tag == "CW_TARGET" else None
         protection = await self._prepare_confirmation_webull_leg(
             acct,
             symbol,
@@ -5457,6 +5822,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             expires_at=expires_at,
             decision=decision,
         )
+        if target_prepare_started is not None:
+            close_context = {**(close_context or {}),
+                "cw_target_prepare_ms": str(round((time.monotonic()-target_prepare_started)*1000, 3)),
+                "cw_target_prepare_outcome": protection}
+            if protection not in {"released", "no_pair"}:
+                self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=close_context,
+                    guards=self._cw_target_prepare_observation(close_context),
+                    blocked_guard="_prepare_confirmation_webull_leg")
         if protection == "released":
             self._start_confirmation_unprotected_interval(decision, acct, symbol)
         if protection == "resolved_by_fill":
@@ -6487,6 +6860,22 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
 
     async def _evaluate_v2_managed_exit(self, acct: str, symbol: str) -> None:
+        # The sync handover and quote consumer can now admit the same EOD leg.
+        # Span the existing read/ownership/submit awaits, not a per-day claim.
+        if not (getattr(self.settings, "oms_v2_eod_oco_transition_enabled", False)
+                and self._v2_eod_oco_transition_due()):
+            return await self._evaluate_v2_managed_exit_claimed(acct, symbol)
+        key = (acct, symbol)
+        inflight = self.__dict__.setdefault("_v2_eod_ladder_inflight", set())
+        if key in inflight:
+            return
+        inflight.add(key)
+        try:
+            await self._evaluate_v2_managed_exit_claimed(acct, symbol)
+        finally:
+            inflight.discard(key)
+
+    async def _evaluate_v2_managed_exit_claimed(self, acct: str, symbol: str) -> None:
         """Run the v2 exit ladder for one symbol on the latest quote. DECISION uses
         the live bid; FILL reference_price is the leg LEVEL (decision B — stop/floor/
         scale level) so live-paper agrees with the re-score by construction. Precedence
@@ -6714,6 +7103,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             # against the same shares -- the NXTC oversell, merely relocated. Fail-open
             # lives in the predicate: anything short of fresh broker confirmation runs
             # the ladder instead of skipping it.
+            self.__dict__.get("_cw_target_decisions", {}).pop(key, None)
             self._observe_v2_native_oco_high_bid(acct, symbol, quote)
             return
         if confirmation is None:
@@ -6781,6 +7171,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     )
                 return
 
+            if key in self.__dict__.get("_cw_target_decisions", {}):
+                # A peak captured during the read must not outrun a newer bound flip.
+                cw_flip_decision = self._fresh_cw_flip_decision(key)
             if (
                 cw_flip_decision is not None
                 and cw_flip_decision.managed_row_id != snapshot.managed_row_id
@@ -6833,6 +7226,19 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 return
 
             # Phase 2 — DECIDE (on-loop, pure): hydrate + ratchet off the snapshot.
+            if confirmation is None:
+                # Quote intake continues during the row read. Decide on its latest value.
+                quote = self._latest_quotes_by_symbol.get(symbol) or {}
+                received_at = quote.get("received_at")
+                if isinstance(received_at, datetime) and (
+                    utcnow() - received_at
+                ).total_seconds() * 1000 > float(
+                    getattr(self.settings, "oms_v2_exit_quote_max_age_ms", 5000)
+                ):
+                    return
+                bid = float(quote.get("bid") or 0)
+                if bid <= 0:
+                    return
             entry_price = snapshot.entry_price
             position = self._hydrate_v2_position(snapshot)
             position.update_price(bid)
@@ -6840,12 +7246,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if snapshot.dedup_active and (
                 cw_flip_decision is not None
                 or (self._cw_exit_enabled and bid <= entry_price * (1 - self._cw_stop_pct / 100))
+                or (self._cw_exit_enabled and self._cw_floor_exit_enabled
+                    and key in self._cw_floor_armed
+                    and bid <= cw_effective_floor(entry_price, self._cw_floor_pct, position.floor_price))
                 or self._cw_target_release_due(entry_price=entry_price, bid=bid)
             ):
                 expected_row_id = snapshot.managed_row_id
                 reason = (
                     "cw_flip" if cw_flip_decision is not None
                     else "cw_hard_stop" if bid <= entry_price * (1 - self._cw_stop_pct / 100)
+                    else "cw_floor" if self._cw_floor_exit_enabled and key in self._cw_floor_armed
                     else "bid_below_entry_minus_one_percent"
                 )
                 if await self._cancel_active_cw_target(
@@ -6987,6 +7397,18 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     flip_pending=flip_pending,
                     ratcheted_floor_price=position.floor_price,
                 )
+                target_decision = self._take_cw_target_decision(key, snapshot)
+                if target_decision is not None and self._native_oco_stand_down_active(acct, symbol):
+                    # Use the existing stand-down/explicit-flip release rules, not a bare return.
+                    native_oco_stand_down = True
+                if action == "target" and target_decision is None and key in self.__dict__.get(
+                    "_cw_quote_evaluating", set()
+                ):
+                    action = "hold"  # A quote worker never derives a new target from a DB read.
+                if target_decision is not None and action in {"hold", "target"}:
+                    action = "target"
+                else:
+                    target_decision = None
                 if native_oco_stand_down:
                     # The bracket continues to own target/stop outcomes. Only the explicit
                     # bar-close ATR flip may take ownership, after its exact OCO is released.
@@ -7055,6 +7477,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 else:  # target | floor | stop | flip -> full close
                     if action == "target":
                         ref, tag = entry_price * (1.0 + self._cw_target_pct / 100.0), "CW_TARGET"
+                        if target_decision is not None:
+                            ref = float(target_decision.reference_price)
                     elif action == "floor":
                         ref, tag = cw_effective_floor(
                             entry_price, self._cw_floor_pct, position.floor_price
@@ -7063,6 +7487,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         ref, tag = entry_price * (1.0 - self._cw_stop_pct / 100.0), "CW_HARD_STOP"
                     else:  # flip: full close at the current bid (trend exit)
                         ref, tag = bid, "CW_FLIP"
+                    decision_context = (
+                        self._cw_target_decision_context(target_decision)
+                        if target_decision is not None else None
+                    )
                     if tag in {"CW_TARGET", "CW_HARD_STOP", "CW_FLOOR", "CW_FLIP"} and self._is_v2_webull_account(acct):
                         # #4: THE SHARED PATH. The bracket owns target/stop while it rests
                         # (`native_oco_stand_down` returned above), so this is reached only with
@@ -7072,6 +7500,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         await self._webull_cw_exit_on_shared_path(
                             acct, symbol, tag=tag, ref=ref, bid=bid,
                             expected_row_id=snapshot.managed_row_id,
+                            decision_context=decision_context,
                         )
                         return
                     emit_outcome = await self._emit_v2_exit_on_loop(
@@ -7079,10 +7508,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         reference_price=ref, reason=f"oms_v2_managed_exit:{tag}",
                         bid=bid, close_on_fill=close_on_fill,
                         expected_managed_row_id=(
-                            snapshot.managed_row_id if native_oco_stand_down else ""
+                            snapshot.managed_row_id if native_oco_stand_down or target_decision else ""
                         ),
                         native_release_row_id=(
                             snapshot.managed_row_id if native_oco_stand_down else ""
+                        ),
+                        confirmation_context=decision_context or self._cw_exit_decision_context(
+                            acct, symbol, tag, ref, bid
                         ),
                     )
                     if native_oco_stand_down and emit_outcome not in {
@@ -7419,6 +7851,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         return _V2ManagedSnapshot(
             symbol=row.symbol,
             managed_row_id=str(row.id),
+            entry_order_id=str(row.entry_order_id or ""),
             entry_price=float(row.entry_price),
             current_quantity=int(row.current_quantity),
             entry_time=str(row.entry_time),
@@ -8978,7 +9411,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     Fill.symbol == symbol.upper(),
                     Fill.side == "sell",
                     Fill.quantity == Decimal(str(qty)),
-                    Fill.price == Decimal(str(detail.get("price"))),
+                    # PG Numeric(18,8) rounds the stored price; match that scale, not raw avg precision.
+                    Fill.price == Decimal(str(detail.get("price"))).quantize(
+                        Decimal("0.00000001"), rounding=ROUND_HALF_UP,
+                    ),
                 )
             ).all() if exit_coid and qty is not None else []
             if not any(
@@ -9153,7 +9589,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                                 Fill.broker_account_id == entry.broker_account_id,
                                 Fill.side == "sell", Fill.symbol == symbol.upper(),
                                 Fill.quantity == Decimal(str(detail["quantity"])),
-                                Fill.price == Decimal(str(detail["price"])),
+                                Fill.price == Decimal(str(detail["price"])).quantize(
+                                    Decimal("0.00000001"), rounding=ROUND_HALF_UP,
+                                ),
                             )
                         ) is not None
             except Exception:
@@ -9351,11 +9789,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if not allow_unconfirmed_overnight and not await self._v2_eod_handover_ready(
             acct, symbol, expected_managed_row_id
         ):
+            if reason == "oms_v2_managed_exit:CW_TARGET":
+                self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=confirmation_context or {},
+                    guards=[dict(name="_v2_eod_handover_ready", outcome="unconfirmed", elapsed_ms=None)],
+                    blocked_guard="_v2_eod_handover_ready")
             return "eod_handover_unconfirmed"
         # The decision instant: the caller decided to exit on THIS quote and awaited us
         # directly, so nothing has blocked yet — no session, no DB read, no broker call.
         # Everything downstream (session open, intent write, submit, record) trails this.
-        decided_at = datetime.now(UTC)
+        decided_at = _as_utc((confirmation_context or {}).get("cw_decided_at")) or utcnow()
         events: list = []
         pending_reject_alarm: _V2ExitRejectAlarm | None = None
         flatten_unavailable_row_id = ""
@@ -9383,6 +9825,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         row.id,
                     )
                     return "refused"
+                if not self._cw_target_binding_matches(row, confirmation_context):
+                    if reason == "oms_v2_managed_exit:CW_TARGET":
+                        self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=confirmation_context or {},
+                            guards=[dict(name="_cw_target_binding_matches", outcome="mismatch", elapsed_ms=None)],
+                            blocked_guard="_cw_target_binding_matches")
+                    return "refused"
                 if kind == "SCALE":
                     protective = self._is_protective_v2_exit(reason)
                     managed_sell = await self._emit_v2_managed_sell(
@@ -9391,6 +9839,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         decided_at=decided_at,
                     )
                     events = managed_sell
+                    if getattr(managed_sell, "ownership_refused", False):
+                        session.commit()
+                        return "refused"
                     reservation = getattr(managed_sell, "reservation", None)
                     if reservation is not None and reservation.outcome == "resolved_by_fill":
                         detail = self._exit_pair_fill_detail(reservation)
@@ -9405,12 +9856,20 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         return "refused"
                     else:
                         position.apply_scale(
-                            str(level or ""), int(sell_qty or 0), exit_price=reference_price
+                            str(level or ""),
+                            getattr(managed_sell, "submitted_quantity", None)
+                            if getattr(managed_sell, "submitted_quantity", None) is not None
+                            else int(sell_qty or 0),
+                            exit_price=reference_price,
                         )
                         # #6: fill-gate the scale quantity (write_quantity=False) — the scale fill
                         # decrements current_quantity; on submit persist only the ladder state.
                         self.store.update_managed_position_from_position(
-                            session, row, position, write_quantity=not close_on_fill
+                            session, row, position,
+                            write_quantity=not close_on_fill and (
+                                getattr(managed_sell, "submitted_quantity", None) is None
+                                or managed_sell.submitted_quantity == int(sell_qty or 0)
+                            ),
                         )
                         statuses = {
                             str(getattr(event.payload, "status", "")).strip().lower()
@@ -9455,6 +9914,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         confirmation_context=confirmation_context,
                     )
                     events = managed_sell
+                    if getattr(managed_sell, "ownership_refused", False):
+                        session.commit()
+                        return "refused"
                     key = (acct, symbol)
                     if getattr(managed_sell, "native_fill_row_id", ""):
                         session.commit()
@@ -9592,7 +10054,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                                 "closed" if "filled" in statuses else "close_submitted"
                             )
                         if resolved_oco is None:
-                            if close_on_fill:
+                            if close_on_fill or (
+                                getattr(managed_sell, "submitted_quantity", None) is not None
+                                and managed_sell.submitted_quantity < int(position.quantity)
+                            ):
                                 # #6: do NOT close on submit — the confirmed fill closes the row.
                                 # Persist price-state only; keep the position monitored/protected.
                                 self.store.update_managed_position_from_position(
@@ -9673,6 +10138,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self, request: OrderRequest
     ) -> OrderRequest | None:
         """Normalize one malformed confirmation close without creating a retry loop."""
+        if request.reason == "oms_v2_managed_exit:CW_TARGET":
+            return None  # Target-floor LIMITs must never be corrected into MARKET sells.
         metadata = dict(request.metadata)
         metadata["confirmation_corrected_retry"] = "true"
         metadata["confirmation_corrected_from_client_order_id"] = request.client_order_id
@@ -9743,6 +10210,89 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             and proof.intent_type == "close"
         )
 
+    async def _v2_managed_sell_owned_quantity(
+        self, *, managed_row_id: str, strategy_code: str,
+        broker_account_name: str, symbol: str, requested_quantity: int,
+        target_context: dict[str, str] | None = None,
+    ) -> int:
+        def read(session):
+            current = self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=symbol,
+            )
+            if (strategy_code != "schwab_1m_v2" or current is None
+                    or str(current.id) != managed_row_id
+                    or current.strategy_code != strategy_code):
+                return 0, None, "episode_or_owner_changed"
+            if not self._cw_target_binding_matches(current, target_context):
+                return 0, None, "target_binding_changed"
+            strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
+            account = session.scalar(select(BrokerAccount).where(
+                BrokerAccount.name == broker_account_name
+            ))
+            if strategy is None or account is None:
+                return 0, None, "missing_strategy_or_account"
+            owned = self.store.get_virtual_position(
+                session, strategy_id=strategy.id, broker_account_id=account.id, symbol=symbol,
+            )
+            return int(current.current_quantity), (
+                Decimal(owned.quantity) if owned is not None else None
+            ), ""
+
+        # Read after broker awaits, with a fresh off-loop session: the caller's ORM
+        # identity map and the quote's hydrated Position can both contain old quantities.
+        managed_quantity, ledger_quantity, refusal = await self._run_db(read, commit=False)
+        quantity = max(0, min(int(requested_quantity), managed_quantity))
+        if ledger_quantity is not None:
+            quantity = max(0, min(quantity, int(ledger_quantity)))
+        if refusal or quantity != requested_quantity or ledger_quantity is None:
+            self.logger.warning(
+                "[OMS-V2-EXIT-OWNED-QUANTITY] acct=%s sym=%s row=%s "
+                "requested=%s managed=%s ledger=%s sell=%s reason=%s",
+                broker_account_name, symbol, managed_row_id, requested_quantity,
+                managed_quantity, ledger_quantity, quantity,
+                refusal or ("managed_only_no_ledger" if ledger_quantity is None
+                            else "own_quantity_cap"),
+            )
+        return quantity
+
+    @staticmethod
+    def _cw_target_prepare_observation(context):
+        if not context or "cw_target_prepare_ms" not in context:
+            return []
+        try:
+            elapsed = float(context["cw_target_prepare_ms"])
+        except (ValueError, TypeError):
+            elapsed = None
+        return [{"name": "_prepare_confirmation_webull_leg",
+                 "elapsed_ms": elapsed,
+                 "outcome": context.get("cw_target_prepare_outcome")}]
+
+    def _log_cw_target_attempt(self, **values):
+        try:
+            if values.get("request") is None:
+                values["metadata"] = dict(values["metadata"])
+                _stamp_managed_exit_session(values["metadata"])
+            self.logger.info("[OMS-V2-CW-TARGET-EXIT] %s",
+                             json.dumps(target_exit_receipt(**values), sort_keys=True))
+        except Exception:
+            pass  # Observability must never change an order, refusal, or original exception.
+
+    async def _submit_cw_target_order(self, request, guards):
+        request.metadata["cw_submitted_at"] = utcnow().isoformat(timespec="microseconds")
+        identity = dict(request=request, account=request.broker_account_name, symbol=request.symbol,
+                        metadata=request.metadata, guards=guards)
+        try:
+            reports = await self.broker_adapter.submit_order(request)
+        except BaseException as exc:
+            self._log_cw_target_attempt(**identity, error_type=type(exc).__name__)
+            raise
+        try:
+            received_at = utcnow()  # Before report recording/DB work: local adapter-result receipt.
+            self._log_cw_target_attempt(**identity, reports=reports, received_at=received_at)
+        except Exception:
+            pass
+        return reports
+
     async def _emit_v2_managed_sell(
         self,
         session: Session,
@@ -9761,14 +10311,21 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         construction invariant that pins routing to the simulated adapter
         (paper-isolation; proven by test_v2_exit_paper_isolation).
 
-        Extended-hours routing (2026-07-05): in RTH the order stays MARKET/NORMAL
-        (byte-identical). In extended hours a MARKET order cannot fill, so route a
+        CW_TARGET uses a target-floor LIMIT in every session. Protective exits in
+        RTH remain MARKET/NORMAL. In extended hours a MARKET order cannot fill, so route a
         LIMIT with session=AM|PM off the live ``bid``: protective legs (hard-stop /
         floor, intent_type="close") price a MARKETABLE buffered limit so they
         reliably cross the spread; scale partials price AT the bid (patient). The
         leg-level ``reference_price`` is left unchanged so the [OMS-V2-MANAGED-EXIT]
         log and the live-paper re-score stay identical; ``limit_price`` drives the
         live order (adapter prefers limit_price, falls back to reference_price)."""
+        if row.strategy_code != "schwab_1m_v2":
+            self.logger.warning(
+                "[OMS-V2-EXIT-OWNED-QUANTITY] acct=%s sym=%s row=%s "
+                "sell=0 reason=foreign_managed_strategy",
+                row.broker_account_name, row.symbol, row.id,
+            )
+            return _ManagedSellEvents(ownership_refused=True)
         strategy = session.scalar(select(Strategy).where(Strategy.code == row.strategy_code))
         broker_account = session.scalar(
             select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
@@ -9779,25 +10336,49 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 row.strategy_code, row.broker_account_name,
             )
             return _ManagedSellEvents()
+        is_target = reason == "oms_v2_managed_exit:CW_TARGET"
+        target_guards = self._cw_target_prepare_observation(confirmation_context) if is_target else []
+        target_identity = dict(account=row.broker_account_name, symbol=row.symbol,
+                               metadata=confirmation_context or {}, guards=target_guards)
         reservation: ExitPairReleaseResult | None = None
         protective = self._is_protective_v2_exit(reason)
         # Resolve the actual broker state before creating a durable intent. A broker-filled pair
         # always suppresses the redundant sell. Unresolved profit-taking waits; protective exits
         # continue so uncertainty cannot disable the hard stop or another safety close.
         if bool(getattr(self.settings, "oms_v2_exit_release_reservation_enabled", False)):
+            release_started = time.monotonic() if is_target else None
             reservation = await self._release_exit_reservation_before_close(
                 session=session,
                 broker_account_name=row.broker_account_name,
                 symbol=row.symbol,
                 terminal_after_attempt=reason == "V2_OVERNIGHT_FLATTEN",
             )
+            if release_started is not None:
+                target_guards.append(dict(name="_release_exit_reservation_before_close",
+                    elapsed_ms=round((time.monotonic()-release_started)*1000, 3), outcome=reservation.outcome))
             self._sync_exit_release_incident(
                 session, row, reservation, reason=reason, protective=protective
             )
             if reservation.outcome == "resolved_by_fill" or (
                 reservation.outcome in {"reserved", "unanswerable"} and not protective
             ):
+                if is_target:
+                    self._log_cw_target_attempt(**target_identity, blocked_guard="_release_exit_reservation_before_close")
                 return _ManagedSellEvents(reservation=reservation)
+        owned_quantity_args = {
+            "managed_row_id": str(row.id), "strategy_code": row.strategy_code,
+            "broker_account_name": row.broker_account_name, "symbol": row.symbol,
+        }
+        # Release evidence belongs to this session. Finish its transaction before
+        # opening the independent reader, even if the ownership check refuses the sell.
+        session.commit()
+        quantity = await self._v2_managed_sell_owned_quantity(
+            **owned_quantity_args, requested_quantity=quantity, target_context=confirmation_context,
+        )
+        if quantity <= 0:
+            if is_target:
+                self._log_cw_target_attempt(**target_identity, blocked_guard="_v2_managed_sell_owned_quantity")
+            return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
         metadata = {
             "oms_v2_managed_exit": "true",
             "reference_price": f"{float(reference_price):.4f}",
@@ -9811,7 +10392,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             metadata.update(confirmation_context)
         order_type = "market"
         session_code = _stamp_managed_exit_session(metadata)
-        if session_code != "NORMAL" and bid and bid > 0:
+        if reason == "oms_v2_managed_exit:CW_TARGET":
+            # Ceiling on the wire grid: nearest rounding can sell below the target.
+            target = Decimal(str(reference_price))
+            routed = format(target_limit_price(target), "f")
+            order_type = "limit"
+            metadata.update(order_type="limit", limit_price=routed, price_source="target_floor")
+        elif session_code != "NORMAL" and bid and bid > 0:
             if intent_type == "scale":
                 routed = _format_limit_price(bid)  # profit-taking: at the bid, zero buffer
             else:  # "close" = hard-stop / floor: buffered marketable limit that must fill
@@ -9880,7 +10467,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             row.broker_account_name, row.symbol, request.client_order_id,
             metadata["session"], _extended_hours_session() or "NORMAL",
         )
-        reports = await self.broker_adapter.submit_order(request)
+        if metadata.get("cw_decided_at") and not is_target:
+            request.metadata["cw_submitted_at"] = utcnow().isoformat(timespec="microseconds")
+            self.logger.info(
+                "[OMS-V2-CW-SUBMISSION] acct=%s sym=%s decided_at=%s submitted_at=%s",
+                row.broker_account_name, row.symbol,
+                metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
+            )
+        reports = (await self._submit_cw_target_order(request, target_guards) if is_target
+                   else await self.broker_adapter.submit_order(request))
         events = await self._record_order_reports(
             session=session, intent=intent, strategy_id=strategy.id,
             broker_account_id=broker_account.id, intent_event=event,
@@ -9900,9 +10495,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             # Preserve the refused attempt before an independent readback/recovery transaction.
             session.commit()
             if await self._reserve1_original_close_rejected(request, reports):
+                retry_release_started = time.monotonic() if is_target else None
                 release = await self._release_native_oco_for_cw_flip(
                     row.broker_account_name, row.symbol, expected_row_id=str(row.id),
                 )
+                if retry_release_started is not None:
+                    target_guards.append(dict(name="_release_native_oco_for_cw_flip",
+                        elapsed_ms=round((time.monotonic()-retry_release_started)*1000, 3), outcome=release))
                 if release == "resolved_by_fill":
                     return _ManagedSellEvents(events, native_fill_row_id=str(row.id))
                 current = await self._run_db(
@@ -9913,7 +10512,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 )
                 if (release == "released" and current is not None
                         and current.managed_row_id == str(row.id)
-                        and current.current_quantity == quantity and not current.dedup_active):
+                        and current.current_quantity == row.current_quantity
+                        and not current.dedup_active
+                        and await self._v2_managed_sell_owned_quantity(
+                            **owned_quantity_args, requested_quantity=quantity, target_context=confirmation_context,
+                        ) == quantity):
                     retry_request = replace(
                         request, client_order_id=self._replacement_client_order_id(
                             request.client_order_id
@@ -9926,7 +10529,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         row.symbol, row.broker_account_name, request.client_order_id,
                         retry_request.client_order_id,
                     )
-                    retry_reports = await self.broker_adapter.submit_order(retry_request)
+                    retry_reports = (await self._submit_cw_target_order(retry_request, target_guards) if is_target
+                                     else await self.broker_adapter.submit_order(retry_request))
                     terminal_events = await self._record_order_reports(
                         session=session, intent=intent, strategy_id=strategy.id,
                         broker_account_id=broker_account.id, intent_event=event,
@@ -9945,6 +10549,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             and self._webull_confirmation_close_can_retry_corrected(reports)
         ):
             corrected_request = self._corrected_webull_confirmation_close_request(request)
+            if corrected_request is not None:
+                # Preserve the first refusal before the new reader or retry can fail.
+                session.commit()
+                if await self._v2_managed_sell_owned_quantity(
+                    **owned_quantity_args, requested_quantity=quantity,
+                ) != quantity:
+                    corrected_request = None
             if corrected_request is not None:
                 corrected_reports = await self.broker_adapter.submit_order(corrected_request)
                 terminal_events = await self._record_order_reports(
@@ -9983,6 +10594,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             events,
             reservation=reservation,
             terminal_events=terminal_events,
+            submitted_quantity=quantity,
         )
 
     async def _has_active_native_stop_guard_order(
@@ -10602,6 +11214,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             # minimum age holds a fresh fill through the settlement window; a genuinely stale
             # unbacked row is still cleared once the bound expires.
             deferred: list[tuple[UUID, str, Decimal, float]] = []
+            momentum_mismatches: list[tuple[UUID, str, Decimal]] = []
             clear_min_age_seconds = max(
                 0.0,
                 float(
@@ -10619,10 +11232,21 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 minimum_age_seconds=clear_min_age_seconds,
                 observed_at=utcnow(),
                 deferred_out=deferred,
+                momentum_mismatch_out=momentum_mismatches,
             )
             wbquiet_shadow.note_consumed(
                 [name for aid, name in accounts if aid in account_ids], "virtual_clear",
             )
+            if momentum_mismatches:
+                account_names = {account_id: name for account_id, name in accounts}
+                detail = ", ".join(
+                    f"{account_names.get(account_id, account_id)}:{symbol}={quantity}"
+                    for account_id, symbol, quantity in momentum_mismatches[:16]
+                )
+                self.logger.critical(
+                    "[MOMLIVE1-OWNED-BACKING-MISMATCH] count=%d retained_owned=1 "
+                    "snapshot_zero_is_not_exit=1: %s", len(momentum_mismatches), detail,
+                )
             if deferred:
                 account_names = {account_id: name for account_id, name in accounts}
                 detail = ", ".join(
@@ -10695,6 +11319,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # v2-primary buy-open FILLS observed this sync, then fire the async Webull mirror AFTER
         # the session closes (submit_order is async and must not run inside the DB session).
         # `record_fill_if_needed` is idempotent, so each real fill lands here exactly once.
+        from project_mai_tai.oms.webull_order_identity import IdentityEvidence
+
+        identity_evidence = []
         mirror_fill_candidates: list = []
         with self.session_factory() as session:
             if account_names is None:
@@ -10737,6 +11364,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     continue
                 strategy = strategy_lookup.get(order.strategy_id)
 
+                if strategy is not None and strategy.code == "momentum_warn_live":
+                    continue  # The owned actor, not generic refresh/resubmit, reconciles these orders.
+
                 request = OrderRequest(
                     client_order_id=order.client_order_id,
                     broker_account_name=account.name,
@@ -10756,6 +11386,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 if report is None:
                     continue
 
+                if account.provider == "webull":
+                    identity = IdentityEvidence.from_report(
+                        order.id, account.name, order.client_order_id, order.symbol,
+                        order.side, report, "order_sync",
+                    )
+                    if identity is not None and identity.broker_order_id != order.broker_order_id:
+                        identity_evidence.append(identity)
                 previous_status = order.status
                 # Section 82 increment 1: a venue status/detail response may omit the
                 # request metadata.  The durable order payload is authoritative for the
@@ -11106,6 +11743,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             session.commit()
 
+        self._queue_webull_order_identities(identity_evidence)
+
         for order_event in published_events:
             await self._publish_order_event(order_event)
 
@@ -11126,6 +11765,37 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             "orders": synced_orders,
             "terminal_orders": terminal_orders,
         }
+
+    def _queue_webull_order_identities(self, evidence) -> None:
+        if not evidence:
+            return
+        from project_mai_tai.oms.webull_order_identity import IdentityWriter
+
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            owned_loop = self.__dict__.get("_webull_identity_loop")
+            if owned_loop is not None and loop is not owned_loop:
+                owned_loop.call_soon_threadsafe(self._queue_webull_order_identities, evidence)
+                return
+            if loop is None:
+                self.logger.error("[WBNULLID1] result=event_loop_unavailable count=%s", len(evidence))
+                return
+            self._webull_identity_loop = loop
+            writer = self.__dict__.get("_webull_identity_writer")
+            if writer is None:
+                writer = IdentityWriter(self.session_factory, self._rpg_owns_old_order)
+                self._webull_identity_writer = writer
+            writer.offer(evidence)
+        except Exception:
+            self.logger.exception("[WBNULLID1] result=enqueue_failed count=%s", len(evidence))
+
+    async def _drain_webull_order_identities(self) -> None:
+        writer = self.__dict__.get("_webull_identity_writer")
+        if writer is not None:
+            await writer.drain()
 
     def _terminalize_orphaned_active_intents(
         self,
@@ -11275,6 +11945,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             "ask": float(event.payload.ask_price),
             "received_at": self._event_time(event),
         }
+        live_dispatch = self.__dict__.get("_momentum_live_quote_dispatch")
+        if live_dispatch is not None:
+            live_dispatch.on_quote(symbol)
+        if self._market_is_fillable():
+            for acct in self._v2_accounts():
+                if (acct, symbol) in self._managed_v2_symbols:
+                    self._capture_cw_target_decision(acct, symbol, self._latest_quotes_by_symbol[symbol])
         if self._armed_hard_stops:
             await self._evaluate_hard_stop_market_event(symbol)
         await self._cancel_drifted_working_orders(symbol)
@@ -11297,11 +11974,21 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if not accounts:
             return
 
-        async def _evaluate_leg(acct: str) -> None:
+        for acct in accounts:
+            self._schedule_v2_quote_leg(acct, symbol)
+
+    def _schedule_v2_quote_leg(self, acct: str, symbol: str) -> None:
+        if (acct, symbol) not in self._managed_v2_symbols or not self._market_is_fillable():
+            return
+
+        async def _evaluate_leg() -> None:
             started = time.monotonic()
+            quote_workers = self.__dict__.setdefault("_cw_quote_evaluating", set())
+            quote_workers.add((acct, symbol))
             try:
                 await self._evaluate_v2_managed_exit(acct, symbol)
             finally:
+                quote_workers.discard((acct, symbol))
                 elapsed_ms = (time.monotonic() - started) * 1000
                 log = self.logger.warning if elapsed_ms >= 250 else self.logger.debug
                 log(
@@ -11309,12 +11996,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     acct, symbol, elapsed_ms, elapsed_ms >= 250,
                 )
 
-        results = await asyncio.gather(
-            *(_evaluate_leg(acct) for acct in accounts), return_exceptions=True
+        # One worker per leg; slow row/protection work cannot stop stream intake.
+        self._schedule_symbol_tick_work(
+            ("managed-exit", (acct, symbol)), _evaluate_leg
         )
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
 
     async def _handle_trade_tick_event(self, event: TradeTickEvent) -> None:
         symbol = str(event.payload.symbol).upper()
@@ -11691,7 +12376,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 self._v2_rth_edge_bracket_last_try[key] = now
                 self._v2_rth_edge_bracket_attempts[key] = attempts + 1
                 try:
-                    await self._emit_v2_rth_edge_bracket(
+                    armed = await self._emit_v2_rth_edge_bracket(
                         acct=acct, symbol=symbol, edge_et=edge, rearm=rearm
                     )
                 except Exception:
@@ -11701,7 +12386,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         acct, symbol, attempts + 1,
                     )
                 else:
-                    self._v2_rth_edge_bracket_done.add(key)
+                    if armed is False:
+                        # A Webull reservation/ownership deferral placed nothing. Preserve
+                        # the attempt budget so an eventual release can still be protected.
+                        self._v2_rth_edge_bracket_attempts[key] = attempts
+                        self._v2_rth_edge_bracket_last_try.pop(key, None)
+                    else:
+                        self._v2_rth_edge_bracket_done.add(key)
 
     def _v2_stand_down_rearm_due(self, acct: str, symbol: str, *, now: datetime) -> bool:
         """True when a bracket CLEARED on a position we still hold — the re-arm case (#646 Part 3).
@@ -11731,9 +12422,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
     async def _emit_v2_rth_edge_bracket(
         self, *, acct: str, symbol: str, edge_et: datetime, rearm: bool = False
-    ) -> None:
+    ) -> bool | None:
         """Place the exit-only OCO for one still-held pre-market position. Raises on failure so the
         caller can count the attempt and leave the software exit in charge."""
+        if self._is_v2_webull_account(acct):
+            return await self._emit_v2_rth_edge_webull_protection(
+                acct=acct, symbol=symbol, edge_et=edge_et, rearm=rearm
+            )
         events: list = []
         with self.session_factory() as session:
             row = self.store.get_open_managed_position(
@@ -11847,6 +12542,61 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             session.commit()
         for ev in events:
             await self._publish_order_event(ev)
+
+    async def _emit_v2_rth_edge_webull_protection(
+        self, *, acct: str, symbol: str, edge_et: datetime, rearm: bool = False
+    ) -> bool:
+        """Reuse the bare-fill attach, including its episode binding and durable pair handle."""
+        key = (acct, symbol.upper())
+        with self.session_factory() as session:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if (row is None or row.strategy_code != "schwab_1m_v2"
+                    or int(row.current_quantity) <= 0 or float(row.entry_price) <= 0):
+                return True
+            entry_time = row.entry_time
+            if entry_time is not None and entry_time.tzinfo is None:
+                entry_time = entry_time.replace(tzinfo=UTC)
+            if not rearm and entry_time is not None and entry_time >= edge_et.astimezone(UTC):
+                return True
+            account = session.scalar(select(BrokerAccount).where(BrokerAccount.name == acct))
+            entry = self._find_oco_entry_order(session, acct, symbol, row=row)
+            if account is None or account.provider != "webull" or entry is None:
+                return False
+            if self.store.get_open_exit_reserved_quantity(
+                session, broker_account_id=account.id, symbol=symbol,
+                include_native_stop_guard=False,
+            ) > 0:
+                self.logger.info(
+                    "[OMS-V2-RTH-EDGE-BRACKET] %s %s deferred: software exit reserves shares",
+                    acct, symbol,
+                )
+                return False
+            # Webull has no armed-OCO reader. A known pair must never be duplicated, even
+            # while its durable handle write is pending or its ownership is unanswerable.
+            base = self._oco_exit_base_for_entry(entry, broker_account_name=acct, symbol=symbol)
+            known = base or self.__dict__.get("_webull_protect_base", {}).get(key)
+            state = dict(entry.payload or {}).get(self._WEBULL_PROTECT_STATE_KEY)
+            if known:
+                if not base:
+                    return False
+                if state != "released":
+                    return True
+            spec = dict(
+                broker_account_name=acct, symbol=symbol, quantity=int(row.current_quantity),
+                entry_price=float(row.entry_price), strategy_code=row.strategy_code,
+                entry_client_order_id=entry.client_order_id,
+            )
+        # Close the read session before the attach's separate binding/persistence transactions.
+        self._exit_reservation_released.discard(key)
+        self._clear_exit_reservation_retry_state(key)
+        task = self._spawn_webull_protection(**spec)
+        if task is None:
+            return False
+        if not await asyncio.shield(task):
+            raise RuntimeError(f"Webull edge attach failed for {acct} {symbol}")
+        return True
 
     def _latest_filled_entry_order_id(self, session, acct: str, symbol: str) -> str | None:
         """Compatibility name: address only this managed row's bound broker parent."""
@@ -12284,11 +13034,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     "[OMS-V2-EOD-OCO-TRANSITION] %s %s outcome=UNKNOWN reason=row_unreadable",
                     acct, symbol,
                 )
+                await self._page_v2_eod_handover_unreadable(acct, symbol)
                 continue
             if snapshot is None:
                 self._managed_v2_symbols.discard((acct, symbol))
                 continue
             if self._v2_eod_oco_transition_rows.get(key) == snapshot.managed_row_id:
+                await self._evaluate_v2_managed_exit(acct, symbol)
                 continue
             retry_key = (key, snapshot.managed_row_id)
             last_try = self.__dict__.setdefault("_v2_eod_oco_last_try", {}).get(retry_key)
@@ -12366,6 +13118,33 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "[OMS-V2-EOD-OCO-TRANSITION] %s %s row=%s broker_legs=CONFIRMED_GONE "
                 "software_exit=ENABLED",
                 acct, symbol, snapshot.managed_row_id,
+            )
+            # Intake stood down while the broker pair owned this quote. After confirmed
+            # handover, use the existing bound/fresh capture, never bypass its admission.
+            quote = self._latest_quotes_by_symbol.get(symbol)
+            if quote:
+                self._capture_cw_target_decision(acct, symbol, quote)
+            await self._evaluate_v2_managed_exit(acct, symbol)
+
+    async def _page_v2_eod_handover_unreadable(self, acct: str, symbol: str) -> None:
+        def _write(session: Session) -> None:
+            row = self.store.get_open_managed_position(
+                session, broker_account_name=acct, symbol=symbol
+            )
+            if row is None or row.strategy_code != "schwab_1m_v2":
+                return  # No independently readable owner: never invent an incident binding.
+            self._sync_v2_eod_release_incident(
+                session, acct, symbol, str(row.id), ExitPairReleaseResult(outcome="unanswerable")
+            )
+
+        try:
+            await self._run_db(_write, commit=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception(
+                "[OMS-V2-EOD-OCO-TRANSITION] %s %s row_unreadable incident=WRITE_FAILED "
+                "software_sell=BLOCKED; retrying next sync", acct, symbol,
             )
 
     async def _v2_eod_handover_ready(
@@ -13064,7 +13843,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 )
 
     async def _broker_symbol_position_state(
-        self, broker_account_name: str, symbol: str
+        self, broker_account_name: str, symbol: str,
+        *, quantity_out: dict[str, Decimal | None] | None = None,
     ) -> _PositionRead:
         """Fresh broker read -> FLAT | HELD | UNKNOWN. Only a POSITIVE confirmation is FLAT.
 
@@ -13076,6 +13856,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
         Also logs every read (Fix 0 of the design): the 07-15 root cause could only ever be
         INFERRED because nothing recorded what the broker actually returned."""
+        if quantity_out is not None:
+            quantity_out["quantity"] = None
         try:
             positions = await self.broker_adapter.list_account_positions(broker_account_name)
         except asyncio.CancelledError:
@@ -13088,7 +13870,23 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return _PositionRead.UNKNOWN
         # Shape decision delegated to the shared pure classifier so the live stop path and the
         # settlement probe can never disagree about what a read MEANS.
-        state = self._classify_position_read(positions, symbol)
+        if quantity_out is not None:
+            # Optional output reuses this fresh read; never infer ownership from
+            # the total or issue a second provider read to recover its quantity.
+            matches = [p for p in positions or []
+                       if getattr(p, "broker_account_name", None) == broker_account_name
+                       and str(getattr(p, "symbol", "")).upper() == str(symbol).upper()]
+            state = _PositionRead.FLAT_INFERRED if not matches else _PositionRead.UNKNOWN
+            if len(matches) == 1:
+                try:
+                    quantity = Decimal(str(matches[0].quantity))
+                    if quantity.is_finite():
+                        quantity_out["quantity"] = quantity
+                        state = self._classify_position_read(matches, symbol)
+                except (AttributeError, TypeError, ValueError, ArithmeticError):
+                    state = _PositionRead.UNKNOWN
+        else:
+            state = self._classify_position_read(positions, symbol)
         self.logger.info(
             "[RECONCILE-READ] acct=%s sym=%s result=%s (n=%d)",
             broker_account_name, symbol, state.value.upper(), len(positions or []),
@@ -15652,6 +16450,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         return published_events
 
     def _should_refresh_working_order(self, order: BrokerOrder) -> bool:
+        if (order.payload or {}).get("momlive_strategy") == "momentum_warn_live":
+            return False
         refresh_after = self._refresh_after_seconds(order)
         last_activity = order.updated_at or order.submitted_at
         if last_activity is None:
@@ -16015,6 +16815,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                             await self._cancel_drifted_working_orders(key[1])
                         elif key[0] == "legacy-mirror":
                             self._schedule_webull_mirror_tick(key[1])
+                        elif key[0] == "managed-exit":
+                            self._schedule_v2_quote_leg(*key[1])
         tasks[key] = asyncio.create_task(execute())
         return True
 
@@ -16163,6 +16965,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         }
         candidates: list[_DriftCancelCandidate] = []
         for order in orders:
+            if (order.payload or {}).get("momlive_strategy") == "momentum_warn_live":
+                continue
             if order.intent_id is None:
                 continue
             if quote is None:
@@ -17432,8 +18236,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         symbol: str,
     ) -> str | None:
         """Dual-broker fan-out collision guard (mirrors the mirror-on-fill guard). Returns a reason
-        string if the shared Webull account already holds this symbol armed / managed / at the
-        broker (never fight ORB or a prior un-flat leg), else None to proceed."""
+        string for an armed / managed / strategy-owned position, not operator holdings
+        in the broker-total book (never fight ORB or a prior un-flat leg)."""
         armed_here = any(
             st.broker_account_name == broker_account_name and st.symbol == symbol
             for st in self._armed_hard_stops.values()
@@ -17447,8 +18251,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             is not None
         ):
             return "fanout_webull_collision_managed"
-        held_qty = self.store.get_account_position_qty_by_name(
-            session, broker_account_name=broker_account_name, symbol=symbol
+        from project_mai_tai.oms.webull_owned_positions import bot_owned_quantity
+
+        held_qty = bot_owned_quantity(
+            session, account_name=broker_account_name, symbol=symbol
         )
         if held_qty != 0:
             return "fanout_webull_collision_held"
@@ -17508,6 +18314,22 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return [self._build_rejected_event(
                 fallback_event, fallback_intent.id, reason="broker_position_unreadable"
             )]
+        if broker_account.provider == "webull" and available_quantity > 0:
+            from project_mai_tai.oms.webull_owned_positions import fallback_sell_quantity
+
+            available_quantity = fallback_sell_quantity(
+                session, strategy_id=strategy.id, account_id=broker_account.id,
+                symbol=original_event.payload.symbol,
+                requested=min(original_event.payload.quantity, original_request.quantity),
+                broker_available=available_quantity,
+            )
+            if available_quantity <= 0:
+                self.logger.warning(
+                    "[WBHOLD1] symbol=%s account=%s reason=fallback_no_owned_shares "
+                    "original_coid=%s sell_submitted=0",
+                    original_event.payload.symbol, broker_account.name,
+                    original_request.client_order_id,
+                )
         if available_quantity <= 0:
             return []
 

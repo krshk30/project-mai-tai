@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly SEC-index country preparation, Saturday morning ET
+
+[Timer]
+OnCalendar=Sat *-*-* 01:00:00 America/New_York
+Persistent=false
+AccuracySec=1s
+Unit=project-mai-tai-momlive-sec.service
+
+[Install]
+WantedBy=timers.target

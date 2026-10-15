@@ -167,10 +167,30 @@ def test_consumed_resting_slot_blocks_only_the_webull_half_of_the_eh_cross() -> 
     state.resting_level = 5.0
     state.bars.append(_bar(5.0, SEGMENT))
 
-    primary = strategy._eh_resting_cross_check(state, _quote(5.1))
+    primary = strategy._eh_resting_cross_check(state, _quote(5.01))
 
     assert primary is not None
     assert primary.metadata["fanout_slot"] == "resting"
+    assert strategy.drain_webull_fanout_intents() == []
+
+
+def test_consumed_webull_slot_past_band_rest_keeps_primary_cross_available(caplog) -> None:
+    strategy, state = _strategy()
+    _consume(strategy, state, source="eh_resting")
+    strategy._entries_held = False
+    strategy._eh_resting_enabled = True
+    strategy._resting_max_bar_age_ms = 300_000
+    strategy._resting_session_is_eh = lambda now=None: True
+    state.resting_active = True
+    state.resting_level = 5.0
+    state.bars.append(_bar(5.0, SEGMENT))
+    with caplog.at_level(logging.INFO):
+        assert strategy._eh_resting_cross_check(state, _quote(5.1)) is None
+    assert state.resting_active and state.resting_flip_ms == 0
+    assert strategy.drain_webull_fanout_intents() == []
+    assert "source=rest_quote latch_taken=0" in caplog.text
+    primary = strategy._eh_resting_cross_check(state, _quote(5.01))
+    assert primary is not None and primary.metadata["fanout_slot"] == "resting"
     assert strategy.drain_webull_fanout_intents() == []
 
 

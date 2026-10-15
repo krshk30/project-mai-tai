@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 import asyncio
 import inspect
 import json
 import logging
+import math
 import time
 from collections.abc import Callable, Iterable
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 
 from massive.exceptions import BadResponse
 
@@ -16,7 +20,10 @@ from project_mai_tai.market_data.models import (
     SnapshotRecord,
     TradeTickRecord,
     LiveBarRecord,
+    MomentumWarningAggregateRecord,
 )
+from project_mai_tai.strategy_core.time_utils import is_fillable_et_session
+from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +96,22 @@ class MassiveSnapshotProvider:
 
     def fetch_all_snapshots(self) -> list[SnapshotRecord]:
         client = self._get_rest_client()
-        snapshots = client.get_snapshot_all("stocks", include_otc=False)
-        return [self._normalize_snapshot(snapshot) for snapshot in snapshots if getattr(snapshot, "ticker", None)]
+        diagnostics = getattr(self, "stage_diagnostics", None)
+        if diagnostics is None:
+            snapshots = client.get_snapshot_all("stocks", include_otc=False)
+            return [self._normalize_snapshot(snapshot) for snapshot in snapshots if getattr(snapshot, "ticker", None)]
+        # One wrapper on our existing SDK instance; other requests pass through.
+        if getattr(self, "_diagnostic_client", None) is not client:
+            original_decode = client._decode
+            def decode(response):
+                if diagnostics.in_snapshot_fetch():
+                    return diagnostics.sync("snapshot_json_decode", original_decode, response)
+                return original_decode(response)
+            client._decode = decode
+            self._diagnostic_client = client
+        snapshots = diagnostics.sync("snapshot_sdk_fetch_parse", client.get_snapshot_all, "stocks", include_otc=False)
+        return diagnostics.sync("snapshot_normalize", lambda: [
+            self._normalize_snapshot(snapshot) for snapshot in snapshots if getattr(snapshot, "ticker", None)])
 
     def get_grouped_daily_multi(self, days: int = 20) -> dict[str, list[float]]:
         client = self._get_rest_client()
@@ -318,6 +339,114 @@ class MassiveTradeStream:
         self._on_agg: Callable[[LiveBarRecord], None] | None = None
         self._provider_aggregate_subscriptions_enabled = bool(enable_aggregate_subscriptions)
         self._aggregate_subscriptions_allowed = True
+        self._warning_trade_symbols: set[str] = set()
+        self._warning_aggregates_enabled = False
+        self._warning_wildcard_used = False
+        self._warning_failed = False
+        self._warning_reconnect_pending = False
+        self._on_warning_aggregate: Callable[[MomentumWarningAggregateRecord], None] | None = None
+        self._on_warning_revert: Callable[[str], None] | None = None
+        self._on_warning_window_close: Callable[[], None] | None = None
+        self._momentum_warning_window = MomentumValidationWindow()
+
+    def configure_momentum_warning(self, on_aggregate, on_revert, on_window_close=None, *, window=None, log_only=False) -> None:
+        self._warning_log_only = log_only
+        self._on_warning_aggregate = on_aggregate
+        self._on_warning_revert = on_revert
+        self._on_warning_window_close = on_window_close
+        if window is not None:
+            self._momentum_warning_window = window
+
+    def _warning_window_is_open(self) -> bool:
+        now = datetime.now(UTC)
+        end = self._momentum_warning_window.gateway_end_for(now.date())
+        return is_fillable_et_session(now, 4, end.hour, end_minute=end.minute)
+
+    async def set_momentum_warning_aggregates(self, enabled: bool) -> bool:
+        if not enabled:
+            self._warning_reconnect_pending = False
+            self._close_warning_window()
+            return False
+        if self._warning_failed or self._on_warning_aggregate is None:
+            return False
+        if not self._warning_window_is_open():
+            self._close_warning_window()
+            return False
+        if self._ws is None or not self._connected:
+            return False
+        if hasattr(self._ws, "websocket") and self._ws.websocket is None:
+            return False
+        if not self._warning_aggregates_enabled:
+            if self._aggregate_subscriptions_enabled:
+                raise ValueError("warning wildcard cannot share the legacy explicit A bar route")
+            self._ws.subscribe("A.*")
+            self._warning_aggregates_enabled = True
+            self._warning_wildcard_used = True
+        return True
+
+    def _close_warning_window(self) -> None:
+        if not self._warning_aggregates_enabled:
+            return
+        try:
+            if self._ws is not None:
+                self._ws.unsubscribe("A.*")
+        except Exception:
+            self._revert_warning("unsubscribe_error")
+            return
+        self._warning_aggregates_enabled = False
+        if self._on_warning_window_close is not None:
+            self._on_warning_window_close()
+
+    def _revert_warning(self, reason: str) -> None:
+        if getattr(self, "_warning_log_only", False):
+            if self._on_warning_revert is not None:
+                self._on_warning_revert(reason)
+            # A replacement socket must restore intent, not the old socket's state.
+            if reason in {"disconnect", "policy_1008", "provider_error"}:
+                self._warning_reconnect_pending = self._warning_aggregates_enabled or self._warning_reconnect_pending
+                self._warning_aggregates_enabled = False
+            return
+        from project_mai_tai.market_data.momwarn_pause_policy import classify_reason
+
+        recoverable = classify_reason(reason) == "monitor"
+        desired = self._warning_aggregates_enabled or self._warning_reconnect_pending
+        if self._on_warning_revert is None or (not desired and not self._warning_window_is_open()):
+            return
+        # Count actual connection failures even during a health pause; preserve
+        # the separate A intent so a health-paused feed is not eagerly restored.
+        self._warning_reconnect_pending = recoverable and desired
+        self._warning_failed = not recoverable
+        self._warning_aggregates_enabled = False
+        try:
+            if self._ws is not None:
+                self._ws.unsubscribe("A.*")
+        except Exception:
+            self._warning_failed = True
+            self._warning_reconnect_pending = False
+            reason = "unsubscribe_error"
+            logger.exception("Failed to unsubscribe warning A wildcard")
+        finally:
+            if self._on_warning_revert is not None:
+                self._on_warning_revert(reason)
+
+    async def sync_warning_trade_symbols(self, symbols: Iterable[str]) -> None:
+        desired = {symbol.upper() for symbol in symbols if raw_symbol_is_uppercase(symbol)}
+        self._validate_explicit_symbols(desired)
+        if len(desired) > 16:
+            raise ValueError("momentum-warning T owner exceeds cap16")
+        old_trades = self._subscriptions | self._warning_trade_symbols
+        new_trades = self._subscriptions | desired
+        if self._ws is not None and self._connected:
+            if removed := old_trades - new_trades:
+                self._ws.unsubscribe(*[f"T.{s}" for s in sorted(removed)])
+            if added := new_trades - old_trades:
+                self._ws.subscribe(*[f"T.{s}" for s in sorted(added)])
+        self._warning_trade_symbols = desired
+
+    @staticmethod
+    def _validate_explicit_symbols(symbols: set[str]) -> None:
+        if any("*" in s or "." == s or "," in s or any(c.isspace() for c in s) for s in symbols):
+            raise ValueError("only explicit symbols allowed; no whole-market T/Q")
 
     async def start(
         self,
@@ -334,6 +463,7 @@ class MassiveTradeStream:
 
     async def stop(self) -> None:
         self._running = False
+        self._revert_warning("disconnect")
         await self._close_ws()
         if self._task is not None:
             self._task.cancel()
@@ -345,27 +475,34 @@ class MassiveTradeStream:
         self._coverage_started_at.clear()
 
     async def sync_subscriptions(self, symbols: Iterable[str]) -> None:
-        desired = {symbol.upper() for symbol in symbols if symbol}
+        desired = {symbol.upper() for symbol in symbols if raw_symbol_is_uppercase(symbol)}
+        self._validate_explicit_symbols(desired)
+        old_trades = self._subscriptions | self._warning_trade_symbols
+        new_trades = desired | self._warning_trade_symbols
         to_remove = self._subscriptions - desired
         to_add = desired - self._subscriptions
-        self._subscriptions = desired
-        for symbol in to_remove:
-            self._coverage_started_at.pop(symbol, None)
-
         if self._ws is None or not self._connected:
+            self._subscriptions = desired
+            for symbol in to_remove:
+                self._coverage_started_at.pop(symbol, None)
             return
 
         if to_remove:
-            self._ws.unsubscribe(*[f"T.{symbol}" for symbol in sorted(to_remove)])
+            if removed_trades := old_trades - new_trades:
+                self._ws.unsubscribe(*[f"T.{symbol}" for symbol in sorted(removed_trades)])
             self._ws.unsubscribe(*[f"Q.{symbol}" for symbol in sorted(to_remove)])
             if self._aggregate_subscriptions_enabled:
                 self._ws.unsubscribe(*[f"A.{symbol}" for symbol in sorted(to_remove)])
         if to_add:
-            self._ws.subscribe(*[f"T.{symbol}" for symbol in sorted(to_add)])
+            if added_trades := new_trades - old_trades:
+                self._ws.subscribe(*[f"T.{symbol}" for symbol in sorted(added_trades)])
             self._ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(to_add)])
             if self._aggregate_subscriptions_enabled:
                 self._ws.subscribe(*[f"A.{symbol}" for symbol in sorted(to_add)])
             self._mark_coverage_started(to_add)
+        self._subscriptions = desired
+        for symbol in to_remove:
+            self._coverage_started_at.pop(symbol, None)
 
     async def _run_loop(self) -> None:
         # We use the massive WebSocketClient's *async* connect() entrypoint
@@ -383,6 +520,9 @@ class MassiveTradeStream:
             try:
                 ws = self._build_client()
                 self._ws = ws
+                warning_only = self._warning_trade_symbols - self._subscriptions
+                if warning_only:
+                    ws.subscribe(*[f"T.{symbol}" for symbol in sorted(warning_only)])
                 if self._subscriptions:
                     ws.subscribe(*[f"T.{symbol}" for symbol in sorted(self._subscriptions)])
                     ws.subscribe(*[f"Q.{symbol}" for symbol in sorted(self._subscriptions)])
@@ -390,15 +530,37 @@ class MassiveTradeStream:
                         ws.subscribe(*[f"A.{symbol}" for symbol in sorted(self._subscriptions)])
                     self._mark_coverage_started(self._subscriptions)
                 self._connected = True
+                if self._warning_reconnect_pending and self._warning_window_is_open() and not self._warning_failed:
+                    # Only the desired A subscription returns on the replacement
+                    # client. Gateway acceptance still requires 3 clean reads.
+                    ws.subscribe("A.*")
+                    self._warning_aggregates_enabled = True
 
                 async def _async_processor(messages) -> None:
-                    self._handle_messages(messages)
+                    await self._process_messages(messages)
 
                 await ws.connect(_async_processor)
+                self._revert_warning("disconnect")
+                self._connected = False
+                await self._close_ws()
+                if self._running:
+                    await asyncio.sleep(5)
             except asyncio.CancelledError:
+                self._revert_warning("disconnect")
                 raise
             except Exception as exc:
                 self._connected = False
+                from websockets.exceptions import ConnectionClosed
+
+                # Parser/authentication/programming failures are not verified
+                # transport reconnects and must never become recoverable noise.
+                if isinstance(exc, ConnectionClosed):
+                    reason = "policy_1008" if self._is_policy_violation(exc) else "disconnect"
+                elif isinstance(exc, ConnectionError):
+                    reason = "disconnect"
+                else:
+                    reason = "provider_error"
+                self._revert_warning(reason)
                 await self._close_ws()
                 if self._downgrade_aggregate_subscriptions(exc):
                     continue
@@ -414,14 +576,64 @@ class MassiveTradeStream:
                 "The 'massive' package is required for live market-data streaming."
             ) from exc
 
-        return WebSocketClient(api_key=self.api_key, subscriptions=[])
+        # SDK-internal reconnects can silently restore A.* before our breaker sees
+        # a disconnect. The existing gateway loop remains the sole reconnect owner.
+        options = {"max_reconnects": 0, "raw": True} if self._on_warning_aggregate is not None else {}
+        return WebSocketClient(api_key=self.api_key, subscriptions=[], **options)
+
+    async def _process_messages(self, messages) -> None:
+        if isinstance(messages, (str, bytes)):
+            # Avoid the SDK's unbounded typed-model conversion before its callback.
+            # Preserve the websocket library's default 1MiB frame bound.
+            if len(messages) > 1024**2:
+                raise ValueError("provider frame exceeds websocket bound")
+            messages = await asyncio.to_thread(json.loads, messages)
+            if not isinstance(messages, list):
+                raise ValueError("provider frame must be an event list")
+        # Bound normalization/dispatch work per turn on the existing SDK socket.
+        for index in range(0, len(messages), 64):
+            batch = messages[index:index + 64]
+            if batch and isinstance(batch[0], dict):
+                from massive.websocket.models import Market, parse
+                statuses = [SimpleNamespace(**item) for item in batch if item.get("ev") == "status"]
+                self._handle_messages(statuses)
+                batch = parse(batch, logger, Market.Stocks)
+            self._handle_messages(batch)
+            await asyncio.sleep(0)
 
     def _handle_messages(self, messages) -> None:
         for message in messages:
             try:
                 event_type = getattr(message, "event_type", None) or getattr(message, "ev", None)
-                symbol = getattr(message, "symbol", None)
-                if not symbol or symbol not in self._subscriptions:
+                if event_type == "status" and getattr(message, "status", "") in {
+                    "error", "auth_failed", "not_authorized"
+                }:
+                    self._revert_warning("provider_error")
+                    continue
+                symbol = getattr(message, "symbol", None) or getattr(message, "sym", None)
+                if not raw_symbol_is_uppercase(symbol):
+                    continue
+                symbol = str(symbol).upper()
+
+                if event_type == "A" and self._warning_wildcard_used:
+                    # Pending wildcard frames after unsubscribe also stay isolated.
+                    if not self._warning_aggregates_enabled:
+                        continue
+                    if not self._warning_window_is_open():
+                        self._close_warning_window()
+                    else:
+                        if getattr(message, "otc", False):
+                            continue
+                        record = self._normalize_warning_aggregate(message, symbol)
+                        if record is None:
+                            self._revert_warning("invalid_aggregate")
+                        elif self._on_warning_aggregate is not None:
+                            self._on_warning_aggregate(record)
+                    continue
+
+                # A wildcard never broadens the watched T/Q or live-bar routes.
+                allowed = self._subscriptions | self._warning_trade_symbols if event_type == "T" else self._subscriptions
+                if symbol not in allowed:
                     continue
 
                 if event_type == "T" and self._on_trade is not None:
@@ -462,7 +674,41 @@ class MassiveTradeStream:
                     if bar is not None:
                         self._on_agg(bar)
             except Exception:
+                self._revert_warning("normalization_error")
                 logger.exception("Failed to normalize Massive stream message")
+
+    @staticmethod
+    def _normalize_warning_aggregate(message, symbol: str) -> MomentumWarningAggregateRecord | None:
+        raw_symbol = getattr(message, "symbol", None) or getattr(message, "sym", None)
+        if not raw_symbol_is_uppercase(raw_symbol) or raw_symbol != symbol:
+            return None
+
+        def field(long_name, short_name):
+            value = getattr(message, long_name, None)
+            return value if value is not None else getattr(message, short_name, None)
+
+        prices = [_to_float(field(name, short)) for name, short in (
+            ("open", "o"), ("high", "h"), ("low", "l"), ("close", "c")
+        )]
+        start = field("start_timestamp", "s")
+        end = field("end_timestamp", "e")
+        volume = _to_int(field("volume", "v"))
+        if any(p is None or not math.isfinite(p) or p <= 0 for p in prices):
+            return None
+        if type(start) is not int or type(end) is not int or start < 1_000_000_000_000 or end - start != 1000:
+            return None
+        if volume is None or volume < 0:
+            return None
+        open_price, high, low, close = prices
+        if not low <= min(open_price, close) <= max(open_price, close) <= high:
+            return None
+        if getattr(message, "otc", False):
+            return None
+        return MomentumWarningAggregateRecord(
+            symbol=symbol, open=open_price, high=high, low=low, close=close,
+            volume=volume, start_ms=start, end_ms=end,
+            received_utc_ns=time.time_ns(), received_monotonic_ns=time.monotonic_ns(),
+        )
 
     @property
     def _aggregate_subscriptions_enabled(self) -> bool:

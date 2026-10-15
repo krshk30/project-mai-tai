@@ -27,6 +27,8 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 logger = logging.getLogger(__name__)
 
 EASTERN = ZoneInfo("America/New_York")
@@ -146,6 +148,8 @@ def capture_events(
     rows: list[dict[str, object]] = []
 
     for stock in all_confirmed or []:
+        if not raw_symbol_is_uppercase(stock.get("ticker")):
+            continue
         symbol = str(stock.get("ticker", "")).upper().strip()
         if not symbol:
             continue
@@ -167,6 +171,8 @@ def capture_events(
         )
 
     for raw_symbol in faded_symbols or []:
+        if not raw_symbol_is_uppercase(raw_symbol):
+            continue
         symbol = str(raw_symbol or "").upper().strip()
         if not symbol:
             continue
@@ -187,6 +193,8 @@ def capture_events(
         )
 
     for raw_symbol in dropped_retention_symbols or []:
+        if not raw_symbol_is_uppercase(raw_symbol):
+            continue
         symbol = str(raw_symbol or "").upper().strip()
         if not symbol:
             continue

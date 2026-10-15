@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 from pathlib import Path
 import subprocess
@@ -50,13 +51,29 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 134
+    assert len(entries) == 140
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
         if field.annotation is bool or bool in get_args(field.annotation)
     }
     by_name = {entry["name"]: entry for entry in entries}
+    momentum = by_name["momentum_live_enabled"]
+    assert momentum["expected"] is False
+    assert momentum["owning_service"] == "oms"
+    assert momentum["also_check_services"] == ["momentum-paper", "control"]
+    assert Settings.model_fields["momentum_live_enabled"].default is False
+    assert Counter(
+        service for entry in entries
+        for service in [entry["owning_service"], *entry.get("also_check_services", [])]
+    ) == {
+        "control": 11, "market-capture": 1, "market-data": 3,
+        "momentum-paper": 4, "oms": 52, "orb-schwab": 6,
+        "reconciler": 1, "schwab-1m-v2": 49, "strategy": 29,
+    }
+    assert by_name["strategy_schwab_1m_v2_false_flip2_enabled"]["expected"] is True
+    assert by_name["strategy_schwab_1m_v2_false_flip2_enabled"]["owning_service"] == "schwab-1m-v2"
+    assert Settings.model_fields["strategy_schwab_1m_v2_false_flip2_enabled"].default is True
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["expected"] is True
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["owning_service"] == "oms"
     assert by_name["webull_list_primary_reads_enabled"]["expected"] is True
@@ -91,6 +108,63 @@ def test_new_unlisted_settings_bool_blocks_catalog(monkeypatch: pytest.MonkeyPat
     )
     with pytest.raises(flags.CatalogError, match="new_fix_enabled"):
         flags.load_catalog(CATALOG)
+
+
+@pytest.mark.parametrize("expected", [False, True], ids=["dark", "operator-approved-on"])
+@pytest.mark.parametrize("actual", [False, True], ids=["process-off", "process-on"])
+def test_momentum_expectation_is_explicit_not_adopted_from_process(expected, actual):
+    original = next(entry for entry in flags.load_catalog(CATALOG)
+                    if entry["name"] == "momentum_live_enabled")
+    # The existing --catalog option accepts a separately approved ON copy.
+    entry = {**original, "expected": expected}
+    rc, lines = flags.audit([entry], lambda _: _reading(1234, {
+        "MAI_TAI_MOMENTUM_LIVE_ENABLED": str(actual).lower(),
+    }))
+    assert rc == (0 if actual == expected else 1)
+    assert len(lines) == 4
+    assert all(f"expected={str(expected).lower()}" in line for line in lines[:-1])
+    assert all(f"running={str(actual).lower()}" in line for line in lines[:-1])
+    assert original["expected"] is False
+
+
+@pytest.mark.parametrize("consumer", ["oms", "momentum-paper", "control"])
+@pytest.mark.parametrize("bad", ["opposite", "missing", "invalid"])
+def test_momentum_checks_all_three_consumers_preserving_default_semantics(consumer, bad):
+    entry = next(entry for entry in flags.load_catalog(CATALOG)
+                 if entry["name"] == "momentum_live_enabled")
+
+    def process_env(service):
+        values = {"MAI_TAI_MOMENTUM_LIVE_ENABLED": "false"}
+        if service == consumer:
+            if bad == "missing":
+                values.clear()
+            else:
+                values["MAI_TAI_MOMENTUM_LIVE_ENABLED"] = "true" if bad == "opposite" else "invalid"
+        return _reading(1234, values)
+
+    rc, lines = flags.audit([entry], process_env)
+    assert rc == (2 if bad == "invalid" else 0 if bad == "missing" else 1)
+    verdict = "UNKNOWN" if bad == "invalid" else "PASS" if bad == "missing" else "REAL FAILURE"
+    assert any(line.startswith(verdict) and f"service={consumer}" in line for line in lines)
+    if bad == "missing":
+        assert all(line.startswith("PASS") for line in lines[:-1])
+        assert any(f"service={consumer}" in line and "source=settings-default" in line for line in lines)
+    else:
+        assert sum(line.startswith(verdict) for line in lines[:-1]) == 1
+
+
+@pytest.mark.parametrize("consumer", ["oms", "momentum-paper", "control"])
+def test_operator_approved_momentum_on_cannot_pass_with_an_off_default(consumer):
+    original = next(entry for entry in flags.load_catalog(CATALOG)
+                    if entry["name"] == "momentum_live_enabled")
+    entry = {**original, "expected": True}
+    rc, lines = flags.audit([entry], lambda service: _reading(1234, {} if service == consumer else {
+        "MAI_TAI_MOMENTUM_LIVE_ENABLED": "true",
+    }))
+    assert rc == 1
+    assert sum(line.startswith("REAL FAILURE") for line in lines[:-1]) == 1
+    assert any(line.startswith("REAL FAILURE") and f"service={consumer}" in line
+               and "source=settings-default" in line for line in lines)
 
 
 @pytest.mark.parametrize("suffix", ["pm_print_ask_confirm", "pm_flip_wait", "pm_rest_reprice", "atr_reprice_handoff"])

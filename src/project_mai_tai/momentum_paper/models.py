@@ -13,6 +13,10 @@ MOMENTUM_STRATEGIES: dict[str, int] = {
     "momentum_30s": 30,
     "momentum_60s": 60,
 }
+MOMENTUM_WARNING_STRATEGIES: dict[str, int] = {
+    "momentum_30s_warn": 30,
+    "momentum_60s_warn": 60,
+}
 
 
 @dataclass(frozen=True)

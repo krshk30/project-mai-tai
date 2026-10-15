@@ -1,0 +1,69 @@
+FINAL WARNING SOURCE / TEST HANDOFF -- MAIN OWNS COMPOSITION
+
+SUPERSEDING HUMAN20:2x RULING
+MOMWARN independent E860 warning/page branch is final candidate base. Final
+F+B+MOMWARN prototype preserved, NOT install candidate.8192burst/TQ+1 and existing
+overflowNOauto-revert ACCEPTED by human. Page locally committed/94controlsPASS.
+Broad/allON60s3of3 after main EXCLUSIVE12x60 window explicitCLEAR, queued notrun.
+Earlier F+B-composition guidance below is historical, not current MOMWARN gate.
+
+Final warning/page source headf9d84ec4dee8dcb845ad8c12aceea35148347c63
+Preserved paired Aqueue test head603657caaf0f108bca1c162dbb45cfdc98ea2805
+E860 base860fba4c7d59edff18eb23468ba576dcb83f4d57
+Final F+B headb718f070be4cdd34f30fdd4318b6bed429a7cdec
+Main checkout /tmp/oct12-f-b-e860-composition (not modified by L3).
+Own branch codex/momwarn1-l3-integration-20261012, preserved originals/e064.
+Later receipt-only child is optional for source composition, no code difference.
+
+COMPACT DEPENDENCY-SAFE VERBATIM CHERRY-PICK SEQUENCE
+git cherry-pick $(git rev-list --reverse --topo-order 860fba4c7d59edff18eb23468ba576dcb83f4d57..f9d84ec4dee8dcb845ad8c12aceea35148347c63)
+
+28 linear commits, zero merges, E860 excluded; no rebase/squash/amend or original
+head rewrite. This is the smallest single contiguous E860-exclusive instruction
+for the exact preserved tree, not a separately validated docs-stripped subset.
+Several source commits update docs whose contexts depend on intervening receipts;
+do not silently omit those commits and then claim exact original-source proof.
+No F/B commits are in this warning range. Main determines/confirms actual clean
+cherry-pick and new composition hash. A source-file/path review shows no shared
+paths with F+B's E860-exclusive changes; this is not an executed composition proof.
+
+Ordered commits:
+71080c376c032b589c5560c309573048bd6be26e
+020dfb1a6c0c0f385576fffc7fd8db2e7cac7637
+943c8cdc8f5bd254baa36580a1df084dd25f5ee3
+e19a67b146fa2454b5ac8be89b6df1c8538ae298
+bfb1198d8b3728575d6b5ad8875d3e3be5211a76
+6afe95175e8d50fd983698294b0ebcdd65391967
+ebed75c7f5a724da8e6f5bf2b6d9c59485dc7f7c
+3f6b2cf24b98e87848345df54d7cde4f652b2978
+d09d9ed1ac1385d34473642ae1be6f7c2c429747
+9e507a5d086cd38578e5e654ca93f8cc1bf5bfb7
+130658ecbf67ed96109d5d0fdefa7928a796b335
+c40ea36182aed4712024946f5d6f1f1290d2f6d9
+a82ceca10984c0c72146d4930bf69a93936663f8
+aa3551021e795cdf18ebffaaca7678cad925a71b
+3b37c3f21932ad620bca180bb9213dc8efa7ef9e
+d8698617b169109a0bd96bcc4d990b90b91a24c3
+f5a808087bd1aec13960853e9936a99ebdd7a513
+1afc921c05916a3eedbc64603f00234b59ecd22e
+81354643b62a0d419256f5cbed107131f55daa46
+715c67d1dc133f6d9f9032108d9b0f3bf92a333f
+5ca5e995a3ea86cc4181fda2d9a0d757141ffcf7
+1db4edf15218340297569f92ca60ed988bd55c77
+e064bcc4bbf9c92ba33b94b36224d51c5f86d201
+c34ceeb0415d6831a4d7dfdde5e85572c478f869
+04fc4d2b87376bff594e1eeb1beb38651e50cf2c
+7fdf4221feba878d35368eb838ce7ce25cebef90
+603657caaf0f108bca1c162dbb45cfdc98ea2805
+f9d84ec4dee8dcb845ad8c12aceea35148347c63
+
+LOCAL RESULT
+Queue source change: Settings default8192 only, paired1PASS/retained34PASS at603.
+Warning page source change atf9: control_plane.py warning-only bounded reader/
+panel and dedicated test. Tested source/test bytes match committedf9; page and
+old display60PASS plus retained settings/gateway/health/close34PASS. No burst or
+60s rerun after page change. Source hashes and commands in WARNING_PAGE_RESULT.
+Completed local source/control repair, NOT wholefeature/install. No further
+L3 heavy runs. Later receipt-only child optional, does not alter source/test tree.
+Actual health setup/overridden settings remains INSTALL; socket entitlement
+UNPROVEN. Exact final F+B+MOMWARN allON/hotpath still main-owned and required.

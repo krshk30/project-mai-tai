@@ -13,6 +13,21 @@ from project_mai_tai.events import (
 
 
 @dataclass(frozen=True)
+class MomentumWarningAggregateRecord:
+    symbol: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    start_ms: int
+    end_ms: int
+    received_utc_ns: int
+    received_monotonic_ns: int
+    provider_kind: str = "massive_ws_a"
+
+
+@dataclass(frozen=True)
 class SnapshotRecord:
     symbol: str
     previous_close: float | None = None

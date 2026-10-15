@@ -21,6 +21,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import Quote
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar
+from tests.unit.v2_input_control import chart_input
 from project_mai_tai.v2_flip_entry_ownership import FlipEntryOwnershipRecord
 from tests.unit.test_v2_flip_owned_first_entry import _strategy, _book, PRIMARY, WEBULL
 
@@ -74,7 +75,7 @@ def test_recorded_aixi_ghost_retired_before_seed_cap_live_buy_is_first_not_retry
         strategy.seed_atr_state("AIXI", prefix)
     else:
         for bar in prefix:
-            assert strategy.on_observed_bar("AIXI", bar, observation_phase="replay") is None
+            assert strategy.on_observed_bar("AIXI", chart_input("AIXI", bar), observation_phase="replay") is None
             assert strategy.drain_pending_intents() == strategy.drain_webull_direct_intents() == []
     assert state.atr_state == "short" and state.atr_short_flip_bar_ts == SEGMENT
     assert strategy.drain_pending_intents() == strategy.drain_webull_direct_intents() == []
@@ -91,7 +92,7 @@ def test_recorded_aixi_ghost_retired_before_seed_cap_live_buy_is_first_not_retry
             continue
         clock[0] = bar.timestamp_ms + 61000
         _book(strategy, clock, "AIXI")
-        assert strategy.on_observed_bar("AIXI", bar, observation_phase="live") is None
+        assert strategy.on_observed_bar("AIXI", chart_input("AIXI", bar), observation_phase="live") is None
         assert strategy.drain_pending_intents() == strategy.drain_webull_direct_intents() == []
     assert state.cw_flip_level == pytest.approx(previous["trail"], abs=0.00005)
     assert state.atr_state == target["state"] == "long"

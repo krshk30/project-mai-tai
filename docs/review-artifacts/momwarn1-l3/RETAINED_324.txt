@@ -1,0 +1,42 @@
+L3-P4 -- published-output check complete; GENERATION PROOF BLOCKED
+
+Existing box files retrieved read-only; no provider/data acquisition in this lane.
+Local:/tmp/momwarn1-l3-retained-study-20261012/claude-sig.csv
+SHA881447955d76e198cf9eceb823b99c5f5199e5597edd28f4d0d072d9a47e685e
+Local:/tmp/momwarn1-l3-retained-study-20261012/claude-lead.json
+SHA36bfba54eef1ad78bea7105f1f6c29d3f6b442bb486ebfb1e63f789283137111
+Original box paths:/tmp/claude-sig.csv,/tmp/claude-lead.json.
+
+Output:/tmp/momwarn1-l3-retained-324-summary.json
+SHA1145392e10412371417453d8aa2e9678cac22313bbadf0b90c1217f630db49c0
+Tested head715c67d1dc133f6d9f9032108d9b0f3bf92a333f.
+Command (isolated L3 checkout):
+/Users/velkris/Projects/project-mai-tai/.venv/bin/python -B scripts/momwarn1_retained_lead_summary.py /tmp/momwarn1-l3-retained-study-20261012/claude-sig.csv /tmp/momwarn1-l3-retained-study-20261012/claude-lead.json --tested-head 715c67d1dc133f6d9f9032108d9b0f3bf92a333f > /tmp/momwarn1-l3-retained-324-summary.json
+Five denominator/refusal/order controls PASS0F in0.06s; not a timing benchmark.
+XML:/tmp/momwarn1-l3-715c67d1-retained-summary-controls.xml
+
+324 rows each;143 M30,181 M60. Key multiplicities match, but98 ordered rows
+differ.205 repeated strategy/day/symbol rows prevent unique per-event joining
+without original generation identity. First ordered mismatch index88: CSV GCTK,
+lead JSON APUS (both M60 Sep24). First positional-join attempt REFUSED, not
+silently repaired. Population-only summary preserves originals and reports the
+order mismatch; it does NOT invent per-signal matching.
+
+M30:123positive/143 total;20nonpositive. Positive-only median8.733000040054321s;
+all-population median7.04200005531311s.
+M60:164positive/181 total;17nonpositive. Positive-only median18.573000073432922s;
+all-population median16.246000051498413s.
+Nonpositive is the earlier published 'no-warning' grouping, not independently
+proven runtime absence/late delivery. Actual warning/subscriber ACK UNMEASURED.
+
+Recovery scope: bounded existing box /tmp lead/sig/warn/claude Python candidates,
+then top-level c1/lead/claude .py files<128KiB, capped64. No matching generator
+reference to claude-sig/claude-lead or published medians recovered. One depth2
+inventory had unreadable private systemd directories; not searched further.
+This is not proof the script is globally absent. No worker/production changes.
+
+Needed from main/c1: ORIGINAL generating script/command/path plus retained
+qualifying1s aggregate inputs/provenance. Reproduce the published algorithm
+first; evaluate END availability/lookahead separately. No silent1s adjustment:
+start/end method remains UNKNOWN without generator; old medians unchanged.
+Recovered output summaries alone do not satisfy actual324 generation gate.

@@ -1,0 +1,88 @@
+STUCKALERT1 ACCEPTED V1 PACKAGE ON INSTALLED H74 -- LOCAL ONLY
+
+AUTHORITY
+LATEST2026-10-13 00:5xET SHAc191da685d9560317049714d636fa9a3942df5fe95f8cb376f55e9cc5651c624.
+Reviewer explicitly ACCEPTS shipv1asbuilt:61/242positivebrokerACK suppressions,
+allinjectedstuck shapes stillfire. STOP>=95%chase; old blocker records historical,
+not a currentv1release blocker. Remaining181OMSlast_broker_read_at is a FUTURE
+separate lane:DO_NOT_BUILD_NOW. No sourcewiden/blanketunknownoriginupgrade.
+Install NEXTafterclose/reconcilerrestartONLY, NOTovernight, main-owned withfuture
+fresh installgates. This package is NOT installationauthority today/intraday.
+
+BASE / ISOLATION
+Actualinstalled H74 lineage74a830421d3e72450ec7207b383e5d862b32b5df verified from
+main currentinstall receipt/queue and localcommit ancestry; no extra boxread needed.
+Newbranch codex/stuckalert1-h74-package-20261013, worktree
+/Users/velkris/.codex/worktrees/stuckalert1-h74-package-20261013/project-mai-tai.
+OldS frozen3d65a577849f4e962fa801bfb05bc9eb774510e0 and MOM32d unchanged.
+App checkout created; attachment retry fails100-identitycap. Reusecreated checkout.
+
+EXACT V1 SOURCE / FILE SCOPE
+Reconciliation/service.py finalsource identicalaccepted8ab987b1 and oldfrozen3d.
+SHA25617a493f45aeb78193a7a6fcd7ae0d294eebc6150ca3187b10a45c582ce28b166.
+Onlyruntime delta vsH74 is src/project_mai_tai/reconciliation/service.py.
+Dedicated test_stuckalert1.py/test_stuckalert1_sync_provenance.py, twooriginal
+recorded fixtures and ownreviewdocs/evidence carried unchanged beforepackageintake.
+NoOMS/broker-adapter/trading/quotes/gateway/Settings/schema/MOM/runtimeenvironment
+edits. No newflag, per-orderfreshness receipt or fabricatedaccountsyncmetric.
+9oldScommits cherry-picked in order ontoH74 (no conflict); originalheads preserved.
+Allrecognized Co-Authored-By: OpenAI Codex <noreply@openai.com> markers retained.
+
+PRESERVED RESULT / LIMITS
+242recordedincidentcutoffs/123uniqueorders,119order123intent. PositivebrokerACK
+history and latestterminal/unknown conflict/tie conditions; no brokerID shortcut.
+Full ASOF stored-history replay:119orders->90retained,123intents->91retained;
+61suppressed(29order/32intent),181retained=180unprovenlegacy+1realGIXIterminalintent.
+Unknownorigins preserved; zero storedfacts does NOT prove no realACK everhappened.
+AllactualopeningtimesRTH; PM/RTH breadth CONTROLLED, not livehistoricalarrival.
+Event-timeASOF reconstruction, not causal softwarearrival/providerlatency proof.
+Optionalpersisted per-account OMScompletionmetric absent/omitted perreviewerruling.
+Originallatest-only57/185 and heldsource receipts retained as historicalcomponents,
+NOT acceptedzero/blanketunknown policy. Original95/102outputs/hashes unchanged.
+
+EXACT VERIFICATION (NO LOAD SUITE)
+Tested7e720b020276f4abcec712f6f686cb4ec9b56ae0 clean:102PASS0FAIL6.80s.
+73S1nodes+29existingreconcile/logging/heartbeat regressions. Actualhistory replay
+61suppressed181retained; five injectednegativeclasses2brokersx2PM/RTH stillfire,
+realGIXI kept, NULLidpositives/explicitpositivebrokerACK/tie/unknown/180scontrols.
+Six source-path controls use ACTUALinstalledH74OMS code with offlinefakeadapter;
+no realbrokerconnections/fills/readlatency/network/page-delivery proof claimed.
+Ruff --no-cache PASS; git diff --check H74..head PASS; H74isancestor PASS.
+Old3d source/control/fixture/provenancecapture vsnewhead diff EMPTY.
+Runtime diff vsH74 ONLYreconciliation/service.py; allOMS/providers/Settings/H/
+gateway/MOM source files unchanged. Tests/evidence samefrozen bytes.
+Original95/102 receipts remain valid and preserved; >=95targetexplicitlySTOPped,
+not falselycleared. Remaining181separatefutureOMSread-source lane NO_BUILD_NOW.
+
+OUTPUTS / SHA256
+/tmp/stuckalert1-H74-package-focused-20261013.xml
+585a14f56993f63ea023bd87bb9ed1b377f21218e822594a2f5dfd05e0b77670
+/tmp/stuckalert1-H74-package-focused-20261013.log
+767f524a16b39373103e5597877a0e38be6c290bf7c01a3a8b047928f6cebc03
+/tmp/stuckalert1-H74-package-ruff-20261013.log
+82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18
+src/project_mai_tai/reconciliation/service.py
+17a493f45aeb78193a7a6fcd7ae0d294eebc6150ca3187b10a45c582ce28b166
+tests/unit/test_stuckalert1.py
+ab01f1fae6f2b280d825155b7e7352428ca0358b308b8addfd3df56207dbad39
+tests/unit/test_stuckalert1_sync_provenance.py
+94d9d7b2e990fd3800d6581159e15ccae23b48769cf7d9f858108950d81c35fa
+tests/fixtures/stuckalert1_actual242.json
+b7858e675311f8fdee79f0abb310d2aa203de087cf7074c2b6f37ab8ee850a2b
+tests/fixtures/stuckalert1_broker_history_asof.json
+a3548c784e4522ff9cb12b0e1a98291ef1fe84b20118c84d51de1add57880b6e
+docs/review-artifacts/stuckalert1/OMS_SYNC_PROVENANCE_CAPTURE.json
+b33019fa66f97c4f13195081c3cf35910380b38b7aa8f265675a1d7dd02e7faf
+
+COMMAND (ownisolatedworktree)
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_stuckalert1.py tests/unit/test_stuckalert1_sync_provenance.py tests/unit/test_reconciliation_service.py tests/unit/test_reconciler_logging.py tests/unit/test_reconciler_heartbeat_redis_reload.py -q -s --junitxml=/tmp/stuckalert1-H74-package-focused-20261013.xml > /tmp/stuckalert1-H74-package-focused-20261013.log 2>&1
+
+LOCAL BUNDLE RECEIPT
+Receipt-only child changes ownintake/package docs, not testedcode/tests/fixtures.
+Bundle plannedat
+/Users/velkris/.codex/task-queues/analysis/stuckalert1-h74-package-20261013/STUCKALERT1-v1-from-H74.bundle
+relative74a830421d3e72450ec7207b383e5d862b32b5df (existingprerequisite,not included).
+Exactfinalhead/bundleSHA/verifiedrefs will be recorded in adjacentPACKAGE_RECEIPT.json
+afterbundlecreation to avoid circularbundlehash references in committed docs.
+No GitHub/provider/socket/credential/DBcapture/runtime/productionwrite or benchmark.
+Report localpackage completion ONLY; install remains nextafterclose/main-owned.

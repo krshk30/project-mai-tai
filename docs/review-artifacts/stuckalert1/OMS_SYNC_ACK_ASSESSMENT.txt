@@ -1,0 +1,122 @@
+STUCKALERT1 LATEST23:2x OMS-SYNC ACK ASSESSMENT -- NO EVIDENCE INVENTION
+
+AUTHORITY / EXACT HEAD
+LATEST.md2026-10-12 23:2x ET SHA256
+a318c66437f4090b42f4487b72bddf2bb7de871718a68b6eb953f658f9708653.
+Main queue read-only; own stable followup STUCKALERT1-OMS-SYNC-ACK recorded beforework.
+Tested0484e0ee7fec699212b49b45c2d19d35475ce41a, clean before/after tests.
+Source head STILL8ab987b1fbdd336772756c8a38632e6adb1e8721, mainaccepted;
+git diff8ab987b1 --src EMPTY. Source not widened on missing provenance.
+Original95PASS and61suppressed/181retained historical receipt/fixtures unchanged.
+No OMS/quotes/trading/models/Settings/MOM/queue edits or productionwrites,
+provider/credential read, GitHub or benchmark. Recognized Codex co-author marker.
+
+181 RETAINED EXACT MISSING-PIECE TABLE -- INCIDENTS, NOT DISTINCT ORDERS
+                                                   Schwab    Webull    Total
+retained cases                                         97        84      181
+order / intent                                      48/49     42/42    90/91
+unique associated order IDs                            49        42       91
+accepted history row present, source unknown            97        84      181
+NO accepted history row                                  0         0        0
+NO broker-origin accepted history                       97        84      181
+persisted proven OMS-sync/read accepted origin            0         0        0
+missing marker in original latest-ASOF snapshot           1         0        1
+NULL broker_order_id in original ASOF snapshot            0        84       84
+latest terminal broker event                             1         0        1
+wire-submitted timestamp on accepted-event metadata       0        84       84
+
+Columns overlap and MUST NOT be summed as disjoint causes. Primary retention is
+180accepted-shaped cases lacking provenorigin +1GIXIterminalnegative. All181have
+one earlieraccepted event of unknownorigin. GIXI's ORIGINAL latestsnapshot is
+cancelled and lacks restingmarker; it nevertheless has an earlierunknownaccepted
+row. Earlier noacceptedrow=1 inference from latest-only snapshot would be wrong:
+new full all-origin accepted count proves noacceptedrow=0. Do not rewrite olddata.
+NULLbrokerID is NOT an exemption gate or explanation of84Webull suppressions;
+existing positive brokerACK controls suppress intentional resting orders with
+NULL IDs. GIXI remainsnegative regardless of any earlier acceptance/marker.
+
+ACTUAL BOUNDED DATA REVIEW
+Exact181retainedcase/order IDs and incidentfirst_opened cutoffs derived from
+unchanged242fixture plus unchanged brokerhistory sufficient-fact fixture.
+12sequential READ ONLY2500ms queries (11x16 +last5), ON_ERROR_STOP=1/ROLLBACK,
+at2026-10-13T03:48:47.510155Z..03:49:14.235542Z. 181cutoffs/91uniqueorders.
+One initial READONLY query type error(json ? operator) returned no capturedrows;
+corrected explicitjsonb cast, then all12pages succeeded. No transaction DBwrite.
+Stored all-origin accepted count:exactly1/event_sourceunknown for each181case.
+Selected latestaccepted UUID/time/source, payload+metadataKEYS, source/status/read
+fields and latestany conflict. No rawpayload/credential dump; rare relevantreason
+would be sanitized, but actual relevantreason fields allnull. md5reason is only a
+stored-value grouping digest, never an origin or causal inference.
+Every metadata.source =schwab_1m_v2. That identifies the STRATEGY, not OMSsync.
+No status_source/oms_broker_sync/broker_status field, Webull brokerplace/fill time,
+_webull_list_evidence or _webull_terminal_proof is positive in any181retainedcase.
+84Webull wiretimestamps prove a wire-attempt stamp is present, NOT a status read.
+AllmetadataKEYS retained for independent review; no inferred source upgrades.
+Only event_at<=opening is queried; pages non-atomic, softwarearrival/retention
+completeness UNMEASURED. It is eventtimeASOF reconstruction, NOT historicalcausal
+arrival proof or proof that real orders never received ACK/read responses.
+
+SOURCE TRACE (READ ONLY, EXACT E860/8ab RUNTIME)
+OMS service.py10847 fetch_order_update precedes status_changed10889;
+10906 only status_changed OR fill appends event through10917 isolatedappend.
+Accepted->accepted withoutfill does NOT save a positive ACK/read completion.
+Orderpayload/reportmetadata is inherited, not stamped as a unique sync provenance.
+OmsStore store.py551-559 copies report.origin verbatim/defaultunknown; no inference.
+ExecutionReport protocols.py29-62 defaultoriginunknown intentionally.
+Schwab adapter.py1022-1040 status read calls _execution_report_from_order;
+that helper1734-1800 marks returned brokerrecord originbroker1782.
+Webull adapter.py1074-1200 reads ordinaryorder body; returned report originbroker1193.
+Thus current known-origin status-changing sync reads already qualify under8ab.
+Legacyunknown accepted cannot be promoted merely because an OMS sync exists:
+Schwab submitaccepted688-709 deliberately retains defaultunknown afterPOST;
+Schwab cancel-unconfirmed1112-1152 also constructs accepted without provenread.
+Webull submitaccepted759-781 defaultsunknown outside mirrorhold, and unconfirmed
+cancel1396-1494 emits acceptedunknown on missing/unreadable/ambiguous brokerdata.
+Same accepted status/strategy-source/wiretimestamp/nonnullID is not unique read
+provenance. No timestamp/currentclosed status/globalsync/positionreceipt shortcut.
+This is positiveorigin evidence assessment, NOT reintroduction of freshness policy.
+
+CONTROLLED SOURCE-PATH PROOFS / NO LIVE MEASUREMENT
+Six new controls:2brokers x3shapes call ACTUAL OmsRiskService.sync_broker_orders
+with an offline fakeadapter and localSQLite. Fakeadapter submission forbidden.
+1.sameaccepted + broker-origin read:1fetch,0new broker event,oldunknownrow unchanged;
+actual reconciler still emitsorder+intentalerts on stale unknownaccepted fixture.
+2.submitted->accepted + broker-origin read:1fetch,1newbrokeraccepted event;
+actual existing reconciler qualifying-ID gate accepts it.
+3.submitted->accepted + unknown-origin read:1fetch,1newunknownaccepted event;
+OMS retains suppliedorigin, no alternate persisted trusted readsource, gate excludes.
+These are CONTROLLED offline paths, not new historical evidence or provider calls.
+One new actualcensus control validates181casekeys/91orders/12pagecoverage/allsource
+counts/cutoffs/zero persistedread markers/perbrokerbreakdown/originalhashes/bounds.
+Existing95tests retained, including actual242historyreplay, all5negative shapes
+in bothbrokersPM/RTH, NULLidpositives, no-event/client/unknown-only ACK controls,
+tieconflicts/partial-only/unknownintent/mixednoack/strict180boundary and realGIXI.
+
+RESULT / TARGET
+Exact0484e0ee102PASS0FAIL6.81s=73S1nodes+29existingreconciler/logging/heartbeat.
+Ruff --no-cache and git diff --check PASS. No source/threshold/assertion weakening.
+Replay remains orders119->90,intents123->91,total242->181;61suppressed25.2066%.
+>=95% would need>=230suppressed (169additionalproven cases). Actual provenlegacy
+sync-origin accepted cases=0/181queried; NO new runtimeextension made withoutfacts.
+>=95target BLOCKED, not waived, forcecleared or counted from currentclosed cases.
+Need actual trusted per-order brokerread provenance OR a separately reviewed
+evidence/policy ruling. No new OMS producer/readfreshness build is authorized.
+Reported boxed COMPLETEDassessment/102controls, separateBLOCKEDtarget. Main review
+and source/data policy next; no integration/install claim, no active test/benchmark.
+
+COMMAND / OUTPUTS
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_stuckalert1_sync_provenance.py tests/unit/test_stuckalert1.py tests/unit/test_reconciliation_service.py tests/unit/test_reconciler_logging.py tests/unit/test_reconciler_heartbeat_redis_reload.py -q -s --junitxml=/tmp/stuckalert1-sync-provenance-final-20261012.xml > /tmp/stuckalert1-sync-provenance-final-20261012.log 2>&1
+
+SHA256
+/tmp/stuckalert1-sync-provenance-final-20261012.xml
+8d12987141ba2284cfcc5fe5c83dfdd133ff4cec34d2cb8c6e5938baba0036bb
+/tmp/stuckalert1-sync-provenance-final-20261012.log
+541f2e32bd796b23dba31d4997d54d4a700b69ffe3a4de79f937dade20b8865f
+docs/review-artifacts/stuckalert1/OMS_SYNC_PROVENANCE_CAPTURE.json
+b33019fa66f97c4f13195081c3cf35910380b38b7aa8f265675a1d7dd02e7faf
+docs/review-artifacts/stuckalert1/OMS_SYNC_PROVENANCE_CAPTURE.sql
+192d4028a0e33d306f89efd8c329f7a6535f65f7d5338a33b4817c22102d0fde
+tests/unit/test_stuckalert1_sync_provenance.py
+94d9d7b2e990fd3800d6581159e15ccae23b48769cf7d9f858108950d81c35fa
+src/project_mai_tai/reconciliation/service.py (UNCHANGED)
+17a493f45aeb78193a7a6fcd7ae0d294eebc6150ca3187b10a45c582ce28b166

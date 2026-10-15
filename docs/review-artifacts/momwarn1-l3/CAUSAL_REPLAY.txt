@@ -1,0 +1,74 @@
+L3-P3 -- controlled WFF causal MODEL receipt, not historical network evidence
+
+Tested code head:1afc921c05916a3eedbc64603f00234b59ecd22e
+Harness:scripts/momwarn1_wff_causal_replay.py
+SHA256:9eae792e84cac97a3087d52d3c0df7ff2639431102051de741a2fc8d133fe569
+Output:/tmp/momwarn1-l3-wff-causal-model.json
+SHA256:76b96add40b1d1d0cc285fe3c00e23ce0c116b90e69eb76fee674fb6c40a5084
+Acceptance:/tmp/momwarn1-l3-wff-causal-acceptance.xml (4PASS0F)
+Combined exact-head controls:/tmp/momwarn1-l3-1afc921c-controls.xml
+272PASS0F in3.36s; one existing XML-property warning. No performance benchmark.
+
+Command (cwd /Users/velkris/.codex/worktrees/momwarn1-l3-integration-20261012/project-mai-tai):
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B scripts/momwarn1_wff_causal_replay.py /Users/velkris/.codex/task-queues/analysis/momentum-detector-timing-20261012/momentum-wff-rest-trades-20261012.json /Users/velkris/.codex/task-queues/analysis/momentum-stop-study-20261012/momentum-stop-study-events-20261012.json --tested-head 1afc921c05916a3eedbc64603f00234b59ecd22e > /tmp/momwarn1-l3-wff-causal-model.json
+
+Inputs and filter:
+All9793 rows in the already retained WFF file, sorted by original SIPns.
+No start_ms filter in this command, no truncation/nearest-price selection.
+Metadata says 'fresh Massive historical REST, not retained forward input',
+fetched2026-10-12T13:14:58.369940+00:00. This execution does NOT fetch anything.
+Trade source SHA256:9fb8f1b31c29a004280912baf23dca8b6c9fe9330c417fc8cda4a1c43e25e3a7
+Observed input bounds1791809280069878660..1791809486997908036ns inclusive:
+2026-10-12 08:48:00.069878660..08:51:26.997908036 ET.
+Original REST request filter/pagination receipt is not in this excerpt; observed
+bounds are NOT asserted to be original endpoint request parameters.
+SESSION_READY Oct12 conditions/prior_close12.29 from retained events file:
+SHA256:46044dac285acfb45b3e4ecacf773099ecd7b81af067a889522b3cb1391723c9
+Eligible classification uses its frozen condition snapshot; excludes noneligible
+prints only from model aggregate OHLC. All rows go through normal raw eligibility.
+
+This is NOT the entire original218392-row WFF population. Its separate receipt
+is analysis/momraw1-20261012/data/recorded_rest/2026-10-12-WFF.receipt.json:
+history SHA7aa1e25e161ced06439faaa244a62e78c7893371837c6211191974b8bb7ad33b,
+requested1791792600000000000..1791812412000000000ns (04:10..09:40:12ET),
+raw_count218392, pagination_exhausted=true, provider coverage UNVERIFIED.
+That larger file was NOT replayed or claimed as the excerpt's acquisition source.
+No full-day population/other-symbol/cap or P&L inference from9793 rows.
+
+Availability and ownership:
+156 eligible1s model buckets derived from real REST SIP prints, NOT recorded
+Massive WS A frames. Qualifying OHLC/summed volume are model-only. Internal
+massive_ws_a compatibility tag is not WS capture provenance. Each bucket becomes
+available only at exclusive END plus declared aggregate delay. Zero delays in
+this run are CONTROLLED assumptions, not measured latency. Same-instant order:
+aggregate, owner application, trade; explicitly controlled, not recorded ordering.
+Current warning consumer admits WFF at08:50:56.000; controlled owner request and
+application at that time. Before application no raw tick is delivered to consumer.
+No provider ACK exists or is invented. Universe WFF only; other cap slots unused.
+
+Whole60s reference:
+At target SIPms1791809480927, window[1791809420927,1791809480927] spans
+08:50:20.927..08:51:20.927. Input starts earlier than the full window and ends
+after signal/fill. Current consumer has47 qualifying whole buckets inside these
+bounds, each available at END. Min reference11.12 belongs to the full bucket
+[1791809422000,1791809423000), 08:50:22..23. Exact low tick timestamp UNKNOWN.
+Partial left/right buckets are not stretched into full-window evidence; no fake
+raw low seed. Missing qualifying seconds are not promoted to provider completeness.
+Time-span coverage is sufficient for this declared retained-input model, NOT a
+provider coverage guarantee, real A arrival history or 60s owned raw T coverage.
+Raw ownership starts56, so target uses existing whole-bucket cold reference.
+
+Result:
+M60 signal08:51:20.927/13.35, actual input callback1791809480927834426ns,
+print13273 exchange8; next eligible input callback1791809480928360516ns,
+print5205 exchange19, native fill20.928/13.40. Fill strictly after decision.
+Harness retains callback print identity explicitly; production metrics still keep
+integer-ms bounds and do not promote from same-ms equality.
+M30 does NOT match target: whole-window low at target11.52 requires13.824,
+so13.35 is below20% threshold. M30 signals24.080/14.44, fills24.222/14.42.
+No quiet policy change to make M30 match. Negative owner26s or trade1ms delay
+controls cannot backdate target fill; negative bucket availability delay rejects.
+
+Transport latency UNMEASURED until W4. No recorded WS burst/ACK/order/fill claim.
+Input ends26.997 before full target-path deadline; terminal/P&L completeness not
+claimed. No aggregate-volume -> T/Q peak extrapolation. Five-gate card NOT READY.

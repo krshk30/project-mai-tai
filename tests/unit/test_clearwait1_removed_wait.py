@@ -291,6 +291,7 @@ def test_recorded_own_mi_fill_cannot_become_unfilled_after_close():
 def _strategy(*, enabled=True, eh=False):
     strategy = SchwabV2Strategy(
         Settings(
+            strategy_schwab_1m_v2_removed_wait_clear_rules_enabled=False,
             _env_file=None,
             strategy_schwab_1m_v2_flip_owned_first_entry_enabled=True,
             strategy_schwab_1m_v2_removed_wait_clear_enabled=enabled,
@@ -720,6 +721,7 @@ def test_accepted_retryoff_true_zero_allows_fresh_unfilled_episode_without_spend
     from tests.unit.test_v2_retry_one import _place_first, _strategy as retry_strategy
 
     strategy, clock, _ = retry_strategy(enabled=True, max_retries=0, dual=True)
+    strategy._removed_wait_clear_rules_enabled = False  # Direct legacy proof control, no async store.
     strategy.configure_removed_wait(lambda *a: None, restored={}, readable=True)
     state, old = _place_first(strategy, clock, "AIXI")
     budget = (state.retry_one_segment_id, state.retry_one_closes_in_segment)

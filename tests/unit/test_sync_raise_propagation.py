@@ -50,8 +50,9 @@ class _Store:
         minimum_age_seconds=0.0,
         observed_at=None,
         deferred_out=None,
+        momentum_mismatch_out=None,
     ):
-        del observed_at, deferred_out
+        del observed_at, deferred_out, momentum_mismatch_out
         self.cleared_scope = list(broker_account_ids or [])
         self.clear_min_age_seconds = float(minimum_age_seconds)
         return []

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 import asyncio
 import json
 import logging
@@ -342,7 +344,8 @@ class StrategyBotRuntime:
         desired_symbols = {
             str(symbol).upper()
             for symbol in symbols
-            if str(symbol).strip() and str(symbol).upper() not in self.manual_stop_symbols
+            if raw_symbol_is_uppercase(symbol) and str(symbol).strip()
+            and str(symbol).upper() not in self.manual_stop_symbols
         }
         self._desired_watchlist_symbols = set(desired_symbols)
         if not self.lifecycle_policy.config.enabled:
@@ -390,7 +393,8 @@ class StrategyBotRuntime:
         self.prewarm_symbols = {
             str(symbol).upper()
             for symbol in symbols
-            if str(symbol).strip() and str(symbol).upper() not in self.manual_stop_symbols
+            if raw_symbol_is_uppercase(symbol) and str(symbol).strip()
+            and str(symbol).upper() not in self.manual_stop_symbols
         }
         self._prune_runtime_state()
 
@@ -483,6 +487,8 @@ class StrategyBotRuntime:
     def update_market_snapshots(self, snapshots: Sequence[MarketSnapshot]) -> None:
         received_at = self._normalize_now(self.now_provider())
         for snapshot in snapshots:
+            if not raw_symbol_is_uppercase(snapshot.ticker):
+                continue
             if snapshot.last_quote is None:
                 continue
             quote: dict[str, float] = {}
@@ -502,6 +508,8 @@ class StrategyBotRuntime:
         bid_price: float | None,
         ask_price: float | None,
     ) -> list[TradeIntentEvent]:
+        if not raw_symbol_is_uppercase(symbol):
+            return []
         normalized_symbol = str(symbol).upper()
         quote: dict[str, float] = {}
         if bid_price is not None and bid_price > 0:
@@ -1120,6 +1128,8 @@ class StrategyBotRuntime:
         timestamp_ns: int | None = None,
         cumulative_volume: int | None = None,
     ) -> list[TradeIntentEvent]:
+        if not raw_symbol_is_uppercase(symbol):
+            return []
         self._roll_day_if_needed()
         normalized_symbol = str(symbol).upper()
         normalized_timestamp_ns = self._normalize_tick_timestamp_ns(timestamp_ns)
@@ -1236,6 +1246,8 @@ class StrategyBotRuntime:
         live_bar_recorded_at: datetime | None = None,
         live_bar_source: str = "live",
     ) -> list[TradeIntentEvent]:
+        if not raw_symbol_is_uppercase(symbol):
+            return []
         self._roll_day_if_needed()
         normalized_symbol = str(symbol).upper()
         self._last_tick_at[normalized_symbol] = self._normalize_now(self.now_provider())
@@ -4557,12 +4569,12 @@ class StrategyEngineState:
         filtered_snapshots = [
             snapshot
             for snapshot in snapshots
-            if snapshot.ticker.upper() not in blocked
+            if raw_symbol_is_uppercase(snapshot.ticker) and snapshot.ticker.upper() not in blocked
         ]
         filtered_reference_data = {
             symbol: value
             for symbol, value in reference_data.items()
-            if symbol.upper() not in blocked
+            if raw_symbol_is_uppercase(symbol) and symbol.upper() not in blocked
         }
 
         self.reference_data.update(filtered_reference_data)
@@ -4996,14 +5008,14 @@ class StrategyEngineState:
         self.current_confirmed = [
             {**dict(item), "ticker": str(item.get("ticker", "")).upper()}
             for item in visible_confirmed
-            if str(item.get("ticker", "")).strip()
+            if raw_symbol_is_uppercase(item.get("ticker")) and str(item.get("ticker", "")).strip()
             and str(item.get("ticker", "")).upper() not in self.global_manual_stop_symbols
         ]
         all_confirmed_rows = all_confirmed if all_confirmed is not None else self.current_confirmed
         self.all_confirmed = [
             {**dict(item), "ticker": str(item.get("ticker", "")).upper()}
             for item in all_confirmed_rows
-            if str(item.get("ticker", "")).strip()
+            if raw_symbol_is_uppercase(item.get("ticker")) and str(item.get("ticker", "")).strip()
             and str(item.get("ticker", "")).upper() not in self.global_manual_stop_symbols
         ]
         if bot_handoff_symbols_by_strategy is not None or bot_handoff_history_by_strategy is not None:
@@ -5214,9 +5226,12 @@ class StrategyEngineState:
         seen: set[str] = set()
         for item in items or ():
             if isinstance(item, dict):
-                symbol = str(item.get("ticker", "")).upper()
+                raw_symbol = item.get("ticker", "")
             else:
-                symbol = str(item).upper()
+                raw_symbol = item
+            if not raw_symbol_is_uppercase(raw_symbol):
+                continue
+            symbol = raw_symbol.upper()
             if not symbol or symbol in seen:
                 continue
             seen.add(symbol)
@@ -5544,6 +5559,8 @@ class StrategyEngineState:
     def _decorate_scanner_rows(self, rows: Sequence[dict[str, object]]) -> list[dict[str, object]]:
         decorated: list[dict[str, object]] = []
         for row in rows:
+            if not raw_symbol_is_uppercase(row.get("ticker")):
+                continue
             ticker = str(row.get("ticker", "")).upper()
             if ticker and ticker not in self._first_seen_by_ticker:
                 self._first_seen_by_ticker[ticker] = self.alert_engine.now_provider().strftime("%I:%M:%S %p ET")
@@ -5565,6 +5582,7 @@ class StrategyEngineState:
                 "ticker": str(alert.get("ticker", "")).upper(),
             }
             for alert in alerts
+            if raw_symbol_is_uppercase(alert.get("ticker"))
         ]
         self.recent_alerts.extend(normalized)
         self.recent_alerts = self.recent_alerts[-100:]
@@ -5648,6 +5666,8 @@ class StrategyEngineState:
             blocked.update(manual_symbols)
         existing = set(self.schwab_prewarm_symbols)
         for symbol in symbols:
+            if not raw_symbol_is_uppercase(symbol):
+                continue
             normalized = str(symbol).upper().strip()
             if not normalized or normalized in blocked:
                 continue
@@ -5706,9 +5726,12 @@ class StrategyEngineState:
         normalized: list[str] = []
         for item in watchlist:
             if isinstance(item, dict):
-                symbol = str(item.get("ticker", "")).upper()
+                raw_symbol = item.get("ticker", "")
             else:
-                symbol = str(item).upper()
+                raw_symbol = item
+            if not raw_symbol_is_uppercase(raw_symbol):
+                continue
+            symbol = raw_symbol.upper()
             if symbol:
                 normalized.append(symbol)
         blocked = self._manual_stop_symbols_for_bot(code)
@@ -7006,7 +7029,8 @@ class StrategyEngineService:
                 self.logger.exception("invalid snapshot batch during warmup prefill")
                 continue
 
-            snapshots = [snapshot_from_payload(item) for item in event.payload.snapshots]
+            snapshots = [snapshot_from_payload(item) for item in event.payload.snapshots
+                         if raw_symbol_is_uppercase(item.symbol)]
             if snapshots:
                 history_batches.append(snapshots)
                 replay_batches.append(
@@ -7019,6 +7043,7 @@ class StrategyEngineService:
                                 avg_daily_volume=float(item.avg_daily_volume),
                             )
                             for item in event.payload.reference_data
+                            if raw_symbol_is_uppercase(item.symbol)
                         },
                     )
                 )
@@ -7052,6 +7077,8 @@ class StrategyEngineService:
             replay_time = completed_at.astimezone(EASTERN_TZ)
             label = replay_time.strftime("%I:%M:%S %p ET")
             for snapshot in snapshots:
+                if not raw_symbol_is_uppercase(snapshot.ticker):
+                    continue
                 ticker = str(snapshot.ticker or "").upper()
                 if ticker and ticker not in rebuilt_first_seen:
                     rebuilt_first_seen[ticker] = label
@@ -7078,6 +7105,9 @@ class StrategyEngineService:
 
         payload = json.loads(data)
         event_type = payload.get("event_type")
+        if event_type in {"trade_tick", "quote_tick", "live_bar", "historical_bars"}:
+            if not raw_symbol_is_uppercase((payload.get("payload") or {}).get("symbol")):
+                return
         if event_type == "paper_exit_config_update":
             if self.paper_exit_store is None or self.paper_exit_runtime is None:
                 raise RuntimeError("paper-exit config update received without paper runtime")
@@ -7151,13 +7181,15 @@ class StrategyEngineService:
 
         if event_type == "snapshot_batch":
             event = SnapshotBatchEvent.model_validate(payload)
-            snapshots = [snapshot_from_payload(item) for item in event.payload.snapshots]
+            snapshots = [snapshot_from_payload(item) for item in event.payload.snapshots
+                         if raw_symbol_is_uppercase(item.symbol)]
             reference = {
                 item.symbol: ReferenceData(
                     shares_outstanding=item.shares_outstanding,
                     avg_daily_volume=float(item.avg_daily_volume),
                 )
                 for item in event.payload.reference_data
+                if raw_symbol_is_uppercase(item.symbol)
             }
             self._preload_manual_stop_state()
             # Roll the scanner session (and hard-purge stale watchlist state) BEFORE
@@ -10073,7 +10105,7 @@ class StrategyEngineService:
                     for symbols in active_handoff.values()
                     if isinstance(symbols, list)
                     for symbol in symbols
-                    if str(symbol).strip()
+                    if raw_symbol_is_uppercase(symbol) and str(symbol).strip()
                 }
             )
         if not watchlist:
@@ -10082,7 +10114,7 @@ class StrategyEngineService:
         visible_confirmed = [
             {"ticker": str(symbol).upper()}
             for symbol in watchlist
-            if str(symbol).strip()
+            if raw_symbol_is_uppercase(symbol) and str(symbol).strip()
         ]
         if not visible_confirmed:
             return

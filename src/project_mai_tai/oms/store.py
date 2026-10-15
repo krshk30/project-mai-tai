@@ -428,8 +428,13 @@ class OmsStore:
             session.flush()
             return order
 
+        from project_mai_tai.oms.webull_order_identity import immutable_report_id
+
+        identity = immutable_report_id(
+            order, broker_order_id, dispatch=getattr(self, "webull_identity_dispatch", None),
+        )
         order.status = status
-        order.broker_order_id = broker_order_id or order.broker_order_id
+        order.broker_order_id = identity
         order.payload = payload
         if order.submitted_at is None:
             order.submitted_at = utcnow()
@@ -529,9 +534,14 @@ class OmsStore:
         metadata: dict[str, str],
         preserve_status: bool = False,
     ) -> BrokerOrder:
+        from project_mai_tai.oms.webull_order_identity import immutable_report_id
+
+        identity = immutable_report_id(
+            order, report.broker_order_id, dispatch=getattr(self, "webull_identity_dispatch", None),
+        )
         if not preserve_status:
             order.status = report.event_type
-        order.broker_order_id = report.broker_order_id or order.broker_order_id
+        order.broker_order_id = identity
         payload = dict(metadata)
         if report.event_type == "rejected" and report.reason:
             payload["reject_reason"] = report.reason
@@ -997,6 +1007,7 @@ class OmsStore:
         minimum_age_seconds: float = 0.0,
         observed_at: datetime | None = None,
         deferred_out: list[tuple[UUID, str, Decimal, float]] | None = None,
+        momentum_mismatch_out: list[tuple[UUID, str, Decimal]] | None = None,
     ) -> list[tuple[UUID, str, Decimal]]:
         """Zero aged virtual positions that a successful broker snapshot does not back.
 
@@ -1020,12 +1031,14 @@ class OmsStore:
         now = observed_at or utcnow()
         if now.tzinfo is None:
             now = now.replace(tzinfo=UTC)
-        query = select(VirtualPosition).where(VirtualPosition.quantity > 0)
+        query = select(VirtualPosition, Strategy.code).join(
+            Strategy, Strategy.id == VirtualPosition.strategy_id,
+        ).where(VirtualPosition.quantity > 0)
         if broker_account_ids:
             query = query.where(VirtualPosition.broker_account_id.in_(broker_account_ids))
 
         cleared: list[tuple[UUID, str, Decimal]] = []
-        for virtual_position in session.scalars(query).all():
+        for virtual_position, strategy_code in session.execute(query).all():
             account_position = session.scalar(
                 select(AccountPosition).where(
                     AccountPosition.broker_account_id == virtual_position.broker_account_id,
@@ -1060,6 +1073,14 @@ class OmsStore:
                             -1.0 if age_unknown else age_seconds,
                         )
                     )
+                continue
+
+            if strategy_code == "momentum_warn_live":
+                # A position snapshot is not an own execution receipt. Historical
+                # child fills still need this ownership to reconcile normally.
+                if momentum_mismatch_out is not None:
+                    momentum_mismatch_out.append((virtual_position.broker_account_id,
+                                                   str(virtual_position.symbol or ""), virtual_position.quantity))
                 continue
 
             cleared.append(

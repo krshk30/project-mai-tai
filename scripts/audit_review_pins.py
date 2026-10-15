@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -48,6 +49,7 @@ class AuditResult:
     covered: int
     missing: int
     could_not_tell: int
+    allowed_historical: int = 0
 
     @property
     def exit_code(self) -> int:
@@ -68,15 +70,69 @@ def _parse_time(value: str, label: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def load_policy(path: Path) -> datetime:
+@dataclass(frozen=True)
+class HistoricalAllowance:
+    pr_number: int
+    head_sha: str
+    base_sha: str | None
+    kind: str
+    reviewed_at: datetime
+    reason: str
+
+    def matches(self, pull: MergedPull, error: GateError) -> bool:
+        if (pull.number != self.pr_number or pull.head_sha != self.head_sha
+                or pull.merged_at > self.reviewed_at):
+            return False
+        if self.kind == "missing_historical_pin":
+            return error.exit_code == EXIT_REFUSED and str(error) == (
+                f"REFUSED: PR #{pull.number} head {pull.head_sha[:9]} has no committed review pin"
+            )
+        return (pull.base_sha == self.base_sha and error.exit_code == EXIT_COULD_NOT_TELL
+                and str(error) == (
+                    f"COULD_NOT_TELL: current PR base {pull.base_sha[:9]} "
+                    f"is not an ancestor of head {pull.head_sha[:9]}"
+                ))
+
+
+def load_config(path: Path) -> tuple[datetime, tuple[HistoricalAllowance, ...]]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise GateError(f"COULD_NOT_TELL: cannot read audit policy {path}: {exc}", 3) from exc
     expected = {"schema_version", "audit_merged_after"}
-    if set(raw) != expected or raw["schema_version"] != 1:
-        raise GateError(f"COULD_NOT_TELL: audit policy {path} does not match schema 1", 3)
-    return _parse_time(str(raw["audit_merged_after"]), "policy")
+    version = raw.get("schema_version") if isinstance(raw, dict) else None
+    if version == 2:
+        expected.add("historical_allowances")
+    if not isinstance(raw, dict) or set(raw) != expected or type(version) is not int or version not in (1, 2):
+        raise GateError(f"COULD_NOT_TELL: audit policy {path} has unsupported schema", 3)
+    rows = raw.get("historical_allowances", [])
+    if not isinstance(rows, list):
+        raise GateError("COULD_NOT_TELL: historical allowances must be a list", 3)
+    allowances = []
+    seen = set()
+    fields = {"pr_number", "head_sha", "base_sha", "kind", "reviewed_at", "reviewer", "reason"}
+    for row in rows:
+        if (not isinstance(row, dict) or set(row) != fields
+                or type(row["pr_number"]) is not int or row["pr_number"] <= 0
+                or row["pr_number"] in seen or row["reviewer"] != "claude-1"
+                or not re.fullmatch(r"[0-9a-f]{40}", str(row["head_sha"]))
+                or row["kind"] not in {"missing_historical_pin", "historical_ancestry"}
+                or not isinstance(row["reason"], str) or not row["reason"].strip()):
+            raise GateError("COULD_NOT_TELL: invalid or duplicate historical allowance", 3)
+        if ((row["kind"] == "historical_ancestry"
+                and not re.fullmatch(r"[0-9a-f]{40}", str(row["base_sha"])))
+                or (row["kind"] == "missing_historical_pin" and row["base_sha"] is not None)):
+            raise GateError("COULD_NOT_TELL: historical allowance base binding invalid", 3)
+        seen.add(row["pr_number"])
+        allowances.append(HistoricalAllowance(
+            row["pr_number"], row["head_sha"], row["base_sha"], row["kind"],
+            _parse_time(str(row["reviewed_at"]), "allowance review"), row["reason"],
+        ))
+    return _parse_time(str(raw["audit_merged_after"]), "policy"), tuple(allowances)
+
+
+def load_policy(path: Path) -> datetime:
+    return load_config(path)[0]
 
 
 class GitHubClient:
@@ -200,11 +256,13 @@ def audit(
     pulls: list[MergedPull],
     *,
     head_fetcher: Callable[[Path, MergedPull], None] = fetch_pull_head,
+    allowances: tuple[HistoricalAllowance, ...] = (),
 ) -> AuditResult:
     rows: list[AuditRow] = []
     covered = 0
     missing = 0
     could_not_tell = 0
+    allowed_historical = 0
     for pull in pulls:
         try:
             head_fetcher(repo, pull)
@@ -216,6 +274,13 @@ def audit(
                 pull.head_sha,
             )
         except GateError as error:
+            allowance = next((entry for entry in allowances if entry.matches(pull, error)), None)
+            if allowance is not None:
+                allowed_historical += 1
+                rows.append(AuditRow(pull, "ALLOWED_HISTORICAL", (
+                    f"{error}; reviewed={allowance.reviewed_at.isoformat()}; reason={allowance.reason}"
+                )))
+                continue
             if error.exit_code == EXIT_REFUSED:
                 missing += 1
                 rows.append(AuditRow(pull, "MISSING_PIN", str(error)))
@@ -225,7 +290,7 @@ def audit(
             continue
         covered += 1
         rows.append(AuditRow(pull, "COVERED", f"{len(records)} committed pin(s)"))
-    return AuditResult(tuple(rows), len(pulls), covered, missing, could_not_tell)
+    return AuditResult(tuple(rows), len(pulls), covered, missing, could_not_tell, allowed_historical)
 
 
 def render(result: AuditResult, policy_time: datetime) -> str:
@@ -241,7 +306,8 @@ def render(result: AuditResult, policy_time: datetime) -> str:
     lines.append(
         f"SUMMARY state={state} audit_merged_after={policy_time.isoformat()} "
         f"evaluated={result.evaluated} covered={result.covered} "
-        f"missing={result.missing} could_not_tell={result.could_not_tell}"
+        f"missing={result.missing} could_not_tell={result.could_not_tell} "
+        f"allowed_historical={result.allowed_historical}"
     )
     return "\n".join(lines)
 
@@ -264,14 +330,14 @@ def _fail(error: GateError) -> NoReturn:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        policy_time = load_policy(args.policy)
+        policy_time, allowances = load_config(args.policy)
         client = GitHubClient(
             args.repository,
             os.environ.get("GITHUB_TOKEN", ""),
             args.api_url,
         )
         pulls = client.merged_pulls(policy_time)
-        result = audit(args.repo.resolve(), args.ledger.resolve(), pulls)
+        result = audit(args.repo.resolve(), args.ledger.resolve(), pulls, allowances=allowances)
         print(render(result, policy_time))
         return result.exit_code
     except GateError as error:

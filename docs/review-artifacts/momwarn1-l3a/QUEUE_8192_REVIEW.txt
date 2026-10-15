@@ -1,0 +1,63 @@
+L3A DEFAULT8192 / MATCHED CONTROL -- PREPARED, NOT EXECUTED
+
+Human20:0x replaces default4096 with8192 for the approved DERIVED envelope:
+observed max1811,1x1811 and3x5433. Settings alone changes at runtime; no
+gateway/provider/publisher/watchdog/consumer/trading algorithm changes.
+Queue configurable bounds1..65536 unchanged, so explicit small-queue overflow
+controls remain valid. No T/Q bound, owner, stream, health or time-window changes.
+Original04fc burst/head/log/XML and frozen e064 qualifier remain historical,
+not rewritten. The original1336drop result is no longer the acceptance target.
+
+ASSESSMENT / FILE PLAN
+Settings default8192; existing gateway Settings/default/drop-oldest control adds
+counter and no-overflow-latch assertions without deleting any prior assertion.
+Dedicated derived test uses the same helper for no-A baseline,1x1811,3x5433.
+Each phase has fresh fake WS/Redis and actual gateway/provider/parser/publisher,
+same64T and64Q controlled callbacks, legal PM clock only overridden, native
+performance clocks. Actual provider._process_messages parses all A-shaped JSON;
+baseline goes through the same parser with an empty frame, not a fabricated ACK.
+Controlled A Redis writer waits at its first write so T/Q progress is observed;
+then it is released and ALL A records must actually publish with zero drops.
+Sample actual gateway metrics both while blocked and after drain. Check native
+received-monotonic-to-write-completion lag for every A, retaining its maximum.
+Retain <50ms first T/Q/individual TQ/loop stall and <2000ms pending/start-write/
+write-completion lag. No threshold relaxed and no GC/hotpath-source edits.
+Receipt shows both baseline-to-load signed p50/p95/p99/max differences and all
+64 timestamp pairs per T/Q per phase. Single descriptive comparison does not
+establish statistical equivalence or authorize a new equivalence margin.
+
+LIMITATION
+Watched callbacks are deliberately available at the first A-writer boundary,
+not located at a provider frame tail. All64 stimuli are injected in each phase
+even if parsing finishes earlier; callbacks_while_A_parser_active exposes how
+many actually overlap. Baseline boundary is empty-frame parser completion.
+No actual WS capture/latency/ACK/Redis production capacity claim.
+DERIVED all-tape symbol-second cardinality remains declared observed scope;
+Oct12 missing/universe exclusions UNKNOWN, not zero. No extra A/provider reads.
+
+ACTUAL COUNTER DISPLAY / POLICY SOURCE REVIEW
+Exported gateway counter sample: YES. warning_metrics() returns queue_depth,
+queue_drops (overflow only), dropped_total (overflow plus safety/window discard),
+lag_ms,max_publish_lag_ms,watchdog_revert_reason/time. Existing10s writer emits
+them to separate momentum-warning-metrics stream. New performance receipt will
+include actual local samples, not invented current production numbers.
+Existing HTML queue-drop counter page: NO. services/control_plane.py warning
+panel displays the separate paper ledger only. No live/page wiring proof is
+claimed, and no unrelated dashboard source is silently changed in this repair.
+Queue-overflow-only auto-revert: NO. gateway._enqueue_warning drops oldest A
+and increments queue_drops/dropped_total; it does not latch failure. Dedicated
+small-queue control asserts actual counts and that A stays active/owners intact.
+Existing safety auto-revert: YES, A only, sticky until operator-reviewed recovery;
+publishlag>2s, applicable barlateness>5s, two OMS duration>5s, load>6, freeRAM<3GiB,
+new required live-logERROR/unreadable monitor,1008/disconnect/reconnect and I/O
+failure remain as implemented/reviewed. No watchdog process restart.
+Normal09:30 close: NOT a safety latch; drain/drop A and normal next trading-day
+resume controls retained. No new overflow-revert/rearm approval policy invented.
+
+SERIALIZATION / NEXT
+Main b718f070 broad finished; main now exclusively owns standalone retained-on
+60s window. Source edits permitted, all L3 tests/benchmarks deliberately paused
+until explicit main CLEAR. Then one no-A/1x/3x measurement plus scoped retained
+overflow/A-only-revert/09:30/owner controls on frozen new head, no blind retries.
+Main sole writer owns final F+B+MOMWARN composition/allON/hotpath; E860-only
+qualification is preliminary. Actual health setup remains INSTALL, not live proof.

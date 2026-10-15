@@ -1,0 +1,164 @@
+MOMWARN1-NO-DATA-EXPIRY-POLICY -- LOCAL BUILD AND FOCUSED CONTROLS, NOT INSTALLED
+
+LATEST EXACT PRESERVATION QUALIFICATION
+Tested66fdcfbe688fb63a15995ef371001c8772f19335:252PASS0FAIL50warnings3.30s,
+36expiry/ownership/preservationcontrols+216regressions. Runtime src identical0b;
+only4extra tests/intake clarify existingpost-exit ten-minute tape tail ownership.
+active_symbols includes pending/open AND exitedbutunfinalizedevidence paths.
+Those EXISTING tail owners remainprotected untilnativepathcomplete (engine.py
+138-143/340-349/519-550), notsilentlytruncated by newdormant-warning lease.
+No engine/strategy/ledger-decision/snapshotfallback/sourceguard change added.
+Newno-data expiry releases idlewarning candidates that do not also own active
+paper/evidence paths. This conservativepreservation is explicit for mainreview.
+It is not an invented openposition nor a newwarning coolingproof.
+Four actualengine controls cover both30/60codes in bothledgers: realcontrolled
+STOP exits retainT/tape duringpath; afteroriginalnativefinalization expiry releases.
+Source hashes window/consumer/app remain final0b hashes below. Newtesthash:
+ea026e1382822876619f1c4f32f89e08e85a5bd3a0bb67583642ec26c9ff8112.
+Final XML /tmp/momwarn1-no-data-expiry-final-preservation-20261013.xml
+7146a3677438c0d8bd858136c93b503a729aeb6b2c61442c4a7453eb74007b6e
+Final log /tmp/momwarn1-no-data-expiry-final-preservation-20261013.log
+9b5ef020897e183f389150774b43bc4ed0a1143b97a7c79f2c9a6911f8429da6
+Final Ruff /tmp/momwarn1-no-data-expiry-final-preservation-ruff-20261013.log
+82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18
+SamefocusedCOMMAND below, final XML/log suffixfinal-preservation. No60sbenchmark.
+OriginalallON3/3 MAIN-owned pendingreview; no production/aftercloseinstall yet.
+Priorad919/4c5247 and0b/53cb248heads/outputs retained ascomponents, notfinalpacket.
+
+AUTHORITATIVE FINAL OWNERSHIP FOLLOWUP
+Tested0b7521528487c557104c03b3c10cc3b09c2e9b25:248PASS0FAIL50warnings3.29s,
+32newexpirycontrols+216regressions. Ruff/diff/scopePASS. No load/60sbenchmark.
+Earlierad919/4c5a247output/body below preserved asCOMPONENT receipt, notfinalhead.
+Beforepackagingfinal, sourceassessment foundexpiry xaddawait canrace withfresh
+warningownerreplace. Paper warningowner-onlyasyncio.Lock serializesrequests and
+recomputescurrentwarningdesired AFTERpriorwrite. Legacyowner/snapshotcode unchanged.
+New controlled paused-write test verifiesre-warning waits, commands complete
+inorder[[],[TEST]], finalwarningownerTEST/uncertainFalse. Existingno-data policy,
+cap16, bothledgerinhibition, snapshotfallback and otherownerTQ preservation kept.
+RED1 on actualoldad919_sync method body (ASTextractedfromGit intoLOCALtestprocess,
+no files/production mutated) FAIL0.55s because rewarning completesbeforeexpirywrite.
+NewracecontrolPASS1.10s; exactcommitted0b248focusedPASS3.29s. Not a timingbenchmark.
+Allpriorhead/source receipts preserved, no amend/rebase/oldWT change.
+
+FINAL OUTPUT SHA256
+/tmp/momwarn1-no-data-expiry-0b752152-focused-20261013.xml
+cb49a4003ab81312920f7e1f899fa8e05f63e8b491ca92ec22ce8dc66d2d2909
+/tmp/momwarn1-no-data-expiry-0b752152-focused-20261013.log
+5f72b17d7d74c14548e874f5f4332a3f659319b0f850fff9a88a47030a2b484a
+/tmp/momwarn1-no-data-expiry-0b752152-ruff-20261013.log
+82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18
+/tmp/momwarn1-no-data-expiry-rewarning-RED-20261013.xml
+e487fdab04dfe63be8a600d9f30f0fde243682be47d90084811276c4921d1728
+FINAL services/momentum_paper_app.py
+9be040538c8e1134bc4fa233920fe2937e01dd279aa25df14c8a43c2cf38bee4
+FINAL tests/unit/test_momwarn1_no_data_expiry.py
+3921d6a64871096ae840a2c3a915edd589280970eacd3222f185b1e45b424b16
+Window/consumer/followup-test source hashes below remainunchanged byserialization.
+SamefocusedCOMMAND below, final XML/log filenamesuse0b752152-focused.
+Mainreview/originalallON3/3/nextaftercloseinstallation still separatelyPENDING.
+
+HISTORICAL AD919/4C5A COMPONENT RECEIPT FOLLOWS
+
+AUTHORITY / EXACT SOURCE
+LATEST2026-10-13 01:5xET SHA
+42a09096b133509dd4eb313ed53ea445951896a2d9928a11dd39fc2639b443b1.
+AGENTS/user instructions and mainqueue read first; main owns queue, never edited.
+Base actualinstalledH74 74a830421d3e72450ec7207b383e5d862b32b5df.
+Isolatedbranch codex/momwarn1-no-data-expiry-20261013/worktree
+/Users/velkris/.codex/worktrees/momwarn1-no-data-expiry-20261013/project-mai-tai.
+Tested sourcead919bd4db153f447e5a93a25e80c945522d19f7, clean before/after finalrun.
+Recognized Co-Authored-By: OpenAI Codex <noreply@openai.com>.
+STUCK9a9816cb package/oldS/MOM/installWT unchanged; no newworker, queue edit or W6 work.
+
+PRECISE APPROVED POLICY
+Candidate lease starts at warning ADMISSION observation ms, not vendorbar end,
+last warning refresh, fictional subscriptionACK or unobserved SIP timestamp.
+Only an ELIGIBLE raw trade that passes EXISTING future/stale<=1s/SIP identity/
+monotonicprint guards resets lasteligible CALLBACK OBSERVATION ms. Thus a 59sSIP
+trade actually observed at59.5s anchors at59.5, not59; no inventedarrival clock.
+No eligible observation for>=60,000ms expires at the existing1Hzpaper tick ONLY
+when neither engine has a pendingentry/openposition for thatsymbol. Both engines
+active_symbols already include all unresolved events for both30/60s strategycodes.
+Bothledgers union protects, and service advances existing clocks BEFORE expiry;
+once a pendingpath legitimately NO_FILLs/terminates, normal lease can release.
+Repeated A warnings and noneligible/duplicate/reordered/future/stale rawprints
+do NOT reset no-data lease. Lease-clock regression gives no expiry; existing
+cooling/window clock-error guards remainstrict/unchanged, not silentlyrelaxed.
+Outcome DROPPED reasonexpired_no_data. INFO log EXACT reasonexpired_no_data,
+NEVER cooled; no coolingproof/cooldown inserted. New warning may immediately
+re-admit same symbol and service emits warning-owner replacement request again.
+Expiry clears per-symbol rawfirst/coverage anchors so rewarnings cannot bridge
+an unsubscribedrawgap into completeTcoverage; monotonicrawtimestamp fence retained.
+Actual1Hz tick means dispatch follows nextscheduledtick; no providerwireACK claim.
+
+SOURCE / CHANGED PATHS
+src/project_mai_tai/momentum_paper/warning_window.py
+src/project_mai_tai/momentum_paper/warning_consumer.py
+src/project_mai_tai/services/momentum_paper_app.py
+tests/unit/test_momwarn1_no_data_expiry.py
+tests/unit/test_momentum_warning_followup.py
+docs/review-artifacts/momwarn1-no-data-expiry-20261013/INTAKE.json
+docs/review-artifacts/momwarn1-no-data-expiry-20261013/RESULT.txt
+Only first3runtimefiles. No OMS/paperenginedecision/store/strategy/gateway/provider/
+protocolmodels/Settings/flags/schema/legacySnapshot handling change.
+Cap16/sharedcapacity unchanged. Ownerreplace remains consumer_name=momentum-warning
+in existing T-only gateway lane; otherowner T/Q unaffected. WarningflagOFF has no
+new consumer/timer/log actions; existing snapshot fallback untouched.
+
+ACTUAL FOCUSED VERIFICATION
+Final exactad919247PASS0FAIL50dependencywarnings3.42s. 31new expirycontrols:
+exact59.999/60.000 boundary, eligibleobservedvsSIP anchor,4noneligible timingcases,
+future/stale trade/futureA, duplicate/out-of-order, leaseclockregression,
+pending/open inhibition8componentcases (both30/60codes in bothledgers) and8ACTUAL
+service_tick cases, rewarning/rawcoveragegap, ACTUALservice expiry INFO/re-subscribe
+and realgatewayownerlogic with fakeWS proving otherowner T.TEST/Q.TEST neverremoved.
+Existing dormantcap control now checks17th REFUSED before60, all16expired_no_data
+at60, nextwarning ADMITTED; no 16cap bypass/cooling fiction/paperentry generated.
+Existing coolingproof tests keep all assertions: add valideligibleprice10callbacks
+while no warningposition to isolate coolingpolicy from newauthorizedsilencepolicy.
+They still require actualcontinuousobservedAcheckpoints/121s and refusebrokenproof.
+Filled-path controls do not injectstop-causing prices; activepath evidence unchanged.
+216existingpaper/warning/cooling/snapshot/engine/conditions/display/provenance and
+selected ownergateway/defaultOFF bound regressions. No broad/load/60sperf suite.
+Ruff --no-cache PASS, git diff --check H74..head PASS, H74ancestorPASS.
+Snapshot sourceepoch/causal exactprint identity, frozen strategy20%/nextprint and
+ledger separation remain covered; no timestamps or providerentitlement invented.
+
+EXECUTION HISTORY (PRESERVED)
+Initial79PASS2FAIL1.67s: NEW testfixture was1499ms stale, so did not reachexisting
+reorderguard; NEW clocktest mistakenly invoked strictcooling guard instead of
+new lease method. Corrected onlyfixture lag1000ms and lease-specific call; no
+source/threshold/assertion weakening. InitialXML/log kept under/tmp.
+Then89controlsPASS1.58s; exactcommitted sourcefinal247PASS3.42s. No repeatuntilgreen
+benchmark/GC/harness changes, no historicalfuture receipt/capturedpeak claims.
+
+COMMAND (isolatedWT)
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_momwarn1_no_data_expiry.py tests/unit/test_momentum_warning.py tests/unit/test_momentum_warning_followup.py tests/unit/test_momentum_paper_service.py tests/unit/test_momentum_paper_engine.py tests/unit/test_momentum_paper_conditions.py tests/unit/test_momwarn1_l3_contract.py tests/unit/test_momwarn1_warning_page_metrics.py tests/unit/test_momwarn1_paper_display.py tests/unit/test_momwarn1_gateway.py::test_warning_owner_T_only_cap_and_other_owner_union tests/unit/test_momwarn1_gateway.py::test_restore_warning_owner_never_warms_or_adds_Q tests/unit/test_momwarn1_gateway.py::test_warning_off_restores_only_other_owners tests/unit/test_momwarn1_gateway.py::test_settings_default_off_and_bounds -q -s --junitxml=/tmp/momwarn1-no-data-expiry-final-20261013.xml > /tmp/momwarn1-no-data-expiry-final-20261013.log 2>&1
+
+OUTPUT SHA256
+/tmp/momwarn1-no-data-expiry-final-20261013.xml
+80875039b143a48b4e52dc4368597dea6bb2ea8ab02c924af9c84d826ce97e02
+/tmp/momwarn1-no-data-expiry-final-20261013.log
+a3725ad8b4a707dd515879b50b9f5eaee7806634d4d6a4529ab31f1a79211575
+/tmp/momwarn1-no-data-expiry-ruff-20261013.log
+82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18
+src/project_mai_tai/momentum_paper/warning_window.py
+ad0f38beec2bb43c6f026732e0582b960790a5001668c62327b4f2afd30630ff
+src/project_mai_tai/momentum_paper/warning_consumer.py
+3405ba099af63ec8f968416bb6492eb29ec09eacbc9e154b3fa9227aeef90e85
+src/project_mai_tai/services/momentum_paper_app.py
+6af952a0e1c04704eba8c74dc97b0bd58df1f741afcc843f8553eba7df67a04c
+tests/unit/test_momwarn1_no_data_expiry.py
+68e2816b694d08800005ca1dc90a5093ae1449666c0555721dff019ef836c81d
+tests/unit/test_momentum_warning_followup.py
+99471898ff6c6b006484aaa1aa6c6640620b6a7935df5048320f951890baed89
+
+STATUS / PACKAGE
+Local source/focusedcontrols completed and reported; source REVIEW and original
+ALL-ON60s3/3 performancegate MAIN-owned, NOTRUN byworker. Nextaftercloseinstall
+only after review+main gate; no present productionaction/flag/push/CI claim.
+GitHubblocked, no provider/socket/REST/credential/DBcapture/runtime writes.
+FakeWS/SQLite/fakeRedis tests only. W6 evidence main-owned, not changed here.
+Localbundle/diff and finalhead/hash receipt will be adjacent under
+/Users/velkris/.codex/task-queues/analysis/momwarn1-no-data-expiry-20261013/.
+Receipt-only child changes own docs/intake, not exacttested code/tests.

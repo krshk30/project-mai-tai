@@ -41,6 +41,7 @@ from project_mai_tai.broker_adapters.atr_buy_readback import (
 from project_mai_tai.broker_adapters.webull_order_reads import (
     QueryBudgetUnavailable, shared_budget, shared_reader, terminal_version,
 )
+from project_mai_tai.broker_adapters.target_price import target_limit_price
 
 
 logger = logging.getLogger(__name__)
@@ -756,13 +757,31 @@ class WebullBrokerAdapter:
         report_metadata["webull_wire_submitted_at_utc"] = datetime.now(UTC).isoformat(
             timespec="milliseconds"
         )
+        is_target = request.reason == "oms_v2_managed_exit:CW_TARGET"
+        if is_target:
+            for key in tuple(report_metadata):
+                if key.startswith("cw_target_api_"):
+                    report_metadata.pop(key)
         try:
-            body = self._body(client.get_response(po))
+            response = client.get_response(po)
+            if is_target:
+                try:
+                    report_metadata["cw_target_api_received_at"] = datetime.now(UTC).isoformat(timespec="microseconds")
+                except Exception:
+                    pass
+            body = self._body(response)
         except Exception as exc:  # noqa: BLE001 - preserve the broker's correlation evidence
             return [self._reject_from_exception(request, exc, metadata=report_metadata)]
         # Confirmed live: the place response returns only {client_order_id}; the broker
         # order_id appears in the order-detail (fetch_order_update). A None here is normal.
         broker_order_id = self._first_str(body, "order_id", "orderId")
+        if is_target:
+            try:
+                if self._first_str(body, "client_order_id", "clientOrderId") == request.client_order_id:
+                    report_metadata.update(cw_target_api_ack_evidence="webull_matching_client_order_id",
+                        cw_target_api_ack_client_order_id=request.client_order_id)
+            except Exception:
+                pass  # Observational evidence is never order/report authority.
         # A resting limit (ORB reclaim) is acknowledged; the OMS polls fetch_order_update for
         # the fill — so we return "accepted" and do not block waiting on a terminal state.
         return [
@@ -1091,7 +1110,11 @@ class WebullBrokerAdapter:
         # silently going dark. The fallback costs an extra call only on a lookup that would
         # otherwise have failed outright.
         master_coid = self._combo_leg_coid(request.client_order_id, "M")
-        lookups = (
+        momentum_owned = (request.strategy_code == "momentum_warn_live"
+                          and bool(request.metadata.get("episode_id"))
+                          and (request.metadata.get("momlive_one_shot") == "true"
+                               or request.metadata.get("momlive_native_child") == "true"))
+        lookups = [request.client_order_id] if momentum_owned else (
             [master_coid, request.client_order_id]
             if self._is_bracket_request(request)
             else [request.client_order_id, master_coid]
@@ -1102,7 +1125,13 @@ class WebullBrokerAdapter:
             od.set_account_id(account.account_id)
             od.set_client_order_id(coid)
             try:
-                _, body = self._ordinary_order_body(account, od, coid, symbol=request.symbol, side=request.side)
+                if momentum_owned and (request.metadata.get("momlive_entry_deadline_read") == "true"
+                                       or request.metadata.get("momlive_fresh_order_read") == "true"):
+                    body = self._momentum_detail_body(account, od, request)
+                else:
+                    _, body = self._ordinary_order_body(account, od, coid, symbol=request.symbol, side=request.side)
+                    if momentum_owned and body is None:
+                        body = self._momentum_detail_body(account, od, request)
                 if body is None and getattr(self, "_list_primary_enabled", False):
                     continue
                 break
@@ -1207,6 +1236,21 @@ class WebullBrokerAdapter:
             metadata=metadata,
             reported_at=reported_at,
         )
+
+    def _momentum_detail_body(self, account, detail_request, request):
+        # Missing list children are UNKNOWN, not permission to probe guessed IDs.
+        # Use the existing ordinary permit, leaving strict cancel/RPG capacity.
+        try:
+            self._query_budget.claim("detail", f"{account.account_id}:{request.client_order_id}")
+        except QueryBudgetUnavailable:
+            return None
+        response = self._get_client().get_response(detail_request)
+        body = self._body(response)
+        if (self._response_status(response) != 200
+                or self._validated_list_execution(body, account, request.client_order_id,
+                    symbol=request.symbol, side=request.side) is None):
+            return None
+        return body
 
     def _positions_blocking(
         self, account: WebullAccountConfig, broker_account_name: str
@@ -2015,7 +2059,7 @@ class WebullBrokerAdapter:
         return [
             {**common, "client_order_id": self._combo_leg_coid(coid, "T"),
              "combo_type": "STOP_PROFIT", "side": "SELL",
-             "order_type": "LIMIT", "limit_price": str(self._round_to_tick(target))},
+             "order_type": "LIMIT", "limit_price": str(target_limit_price(target))},
             {**common, "client_order_id": self._combo_leg_coid(coid, "S"),
              "combo_type": "STOP_LOSS", "side": "SELL",
              "order_type": "STOP_LOSS", "stop_price": str(self._round_to_tick(protect))},

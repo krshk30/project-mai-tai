@@ -3,21 +3,31 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Iterable
 
-from sqlalchemy import distinct, select
+from sqlalchemy import distinct, or_, select, tuple_
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import MomentumPaperEvent
-from project_mai_tai.momentum_paper.models import MomentumTapeRecord
+from project_mai_tai.momentum_paper.models import MOMENTUM_STRATEGIES, MomentumTapeRecord
+from project_mai_tai.momentum_paper.case_collision_audit import (
+    INVALIDATED, apply_reference_audit, invalidated_event_scopes,
+)
 
 
 TERMINAL_EVENT_TYPES = frozenset({"FINAL", "NO_FILL", "UNANSWERABLE"})
+
+
+def _event_scope():
+    return tuple_(MomentumPaperEvent.logical_id, MomentumPaperEvent.strategy_code,
+                  MomentumPaperEvent.symbol, MomentumPaperEvent.session_date)
 
 
 class MomentumPaperStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 
-    def append_many(self, records: Iterable[MomentumTapeRecord]) -> int:
+    def append_many(self, records: Iterable[MomentumTapeRecord], *, session: Session | None = None) -> int:
+        if session is not None:
+            return self._append_many_in_transaction(session, records)
         pending = list({record.event_key: record for record in records}.values())
         if not pending:
             return 0
@@ -49,22 +59,48 @@ class MomentumPaperStore:
             session.commit()
         return len(new_records)
 
-    def load_session(self, session_date: date) -> list[MomentumTapeRecord]:
+    def _append_many_in_transaction(self, session: Session, records: Iterable[MomentumTapeRecord]) -> int:
+        """Normal append shape without committing the caller's guarded transaction."""
+        pending = list({record.event_key: record for record in records}.values())
+        if not pending:
+            return 0
+        existing = set(session.scalars(select(MomentumPaperEvent.event_key).where(
+            MomentumPaperEvent.event_key.in_([record.event_key for record in pending]))).all())
+        new_records = [record for record in pending if record.event_key not in existing]
+        session.add_all([MomentumPaperEvent(event_key=r.event_key, logical_id=r.logical_id,
+            strategy_code=r.strategy_code, event_type=r.event_type, session_date=r.session_date,
+            symbol=r.symbol, observed_at=r.observed_at, payload=dict(r.payload)) for r in new_records])
+        return len(new_records)
+
+    def load_session(
+        self, session_date: date, *, strategy_codes: Iterable[str] = MOMENTUM_STRATEGIES,
+    ) -> list[MomentumTapeRecord]:
         with self.session_factory() as session:
             rows = session.scalars(
                 select(MomentumPaperEvent)
-                .where(MomentumPaperEvent.session_date == session_date)
+                .where(
+                    MomentumPaperEvent.session_date == session_date,
+                    MomentumPaperEvent.strategy_code.in_((*strategy_codes, "momentum_paper")),
+                    or_(MomentumPaperEvent.event_type != INVALIDATED,
+                        _event_scope().in_(invalidated_event_scopes())),
+                    or_(MomentumPaperEvent.event_type == INVALIDATED,
+                        _event_scope().not_in(invalidated_event_scopes())),
+                )
                 .order_by(MomentumPaperEvent.observed_at, MomentumPaperEvent.created_at)
             ).all()
         return [self._record(row) for row in rows]
 
-    def load_completed_since(self, start_date: date) -> list[dict[str, object]]:
+    def load_completed_since(
+        self, start_date: date, *, strategy_codes: Iterable[str] = MOMENTUM_STRATEGIES,
+    ) -> list[dict[str, object]]:
         with self.session_factory() as session:
             rows = session.scalars(
                 select(MomentumPaperEvent)
                 .where(
                     MomentumPaperEvent.session_date >= start_date,
                     MomentumPaperEvent.event_type.in_(TERMINAL_EVENT_TYPES),
+                    MomentumPaperEvent.strategy_code.in_(tuple(strategy_codes)),
+                    _event_scope().not_in(invalidated_event_scopes()),
                 )
                 .order_by(MomentumPaperEvent.observed_at)
             ).all()
@@ -83,15 +119,16 @@ class MomentumPaperStore:
     @staticmethod
     def incomplete_logical_ids(rows: Iterable[MomentumTapeRecord]) -> set[str]:
         detected = {row.logical_id for row in rows if row.event_type == "DETECTED"}
-        terminal = {row.logical_id for row in rows if row.event_type in TERMINAL_EVENT_TYPES}
+        terminal = {row.logical_id for row in rows if row.event_type in TERMINAL_EVENT_TYPES or row.event_type == INVALIDATED}
         return detected - terminal
 
     @staticmethod
     def latest_session_ready(
         rows: Iterable[MomentumTapeRecord],
     ) -> MomentumTapeRecord | None:
-        matches = [row for row in rows if row.event_type == "SESSION_READY"]
-        return matches[-1] if matches else None
+        source = list(rows)
+        matches = [row for row in source if row.event_type == "SESSION_READY"]
+        return apply_reference_audit(matches[-1] if matches else None, source)
 
     @staticmethod
     def _record(row: MomentumPaperEvent) -> MomentumTapeRecord:

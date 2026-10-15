@@ -1,0 +1,58 @@
+LOCAL REVIEW ARTIFACTS ONLY - nothing installed or activated by J.
+Authority LATEST2026-10-15 07:5x. Do not run during today's live session.
+
+Operator-reviewed installation mapping (back up each destination first):
+project-mai-tai-maintenance -> /usr/local/libexec/project-mai-tai-maintenance root:root0755
+60-project-mai-tai-maintenance -> /etc/apt/apt.conf.d/60-project-mai-tai-maintenance root:root0644
+apt-daily-upgrade.timer.override.conf -> /etc/systemd/system/apt-daily-upgrade.timer.d/zz-project-mai-tai-window.conf root:root0644
+apt-daily-upgrade.service.override.conf -> /etc/systemd/system/apt-daily-upgrade.service.d/zz-project-mai-tai-window.conf root:root0644
+zz-project-mai-tai-window.conf -> /etc/needrestart/conf.d/zz-project-mai-tai-window.conf root:root0644
+policy-rc.d -> /usr/sbin/policy-rc.d root:root0755 ONLY IF ABSENT, or already identical.
+If an existing policy-rc.d differs, STOP for reviewed chaining; never overwrite it.
+New drop-ins sort after old daily schedule; inspect effective unit before enabling.
+Existing approved notifications remain; no ExecStart/notification overrides here.
+
+Existing 52-project-mai-tai-unattended-upgrades blacklists security-sensitive
+Postgres/openssl libraries indefinitely. To permit their security updates inside
+the approved window, operator must back up and retire ONLY that exact recognized
+project blacklist, after checking bytes against the versioned original. Do not
+clear unrelated operator blacklists or alter allowed security origins. Until
+that existing exclusion is retired, do NOT claim all security patches apply.
+Daily apt download timer stays; weekly upgrade timer is Sat00:00ET/no catchup.
+Runtime ExecCondition + apt Pre-Invoke guard reject installation outside hour.
+Explicit attended emergency: use a one-command root environment
+MAI_TAI_MAINTENANCE_ATTENDED=1, never persist it in automatic-service env.
+No automatic reboot, including inside window; operator handles reboot separately.
+
+Policy covers standard invoke-rc.d/deb-systemd-invoke package service actions
+and needrestart. Arbitrary root systemctl commands are not intercepted. Package
+installation starts outside the window are blocked to prevent maintainer scripts
+running there. Existing root custom scripts/direct dpkg remain operator-owned;
+do not claim a global systemctl prohibition or independently verified live policy.
+
+A transaction already executing at01:00 is NOT forcibly killed/rolled back.
+Package post-hook flags window overrun. Service policy still refuses protected
+restart actions at/after01:00. Thus no-new-start/outside-restart policy is built;
+strict package completion within60min is UNMEASURED, not guaranteed by a timer.
+
+Pending evidence: /var/lib/project-mai-tai-maintenance/pending-restart.json,
+root-owned0644 under0755directory; no credentials/raw command output stored.
+Needrestart scan is explicitly batch/list-only; never starts/restarts a service.
+Flag is deliberately not auto-cleared. Operator verifies remaining packages,
+needrestart list and reboot status then archives/clears it in attended maintenance.
+If flag or scan unreadable, report UNKNOWN; absence is not runtime health proof.
+
+Fullscan source is an external claude-owned tool, not part of this repository.
+Prepared ops/health/fullscan-maintenance.patch adds the readonly repo probe to
+its box.sh HEALTH section; analyzer already prints this header/body. Apply to
+the local tool only after reviewer approval; no active fullscan script edited
+or executed by J. This patch/probe is ready for integration, NOT an active check.
+No SSH, daemon-reload, timer start, package/needrestart command or root write
+performed by J. Actual installed-precedence/Ubuntu apt+needrestart acceptance
+belongs to reviewed operator installation, not the mocked local tests.
+
+Primary semantics checked: Debian apt.conf DPkg Pre/Post-Invoke hooks;
+invoke-rc.d policy refusal101; needrestart -r l list-only mode.
+https://manpages.debian.org/bookworm/apt/apt.conf.5.en.html
+https://manpages.debian.org/bookworm/init-system-helpers/invoke-rc.d.8.en.html
+https://manpages.debian.org/bookworm/needrestart/needrestart.1.en.html

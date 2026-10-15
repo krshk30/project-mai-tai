@@ -178,7 +178,7 @@ def test_cross_emits_exactly_once_per_trigger() -> None:
     st = strat.watchlist_state("TEST")
     _arm(strat, st, trail=9.5, now_ms=PRE_WIN + 1000)
     strat._now_ms = lambda: PRE_WIN + 2000
-    first = strat.on_quote("TEST", Quote("TEST", 9.55, 9.57, 9.56, PRE_WIN + 2000, 0))
+    first = strat.on_quote("TEST", Quote("TEST", 9.53, 9.54, 9.56, PRE_WIN + 2000, 0))
     assert first is not None
     strat._now_ms = lambda: PRE_WIN + 2500
     second = strat.on_quote("TEST", Quote("TEST", 9.60, 9.62, 9.61, PRE_WIN + 2500, 0))
@@ -249,9 +249,25 @@ def test_grace_expiry_disarms_in_memory_without_a_broker_cancel() -> None:
     st = strat.watchlist_state("TEST")
     _arm(strat, st, trail=9.5, now_ms=PRE_WIN + 1000)
     strat._now_ms = lambda: PRE_WIN + 2000
-    strat.on_quote("TEST", Quote("TEST", 9.55, 9.57, 9.56, PRE_WIN + 2000, 0))   # cross -> grace @ +2000
+    strat.on_quote("TEST", Quote("TEST", 9.53, 9.54, 9.56, PRE_WIN + 2000, 0))   # cross -> grace @ +2000
     assert st.resting_flip_ms == PRE_WIN + 2000
     # 31s later, still flat -> grace expires -> disarm (in memory), NO broker cancel draft
     out = _arm(strat, st, trail=9.5, ts=PRE_WIN + 31_000, now_ms=PRE_WIN + 33_000)
     assert out == []                                            # no broker draft
     assert st.resting_active is False and st.resting_flip_ms == 0
+
+
+def test_past_band_rest_quote_keeps_watch_for_in_band_once_only_cross(caplog) -> None:
+    strat = _strat()
+    st = strat.watchlist_state("TEST")
+    _arm(strat, st, trail=9.5, now_ms=PRE_WIN + 1000)
+    strat._now_ms = lambda: PRE_WIN + 2000
+    with caplog.at_level("INFO"):
+        assert strat.on_quote("TEST", Quote("TEST", 9.55, 9.57, 9.56, PRE_WIN + 2000, 0)) is None
+    assert st.resting_active and st.resting_flip_ms == 0
+    assert strat.drain_pending_intents() == []
+    assert "source=rest_quote latch_taken=0" in caplog.text
+    strat._now_ms = lambda: PRE_WIN + 2500
+    assert strat.on_quote("TEST", Quote("TEST", 9.53, 9.54, 9.56, PRE_WIN + 2500, 0)) is not None
+    assert st.resting_flip_ms == PRE_WIN + 2500
+    assert strat.on_quote("TEST", Quote("TEST", 9.53, 9.54, 9.56, PRE_WIN + 2500, 0)) is None

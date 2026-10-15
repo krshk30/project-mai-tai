@@ -4,10 +4,11 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import MomentumPaperEvent
+from project_mai_tai.momentum_paper.case_collision_audit import invalidated_event_scopes
 
 
 MAX_TERMINAL_ROWS = 4096
@@ -18,6 +19,20 @@ def load_completed_today(
 ) -> tuple[list[dict[str, Any]], Decimal]:
     if strategy_code not in {"momentum_30s", "momentum_60s"}:
         raise ValueError("Momentum page history is limited to the two Momentum strategies")
+    return _load_completed_today(session_factory, strategy_code, session_date)
+
+
+def load_warning_completed_today(
+    session_factory: sessionmaker[Session], strategy_code: str, session_date: date,
+) -> tuple[list[dict[str, Any]], Decimal]:
+    if strategy_code not in {"momentum_30s_warn", "momentum_60s_warn"}:
+        raise ValueError("Warning page history requires a labelled warning strategy")
+    return _load_completed_today(session_factory, strategy_code, session_date)
+
+
+def _load_completed_today(
+    session_factory: sessionmaker[Session], strategy_code: str, session_date: date,
+) -> tuple[list[dict[str, Any]], Decimal]:
     with session_factory() as session:
         rows = session.scalars(
             select(MomentumPaperEvent)
@@ -25,6 +40,8 @@ def load_completed_today(
                 MomentumPaperEvent.session_date == session_date,
                 MomentumPaperEvent.strategy_code == strategy_code,
                 MomentumPaperEvent.event_type.in_(("FILLED", "EXITED", "FINAL")),
+                tuple_(MomentumPaperEvent.logical_id, MomentumPaperEvent.strategy_code,
+                       MomentumPaperEvent.symbol, MomentumPaperEvent.session_date).not_in(invalidated_event_scopes()),
             )
             .order_by(MomentumPaperEvent.observed_at, MomentumPaperEvent.created_at, MomentumPaperEvent.event_key)
             .limit(MAX_TERMINAL_ROWS + 1)

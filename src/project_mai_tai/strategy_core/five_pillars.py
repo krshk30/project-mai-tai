@@ -4,6 +4,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 from project_mai_tai.strategy_core.models import MarketSnapshot, ReferenceData
 from project_mai_tai.strategy_core.snapshot_utils import (
     compute_rvol,
@@ -41,6 +43,8 @@ def apply_five_pillars(
 
     results: list[dict[str, object]] = []
     for snapshot in snapshots:
+        if not raw_symbol_is_uppercase(snapshot.ticker):
+            continue
         ticker = snapshot.ticker.upper()
         if not ticker or snapshot.day is None:
             continue

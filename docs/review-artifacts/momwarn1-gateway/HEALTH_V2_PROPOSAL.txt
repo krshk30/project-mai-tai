@@ -1,0 +1,90 @@
+MOMWARN1 W3 health v2 PROPOSAL ONLY -- requires main/G3 review
+Runtime reader/schema remains v1 at7b2bdfc7. No schema/code/Settings relaxation.
+Daily-window and retired-paper-log repairs are separate completed local scopes.
+
+Confirmed inputs and source anchors (relative to this worktree):
+Human read-only /proc confirms OMS_BROKER_SYNC_INTERVAL_SECONDS=15. The Settings
+default is5, so default-derived cadence must not substitute for actual running15.
+oms/service.py:1103,1146,1156 schedules by the effective interval and stores the
+pre-pass loop clock in last_broker_sync. This is not a true completion timestamp.
+oms/service.py:11235-11242 can shorten cadence for active stop guards; configured
+15 alone does not prove the currently selected effective interval.
+oms/service.py:10310-10337 emits INFO OMS-BROKER-SYNC-PASS start/end, pass ID,
+outcome and monotonic measured duration_ms. This is a real candidate source;
+actual log receipt pairing, UTC conversion and timing remain G3 proof work.
+log.py:71-77 uses asctime with no explicit UTC converter. Do not assume UTC from
+these timestamps; require source-host timezone and millisecond precision proof.
+services/schwab_1m_v2_bot.py:1172-1196 labels04:00 as premarket; this generic
+session helper cannot prove pre07 bar applicability or5s bar lateness.
+market_data/schwab_v2_rest_client.py:49-52 explicitly bounds only the anchored
+REST lane to weekdays07:00-16:00. It is not a universal CHART source schedule.
+services/schwab_1m_v2_bot.py:1243-1256 distinguishes no watchlist/quiet market,
+but its existing180s flow threshold and rounded age heartbeat are not the new
+card's actual completed-bar due-time plus5s measurement.
+services/schwab_1m_v2_bot.py:2298-2304 subscribes watchlist UNION exit coverage.
+Empty entry watchlist must not silently declare held-symbol bar input N/A.
+
+Proposed schema_version=2 fields (names pending review, not a deployed schema):
+monitor_observed_utc_ns: true timestamp of this1Hz monitor read; <=5s old,
+never future, same-host/skew validated. Refreshing this is not refreshing sources.
+source identity per service: service name,pid/process-start token, file inode/
+byte cursor, original timestamp resolution/timezone provenance. Restarted OMS
+pass IDs must not be confused with previous process IDs or gateway generations.
+oms.state: AVAILABLE or UNKNOWN (OMS missing is never N/A).
+oms.last_completed_pass_id: real end-event ID, not sample sequence.
+oms.last_completed_utc_ns: original source end time; unchanged between passes.
+oms.last_duration_ms: original measured monotonic duration; never default0.
+oms.last_outcome: original end-event outcome; failed/cancelled is not healthy.
+oms.current_pass_id,oms.current_started_utc_ns: real start event if in progress,
+else null. Do not fabricate a running pass or complete an unmatched start.
+oms.configured_interval_seconds: actual running15, with /proc source proof.
+oms.effective_interval_seconds and evidence: actual selected cadence if provable;
+not derived from Settings default or inferred solely from last inter-pass gap.
+oms.completions_since_cursor: bounded list of real end records to avoid skipped
+fast/post-intent passes; every distinct >5s completion counts once. Loss/overflow/
+unmatched pairs/restart ambiguity => UNKNOWN, not silently skipped evidence.
+
+Cadence freshness proposal for review:
+Keep monitor freshness<=5s. Separately require OMS completion age against a
+validated cadence budget; proposed15s+5s pass budget=20s only for proven15s
+effective cadence. It is not a code-proven hard upper bound: source awaits sync
+and other work without a5s pass timeout. No claim that current code guarantees20s.
+If shorter cadence applies or cadence evidence is unavailable, do not blindly
+grant20s; G3 must establish the applicable budget or state UNKNOWN.
+Failed sync, >5s twice, missing required evidence and sequence loss still fail
+closed A only. Sampling the same completed pass never counts it twice.
+
+v2_bar.state: AVAILABLE, NOT_APPLICABLE, or UNKNOWN, explicitly carried.
+v2_bar.source_predicate: provider/lane, expected-bar window start, current UTC/ET
+session mapping, source-backed expected watched-bar symbol set and observation
+time/process identity. Missing symbol/window evidence is UNKNOWN, not empty.
+v2_bar.reason: before_expected_bar_window or no_expected_watched_bars ONLY when
+that source predicate is proved. Before actual expected07 and confirmed empty
+expected-bar set may be NOT_APPLICABLE; numeric lateness must be null, never0.
+v2_bar.expected_bar_due_utc_ns,last_completed_bar_end_utc_ns,
+last_processed_utc_ns,lateness_ms: true source timings when AVAILABLE. Preserve
+per-symbol coverage/maximum applicable lateness; unrelated fresh bar cannot hide
+another applicable late watched symbol. Do not use aggregate A as v2 bar proof.
+For applicable bars, >5000ms late still reverts A. Required unknown/missing/stale
+bar evidence also reverts. Disconnected, warming up, absent logs or no receipt
+are not substitute N/A reasons. First expected completed-minute boundary at07
+needs G3 source/timing review; do not silently invent due times or a grace rule.
+
+Independent actual-source/timing acceptance before any reader/schema update:
+1. Retained real15s OMS start/end records plus process/cadence receipts: at6s
+after completion, fresh monitor may remain valid WITHOUT restamping completion;
+at the reviewed evidence budget boundary, loss/overdue source stays fail-closed.
+2. Repeat samples of same pass keep source time/duration/ID unchanged; two real
+distinct >5s passes trip once each. Include faster cadence, post-intent passes,
+missing end, failed outcome, rotation, timezone/skew and process restart cases.
+3. Real04:11/pre07 provider/watch-set evidence yields NOT_APPLICABLE+null;
+absence/unreadability yields UNKNOWN. Missing watch-set is not a zero count.
+4. Real first expected07 minute/active-watch delivery fixtures define due time;
+applicable >5s lateness/UNKNOWN still revert. Include zero entry watches with
+held exit coverage to prove the exact expected-bar predicate.
+5. No per-tick DB/HTTP, no provider connection/probe, no fabricated source
+producer treated as live proof. Independent G3 read-only assessment supplies
+minimal source fixtures; G1 implements only after proposal review.
+
+Status: proposal prepared; acceptance evidence and review pending. W5 recorded
+3xpeak remains missing. External health JSON producer is not itself live proof.

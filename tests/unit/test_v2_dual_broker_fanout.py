@@ -280,6 +280,18 @@ def _resting_state(strat, *, level=9.5, now_ms=RTH_MS):
     st.bars.append(_bar(level + 1, ts=now_ms))            # fresh live bar
     strat._resting_session_is_eh = lambda now=None: False  # RTH
     strat._now_ms = lambda: now_ms
+    st.resting_is_broker_order = True
+    st.last_resting_placed_slot = "first"
+    identity = strat._fanout_identity_metadata(st, source="rth_resting")
+    st.resting_schwab_generation = "controlled-primary-generation"
+    strat.apply_primary_resting_book(observed_at_ms=now_ms, orders={
+        (st.symbol, st.resting_schwab_generation): {
+            "broker_order_id": "CONTROLLED-ACCEPTED", "status": "working",
+            "segment_id": int(identity["fanout_segment_id"]),
+            "slot": identity["fanout_slot"], "slot_id": identity["fanout_slot_id"],
+            "entry_slot": "first",
+        },
+    })
     return st
 
 
@@ -326,6 +338,15 @@ def test_rth_resting_primary_and_cross_fired_webull_leg_share_identity():
 
     strat._queue_resting_place(st, 9.5, slot="first")
     primary = strat.drain_pending_intents()[0]
+    strat.apply_primary_resting_book(observed_at_ms=RTH_MS, orders={
+        (st.symbol, st.resting_schwab_generation): {
+            "broker_order_id": "CONTROLLED-ACCEPTED", "status": "working",
+            "segment_id": int(primary.metadata["fanout_segment_id"]),
+            "slot": primary.metadata["fanout_slot"],
+            "slot_id": primary.metadata["fanout_slot_id"],
+            "entry_slot": primary.metadata["cw_entry_slot"],
+        },
+    })
     strat._fanout_rth_resting_cross(st, _quote(9.51))
     webull = strat.drain_webull_fanout_intents()[0]
 

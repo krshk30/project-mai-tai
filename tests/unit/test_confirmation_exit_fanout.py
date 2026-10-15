@@ -1871,6 +1871,8 @@ async def test_uncovered_page_fires_when_a_reattach_failed_and_left_the_old_hand
     assert await service._check_webull_uncovered_shares() == 0  # resting: covered
 
     async def _held(*args, **kwargs):
+        if "quantity_out" in kwargs:
+            kwargs["quantity_out"]["quantity"] = Decimal("1")
         return service_module._PositionRead.HELD
 
     async def _no_sleep(_seconds: float) -> None:
@@ -2058,6 +2060,8 @@ async def test_uncovered_page_survives_a_restart_after_a_failed_reattach(monkeyp
     )
 
     async def _held(*args, **kwargs):
+        if "quantity_out" in kwargs:
+            kwargs["quantity_out"]["quantity"] = Decimal("1")
         return service_module._PositionRead.HELD
 
     async def _no_sleep(_seconds: float) -> None:

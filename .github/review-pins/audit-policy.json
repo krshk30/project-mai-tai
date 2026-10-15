@@ -1,4 +1,15 @@
 {
   "audit_merged_after": "2026-08-27T17:33:34Z",
-  "schema_version": 1
+  "schema_version": 2,
+  "historical_allowances": [
+    {"pr_number":857,"head_sha":"32711c78c6ef0237bc8a9730ce321d153db8ec6d","base_sha":null,"kind":"missing_historical_pin","reviewed_at":"2026-10-15T07:50:00-04:00","reviewer":"claude-1","reason":"LATEST Oct15 07:5x: standing allowance for historical missing pin, PR857; not independent coverage."},
+    {"pr_number":883,"head_sha":"cd3d94c57fcce9e201b727a5a2bce4c4a8850365","base_sha":null,"kind":"missing_historical_pin","reviewed_at":"2026-10-15T07:50:00-04:00","reviewer":"claude-1","reason":"LATEST Oct15 07:5x: standing allowance for historical missing pin, PR883; not independent coverage."},
+    {"pr_number":885,"head_sha":"07fe6be05c5dc4978241bff81ed4182f540c8fd9","base_sha":null,"kind":"missing_historical_pin","reviewed_at":"2026-10-15T07:50:00-04:00","reviewer":"claude-1","reason":"LATEST Oct15 07:5x: standing allowance for historical missing pin, PR885; not independent coverage."},
+    {"pr_number":919,"head_sha":"4a7816ce10724faf639f0d5b5d152cf8325a66d1","base_sha":null,"kind":"missing_historical_pin","reviewed_at":"2026-10-15T07:50:00-04:00","reviewer":"claude-1","reason":"LATEST Oct15 07:5x: standing allowance for historical missing pin, PR919; not independent coverage."},
+    {"pr_number":937,"head_sha":"cde36270ca74d0c85242f40b6064bf4711b58c7c","base_sha":null,"kind":"missing_historical_pin","reviewed_at":"2026-10-15T07:50:00-04:00","reviewer":"claude-1","reason":"LATEST Oct15 07:5x: standing allowance for historical missing pin, PR937; not independent coverage."},
+    {"pr_number":941,"head_sha":"2868a22405052c6933cd4d07d66b5629e48b3d25","base_sha":null,"kind":"missing_historical_pin","reviewed_at":"2026-10-15T07:50:00-04:00","reviewer":"claude-1","reason":"LATEST Oct15 07:5x: standing allowance for historical missing pin, PR941; not independent coverage."},
+    {"pr_number":978,"head_sha":"c74ca39183a0a6958cb80d9888e84a67abd2c820","base_sha":null,"kind":"missing_historical_pin","reviewed_at":"2026-10-15T07:50:00-04:00","reviewer":"claude-1","reason":"LATEST Oct15 07:5x: standing allowance for historical missing pin, PR978; not independent coverage."},
+    {"pr_number":1144,"head_sha":"add40418373ac2eaa0e48ffd6f0f366f6e58b8c8","base_sha":null,"kind":"missing_historical_pin","reviewed_at":"2026-10-15T07:50:00-04:00","reviewer":"claude-1","reason":"LATEST Oct15 07:5x: standing allowance for historical missing pin, PR1144; not independent coverage."},
+    {"pr_number":938,"head_sha":"7527eff41e2c3934f2ad886bd26a46bcbd2450f4","base_sha":"97bc891f61275bd64db8b6207e22345b26b4239b","kind":"historical_ancestry","reviewed_at":"2026-10-15T07:50:00-04:00","reviewer":"claude-1","reason":"LATEST Oct15 07:5x: historical PR938 base97bc891f6 not ancestor of head7527eff41; exact ancestry allowance only."}
+  ]
 }

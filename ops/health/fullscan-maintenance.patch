@@ -1,0 +1,9 @@
+--- a/box.sh
++++ b/box.sh
+@@ -7,3 +7,6 @@
+ done
+ echo "#HEALTH"
++echo "#MAINTENANCE"
++python3 /home/trader/project-mai-tai/ops/health/maintenance_pending_check.py || true
++echo "#HEALTH-CONTINUED"
+ tail -1 /home/trader/fleet_health/cron.log | cut -c1-140

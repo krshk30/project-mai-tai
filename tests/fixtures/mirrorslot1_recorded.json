@@ -1,0 +1,29 @@
+{
+  "source": "Read-only PostgreSQL captured-rows.jsonl and retained captured-logs.jsonl 2026-10-12; UTC below. Fresh Webull delivery, old-order clearance, SDK ACK and quotes in replay are CONTROLLED, not historical fills.",
+  "cases": [
+    {"symbol":"YMAT","segment":"1791818404184","slot":"6429ce7a-b2b2-5a2d-bb80-556b52783305",
+     "old_at":"2026-10-12T16:47:02.551080+00:00","old_stop":"2.70","old_limit":"2.71",
+     "generation":"27562746-b293-411c-8f02-26fe62b556ec","rpg":"73f4beb9-ac69-447f-afde-efb254c86f9e",
+     "cancel_at":"2026-10-12T17:00:09.714567+00:00","cancel_event":"8734511d-89fa-489b-914a-e2f68c6da8a3",
+     "rearms":[["2026-10-12T17:01:03.309093+00:00","2.64","2.65"],["2026-10-12T17:08:02.749813+00:00","2.59","2.60"],["2026-10-12T17:17:03.918582+00:00","2.56","2.57"]],
+     "log_lines":["schwab-1m-v2.log:35952","oms.log:31544","schwab-1m-v2.log:36056","schwab-1m-v2.log:36818","schwab-1m-v2.log:37693"]},
+    {"symbol":"GIXI","segment":"1791822661935","slot":"85d38137-ae8b-5585-90a0-6e135597d964",
+     "old_at":"2026-10-12T16:31:01.976893+00:00","old_stop":"6.06","old_limit":"6.09",
+     "generation":"c9ec9580-88cf-4ebd-8b2a-ea64eeb6066a","rpg":"b98de951-fbc9-496d-a8b0-153cce9f26b3",
+     "cancel_at":"2026-10-12T16:37:03.804622+00:00","cancel_event":"f27f5857-38a3-4d25-bda7-23c1fada0b0e",
+     "rearms":[["2026-10-12T16:39:04.512993+00:00","6.02","6.05"]],
+     "log_lines":["schwab-1m-v2.log:33419","oms.log:30728","schwab-1m-v2.log:33635"]},
+    {"symbol":"SKYA","segment":"1791822665809","slot":"3b1fc05e-6278-5df0-863f-abddfea2a095",
+     "old_at":"2026-10-12T16:31:05.834835+00:00","old_stop":"2.64","old_limit":"2.65",
+     "generation":"711c129a-58ac-4a00-9263-33f3bd83583a","rpg":"b97014ba-acf7-410b-af8f-d64cd183cf9b",
+     "cancel_at":"2026-10-12T16:41:05.261347+00:00","cancel_event":"e227f7af-31e3-44ad-9fad-92d48efff90b",
+     "rearms":[["2026-10-12T16:42:04.829560+00:00","2.63","2.64"]],
+     "log_lines":["schwab-1m-v2.log:33856","oms.log:30864","schwab-1m-v2.log:33967"]},
+    {"symbol":"AIXI","segment":"1791483121177","slot":"0b332ef1-d234-5c39-8236-5a9f9c292958",
+     "old_at":"2026-10-08T18:20:03.308759+00:00","old_stop":"2.14","old_limit":"2.15",
+     "generation":"e63df124-023c-4e56-ad20-649136212045","rpg":"8e15730a-3cf2-45bb-a0c1-e10e8d696bd0",
+     "cancel_at":"2026-10-08T18:26:02.627640+00:00","cancel_event":"7b9c6598-8636-435c-a73a-662934f42b29",
+     "rearms":[["2026-10-08T18:27:02.523059+00:00","2.14","2.15"]],
+     "log_lines":[],"evidence":"Actual DB cancel/open+retired owner; Oct8 relevant log rows not retained by bounded log scan."}
+  ]
+}

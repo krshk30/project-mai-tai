@@ -1,0 +1,90 @@
+STUCKALERT1 POSITIVE BROKER ACK REPAIR -- LOCAL VERIFIED, MAIN REVIEW PENDING
+
+EXACT TESTED SOURCE
+8ab987b1fbdd336772756c8a38632e6adb1e8721
+Base860fba4c7d59edff18eb23468ba576dcb83f4d57 on isolated
+codex/stuckalert1-reconciler-20261012. Held6de4a9db/da10e34b heads unchanged.
+Only runtime source src/project_mai_tai/reconciliation/service.py. Dedicated
+test change tests/unit/test_stuckalert1.py and own assessment/intake/receipt only.
+Recorded fixture unchanged. No OMS/quotes/trading/Settings/schema/MOM/queue
+change, GitHub, provider request, production action or benchmark.
+Recognized Co-Authored-By: OpenAI Codex <noreply@openai.com> marker on source commit.
+
+ASSESSMENT / POLICY DISTINCTION
+Earlier candidates-minus-contradictions permitted accepted-looking rows without
+positive broker acceptance. That was my overly broad interpretation, not an
+approved marker-only policy. V1 removes per-order freshness ONLY; it still needs
+an actual event_source=broker,event_type=accepted PLUS accepted BUY STOP/STOP_LIMIT
+and resting_entry=true or fanout_source=rth_resting_mirror on live Schwab/Webull.
+One broker-only ranked query now requires positive accepted history AND latest
+broker event accepted/partially_filled. Partial-only is not accepted proof.
+Latest terminal/unknown prevents exemption; tied timestamps favor contradiction.
+No-event/client-only/unknown-only acceptance, nonnullbrokerID, marker and local
+status cannot stand in for a broker ACK. No origin upgrade or freshness threshold.
+Intents still need all matching linked active orders to qualify; orphan, mixed
+noack and unknown-intent alerts remain. Optional persisted account OMS completion
+metric absent: disclose/omit as authorized, no new receipt/OMS producer.
+
+RED / GREEN CONTROLS
+RED12 on held6de source:2brokers x2PM/RTH x3missing-ACK shapes(noevent/client/unknown
+accepted), all12fail as expected,49deselected,0.83s. Final test checks BOTH actual
+stuckorder and stuckintent builders yield one alert each, even with nonnullID.
+GREEN94PASS0FAIL4.32s on exact8ab, clean before/after run,65S1nodes+29unchanged
+reconciliation/logging/heartbeat regressions. S1=16positive brokerACK/type/marker/
+broker/session +12ACKnegative +20five-shape negatives +8scope/ambiguity fences
++3tied conflicts +4partial-onlyvsacceptedthenpartial +1strict180boundary +1replay.
+Existing ambiguity tests now seed positive ACK before independent conflict/fence,
+not weakened to pass because another requirement is missing. GIXI retained.
+Ruff --no-cache and git diff --check PASS. No broad/hotpath/timing benchmark.
+RED completed before main reserved Hwindow; no test active when hold arrived.
+GREEN/Ruff began only after main explicitly CLEARed that window.
+
+ACTUAL242 RECONSTRUCTION -- NOT HISTORICAL SOFTWARE-ARRIVAL PROOF
+119order+123intent distinct incidents openedOct05 00ET throughOct13 00ET; all
+opening times RTH. PM coverage is separately labelled CONTROLLED injection.
+Replay uses original incident status/age and latest retained as-of event <=open,
+not currentclosed incident status or later terminal-book projection. Fixture
+contains only latest retained as-of event, not complete earlier event history.
+Unknown184 means captured evidence cannot prove requiredbrokerACK, NOT that an
+earlier ACK could never have existed. No raw origin changed to broker.
+
+kind           recorded_before   actual_after   suppressed_positive_ACK
+stuck_order                119             92                       27
+stuck_intent               123             93                       30
+TOTAL                      242            185                       57
+
+Retained185=184accepted unknown-origin (92order/92intent) +1broker-terminal GIXI
+submittedintent case1a7fdc71-60e3-410c-8d49-bcea106cb322, relatedbroker-cancelled
+order86a0633c-f350-416e-8c9a-1dbff2b9dbb6 at16:42:04Z, open16:42:09.919890Z.
+57suppressed all have capturedpositivebrokeraccepted (27order/30intent Webull).
+No forced242->0, no relabel184, no weak terminal assertion. Fixture251lines from
+16paged READ ONLY2500ms captures, notatomic. Software event receipt UNMEASURED.
+Separate144Webullorders/36nullbrokerIDs unchanged side finding, NOT242denominator;
+exact missing-ID cause UNMEASURED and no OMS fix.
+
+COMMANDS (isolated S1 worktree)
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_stuckalert1.py -q -k requires_positive_broker_accepted_event --junitxml=/tmp/stuckalert1-positive-ack-RED-20261012.xml > /tmp/stuckalert1-positive-ack-RED-20261012.log 2>&1
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_stuckalert1.py tests/unit/test_reconciliation_service.py tests/unit/test_reconciler_logging.py tests/unit/test_reconciler_heartbeat_redis_reload.py -q -s --junitxml=/tmp/stuckalert1-positive-ack-final-20261012.xml > /tmp/stuckalert1-positive-ack-final-20261012.log 2>&1
+/Users/velkris/Projects/project-mai-tai/.venv/bin/ruff check --no-cache src/project_mai_tai/reconciliation/service.py tests/unit/test_stuckalert1.py
+git diff --check
+
+OUTPUT SHA256
+/tmp/stuckalert1-positive-ack-RED-20261012.xml
+46237ac3029ff7638b10838617f5b209e81b1c98764cb88f32273171d4d780eb
+/tmp/stuckalert1-positive-ack-RED-20261012.log
+f312fd155ea6dd13fe35c1ce4f5ff2a57e5fa370a645e13ca949aa261dbc8c81
+/tmp/stuckalert1-positive-ack-final-20261012.xml
+d770d434b8a2a8452b09a824c1646cb619fe019736ecc20a28405de73c83a350
+/tmp/stuckalert1-positive-ack-final-20261012.log
+de08aa79d5ce621ed54b863066e92aee3a477010ed15331a32381998293c144f
+tests/fixtures/stuckalert1_actual242.json
+b7858e675311f8fdee79f0abb310d2aa203de087cf7074c2b6f37ab8ee850a2b
+src/project_mai_tai/reconciliation/service.py
+17a493f45aeb78193a7a6fcd7ae0d294eebc6150ca3187b10a45c582ce28b166
+tests/unit/test_stuckalert1.py
+1d27f5bc8bedfec01a1fd81f48be4d1ed67bf86cb1455c30b1e78d154d94aa84
+
+STATUS
+Local repair result reported to main/user as94PASS/RED12/57suppressed/185retained.
+Main review/integration/install not performed or claimed. Preserve held outputs.
+Receipt-only child commit does not change tested runtime/test/fixture hashes.
