@@ -1,0 +1,129 @@
+L3a LOCAL DERIVED RATE / BURST RESULT -- NOT ACTUAL WS OR FEATURE INSTALL PROOF
+
+Base e064bcc4bbf9c92ba33b94b36224d51c5f86d201 preserved in history.
+Rate scanner/coordinator code head:c34ceeb0415d6831a4d7dfdde5e85572c478f869
+Frozen single burst test head:04fc4d2b87376bff594e1eeb1beb38651e50cf2c
+Runtime src diff against e064 EMPTY, clean before/after burst. No Settings/flag,
+gateway/provider/watchdog/publisher/OMS/v2/ORB/trading changes. Added offline
+scripts, dedicated tests and L3a docs only. Latest receipt child adds no code.
+
+HUMAN SUPERSESSION
+Recorded liveA requirement REPLACED by approved observed raw-tape derivation.
+Actual health config/settings/PID/timezone/baseline/cadence evidence moved to
+INSTALL; local controls unchanged. Original c1 generator no longer required;
+Mendel owns OUR signal-list generation. No claim these changes complete MOMRAW
+fullR5, feature/W4, broker execution or approval to install/connect/deploy.
+
+NINE-DAY OBSERVED CARDINALITY TABLE
+Counts = distinct downloaded symbols with >=1 raw print per integer UTC SIPsecond.
+Full8 read ALL original daily trades_v1 rows, not candidate/eligible retained rows.
+No symbol/price/condition/correction/Momentum filter added by this derivation.
+Oct12 sources are already prefiltered upstream by MOMRAW eligible/prior-close
+universe; all prints within those downloaded symbols counted without further
+condition filtering. It is NOT whole-market coverage.
+
+day        downloaded  printedPM  peak  p99.9  seconds  ETwindow       scope
+2026-09-18       12843       8029  1364    711    19800  04:00-09:30    full object
+2026-09-24       12852       7635  1535    590    19800  04:00-09:30    full object
+2026-10-02       12878       7776  1325    704    19800  04:00-09:30    full object
+2026-10-05       12880       7957  1811    720    19800  04:00-09:30    full object
+2026-10-06       12866       8007  1351    646    19800  04:00-09:30    full object
+2026-10-07       12888       8063  1562    675    19800  04:00-09:30    full object
+2026-10-08       12882       7845  1615    713    19800  04:00-09:30    full object
+2026-10-09       12890       7669  1164    629    19800  04:00-09:30    full object
+2026-10-12        4332       2467   546     96    19200  04:10-09:30    PARTIAL lower bound
+
+p99.9 nearest rank ceil(.999*N), ALL verified-window seconds, not positive-only.
+Full-file denominator counts distinct tickers anywhere in that downloaded daily
+object. Oct12 denominator counts4332 sealed complete/reused query jobs, including
+empty downloaded queries;2793712available prints,1323757insidePM comparison window.
+Query universe11820;7488missing intervals and excluded/low-price symbols UNKNOWN,
+not zero.04:00-04:10 UNKNOWN, not zero-filled. Partial p99.9 is a lower bound only
+against the SAME04:10-09:30 universe/window, not the wider04:00 distribution.
+Physical provider completeness remains UNVERIFIED. Observed-file zero does not
+assert physical market zero. WS updates/retransmissions/frame/rate UNMEASURED.
+No aggregate-volume-to-TQ extrapolation. Observed maximum1811, not future market
+capacity/expected actual WS peak. Human-approved stress envelope =3*1811=5433.
+
+INPUT / BOUNDS / HASHES
+Full sources: /Users/velkris/.codex/task-queues/analysis/momraw1-20261012/replay/provider-flatfiles/YYYY-MM-DD.csv.gz
+All8 current lengths/SHA match GET receipt; gzip EOF/CRC verified by scanner.
+Source fingerprints checked unchanged around streaming scan. All13 CSV columns
+strict width/quote handling; bounded100000symbols,4096byte lines,1MiBchunks,
+19800counter grid and lazily allocated symbol bitsets. One day at a time.
+Oct12 files selected only from sealed retained-input-SHA256SUMS; each source/
+receipt hash, complete/paginationEOF, raw count and common interval verified.
+No provider/REST/socket requests. No writes in MOMRAW or Mendel offlinelead lane.
+
+Source raw gz SHA256 (freshly recomputed):
+Sep18 94e8cd4af8c19c25996da3c3ad4f359c85d64f4616b2658a2eb2a5f9aa88c430
+Sep24 695d4f9af7c946302fc011163edd99d75a6c9e34cc39fa66a462e0463e591941
+Oct02 41709e9b63025902e9ffe726ab511e6bae1c9a821c1786473709a068f1c2bc30
+Oct05 4f793e5658c4164165a63aee0ef55a8f0064dfd218ae51631a2304882140e1c3
+Oct06 89734b19eb076de6bd94ae6764be2d85b309099f189909cb3e34159a748f15b7
+Oct07 d385c5cf7e2e40dae7ad75e9527ade9de3f43c6780a7e4c1de2b5dd46544a164
+Oct08 a4f3b5ffb583e6c83c89e14073a3663a4df915fd4d83ee03e3d752af217dff3f
+Oct09 bdad16b313cb67974f0b1e156a2a096de83ed7bdf6a3e724adb357a3dc633308
+Oct12 sealed manifest SHA58639bceadd3e3c3557ca560df1296bf2b534dbbf5b75783af7566081bd26531
+Perdaycounts JSON contains exact UTCns time bounds, downloaded-name hash, counts,
+source/receipt hashes, input rows, scope and template origin. summary.json indexes
+perday output hashes. No missing interval/stock converted to fabricated0.
+
+OUTPUT DIRECTORY
+/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012
+rates.csv SHAcba79a03f24cb890989563e29be8436910a9dbf54815ef78356d9f0963210ef9
+summary.json SHA207c3f7b0969aee612f1dada053cf443024505fc52731330129ca08e0ab2c9ab
+burst.xml SHAcdd0bf1520020c405a4fc75ef18802cfd4587330aa7d814e17e42da1211398c8
+burst.log SHA20944b63ca6049419cf947ae25ea2ded7c9c66a1c8420cf1091fe7a2d8c50beb
+Scanner binarySHA7b46a43cc33eb5101d5c73a7afe343cd789b5c8d29a9d9a6a39a3894f716a32b
+Scanner sourceSHA15aaa1ed9e7c27999fe4070fe123d31cd5f6d2beaaaf712bde4f01294e554d65
+CoordinatorSHA807bc7ea3d31b8274046bed19381d850ca71de4e6423e11d739c910b522d9b9d
+Burst testSHAfe361515191ffd9214d660ad47ca0373cb7b5a3e0d51cb2a0d63b98ed01d2d83
+
+ONE FROZEN DERIVED BURST --1PASS/0F in0.59s, existing XML-property warning
+Actual gateway/provider raw decode, SDK64-chunk normalization and fair publish
+loop exercised, fake WS/Redis I/O. One5433-event bounded raw frame; all events
+accepted by actual normalizer. A-shaped templates project a real raw tape print
+to valid1000-exclusive bucket shape; NOT vendor qualifying OHLC reconstruction.
+CONTROLLED watched callbacks available at first A-writer boundary while A batch
+continues; NOT observed provider ordering, next WS frame/tail delivery, or real
+subscription ACK. Actual SIP WFF print stamp retained for control T, Q controlled.
+Native performance clocks, no source/harness/GC policy changes, no retries.
+First observed watched T/Q publication since burst entry5.562334ms.
+Max event-loop stall3.496708ms <unchanged50ms.
+Actual callback->Redis completion, nearest-rank per type,64samples each:
+T p50=0.403333ms p95=0.493625ms p99=max=0.955833ms.
+Q p50=0.414583ms p95=0.519292ms p99=max=0.969292ms.
+All raw monotonic observation pairs retained in burst.log JSON.
+Default Aqueue4096 retained exactly4096, one pending write, received5433,
+queue_drops=dropped_total1336 (drop-oldest A only), A_published0 at blocked sample.
+Actual separate A stream attempt:test:momentum-warning-bars,maxlen20000,
+approximate=false. Controlled A writer blocked; watched T/Q finish independently,
+all64ofeach accounted for, other ownersWFFwatchedTQ/NEWwarningT unchanged.
+No A on general stream/v2/ORB/livebars, no safety revert induced by short burst.
+
+UNCHANGED WATCHDOG PROOF
+Runtime diff e064..04fc src empty; fixed publishlag2s/OMS duration5s twice/
+applicable v2lateness5s/load6/RAM3GiB/new required-logERROR/unreadability and
+1008/disconnect/reconnect A-only triggers retained, no restart by watchdog.
+Existing exact source health/first-due45P0F, final preservation487P0F and prior
+allON/hotpath receipts remain correctly scoped. Not rerun during main window;
+no claim controlled checks are actual installed-source measurements. No policy
+relaxation from moving actual setup to INSTALL.
+
+SERIALIZATION
+Main explicitly allowed rate reads; own chunk-bounded PAUSE hook offered for its
+reserved60s. All9 rates completed before performance. Main explicitly reserved
+ONE burst; Euler confirmed tests paused, Mendel idle, local test/scan inventory
+empty. Window CLEAR immediately after run; both Euler/Mendel messaged CLEAR.
+No further L3 timing tests, no adoption of main final F+B/hotpath qualification.
+
+COMMANDS (isolated L3 worktree cwd)
+clang++ -O3 -std=c++17 -Wall -Wextra -Werror scripts/momwarn1_trade_second_counts.cpp -lz -o /Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-20261012-scanner
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B scripts/momwarn1_derive_a_load.py --source-root /Users/velkris/.codex/task-queues/analysis/momraw1-20261012 --binary /Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-20261012-scanner --output /Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012 --pause-file /Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/PAUSE --days 2026-10-12 2026-09-18 2026-09-24 2026-10-02 2026-10-05 2026-10-06 2026-10-07 2026-10-08 2026-10-09 --tested-head c34ceeb0415d6831a4d7dfdde5e85572c478f869
+MOMWARN_DERIVED_SUMMARY=/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/summary.json PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_momwarn1_derived_a_burst.py -q -s --junitxml=/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/burst.xml > /Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/burst.log 2>&1
+
+Tooling controls7PASS: unsorted/dedup/lowprice/excludedcondition/classsymbol,
+outsidewindow/downloaded denominator, bad source/CRC refusals, percentile zeros,
+partial-window labeling and sealed hash mismatch. Dedicated XML momwarn1-l3a-unit-controls.xml.
+Ruff/diffcheck PASS. No whole-card/W4 completion, pin or installation claim.

@@ -1,0 +1,98 @@
+#!/usr/bin/python3
+"""Package maintenance clock and deferred-restart evidence; no service actions."""
+from datetime import UTC, datetime, time
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
+FLAG = Path("/var/lib/project-mai-tai-maintenance/pending-restart.json")
+PROTECTED = re.compile(r"^(project-mai-tai-.+|redis(?:[-@.].*)?|postgresql(?:[-@.].*)?)$")
+
+
+def in_window(now):
+    if now.tzinfo is None:
+        raise ValueError("aware clock required")
+    local = now.astimezone(ET)
+    return local.weekday() == 5 and time(0) <= local.time() < time(1)
+
+
+def record_pending(reason, *, path=FLAG, now=None, services=()):
+    now = now or datetime.now(UTC)
+    if path.is_symlink() or path.parent.is_symlink():
+        raise ValueError("pending flag symlink")
+    path.parent.mkdir(parents=True, mode=0o755, exist_ok=True)
+    row = {"version": 1, "at_utc": now.isoformat(), "reason": reason,
+           "services": list(services)[:64], "clear": "explicit operator after verification"}
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
+        name = output.name
+        try:
+            json.dump(row, output, sort_keys=True)
+            output.flush()
+            os.fsync(output.fileno())
+            os.chmod(name, 0o644)
+            os.replace(name, path)
+        finally:
+            Path(name).unlink(missing_ok=True)
+
+
+def policy(args, now, *, attended=False, flag=FLAG):
+    words = [word for word in args if not word.startswith("--")]
+    if len(words) < 2:
+        return 102
+    service, action = words[:2]
+    action = action.strip("()")
+    if (PROTECTED.fullmatch(service) and action not in {"status", "reload"}
+            and not attended and not in_window(now)):
+        record_pending("package_service_action_deferred", path=flag, now=now, services=[service])
+        return 101
+    return 0
+
+
+def audit_pending(now, *, flag=FLAG, run=subprocess.run, reboot=Path("/run/reboot-required")):
+    # Explicit list-only CLI and environment prevent this evidence read restarting services.
+    try:
+        result = run(["needrestart", "-b", "-r", "l"], capture_output=True,
+                     text=True, timeout=60, env={**os.environ, "NEEDRESTART_MODE": "l"})
+        if result.returncode or len(result.stdout.encode()) > 65_536:
+            raise ValueError("needrestart evidence unavailable")
+        services = [line.partition(":")[2].strip() for line in result.stdout.splitlines()
+                    if line.startswith("NEEDRESTART-SVC:")]
+        if any(not re.fullmatch(r"[A-Za-z0-9@_.:-]{1,200}", item) for item in services):
+            raise ValueError("needrestart service evidence malformed")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        record_pending("restart_scan_UNKNOWN", path=flag, now=now)
+        return
+    if services or reboot.exists():
+        record_pending("restart_required", path=flag, now=now, services=services)
+    # An in-progress dpkg transaction is never killed at the window boundary.
+    if not in_window(now) and os.environ.get("MAI_TAI_MAINTENANCE_ATTENDED") != "1":
+        record_pending("maintenance_window_overrun", path=flag, now=now, services=services)
+
+
+def main(args=None):
+    args = sys.argv[1:] if args is None else args
+    now = datetime.now(UTC)
+    attended = os.environ.get("MAI_TAI_MAINTENANCE_ATTENDED") == "1"
+    if args == ["window"]:
+        return 0 if in_window(now) else 1
+    if args == ["install"]:
+        if attended or in_window(now):
+            return 0
+        record_pending("package_install_deferred", now=now)
+        return 1
+    if args == ["audit"]:
+        audit_pending(now)
+        return 0
+    if args and args[0] == "policy":
+        return policy(args[1:], now, attended=attended)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

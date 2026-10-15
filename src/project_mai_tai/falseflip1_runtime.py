@@ -35,10 +35,19 @@ class FalseBudget:
     revision: int = 0
     cancelled: tuple[int, ...] = ()
     drafted: tuple[int, ...] = ()
+    filled_closed: tuple[int, ...] = ()
 
     @property
     def awaiting_rearm(self) -> int:
-        return next((value for value in reversed(self.cancelled) if value not in self.drafted), 0)
+        return next((value for value in reversed(self.episodes)
+                     if value in (*self.cancelled, *self.filled_closed) and value not in self.drafted), 0)
+
+    def fully_filled_closed(self, opportunity: int) -> FalseBudget:
+        if opportunity not in self.episodes:
+            raise ValueError("completed fill has no classified episode")
+        if opportunity in self.filled_closed:
+            return self
+        return replace(self, filled_closed=(*self.filled_closed, opportunity), revision=self.revision + 1)
 
     def cancellation_confirmed(self, opportunity: int) -> FalseBudget:
         if opportunity not in self.episodes:
@@ -48,7 +57,7 @@ class FalseBudget:
         return replace(self, cancelled=(*self.cancelled, opportunity), revision=self.revision + 1)
 
     def rest_drafted(self, opportunity: int) -> FalseBudget:
-        if opportunity not in self.cancelled:
+        if opportunity not in (*self.cancelled, *self.filled_closed):
             raise ValueError("rest has no confirmed cancellation")
         if opportunity in self.drafted:
             return self
@@ -81,7 +90,8 @@ class FalseBudget:
                      tuple(int(value) for value in payload["refunded_counts"]),
                      payload["skipped"], int(payload["revision"]),
                      tuple(int(value) for value in payload.get("cancelled", ())),
-                     tuple(int(value) for value in payload.get("drafted", ())))
+                     tuple(int(value) for value in payload.get("drafted", ())),
+                     tuple(int(value) for value in payload.get("filled_closed", ())))
         if (payload.get("schema_version") != 1 or not result.symbol or result.segment <= 0
                 or type(result.skipped) is not bool or result.revision < 0
                 or len(set(result.episodes)) != len(result.episodes)
@@ -92,7 +102,9 @@ class FalseBudget:
                 or len(set(result.cancelled)) != len(result.cancelled)
                 or len(set(result.drafted)) != len(result.drafted)
                 or not set(result.cancelled) <= set(result.episodes)
-                or not set(result.drafted) <= set(result.cancelled)
+                or len(set(result.filled_closed)) != len(result.filled_closed)
+                or not set(result.filled_closed) <= set(result.episodes)
+                or not set(result.drafted) <= set(result.cancelled) | set(result.filled_closed)
                 or (result.skipped and len(result.episodes) < 2)):
             raise ValueError("false-flip budget unreadable")
         return result

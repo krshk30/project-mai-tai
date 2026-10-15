@@ -1,6 +1,7 @@
-"""Isolated, broker-disconnected Momentum 30 / Momentum 60 paper service."""
+"""Momentum paper observer with an explicitly opt-in, bounded live signal handoff."""
 
 from __future__ import annotations
+from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 
 import argparse
 import asyncio
@@ -10,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 import json
 import logging
 import signal
+import time as wall_time
 from typing import Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
@@ -30,15 +32,17 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.log import configure_logging
 from project_mai_tai.market_data.tick_time import normalize_ts_ns
+from project_mai_tai.momentum_live.handoff import LiveHandoff
 from project_mai_tai.momentum_paper.conditions import (
     ConditionSnapshot,
     build_condition_snapshot,
     condition_snapshot_from_payload,
 )
-from project_mai_tai.momentum_paper.engine import MomentumPaperEngine
+from project_mai_tai.momentum_paper.engine import MomentumPaperEngine, symbol_is_eligible
 from project_mai_tai.momentum_paper.models import (
     MOMENTUM_ACCOUNT_NAME,
     MOMENTUM_STRATEGIES,
+    MOMENTUM_WARNING_STRATEGIES,
     MomentumTapeRecord,
     TradePrint,
 )
@@ -48,6 +52,8 @@ from project_mai_tai.momentum_paper.store import (
     session_closed_record,
     session_record,
 )
+from project_mai_tai.momentum_paper.warning_consumer import MomentumWarningConsumer
+from project_mai_tai.momentum_paper.warning_window import AggregateObservation
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.strategy_core.time_utils import US_MARKET_HOLIDAYS
 
@@ -57,8 +63,8 @@ logger = logging.getLogger(SERVICE_NAME)
 _ET = ZoneInfo("America/New_York")
 _PREPARE_AT = time(3, 55)
 _STREAM_AT = time(4, 0)
-_TAIL_AT = time(9, 30)
-_CLOSE_AT = time(9, 40, 1)
+_TAIL_AT = time(18)
+_CLOSE_AT = time(18, 10, 1)
 _HEARTBEAT_SECONDS = 15
 _MAX_SUBSCRIBED_SYMBOLS = 16
 _SUBSCRIPTION_DEBOUNCE_SECONDS = 1
@@ -110,7 +116,9 @@ def normalize_raw_trade(row: object, *, conditions: ConditionSnapshot) -> TradeP
     event_type = str(_raw_value(row, "ev", "event_type") or "")
     if event_type != "T":
         return None
-    symbol = str(_raw_value(row, "sym", "symbol") or "").upper()
+    symbol = _raw_value(row, "sym", "symbol")
+    if not symbol_is_eligible(symbol):
+        return None
     price_raw = _raw_value(row, "p", "price")
     sip_raw = _raw_value(row, "t", "sip_timestamp", "timestamp")
     if not symbol or price_raw is None or sip_raw is None:
@@ -155,6 +163,7 @@ class MomentumPaperService:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.settings = settings or get_settings()
+        self._validation_window = MomentumValidationWindow.from_settings(self.settings)
         self.redis = redis_client or Redis.from_url(self.settings.redis_url, decode_responses=True)
         self.session_factory = session_factory
         self.store = store
@@ -178,6 +187,20 @@ class MomentumPaperService:
         self._complete_sessions = 0
         self._session_closed = False
         self._feed_gap_started_ms: int | None = None
+        self._warning: MomentumWarningConsumer | None = None
+        self._warning_task: asyncio.Task[None] | None = None
+        self._last_warning_sample_ns = 0
+        self._warning_subscribed_symbols: set[str] = set()
+        self._warning_log_prices: dict[str, Decimal] = {}
+        self._warning_owner_uncertain = False
+        self._warning_subscription_lock = asyncio.Lock()
+        self._warning_invalid_messages = 0
+        self._last_warning_invalid_log_ns = 0
+        self._live_handoff = LiveHandoff(self.redis, self.settings) if self.settings.momentum_live_enabled else None
+        self._live_handoff_task: asyncio.Task | None = None
+        self._live_country_router = None
+        self._live_country_day = None
+        self._live_day_volumes: dict[str, tuple[int | None, datetime]] = {}
 
     async def run(self) -> None:
         if not bool(getattr(self.settings, "momentum_paper_enabled", False)):
@@ -191,15 +214,25 @@ class MomentumPaperService:
             )
         if self.store is None:
             self.store = MomentumPaperStore(self.session_factory)
-        logger.info("[MOMENTUM-PAPER] starting isolated paper observer; broker_route=none")
+        await self._start_country_router()
+        logger.info("[MOMENTUM-PAPER] starting paper observer; live_handoff=%s", self._live_handoff is not None)
+        if self._live_handoff is not None:
+            self._live_handoff_task = asyncio.create_task(self._live_handoff.run())
         try:
             while True:
                 await self._tick()
                 await asyncio.sleep(1)
         finally:
+            if self._live_country_router is not None:
+                await self._live_country_router.close()
+            if self._live_handoff_task is not None:
+                self._live_handoff_task.cancel()
+                await asyncio.gather(self._live_handoff_task, return_exceptions=True)
             await self._stop_gateway()
             if self._engine is not None:
                 await self._persist(self._engine.close_session(self._now_ms()))
+            if self._warning is not None:
+                await self._persist(self._warning.engine.close_session(self._now_ms()))
 
     async def _tick(self) -> None:
         now = self._clock()
@@ -218,26 +251,74 @@ class MomentumPaperService:
             self._session_date = et.date()
             self._condition_snapshot = None
             self._engine = None
+            self._warning = None
+            getattr(self, "_warning_log_prices", {}).clear()
             self._completed_from_store = []
             self._historical_completed = []
             self._complete_sessions = 0
             self._session_closed = False
-        if _PREPARE_AT <= et.time() < _CLOSE_AT and self._engine is None:
+            getattr(self, "_live_day_volumes", {}).clear()
+        close_at = self._validation_window.paper_close_for(et.date())
+        if (getattr(self, "_live_country_router", None) is not None and et.time() >= _PREPARE_AT
+                and self._live_country_day != et.date()):
+            if getattr(self, "_live_handoff", None) is not None:
+                await self._live_handoff.prepare_country_day(et.date())
+            else:
+                await self._live_country_router.reload_async()
+            self._live_country_day = et.date()
+            self._live_day_volumes.clear()
+        if (getattr(self, "_live_handoff", None) is not None and et.time() >= _PREPARE_AT
+                and self._live_handoff.country_prepared_day != et.date()):
+            await self._live_handoff.prepare_country_day(et.date())
+            self._live_day_volumes.clear()
+        if _PREPARE_AT <= et.time() < close_at and self._engine is None:
             await self._prepare_session(et.date())
         if self._engine is None:
             return
         await self._persist(self._engine.advance_clock(self._now_ms()))
+        if self._warning is not None:
+            await self._persist(self._warning.engine.advance_clock(self._now_ms()))
+            outcomes = self._warning.expire_quiet(
+                observed_ms=self._now_ms(), legacy_active=self._engine.active_symbols,
+            )
+            for outcome in outcomes:
+                self._log_warning_transition(outcome)
+            if any(outcome.status == "DROPPED" for outcome in outcomes):
+                await self._sync_gateway_subscriptions()
+            sample_ns = wall_time.time_ns()
+            if sample_ns - self._last_warning_sample_ns >= 10_000_000_000:
+                self._last_warning_sample_ns = sample_ns
+                await self._warning_metrics(
+                    event_type="consumer_sample", observed_ns=sample_ns,
+                    gateway_instance_id=(self._warning.epoch or (None, None))[0],
+                    generation=(self._warning.epoch or (None, None))[1],
+                    coverage=(self._warning.coverage.lineage if self._warning.coverage else "UNKNOWN"),
+                    transport_status=self._warning.transport.status,
+                    transport_start_ms=(self._warning.coverage.start_ms if self._warning.coverage else None),
+                    transport_through_ms=(self._warning.coverage.through_ms if self._warning.coverage else None),
+                    invalid_aggregate_messages=self._warning_invalid_messages,
+                    cooling_status=self._warning.cooling_status,
+                    owned_warning_symbols=len(self._warning.desired_symbols(set())),
+                    shared_owned_symbols=len(self._warning.desired_symbols(self._engine.active_symbols)),
+                    active_warning_paths=len(self._warning.engine.active_events),
+                    status=self._warning.last_status, subscription_confirmed_ns=None,
+                    **self._warning.late_raw_ignored_metrics(),
+                    **self._warning.take_transport_stale_metrics(),
+                    **self._warning.source_age_stats.take_sample(observed_ns=sample_ns),
+                )
         if (
             self._last_snapshot_at is not None
             and (now - self._last_snapshot_at).total_seconds() > _SNAPSHOT_STALE_SECONDS
         ):
             self._mark_gateway_disconnected()
-        if _STREAM_AT <= et.time() < _CLOSE_AT and self._gateway_task is None:
+        if _STREAM_AT <= et.time() < close_at and self._gateway_task is None:
             await self._start_gateway()
         if self._gateway_task is not None:
             await self._sync_gateway_subscriptions()
-        if et.time() >= _CLOSE_AT and not self._session_closed:
+        if et.time() >= close_at and not self._session_closed:
             await self._persist(self._engine.close_session(self._now_ms()))
+            if self._warning is not None:
+                await self._persist(self._warning.engine.close_session(self._now_ms()))
             await self._stop_gateway()
             closed = session_closed_record(
                 session_date=et.date(),
@@ -278,11 +359,29 @@ class MomentumPaperService:
             raise RuntimeError("persisted Momentum session evidence is malformed")
         self._condition_snapshot = condition_snapshot_from_payload(raw_conditions)
         self._engine = MomentumPaperEngine(
-            prior_closes={str(symbol): Decimal(str(price)) for symbol, price in raw_closes.items()},
+            prior_closes={symbol: Decimal(str(price)) for symbol, price in raw_closes.items()
+                          if symbol_is_eligible(symbol)},
             condition_version=self._condition_snapshot.version,
             coverage_started_ms=self._now_ms(),
+            validation_window=self._validation_window,
         )
         self._engine.seed_reentry_boundaries(existing)
+        warning_rows: list[MomentumTapeRecord] = []
+        if bool(getattr(self.settings, "market_data_momentum_warning_enabled", False)):
+            warning_rows = await asyncio.to_thread(
+                self.store.load_session, session_date, strategy_codes=MOMENTUM_WARNING_STRATEGIES,
+            )
+            self._warning = MomentumWarningConsumer(
+                prior_closes=self._engine.prior_closes,
+                condition_version=self._condition_snapshot.version,
+                coverage_started_ms=self._now_ms(),
+                owner_cap=int(getattr(self.settings, "market_data_momentum_warning_owner_cap", 16)),
+                validation_window=self._validation_window,
+            )
+            self._warning.engine.seed_reentry_boundaries(warning_rows)
+            incomplete_warning = self.store.incomplete_logical_ids(warning_rows)
+            if incomplete_warning:
+                await self._persist(self._interrupted_records(warning_rows, incomplete_warning))
         incomplete = self.store.incomplete_logical_ids(existing)
         if incomplete:
             interrupted = self._interrupted_records(existing, incomplete)
@@ -335,7 +434,9 @@ class MomentumPaperService:
         grouped = client.get_grouped_daily_aggs(prior_day, adjusted=True)
         closes: dict[str, Decimal] = {}
         for row in grouped:
-            symbol = str(_raw_value(row, "ticker", "T") or "").upper()
+            symbol = _raw_value(row, "ticker", "T")
+            if not symbol_is_eligible(symbol):
+                continue
             close = _raw_value(row, "close", "c")
             if not symbol or close is None:
                 continue
@@ -354,8 +455,145 @@ class MomentumPaperService:
     async def _start_gateway(self) -> None:
         await self._sync_gateway_subscriptions(force=True)
         self._gateway_task = asyncio.create_task(self._gateway_loop())
+        if self._warning is not None:
+            self._warning_task = asyncio.create_task(self._warning_loop())
         logger.info("[MOMENTUM-PAPER-FEED] source=gateway snapshots+bounded_trades cap=%d",
                     _MAX_SUBSCRIBED_SYMBOLS)
+
+    async def _warning_loop(self) -> None:
+        stream = stream_name(self.settings.redis_stream_prefix, "momentum-warning-bars")
+        offsets = {stream: "$"}
+        if self._warning is not None:
+            self._warning.invalidate_transport("reader_started")
+        while True:
+            try:
+                messages = await self.redis.xread(offsets, block=1000, count=128)
+                handled = 0
+                for name, entries in messages:
+                    for message_id, fields in entries:
+                        offsets[name] = message_id
+                        if fields.get("data"):
+                            await self._handle_warning_event(fields["data"])
+                        elif self._warning is not None:
+                            self._refuse_warning_message("missing_aggregate_data")
+                        handled += 1
+                        if handled % 32 == 0:
+                            await asyncio.sleep(0)
+                if self._warning is not None:
+                    self._warning.complete_read(offsets[stream], observed_ns=wall_time.time_ns())
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[MOMENTUM-WARNING] stream failure; coverage UNKNOWN")
+                if self._warning is not None:
+                    self._warning.invalidate_transport("xread_failure")
+                    await self._persist(self._warning.engine.mark_feed_gap(
+                        self._now_ms(), self._now_ms(),
+                    ))
+                await asyncio.sleep(1)
+
+    async def _handle_warning_event(self, data: str | bytes) -> None:
+        if self._warning is None or self._engine is None:
+            return
+        try:
+            bar = AggregateObservation.from_payload(json.loads(data))
+        except (KeyError, TypeError, ValueError, InvalidOperation):
+            self._refuse_warning_message("invalid_aggregate")
+            return
+        observed_ns = wall_time.time_ns()
+        outcome, records = self._warning.observe_aggregate(
+            bar, observed_ns=observed_ns, legacy_active=self._engine.active_symbols,
+        )
+        emit_decision = outcome.status != "IGNORED"
+        if (outcome.reason == "aggregate_clock_or_stale"
+                and observed_ns >= bar.published_utc_ns
+                and observed_ns - bar.received_utc_ns > 1_000_000_000):
+            emit_decision = self._warning.transport_stale_by_symbol.get(bar.symbol, 0) == 1
+        decision_ns = wall_time.time_ns()
+        if (getattr(self, "_live_handoff", None) is not None
+                and outcome.reason in {"observed_warning", "warning_refreshed"}):
+            self._live_handoff.offer_warning(bar.symbol)
+        records = self._warning.engine.seal_warning_decisions(records, observed_decision_ns=decision_ns)
+        self._offer_live_signals(records, decision_ns)
+        self._log_warning_transition(outcome, trigger_price=bar.high, observed_ns=observed_ns)
+        await self._persist(records)
+        if emit_decision:
+            await self._warning_metrics(
+                event_type="decision", symbol=bar.symbol, observed_ns=observed_ns,
+                observed_decision_ns=decision_ns,
+                gateway_instance_id=bar.gateway_instance_id, generation=bar.generation,
+                status=outcome.status, reason=outcome.reason, signal_start_ms=bar.start_ms,
+                signal_end_ms=bar.end_ms, lineage="observed_aggregate",
+                warning_obs_ns=self._warning.last_warning_ns.get(bar.symbol),
+                signal_sip_ns=None, dropped_total=bar.dropped_total,
+                subscription_status="request_only", subscription_confirmed_ns=None,
+                signals=[{"strategy_code": row.strategy_code, "logical_id": row.logical_id,
+                          "status": row.event_type, "payload": row.payload}
+                         for row in records if row.event_type == "DETECTED"],
+            )
+        if outcome.status in {"ADMITTED", "DROPPED"}:
+            await self._sync_gateway_subscriptions()
+
+    def _log_warning_transition(self, outcome, *, trigger_price: Decimal | None = None,
+                                observed_ns: int | None = None) -> None:
+        if outcome.status not in {"ADMITTED", "DROPPED"}:
+            return
+        prices = getattr(self, "_warning_log_prices", None)
+        if prices is None:
+            prices = self._warning_log_prices = {}
+        if outcome.status == "ADMITTED":
+            if trigger_price is not None:
+                prices[outcome.symbol] = trigger_price
+            action = "ADD"
+        else:
+            trigger_price = prices.pop(outcome.symbol, None)
+            action = "DROP"
+        logger.info("[MOMENTUM-WARNING] action=%s symbol=%s trigger_price=%s "
+                    "trigger_price_source=aggregate_high_at_add status=%s reason=%s",
+                    action, outcome.symbol, trigger_price if trigger_price is not None else "UNKNOWN",
+                    outcome.status, outcome.reason)
+        if action != "ADD":
+            return
+        now = datetime.fromtimestamp(observed_ns / 1e9, UTC) if observed_ns is not None else self._clock()
+        router = getattr(self, "_live_country_router", None)
+        decision = router.route_for(outcome.symbol, now) if router is not None else None
+        record = router._records.get(outcome.symbol) if router is not None else None
+        country = "/".join((record.business_country or "UNKNOWN", record.incorporation or "UNKNOWN")) \
+            if record is not None else "UNKNOWN/UNKNOWN"
+        volume = "UNKNOWN"
+        cached = getattr(self, "_live_day_volumes", {}).get(outcome.symbol)
+        if cached is not None:
+            value, observed = cached
+            if (observed.astimezone(_ET).date() == now.astimezone(_ET).date()
+                    and 0 <= (now - observed).total_seconds() <= _SNAPSHOT_STALE_SECONDS
+                    and value is not None):
+                volume = value
+        logger.info("[MOMLIVE1-WARN-ROUTE] symbol=%s route=%s reason=%s status=%s "
+                    "country=%s as_of=%s day_volume=%s informational_only=true",
+                    outcome.symbol, decision.broker or "NONE" if decision is not None else "UNKNOWN",
+                    decision.reason.upper() if decision is not None else "SEC_TABLE_UNAVAILABLE",
+                    decision.status if decision is not None else "UNKNOWN", country,
+                    decision.as_of.isoformat() if decision is not None and decision.as_of is not None else "UNKNOWN",
+                    volume)
+
+    def _refuse_warning_message(self, reason: str) -> None:
+        if self._warning is not None:
+            self._warning.invalidate_transport(reason)
+        self._warning_invalid_messages += 1
+        now_ns = wall_time.time_ns()
+        if now_ns - self._last_warning_invalid_log_ns >= 10_000_000_000:
+            self._last_warning_invalid_log_ns = now_ns
+            logger.warning("[MOMENTUM-WARNING] invalid aggregate; refused reason=%s total=%d",
+                           reason, self._warning_invalid_messages)
+
+    async def _warning_metrics(self, *, event_type: str, **fields: object) -> None:
+        payload = {"version": 1, "event_type": event_type, "source": SERVICE_NAME, **fields}
+        await self.redis.xadd(
+            stream_name(self.settings.redis_stream_prefix, "momentum-warning-metrics"),
+            {"data": json.dumps(payload)},
+            maxlen=int(getattr(self.settings, "market_data_momentum_warning_stream_maxlen", 20_000)),
+            approximate=False,
+        )
 
     async def _gateway_loop(self) -> None:
         offsets = {
@@ -397,23 +635,61 @@ class MomentumPaperService:
                 self._mark_gateway_disconnected()
                 return
             self._last_snapshot_at = self._clock()
+            if getattr(self, "_live_handoff", None) is not None:
+                for snapshot in event.payload.snapshots:
+                    volume = max(
+                        (value for value in (snapshot.day_volume, snapshot.minute_accumulated_volume)
+                         if value is not None), default=None,
+                    )
+                    self._live_day_volumes[snapshot.symbol] = (volume, completed_at)
             self._connected = True
             if self._feed_gap_started_ms is not None:
                 await self._persist(
                     self._engine.mark_feed_gap(self._feed_gap_started_ms, self._now_ms())
                 )
+                if self._warning is not None:
+                    await self._persist(self._warning.engine.mark_feed_gap(
+                        self._feed_gap_started_ms, self._now_ms(),
+                    ))
                 self._feed_gap_started_ms = None
             records, capped = self._engine.detect_from_snapshots(
                 event.payload.snapshots, completed_at=completed_at,
-                max_symbols=_MAX_SUBSCRIBED_SYMBOLS,
+                max_symbols=(
+                    _MAX_SUBSCRIBED_SYMBOLS - len(
+                        self._warning.desired_symbols(self._engine.active_symbols)
+                        - self._engine.active_symbols
+                    ) if self._warning is not None else _MAX_SUBSCRIBED_SYMBOLS
+                ),
             )
             self._subscription_cap_skips += capped
+            snapshot_decision_ns = wall_time.time_ns()
             await self._persist(records)
+            if self._warning is not None:
+                for row in records:
+                    snapshot = next(item for item in event.payload.snapshots if item.symbol == row.symbol)
+                    await self._warning_metrics(
+                        event_type="snapshot_entry", observed_ns=wall_time.time_ns(),
+                        observed_decision_ns=snapshot_decision_ns,
+                        gateway_instance_id=None, generation=None, source_epoch_status="UNKNOWN",
+                        observer_warning_context=dict(
+                            gateway_instance_id=(self._warning.epoch or (None, None))[0],
+                            generation=(self._warning.epoch or (None, None))[1]),
+                        snapshot_source_event_id=str(event.event_id),
+                        snapshot_source_service=event.source_service,
+                        snapshot_source_produced_at=event.produced_at.isoformat(),
+                        snapshot_last_trade_sip_ns=normalize_ts_ns(snapshot.last_trade_timestamp_ns),
+                        strategy_code=row.strategy_code, symbol=row.symbol,
+                        logical_id=row.logical_id, status=row.event_type,
+                        lineage="legacy_snapshot", payload=row.payload,
+                    )
             if records:
                 await self._sync_gateway_subscriptions()
         elif event_type == "trade_tick":
             raw_payload = envelope.get("payload") or {}
-            if str(raw_payload.get("symbol", "")).upper() not in self._subscribed_symbols:
+            symbol = raw_payload.get("symbol", "")
+            if not symbol_is_eligible(symbol) or symbol not in (
+                self._subscribed_symbols | self._warning_subscribed_symbols
+            ):
                 return
             event = TradeTickEvent.model_validate(envelope)
             payload = event.payload
@@ -436,11 +712,58 @@ class MomentumPaperService:
             self._condition_feed_verified = True
             eligible, reason = self._condition_snapshot.classify(codes)
             trade = TradePrint(
-                symbol=payload.symbol.upper(), sip_ts_ms=stamp_ns // 1_000_000,
+                symbol=payload.symbol, sip_ts_ms=stamp_ns // 1_000_000,
                 price=payload.price, size=payload.size,
                 conditions=codes, eligible=eligible, exclusion_reason=reason,
             )
-            await self._persist(self._engine.ingest(trade, allow_detection=False))
+            legacy_records = self._engine.ingest(trade, allow_detection=False)
+            if self._warning is not None:
+                observed_ns = wall_time.time_ns()
+                records = self._warning.observe_trade(
+                    trade, sip_timestamp_ns=stamp_ns, observed_ns=observed_ns,
+                )
+                decision_ns = wall_time.time_ns()
+                records = self._warning.engine.seal_warning_decisions(
+                    records, observed_decision_ns=decision_ns,
+                )
+                self._offer_live_signals(records, decision_ns)
+                await self._persist((*legacy_records, *records))
+                for record in legacy_records:
+                    if record.event_type in {"FILLED", "EXITED"}:
+                        await self._warning_metrics(
+                            event_type="snapshot_entry", symbol=trade.symbol,
+                            observed_ns=observed_ns, callback_sip_ns=stamp_ns,
+                            gateway_instance_id=None, generation=None, source_epoch_status="UNKNOWN",
+                            observer_warning_context=dict(
+                                gateway_instance_id=(self._warning.epoch or (None, None))[0],
+                                generation=(self._warning.epoch or (None, None))[1]),
+                            callback_source_event_id=str(event.event_id),
+                            callback_source_service=event.source_service,
+                            callback_source_produced_at=event.produced_at.isoformat(),
+                            strategy_code=record.strategy_code, logical_id=record.logical_id,
+                            status=record.event_type, lineage="legacy_snapshot",
+                            payload=record.payload,
+                        )
+                for record in records:
+                    if record.event_type in {"DETECTED", "FILLED", "EXITED"}:
+                        await self._warning_metrics(
+                            event_type="decision", symbol=trade.symbol, observed_ns=observed_ns,
+                            observed_decision_ns=decision_ns, callback_sip_ns=stamp_ns,
+                            callback_source_event_id=str(event.event_id),
+                            callback_source_service=event.source_service,
+                            callback_source_produced_at=event.produced_at.isoformat(),
+                            gateway_instance_id=(self._warning.epoch or (None, None))[0],
+                            generation=(self._warning.epoch or (None, None))[1],
+                            status=record.event_type, strategy_code=record.strategy_code,
+                            logical_id=record.logical_id,
+                            lineage=self._warning.last_status,
+                            warning_obs_ns=self._warning.last_warning_ns.get(trade.symbol),
+                            first_tick_boundary="observed_print_not_subscription_ack",
+                            subscription_confirmed_ns=None,
+                            payload=record.payload,
+                        )
+            else:
+                await self._persist(legacy_records)
 
     async def _sync_gateway_subscriptions(
         self, *, force: bool = False, desired_override: set[str] | None = None
@@ -449,6 +772,56 @@ class MomentumPaperService:
             desired_override if desired_override is not None
             else (self._engine.active_symbols if self._engine is not None else set())
         )
+        if self._warning is not None:
+            # A rewarning must be requested after an in-flight expiry replacement finishes.
+            async with self._warning_subscription_lock:
+                shared = self._warning.desired_symbols(desired) if desired_override is None else desired
+                if len(shared) > _MAX_SUBSCRIBED_SYMBOLS:
+                    raise RuntimeError("Momentum shared subscription cap breached")
+                warning_desired = (
+                    self._warning.desired_symbols(set()) if desired_override is None else set()
+                )
+                if (desired_override is None and self.settings.momentum_live_enabled
+                        and (self._subscribed_symbols - shared
+                             or getattr(self, "_gateway_subscription_uncertain", False))):
+                    # Trim before replacing T ownership: old Q + new T must
+                    # never transiently exceed the shared warning cap.
+                    await self._sync_regular_gateway_subscriptions(
+                        self._subscribed_symbols & shared, force=True,
+                    )
+                if (
+                    force or self._warning_owner_uncertain
+                    or warning_desired != self._warning_subscribed_symbols
+                ):
+                    warning_event = MarketDataSubscriptionEvent(
+                        source_service=SERVICE_NAME,
+                        payload=MarketDataSubscriptionPayload(
+                            consumer_name="momentum-warning", mode="replace",
+                            symbols=sorted(warning_desired),
+                        ),
+                    )
+                    self._warning_owner_uncertain = True
+                    await self.redis.xadd(
+                        stream_name(self.settings.redis_stream_prefix, "market-data-subscriptions"),
+                        {"data": warning_event.model_dump_json()},
+                        maxlen=self.settings.redis_market_data_subscription_stream_maxlen,
+                        approximate=True,
+                    )
+                    self._warning_subscribed_symbols = set(warning_desired)
+                    self._warning_owner_uncertain = False
+                if desired_override is None and self.settings.momentum_live_enabled:
+                    # Prime Q with the existing paper T/Q owner at WARNING, not
+                    # DETECTED. OMS independently retains working/held owners.
+                    desired = set(shared)
+                await self._sync_regular_gateway_subscriptions(
+                    desired, force=force or (
+                        self.settings.momentum_live_enabled and desired != self._subscribed_symbols
+                    ),
+                )
+            return
+        await self._sync_regular_gateway_subscriptions(desired, force=force)
+
+    async def _sync_regular_gateway_subscriptions(self, desired: set[str], *, force: bool) -> None:
         if len(desired) > _MAX_SUBSCRIBED_SYMBOLS:
             raise RuntimeError("Momentum subscription cap breached")
         first_announcement = (
@@ -490,8 +863,18 @@ class MomentumPaperService:
         self._connected = False
         if self._feed_gap_started_ms is None:
             self._feed_gap_started_ms = self._now_ms()
+        if self._warning is not None:
+            self._warning.set_coverage(None)
 
     async def _stop_gateway(self) -> None:
+        warning_task = self._warning_task
+        self._warning_task = None
+        if warning_task is not None and not warning_task.done():
+            warning_task.cancel()
+            try:
+                await warning_task
+            except asyncio.CancelledError:
+                pass
         task = self._gateway_task
         self._gateway_task = None
         if task is not None and not task.done():
@@ -503,8 +886,43 @@ class MomentumPaperService:
         self._connected = False
         self._last_snapshot_at = None
         self._condition_feed_verified = False
-        if self._gateway_owner_claimed or self._subscribed_symbols:
+        if (
+            self._gateway_owner_claimed or self._subscribed_symbols
+            or self._warning_subscribed_symbols or self._warning_owner_uncertain
+        ):
             await self._sync_gateway_subscriptions(force=True, desired_override=set())
+
+    def _offer_live_signals(self, records: Iterable[MomentumTapeRecord], now_ns: int) -> None:
+        if getattr(self, "_live_handoff", None) is None:
+            return
+        now = self._clock()
+        for record in records:
+            cached = self._live_day_volumes.get(record.symbol)
+            volume = None
+            if cached is not None:
+                value, observed = cached
+                if (observed.astimezone(_ET).date() == now.astimezone(_ET).date()
+                        and 0 <= (now - observed).total_seconds() <= _SNAPSHOT_STALE_SECONDS):
+                    volume = value
+            self._live_handoff.offer(record, day_volume=volume, now_ns=now_ns)
+
+    async def _start_country_router(self) -> None:
+        if getattr(self, "_live_handoff", None) is None:
+            return
+        from project_mai_tai.momentum_live_sec import CountryRouter, CountryStore, SecClient
+        store = await asyncio.to_thread(CountryStore, self.session_factory)
+        client = None
+        if self.settings.sec_user_agent:
+            client = SecClient(store, user_agent=self.settings.sec_user_agent)
+        else:
+            logger.warning("[MOMLIVE1-SEC] configured_contact=EMPTY on_demand_lookup=disabled")
+        router = CountryRouter(store, client)
+        await router.start()
+        self._live_country_router = router
+        if self._live_handoff is not None:
+            self._live_handoff.route_for = router.route_for
+            self._live_handoff.country_warning_offer = router.prefetch
+            self._live_handoff.reload_country = lambda day: router.reload_async()
 
     async def _persist(self, records: Iterable[MomentumTapeRecord]) -> None:
         # RETAIN1: calculation prints stay in the engine; only transitions are durable.

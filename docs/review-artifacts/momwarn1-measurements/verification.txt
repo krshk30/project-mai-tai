@@ -1,0 +1,51 @@
+MOMWARN1 G3 LOCAL / CONTROLLED ONLY -- NOT install-ready or actual W4 completion
+Base b680c2aff50150ea6130b19ccf0db9e05dfb680d
+Branch codex/momwarn1-measurements-20261012
+Worktree /Users/velkris/.codex/worktrees/momwarn1-measurements-20261012/project-mai-tai
+
+Final focused + preservation: 204 passed in2.54s, no skips/xfails/deselections.
+84 G3 controls +120 unchanged neighbors.
+Command: env -u MAI_TAI_DATABASE_URL PYTHONPATH=src:. <project .venv>/bin/python
+-m pytest -p no:cacheprovider -q with these exact files:
+tests/unit/test_momwarn1_measurements.py
+tests/unit/test_momwarn1_health.py
+tests/unit/test_momwarn1_health_contract.py
+tests/unit/test_momentum_paper_engine.py
+tests/unit/test_momentum_gateway_handoff.py
+tests/unit/test_momentum_paper_conditions.py
+tests/unit/test_momentum_option_a.py
+tests/unit/test_momentum_paper_service.py
+tests/unit/test_momentum_live_rule_baseline.py
+Ruff explicit G3 modules/scripts/tests: All checks passed.
+
+RED receipts: duplicate bin outside current window was incorrectly accepted;
+new unchanged control failed (1 failed,162 passed), separate seen-seconds fixed it.
+Lifecycle update double-counted causal decision: unchanged control 1 failed in0.10s;
+bounded ledger/lineage/capture identity fixed it. Full final run GREEN.
+
+CONTROLLED fixture: tests/fixtures/momwarn1_measurements_controlled.jsonl,6 lines.
+04:11/04:11:10 means100 A/sec; second bin p95/peak120,observed2/10 not zero-filled.
+Second drop delta1, CPU10% and systemcpu0=20% injected (not actual host receipts).
+TESTONLY warning lead9100ms, clock-qualified SIP-decision100ms, not actual future data.
+TESTONLY warning entry1.25/outcome target vsSnapshot1.27/stop, separate totals.
+CSV roundtrip1915 ten-second rows through09:30ET, missing reads UNKNOWN.
+
+Health v1 PROTOTYPE (NON-OPERATIONAL): atomic file0600/inode replacement;
+stale/future/sequence skips/regression/instance changes/restamped OMS end rejected.
+Original measurement timestamp retained; unchanged old input becomes UNKNOWN.
+1Hz loop only controlled temporary-file tests, off-loop single in-flight worker.
+No live publisher, no production /run write, no auto task/timer installed.
+
+Main review rejected v1 completion-age<=5s as incompatible with actual live15s.
+Configured15+bounded5 allowance is main's assessment proposal, NOT human approval.
+Proposed healthv2 candidate normal6/15/20s agePASS, >20/fresh monitor unreadableREDgate.
+Original end stamp retained separately from actual EOF/proc monitor stamp.
+Bounded actual OMS log/proc reader implemented, tested controlled files only.
+Sourced pre07/complete-empty-watchlist N/A is null, not zero; applicable7s preserved.
+G1v1 reader NOT edited/wired. V1 CLI refuses launch; no placeholder called end-to-end.
+
+OPEN: G1 healthv2 schema review/wiring; G2 final flat/nested schema mapping;
+actual applicable v2 health source/prior-card eligibility provenance;
+G1 entitlement/recorded A peak and fairness burst proof (G1/main scope), tomorrow W4.
+B unchanged/clean a844494652381153f7e63e49bb6c596a1f46a580; original causes UNKNOWN.
+No settings/provider/gateway/engine/display/shared queue/production/GitHub edits.

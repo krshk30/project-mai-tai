@@ -1,0 +1,84 @@
+L3A WARNING COUNTER PAGE -- LOCAL REVIEW RESULT, NOT INSTALL/FULL FEATURE PROOF
+
+LATEST HUMAN20:2x:8192burst/TQ+1/overflowNOauto-revertACCEPTED. Independent E860
+warning/page branch is final candidate; F+B+MOM prototype preserved NOT candidate.
+Broad/allON60s3of3 queued after main EXCLUSIVE12x60 window explicitCLEAR; no runs
+now. Historical final F+B dependency below superseded only for MOMWARN gate.
+
+Final code/test commit f9d84ec4dee8dcb845ad8c12aceea35148347c63
+Parent603657caaf0f108bca1c162dbb45cfdc98ea2805 preserved, not rebased/amended.
+Commit marker Co-Authored-By: OpenAI Codex <noreply@openai.com>
+Code diff relative603: services/control_plane.py83added lines only, and dedicated
+tests/unit/test_momwarn1_warning_page_metrics.py. Own intake records result.
+No gateway/provider/Settings/consumer/OMS/v2/ORB/trading source change in this child.
+
+BOUNDED READ-ONLY PAGE CONTRACT
+Only enabled warning panel on the two Momentum detail pages performs the read.
+Uses existing repository Redis client, ONE xrevrange on momentum-warning-metrics
+count64,250ms timeout. No reconnect/client creation/xreadgroup/ACK/write/sub/control.
+Refuses >64returned rows, >16KiBdata perrecord, malformed JSON/nonfinite values.
+Newest gateway source/version1 gateway_sample or revert selected. Exact original
+observed_ns, gateway_instance_id and generation retained, never re-stamped or
+borrowed from consumer/Warning/Snapshot context. Fresh<=20s and nonfuture required.
+Any conflicting fresh gateway instance/generation or reverse queued-old timestamp
+ordering returns UNKNOWN. During overlap of fresh old/new epochs the page may
+remain conservatively UNKNOWN until the previous epoch ages past20s; this is
+display only, not a safety reader relaxation/control policy.
+Missing/invalid numeric fields individuallyUNKNOWN, never default0. Source real0
+is rendered only when the fresh valid producer sample supplies actual0.
+Reads at most64entries; if busy mixed metrics hide the gateway sample, UNKNOWN
+is correct, no scan expansion/background worker or inferred population zero.
+
+PAGE
+Actual queue_drops, dropped_total, queue_depth, A_received/A_published, current/max
+publishlag; producerinstance/generation/originalUTCobserved_ns/age; safety reason.
+Counters explicitly gateway-instance cumulative, not inferred daily totals.
+HTML escaped; warning panel only, legacy Snapshot P&L/closed results unchanged.
+Ledger unreadable does not suppress independently fresh counter evidence; counter
+unreadable does not replace or contaminate ledger/Snapshot results.
+Overflow-only auto-revert explicitlyNO, existing safety auto-revertYES A-only.
+No new queue-drop-trigger/rearm/approval policy. Metrics-page read failures are
+UNKNOWN display only and do not write safety/trading controls.
+Prior no-counter-panel finding at603 is superseded by this approved f9 source
+followup, not by rewriting historical603/04fc receipts.
+
+TESTS
+60PASS/0FAIL,1deselected(page_load_receipt),2.64s: new page reader/caller plus
+existing warning ledger display and Snapshot page preservation. Existing92
+Starlette/SQLite deprecation warnings retained, not suppressed.
+34PASS/0FAIL,97deselected,0.84s: scoped default8192/OFF/bounds, inducedqueue2
+overflow, owner restore/T-only isolation, normal09:30close+next04resume, cancelled
+inflight A, sticky/A-only health/source triggers and07:01first-due controls.
+Actual controlled provider->gateway overflow5into2 produces realcounter3;
+through HTTP warning-page caller renders3/3/depth2 and originalSnapshot+$31.80.
+Fresh/missing/stale/future/badsource/schema/missingcount/boolean/negativecount/
+byte/row/timeout limits, old/new epoch conflicts and consumer no-borrow controls.
+DefaultOFF and other page do not read the warning metrics stream.
+Static Ruff and diffcheckPASS. No burst/60s benchmark rerun or production action.
+
+SOURCE PROVENANCE
+Tests executed on final working-tree source/test bytes BEFORE commit; no code/
+test changes between these runs and f9 commit. Postcommit hashes verified equal:
+control_plane.py479a0e6488dfa265c215d527c3b801b92b93c7b427c2bf263f45b383872da867
+test_momwarn1_warning_page_metrics.pye3465e2973a8848b535d169893ef7ea4f4b47f2375cb719f697d98b9d82aa072
+Do not present those runs as executed before f9 existed on a clean committedhead;
+they qualify its identical source/test tree, not the final F+B composition.
+
+EVIDENCE DIRECTORY
+/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012
+warning-page-focused.xml8c01c72d3507e63cc7d7c96b9b0cb6b8e3230e80031c84643a655975a2dec626
+warning-page-focused.log14cc8c03ab0340a47bf4203db3ad160f498a0d87bf31b53904cf1f62306060b6
+warning-page-gateway-controls.xmlefd2fcd676f953993ac41aae452a1c02545be331f3c707ceafe9ce2ca192bcfb
+warning-page-gateway-controls.logcb1f14496bca352d10044d32fb0ed1b160ba6b4ecff88f7990139d812208881c
+Preserved603 queue8192-paired.xml/log and queue8192-controls.xml/log unchanged.
+
+COMMANDS (own L3 worktree)
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_momwarn1_warning_page_metrics.py tests/unit/test_momwarn1_paper_display.py tests/unit/test_mompage1.py -q -k 'not page_load_receipt' --junitxml=/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/warning-page-focused.xml > /Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/warning-page-focused.log 2>&1
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -m pytest -p no:cacheprovider tests/unit/test_momwarn1_gateway.py tests/unit/test_momwarn1_live_health.py -q -k 'settings_default_off_and_bounds or dropoldest or normal_0930 or normal_close_cancels or safety_failure_remains or gateway_auto_revert_A_only or gateway_g3_live_source_wire or first_due_boundaries or disconnect_or_1008 or required_live_log or normal_A_live_path or warning_owner_T_only or restore_warning_owner or warning_off_restores or pending_A_write_cancelled' --junitxml=/Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/warning-page-gateway-controls.xml > /Users/velkris/.codex/task-queues/analysis/momwarn1-l3a-derived-20261012/warning-page-gateway-controls.log 2>&1
+
+REMAINING
+Local reviewed counter page request completed; main review/composition pending.
+Main reported newFB gateBLOCKED251ms vs E86016ms; no attribution work/full52
+reopening. Main sole owner exact final F+B+MOMWARN allON/hotpath proof. Actual
+health settings/PID/timezone/baselines remain INSTALL; entitlementUNPROVEN.
+No provider/production/GitHub writes/extra worker, queue untouched, no more tests.

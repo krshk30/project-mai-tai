@@ -2,10 +2,10 @@ name: Independent Review Pin
 
 on:
   pull_request_target:
-    # A committed pin does not move the PR head, so it cannot emit synchronize.
-    # Adding/toggling the review-pinned label is a retrigger only; the label is
-    # never evidence and cannot make the gate pass without a ledger record.
-    types: [opened, reopened, synchronize, ready_for_review, labeled]
+    # Commit the independent pin before adding/re-adding the review-pinned label.
+    # A new head needs a new pin and label event; required checks remain pending.
+    # Labels trigger verification but never substitute for committed coverage.
+    types: [labeled]
 
 permissions:
   contents: read

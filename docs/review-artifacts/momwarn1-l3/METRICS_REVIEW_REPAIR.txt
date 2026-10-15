@@ -1,0 +1,37 @@
+L3-R1/R2 -- assessment and local metrics-only repair; MAIN REVIEW PENDING
+
+FOLLOWUP: human main independently reviewed d869 diff/caller tests/XML131P0F
+and explicitly closed both findings as LOCAL MEASUREMENT REPAIR ONLY. No feature
+pin/install/card completion approval. Historical pending assessment below retained.
+
+Reviewed source agrees with both MUST-FIX findings; no provenance guarantee
+justifies the old claims. EventEnvelope has no gateway instance/generation.
+TradeTickPayload lacks provider print identity; paper summary stores integer
+milliseconds. Raw callback time cannot identify the summary's stored print.
+
+R1: Snapshot producer epoch explicitly UNKNOWN; source event ID/service/time
+retained. A epoch only observer_warning_context. Queued original Snapshot after
+new A generation99 does not become a generation99 Snapshot or pair with that
+warning. Source epoch/comparison remain UNKNOWN, not inferred from proximity.
+
+R2: signal/fill/exit native timestamps retain [ms,ms+1) bounds. Exact native
+timestamps remain null. Actual callback SIPns and envelope remain separate.
+Three same-ms different-print controls cover DETECTED/FILLED/EXITED through
+mapping and collector; two actual service lifecycle callbacks cover FILLED and
+EXITED with stored print +123ns vs callback +789ns in the same millisecond.
+Aggregate timestamps remain true upstream s/e, not fabricated tick timestamps.
+
+Verification: 131 PASS in1.95s, 0failures. Dedicated L3 contract, G3 collector,
+existing momentum service and warning controls. Ruff and diff-check PASS.
+Receipt: /tmp/momwarn1-l3-metrics-mustfix-final.xml
+No trading decisions, OMS/provider subscription policy, thresholds or flags
+changed by this commit. Source repair scope: service metric emission, bounded
+native adapter and G3 evidence fields/UNKNOWN-source handling, dedicated tests.
+No main queue edits, production actions, network probe or heavy benchmark.
+
+The health wiring and offline replay remain distinct uncommitted followups.
+A combined health/metrics control run previously196P/1F: old component health
+fixture used a legacy placeholder as live proof. Live source reader intentionally
+now refuses it; fixture scope will be made explicit, no safety relaxation.
+Prior aa355102 full/on/timing receipts are prior-checkpoint evidence only, not
+proof of this followup or final composition. Five-gate card not complete.

@@ -1,0 +1,116 @@
+MOMWARN1 G1/G2/G3 v1 -- local contract for main to relay before integration
+
+Settings solewriter G1:
+market_data_momentum_warning_enabled: bool=False (reviewed install expected True)
+market_data_momentum_warning_queue_maxsize: int=4096 [1,65536]
+market_data_momentum_warning_stream_maxlen: int=20000 [1,100000]
+market_data_momentum_warning_owner_cap: int=16 [1,16]
+market_data_publish_round_size: int=16 [1,64]
+market_data_momentum_warning_monitor_interval_seconds: float=1 [.1,1]
+market_data_momentum_warning_monitor_timeout_seconds: float=1 (0,2]
+market_data_momentum_warning_health_path: /run/project-mai-tai/momentum-warning-health.json
+market_data_momentum_warning_log_directory: /var/log/project-mai-tai
+G2 compatibility access: getattr(settings, "market_data_momentum_warning_enabled", False).
+Other new bounds can also use getattr with the documented defaults.
+Catalog owner market-data, also_check_services momentum-paper, expected True;
+default remains False. Catalog bool inventory increased 137 -> 138.
+
+Stream <redis_stream_prefix>:momentum-warning-bars:
+Redis entry field data = compact JSON object, with version=1,event_type="aggregate".
+symbol:string, start_ms:int, end_ms:int: exact upstream SDK s/e Unix milliseconds.
+Supported v1 shape: end_ms-start_ms==1000; end_ms is the exclusive closed-bucket
+boundary and is preserved exactly. Official A sample s1610144868000/e1610144869000
+has this shape. Partial spans1..998 and999 inclusive-end input are unsupported
+in this contract; no implicit e+1 conversion or999 compatibility.
+The earlier claim of common captured999 WS bars was withdrawn by the human as
+UNPROVEN inference.999 is not recorded vendor evidence. Any future inclusive-end
+compatibility requires explicit input semantics/version review, preserving raw s/e.
+G2 currently also requires start_ms%1000==0. The official sample is aligned but
+does not establish a universal vendor alignment guarantee. G1 adds no new start
+alignment restriction without that proof; G1 never rounds or manufactures s/e.
+open/high/low/close:number, volume:int: upstream qualifying OHLC/volume.
+received_utc_ns:int: local wall clock at normalization.
+received_monotonic_ns:int: additional local monotonic clock for gateway lag checks.
+published_utc_ns:int: local wall clock when submitting XADD, NOT Redis server time.
+gateway_instance_id:string: unique process UUID; generation:int increases on A activation.
+sequence:int: increasing accepted A callback counter per gateway process.
+dropped_total:int: cumulative local discarded A rows per gateway process.
+provider_kind="massive_ws_a": upstream eligibility provenance.
+No invented SIP timestamp, no SIP_low_at; low occurred only somewhere in [s,e].
+No generic market-data/live-bar/ORB/v2 publication for wildcard A messages.
+Pending A frames after unsubscribe/revert also stay isolated. A wildcard enable
+refuses a conflicting legacy explicit-A bar route rather than repurposing it.
+Strict Redis MAXLEN approximate=False; oldest A rows only trimmed.
+Sequence gaps reveal unavailable bars including Redis trimming; dropped_total counts
+gateway local drops, not Redis trimming. Do not reinterpret as lossless coverage.
+
+Existing market-data-subscriptions stream/event envelope unchanged:
+consumer_name="momentum-warning", symbols=[explicit symbols], mode=replace/add/remove.
+T-only owner cap16; no Q, historical warmup or REST for warning-only owners.
+Removing/restoring warning owner preserves other owners' T/Q and warmup.
+All-owner symbol validation also applies with the warning flag OFF, solely to
+reject wildcards, comma/whitespace channel separators and a lone invalid dot.
+It does not reject dots within class tickers (BRK.B/BRK.A/BF.B). SDK subscription
+parsing splits at the first dot only, preserving the class suffix. No blanket
+channel-prefix/dotted-symbol restriction was introduced; the provider prepends
+the channel itself, while comma injection could otherwise add another topic.
+Warning T trades keep existing trade_tick eligibility/conditions/provenance fields.
+Provider configure_momentum_warning(on_aggregate,on_revert,on_window_close=None),
+set_momentum_warning_aggregates(enabled), sync_warning_trade_symbols(symbols).
+No new provider socket. Only the existing Massive SDK connection is used.
+
+Stream <prefix>:momentum-warning-metrics:
+data compact JSON; version=1,source="market-data-gateway", event_type=gateway_sample/revert.
+observed_ns (UTC wall ns),gateway_instance_id,generation,A_received,A_published,
+A_rate_bins=[[UTC receipt second,count],...], queue_depth,queue_drops,dropped_total,
+lag_ms,owned_warning_symbols,warning_trade_coverage,coverage_status,
+max_publish_lag_ms: process high-water local lag at publish attempt.
+A_subscription_requested_ns,A_first_provider_event_ns,A_subscription_confirmed=null,
+watchdog_revert_reason (null if no revert),watchdog_revert_ns (null if no revert).
+Samples every10s. Receipt bins bounded at10; absent bins are absent evidence, not zeros.
+queue_drops counts bounded drop-oldest only; dropped_total also includes discarded
+queued/in-flight rows on revert or failed publish (a failed ACK can be ambiguous).
+warning_trade_coverage per owned symbol: requested_utc_ns,first_event_observed_ns,
+first_trade_sip_ns (real trade field only; null if absent),subscription_confirmed=null,
+status=requested/provider_event_observed. First tick is a coverage boundary, not ACK.
+G2 owns consumer_sample/decision/snapshot_entry fields, including real-trade SIPns
+or bucket bounds, observeddecision_ns,warning_obs_ns,lineage,status,cap.
+G3 (Euler per latest human) joins only fresh <=20s samples with timestamp/skew
+validation; missing evidence is UNKNOWN, not0. Main owns integration/display.
+
+W3 separate fresh local health evidence input, supplied by main/G3 measurement:
+Atomically replace the configured JSON file with schema_version=1,
+observed_wall_ns:int,oms_sync_seq:int,oms_sync_seconds:measured seconds,
+v2_bar_lateness_seconds:actual completed-bar lateness beyond due time.
+Refresh <=1s; older than5s/future timestamp/missing/invalid evidence fails closed.
+OMS any two >5s distinct observed sync sequences; repeats never count twice.
+Skipped/regressed sync sequence fails closed because intermediate duration is unknown.
+Periodic reads off-loop with bounded bytes and timeout. Load1m>6,
+Linux MemAvailable<3GiB, new ERROR in OMS/strategy/v2/ORB logs, bar lateness>5s,
+A publishlag>2s, disconnect/reconnect/policy1008 all latch A off.
+Rotated/truncated/oversized/unreadable logs fail closed. No watchdog service restart.
+Required logs only: oms.log,strategy.log,schwab-1m-v2.log,orb-schwab.log.
+Normal09:30 close quietly unsubscribes/drains A, cancels only its pending write,
+and resets observation baselines for the next trading04:00 fresh-health request.
+It does not set a failure latch or terminate the A writer. Safety failures remain
+sticky across daily windows; disconnect/policy/monitor/publish failures still revert.
+orb.log is the separate paper observer, not the live ORB producer; absent or
+errored retired-paper output does not disable A. Live ORB unit stdout/stderr both
+append to orb-schwab.log (ops/systemd/project-mai-tai-orb-schwab.service).
+Separate A Redis pool/tasks; existing live T/Q writer does not await A writes.
+Existing SDK callbacks normalize/dispatch in chunks64 with async yields.
+Warning-configured SDK uses raw=True: bounded1MiB JSON decode off-loop, SDK typed
+normalization64 at a time with yields, including raw provider status rejection.
+Warning-configured SDK max_reconnects=0 disables hidden A resubscribe; the existing
+gateway reconnect loop owns disconnect handling and preserves watched T/Q only.
+No A request until the existing SDK has a socket handle (still not entitlement ACK).
+
+Evidence limits:
+Current socket A entitlement UNPROVEN. Expected full-market A peak UNMEASURED.
+Synthetic batch fairness controls are NOT recorded WebSocket bursts or3x peak proof.
+No local recorded1s REST aggregate fixture found yet; no new acquisition/probe.
+Official source https://massive.com/docs/websocket/stocks/aggregates-per-second
+confirms qualifying OHLC, s/e Unix ms; docs cannot prove current socket entitlement.
+G2 approved conservative whole-bucket seed and separate paper ledger own namespace;
+G1 has no policy dependency on that choice and never supplies fictional low SIP time.
+Gateway restart after-close review only; no authority for intraday writes/restart.

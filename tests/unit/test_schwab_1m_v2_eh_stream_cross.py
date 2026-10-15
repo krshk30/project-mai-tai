@@ -121,7 +121,7 @@ def test_rest_cross_first_blocks_the_stream_print() -> None:
     strat = SchwabV2Strategy(_settings())
     _armed_clro(strat)
     _at(strat, PRINT_1_RCV)
-    assert strat.on_quote("CLRO", Quote("CLRO", 5.55, 5.59, 5.59, PRINT_1_RCV, 0)) is not None
+    assert strat.on_quote("CLRO", Quote("CLRO", 5.55, 5.57, 5.59, PRINT_1_RCV, 0)) is not None
     assert strat.on_stream_trade("CLRO", 5.59, PRINT_1_TS, ask_price=5.57) is None
 
 

@@ -1,0 +1,90 @@
+MOMWARN1 L3 OWN ASSESSMENT -- Oct12 evening, NOT INSTALLABLE
+
+HISTORICAL INITIAL ASSESSMENT below; superseded followup receipts are
+METRICS_REVIEW_REPAIR.txt, LIVE_HEALTH_REVIEW.txt and CAUSAL_REPLAY.txt.
+Human explicitly clarified P3 is controlled causal replay, not impossible
+historical warning transport. The earlier recorded-arrival prerequisite below
+is superseded for P3 only; recorded A3xpeak remains mandatory for P1.
+
+Human transferred frozen G1/G2/G3 local integration to one writer, Anscombe.
+Main owns queue/L5; Euler B, Mendel F, Huygens MOMRAW data stay independent.
+Base installed-set source:860fba4c7d59edff18eb23468ba576dcb83f4d57 (human installed
+receipt, not a new box inspection). Preserve all earlier branches and d8e78610.
+Target TueOct13 review/install AFTER close only if five proofs green/reviewed;
+WedOct14 04:11-09:30 actual W4 is future, NOT RUN. No schedule/service installed.
+
+COMPOSITION
+New isolated codex/momwarn1-l3-integration-20261012 on E860.
+Warning-only commits from preserved d8 review cherry-picked with provenance:
+220d0130,070b278b,fa971d8a,288053fd,a6ce2863,eaeb0785,beccd06f,de981a75,
+b2bb6a2d,19617727,ed1d2172,94da17ee,d8e78610. A/D are already in E860 and are
+NOT replayed. No runtime source repair yet; inherited warning code unchanged.
+App worktree registration and one attach retry hit100-identity limit. Continue
+in the existing isolated checkout; no duplicate checkout/worker created.
+
+P1 RECORDED A3xPEAK: BLOCKED / UNKNOWN
+Scoped preserved gateway/consumer/measurement fixtures contain controlled A rows,
+not recorded full-market A WebSocket burst or a measured expected full A peak.
+Existing synthetic12000-frame fairness receipt is not recorded3xpeak proof.
+Socket A entitlement UNPROVEN, no inference from REST tier or new probe allowed.
+No actual recorded A burst source located in these scoped artifacts. Next input:
+approved retained burst plus measurement provenance/peak denominator. An absent
+source cannot be repaired by a synthetic fixture or an unsupported claimed rate.
+
+P2 LIVE HEALTH + EVERY REVERT: BLOCKED / SOURCE AND POLICY GAPS
+G1 WarningHealthReader still requires schema1; G3 proposed_health_v2 produces2
+but is not wired. scripts/momwarn1_health.py deliberately refuses live launch.
+OmsLogMonitor preserves original OMS end timestamp, PID/start and duration and
+stamps actual bounded EOF/proc observation separately; its tests are controlled.
+Actual configured sync cadence15 comes from prior main read-only receipt.
+15+bounded5 health allowance remains proposal, NOT approved live policy.
+No source-complete actual watched-current-due v2 bars found; generic last-bar
+heartbeat includes warmup and cannot prove every expected current-day bar.
+Pre07 N/A needs anchored-lane expectation provenance; empty watchlist N/A needs
+explicit fresh source completeness. Missing source must stay UNKNOWN, not0.
+No OMS/ORB/v2 trading source changes authorized to obtain observability.
+G1 A-only reversion controls are present; allON composition tests still pending.
+Local tests do not turn an unwired source into live health proof.
+
+P3 CAUSAL WFF: BLOCKED / UNKNOWN RECEIPT HISTORY
+Retained WFF file exists at task-queues/analysis/momraw1-20261012/data/recorded_rest/
+2026-10-12-WFF.history.jsonl:218392rows, labelled historical REST SIP order,
+not live receive-time history; provider coverage guarantee UNVERIFIED.
+Earlier raw model20.927/13.35 signal and20.928/13.40 next eligible fill are
+controls, not evidence of timely A warning arrival/T request/first received tick.
+G2 now uses qualifying last CLOSE, not high as signal; bucket low's exact SIP
+timestamp remains UNKNOWN. Do not feed retrospective low TradePrint fiction.
+Actual recorded A/T receipt ordering needed; no backdating/fabricated ACK.
+
+P4 ACTUAL324 GENERATION: BLOCKED / UNKNOWN INPUTS
+/tmp/momwarn1-g2-20261012/claude-sig.csv and /tmp/claude-sig.csv available.
+Earlier assessment names /tmp/claude-lead.json SHA36bfba54..., absent locally.
+Retained summary143M30/181M60, positive-only medians8.733/18.573 and20/17
+nonpositive are not a regenerated algorithm result or a live headroom promise.
+Actual A inputs/generation script/receipt lineage absent from named artifacts.
+Need original retained lead output and algorithm inputs; raw REST can validate a
+SIP model but cannot supply missing A arrival times. Missing remains UNKNOWN.
+
+P5 E860 ALLON: ACTIONABLE LOCAL COMPOSITION, NOT LIVE/RECORDED PROOF
+Run preserved367 selected controls and explicit all-ON fixtures plus installed
+trading neighbors on new composition. Default-OFF fixtures remain OFF; do not
+force globalON and rewrite their expectations. Every original gate retained.
+The allON/hotpath control receipts must state fake broker/exits/Redis and synthetic
+input limitations. No final bundle readiness without the other four proof gates.
+
+ADDITIONAL ASSESSED DEPENDENCIES (not silently dropped)
+G2 metric payloads use observed_decision_ns, strategy_code/logical_id, nested
+signals/payload while G3 requires flat observeddecision_ns,ledger/window/lineage_id.
+Some Snapshot FILLED/EXITED packets omit epoch. Mapping cannot invent epoch/ACK,
+exact signal SIP, comparison identity or future latency. Needs narrow bounded
+contract adapter and through-composition tests before actual W4 can be complete.
+G2 controlled16 dormant candidates can hold cap indefinitely on empty stock
+windows. Human/main release policy unresolved; do not introduce an idle waiver.
+
+SOURCE FOLLOWUP PLAN
+First complete E860 local composition and tests, preserve source hashes for OMS,
+ORB/v2 strategy/mirror runtime. Then assess bounded metrics-only compatibility
+repair and dedicated tests; explicitly record changed source scope before edits.
+Health schema/wiring must await reviewed policy/source predicate; no blind relax.
+Recorded-evidence blockers are handed to main, not disguised as implementation.
+All new receipts stay local, <=500-line fixtures, no proofworker expansion.

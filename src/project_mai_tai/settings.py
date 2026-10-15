@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from functools import lru_cache
 import json
 
@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     # Isolated raw-trade paper study. Default OFF: no Massive connection, DB read,
     # dashboard registration, or runtime process is created until explicitly enabled.
     momentum_paper_enabled: bool = False
+    momentum_live_enabled: bool = False
+    sec_user_agent: str = Field(default="", repr=False)
     # COLDSTART1: announce the current owner set once, including an empty set.
     market_data_subscription_startup_enabled: bool = True
     market_data_snapshot_interval_seconds: int = 5
@@ -112,6 +114,19 @@ class Settings(BaseSettings):
     market_data_warmup_lookback_days: int = 14
     market_data_warmup_bar_limit: int = 50_000
     market_data_live_aggregate_stream_enabled: bool = False
+    market_data_momentum_warning_enabled: bool = False
+    momentum_validation_session_date: date | None = None
+    market_data_momentum_warning_end_et: time = time(18)
+    momentum_paper_detection_end_et: time = time(18)
+    momentum_paper_guard_end_et: time = time(18, 10)
+    market_data_momentum_warning_queue_maxsize: int = Field(default=8192, ge=1, le=65536)
+    market_data_momentum_warning_stream_maxlen: int = Field(default=20000, ge=1, le=100000)
+    market_data_momentum_warning_owner_cap: int = Field(default=16, ge=1, le=16)
+    market_data_publish_round_size: int = Field(default=16, ge=1, le=64)
+    market_data_momentum_warning_monitor_interval_seconds: float = Field(default=1, ge=0.1, le=1)
+    market_data_momentum_warning_monitor_timeout_seconds: float = Field(default=1, gt=0, le=2)
+    market_data_momentum_warning_health_path: str = "/run/project-mai-tai/momentum-warning-health.json"
+    market_data_momentum_warning_log_directory: str = "/var/log/project-mai-tai"
     strategy_macd_30s_enabled: bool = True
     strategy_polygon_30s_enabled: bool = _legacy_strategy_alias_field(
         False,
@@ -457,6 +472,8 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_gap_line_carry_enabled: bool = False
     # LINE=CHART: anchored, versioned session rebuild. Separate from pause handling.
     strategy_schwab_1m_v2_line_chart_restoration_enabled: bool = False
+    # Missing-minute tape counts only prints that can establish an OHLC bar.
+    strategy_schwab_1m_v2_gap_trade_conditions_filter_enabled: bool = True
     strategy_schwab_1m_v2_gap_hold_detect_seconds: float = 90.0  # Seconds past the last bar's CLOSE.
     # CSV of symbols (or "*") for which `[V2-ATR-PROBE]` logs each evaluated bar's
     # ATR state (tr/loss/trail/state/touch). Diagnostic-only; default empty = off.
@@ -534,8 +551,12 @@ class Settings(BaseSettings):
     # confirmation-only reset exactly. The count is anchored to the 04:00 ET strategy session.
     strategy_schwab_1m_v2_retry_one_enabled: bool = False
     strategy_schwab_1m_v2_false_flip_enabled: bool = False
+    # FALSEFLIP2 uses fresh owned-episode evidence and the normal SHORT placement path.
+    strategy_schwab_1m_v2_false_flip2_enabled: bool = True
     # CLEARWAIT1: retire only a removed, durably terminal unfilled episode. OFF is rollback.
     strategy_schwab_1m_v2_removed_wait_clear_enabled: bool = True
+    strategy_schwab_1m_v2_removed_wait_clear_rules_enabled: bool = True
+    strategy_schwab_1m_v2_fresh_sell_owner_release_enabled: bool = True
     strategy_schwab_1m_v2_retry_one_max_retries: int = 1
     # P1.3 + P1.4 armed-segment safety (ONE flag gates the boot-mark AND the boot-hold; they are one
     # change). ON: reconstructed CW-v2 segments are capped on db-seed so a restart can't re-issue the
@@ -1402,6 +1423,8 @@ class Settings(BaseSettings):
 
     def provider_for_strategy(self, strategy_code: str) -> str:
         normalized_code = str(strategy_code).strip().lower()
+        if normalized_code == "momentum_warn_live":
+            return "schwab" if self.momentum_live_enabled else "none"
         if normalized_code == "orb_schwab":
             return "schwab" if self.orb_live_schwab_orders_enabled else "none"
         if normalized_code in {"orb", "momentum_30s", "momentum_60s"}:

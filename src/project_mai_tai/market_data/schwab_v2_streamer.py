@@ -21,6 +21,8 @@ wait, no round-robin queue. That drops the v2 persist-lag floor from
 """
 from __future__ import annotations
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 import asyncio
 import hashlib
 import itertools
@@ -192,7 +194,7 @@ class SchwabV2Streamer:
         )
 
     def set_desired_symbols(self, symbols: set[str]) -> None:
-        normalized = {s.strip().upper() for s in symbols if s.strip()}
+        normalized = {s.strip().upper() for s in symbols if raw_symbol_is_uppercase(s) and s.strip()}
         if normalized == self._desired_symbols:
             return
         self._desired_symbols = normalized
@@ -603,9 +605,10 @@ class SchwabV2Streamer:
 
     @staticmethod
     def _extract_chart_bar(content: dict[str, object]) -> ChartBar | None:
-        symbol = str(content.get("key") or content.get("0") or "").upper()
-        if not symbol:
+        raw_symbol = content.get("key") or content.get("0") or ""
+        if not raw_symbol_is_uppercase(raw_symbol):
             return None
+        symbol = raw_symbol.upper()
         try:
             open_p = float(content.get("2", 0.0) or 0.0)
             high_p = float(content.get("3", 0.0) or 0.0)
@@ -636,9 +639,10 @@ class SchwabV2Streamer:
         5=ask_size, 8=cumulative_volume, 9=last_size, 35=trade_time_ms.
         Capture-only; no dedupe here (the DB unique constraint dedups exact
         re-sends; distinct field updates are intentionally all kept)."""
-        symbol = str(content.get("key") or content.get("0") or "").upper()
-        if not symbol:
+        raw_symbol = content.get("key") or content.get("0") or ""
+        if not raw_symbol_is_uppercase(raw_symbol):
             return []
+        symbol = raw_symbol.upper()
         raw_hash = hashlib.sha1(
             json.dumps(content, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
@@ -681,9 +685,10 @@ class SchwabV2Streamer:
         """Parse one TIMESALE_EQUITY content record into a single TRADE tick (true
         time-&-sales). Fields: 0=key, 1=trade_time_ms, 2=last_price, 3=last_size,
         4=sequence. Capture-only; the DB unique constraint dedups exact re-sends."""
-        symbol = str(content.get("key") or content.get("0") or "").upper()
-        if not symbol:
+        raw_symbol = content.get("key") or content.get("0") or ""
+        if not raw_symbol_is_uppercase(raw_symbol):
             return None
+        symbol = raw_symbol.upper()
         price = _float_or_none(content.get("2"))
         if price is None or price <= 0:
             return None

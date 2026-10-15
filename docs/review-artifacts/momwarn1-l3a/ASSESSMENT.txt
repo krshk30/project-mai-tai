@@ -1,0 +1,43 @@
+L3a OWN ASSESSMENT / FILE PLAN -- approved derivation, NOT recorded WebSocket A
+
+Human replaces live-recorded-A requirement with derived raw-trade cardinality;
+actual health setup moves to INSTALL. Original c1 generator no longer required,
+Mendel owns OUR signal lists. Preserve e064 history and reviewed local controls.
+No adoption of main F+B/hotpath or Mendel offlinelead work, no new worker.
+
+Sources:8complete original provider trades_v1 gzip files,22GBcompressed total;
+read ALL symbols/conditions/prices with no Momentum or prior-close restriction.
+MOMRAW flat_scanned retained files are candidate/universe-filtered and MUST NOT
+be used to count full-file denominator. Whole daily gzip GET/hash/EOF receipts
+exist. Downloaded-symbol denominator is distinct ticker present anywhere in that
+original daily object; PM denominator is distinct ticker with a SIP print inside
+[04:00,09:30)ET. Full listed/physical provider universe coverage remains UNVERIFIED.
+
+Definition: every actual print, including condition-excluded/corrections/lowprice,
+adds at most one distinct symbol to its integer UTC SIPsecond. This is an
+all-print cardinality load envelope, not vendor qualifying OHLC reconstruction
+or observed WS update/frame/retransmission rate. No volume-to-TQ inference.
+Use all19800 PM seconds for each full dataset. Observed-file zero is NOT proof
+of physical-market zero. p99.9 uses explicit nearest rank ceil(.999*N), no hidden
+positive-second denominator. Partial Oct12 use only common verified query window
+[04:10,09:30) among4332completed/reused symbols. Missing04:00-04:10 and symbol
+intervals are UNKNOWN, never zero-filled. Universe11820 is already eligibility/
+prior-close filtered;7488pending and low-price/excluded symbols are not covered.
+
+Bounded plan: C++ gzip CSV stream uses fixed input/line limits, strict headers/
+integer SIPns, per-symbol PM bitsets (bounded maxsymbols), one time-grid counter
+array. Source order need not be SIP sorted. Gzip EOF/CRC checked, malformed rows
+fail closed. Python coordinator validates receipts/length/SHA with bounded reads,
+one day at a time and no provider/client imports. Oct12 sources selected ONLY
+from sealed input manifest, receipts and common exact requested coverage; no
+new acquisitions and no directory glob pretending missing files are zero.
+Nine-row table and hashed perday count evidence, small actual-tape A-shaped
+templates retained with DERIVED provenance. Actual gateway test scales event
+count3xmax perday peak, explicitly model multiplicity/controlled arrival, never
+recordedWS. Exercise existing provider normalization async chunks, bounded A
+queue/separate writer, watchedTQ progress and unchanged<50ms gate.
+
+File plan: two scripts, dedicated small controls and derived burst test, L3a
+docs/receipts. No gateway/runtime/settings/policy edits. Heavy scan and timing
+must serialize with main; current tool cannot message native ancestor. Clear
+requested via direct commentary before heavy phase, not inferred from no pytest.

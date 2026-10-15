@@ -1,26 +1,31 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time
 from decimal import Decimal, ROUND_FLOOR
 import hashlib
 import json
-from typing import Iterable
+from typing import Iterable, Mapping
 from zoneinfo import ZoneInfo
+
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
 
 from project_mai_tai.events import MarketSnapshotPayload
 from project_mai_tai.market_data.tick_time import normalize_ts_ns
+from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 from project_mai_tai.momentum_paper.models import (
     MOMENTUM_STRATEGIES,
+    MOMENTUM_WARNING_STRATEGIES,
     MomentumTapeRecord,
     TradePrint,
 )
+from project_mai_tai.momentum_paper.warning_source_age import aggregate_source_age_reason
 
 
 _ET = ZoneInfo("America/New_York")
 _DETECTION_START = time(4, 11)
-_DETECTION_END = time(9, 30)
+_DETECTION_END = time(18)
 _DETECTION_MULTIPLIER = Decimal("1.20")
 _TARGET_MULTIPLIER = Decimal("1.05")
 _STOP_MULTIPLIER = Decimal("0.85")
@@ -36,14 +41,20 @@ def is_warrant_like(symbol: str) -> bool:
 
 
 def symbol_is_eligible(symbol: str) -> bool:
-    value = symbol.strip().upper()
-    return bool(value) and "." not in value and len(value) <= 5
+    # Lowercase markers identify distinct share classes, not aliases of common tickers.
+    return (
+        raw_symbol_is_uppercase(symbol)
+        and symbol == symbol.strip() and "." not in symbol and len(symbol) <= 5
+    )
 
 
-def detection_time_is_eligible(sip_ts_ms: int) -> bool:
+def detection_time_is_eligible(
+    sip_ts_ms: int, validation_window: MomentumValidationWindow | None = None,
+) -> bool:
     observed = datetime.fromtimestamp(sip_ts_ms / 1000, tz=UTC).astimezone(_ET)
     clock = observed.time().replace(tzinfo=None)
-    return observed.weekday() < 5 and _DETECTION_START <= clock < _DETECTION_END
+    end = validation_window.detection_end_for(observed.date()) if validation_window else _DETECTION_END
+    return observed.weekday() < 5 and _DETECTION_START <= clock < end
 
 
 @dataclass
@@ -54,8 +65,8 @@ class _ActiveEvent:
     session_date: date
     symbol: str
     prior_close: Decimal
-    reference: TradePrint
-    detection: TradePrint
+    reference: TradePrint | None
+    detection: TradePrint | None
     condition_version: str
     window_print_count: int
     window_share_count: int
@@ -73,11 +84,27 @@ class _ActiveEvent:
     largest_gap_ms: int = 0
     last_eligible_path_ts_ms: int | None = None
     feed_gap: bool = False
+    observed_decision_ns: int | None = None
+    aggregate_reference: dict[str, object] | None = None
+    aggregate_signal: dict[str, object] | None = None
+    aggregate_received_utc_ns: int | None = None
+    aggregate_published_utc_ns: int | None = None
+
+    @property
+    def detection_ms(self) -> int:
+        if self.detection is not None:
+            return self.detection.sip_ts_ms
+        assert self.observed_decision_ns is not None
+        return self.observed_decision_ns // 1_000_000
+
+    @property
+    def fill_after_ms(self) -> int:
+        return max(self.detection_ms, (self.observed_decision_ns or 0) // 1_000_000)
 
     @property
     def path_deadline_ms(self) -> int:
         if self.fill is None:
-            return self.detection.sip_ts_ms + _FILL_WINDOW_MS
+            return self.detection_ms + _FILL_WINDOW_MS
         return self.fill.sip_ts_ms + _PATH_WINDOW_MS
 
     @property
@@ -98,12 +125,19 @@ class MomentumPaperEngine:
         prior_closes: dict[str, Decimal],
         condition_version: str,
         coverage_started_ms: int,
+        strategy_windows: Mapping[str, int] | None = None,
+        validation_window: MomentumValidationWindow | None = None,
     ) -> None:
+        self.validation_window = validation_window or MomentumValidationWindow()
         self.prior_closes = {
-            str(symbol).upper(): Decimal(str(price)) for symbol, price in prior_closes.items()
+            symbol: Decimal(str(price)) for symbol, price in prior_closes.items()
+            if symbol_is_eligible(symbol)
         }
         self.condition_version = condition_version
         self.coverage_started_ms = int(coverage_started_ms)
+        self.strategy_windows = dict(
+            MOMENTUM_STRATEGIES if strategy_windows is None else strategy_windows
+        )
         self._eligible_history: dict[str, deque[TradePrint]] = defaultdict(deque)
         self._snapshot_history: dict[str, deque[TradePrint]] = defaultdict(deque)
         self._excluded_history: dict[str, deque[TradePrint]] = defaultdict(deque)
@@ -137,6 +171,10 @@ class MomentumPaperEngine:
 
     def seed_reentry_boundaries(self, rows: Iterable[MomentumTapeRecord]) -> None:
         for row in rows:
+            if not symbol_is_eligible(row.symbol):
+                continue
+            if row.strategy_code not in self.strategy_windows:
+                continue
             if row.event_type not in {"FINAL", "NO_FILL", "UNANSWERABLE"}:
                 continue
             exit_payload = row.payload.get("exit")
@@ -147,17 +185,20 @@ class MomentumPaperEngine:
                 boundary_ms = int(row.payload.get("terminal_boundary_sip_ts_ms", 0) or 0)
             if not boundary_ms:
                 boundary_ms = int(row.observed_at.timestamp() * 1000)
-            key = (row.strategy_code, row.symbol.upper())
+            key = (row.strategy_code, row.symbol)
             self._reference_after_ms[key] = max(
                 boundary_ms,
                 self._reference_after_ms.get(key, 0),
             )
 
     def ingest(
-        self, trade: TradePrint, *, allow_detection: bool = True
+        self, trade: TradePrint, *, allow_detection: bool = True,
+        observed_decision_ns: int | None = None,
     ) -> tuple[MomentumTapeRecord, ...]:
+        if not symbol_is_eligible(trade.symbol):
+            return ()
         trade = TradePrint(
-            symbol=trade.symbol.upper(),
+            symbol=trade.symbol,
             sip_ts_ms=trade.sip_ts_ms,
             participant_ts_ms=trade.participant_ts_ms,
             price=trade.price,
@@ -191,7 +232,7 @@ class MomentumPaperEngine:
             return tuple(records)
 
         if allow_detection and self._can_detect(trade):
-            for strategy_code, window_seconds in MOMENTUM_STRATEGIES.items():
+            for strategy_code, window_seconds in self.strategy_windows.items():
                 key = (strategy_code, trade.symbol)
                 if self._has_unresolved_event(key):
                     continue
@@ -199,7 +240,8 @@ class MomentumPaperEngine:
                 reference_pool = [
                     item
                     for item in history
-                    if trade.sip_ts_ms - window_seconds * 1000 <= item.sip_ts_ms
+                    if item.symbol == trade.symbol
+                    and trade.sip_ts_ms - window_seconds * 1000 <= item.sip_ts_ms
                     and item.sip_ts_ms < trade.sip_ts_ms
                     and item.sip_ts_ms > reference_after_ms
                 ]
@@ -221,6 +263,7 @@ class MomentumPaperEngine:
                     detection=trade,
                     window_prints=reference_pool,
                     excluded_prints=window_excluded,
+                    observed_decision_ns=observed_decision_ns,
                 )
                 self._active[event.logical_id] = event
                 records.append(self._record(event, "DETECTED", trade, self._summary(event)))
@@ -244,7 +287,7 @@ class MomentumPaperEngine:
         completed_ms = int(completed_at.timestamp() * 1000)
         proposals: list[tuple[Decimal, str, str, TradePrint, TradePrint, list[TradePrint]]] = []
         for snapshot in snapshots:
-            symbol = snapshot.symbol.upper()
+            symbol = snapshot.symbol
             if symbol not in self.prior_closes or not symbol_is_eligible(symbol):
                 continue
             raw_ns = normalize_ts_ns(snapshot.last_trade_timestamp_ns)
@@ -266,13 +309,14 @@ class MomentumPaperEngine:
             while history and history[0].sip_ts_ms < sip_ms - 60_000:
                 history.popleft()
             if self._can_detect(sample):
-                for strategy_code, window_seconds in MOMENTUM_STRATEGIES.items():
+                for strategy_code, window_seconds in self.strategy_windows.items():
                     if self._has_unresolved_event((strategy_code, symbol)):
                         continue
                     boundary = self._reference_after_ms.get((strategy_code, symbol), 0)
                     reference_pool = [
                         item for item in history
-                        if sip_ms - window_seconds * 1000 <= item.sip_ts_ms < sip_ms
+                        if item.symbol == symbol
+                        and sip_ms - window_seconds * 1000 <= item.sip_ts_ms < sip_ms
                         and item.sip_ts_ms > boundary
                     ]
                     if not reference_pool:
@@ -296,7 +340,7 @@ class MomentumPaperEngine:
                 continue
             event = self._new_event(
                 strategy_code=strategy_code,
-                window_seconds=MOMENTUM_STRATEGIES[strategy_code],
+                window_seconds=self.strategy_windows[strategy_code],
                 reference=reference,
                 detection=detection,
                 window_prints=window,
@@ -326,10 +370,14 @@ class MomentumPaperEngine:
                 records.extend(self._finalize(event, now_ms))
         return tuple(records)
 
-    def mark_feed_gap(self, started_ms: int, ended_ms: int) -> tuple[MomentumTapeRecord, ...]:
+    def mark_feed_gap(
+        self, started_ms: int, ended_ms: int, *, symbol: str | None = None,
+    ) -> tuple[MomentumTapeRecord, ...]:
         records: list[MomentumTapeRecord] = []
         for event in self._active.values():
-            if ended_ms < event.detection.sip_ts_ms or started_ms > event.path_deadline_ms:
+            if symbol is not None and event.symbol != symbol:
+                continue
+            if event.feed_gap or ended_ms < event.detection_ms or started_ms > event.path_deadline_ms:
                 continue
             event.feed_gap = True
             records.append(
@@ -346,7 +394,7 @@ class MomentumPaperEngine:
         records: list[MomentumTapeRecord] = []
         records.extend(self.advance_clock(now_ms))
         for event in list(self._active.values()):
-            if event.fill is None and now_ms > event.detection.sip_ts_ms + _FILL_WINDOW_MS:
+            if event.fill is None and now_ms > event.detection_ms + _FILL_WINDOW_MS:
                 records.extend(
                     self._finish(event, "NO_FILL", now_ms, "no_eligible_print_within_10s")
                 )
@@ -358,7 +406,7 @@ class MomentumPaperEngine:
     def _can_detect(self, trade: TradePrint) -> bool:
         prior_close = self.prior_closes.get(trade.symbol)
         return (
-            detection_time_is_eligible(trade.sip_ts_ms)
+            detection_time_is_eligible(trade.sip_ts_ms, self.validation_window)
             and symbol_is_eligible(trade.symbol)
             and prior_close is not None
             and prior_close >= Decimal("1.00")
@@ -374,6 +422,7 @@ class MomentumPaperEngine:
         detection: TradePrint,
         window_prints: list[TradePrint],
         excluded_prints: int,
+        observed_decision_ns: int | None = None,
     ) -> _ActiveEvent:
         logical_id = f"{strategy_code}:{detection.symbol}:{detection.sip_ts_ms}"
         return _ActiveEvent(
@@ -392,7 +441,119 @@ class MomentumPaperEngine:
             excluded_prints=excluded_prints,
             path=[detection],
             last_eligible_path_ts_ms=detection.sip_ts_ms,
+            observed_decision_ns=observed_decision_ns,
         )
+
+    def detect_from_bucket(
+        self, *, strategy_code: str, symbol: str, reference_price: Decimal,
+        reference_start_ms: int, reference_end_ms: int, signal_price: Decimal,
+        signal_start_ms: int, signal_end_ms: int, observed_decision_ns: int,
+        signal_trade: TradePrint | None = None,
+        aggregate_received_utc_ns: int | None = None,
+        aggregate_published_utc_ns: int | None = None,
+    ) -> tuple[MomentumTapeRecord, ...]:
+        """Warning ledger only: observed bucket evidence is never a fictional print."""
+        if strategy_code not in MOMENTUM_WARNING_STRATEGIES or strategy_code not in self.strategy_windows:
+            raise ValueError("bucket_detection_requires_warning_ledger")
+        now_ms = observed_decision_ns // 1_000_000
+        seconds = self.strategy_windows[strategy_code]
+        prior_close = self.prior_closes.get(symbol)
+        boundary = self._reference_after_ms.get((strategy_code, symbol), 0)
+        reference_at_ms = signal_trade.sip_ts_ms if signal_trade is not None else now_ms
+        if (
+            not detection_time_is_eligible(now_ms, self.validation_window) or not symbol_is_eligible(symbol)
+            or prior_close is None or prior_close < Decimal("1")
+            or reference_price <= 0 or not reference_price.is_finite()
+            or signal_price < reference_price * _DETECTION_MULTIPLIER
+            or not reference_at_ms - seconds * 1000 <= reference_start_ms < reference_end_ms <= reference_at_ms
+            or reference_start_ms <= boundary
+            or (signal_trade is None and not (
+                reference_end_ms <= signal_start_ms
+                or (reference_start_ms, reference_end_ms) == (signal_start_ms, signal_end_ms)
+            ))
+            or not (signal_start_ms == signal_end_ms if signal_trade else signal_start_ms < signal_end_ms)
+            or (signal_trade is not None and not signal_end_ms <= now_ms <= signal_end_ms + 1000)
+            or (signal_trade is None and (
+                aggregate_source_age_reason(end_ms=signal_end_ms, observed_ms=now_ms) is not None
+                or aggregate_received_utc_ns is None or aggregate_published_utc_ns is None
+                or not 0 <= observed_decision_ns - aggregate_received_utc_ns <= 1_000_000_000
+                or observed_decision_ns < aggregate_published_utc_ns
+            ))
+            or self._has_unresolved_event((strategy_code, symbol))
+            or (signal_trade is not None and (
+                not signal_trade.eligible or signal_trade.symbol != symbol
+                or signal_trade.price != signal_price or signal_trade.sip_ts_ms > now_ms
+            ))
+        ):
+            return ()
+        lineage = "observed_raw_bucket_reference" if signal_trade else "observed_aggregate"
+        reference = {
+            "price": str(reference_price), "start_ms": reference_start_ms,
+            "end_ms": reference_end_ms, "lineage": "whole_bucket_low",
+            "exact_low_sip_timestamp": None,
+        }
+        signal = {
+            "symbol": symbol, "price": str(signal_price), "start_ms": signal_start_ms,
+            "end_ms": signal_end_ms, "observed_decision_ns": observed_decision_ns,
+            "lineage": lineage, "exact_signal_sip_timestamp": None,
+            "signal_field": "trade_price" if signal_trade else "close",
+            "price_provenance": "real_trade" if signal_trade else "qualifying_bucket_last_close",
+        }
+        event = _ActiveEvent(
+            logical_id=f"{strategy_code}:{symbol}:{lineage}:{observed_decision_ns}",
+            strategy_code=strategy_code, window_seconds=seconds,
+            session_date=datetime.fromtimestamp(now_ms / 1000, tz=UTC).astimezone(_ET).date(),
+            symbol=symbol, prior_close=prior_close, reference=None, detection=signal_trade,
+            condition_version=self.condition_version, window_print_count=0,
+            window_share_count=0, warrant_like=is_warrant_like(symbol),
+            observed_decision_ns=observed_decision_ns,
+            aggregate_reference=reference, aggregate_signal=signal,
+            aggregate_received_utc_ns=aggregate_received_utc_ns,
+            aggregate_published_utc_ns=aggregate_published_utc_ns,
+        )
+        self._active[event.logical_id] = event
+        return (self._record(event, "DETECTED", datetime.fromtimestamp(now_ms / 1000, tz=UTC),
+                             self._summary(event)),)
+
+    def reference_boundary(self, strategy_code: str, symbol: str) -> int:
+        return self._reference_after_ms.get((strategy_code, symbol), 0)
+
+    def seal_warning_decisions(
+        self, records: tuple[MomentumTapeRecord, ...], *, observed_decision_ns: int,
+    ) -> tuple[MomentumTapeRecord, ...]:
+        """Seal at the end of evaluation, before persistence; never fill queued earlier prints."""
+        sealed = []
+        for record in records:
+            if record.event_type != "DETECTED" or record.strategy_code not in MOMENTUM_WARNING_STRATEGIES:
+                sealed.append(record)
+                continue
+            event = self._active[record.logical_id]
+            signal_end = (
+                event.detection.sip_ts_ms if event.detection else
+                int((event.aggregate_signal or {})["end_ms"])
+            )
+            now_ms = observed_decision_ns // 1_000_000
+            reference_start = (event.aggregate_reference or {}).get("start_ms")
+            if (
+                (event.detection is not None and now_ms > signal_end + 1000)
+                or (event.detection is None and (
+                    aggregate_source_age_reason(end_ms=signal_end, observed_ms=now_ms) is not None
+                    or event.aggregate_received_utc_ns is None or event.aggregate_published_utc_ns is None
+                    or not 0 <= observed_decision_ns - event.aggregate_received_utc_ns <= 1_000_000_000
+                    or observed_decision_ns < event.aggregate_published_utc_ns
+                ))
+                or (event.detection is None and reference_start is not None
+                    and int(reference_start) < now_ms - event.window_seconds * 1000)
+            ):
+                # Only an unpersisted proposal is withdrawn, never an existing path.
+                self._active.pop(event.logical_id)
+                continue
+            event.observed_decision_ns = observed_decision_ns
+            if event.aggregate_signal is not None:
+                event.aggregate_signal = {**event.aggregate_signal,
+                                          "observed_decision_ns": observed_decision_ns}
+            sealed.append(replace(record, payload=self._summary(event)))
+        return tuple(sealed)
 
     def _advance_symbol_events(
         self, trade: TradePrint
@@ -423,7 +584,7 @@ class MomentumPaperEngine:
                 records.extend(self._finalize(event, trade.sip_ts_ms))
                 continue
 
-            if trade.sip_ts_ms < event.detection.sip_ts_ms:
+            if trade.sip_ts_ms < event.detection_ms:
                 continue
             if trade.sip_ts_ms <= event.path_deadline_ms or (
                 event.fill is not None and event.exit is None and trade.eligible
@@ -435,7 +596,7 @@ class MomentumPaperEngine:
                 continue
 
             if event.fill is None:
-                if trade.sip_ts_ms <= event.detection.sip_ts_ms:
+                if trade.sip_ts_ms <= event.fill_after_ms:
                     continue
                 event.fill = trade
                 event.quantity = max(
@@ -450,7 +611,7 @@ class MomentumPaperEngine:
                         {
                             "fill": trade.payload(),
                             "quantity": event.quantity,
-                            "latency_ms": trade.sip_ts_ms - event.detection.sip_ts_ms,
+                            "latency_ms": trade.sip_ts_ms - event.detection_ms,
                         },
                     )
                 )
@@ -558,7 +719,7 @@ class MomentumPaperEngine:
     @staticmethod
     def _terminal_boundary_ms(event: _ActiveEvent, status: str, now_ms: int) -> int:
         if status == "NO_FILL":
-            return event.detection.sip_ts_ms + _FILL_WINDOW_MS
+            return event.detection_ms + _FILL_WINDOW_MS
         if status == "UNANSWERABLE":
             return event.path_deadline_ms
         if event.exit is not None:
@@ -631,19 +792,27 @@ class MomentumPaperEngine:
             pnl = (exit_price - fill_price) * event.quantity
         return {
             "logical_id": event.logical_id,
+            **({"validation_window": "validation-window"}
+               if self.validation_window.is_validation_clock(
+                   datetime.fromtimestamp(event.detection_ms / 1000, UTC).astimezone(_ET)
+               ) else {}),
             "strategy_code": event.strategy_code,
             "window_seconds": event.window_seconds,
             "session_date": event.session_date.isoformat(),
             "symbol": event.symbol,
             "prior_close": str(event.prior_close),
-            "reference": event.reference.payload(),
-            "detect": event.detection.payload(),
-            "path_start": {**event.detection.payload(), "dt_ms": 0},
+            "reference": event.reference.payload() if event.reference else event.aggregate_reference,
+            "detect": event.detection.payload() if event.detection else event.aggregate_signal,
+            "path_start": {
+                **(event.detection.payload() if event.detection else event.aggregate_signal or {}),
+                "dt_ms": 0,
+            },
             "path_range": {
                 "tape_logical_id": self._tape_logical_id(
                     event.strategy_code, event.symbol, event.session_date
                 ),
-                "start_sip_ts_ms": event.detection.sip_ts_ms,
+                "start_sip_ts_ms": event.detection.sip_ts_ms if event.detection else None,
+                **({"start_observed_ms": event.detection_ms} if event.detection is None else {}),
                 "end_sip_ts_ms": event.path_deadline_ms,
                 "start_inclusive": True,
                 "end_inclusive": True,
@@ -665,6 +834,12 @@ class MomentumPaperEngine:
             "largest_no_print_gap_ms": event.largest_gap_ms,
             "path_print_count": len(event.path),
             "path_complete": False,
+            **({
+                "observed_decision_ns": event.observed_decision_ns,
+                "lineage": (event.aggregate_signal or {}).get("lineage", "observed_raw"),
+                "reference_provenance": event.aggregate_reference or "observed_raw",
+                "model_precision": "integer_sip_ms",
+            } if event.observed_decision_ns is not None else {}),
         }
 
     def _record(
@@ -676,6 +851,10 @@ class MomentumPaperEngine:
     ) -> MomentumTapeRecord:
         event.sequence += 1
         observed_at = observed.observed_at if isinstance(observed, TradePrint) else observed
+        if self.validation_window.is_validation_clock(
+            datetime.fromtimestamp(event.detection_ms / 1000, UTC).astimezone(_ET)
+        ):
+            payload = {**payload, "validation_window": "validation-window"}
         return MomentumTapeRecord(
             event_key=f"{event.logical_id}:{event.sequence:08d}:{event_type}",
             logical_id=event.logical_id,

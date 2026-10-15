@@ -2,6 +2,8 @@
 Description=Project Mai Tai Momentum 30 / Momentum 60 broker-disconnected paper observer
 After=network-online.target postgresql.service redis-server.service
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -9,8 +11,10 @@ User=trader
 Group=trader
 WorkingDirectory=/home/trader/project-mai-tai
 EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+ExecStartPre=+/home/trader/project-mai-tai/.venv/bin/python -B /home/trader/option-a-daily-guard/daily_guard.py --paper-prestart
 ExecStart=/home/trader/project-mai-tai/.venv/bin/mai-tai-momentum-paper
-Restart=always
+Restart=on-failure
+RestartPreventExitStatus=78
 RestartSec=5
 TimeoutStopSec=30
 NoNewPrivileges=true

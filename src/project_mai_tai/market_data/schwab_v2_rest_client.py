@@ -19,6 +19,8 @@ accordingly.
 """
 from __future__ import annotations
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 import asyncio
 import itertools
 import json
@@ -134,7 +136,7 @@ class SchwabV2RestClient:
         return bool((self.settings.schwab_token_store_path or "").strip())
 
     def set_desired_symbols(self, symbols: set[str]) -> None:
-        normalized = {s.strip().upper() for s in symbols if s.strip()}
+        normalized = {s.strip().upper() for s in symbols if raw_symbol_is_uppercase(s) and s.strip()}
         # set_desired is called from the engine loop without await — assign
         # atomically (no async lock needed for set replacement on a single
         # event loop).
@@ -496,7 +498,9 @@ class SchwabV2RestClient:
         if not isinstance(payload, dict):
             raise ValueError("malformed session envelope")
         candles = payload.get("candles")
-        if (str(payload.get("symbol", "")).upper() != symbol.upper()
+        if (not raw_symbol_is_uppercase(symbol)
+                or not raw_symbol_is_uppercase(payload.get("symbol"))
+                or str(payload.get("symbol", "")).upper() != symbol.upper()
                 or (payload.get("empty") is not False and payload.get("empty") is not True)
                 or not isinstance(candles, list) or len(candles) > 960
                 or any(payload.get(key) for key in ("next", "nextToken", "nextPage", "truncated"))):
@@ -546,6 +550,8 @@ class SchwabV2RestClient:
         payload = self._authorized_get(url)
         results: list[Quote] = []
         for symbol, record in payload.items():
+            if not raw_symbol_is_uppercase(symbol):
+                continue
             if not isinstance(record, dict):
                 continue
             quote = record.get("quote")
