@@ -1,0 +1,9 @@
+{
+  "pr_number": 1160,
+  "range_base": "caaef9a3dc18c735e051970792f3c1ad50e3a10a",
+  "range_head": "a3c5782a4cbc186274646324542278dc7909dc92",
+  "reviewed_at": "2026-10-15T21:26:11Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: re-content after Group C rollback. Verified tree = exact 2ca94594 (Group A, live on box since 17:18) + only .github/workflows/validate.yml (C7a runner PG16). Group A: component reviews 11:36/11:5x, ledger gate rehearsal PASS, 15/15 timing PASS, installed 15:07 then retained as rollback target; the 6 exit-path tests that Group C broke pass on 2ca (57/57 local). Group C excluded pending C2 fix + full-suite diff."
+}
