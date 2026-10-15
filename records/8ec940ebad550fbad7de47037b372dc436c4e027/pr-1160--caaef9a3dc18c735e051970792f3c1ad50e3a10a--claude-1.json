@@ -1,0 +1,9 @@
+{
+  "pr_number": 1160,
+  "range_base": "caaef9a3dc18c735e051970792f3c1ad50e3a10a",
+  "range_head": "8ec940ebad550fbad7de47037b372dc436c4e027",
+  "reviewed_at": "2026-10-15T20:26:14Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1 reviewed every component diff (Group A 2ca94594: MOMRESTART1/B/VIRTUAL-CLEAR/SEC weekly/maintenance window/CI-EMAIL1; Group C C1 ddd80719, C2 b1da/1242 incl. J P1s, C4 28432569, C5 per-account, C8 20e72d1e) + C7a 64b48308 runner PG16; tree = installed 20e72d1e + validate.yml only (verified); pre-restart ledger gate rehearsed PASS; Group A 15/15 timing PASS; Group C rate 6/6 Mac + 6/6 VPS PASS (one 65.5ms Mac FAIL = host noise, disclosed); installed on box 15:07 ET, pages C1/C4 validated live."
+}
