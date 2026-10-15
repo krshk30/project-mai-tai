@@ -1,0 +1,9 @@
+{
+  "pr_number": 1159,
+  "range_base": "caaef9a3dc18c735e051970792f3c1ad50e3a10a",
+  "range_head": "536159f4678690dea5443fa395ee1f035bc7fef3",
+  "reviewed_at": "2026-10-15T00:56:29Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1 review: src/sql/ops byte-identical to be820aab (installed dark 19:37 ET, reviewed: OMS boot isolation, timing 6-run interleaved + native-ON 3 serial PASS, OMS neighbour 0 NEW, focused MOM 459 PASS); tests differ from be820 only by fixture redaction (Webull account literal -> 90000001); 311 files incl. 3 QA fixtures + 6 helpers + handoff; secret scan: only CONTROLLED test strings, UUIDs, Schwab tag already public on main; SEC contact absent."
+}
