@@ -1,0 +1,9 @@
+{
+  "pr_number": 1161,
+  "range_base": "49ede6d589de1a56cfc918d2760cc8f79a49f6ad",
+  "range_head": "8a74288bb1a05c3c37dbf10cd0f15480d6534d0a",
+  "reviewed_at": "2026-10-15T22:42:53Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: Group C = main 49ede6d5 + C1 ddd80719/C4 28432569/C5 per-account/C8 20e72d1e + C2 fix aae0e648 (refuse only on proven own native exit fully filled / corrupt history; protective exits keep pending writer; post-release ownership read unchanged). Verified 8a74288b src == aae0e648 src, + validate.yml only vs main. Full unit suite aae0e648: 0 new real failures vs Linux 46-ID base (57 Mac-only debt; 2 load flakes pass 3/3 on base+candidate); the 6 prior C2 regressions pass. VPS tick-rate 2/2 PASS. Installed on box 18:35 ET, pages validated."
+}
