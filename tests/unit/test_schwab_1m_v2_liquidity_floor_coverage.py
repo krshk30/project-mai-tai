@@ -259,6 +259,9 @@ def test_ftft_20260911_real_tape_stays_resting_through_the_flip() -> None:
 
 
 # ------------------------------------------------------------------ FAN-OUT leg
+from tests.unit.resting_book_control import prove_primary_rest
+
+
 def test_fanout_leg_is_gated_on_its_own() -> None:
     """The Webull leg fires from its OWN software price-cross detector, so gating the Schwab
     primary does not cover it. CNET fired here at px=1.4300 on a thin tape."""
@@ -270,6 +273,7 @@ def test_fanout_leg_is_gated_on_its_own() -> None:
     strat._now_ms = lambda: IN_WIN + 1000
     strat._resting_session_is_eh = lambda now=None: False   # wall-clock; pin to RTH
     _bar(strat, st, trail=1.4034, volume=CNET_THIN)
+    prove_primary_rest(strat, st)
 
     strat._fanout_rth_resting_cross(st, _q())
     assert strat.drain_webull_fanout_intents() == []
@@ -285,6 +289,7 @@ def test_fanout_leg_still_fires_on_a_liquid_bar() -> None:
     strat._now_ms = lambda: IN_WIN + 1000
     strat._resting_session_is_eh = lambda now=None: False   # wall-clock; pin to RTH
     _bar(strat, st, trail=1.4034, volume=10_339)
+    prove_primary_rest(strat, st)
 
     strat._fanout_rth_resting_cross(st, _q())
     assert strat.drain_webull_fanout_intents(), "the floor blocked a legitimate liquid fan-out leg"

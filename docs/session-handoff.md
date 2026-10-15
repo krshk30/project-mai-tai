@@ -3,7 +3,89 @@
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 
-## PRODUCTION NOW — as of 2026-10-08 20:30 ET (claude-1 close-out sweep against the box)
+## PRODUCTION NOW — as of 2026-10-14 16:45 ET (claude-1; GitHub back 15:5x, low-volume process)
+- Box checkout 7d36f7e8 (pushed as branch production/box-2026-10-14-7d36f7e8; main 200 commits behind → lands as ONE squash in tonight's PR). Flat, 0 working orders. ATR day −$73.68 by broker fills (page −155.43 = ATRPNL1, board O-1014-1).
+- GITHUB PROCESS (operator approved 16:0x): one squash PR per install night; WIP/evidence never pushed; ≤5 pushes/day; no daily handoff PR; branch trim 50/day (tool ~/.claude/tools/git-branch-trim, backup bundle remote-branches-20261014 in iCloud + box). #1155-1158 closed.
+- MOMLIVE1 (operator approved card; tonight = DARK install, live switch OFF; operator enables 10-15 morning): signal = warning DETECTED, $100, vol ≥50k, Webull 04–16 / Schwab 07–16, routing SEC only (US→Schwab, non-US/unknown→Webull; Schwab refusal = no trade, nothing else), marketable limit ≤ signal×1.015, 2 s cancel, +5%/−15%/5-min (clock = first fill or send), 30 s cooldown, max 2 open, same accounts as ATR (strategy momentum_warn_live). Reviewed pieces: SEC J 0f3c4a21, OPS nightly ea60+0a829058, guard owner 4d9311e1. Core I in progress (target freeze 18:30 → broad + tick-rate 19:30 → review 20:30 → install from 21:00, last start 02:00).
+- SEC validation vs our Schwab history: refused 152 → 150 to Webull, 2 (NCRA, NXTS) SEC=US; filled 264 → 174 Schwab.
+- MOMPAGE3 (Momentum page tables like ATR): 9f06d173 reviewed, one fix asked (single Open Positions table); ships tonight only if reviewed.
+- Board O-1014-1..13 waits behind momentum (ATRPNL1, WBMIRRORCXL1 no-fix, COUNTRYROUTE-ATR …).
+- 10-15 morning: report overnight test a–f → operator enables MOMLIVE1 → watch first live trade end to end; measure MOMOPEN1 09:29–09:32.
+
+## PREVIOUS: PRODUCTION as of 2026-10-14 14:15 ET (claude-1, verified on the box; GitHub suspended → local branch + bundles)
+
+| Item | State now | Evidence (as-of) |
+|---|---|---|
+| Box checkout | `7d36f7e8` (fbbeb0cd + MOMAGE1/MOMLOGCAP1 → MOMSIMPLE1 → FEEDGAP1/2 → MOMPAGE2 → PAPERLAG1 → items 2/3/6) | `git rev-parse` 14:1x |
+| Services (UTC starts) | OMS 3356648 (10-13 23:42Z) · reconciler 3358640 (23:47Z) · strategy 3372452 (10-14 00:29Z) · v2 3409611 (04:46Z) · control 3497337 (13:10Z, MOMPAGE2) · gateway 3567580 (16:31Z, items 2/3/6) · paper 3569596 + dated guard 3569590 (16:34Z) · ORB 2356722 (10-09) | systemctl 14:1x |
+| Trading | ATR (v2) closed day **−$66.34 by broker fills** (GLND 9 trades ≈ +$0.69, GENK −$67.03); ATR PAGE WRONG (−94.11: ATRPNL1). Flat except GLND #9 Schwab 163 (OCO live) at 13:50 | fills 13:48 |
+| Momentum warning | ON, minimal safety (MOMSIMPLE1: no auto pause/revert; manual switch `MAI_TAI_MARKET_DATA_MOMENTUM_WARNING_ENABLED`). Paper running 04:00–18:00 via dated 10-14 guard continuation | metrics 14:0x |
+
+### Installed today 10-14 (all reviewed by claude-1, verified on the box)
+| Time ET | Item | What |
+|---|---|---|
+| 06:42 | MOMAGE1 + MOMLOGCAP1 | A-bar source-age bound 7,601 ms (provider sends bars ~2 s late); watchdog/live-health/OMS-log readers catch up in chunks (no 64 KB self-lock) |
+| 07:06 | paper back | guard refused mid-session start → 10-14 dated continuation (10-13 precedent) |
+| 07:52 | MOMSIMPLE1 | operator: minimal safety — all trip reasons log-only; A on whole window |
+| 08:38 | FEEDGAP1 | one FEED_GAP row per event; stale-raw scoped to its symbol (73k junk rows stopped) |
+| 09:10 | MOMPAGE2 | momentum page: PAPER ONLY banner, two ledgers (warning new / snapshot old), one-line feed status — operator: "good and clean" |
+| 09:45 | FEEDGAP2 | late (>1 s) prints ignored + counted, never a gap |
+| 11:39 | PAPERLAG1 | sequence tracked before the stale check; stale bar clears only its symbol; stale metric coalesced → 0 gaps at 5-min marks |
+| 12:31/12:35 | items 2/3/6 (7d36f7e8) | A Redis pools split (publish 2 / metrics 1 / health 1, retry-once before send), open-burst counters (A_open_sample), observation-log dedupe. Runbook lesson: wait for the gateway's first heartbeat before the dated dry-run |
+
+### Operator rulings today (also in memory rule cards)
+- MOMAGE1 approved (bound 7.6 s). Other bots' ERROR lines never stop momentum. **MOMSIMPLE1: minimal safety, measure + daily review; add a guard only after measured live impact.** Keep momentum ON; switch nothing off until the trading path breaks (sync-pass slowness alone is not a break).
+- Momentum volume floor for live: **50k** day volume at detection. Stop study (8 sessions, tick tape): keep −15%.
+- **MOMLIVE1 approved + resumed 13:0x** ($100/trade; Webull 04:00–16:00, Schwab 07:00–16:00, 04–07 all Webull; known-not-Schwab (persistent ineligible list + foreign types) → Webull else Schwab with refusal→Webull re-send; marketable LIMIT ≤ signal×1.015; send once, cancel unfilled at 2 s, keep partials; +5% / −15% / 5-min exit; 30 s cooldown; max 2 open; no loss limit; no price floor; same accounts, own strategy code `momentum_warn_live`; guard admits literal owner `momentum-live` ≤2 quotes; flag OFF blocks new entries only). **Build in progress; install AFTER CLOSE when flat** (touches OMS).
+- One track: momentum first; non-momentum items wait (board O-1014-1…12).
+- WBMIRRORCXL1 (GLND stale Webull buy): operator cancelled by hand; **no fix now**, board O-1014-12; fix if it hits another symbol.
+
+### Open / next (in order)
+1. MOMLIVE1 — review frozen build → after-close install (runbook in codex `MOMLIVE1-AFTER-CLOSE-RUNBOOK-PREP.txt`), first live entries 04:00 tomorrow (Webull).
+2. Item 5 (after close): paper as plain unit 03:55 prepare / 04:00–18:00 detect / 18:10 drain; gateway restart must not stop paper.
+3. ATRPNL1 (paused): ATR page drops the OCO-target row after a rejected duplicate close (+$30 GLND 09:53) and shows the order price not the fill price (GLND #8).
+4. Board O-1014-2…12: duplicate close after OCO fill; WBNULLID1 identity conflict (GENK 26 s); false CRITICAL protection-failed on a flat position; false "stuck accepted" for resting STOP_LIMIT buys; operator-shares alert noise; v2 prior-session closed-fill ERRORs; OMS stage timing; POLL-REENROLL; 19 fleet crons at the same second; MOMLIVE1; WBMIRRORCXL1.
+5. MOMOPEN1: measure 09:29–09:32 tomorrow from A_open_sample (keep 8192/32/2 s).
+
+### Restart safety (lessons today)
+- A gateway restart stops paper via the dated guard → use runbook C: paper-flat gate → planned guard+paper stop → gateway once → ORIGINAL + dated manifests → **wait for gateway heartbeat** → dated dry-run → one guard start (ExecStartPost starts paper).
+- Never restart v2/OMS with an open position unless the runbook says so; check `broker_orders` working + `oms_managed_positions` open first.
+
+### Tools (claude-1)
+- Full scan every 15 min: `~/.claude/tools/mai-tai-fullscan/run.sh` (now with #ORDER HYGIENE: reprice pairing, stale working buys, exits; PNL CHECK page vs fills).
+- Momentum impact watch: `~/.claude/tools/momwatch/box.sh` (OMS vs 10-12 base, A in/out, paper gaps, warn trades).
+- Codex channel: `~/.codex/task-queues/analysis/claude1-reviews/LATEST.md` (rulings, newest on top) + `CODEX_STATUS.md`.
+- Backups: git bundles in iCloud `project-mai-tai-backup/` and box `/var/backups/project-mai-tai/repo/`.
+
+---
+
+## PREVIOUS: PRODUCTION as of 2026-10-14 01:00 ET
+
+
+| Item | State now | Evidence (as-of) |
+|---|---|---|
+| Box checkout | `fbbeb0cd` (contains 6ad4f143 W1, 9dcd34a1 W3, c6d5929b K+C, 266a/49ba/26be G1+off-window, fbbeb0cd R) | `git log` on box 01:00 |
+| Services | OMS 3356648 (19:42:59), reconciler 3358640 (19:47:12), strategy 3372452 / paper / control (20:29:43; paper 21:53:23), gateway 3393091 (21:53:06), v2 3409611 (00:46:03) | systemctl 01:00 |
+| v2 switches (/proc) | FALSE_FLIP2 on, FLIP_OWNED_FIRST on, RETRY_ONE on max 0, REACTIVE on, RECLAIM off, REPRICE_HANDOFF off, LINE on, VOL_FLOOR 10000 | /proc 00:46 |
+| State | flat, 0 working orders, 0 open managed rows; 0 ERROR overnight except a Massive reconnect 00:01 | 00:03 read |
+| Momentum warning (A) | MOMLATCH1 + G1 + off-window installed; pause_state window_closed; arms after 3 clean reads at 04:00 | metrics 21:55 |
+
+### Installed 10-13 evening (all reviewed by claude-1, verified on the box)
+- W1 (OMS + reconciler): EXITFILLPREC1, WBHOLD1 (owned-share backstop), WBNULLID1 runtime, STUCKALERT1/expiry; JBDI stale incident closed 19:49:57.
+- W3 (gateway/strategy/paper/control): TICKCASE1 scanner/paper, TPC fix; 213 TPC/BCPC paper events invalidated + prior-close correction.
+- W2 (v2): RESTARTKEEP1 (+N1 filled-sibling, AIXI client-terminal predicate) + TICKCASE1 v2 guards; EH2RTH1 (non-RPG terminal re-place, session-scoped book).
+- MOMLATCH1 (harm=sticky, noise=pause/resume), publish-lag pipeline, G1 cohort-window N/A outside 07:01–20:00, off-window reopen on the ET session.
+
+### Open / next
+- PARA1: Gate A 3/3 pass; Gate B run 1 failed (279 ms stall; 6 unpaired legs refused segment_identity_unproven) — attribution; not installed unless A+B 3/3 by 02:45.
+- REPLACE1: read-only done — reprice gap ≈60 s, ≤6/889 proxy misses (2/221 since 10-07), lost buys UNMEASURED → recommend no build (operator card).
+- Follow-ups: v2 boot warm-up timeout logs ERROR (would trip A live_error in-window); EH2RTH1 15 s book TTL vs poll cadence; hard-coded account name; standard-time anchor test; guard survives gateway restart; snapshot GIL/process split; DRIFT1 standing allowance (parked item, alert only).
+- RESTARTKEEP1 positive restore path NOT yet exercised live (needs an in-session restart after a live SELL).
+
+### Backups (GitHub suspended)
+- git bundle --all: iCloud `project-mai-tai-backup/` + server `/var/backups/project-mai-tai/repo/` (latest sha256 dd3b8656…, includes fbbeb0cd).
+
+## PREVIOUS STATE — as of 2026-10-08 20:30 ET (claude-1 close-out sweep against the box)
 
 | Item | State now | Evidence (as-of) |
 |---|---|---|

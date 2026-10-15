@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 
 from project_mai_tai.market_data.schwab_v2_rest_client import Quote
+from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     OHLCVBar,
@@ -46,8 +47,18 @@ def _strategy() -> tuple[SchwabV2Strategy, SymbolState]:
     state = strategy.watchlist_state("MIMI")
     state.fanout_segment_id = SEGMENT
     state.resting_active = True
+    state.resting_is_broker_order = True
     state.resting_level = 5.0
     state.last_resting_placed_slot = "first"
+    state.resting_schwab_generation = "controlled-primary-generation"
+    strategy.apply_primary_resting_book(observed_at_ms=SEGMENT, orders={
+        (state.symbol, state.resting_schwab_generation): {
+            "broker_order_id": "CONTROLLED-ACCEPTED", "status": "working",
+            "segment_id": SEGMENT, "slot": "resting", "entry_slot": "first",
+            "slot_id": fanout_slot_id(strategy_code="schwab_1m_v2", symbol=state.symbol,
+                                      segment_id=SEGMENT, slot="resting"),
+        },
+    })
     state.bars.append(
         OHLCVBar(
             timestamp_ms=SEGMENT - 30_000,

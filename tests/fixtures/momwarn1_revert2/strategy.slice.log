@@ -1,0 +1,16 @@
+2026-10-13 10:11:05,851 INFO [project_mai_tai.strategy_core.momentum_alerts] [ALERT] [VOLUME_SPIKE] NOK @ $9.78 | {'vol_5min': 63297, 'expected_5min': 1074798, 'spike_mult': 0.1, 'total_vol': 5039638, 'spike_type': 'absolute'}
+2026-10-13 10:11:06,546 INFO [strategy-engine] snapshot batch processed | alerts=1 confirmed=4
+2026-10-13 10:11:13,426 INFO [strategy-engine] snapshot batch processed | alerts=0 confirmed=4
+2026-10-13 10:11:20,008 INFO [strategy-engine] snapshot batch processed | alerts=0 confirmed=4
+2026-10-13 10:11:26,730 INFO [strategy-engine] snapshot batch processed | alerts=0 confirmed=4
+2026-10-13 10:11:33,159 INFO [strategy-engine] snapshot batch processed | alerts=0 confirmed=4
+2026-10-13 10:11:40,173 INFO [strategy-engine] snapshot batch processed | alerts=0 confirmed=4
+2026-10-13 10:11:47,385 INFO [strategy-engine] snapshot batch processed | alerts=0 confirmed=4
+2026-10-13 10:11:54,020 INFO [strategy-engine] snapshot batch processed | alerts=0 confirmed=4
+2026-10-13 10:12:00,703 INFO [project_mai_tai.strategy_core.momentum_alerts] [ALERT] [SQUEEZE_5MIN] MNDR @ $2.10 | {'change_pct': 6.1, 'price_5min_ago': 1.98}
+2026-10-13 10:12:01,271 INFO [strategy-engine] snapshot batch processed | alerts=1 confirmed=4
+2026-10-13 10:12:07,670 INFO [project_mai_tai.strategy_core.momentum_alerts] [ALERT] [SQUEEZE_10MIN] MNDR @ $2.18 | {'change_pct': 13.5, 'price_10min_ago': 1.92}
+2026-10-13 10:12:07,677 INFO [project_mai_tai.strategy_core.momentum_confirmed] [CONFIRMED] ✅ MNDR — 2 SQUEEZES @ $2.18 | vol=686495 | float=888592 | squeezes=2
+2026-10-13 10:12:07,677 INFO [project_mai_tai.strategy_core.momentum_confirmed] [CONFIRMED] MNDR — reset for re-confirmation
+2026-10-13 10:12:07,677 INFO [project_mai_tai.strategy_core.momentum_confirmed] [CONFIRMED] removed 1 faded candidates below 30.0%: MNDR
+2026-10-13 10:12:08,149 INFO [strategy-engine] snapshot batch processed | alerts=1 confirmed=4

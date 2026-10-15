@@ -202,6 +202,7 @@ def test_atr_sell_observation_none_on_stale_bar():
 
 def _quote(last: float, ms: int = 0):
     return SimpleNamespace(
+        symbol="TEST",
         last_price=last, bid_price=last - 0.01, ask_price=last + 0.01,
         quote_time_ms=ms or _now_ms(),
     )

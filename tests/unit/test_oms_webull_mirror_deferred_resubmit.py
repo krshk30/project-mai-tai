@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import inspect
@@ -69,8 +70,15 @@ class _FakeRedis:
         del key, value, ex
         return True
 
-    async def xread(self, offsets: object, block: int = 0, count: int = 0) -> list[object]:
-        del offsets, block, count
+    async def xrevrange(self, stream: str, count: int = 1) -> list[object]:
+        # This stub controls an empty startup stream, not native history.
+        del stream, count
+        return []
+
+    async def xread(self, offsets: object = None, block: int = 0, count: int = 0,
+                    *, streams: object = None) -> list[object]:
+        del offsets, streams, block, count
+        await asyncio.sleep(0)  # Match the scheduling yield of real Redis I/O.
         return []
 
     async def aclose(self) -> None:

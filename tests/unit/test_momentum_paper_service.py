@@ -304,7 +304,7 @@ async def test_after_close_start_does_not_create_an_empty_paper_session() -> Non
         store=_store(),
         rest_client_factory=forbidden,
         redis_client=AsyncMock(),
-        clock=lambda: datetime(2026, 9, 16, 20, 0, tzinfo=UTC),
+        clock=lambda: datetime(2026, 9, 16, 22, 11, tzinfo=UTC),
     )
 
     await service._tick()

@@ -24,6 +24,7 @@ from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    BrokerOrderEvent,
     Fill,
     OmsManagedPosition,
     ReconciliationFinding,
@@ -44,8 +45,8 @@ logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "reconciler"
 ACTIVE_INCIDENT_STATUSES = {"open", "acknowledged"}
-ACTIVE_ORDER_STATUSES = {"pending", "submitted", "accepted", "partially_filled"}
-ACTIVE_INTENT_STATUSES = {"pending", "submitted", "accepted"}
+ACTIVE_ORDER_STATUSES = {"pending", "submitted", "accepted", "partially_filled", "unknown"}
+ACTIVE_INTENT_STATUSES = {"pending", "submitted", "accepted", "unknown"}
 # The 2026-08-27 live Redis restart loaded its RDB in 2.375s. These bounded
 # delays provide 7.5s of reload margin (five total attempts) without turning a
 # persistent Redis failure into an indefinitely healthy-looking heartbeat loop.
@@ -79,6 +80,54 @@ class FindingSpec:
     symbol: str | None
     payload: dict[str, Any]
     order_id: UUID | None = None
+
+
+def _accepted_resting_order(order: BrokerOrder) -> bool:
+    metadata = order.payload or {}
+    if not isinstance(metadata, dict):
+        return False
+    return (
+        order.status == "accepted" and str(order.side).lower() == "buy"
+        and str(order.order_type).strip().upper() in {"STOP", "STOP_LIMIT"}
+        and (str(metadata.get("resting_entry", "")).strip().lower() == "true"
+             or metadata.get("fanout_source") == "rth_resting_mirror")
+    )
+
+
+def _accepted_resting_ids(
+    session: Session, orders: list[BrokerOrder], accounts: dict[UUID, BrokerAccount],
+) -> set[UUID]:
+    candidates = {
+        order.id for order in orders
+        if _accepted_resting_order(order)
+        and (account := accounts.get(order.broker_account_id)) is not None
+        and account.name.startswith("live:") and account.provider in {"schwab", "webull"}
+    }
+    if not candidates:
+        return set()
+    # Require positive broker acceptance; timestamps order contradictions, not freshness.
+    ranked = select(
+        BrokerOrderEvent.order_id, BrokerOrderEvent.event_type,
+        func.max(case((BrokerOrderEvent.event_type == "accepted", 1), else_=0)).over(
+            partition_by=BrokerOrderEvent.order_id,
+        ).label("has_broker_accept"),
+        func.row_number().over(
+            partition_by=BrokerOrderEvent.order_id,
+            order_by=(
+                desc(BrokerOrderEvent.event_at),
+                desc(case((BrokerOrderEvent.event_type.in_({"accepted", "partially_filled"}), 0), else_=1)),
+                desc(BrokerOrderEvent.id),
+            ),
+        ).label("rank"),
+    ).where(
+        BrokerOrderEvent.order_id.in_(candidates), BrokerOrderEvent.event_source == "broker",
+    ).subquery()
+    return {
+        order_id for order_id, event_type, has_broker_accept in session.execute(
+            select(ranked.c.order_id, ranked.c.event_type, ranked.c.has_broker_accept)
+            .where(ranked.c.rank == 1)
+        ) if has_broker_accept == 1 and event_type in {"accepted", "partially_filled"}
+    }
 
 
 class ReconciliationService:
@@ -606,8 +655,11 @@ class ReconciliationService:
             .where(BrokerOrder.updated_at < cutoff)
             .order_by(desc(BrokerOrder.updated_at))
         ).all()
+        resting_ids = _accepted_resting_ids(session, stale_orders, account_lookup)
 
         for order in stale_orders:
+            if order.id in resting_ids:
+                continue
             account = account_lookup.get(order.broker_account_id)
             strategy = strategy_lookup.get(order.strategy_id)
             account_name = account.name if account is not None else str(order.broker_account_id)
@@ -648,8 +700,27 @@ class ReconciliationService:
             .where(TradeIntent.updated_at < cutoff)
             .order_by(desc(TradeIntent.updated_at))
         ).all()
+        orders_by_intent: dict[UUID, list[BrokerOrder]] = defaultdict(list)
+        if stale_intents:
+            linked_orders = session.scalars(select(BrokerOrder).where(
+                BrokerOrder.intent_id.in_([intent.id for intent in stale_intents]),
+                BrokerOrder.status.in_(sorted(ACTIVE_ORDER_STATUSES)),
+            )).all()
+            for order in linked_orders:
+                orders_by_intent[order.intent_id].append(order)
+            resting_ids = _accepted_resting_ids(session, linked_orders, account_lookup)
+        else:
+            resting_ids = set()
 
         for intent in stale_intents:
+            linked = orders_by_intent.get(intent.id, [])
+            if intent.status in {"pending", "submitted", "accepted"} and linked and all(
+                order.id in resting_ids and order.broker_account_id == intent.broker_account_id
+                and order.strategy_id == intent.strategy_id and order.symbol == intent.symbol
+                and str(order.side).lower() == str(intent.side).lower()
+                for order in linked
+            ):
+                continue
             account = account_lookup.get(intent.broker_account_id)
             strategy = strategy_lookup.get(intent.strategy_id)
             account_name = account.name if account is not None else str(intent.broker_account_id)

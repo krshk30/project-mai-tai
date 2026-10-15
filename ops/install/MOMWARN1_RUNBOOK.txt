@@ -1,0 +1,184 @@
+MOMWARN1-INSTALL-REHEARSAL / M3 / sole local writer Mendel
+LOCAL PREPARATION AND ACTUAL READ-ONLY REHEARSAL, NOT INSTALL PASS
+
+Source32d5a2f7aecbbc4fc7490f05409be1be053f3a9d, based solely on installed
+E860fba4c7d59edff18eb23468ba576dcb83f4d57. No F/B dependency.
+Human latest ruling supersedes Tuesday-only install: MAIN may install TONIGHT
+only after every M1 qualification and M3 actual setup/gate is reviewed green.
+First live target TuesdayOct13. No worker production execution is authorized.
+Main M1 performance window respected: no benchmarks/heavy tests in this lane.
+
+OWNED FILES
+ops/install/momwarn1_install_runner.sh: default --plan has no side effects.
+--rehearse streams the collector over the existing SSH alias; no remote file
+creation, broker/provider calls, token refresh, service or subscription changes.
+--install-approved / --rollback-approved are FUTURE MAIN-only remote-root modes.
+ops/install/momwarn1_readonly_rehearsal.py: bounded proc/log/Redis/localhost reads
+and SQL BEGIN READ ONLY / timeout5s / ROLLBACK. Filtered flags/settings only.
+ops/install/momwarn1_runner_support.py: isolated guard/receipt/environment helpers.
+No application source, queue, frozen32d worktree, or another worker file changed.
+
+ACTUAL BOX REHEARSAL
+Evidence root /Users/velkris/.codex/task-queues/analysis/momwarn1-m3-install-20261012.
+Latest full receipt readonly-box-final.json, observed00:46:23.603987Z through
+00:46:45.078951Z Oct13UTC (Oct12 20:46ET). Exit0, stderr empty.
+SQL original read timestamps00:46:23.824128Z /00:46:45.151553Z:
+accounts2, working0, inflight0, open managed0, nonzero positions0, fresh flat
+OMS broker-position receipts2. Both real accounts checked, no manual exclusions.
+Actual read_at at final: live:orb00:46:36.593274Z,
+live:schwab_1m_v2 00:46:37.141491Z; writeroms.sync_broker_positions, count0.
+Working orders are cached DB statuses, NOT newly fetched broker open orders.
+Strict explicit native-v2 arms[]; final produced00:46:44.189515Z age0.987s.
+Native unchanged OMS preflight20:42:41ET PASS, v2 preflight20:43:57ET PASS;
+PGOPTIONS forces read-only transactions and timeout5s. No overrides.
+V2 log/state dangling-arm divergence reported by native gate, not suppressed.
+Initial receipt SQL JSON parser failed on PostgreSQL multiline json_agg; UNKNOWN
+preserved in readonly-box-rehearsal.json. Local parser repaired, no query/gate
+weakening. v2/final receipts independently parsed complete multiline object.
+
+PROCESS / HEALTH SOURCE BINDINGS (ACTUAL, NOT FUTURE PIDS)
+OMS PID2885183 instance2885183:77762851 start21:41:53Z Oct12,
+started_ns1791841313000000000 (systemd whole-second precision).
+V2 PID2887979 instance2887979:77774258 start21:43:47Z Oct12,
+started_ns1791841427000000000, source /units/schwab-1m-v2/ExecMainStartTimestamp.
+OMS and v2 process instance IDs include /proc stat startticks, not PID alone.
+Host timezoneEtc/UTC; no TZ override found in selected proc environments.
+Source log.py configure_logging uses ordinary logging asctime; actual OMS
+end-line00:46:37.222 matches currentUTC/SQL times, not UI's formatted ET string.
+Live numeric proc OMS cadence15s (not Settings default5), v2 polling5s,
+probe_symbols='*'. These numeric/coverage settings were NOT modified.
+OMS baseline inode790862 offset279350; tail receipts717..736 allok, duration
+0.450228..1.009418s; new original end73700:46:37.222Z duration0.788028s.
+No repeated-end restamp. 7 observed log suffixes had0newERROR/CRITICAL lines.
+This establishes bounded receipt coverage, not an entire-night error count.
+Warning source health config /run/project-mai-tai/momentum-warning-health.json
+is actually ABSENT. No schema1/2 external measured JSON may substitute for it.
+No warning flag in current gateway proc ENV; installed E860 lacks this setting,
+so absence is not an observed new-process flagfalse receipt.
+
+Health gateway/OMS/strategy healthy; DB/Redis connected. V2 rawdegraded with
+actual details market_session=closed,data_flow=stalled_offhours_rest_dry,
+lastbar2779s,lastquote3s,watchlist4. Source bot._evaluate_data_flow explicitly
+uses this degraded offhours signature; not promoted to healthy by M3.
+V2 closed-bar probes absent in bounded night suffix. No applicable future
+minute/07:01 completeness proof is claimed. Watches FCHL,MNDR,NCPL,YMAT remain.
+Existing Redis scanner strategy-state cycle1585 produced00:46:19.497746Z,
+watchlist0,five_pillars6,top_gainers10. Separate scanner unit is NOT FOUND;
+scanner is strategy-engine state, not a unit to start. /api/scanner and latest
+snapshot-batch exceeded collection byte bounds: UNKNOWN, not empty/live PASS.
+Last bounded Massive T/Q rows are at23:59:59Z (20:00ET), expected afterclose
+context but not proof of next-live T/Q. Gateway active_symbols4 and8 socketFDs
+are actual; socketFD count is unclassified, NOT8 Massive sockets or proof of1.
+Paper unit loaded butinactive/PID0 despite MOMENTUM_PAPER_ENABLEDtrue in common
+running-service proc flags. It must be explicitly started/restarted to run the
+new warning consumer, unless a fresh receipt proves an already-ready instance.
+
+SOURCE / RESTART SCOPE
+Gateway.__init__ constructs ONE trade_stream, run calls trade_stream.start once.
+MassiveTradeStream.set_momentum_warning_aggregates uses EXISTING self._ws
+subscribe('A.*'), and close unsubscribes onlyA.*. No separate connect/client is
+created for A. Existing stream.start/connect and stop/close own the lifecycle.
+Future systemctl restart market-data serially stops old instance then starts
+new; do not launch another gateway/provider socket or perform provider probes.
+Code A window is trading-day04:00<=ET<09:30, NOT stated04:11. The monitor also
+skips live health reads outside that window. Human acknowledgement is explicit
+in the future request; source frozen, no silent window/datetime adjustment.
+Source32d vsE860 changes gateway/provider/warning consumer/control display plus
+additive models/publisher/settings. OMS service and native v2 money logic are
+unchanged. No OMS/strategy/v2 restart is requested or allowed by this runner.
+Paper needed because warning consumer initializes at _open_session only when
+warning flagtrue and reads warning-bars via existing Redis; inactive today.
+Control optional display-only: control_plane bot page loads new warning panel
+and metrics only after new process loads module/settings. Display nonblocking,
+not a reason to restart it automatically. Approval names exact rationale.
+
+FUTURE MAIN MECHANICS / NO NEW SAFETY GATES
+1 Main reviews exact source qualification, runtime health configuration and
+scope. Stage existing runner scripts, exact bundle/ref/hash, and root600 named
+approval request. Current code only prints plan unless mode explicitly selected.
+2 Reuse existing installer lock; clean installed E860 check. Existing native
+OMS+v2 preflights unchanged, strict E aggregate2/0/0/0/0/2 and actual explicit
+zero-armed <=30s. No clock/position/armed override. Re-run immediately before
+checkout and gateway restart. These receipts expire; tonight rehearsal is not
+reusable authorization when main runs later.
+3 Private evidence dir /home/trader/after-hours/<approved ET date>/MOMWARN1-*.
+Save proc units/flags/settings/instance/log inode+offset before.json, exact
+native v2_restart_evidence snapshot.json, env backup+hash and prior health
+config/absence. Env credentials stay onbox inside0700dir/0600backup, no dump.
+Native snapshot only future mode; today's collector does not write a snapshot
+onbox. Existing three retries apply ONLY known negative-age native snapshot
+UNKNOWN rc2, never arbitrary failed gates. Preserve every attempt text.
+4 Verify/fetch reviewed bundle; exact target/ref/ancestry E860+32d; runtime/test
+tree must match frozen32d except owned runner/docs. Checkout exact target.
+5 Reviewed confighash and actual still-current OMS/v2 PID+startticks/starttime,
+UTCsource/cadence/probe refs must match. Rebind requires review, never fabricated
+timestamps. Set warning flagtrue ONLY, preserve all other env bytes/settings.
+Config goes default path atomically/trader-readable, no restamped metrics file.
+6 Explicit optional control display restart; explicit paper start/restart if
+required; gateway restart single existing stream. Existing post_restart_health
+gate SLA60 with actual systemd PID/start and gitSHA for each changed process.
+Heartbeat schema itself does NOT attest PID/SHA; deployment evidence does.
+7 After20s, re-read fresh gates and before/after units/flags/source. Unchanged
+OMS/strategy/v2/ORB/reconciler/scanner identity/state enforced. Source refs and
+baseline logs retained; compare only newly added warningflag among old processes.
+8 Native install-record schema1 uses snapshot_captured_at_utc exactly from
+snapshot.json, source_journal=actualrunner.log, and every native snapshot service
+classified restarted/deliberately_untouched. Native collector excludes paper;
+our before/after.json additionally proves actual existing-inactive paper start.
+RESTARTS_DONE only means these mechanics completed, not live warning PASS.
+9 MAIN verifies T/Q/scanner/v2/OMS, post-baseline errors and existing proof
+population, then reviews metadata publication separately. Existing E adapter
+capture_publish_e.py is hardbound E-only860/GROUPoms,strategy,v2; DO NOT execute
+it for warning32d. Reuse its MECHANICS, not wrong hardcoded payload: actual
+snapshot/journal/states, per-service loadedSHAs retained on untouched processes,
+private backups preserving uid/gid/mode, immutable install records, existing
+run.lock, fresh capture/replan, four files runtime LAST. Actual existing targets
+are /home/trader/preopen.sh, /home/trader/restart_evidence/expected_flags.json,
+/home/trader/preopen-daily/binding.json and runtime.json. Partial publication
+fails closed, no multi-file-atomic claim. Root daily units unchanged. Main owns
+new reviewed request/adapter and publication; this runner does NOT write them.
+
+ACTUAL SOURCE CONFIGURATION GAP (DO NOT INVENT)
+LiveWarningHealthSource requires configversion1, actual OMS/v2 PID/instance/
+started_ns, verified_timezone, oms_sync_interval_seconds, nonempty probe list,
+oms_cadence_source/source_timezone_ref/v2_probe_source_ref/v2_expectation_ref.
+Conditional first due requires reviewed actual first same-day07:00 reference:
+v2_source_lane=schwab_pricehistory_same_day,
+v2_expectation_kind=recorded_first_same_day_0700, expected_start07:00,
+first_bar_start07:00, interval60, v2_first_bar_source_ref.
+The anchored helper exists but is UNCALLED; cannot cite as active source proof.
+Original recorded first-day-history reference not recovered by this rehearsal.
+Main must supply/review it rather than replacing it with an invented identifier.
+Real measured UTC/cadence/PID/probes are supplied; missing first-due reference
+and absent deployed config remain BLOCKED. Config constructor validation alone
+is NOT live health read/proof. New process/PID/reboot/rotated source => UNKNOWN.
+Afterclose cannot prove A entitlements, real W4 transport, all due v2 symbols,
+queue/load or09:30 unsubscribe. No provider reads/new sockets to manufacture it.
+
+ROLLBACK (FUTURE MAIN, SEPARATE APPROVAL)
+Stage NEW root600 request mode=rollback with actualcurrent candidateSHA and
+isolated evidence dir. Fresh unchanged native/E/arms gates again. Backup env,
+settings/baselines before rollback. Change only warningflag=false then restart
+ONLY gateway; verify actual new proc flagfalse, fresh heartbeat, flat/arms and
+unchangedT/Q/scanner/v2/OMS against before receipt. Do not restore old entireenv,
+checkout oldmoneylogic, cancel orders, refresh auth, or restart trading services.
+Paper/control may remain loadedwarningtrue after gateway A-only rollback; no
+new A is requested by gateway. This is deliberately A-only, not feature-wide
+unload; preserve other owner T/Q and ledgers, main reviews residual state.
+Recorded env-before is a private backup, not automatic all-env restoration.
+
+MAIN REQUEST REQUIRED KEYS (NO APPROVED REQUEST PROVIDED BY WORKER)
+task_id=MOMWARN1-INSTALL-REHEARSAL; mode=install; execution_approved=true;
+human_reference=<actual human approval>; approved_date_et=2026-10-12 or13;
+source_sha=32d...; target_sha=<exact qualified main bundle SHA>;
+evidence_directory=/home/trader/after-hours/<date>/MOMWARN1-<unique attempt>;
+qualification_reviewed=true; restart_scope=[market-data,momentum-paper] for
+actual currently inactive paper (or include separately approvedcontrol);
+paper_start_approved=true; health_setup_reviewed=true;
+single_existing_provider_socket_plan_reviewed=true;
+actual_A_window_0400_acknowledged=true;
+bundle_path/bundle_ref/bundle_sha256; health_config_path/health_config_sha256.
+Optional control adds control_display_restart_approved=true and exact
+control_restart_rationale=load_warning_page_and_metrics_display.
+Rollback request retains task/date/source/target/evidence/humanapproval keys,
+mode=rollback. Never reuse install request as rollback approval.

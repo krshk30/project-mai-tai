@@ -151,10 +151,12 @@ def test_detection_threshold_is_decimal_exact(candidate_price: str, accepted: bo
         ("04:10:59.000", False),
         ("04:11:00.000", True),
         ("09:29:59.000", True),
-        ("09:30:00.000", False),
+        ("09:30:00.000", True),
+        ("17:59:59.000", True),
+        ("18:00:00.000", False),
     ],
 )
-def test_detection_window_boundaries_are_frozen(clock: str, accepted: bool) -> None:
+def test_approved_daily_detection_window_boundaries(clock: str, accepted: bool) -> None:
     engine = _engine()
     candidate_ms = _ms(clock)
     engine.coverage_started_ms = candidate_ms - 61_000

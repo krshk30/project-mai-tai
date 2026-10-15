@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 import logging
 from typing import Dict
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 from project_mai_tai.strategy_core.config import MomentumAlertConfig
 from project_mai_tai.strategy_core.models import MarketSnapshot, ReferenceData
 from project_mai_tai.strategy_core.snapshot_utils import (
@@ -46,7 +48,8 @@ class MomentumAlertEngine:
         self._history.clear()
         for entry in entries:
             if isinstance(entry, dict):
-                self._history.append(entry)
+                self._history.append({ticker: values for ticker, values in entry.items()
+                                      if raw_symbol_is_uppercase(ticker)})
             else:
                 self._history.append(self._build_history_entry(entry))
 
@@ -78,7 +81,7 @@ class MomentumAlertEngine:
                 continue
             normalized_entry: HistoryEntry = {}
             for ticker, values in entry.items():
-                if not isinstance(ticker, str):
+                if not raw_symbol_is_uppercase(ticker):
                     continue
                 normalized = self._normalize_history_point(values)
                 if normalized is None:
@@ -94,6 +97,8 @@ class MomentumAlertEngine:
         if isinstance(cooldowns, Sequence) and not isinstance(cooldowns, (str, bytes)):
             for item in cooldowns:
                 if not isinstance(item, dict):
+                    continue
+                if not raw_symbol_is_uppercase(item.get("ticker")):
                     continue
                 ticker = str(item.get("ticker", "")).upper()
                 alert_type = str(item.get("alert_type", "")).upper()
@@ -112,6 +117,8 @@ class MomentumAlertEngine:
         self._last_spike_volume = {}
         if isinstance(last_spike_volume, dict):
             for ticker, volume in last_spike_volume.items():
+                if not raw_symbol_is_uppercase(ticker):
+                    continue
                 try:
                     normalized_ticker = str(ticker).upper()
                     self._last_spike_volume[normalized_ticker] = int(volume)
@@ -125,7 +132,8 @@ class MomentumAlertEngine:
             (str, bytes),
         ):
             self._volume_spike_tickers = {
-                str(ticker).upper() for ticker in volume_spike_tickers if str(ticker).strip()
+                str(ticker).upper() for ticker in volume_spike_tickers
+                if raw_symbol_is_uppercase(ticker) and str(ticker).strip()
             }
 
         recent_rejections = payload.get("recent_rejections")
@@ -142,7 +150,7 @@ class MomentumAlertEngine:
                     ],
                 }
                 for item in recent_rejections[-250:]
-                if isinstance(item, dict)
+                if isinstance(item, dict) and raw_symbol_is_uppercase(item.get("ticker"))
             ]
 
         logger.info(
@@ -169,7 +177,7 @@ class MomentumAlertEngine:
         current: dict[str, dict[str, float | int]] = {}
         snapshot_lookup: dict[str, MarketSnapshot] = {}
         for snapshot in snapshots:
-            if not snapshot.ticker:
+            if not raw_symbol_is_uppercase(snapshot.ticker):
                 continue
             price = get_current_price(snapshot)
             if price is None:
@@ -427,7 +435,7 @@ class MomentumAlertEngine:
     def _build_history_entry(self, snapshots: Sequence[MarketSnapshot]) -> HistoryEntry:
         entry: HistoryEntry = {}
         for snapshot in snapshots:
-            if not snapshot.ticker:
+            if not raw_symbol_is_uppercase(snapshot.ticker):
                 continue
             price = get_current_price(snapshot)
             if price is None:

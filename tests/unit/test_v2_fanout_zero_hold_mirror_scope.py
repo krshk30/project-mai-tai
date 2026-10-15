@@ -30,6 +30,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     SchwabV2Strategy,
     SymbolState,
 )
+from tests.unit.resting_book_control import prove_primary_rest
 
 SEGMENT = 1787846400000
 
@@ -60,6 +61,7 @@ def _armed_rest(strategy: SchwabV2Strategy, state: SymbolState) -> None:
     state.resting_active = True
     state.resting_level = 5.0
     state.last_resting_placed_slot = "first"
+    prove_primary_rest(strategy, state)
     state.bars.append(
         OHLCVBar(
             timestamp_ms=SEGMENT - 30_000,

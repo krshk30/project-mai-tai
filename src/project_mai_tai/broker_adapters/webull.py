@@ -41,6 +41,7 @@ from project_mai_tai.broker_adapters.atr_buy_readback import (
 from project_mai_tai.broker_adapters.webull_order_reads import (
     QueryBudgetUnavailable, shared_budget, shared_reader, terminal_version,
 )
+from project_mai_tai.broker_adapters.target_price import target_limit_price
 
 
 logger = logging.getLogger(__name__)
@@ -756,13 +757,31 @@ class WebullBrokerAdapter:
         report_metadata["webull_wire_submitted_at_utc"] = datetime.now(UTC).isoformat(
             timespec="milliseconds"
         )
+        is_target = request.reason == "oms_v2_managed_exit:CW_TARGET"
+        if is_target:
+            for key in tuple(report_metadata):
+                if key.startswith("cw_target_api_"):
+                    report_metadata.pop(key)
         try:
-            body = self._body(client.get_response(po))
+            response = client.get_response(po)
+            if is_target:
+                try:
+                    report_metadata["cw_target_api_received_at"] = datetime.now(UTC).isoformat(timespec="microseconds")
+                except Exception:
+                    pass
+            body = self._body(response)
         except Exception as exc:  # noqa: BLE001 - preserve the broker's correlation evidence
             return [self._reject_from_exception(request, exc, metadata=report_metadata)]
         # Confirmed live: the place response returns only {client_order_id}; the broker
         # order_id appears in the order-detail (fetch_order_update). A None here is normal.
         broker_order_id = self._first_str(body, "order_id", "orderId")
+        if is_target:
+            try:
+                if self._first_str(body, "client_order_id", "clientOrderId") == request.client_order_id:
+                    report_metadata.update(cw_target_api_ack_evidence="webull_matching_client_order_id",
+                        cw_target_api_ack_client_order_id=request.client_order_id)
+            except Exception:
+                pass  # Observational evidence is never order/report authority.
         # A resting limit (ORB reclaim) is acknowledged; the OMS polls fetch_order_update for
         # the fill — so we return "accepted" and do not block waiting on a terminal state.
         return [
@@ -2015,7 +2034,7 @@ class WebullBrokerAdapter:
         return [
             {**common, "client_order_id": self._combo_leg_coid(coid, "T"),
              "combo_type": "STOP_PROFIT", "side": "SELL",
-             "order_type": "LIMIT", "limit_price": str(self._round_to_tick(target))},
+             "order_type": "LIMIT", "limit_price": str(target_limit_price(target))},
             {**common, "client_order_id": self._combo_leg_coid(coid, "S"),
              "combo_type": "STOP_LOSS", "side": "SELL",
              "order_type": "STOP_LOSS", "stop_price": str(self._round_to_tick(protect))},

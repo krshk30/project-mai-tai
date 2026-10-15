@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 import asyncio
 import json
 import logging
@@ -697,7 +699,10 @@ class SchwabStreamerClient:
             for content in item.get("content", []):
                 if not isinstance(content, dict):
                     continue
-                symbol = str(content.get("key") or content.get("0") or "").upper()
+                raw_symbol = content.get("key") or content.get("0") or ""
+                if not raw_symbol_is_uppercase(raw_symbol):
+                    continue
+                symbol = raw_symbol.upper()
                 if symbol:
                     timesale_symbols_seen_in_payload.add(symbol)
         for item in payload.get("data", []):
@@ -710,7 +715,10 @@ class SchwabStreamerClient:
                     if quote is not None:
                         quotes.append(quote)
 
-                    symbol = str(content.get("key") or content.get("0") or "").upper()
+                    raw_symbol = content.get("key") or content.get("0") or ""
+                    if not raw_symbol_is_uppercase(raw_symbol):
+                        continue
+                    symbol = raw_symbol.upper()
                     if symbol in normalized_timesale_symbols or symbol in timesale_symbols_seen_in_payload:
                         continue
                     trade = cls._extract_trade_record(content)
@@ -943,7 +951,10 @@ class SchwabStreamerClient:
             for record in content:
                 if not isinstance(record, dict):
                     continue
-                symbol = str(record.get("key") or record.get("0") or "").upper()
+                raw_symbol = record.get("key") or record.get("0") or ""
+                if not raw_symbol_is_uppercase(raw_symbol):
+                    continue
+                symbol = raw_symbol.upper()
                 if symbol:
                     state.confirmed_symbols.add(symbol)
                 if service == self.CHART_EQUITY_SERVICE:
@@ -1052,9 +1063,10 @@ class SchwabStreamerClient:
 
     @classmethod
     def _extract_quote_record(cls, content: dict[str, object]) -> QuoteTickRecord | None:
-        symbol = str(content.get("key") or content.get("0") or "").upper()
-        if not symbol:
+        raw_symbol = content.get("key") or content.get("0") or ""
+        if not raw_symbol_is_uppercase(raw_symbol):
             return None
+        symbol = raw_symbol.upper()
 
         bid_price = cls._float_or_none(content.get("1"))
         ask_price = cls._float_or_none(content.get("2"))
@@ -1071,9 +1083,10 @@ class SchwabStreamerClient:
 
     @classmethod
     def _extract_trade_record(cls, content: dict[str, object]) -> TradeTickRecord | None:
-        symbol = str(content.get("key") or content.get("0") or "").upper()
-        if not symbol:
+        raw_symbol = content.get("key") or content.get("0") or ""
+        if not raw_symbol_is_uppercase(raw_symbol):
             return None
+        symbol = raw_symbol.upper()
 
         last_price = cls._float_or_none(content.get("3"))
         if last_price is None or last_price <= 0:
@@ -1094,9 +1107,10 @@ class SchwabStreamerClient:
 
     @classmethod
     def _extract_timesale_trade_record(cls, content: dict[str, object]) -> TradeTickRecord | None:
-        symbol = str(content.get("key") or content.get("0") or "").upper()
-        if not symbol:
+        raw_symbol = content.get("key") or content.get("0") or ""
+        if not raw_symbol_is_uppercase(raw_symbol):
             return None
+        symbol = raw_symbol.upper()
 
         last_price = cls._float_or_none(content.get("2"))
         if last_price is None or last_price <= 0:
@@ -1114,9 +1128,10 @@ class SchwabStreamerClient:
 
     @classmethod
     def _extract_chart_bar_record(cls, content: dict[str, object]) -> LiveBarRecord | None:
-        symbol = str(content.get("key") or content.get("0") or "").upper()
-        if not symbol:
+        raw_symbol = content.get("key") or content.get("0") or ""
+        if not raw_symbol_is_uppercase(raw_symbol):
             return None
+        symbol = raw_symbol.upper()
 
         open_price = cls._float_or_none(content.get("2"))
         high_price = cls._float_or_none(content.get("3"))

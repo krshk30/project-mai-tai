@@ -20,6 +20,8 @@ or flips the enable flag.
 """
 from __future__ import annotations
 
+from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+
 import asyncio
 import json
 import logging
@@ -38,14 +40,15 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from project_mai_tai.db.models import (
     AccountPosition,
     BrokerAccount,
     BrokerOrder,
+    BrokerOrderEvent,
     DashboardSnapshot,
     Fill,
     OmsManagedPosition,
@@ -72,6 +75,9 @@ from project_mai_tai.fanout_outcome_consumer import (
 from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.falseflip1_runtime import FalseFlipStore
 from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
+from project_mai_tai.v2_restart_rest_store import (
+    RestartCheckpointWriter, RestartRestStore, checkpoint_state,
+)
 from project_mai_tai.v2_flip_entry_ownership import (
     FlipConfirmationClose,
     FlipEntryOwnershipStore,
@@ -86,6 +92,7 @@ from project_mai_tai.events import (
     IsolatedBotStateEvent,
     MarketDataSubscriptionEvent,
     MarketDataSubscriptionPayload,
+    OrderEventEvent,
     StrategyBotStatePayload,
     StrategyStateSnapshotEvent,
     stream_name,
@@ -107,6 +114,7 @@ from project_mai_tai.market_data.schwab_v2_rest_client import (
 from project_mai_tai.market_data.schwab_v2_streamer import SchwabTick, SchwabV2Streamer
 from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
 from project_mai_tai.settings import Settings, get_settings
+from project_mai_tai.positions_read_receipt import load_receipts
 from project_mai_tai.strategy_core.time_utils import (
     US_MARKET_HOLIDAYS,
     session_day_eastern_str,
@@ -126,6 +134,8 @@ from project_mai_tai.strategy_core.session_line_restore import (
 from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, local_rpg_abort_proof
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
     FLIP_OWNER_ROW_SETTLE_MS,
+    FLIP_OWNER_EVIDENCE_MAX_AGE_MS,
+    FreshSellReleaseEvidence,
     MAX_BAR_AGE_SECONDS_FOR_EMIT,
     PostCloseEntryRelease,
     SERVICE_NAME,
@@ -137,7 +147,7 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     TradeIntentDraft,
     session_start_ts_ms,
 )
-from project_mai_tai.v2_removed_wait import RemovedWaitStore
+from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitStore, request_only_retirement
 
 logger = logging.getLogger(__name__)
 
@@ -424,6 +434,17 @@ class SchwabV2BotService:
         # falls back to `_boot_ms` (see `_watch_start_for`), preserving pre-2026-07-30 behaviour for
         # every symbol that was already being watched.
         self._watch_start_ms: dict[str, int] = {}
+        self._entry_watch_symbols: set[str] = set()
+        self._restart_rest_store = None
+        self._restart_checkpoint = None
+        self._restart_continuing: dict[str, dict] = {}
+        self._restart_rest_legs: dict[str, dict] = {}
+        self._restart_rest_applied: set[str] = set()
+        self._restart_scanner_ready = False
+        self._restart_membership_replay = False
+        self._restart_checkpoint_writer = None
+        self._restart_writer_instance_id = f"{os.getpid()}:{uuid4()}"
+        self._restart_checkpoint_sequence = 0
         # ⛔⭐⭐ EXIT COVERAGE — symbols we HOLD, kept subscribed even after the scanner drops them.
         # EXIT-ONLY: this set feeds market-data subscriptions so the OMS exit ladder keeps receiving
         # quotes. It must NEVER be unioned into an ENTRY decision — see
@@ -642,6 +663,237 @@ class SchwabV2BotService:
     def enabled(self) -> bool:
         return bool(getattr(self.settings, "strategy_schwab_1m_v2_enabled", False))
 
+    async def _configure_restart_rest_store(self) -> None:
+        if not self.strategy._flip_owned_first_entry_enabled:
+            return
+        if self.session_factory is None:
+            return
+        self._restart_rest_store = RestartRestStore(self.session_factory)
+        try:
+            self._restart_checkpoint = await asyncio.to_thread(self._restart_rest_store.restore)
+            if self._restart_checkpoint:
+                self._restart_rest_legs = await asyncio.to_thread(
+                    self._read_restart_rest_legs, self._restart_checkpoint)
+        except Exception:
+            for symbol in (self._restart_checkpoint or {}).get("symbols", {}):
+                self._log_restart_restore(symbol, "refused", "checkpoint_or_native_read_unreadable")
+            self._restart_checkpoint = None
+            logger.exception("[V2-RESTART-REST] restore_unreadable=1 continuity_permission=0")
+
+    def _read_restart_rest_legs(self, checkpoint: dict) -> dict[str, dict]:
+        """Exact cached native generations, boot/pending poll only; no provider call."""
+        from project_mai_tai.oms.service import (
+            _CANCEL_TARGET_SETTLED_STATUSES, _TERMINAL_INTENT_STATUSES,
+        )
+
+        # Canonical OMS request-terminal states are not broker-book evidence.
+        # NFQ2 additionally terminalizes never-wired held intents as superseded.
+        intent_terminal = frozenset(_TERMINAL_INTENT_STATUSES) | {
+            "canceled", "expired", "completed", "superseded",
+        }
+        order_terminal = frozenset(_CANCEL_TARGET_SETTLED_STATUSES) | {"canceled"}
+        symbols = checkpoint["symbols"]
+        result = {}
+        with self.session_factory() as session:
+            if session.get_bind().dialect.name == "postgresql":
+                session.execute(text("SET TRANSACTION READ ONLY"))
+            rows = session.execute(select(TradeIntent, BrokerAccount.name).join(
+                Strategy, TradeIntent.strategy_id == Strategy.id).join(
+                BrokerAccount, TradeIntent.broker_account_id == BrokerAccount.id).where(
+                Strategy.code == STRATEGY_CODE,
+                TradeIntent.symbol.in_(symbols),
+                TradeIntent.side == "buy",
+                TradeIntent.intent_type == "open",
+                TradeIntent.created_at >= datetime.fromtimestamp(
+                    checkpoint["session_anchor_ms"] / 1000, UTC),
+            ).order_by(TradeIntent.created_at.desc()).limit(2049)).all()
+            if len(rows) > 2048:
+                for symbol in symbols:
+                    self._log_restart_restore(symbol, "pending", "intent_read_bound")
+                return {}
+            for symbol, saved in symbols.items():
+                state = saved["state"]
+                rest = state.get("rest", {})
+                legs = {}
+                if not rest.get("resting_is_broker_order", True):
+                    from project_mai_tai.v2_removed_wait import DISPATCH_SNAPSHOT_TYPE
+                    dispatch = session.scalars(select(DashboardSnapshot).where(
+                        DashboardSnapshot.snapshot_type == DISPATCH_SNAPSHOT_TYPE,
+                        DashboardSnapshot.payload["symbol"].as_string() == symbol,
+                        DashboardSnapshot.payload["opportunity_id"].as_string() ==
+                            str(state["opportunity_id"]),
+                    ).limit(2)).all()
+                    begin_only = bool(len(dispatch) == 1 and dispatch[0].payload == {
+                        "schema_version": 1, "strategy_code": STRATEGY_CODE,
+                        "symbol": symbol, "opportunity_id": str(state["opportunity_id"]),
+                        "account_names": list(self.strategy._removed_wait_accounts()),
+                        "kind": "begin", "attempt_token": "", "account_name": "",
+                    })
+                    dispatched = any(row.symbol == symbol and
+                        str(row.payload.get("metadata", {}).get("fanout_segment_id", "")) ==
+                        str(state["opportunity_id"]) for row, _ in rows)
+                    result[symbol] = {"software_dispatched": dispatched or not begin_only}
+                    continue
+                for account, prefix in (
+                    (self.strategy._flip_owner_primary_account, "schwab"),
+                    (self.strategy._flip_owner_webull_account, "webull"),
+                ):
+                    if not account:
+                        continue
+                    quantity = rest.get(f"resting_{prefix}_quantity", 0)
+                    generation = rest.get(f"resting_{prefix}_generation", "")
+                    if not quantity and not generation:
+                        legs[account] = "absent"
+                        continue
+                    matches = [row for row, name in rows if row.symbol == symbol
+                        and name == account and generation
+                        and isinstance(row.payload.get("metadata"), dict)
+                        and row.payload["metadata"].get("rpg_resting_generation") == generation
+                        and str(row.payload["metadata"].get("fanout_segment_id", "")) ==
+                            str(state["opportunity_id"])]
+                    if len(matches) != 1:
+                        self._log_restart_restore(symbol, "pending", f"{account}:generation_not_unique")
+                        continue
+                    if any(row.symbol == symbol and name == account
+                           and str(row.payload.get("metadata", {}).get("fanout_segment_id", "")) ==
+                               str(state["opportunity_id"])
+                           and row.status in {"filled", "partially_filled", "partial_fill"}
+                           for row, name in rows):
+                        legs[account] = "filled"
+                        self._log_restart_restore(symbol, "refused", f"{account}:same_opportunity_sibling_fill")
+                        continue
+                    if any(row.id != matches[0].id and row.symbol == symbol and name == account
+                           and str(row.payload.get("metadata", {}).get("fanout_segment_id", "")) ==
+                               str(state["opportunity_id"])
+                           and row.status not in intent_terminal
+                           for row, name in rows):
+                        self._log_restart_restore(symbol, "pending", f"{account}:other_live_intent")
+                        continue
+                    orders = session.scalars(select(BrokerOrder).where(
+                        BrokerOrder.intent_id == matches[0].id)).all()
+                    if len(orders) != 1:
+                        self._log_restart_restore(symbol, "pending", f"{account}:native_order_not_unique")
+                        continue
+                    order = orders[0]
+                    events = session.scalars(select(BrokerOrderEvent).where(
+                        BrokerOrderEvent.order_id == order.id
+                    ).order_by(BrokerOrderEvent.event_at.desc()).limit(2049)).all()
+                    if len(events) > 2048:
+                        self._log_restart_restore(symbol, "pending", f"{account}:event_read_bound")
+                        continue
+                    filled = session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1))
+                    if (filled is not None or order.status in {"filled", "partially_filled"}
+                            or any(e.event_type in {"filled", "partially_filled"}
+                                   or e.payload.get("broker_fill_id")
+                                   or Decimal(str(e.payload.get("filled_quantity", "0"))) > 0
+                                   for e in events)):
+                        legs[account] = "filled"
+                        self._log_restart_restore(symbol, "refused", f"{account}:fill_evidence")
+                    elif order.status in order_terminal:
+                        event = next((e for e in events if e.event_source == "broker"), None)
+                        if event is None:
+                            self._log_restart_restore(symbol, "pending", f"{account}:broker_terminal_event_missing")
+                            continue
+                        event_at = event.event_at
+                        if event_at.tzinfo is None:
+                            event_at = event_at.replace(tzinfo=UTC)
+                        metadata = event.payload.get("metadata", event.payload)
+                        if (event.event_type in order_terminal
+                                and event_at <= datetime.now(UTC) - timedelta(
+                                    milliseconds=FLIP_OWNER_ROW_SETTLE_MS)
+                                and metadata.get("cancel_outcome") not in {
+                                    "already_absent", "confirmed_after_accepted_request",
+                                    "could_not_tell", "not_confirmed"}):
+                            legs[account] = "terminal"
+                        else:
+                            self._log_restart_restore(symbol, "pending", f"{account}:broker_terminal_not_settled")
+                    elif order.status in {"accepted", "working", "submitted", "pending"}:
+                        # Saved ownership authorizes management/cancellation, not a new buy.
+                        legs[account] = "owned"
+                    else:
+                        self._log_restart_restore(symbol, "pending", f"{account}:native_order_status_unproven")
+                result[symbol] = legs
+        return result
+
+    def _persist_restart_checkpoint(self) -> None:
+        store = getattr(self, "_restart_rest_store", None)
+        if store is None or not getattr(self, "_restart_scanner_ready", False):
+            return
+        writer = self._restart_checkpoint_writer
+        if writer is None:
+            writer = self._restart_checkpoint_writer = RestartCheckpointWriter(store)
+        now_ms = self.strategy._now_ms()
+        anchor = session_start_ts_ms(now_ms)
+        self._restart_checkpoint_sequence += 1
+        payload = {
+            "session_anchor_ms": anchor,
+            "cursor": self._strategy_state_last_id,
+            "writer_instance_id": self._restart_writer_instance_id,
+            "checkpoint_sequence": self._restart_checkpoint_sequence,
+            "captured_at_ms": now_ms,
+            "symbols": {
+                symbol: {
+                    "watch_ms": max(anchor, self._watch_start_for(symbol)),
+                    "state": checkpoint_state(self.strategy.watchlist_state(symbol)),
+                }
+                for symbol in sorted(self._entry_watch_symbols)
+            },
+        }
+        if not writer.submit(payload):
+            logger.warning("[V2-RESTART-REST] checkpoint_refused=1 reason=writer_closed")
+
+    @staticmethod
+    def _log_restart_restore(symbol: str, outcome: str, reason: str) -> None:
+        logger.warning("[V2-RESTART-REST] symbol=%s restore=%s reason=%s continuity_permission=0",
+                       symbol, outcome, reason)
+
+    async def _reconcile_pending_restart_rest(self) -> None:
+        continuing = getattr(self, "_restart_continuing", {})
+        pending = {
+            symbol: saved for symbol, saved in continuing.items()
+            if getattr(self.strategy._symbol_states.get(symbol),
+                       "restart_rest_evidence_pending", False)
+        }
+        if not pending or self.session_factory is None:
+            return
+        try:
+            legs = await asyncio.to_thread(self._read_restart_rest_legs, {
+                "symbols": pending,
+                "session_anchor_ms": session_start_ts_ms(self.strategy._now_ms()),
+            })
+        except Exception:
+            logger.exception("[V2-RESTART-REST] pending_evidence_unreadable=1")
+            for symbol in pending:
+                self._log_restart_restore(symbol, "pending", "native_evidence_unreadable")
+            return
+        self._restart_rest_legs.update(legs)
+        for symbol in pending:
+            self._restore_restart_rest_after_seed(symbol)
+
+    def _restart_same_sell(self, symbol: str, sell_ms: int) -> bool:
+        saved = getattr(self, "_restart_continuing", {}).get(symbol)
+        return bool(saved and saved["state"].get("sell_ms") == sell_ms
+                    and saved["watch_ms"] < sell_ms < self.strategy._boot_ms
+                    and saved["watch_ms"] >= session_start_ts_ms(self.strategy._now_ms()))
+
+    def _restore_restart_rest_after_seed(self, symbol: str, *, sell_ms: int | None = None) -> bool:
+        saved = getattr(self, "_restart_continuing", {}).get(symbol)
+        state = self.strategy.watchlist_state(symbol)
+        if not saved:
+            self._log_restart_restore(symbol, "refused", "continuous_watch_not_proven")
+            return False
+        if not self._restart_same_sell(
+                symbol, state.atr_short_flip_bar_ts if sell_ms is None else sell_ms):
+            self._log_restart_restore(symbol, "refused", "same_live_sell_not_proven")
+            return False
+        applied = getattr(self, "_restart_rest_applied", set())
+        if symbol not in applied:
+            if not self.strategy.restore_restart_rest(
+                    state, saved["state"], self._restart_rest_legs.get(symbol, {})):
+                return False
+            applied.add(symbol)
+        return True
+
     def _configure_fanout_identity_store(self) -> dict[str, int]:
         """Restore the current segment before any market-data task can emit a draft."""
 
@@ -812,7 +1064,7 @@ class SchwabV2BotService:
             getattr(self.settings, "strategy_schwab_1m_v2_streamer_enabled", False)
         )
 
-    def _configure_removed_wait_store(self) -> None:
+    async def _configure_removed_wait_store(self) -> None:
         if not (self.strategy._removed_wait_enabled or getattr(self.strategy, "_retry_one_enabled", False)):
             return
         store = None
@@ -820,14 +1072,16 @@ class SchwabV2BotService:
             if self.session_factory is None:
                 raise RuntimeError("removal evidence database unavailable")
             store = RemovedWaitStore(self.session_factory)
-            restored = store.restore()
+            restored = await asyncio.to_thread(store.restore)
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=restore_unreadable")
             self.strategy.configure_removed_wait(None, restored={}, readable=False)
         else:
-            self.strategy.configure_removed_wait(store.record, restored=restored, readable=True,
+            record = (store.record_rules if self.strategy._removed_wait_clear_rules_enabled else store.record)
+            self.strategy.configure_removed_wait(record, restored=restored, readable=True,
                                                  dispatch_persist=store.record_dispatch)
         self._removed_wait_store = store
+        await self._removed_wait_poll()
 
     async def _removed_wait_poll(self) -> None:
         if not (getattr(self.strategy, "_removed_wait_enabled", False)
@@ -836,29 +1090,159 @@ class SchwabV2BotService:
         requests = tuple(self.strategy._removed_wait_requests.values())
         if not requests:
             return
-        # An emit already past its gate must finish before the serial cancellation barrier.
-        if self._removed_wait_emits_inflight():
+        rules_enabled = self.strategy._removed_wait_clear_rules_enabled
+        generation = getattr(self, "_clearwait_emit_generation", 0)
+        symbol_generations = dict(getattr(self, "_clearwait_emit_generation_by_symbol", {}))
+        open_counts = dict(getattr(self, "_clearwait_open_emits", {}))
+
+        def emit_valid(symbol):
+            return (not self._removed_wait_emits_inflight(symbol)
+                    and getattr(self, "_clearwait_open_emits", {}).get(symbol, 0) == open_counts.get(symbol, 0)
+                    and getattr(self, "_clearwait_emit_generation_by_symbol", {}).get(symbol, 0)
+                        == symbol_generations.get(symbol, 0))
+
+        # An emit already past its gate must finish, without delaying other symbols.
+        if rules_enabled:
+            requests = tuple(r for r in requests if emit_valid(r.symbol))
+            if not requests:
+                return
+        elif self._removed_wait_emits_inflight():
             return
         store = getattr(self, "_removed_wait_store", None)
         if store is None:
             return
+        if rules_enabled:
+            for request in tuple(self.strategy._removed_wait_pending_publications.values()):
+                if not emit_valid(request.symbol):
+                    self.strategy.retry_superseded_removed_wait(request)
+                    continue
+                def publication_valid(request=request):
+                    return (self.strategy._removed_wait_requests.get(request.symbol) == request
+                            and self.strategy._removed_wait_pending_publications.get(request.symbol) == request
+                            and emit_valid(request.symbol))
+                try:
+                    await asyncio.to_thread(store.record_rules, request, True, publication_valid)
+                    if publication_valid():
+                        self.strategy.acknowledge_removed_wait_publication(request)
+                    else:
+                        self.strategy.retry_superseded_removed_wait(request)
+                except Exception:  # noqa: BLE001 - pending publication keeps admission closed
+                    if not publication_valid():
+                        self.strategy.retry_superseded_removed_wait(request)
+                    else:
+                        logger.exception("[V2-REMOVED-WAIT] %s reason=offloop_publication_failed", request.symbol)
+            requests = tuple(r for r in self.strategy._removed_wait_requests.values()
+                             if r.symbol not in self.strategy._removed_wait_pending_publications
+                             and emit_valid(r.symbol))
+            if not requests:
+                return
         accounts = {self.settings.strategy_schwab_1m_v2_account_name}
-        if self.strategy._dual_broker_fanout_enabled:
+        if (self.strategy._dual_broker_fanout_enabled
+                or self.strategy._removed_wait_clear_rules_enabled):
             accounts.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
         try:
-            proofs = await asyncio.to_thread(store.proofs, requests, accounts)
+            if self.strategy._removed_wait_clear_rules_enabled:
+                proofs = await asyncio.to_thread(store.clear_rule_proofs, requests, accounts)
+            else:
+                proofs = await asyncio.to_thread(store.proofs, requests, accounts)
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=evidence_unreadable")
             return
-        if self._removed_wait_emits_inflight():
+        if not rules_enabled and (self._removed_wait_emits_inflight()
+                or getattr(self, "_clearwait_emit_generation", 0) != generation):
             return
+        if rules_enabled:
+            fresh = []
+            for proof in proofs:
+                if emit_valid(proof.request.symbol):
+                    fresh.append(proof)
+                else:
+                    self.strategy.retry_superseded_removed_wait(proof.request)
+            proofs = tuple(fresh)
+            failures = self.__dict__.setdefault("_rwloop1_failures", {})
+            active = set(self.strategy._removed_wait_requests.values())
+            for request in tuple(failures):
+                if request not in active:
+                    failures.pop(request)
+            for proof in proofs:
+                if not proof.clear and not request_only_retirement(proof):
+                    continue
+                failure = failures.get(proof.request)
+                if request_only_retirement(proof) and failure and (
+                        failure["attempts"] >= 5 or self.strategy._now_ms() < failure["next_ms"]):
+                    continue
+                pending = self.strategy.__dict__.get("_removed_wait_pending_clears", {}).get(proof.request)
+                committed = self.strategy.__dict__.get("_removed_wait_committed_clears", {}).get(proof.request)
+                if any(p is not None and self.strategy.removed_wait_clear_valid(p) for p in (pending, committed)):
+                    continue
+                state = self.strategy._symbol_states.get(proof.request.symbol)
+                current = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0) if state else 0
+                retire = (proof.reason == "scanner_removal_flat" and current > 0
+                          and current == proof.request.opportunity_id)
+                if retire and (not self.strategy._flip_owner_restore_readable
+                               or self.strategy._removed_wait_has_owner(state) or state.position_qty
+                               or not self.strategy._flip_owner_evidence_fresh(state)):
+                    continue
+                self.strategy.stage_removed_wait_clear(proof, retire_owner=retire)
+            for request, plan in tuple(self.strategy.__dict__.get("_removed_wait_pending_clears", {}).items()):
+                def valid(plan=plan):
+                    return (emit_valid(plan.proof.request.symbol)
+                            and self.strategy.removed_wait_clear_valid(plan))
+                if not valid():
+                    self.strategy.retry_superseded_removed_wait(request)
+                    continue
+                committing = self.__dict__.setdefault("_clearwait_committing_symbols", set())
+                committing.add(request.symbol)
+                try:
+                    await asyncio.to_thread(store.commit_clear, plan, valid)
+                    if valid():
+                        self.strategy.__dict__.setdefault("_removed_wait_committed_clears", {})[request] = plan
+                        failures.pop(request, None)
+                    else:
+                        # A committed but superseded acknowledgement must never authorize entry.
+                        self.strategy.retry_superseded_removed_wait(request)
+                except Exception as exc:  # noqa: BLE001
+                    if not valid():
+                        self.strategy.retry_superseded_removed_wait(request)
+                    elif request_only_retirement(plan.proof):
+                        failure = failures.setdefault(request, {"attempts": 0, "next_ms": 0})
+                        failure["attempts"] += 1
+                        delay_ms = min(300000, 15000 * 2 ** (failure["attempts"] - 1))
+                        failure["next_ms"] = self.strategy._now_ms() + delay_ms
+                        if failure["attempts"] == 1:
+                            logger.warning("[RWLOOP1] %s reason=request_only_commit_failed "
+                                           "error_class=%s retry_backoff=1 max_attempts=5 owner_kept=1",
+                                           request.symbol, type(exc).__name__)
+                        try:
+                            await asyncio.to_thread(store.record_clear_failure, request,
+                                                    failure["attempts"], type(exc).__name__)
+                        except Exception:  # noqa: BLE001 - DB unavailable; warning is retained, no log storm
+                            pass
+                    else:
+                        logger.exception("[V2-REMOVED-WAIT] %s reason=offloop_clear_failed", request.symbol)
+                finally:
+                    committing.discard(request.symbol)
+                    if self.strategy._removed_wait_pending_clears.get(request) is plan:
+                        self.strategy._removed_wait_pending_clears.pop(request)
+            fresh = []
+            for proof in proofs:
+                if emit_valid(proof.request.symbol):
+                    fresh.append(proof)
+                else:
+                    self.strategy.retry_superseded_removed_wait(proof.request)
+            proofs = tuple(fresh)
         self.strategy.apply_removed_wait_proofs(proofs)
 
-    def _removed_wait_emits_inflight(self) -> bool:
+    def _removed_wait_emits_inflight(self, symbol: str | None = None) -> bool:
         counts = getattr(self, "_clearwait_open_emits", {})
+        if symbol is not None:
+            return bool(counts.get(symbol, 0))
         return any(counts.get(symbol, 0) for symbol in self.strategy._removed_wait_requests)
 
     async def _emit_removal_tracked(self, emitter, draft) -> bool:
+        if (getattr(draft, "intent_type", "") == "open"
+                and draft.symbol.upper() in getattr(self, "_clearwait_committing_symbols", ())):
+            return False
         if (getattr(draft, "intent_type", "") != "open"
                 or not getattr(getattr(self, "strategy", None), "_removed_wait_enabled", False)):
             await emitter.emit(draft)
@@ -868,6 +1252,9 @@ class SchwabV2BotService:
         counts = self.__dict__.setdefault("_clearwait_open_emits", {})
         symbol = draft.symbol.upper()
         counts[symbol] = counts.get(symbol, 0) + 1
+        self._clearwait_emit_generation = getattr(self, "_clearwait_emit_generation", 0) + 1
+        generations = self.__dict__.setdefault("_clearwait_emit_generation_by_symbol", {})
+        generations[symbol] = generations.get(symbol, 0) + 1
         try:
             account = getattr(emitter, "broker_account_name", "")
             if not self.strategy.track_removed_wait_dispatch(draft, account):
@@ -905,13 +1292,15 @@ class SchwabV2BotService:
         await asyncio.to_thread(self._rpg_retire_disabled_at_boot)
         active_segments = self._configure_fanout_identity_store()
         self._configure_flip_entry_ownership_store(active_segments)
-        self._configure_removed_wait_store()
+        await self._configure_restart_rest_store()
+        await self._configure_removed_wait_store()
         await self._recover_soft_rest_boot()
         self._configure_fanout_outcome_journal(active_segments)
         self.intent_emitter = SchwabV2IntentEmitter(
             self.settings,
             self.redis,
             broker_account_name=self.settings.strategy_schwab_1m_v2_account_name,
+            on_submitted=self.strategy.note_primary_resting_submission,
         )
         # Dual-broker FAN-OUT: build the SECOND emitter bound to the Webull account only when the
         # flag is on AND the account is set. Unset => warn + stay single-leg (never point at nothing).
@@ -1003,6 +1392,10 @@ class SchwabV2BotService:
             "state_publish": asyncio.create_task(self._state_publish_loop()),
         }
         if self.enabled:
+            if self._dual_primary_book_enabled():
+                latest = await self.redis.xrevrange(
+                    stream_name(self.settings.redis_stream_prefix, "order-events"), count=1)
+                self._primary_order_event_cursor = latest[0][0] if latest else "0-0"
             await self._rpg_handoff_pass()
             self._tasks["atr_reprice"] = asyncio.create_task(self._rpg_handoff_loop())
             self._tasks["rest_client"] = asyncio.create_task(self.rest_client.run())
@@ -1011,6 +1404,9 @@ class SchwabV2BotService:
                 self._tasks["line_source_events"] = asyncio.create_task(self._line_source_events_loop())
             self._tasks["scanner"] = asyncio.create_task(self._scanner_consumer_loop())
             self._tasks["position_poll"] = asyncio.create_task(self._position_poll_loop())
+            if self._dual_primary_book_enabled():
+                self._tasks["primary_order_events"] = asyncio.create_task(
+                    self._primary_order_events_loop())
             if self.fanout_outcome_journal is not None:
                 self._tasks["fanout_outcomes"] = asyncio.create_task(
                     self._fanout_outcome_loop()
@@ -1039,6 +1435,8 @@ class SchwabV2BotService:
             for task in self._tasks.values():
                 task.cancel()
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+            if self._restart_checkpoint_writer is not None:
+                await self._restart_checkpoint_writer.drain(timeout=3.0)
             if self._eh_stream_emit_tasks:
                 _, pending = await asyncio.wait(self._eh_stream_emit_tasks, timeout=3.0)
                 if pending:
@@ -2017,10 +2415,23 @@ class SchwabV2BotService:
         )
 
     async def _position_poll_pass(self) -> None:
+        if getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False):
+            # DB evidence only: no broker call, and no local placement boolean as proof.
+            observed_at_ms = int(datetime.now(UTC).timestamp() * 1000)
+            scope = self.strategy.primary_resting_scope()
+            proofs = await asyncio.to_thread(self._fetch_primary_resting_book, scope)
+            self.strategy.apply_primary_resting_book(
+                observed_at_ms=observed_at_ms, orders=proofs,
+            )
         falseflip_poll = getattr(self, "_falseflip_poll", None)
         if (getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is True
                 and callable(falseflip_poll)):
-            await falseflip_poll()
+            self._falseflip_defer_cancel_publication = (
+                getattr(self.settings, "strategy_schwab_1m_v2_false_flip2_enabled", False) is True)
+            try:
+                await falseflip_poll()
+            finally:
+                self._falseflip_defer_cancel_publication = False
         evaluate_gap_holds = getattr(self, "_evaluate_gap_holds", None)
         if callable(evaluate_gap_holds):
             await evaluate_gap_holds()
@@ -2070,6 +2481,13 @@ class SchwabV2BotService:
                 unknown_opportunities,
             )
             self.strategy.apply_flip_position_book(position_book)
+            if (getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True
+                    and getattr(self.settings, "strategy_schwab_1m_v2_false_flip2_enabled", False) is True
+                    and callable(getattr(self, "_falseflip2_poll", None))):
+                await self._falseflip2_poll(position_book)
+        fresh_sell_poll = getattr(self, "_fresh_sell_owner_release_poll", None)
+        if callable(fresh_sell_poll):
+            await fresh_sell_poll()
         removed_wait_poll = getattr(self, "_removed_wait_poll", None)
         if callable(removed_wait_poll):
             await removed_wait_poll()
@@ -2093,6 +2511,200 @@ class SchwabV2BotService:
             )
             await self._sync_gateway_subscription()
             self._push_desired_symbols()
+        if getattr(self, "_restart_rest_store", None) is not None:
+            await self._reconcile_pending_restart_rest()
+            self._persist_restart_checkpoint()
+
+    def _dual_primary_book_enabled(self) -> bool:
+        return bool(self.settings.strategy_schwab_1m_v2_dual_broker_fanout_enabled)
+
+    async def _primary_order_events_loop(self) -> None:
+        # Cursor was captured before starting market data; no historical-book replay.
+        await run_resilient_loop(
+            stop_event=self._stop_event, tracker=self._loop_health,
+            name="primary_order_events", iteration=self._primary_order_events_pass,
+            backoff_secs=self._loop_backoff_secs, logger=logger)
+
+    async def _primary_order_events_pass(self) -> None:
+        stream = stream_name(self.settings.redis_stream_prefix, "order-events")
+        response = await self.redis.xread(
+            streams={stream: self._primary_order_event_cursor}, count=100, block=1000)
+        for _, entries in response or []:
+            for entry_id, data in entries:
+                try:
+                    event = OrderEventEvent.model_validate_json(data["data"])
+                except (ValueError, KeyError, TypeError):
+                    logger.warning("[V2-PRIMARY-ACK] malformed_event=1 provisional_allowed=0")
+                else:
+                    self.strategy.apply_primary_resting_event(event)
+                self._primary_order_event_cursor = entry_id
+
+    def _fetch_primary_resting_book(self, scope: tuple | None = None) -> dict | None:
+        if self.session_factory is None:
+            return None
+        try:
+            now = datetime.now(UTC)
+            anchor = datetime.fromtimestamp(session_start_ts_ms(int(now.timestamp() * 1000)) / 1000, UTC)
+            if scope is None:
+                scope = self.strategy.primary_resting_scope()
+            scope = tuple(row for row in scope if int(anchor.timestamp() * 1000) <= row[2] <= int(now.timestamp() * 1000))
+            if not scope:
+                return {}
+            requested_md = TradeIntent.payload["metadata"]
+            exact_scope = or_(*(and_(
+                TradeIntent.symbol == symbol,
+                requested_md["rpg_resting_generation"].as_string() == generation,
+                requested_md["fanout_segment_id"].as_string() == str(segment),
+                requested_md["fanout_slot"].as_string() == "resting",
+                requested_md["fanout_slot_id"].as_string() == slot_id,
+                requested_md["cw_entry_slot"].as_string() == entry_slot,
+            ) for symbol, generation, segment, slot_id, entry_slot in scope))
+            with self.session_factory() as session:
+                if session.get_bind().dialect.name == "postgresql":
+                    session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                    session.execute(text("SET LOCAL statement_timeout = '2s'"))
+                latest_event = (select(BrokerOrderEvent.id)
+                    .where(BrokerOrderEvent.order_id == BrokerOrder.id)
+                    .order_by(BrokerOrderEvent.event_at.desc(), BrokerOrderEvent.id.desc())
+                    .limit(1).correlate(BrokerOrder).scalar_subquery())
+                first_response_id = (select(BrokerOrderEvent.id)
+                    .where(BrokerOrderEvent.order_id == BrokerOrder.id,
+                           BrokerOrderEvent.event_source.in_(["broker", "unknown"]))
+                    .order_by(BrokerOrderEvent.event_at, BrokerOrderEvent.id)
+                    .limit(1).correlate(BrokerOrder).scalar_subquery())
+                first_response = aliased(BrokerOrderEvent)
+                terminal = (select(BrokerOrderEvent.id)
+                    .where(BrokerOrderEvent.order_id == BrokerOrder.id,
+                           BrokerOrderEvent.event_type.in_([
+                               "filled", "cancelled", "canceled", "rejected", "expired"]))
+                    .correlate(BrokerOrder).exists())
+                filled = or_(select(Fill.id).where(Fill.order_id == BrokerOrder.id)
+                    .correlate(BrokerOrder).exists(),
+                    select(BrokerOrderEvent.id).where(BrokerOrderEvent.order_id == BrokerOrder.id,
+                        BrokerOrderEvent.event_type.in_(["filled", "partially_filled", "partial_fill"]))
+                    .correlate(BrokerOrder).exists())
+                rows = session.execute(
+                    select(BrokerOrder, TradeIntent, BrokerOrderEvent, first_response, filled, terminal)
+                    .select_from(TradeIntent)
+                    .join(BrokerAccount, BrokerAccount.id == TradeIntent.broker_account_id)
+                    .join(Strategy, Strategy.id == TradeIntent.strategy_id)
+                    .outerjoin(BrokerOrder, BrokerOrder.intent_id == TradeIntent.id)
+                    .outerjoin(BrokerOrderEvent, BrokerOrderEvent.id == latest_event)
+                    .outerjoin(first_response, first_response.id == first_response_id)
+                    .where(BrokerAccount.name == self.settings.strategy_schwab_1m_v2_account_name,
+                           BrokerAccount.name == "live:schwab_1m_v2",
+                           BrokerAccount.provider == "schwab", Strategy.code == STRATEGY_CODE,
+                           TradeIntent.created_at >= anchor,
+                           requested_md["source"].as_string() == STRATEGY_CODE,
+                           requested_md["resting_entry"].as_string() == "true",
+                           exact_scope,
+                           TradeIntent.intent_type == "open", TradeIntent.side == "buy",
+                           or_(and_(BrokerOrder.side == "buy",
+                                    func.lower(BrokerOrder.order_type) == "stop_limit",
+                                    BrokerOrder.quantity > 0,
+                                    TradeIntent.strategy_id == BrokerOrder.strategy_id,
+                                    TradeIntent.broker_account_id == BrokerOrder.broker_account_id,
+                                    TradeIntent.symbol == BrokerOrder.symbol,
+                                    BrokerOrder.status.in_(["accepted", "working", "pending", "submitted",
+                                                           "cancelled", "canceled", "rejected", "expired"])),
+                               and_(BrokerOrder.id.is_(None), TradeIntent.status.in_(["aborted", "rejected"]))))
+                    .limit(1001)
+                ).all()
+                if len(rows) > 1000:
+                    logger.warning("[V2-PRIMARY-RESTING-BOOK] result=UNKNOWN count=%d cap=1000 "
+                                   "session_anchor=%s webull_cross_allowed=0", len(rows), anchor.isoformat())
+                    return None  # A truncated order book is not absence/clearance evidence.
+                proofs = {}
+                for order, intent, event, initial, has_fill, has_terminal in rows:
+                    requested = dict((intent.payload or {}).get("metadata") or {})
+                    metadata = dict(order.payload or {}) if order is not None else requested
+                    symbol = order.symbol if order is not None else intent.symbol
+                    identity_keys = ("source", "resting_entry", "rpg_resting_generation",
+                                     "fanout_segment_id", "fanout_slot", "fanout_slot_id",
+                                     "cw_entry_slot")
+                    if any(not metadata.get(k) or metadata[k] != requested.get(k)
+                           for k in identity_keys):
+                        continue
+                    generation = str(metadata.get("rpg_resting_generation") or "")
+                    if (not generation or metadata["resting_entry"] != "true"
+                            or metadata["source"] != STRATEGY_CODE
+                            or metadata["cw_entry_slot"] not in {"first", "reclaim"}):
+                        continue
+                    try:
+                        segment = int(metadata["fanout_segment_id"])
+                        slot_id = fanout_slot_id(strategy_code=STRATEGY_CODE, symbol=symbol,
+                                                segment_id=segment, slot=metadata["fanout_slot"])
+                    except (TypeError, ValueError):
+                        continue
+                    if metadata["fanout_slot_id"] != slot_id:
+                        continue
+                    identity = {"segment_id": segment, "slot_id": slot_id,
+                                "slot": metadata["fanout_slot"], "entry_slot": metadata["cw_entry_slot"]}
+                    key = (symbol, generation)
+                    if key in proofs:
+                        proofs[key] = None
+                        continue
+                    if order is None:
+                        audit = intent.payload or {}
+                        if (audit.get("refusal_origin") == "skipped_before_submit"
+                                and audit.get("refusal_code")):
+                            proofs[key] = {**identity, "status": "refused_before_wire",
+                                           "terminal_zero_proven": True,
+                                           "broker_order_id": "", "submit_response_at_ms": 0}
+                        continue
+                    if event is None or initial is None or has_fill:
+                        continue
+                    initial_at = initial.event_at.replace(tzinfo=UTC) if initial.event_at.tzinfo is None else initial.event_at
+                    event_at = event.event_at.replace(tzinfo=UTC) if event.event_at.tzinfo is None else event.event_at
+                    if event_at > now:
+                        continue
+                    if order.status in {"cancelled", "canceled", "rejected", "expired"}:
+                        receipt = event.payload or {}
+                        try:
+                            # Native audit omits quantity; the same SQL snapshot vetoes
+                            # committed fills/partial events. Explicit conflicting quantity vetoes too.
+                            zero = ("filled_quantity" not in receipt
+                                    or Decimal(str(receipt["filled_quantity"])) == 0)
+                        except (ValueError, ArithmeticError):
+                            zero = False
+                        if (event.event_source == "broker" and event.event_type == order.status
+                                and receipt.get("client_order_id") == order.client_order_id
+                                and isinstance(receipt.get("metadata"), dict)
+                                and all(receipt["metadata"].get(k) == metadata[k] for k in identity_keys) and zero
+                                and not receipt.get("broker_fill_id")):
+                            proofs[key] = {**identity, "status": order.status,
+                                           "terminal_zero_proven": True,
+                                           "broker_order_id": str(order.broker_order_id or ""),
+                                           "submit_response_at_ms": 0}
+                        continue
+                    if has_terminal:
+                        continue
+                    response = dict(initial.payload or {})
+                    response_metadata = response.get("metadata") or {}
+                    # Only the initial real submit ACK may carry unknown origin.
+                    initial_submit = (initial.event_type == "accepted"
+                        and initial.event_source in {"broker", "unknown"}
+                        and response.get("client_order_id") == order.client_order_id
+                        and isinstance(response_metadata, dict)
+                        and all(response_metadata.get(k) == metadata[k] for k in identity_keys))
+                    if (event.event_type not in {"accepted", "working"}
+                            or not (event.event_source == "broker"
+                                    or (event.id == initial.id and initial_submit))):
+                        continue
+                    broker_id = str(order.broker_order_id or "").strip()
+                    submit_ms = int(initial_at.timestamp() * 1000) if initial_submit else 0
+                    fresh_ack = initial_submit and 0 <= (now - initial_at).total_seconds() < 15
+                    if order.status in {"pending", "submitted"} and not fresh_ack:
+                        continue
+                    if not broker_id and not fresh_ack:
+                        continue
+                    proofs[key] = {"broker_order_id": broker_id,
+                                   "status": "accepted" if fresh_ack else order.status,
+                                   "submit_response_at_ms": submit_ms, **identity}
+                return proofs
+        except Exception:  # noqa: BLE001
+            logger.exception("[V2-PRIMARY-RESTING-BOOK] result=UNKNOWN webull_cross_allowed=0")
+            return None
 
     def _startup_gateway_exit_coverage(self) -> set[str]:
         if self.session_factory is None:
@@ -2496,8 +3108,8 @@ class SchwabV2BotService:
     def _fetch_position_maps(self) -> tuple[dict[str, int], dict[str, int]] | None:
         """Returns (union, held).
 
-        `union` is the historical conservative signal -- virtual_positions ∪ in-flight open intents
-        for the configured v2 broker account -- and is what `_fetch_open_positions` still returns.
+        `union` is the conservative signal -- v2 virtual_positions ∪ v2 in-flight open intents
+        for the configured primary broker account -- and is what `_fetch_open_positions` returns.
         Cross-venue fan-out intents must not enter this entry-decision signal: reading A accounts for
         the Webull claim separately from the Schwab primary venue.
 
@@ -2516,12 +3128,14 @@ class SchwabV2BotService:
                 broker = session.scalar(
                     select(BrokerAccount).where(BrokerAccount.name == account_name)
                 )
-                if broker is None:
+                strategy = session.scalar(select(Strategy).where(Strategy.code == STRATEGY_CODE))
+                if broker is None or strategy is None:
                     return positions, held
-                # Virtual positions = mai-tai's authoritative view of what
-                # we own (synchronized by OMS on fills).
+                # A shared-account ORB fill is not a v2 fill and must never consume
+                # a v2 slot or mint an UNKNOWN first-rest owner.
                 for vp in session.scalars(
                     select(VirtualPosition).where(
+                        VirtualPosition.strategy_id == strategy.id,
                         VirtualPosition.broker_account_id == broker.id,
                         VirtualPosition.quantity > 0,
                     )
@@ -2534,9 +3148,6 @@ class SchwabV2BotService:
                         held[symbol] = max(held.get(symbol, 0), int(vp.quantity))
                 # In-flight open intents — block re-entry until OMS resolves
                 # the prior intent (filled / rejected / cancelled).
-                strategy = session.scalar(
-                    select(Strategy).where(Strategy.code == "schwab_1m_v2")
-                )
                 if strategy is not None:
                     for ti in session.scalars(
                         select(TradeIntent).where(
@@ -2562,6 +3173,12 @@ class SchwabV2BotService:
 
     async def _recover_soft_rest_boot(self) -> None:
         candidates = self.strategy.soft_rest_boot_candidates()
+        checkpoint = getattr(self, "_restart_checkpoint", None)
+        if checkpoint:
+            # Defer software owners until the retained scanner gap proves continuity.
+            candidates = {sym: op for sym, op in candidates.items()
+                if sym not in checkpoint["symbols"]
+                or checkpoint["symbols"][sym]["state"]["opportunity_id"] != op}
         if not candidates:
             return
         try:
@@ -2741,6 +3358,113 @@ class SchwabV2BotService:
                 proof.update(never_dispatched=True, flat_accounts=list(accounts), reason="positive_begin_no_attempt")
         return proofs
 
+    async def _fresh_sell_owner_release_poll(self) -> None:
+        strategy = self.strategy
+        if (not getattr(strategy, "_flip_owned_first_entry_enabled", False)
+                or not self.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled):
+            return
+        requests = tuple(r for r in strategy._removed_wait_requests.values()
+                         if r.purpose in {"retry_exhausted", "false_flip_restore"})
+        if not requests:
+            return
+        proofs = await asyncio.to_thread(self._fetch_fresh_sell_release_evidence, requests)
+        strategy._fresh_sell_release_evidence = {p.request.symbol: p for p in proofs}
+
+    def _fetch_fresh_sell_release_evidence(
+        self, requests: tuple[RemovedWait, ...],
+    ) -> tuple[FreshSellReleaseEvidence, ...]:
+        # Cache only a read result. A later live SELL owns the release decision.
+        now = datetime.now(UTC)
+        observed = int(now.timestamp() * 1000)
+        cutoff = now - timedelta(milliseconds=FLIP_OWNER_ROW_SETTLE_MS)
+        terminal = {"cancelled", "canceled", "filled", "rejected", "expired"}
+
+        def at_ms(value: datetime | None) -> int:
+            if value is None:
+                return 0
+            return int((value.replace(tzinfo=UTC) if value.tzinfo is None else value).timestamp() * 1000)
+
+        def assess(session: Session, request: RemovedWait, receipts: dict) -> FreshSellReleaseEvidence:
+            evidence_at = observed
+
+            def result(reason: str, clear: bool = False) -> FreshSellReleaseEvidence:
+                return FreshSellReleaseEvidence(request, evidence_at, clear, reason)
+
+            names = tuple(request.account_names)
+            expected = self.strategy._flip_owner_accounts
+            if len(names) != 2 or len(set(names)) != 2 or set(names) != expected:
+                return result("accounts_unknown")
+            accounts = session.scalars(select(BrokerAccount).where(BrokerAccount.name.in_(names))).all()
+            if len(accounts) != len(names):
+                return result("accounts_unknown")
+            account_names = {a.id: a.name for a in accounts}
+            for name in names:
+                receipt = receipts.get(name, {})
+                read_at = at_ms(receipt.get("read_at"))
+                if (receipt.get("writer") != "oms.sync_broker_positions"
+                        or not read_at or not 0 <= observed - read_at <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+                    return result("broker_position_evidence_unknown_or_stale")
+                evidence_at = min(evidence_at, read_at)
+            symbol = request.symbol
+            if (session.scalar(select(AccountPosition.id).where(
+                    AccountPosition.broker_account_id.in_(account_names), AccountPosition.symbol == symbol,
+                    AccountPosition.quantity != 0).limit(1))
+                    or session.scalar(select(VirtualPosition.id).where(
+                        VirtualPosition.broker_account_id.in_(account_names), VirtualPosition.symbol == symbol,
+                        VirtualPosition.quantity != 0).limit(1))
+                    or session.scalar(select(OmsManagedPosition.id).where(
+                        OmsManagedPosition.broker_account_name.in_(names), OmsManagedPosition.symbol == symbol,
+                        or_(OmsManagedPosition.status == "open", OmsManagedPosition.current_quantity != 0)
+                    ).limit(1))):
+                return result("position_stays_owned")
+            # Deliberately no strategy/account restriction: shared Schwab ORB also owns a BUY.
+            if (session.scalar(select(BrokerOrder.id).where(BrokerOrder.symbol == symbol,
+                    BrokerOrder.side == "buy",
+                    or_(BrokerOrder.status.is_(None), BrokerOrder.status.notin_(terminal))).limit(1))
+                    or session.scalar(select(TradeIntent.id).where(TradeIntent.symbol == symbol,
+                        TradeIntent.side == "buy", TradeIntent.intent_type == "open",
+                        or_(TradeIntent.status.is_(None), TradeIntent.status.notin_(terminal))).limit(1))):
+                return result("working_buy_or_intent")
+            cancels = session.execute(select(TradeIntent, Strategy.code)
+                .join(Strategy, Strategy.id == TradeIntent.strategy_id)
+                .where(TradeIntent.symbol == symbol, TradeIntent.intent_type == "cancel",
+                       TradeIntent.created_at >= datetime.fromtimestamp(request.requested_at_ms / 1000, UTC),
+                       TradeIntent.broker_account_id.in_(account_names))).all()
+            acknowledged = set()
+            for intent, code in cancels:
+                payload = intent.payload or {}
+                md = payload.get("metadata", {})
+                if md.get("clearwait_removal_token") != request.token:
+                    continue
+                if (code != STRATEGY_CODE or intent.side != "buy"
+                        or str(md.get("clearwait_opportunity_id")) != str(request.opportunity_id)
+                        or md.get("clearwait_buy_only") != "true"
+                        or md.get("reason") != ("false_flip_restore" if request.purpose == "false_flip_restore"
+                                                else "retry_budget_exhausted")):
+                    return result("cancel_request_identity_unknown")
+                no_target = (intent.status == "rejected"
+                             and payload.get("refusal_origin") == "skipped_before_submit"
+                             and payload.get("refusal_code") == "cancel_target_not_found")
+                if intent.status not in {"cancelled", "canceled"} and not no_target:
+                    return result("own_cancel_not_terminal")
+                updated = at_ms(intent.updated_at)
+                if not updated or updated < request.requested_at_ms or updated > int(cutoff.timestamp() * 1000):
+                    return result("own_cancel_settling")
+                acknowledged.add(account_names[intent.broker_account_id])
+            if acknowledged != set(names):
+                return result("own_cancel_missing")
+            return result("flat_both_own_cancels_settled", True)
+
+        try:
+            if self.session_factory is None:
+                raise ValueError("position database unavailable")
+            with self.session_factory() as session:
+                receipts = load_receipts(session)
+                return tuple(assess(session, request, receipts) for request in requests)
+        except Exception:  # noqa: BLE001 - unknown evidence never releases an owner
+            logger.exception("[V2-FRESH-SELL-OWNER-READ] reason=evidence_unreadable")
+            return tuple(FreshSellReleaseEvidence(r, observed, False, "evidence_unreadable") for r in requests)
+
     def _fetch_flip_position_book(
         self,
         unknown_opportunities: dict[str, int] | None = None,
@@ -2792,6 +3516,7 @@ class SchwabV2BotService:
         entry_classifications = {}
         filled_opportunities = {}
         closed_entry_rows = frozenset()
+        falseflip_release_proofs = {}
         try:
             with self.session_factory() as session:
                 rows = session.scalars(
@@ -2871,6 +3596,10 @@ class SchwabV2BotService:
                         opportunity = int(md.get("fanout_segment_id", 0))
                         if opportunity > 0:
                             filled_opportunities.setdefault(order.symbol, set()).add((account.name, opportunity))
+                    if getattr(self.settings, "strategy_schwab_1m_v2_false_flip2_enabled", False) is True:
+                        from project_mai_tai.v2_falseflip_release import read_release_proofs
+
+                        falseflip_release_proofs = read_release_proofs(session, [*rows, *closed_rows], accounts)
         except Exception:  # noqa: BLE001 - an unreadable owner is an entry refusal
             logger.exception(
                 "[V2-FLIP-OWNER-POSITION-BOOK] evaluated=0 known=0 unknown=1 "
@@ -3011,6 +3740,7 @@ class SchwabV2BotService:
             entry_classifications={key: tuple(value) for key, value in entry_classifications.items()},
             filled_opportunities={key: tuple(value) for key, value in filled_opportunities.items()},
             closed_entry_rows=closed_entry_rows,
+            falseflip_release_proofs=falseflip_release_proofs,
         )
 
     def _terminal_unfilled_first_rest_opportunities(
@@ -3235,9 +3965,59 @@ class SchwabV2BotService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("schwab_1m_v2 scanner seed xrevrange failed: %s", exc)
             seed = []
-        for entry_id, data in seed:
-            self._strategy_state_last_id = entry_id
-            await self._apply_strategy_state_event_async(data, max_watchlist=max_watchlist)
+        checkpoint = getattr(self, "_restart_checkpoint", None)
+        if checkpoint and seed:
+            cursor = checkpoint["cursor"]
+            try:
+                gap = await self.redis.xrange(
+                    self._strategy_state_stream, min=cursor, max=seed[0][0], count=1025)
+            except Exception:
+                gap = []
+                logger.exception("[V2-RESTART-REST] scanner_gap_unreadable=1")
+            if (gap and len(gap) <= 1024 and gap[0][0] == cursor
+                    and gap[-1][0] == seed[0][0]):
+                try:
+                    valid_gap = all(self._strategy_state_event_is_current(
+                        StrategyStateSnapshotEvent.model_validate_json(data["data"]))
+                        for _, data in gap)
+                except Exception:
+                    valid_gap = False
+                if valid_gap:
+                    self._restart_continuing = deepcopy(checkpoint["symbols"])
+                    # Include the exact checkpoint to prove it was not trimmed. Replay
+                    # removals even when latest membership matches, without old-symbol GETs.
+                    seed = gap
+                else:
+                    logger.warning("[V2-RESTART-REST] scanner_gap_malformed=1 continuity_permission=0")
+                    for symbol in checkpoint["symbols"]:
+                        self._log_restart_restore(symbol, "refused", "scanner_gap_malformed")
+            else:
+                logger.warning("[V2-RESTART-REST] scanner_gap_unproven=1 continuity_permission=0")
+                for symbol in checkpoint["symbols"]:
+                    self._log_restart_restore(symbol, "refused", "scanner_gap_unproven")
+        self._restart_membership_replay = len(seed) > 1
+        try:
+            for index, (entry_id, data) in enumerate(seed):
+                self._strategy_state_last_id = entry_id
+                if index < len(seed) - 1:
+                    self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+                    continue
+                if len(seed) > 1:
+                    current = StrategyStateSnapshotEvent.model_validate_json(data["data"])
+                    candidates = set(self._extract_confirmed_symbols(current)[:max_watchlist])
+                    candidates.update(self._protected_symbols())
+                    await self._prepare_atr_massive_seeds(candidates)
+                await self._apply_strategy_state_event_async(data, max_watchlist=max_watchlist)
+        finally:
+            self._restart_membership_replay = False
+        if len(seed) > 1:
+            self._sync_line_epochs()
+            self._try_complete_boot_state_restoration(
+                self._watchlist, new_symbols=set(self._watchlist))
+            self._push_desired_symbols()
+            self._request_line_repairs(set(self._watchlist))
+        self._restart_scanner_ready = bool(seed)
+        self._persist_restart_checkpoint()
         await self._sync_gateway_subscription()  # slice-2: register v2 symbols (gated/inert)
 
         # Step 2: tail for new snapshots (backstopped — xread + apply contained).
@@ -3597,6 +4377,7 @@ class SchwabV2BotService:
                 await self._prepare_atr_massive_seeds(candidates - self._watchlist)
         self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
         self._log_atr_massive_seed_census()
+        self._persist_restart_checkpoint()
 
     def _apply_strategy_state_event(
         self, data: object, *, max_watchlist: int
@@ -3657,6 +4438,20 @@ class SchwabV2BotService:
         # flag. A prior fully-excluded snapshot must not let held-position coverage launder a
         # later empty scanner pass into completed boot restoration.
         self._boot_scanner_selected = scanner_selected
+        prior_entries = getattr(self, "_entry_watch_symbols", set())
+        continuing = getattr(self, "_restart_continuing", {})
+        for sym in set(continuing) - scanner_selected:
+            self._log_restart_restore(sym, "refused", "scanner_removed_or_excluded")
+            continuing.pop(sym, None)
+        now_ms = self.strategy._now_ms()
+        for sym in scanner_selected - prior_entries:
+            saved = continuing.get(sym)
+            watch_ms = saved["watch_ms"] if saved else now_ms
+            self._watch_start_ms[sym] = watch_ms
+            self.strategy.watchlist_state(sym).retry_one_watch_start_ms = watch_ms
+            if sym in self._watchlist and saved is None:
+                self._cap_reconstructed_segment(sym, stage="scanner-entry-readd")
+        self._entry_watch_symbols = set(scanner_selected)
         self._boot_exclusion_sources_readable = not unreadable_exclusion_sources
         if getattr(self.strategy, "_removed_wait_enabled", False):
             previous = getattr(self, "_clearwait_scanner_symbols", None)
@@ -3695,8 +4490,9 @@ class SchwabV2BotService:
         # have missed flips in between, and its warmup will replay them as if they were current.
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         for sym in new_symbols:
-            self._watch_start_ms[sym] = now_ms
-            self.strategy.watchlist_state(sym).retry_one_watch_start_ms = now_ms
+            if sym not in scanner_selected:
+                self._watch_start_ms[sym] = now_ms
+                self.strategy.watchlist_state(sym).retry_one_watch_start_ms = now_ms
         self._watch_start_ms = {
             sym: ts for sym, ts in self._watch_start_ms.items() if sym in selected
         }
@@ -3761,6 +4557,8 @@ class SchwabV2BotService:
         never turns an unreadable seed into safety, and the dangerous-segment check remains the
         final entry gate.
         """
+        if getattr(self, "_restart_membership_replay", False):
+            return
         if not getattr(self.strategy, "_cw_armed_segment_safety_enabled", False):
             # Flag-OFF is the shipped compatibility mode. Preserve the pre-change DB seed for new
             # symbols, but add no boot latch, hold, restoration field, or fleet-wide decision.
@@ -3962,6 +4760,8 @@ class SchwabV2BotService:
         what arms CW_FLIP, and the quote feed is what drives every other exit rule.
         ⛔ EXIT-ONLY — see docs/design/held-symbol-exit-coverage.md §2.
         """
+        if getattr(self, "_restart_membership_replay", False):
+            return
         desired = self._subscription_symbols()
         # Lightweight coverage harnesses call this method without constructing the full service.
         if hasattr(self, "_halt_trackers"):
@@ -4086,11 +4886,14 @@ class SchwabV2BotService:
         seen: set[str] = set()
         for item in candidates:
             if isinstance(item, dict):
-                sym = str(item.get("symbol") or item.get("ticker") or "").strip().upper()
+                raw_symbol = item.get("symbol") or item.get("ticker") or ""
             elif isinstance(item, str):
-                sym = item.strip().upper()
+                raw_symbol = item
             else:
-                sym = ""
+                continue
+            if not raw_symbol_is_uppercase(raw_symbol):
+                continue
+            sym = raw_symbol.strip().upper()
             if sym and sym not in seen:
                 symbols.append(sym)
                 seen.add(sym)
@@ -4128,6 +4931,8 @@ class SchwabV2BotService:
           source, or this is a genuine gap fill bar that the streamer
           missed during a disconnect window).
         """
+        if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(bar.symbol):
+            return
         if self._loop_fault_injection_remaining > 0:
             # SPOF Workstream A (v2) controlled survival test (default OFF).
             # Raises on the E1 callback path — v2's real remaining escape — so an
@@ -4192,6 +4997,8 @@ class SchwabV2BotService:
         buffer, caps reconstructed state, and retries boot restoration. Stale
         bars from either source remain gated by the same 300-second bound.
         """
+        if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(bar.symbol):
+            return
         self._observe_line_bar(symbol, bar, source_callback=True)
         self._note_line_live_bar(symbol, bar)
         if symbol not in self._warmup_ready_symbols():
@@ -4386,6 +5193,13 @@ class SchwabV2BotService:
             session_start_ts_ms(int(now_ms_fn())) if callable(now_ms_fn) else 0
         )
         watch_start = max(self._watch_start_for(symbol), session_anchor)
+        if symbol in getattr(self, "_restart_continuing", {}):
+            # A SELL that appeared while the process was down was not observed live.
+            if not self._restart_same_sell(symbol, st.atr_short_flip_bar_ts):
+                self._log_restart_restore(symbol, "refused", "same_live_sell_not_proven")
+                watch_start = max(watch_start, strat._boot_ms, strat._now_ms())
+            else:
+                self._restore_restart_rest_after_seed(symbol)
         # ⛔⭐ THE OTHER HALF (2026-09-16, FTFT). The branch below caps a reconstructed LONG segment —
         # one the replay ARMED from a BUY flip. It has no shape for a reconstructed SHORT segment,
         # and the resting path rests on exactly that: state short + a settled trail. FTFT flipped
@@ -4941,6 +5755,8 @@ class SchwabV2BotService:
         await self._drain_direct_strategy_intents()
         # Dual-broker fan-out: emit any Webull legs the strategy queued this bar (no-op if off).
         await self._emit_webull_fanout_legs()
+        if observation_phase == "live":
+            self._persist_restart_checkpoint()
 
     def _sync_line_epochs(self) -> None:
         if not getattr(self, "_line_restoration_enabled", False):
@@ -5059,7 +5875,10 @@ class SchwabV2BotService:
         for item in (*event.payload.top_confirmed, *event.payload.all_confirmed,
                      *event.payload.watchlist):
             if isinstance(item, dict):
-                sym = str(item.get("symbol") or item.get("ticker") or "").strip().upper()
+                raw_symbol = item.get("symbol") or item.get("ticker") or ""
+                if not raw_symbol_is_uppercase(raw_symbol):
+                    continue
+                sym = raw_symbol.strip().upper()
                 identity = str(item.get("confirmed_at") or "").strip()
                 if sym in selected and identity:
                     identities.setdefault(sym, identity)
@@ -5093,6 +5912,8 @@ class SchwabV2BotService:
         return reconfirmed
 
     def _request_line_repairs(self, symbols: set[str]) -> None:
+        if getattr(self, "_restart_membership_replay", False):
+            return
         for symbol in symbols:
             ledger = self._line_sessions.get(symbol)
             if ledger is not None and symbol in self._line_startup_pending:
@@ -5607,10 +6428,21 @@ class SchwabV2BotService:
         confirmations.update({(symbol, ts): value for ts, value in snapshot.confirmation if ts in live})
         changed_history = bool(previous is None or previous.snapshot.reset_after_ms != reset_fence
                                or result.request.bars[:len(previous.request.bars)] != previous.request.bars)
+        confirmed_sell = int(indicator["atr_short_flip_bar_ts"])
+        if not confirmed_sell:
+            prior_state = None
+            for ts, line_state in snapshot.confirmation:
+                if line_state == "short" and prior_state == "long":
+                    confirmed_sell = ts
+                prior_state = line_state
+        own_restart_rest = bool(
+            previous is None and not reset_fence
+            and self._restart_same_sell(symbol, confirmed_sell)
+            and self._restore_restart_rest_after_seed(symbol, sell_ms=confirmed_sell))
         if changed_history:
             # A corrected line revokes permission from the old line; it cannot
             # revive an arm, cancellation, claim, consumed slot or retry budget.
-            if state.resting_active or state.webull_resting_active:
+            if not own_restart_rest and (state.resting_active or state.webull_resting_active):
                 self.strategy._queue_resting_cancel(state, reason="line_history_changed")
             state.cw_armed = False
             state.cw_arm_bar_ts = 0
@@ -5621,6 +6453,8 @@ class SchwabV2BotService:
             current_bar.low, current_bar.close, current_bar.volume,
         )
         self.strategy._restore_atr_indicator_snapshot(state, indicator)
+        if previous is None:
+            self._cap_reconstructed_segment(symbol, stage="first-line-publication")
         if seed_segment and self._line_retry_seed_candidate(state, indicator) == seed_segment:
             state.retry_one_segment_id = seed_segment
             logger.info("[V2-LINE-RESTORE] sym=%s segment_id=%d closes_in_segment=0 "
@@ -5705,6 +6539,7 @@ class SchwabV2BotService:
         await self._maybe_emit(draft)
         await self._drain_direct_strategy_intents()
         await self._emit_webull_fanout_legs()
+        self._persist_restart_checkpoint()
         return True
 
     def _read_line_session_bars(self, symbol: str, anchor_ms: int, current_bar_ms: int):
@@ -5738,17 +6573,43 @@ class SchwabV2BotService:
         for i, (left, right) in enumerate(pairs):
             params[f"left_{i}"] = left
             params[f"right_{i}"] = right
+        capture_filter = tick_filter = ""
+        if self.settings.strategy_schwab_1m_v2_gap_trade_conditions_filter_enabled:
+            # Frozen stocks/trade consolidated rules read 2026-10-11. High/low-only
+            # updates cannot establish a missing minute's open/close (e.g. 32).
+            # Form T (12) remains eligible under the existing minute-bar semantics.
+            params["known_conditions"] = [str(code) for code in (
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+                19, 20, 21, 22, 23, 24, 25, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+                36, 37, 38, 41, 52, 53, 55,
+            )]
+            params["non_bar_conditions"] = [str(code) for code in (
+                2, 5, 7, 10, 13, 15, 16, 20, 21, 22, 29, 32, 33, 37, 52, 53,
+            )]
+
+            def condition_filter(codes):
+                # Only positively classified exclusions permit spanning. Unknown
+                # providers/codes or missing/malformed metadata keep the gap held.
+                return f"""AND NOT COALESCE(
+                    t.provider IN ('massive', 'polygon')
+                    AND {codes} <@ CAST(:known_conditions AS text[])
+                    AND {codes} && CAST(:non_bar_conditions AS text[]), FALSE)"""
+
+            capture_filter = condition_filter("string_to_array(t.conditions, ',')")
+            raw_codes = "COALESCE(t.raw->'conditions', t.raw->'c')"
+            tick_filter = condition_filter(f"""CASE WHEN jsonb_typeof({raw_codes}) = 'array'
+                THEN ARRAY(SELECT jsonb_array_elements_text({raw_codes})) ELSE NULL END""")
         query = text(f"""
             WITH gaps(lo, hi) AS (VALUES {values})
             SELECT lo, hi FROM gaps WHERE
             EXISTS (SELECT 1 FROM market_capture_trades t
                     WHERE t.symbol=:symbol
                     AND t.event_ts >= to_timestamp((lo+60000)/1000.0)
-                    AND t.event_ts < to_timestamp(hi/1000.0))
+                    AND t.event_ts < to_timestamp(hi/1000.0) {capture_filter})
             OR EXISTS (SELECT 1 FROM market_trade_ticks t
                     WHERE t.symbol=:symbol
                     AND t.event_ts >= to_timestamp((lo+60000)/1000.0)
-                    AND t.event_ts < to_timestamp(hi/1000.0))
+                    AND t.event_ts < to_timestamp(hi/1000.0) {tick_filter})
         """)
         with self.session_factory() as session:
             session.execute(text("SET LOCAL statement_timeout = '5s'"))
@@ -5820,13 +6681,97 @@ class SchwabV2BotService:
                     logger.exception("[V2-FALSE-FLIP] sym=%s reason=budget_write_failed", before.symbol)
                     break
                 self.strategy.acknowledge_falseflip_budget(before, after)
+        if self.__dict__.get("_falseflip_defer_cancel_publication", False):
+            return  # Refresh both accounts before deciding whether a cancel is necessary.
         for request in self.strategy.pending_falseflip_cancel_publications():
+            state = self.strategy._symbol_states.get(request.symbol)
+            if (self.strategy._falseflip2_enabled() and state is not None
+                    and self.strategy._falseflip2_proven(state, request.opportunity_id)):
+                continue  # The atomic owner writer closes the exact request, not a broker cancel.
             try:
-                await asyncio.to_thread(self.strategy._removed_wait_persist, request, True)
+                if self.strategy._falseflip2_enabled():
+                    store = getattr(self, "_removed_wait_store", None)
+                    if store is None:
+                        continue
+                    generation = self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(request.symbol, 0)
+
+                    def valid(r=request, g=generation):
+                        return (self.strategy.falseflip2_cancel_valid(r)
+                                and not self.__dict__.get("_clearwait_open_emits", {}).get(r.symbol, 0)
+                                and self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(r.symbol, 0) == g)
+
+                    await asyncio.to_thread(store.record_rules, request, True, valid)
+                    if not valid():
+                        continue
+                else:
+                    await asyncio.to_thread(self.strategy._removed_wait_persist, request, True)
             except Exception:  # noqa: BLE001 - no cancel publication before its durable request
                 logger.exception("[V2-FALSE-FLIP] sym=%s reason=cancel_barrier_write_failed", request.symbol)
                 break
             self.strategy.acknowledge_falseflip_cancel_publication(request)
+
+    async def _falseflip2_poll(self, position_book: FlipPositionBook) -> None:
+        """Existing position task only: commit proof/owner/dispatch before memory rearm."""
+        from project_mai_tai.v2_falseflip_release import persist_owner_transition, unanswered_incidents
+
+        if not self.strategy._falseflip2_enabled() or self.session_factory is None:
+            return
+        accounts = self.strategy._removed_wait_accounts()
+        # Classification, settlement and draft are separate CAS revisions. Applying
+        # the same immutable book between commits does not invent a newer read time.
+        for _ in range(2):
+            await self._falseflip_poll()
+            self.strategy.apply_flip_position_book(position_book)
+
+        def fenced(symbol, check):
+            generation = self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(symbol, 0)
+
+            def valid():
+                return (not self.__dict__.get("_clearwait_open_emits", {}).get(symbol, 0)
+                        and self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(symbol, 0)
+                        == generation and check())
+
+            return valid
+
+        for record in self.strategy.pending_falseflip2_releases():
+            request = self.strategy._removed_wait_requests.get(record.symbol)
+            valid = fenced(record.symbol, lambda r=record: self.strategy.falseflip2_release_valid(r))
+            if not valid():
+                continue
+            try:
+                await asyncio.to_thread(persist_owner_transition, self.session_factory, record,
+                                        accounts, valid, request=request)
+            except Exception:  # noqa: BLE001 - uncommitted proof never grants an entry
+                logger.exception("[V2-FALSEFLIP2] %s reason=release_write_pending", record.symbol)
+                continue
+            if valid():
+                self.strategy.acknowledge_falseflip2_release(record)
+
+        for symbol in tuple(self.strategy.__dict__.get("_falseflip2_rearm", {})):
+            state = self.strategy._symbol_states.get(symbol)
+            if state is not None:
+                self.strategy._falseflip_restoring_track(state)
+        for plan in self.strategy.pending_falseflip2_rearms():
+            record, _, previous = plan
+            valid = fenced(record.symbol, lambda p=plan: self.strategy.falseflip2_rearm_valid(p))
+            if not valid():
+                continue
+            try:
+                await asyncio.to_thread(persist_owner_transition, self.session_factory, record,
+                                        accounts, valid, previous=previous)
+            except Exception:  # noqa: BLE001 - keep the old false opportunity fenced
+                logger.exception("[V2-FALSEFLIP2] %s reason=rearm_write_pending", record.symbol)
+                continue
+            if valid():
+                self.strategy.acknowledge_falseflip2_rearm(plan)
+        await self._falseflip_poll()
+        requests = tuple(request for request in self.strategy._removed_wait_requests.values()
+                         if request.purpose == "false_flip_restore")
+        if requests:
+            try:
+                await asyncio.to_thread(unanswered_incidents, self.session_factory, requests)
+            except Exception:  # noqa: BLE001 - cancellation uncertainty remains blocked
+                logger.exception("[V2-FALSEFLIP2] reason=incident_write_failed")
 
     async def _drain_direct_strategy_intents(self) -> None:
         """Emit strategy-owned resting place/cancel queues without an entry-window gate.
@@ -6049,6 +6994,8 @@ class SchwabV2BotService:
             return None
 
     async def _handle_quote(self, symbol: str, quote: Quote) -> None:
+        if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(quote.symbol):
+            return
         now = datetime.now(UTC)
         self._observe_line_trade(symbol, int(getattr(quote, "trade_time_ms", 0) or 0))
         self._last_tick_at[symbol] = _format_eastern(now)
@@ -6086,6 +7033,8 @@ class SchwabV2BotService:
         await self._emit_webull_fanout_legs()
 
     async def _handle_stream_tick(self, tick: SchwabTick) -> None:
+        if not raw_symbol_is_uppercase(tick.symbol):
+            return
         if tick.kind == "trade":
             self._observe_line_trade(tick.symbol, int(tick.event_ts_ms))
         if self._eh_stream_cross_enabled and tick.service == "LEVELONE_EQUITIES":

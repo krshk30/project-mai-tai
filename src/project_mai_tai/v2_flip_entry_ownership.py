@@ -72,6 +72,7 @@ class FlipPositionBook:
     entry_classifications: Mapping[str, tuple[dict, ...]] = field(default_factory=dict)
     filled_opportunities: Mapping[str, tuple[tuple[str, int], ...]] = field(default_factory=dict)
     closed_entry_rows: frozenset[tuple[str, str]] = field(default_factory=frozenset)
+    falseflip_release_proofs: Mapping[tuple[str, int], object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

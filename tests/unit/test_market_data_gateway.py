@@ -81,6 +81,30 @@ class FakeRedis:
         self.entries: list[tuple[str, dict[str, object], dict[str, object]]] = []
         self.hashes: dict[str, dict[str, str]] = {}
 
+    def pipeline(self, *, transaction):
+        assert transaction is False
+        parent = self
+        class Pipeline:
+            def __init__(self):
+                self.commands = []
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                return None
+            def xadd(self, *args, **kwargs):
+                self.commands.append((args, kwargs))
+                return self
+            async def execute(self, *, raise_on_error):
+                assert raise_on_error is False
+                replies = []
+                for args, kwargs in self.commands:
+                    try:
+                        replies.append(await parent.xadd(*args, **kwargs))
+                    except Exception as exc:
+                        replies.append(exc)
+                return replies
+        return Pipeline()
+
     async def xadd(self, stream: str, fields: dict[str, str], **kwargs) -> str:
         self.entries.append((stream, json.loads(fields["data"]), kwargs))
         return "1-0"

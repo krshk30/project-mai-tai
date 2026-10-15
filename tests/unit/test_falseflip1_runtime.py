@@ -50,7 +50,7 @@ def controlled_proof(row):
     return classify_entry(identity, bar)
 
 
-def runtime(rows=FLYE, *, pm=False, budgets=None, installed_policy=False):
+def runtime(rows=FLYE, *, pm=False, budgets=None, installed_policy=False, falseflip2=False):
     proofs = tuple(controlled_proof(row) for row in rows)
     first = proofs[0]
     # FLYE's recorded causal SELL; other fixtures test the new runtime over recorded
@@ -90,6 +90,8 @@ def runtime(rows=FLYE, *, pm=False, budgets=None, installed_policy=False):
         state.resting_schwab_quantity, state.resting_webull_quantity = 197, 98
         state.cw_armed = pm
     strategy.settings.strategy_schwab_1m_v2_false_flip_enabled = True
+    # Retain the original FF1 cancellation-contract controls under its rollback flag.
+    strategy.settings.strategy_schwab_1m_v2_false_flip2_enabled = falseflip2
     strategy.configure_falseflip(budgets or {}, readable=True)
     strategy._resting_in_window = lambda now=None: True
     strategy._resting_session_is_eh = lambda now=None: pm
@@ -844,7 +846,8 @@ async def test_recorded_flye_completed_bar_database_book_next_live_bar_and_exist
 
     bot.intent_emitter = SchwabV2IntentEmitter(strategy.settings, Redis(), "live:schwab_1m_v2")
     mirror_emitter = SchwabV2IntentEmitter(strategy.settings, Redis(), "live:orb")
-    bot._strategy_on_bar("FLYE", entry_bar, observation_phase="live")
+    from tests.unit.v2_input_control import chart_input
+    bot._strategy_on_bar("FLYE", chart_input("FLYE", entry_bar), observation_phase="live")
     await bot._falseflip_poll()
     event_, = emitted
     assert event_["event_type"] == "v2_entry_bar_close"
@@ -879,7 +882,7 @@ async def test_recorded_flye_completed_bar_database_book_next_live_bar_and_exist
     next_bar = next(bar for bar in bars if bar.timestamp_ms == entry_bar.timestamp_ms+60000)
     clock[0] = next_bar.timestamp_ms+62000
     strategy.apply_flip_position_book(bot._fetch_flip_position_book())
-    bot._strategy_on_bar("FLYE", next_bar, observation_phase="live")
+    bot._strategy_on_bar("FLYE", chart_input("FLYE", next_bar), observation_phase="live")
     primary, = strategy.drain_pending_intents()
     mirror, = strategy.drain_webull_direct_intents()
     for emitter, draft in ((bot.intent_emitter, primary), (mirror_emitter, mirror)):
