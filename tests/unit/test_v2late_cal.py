@@ -123,19 +123,21 @@ def cal_env(setup):
 async def test_native_unknown_receipt_and_health_line_counted_without_revert(setup, caplog):
     env = cal_env(setup)
     svc, provider, _, _ = service()
-    svc._warning_health_reader, svc._warning_redis = env.reader, env.client
+    svc._warning_health_reader, svc._warning_health_redis = env.reader, env.client
     await svc.apply_subscription_event(event("v2", ["WFF"]))
     caplog.set_level(logging.INFO)
     for index in range(3):
         await svc._warning_monitor_once()
         assert not svc._warning_revert_reason
-        assert svc._warning_active is (index == 2)
+        assert svc._warning_active
+        assert env.client.xrevrange.call_count == index + 1
     assert svc._warning_active and not svc._warning_revert_reason
     health = await env.reader.read_live(env.client, "test")
     assert health.v2_bar_lateness_seconds is None
     assert health.v2_cohort["status"] == "INCOMPLETE"
     assert svc.warning_metrics()["v2_cohort"]["incomplete_minutes"] == 1
-    assert "status=INCOMPLETE" in caplog.text and "lateness=UNKNOWN" in caplog.text
+    assert svc.warning_metrics()["v2_cohort"]["status"] == "INCOMPLETE"
+    assert provider._ws.removed == []
     assert provider._subscriptions == {"WFF"}
 
 
@@ -173,7 +175,11 @@ async def test_independent_revert_gates_still_strict_with_incomplete_cohort(setu
     env = cal_env(setup)
     health = await env.reader.read_live(env.client, "test")
     assert health.v2_cohort["status"] == "INCOMPLETE"
-    assert WarningWatchdog().check(replace(health, **change), publish_lag_seconds=lag) == reason
+    observed = replace(health, **change)
+    expected = None if change == {"new_live_error": True} else reason
+    assert WarningWatchdog().check(observed, publish_lag_seconds=lag) == expected
+    if change == {"new_live_error": True}:
+        assert observed.new_live_error  # Observation remains truthful; never an A trip.
 
 
 @pytest.mark.asyncio

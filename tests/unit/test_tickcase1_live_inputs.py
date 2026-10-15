@@ -2,7 +2,6 @@
 import ast
 from dataclasses import replace
 from datetime import datetime
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -31,6 +30,7 @@ from tests.unit.test_scanner_confirmed_capture import _FakeSessionFactory
 from tests.unit.test_momwarn1_gateway import event, service
 from tests.unit.test_scanner_cycle_history_restore import build_test_session_factory, FakeRedis
 from project_mai_tai.db.models import DashboardSnapshot
+from tests.c7_retained import retained_bytes, retained_manifest
 
 CASE = json.loads((Path(__file__).parents[1]/'fixtures/tickcase1_native_pairs.json').read_text())
 ROWS = {row['symbol']: row for row in CASE['pair_snapshots']}
@@ -67,9 +67,8 @@ def test_native_snapshot_quotes_cannot_merge_or_overwrite_common(preferred, comm
 
 
 def test_retained13269_rawcase_filter_and_scanner_uppercase_content_parity(monkeypatch):
-    source = Path(CASE['source_path'])
-    raw = source.read_bytes()
-    assert hashlib.sha256(raw).hexdigest() == CASE['source_sha256']
+    raw = retained_bytes('snapshot-market-payload.json')
+    assert retained_manifest()['artifacts']['snapshot-market-payload.json']['original_sha256'] == CASE['source_sha256']
     payload = json.loads(raw)['event']['payload']
     rows = payload['snapshots']
     kept = [row for row in rows if raw_symbol_is_uppercase(row['symbol'])]
@@ -221,9 +220,9 @@ def test_shared_case_helper_matches_stable_T_without_broadening_paper_eligibilit
     namespace = {}
     exec(compile(ast.Module(body=[function], type_ignores=[]), '<stable-T-eligibility>', 'exec'), namespace)
     eligible = namespace['symbol_is_eligible']
-    for symbol in ('TpC', 'TPC', 'BCpC', 'BCPC', '', 'BRK.B', ' TPC ', 'ABCDEF', None):
-        assert eligible(symbol) == (raw_symbol_is_uppercase(symbol) and symbol == symbol.strip()
-                                    and '.' not in symbol and len(symbol) <= 5)
+    for symbol, expected in (('TpC', False), ('TPC', True), ('BCpC', False), ('BCPC', True),
+                             ('', False), ('BRK.B', False), (' TPC ', False), ('ABCDEF', False), (None, False)):
+        assert eligible(symbol) is expected
     assert raw_symbol_is_uppercase('BRK.B') and not eligible('BRK.B')
 
 

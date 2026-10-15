@@ -426,6 +426,12 @@ async def test_u1_daic_bound_memory_pair_is_released_before_sell(replay, monkeyp
     service.settings.oms_v2_cw_target_pct = 5.0
     service.settings.oms_v2_cw_hard_stop_pct = 8.0
     adapter = _FanoutAdapter()
+    from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot
+
+    async def daic_positions(account):
+        return [BrokerPositionSnapshot(account, "DAIC", Decimal(1), Decimal("5.07"))]
+
+    adapter.list_account_positions = daic_positions
     adapter.submit_results = [[ExecutionReport(
         event_type="accepted", client_order_id="schwab_1m_v2-DAIC-protect-ebfb9d30c4a6",
         symbol="DAIC", side="sell", intent_type="close", quantity=Decimal("1"),

@@ -83,11 +83,18 @@ def test_recorded_population_keeps_the_full_denominator_and_raw_provenance():
     assert FIXTURE["raw_sha256"] == "fe2cda938daa5768344351ce8ef587f3ba194e7e27a77e1ee329a5573199f9b8"
 
 
-def test_recorded_carry_state_and_first_flip_population(capsys):
+def test_recorded_carry_state_and_first_flip_population(capsys, monkeypatch):
     path = Path(__file__).parents[2] / "docs/review-artifacts/gapline1/replay_build.py"
     spec = importlib.util.spec_from_file_location("gapline1_build_replay", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    from tests.unit.v2_input_control import chart_input
+
+    class PublicChartInputs(SchwabV2Strategy):
+        def on_observed_bar(self, symbol, bar, **kwargs):
+            return super().on_observed_bar(symbol, chart_input(symbol, bar), **kwargs)
+
+    monkeypatch.setattr(module, "SchwabV2Strategy", PublicChartInputs)
     module.main()
     result = json.loads(capsys.readouterr().out)
     assert len(result["readings"]) == 14

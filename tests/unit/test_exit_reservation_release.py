@@ -483,15 +483,61 @@ def test_the_flag_defaults_OFF() -> None:
     assert Settings().oms_v2_exit_release_reservation_enabled is False
 
 
-def test_the_release_runs_BEFORE_the_sell_is_submitted() -> None:
-    """Ordering is the entire point — cancelling after the sell releases nothing."""
-    import inspect
+async def _assert_managed_release_order(monkeypatch, account, emit):
+    from uuid import UUID
+    from tests.unit.test_oco_duplicate_close_after_close import seed_episode
+    from project_mai_tai.db.models import OmsManagedPosition
 
-    src = inspect.getsource(svc.OmsRiskService._emit_v2_managed_sell)
-    assert "_release_exit_reservation_before_close" in src
-    assert src.index("_release_exit_reservation_before_close") < src.index(
-        "reports = await self.broker_adapter.submit_order(request)"
-    )
+    service, factory, row_id, now, _ = seed_episode(account, exited=0)
+    monkeypatch.setattr(svc, "utcnow", lambda: now)
+    sequence = []
+
+    async def released(**kwargs):
+        assert kwargs["broker_account_name"] == account
+        sequence.append("release")
+        return ExitPairReleaseResult(outcome="released")
+
+    async def submit(request):
+        assert sequence == ["release"], "release must precede submit"
+        assert request.broker_account_name == account and request.quantity == 150
+        sequence.append("submit")
+        return []
+
+    monkeypatch.setattr(service, "_release_exit_reservation_before_close", released)
+    monkeypatch.setattr(service.broker_adapter, "submit_order", submit)
+    with factory() as session:
+        await emit(service, session, session.get(OmsManagedPosition, UUID(row_id)),
+                   intent_type="close", quantity=150, reference_price=4.19,
+                   reason="oms_v2_managed_exit:HARD", bid=4.19)
+    assert sequence == ["release", "submit"]
+
+
+@pytest.mark.asyncio
+async def test_the_release_runs_BEFORE_the_sell_is_submitted(monkeypatch) -> None:
+    for account in ("live:schwab_1m_v2", "live:orb"):
+        await _assert_managed_release_order(monkeypatch, account, svc.OmsRiskService._emit_v2_managed_sell)
+
+
+@pytest.mark.asyncio
+async def test_reversed_managed_release_order_mutant_is_detected(monkeypatch):
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(svc.OmsRiskService._emit_v2_managed_sell)))
+    function = tree.body[0]
+    release = next(statement for statement in function.body
+                   if any(isinstance(node, ast.Attribute) and node.attr == "_release_exit_reservation_before_close"
+                          for node in ast.walk(statement)))
+    function.body.remove(release)
+    index = next(i for i, statement in enumerate(function.body)
+                 if isinstance(statement, ast.Assign)
+                 and any(isinstance(target, ast.Name) and target.id == "reports" for target in statement.targets))
+    function.body.insert(index + 1, release)
+    namespace = dict(vars(svc))
+    exec(compile(ast.fix_missing_locations(tree), "<release-after-submit-mutant>", "exec"), namespace)
+    for account in ("live:schwab_1m_v2", "live:orb"):
+        with pytest.raises(AssertionError, match="release must precede submit"):
+            await _assert_managed_release_order(monkeypatch, account, namespace["_emit_v2_managed_sell"])
 
 
 def test_the_hook_is_FLAG_GATED() -> None:

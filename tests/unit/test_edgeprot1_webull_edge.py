@@ -72,8 +72,8 @@ class _Wire(WebullBrokerAdapter):
         return ExitPairReleaseResult(outcome=self.release_outcome)
 
 
-@pytest.fixture
-def replay(monkeypatch):
+@pytest.fixture(autouse=True)
+def owned_clock(monkeypatch):
     monkeypatch.setattr(module, "utcnow", lambda: NOW)
 
     class _Clock(datetime):
@@ -82,6 +82,10 @@ def replay(monkeypatch):
             return NOW.astimezone(tz) if tz is not None else NOW.replace(tzinfo=None)
 
     monkeypatch.setattr(module, "datetime", _Clock)
+
+
+@pytest.fixture
+def replay(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
                            poolclass=StaticPool)
     Base.metadata.create_all(engine)

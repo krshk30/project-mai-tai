@@ -569,12 +569,21 @@ def _v2_strategy_with_an_expiring_claim(*, mirror_live: bool):
     state.resting_active = True
     state.resting_level = 5.0
     state.last_resting_placed_slot = "first"
+    state.resting_is_broker_order = True
+    state.resting_schwab_generation = "CONTROLLED-PRIMARY"
     state.webull_resting_active = mirror_live
     state.fanout_mirror_cross_below_seen = True
     state.fanout_webull_claimed = True
     state.fanout_claim_ms = _CLAIM_SEGMENT_MS
     state.fanout_claim_outcome = "queued"
     clock["ms"] = _CLAIM_SEGMENT_MS + 31_000
+    strategy.apply_primary_resting_book(observed_at_ms=clock["ms"], orders={
+        ("MIMI", "CONTROLLED-PRIMARY"): {
+            "status": "working", "broker_order_id": "CONTROLLED-ACCEPTED-PRIMARY",
+            "segment_id": 1787846400000, "slot": "resting", "entry_slot": "first",
+            "slot_id": "bb81fed1-b039-5024-af24-fda5e8b98cc2",
+        },
+    })
     state.bars.append(
         OHLCVBar(
             timestamp_ms=clock["ms"] - 30_000,
@@ -626,6 +635,14 @@ def test_v2_claim_expiry_control_the_same_cross_does_emit_once_the_mirror_is_gon
     assert "[V2-FANOUT-CLAIM-EXPIRED]" in log
     assert "[V2-FANOUT-RTH-RESTING]" in log
     assert len(strategy.drain_webull_fanout_intents()) == 1
+
+
+def test_expired_mirror_without_primary_working_proof_still_refuses(caplog) -> None:
+    strategy, state = _v2_strategy_with_an_expiring_claim(mirror_live=False)
+    strategy.apply_primary_resting_book(observed_at_ms=strategy._now_ms(), orders={})
+    log = _cross_again(strategy, state, caplog)
+    assert "[V2-FANOUT-PRIMARY-UNPROVEN]" in log
+    assert strategy.drain_webull_fanout_intents() == []
 
 
 @pytest.mark.asyncio

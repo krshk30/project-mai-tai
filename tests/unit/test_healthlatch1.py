@@ -24,8 +24,8 @@ def _state_and_logs(tmp_path):
     return state, market, paper
 
 
-# 23 function+runtime verdicts: strategy-bar-freshness retired (HEALTHNOISE1).
-@pytest.mark.parametrize("runtime_only,expected", [(True, 19), (False, 23)])
+# 19 runtime plus five independently enumerated function verdicts.
+@pytest.mark.parametrize("runtime_only,expected", [(True, 19), (False, 24)])
 def test_today_exact_stale_state_and_paper_log_summary_green(
     tmp_path, monkeypatch, capsys, runtime_only, expected,
 ):
@@ -67,6 +67,18 @@ def test_today_exact_stale_state_and_paper_log_summary_green(
     assert fhc.main(runtime_only=runtime_only) == 0
     output = capsys.readouterr().out
     assert output.count("VERDICT:") == expected
+    assert fhc.RUNTIME_SERVICES == (
+        "project-mai-tai-control.service", "project-mai-tai-market-capture.service",
+        "project-mai-tai-market-data.service", "project-mai-tai-momentum-paper.service",
+        "project-mai-tai-oms.service", "project-mai-tai-orb-schwab.service",
+        "project-mai-tai-reconciler.service", "project-mai-tai-schwab-1m-v2.service",
+        "project-mai-tai-strategy.service",
+    )
+    if not runtime_only:
+        assert sorted(original.check.__name__ for original in fhc.FUNCTION_CHECKS) == [
+            "check_bar_continuity", "check_d6_status_freshness", "check_momentum_owned_backing",
+            "check_oms_order_lifecycle", "check_stops_armed",
+        ]
     assert f"SUMMARY: GREEN fleet-function-health checks={expected}" in output
     assert "feed-policy-violation" not in output
     assert output.count("v2-bar-continuity") == (0 if runtime_only else 1)
