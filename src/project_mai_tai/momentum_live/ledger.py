@@ -14,9 +14,18 @@ from project_mai_tai.momentum_live.persistence import LivePersistence
 ET = ZoneInfo("America/New_York")
 
 
+def _recorded_fill_time(value, now):
+    if not isinstance(value, datetime):
+        return None
+    # SQLite returns naive timestamps for the same UTC-backed column.
+    stamp = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    return stamp if datetime(1970, 1, 1, tzinfo=UTC) < stamp <= now else None
+
+
 def load_live_ledger(session_factory, day) -> dict:
     """Read only the new strategy's broker fills; no order-price cycle projection."""
     with session_factory() as session:
+        now = datetime.now(UTC)
         rows = session.execute(select(Fill, BrokerOrder, BrokerAccount.name)
             .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
             .join(BrokerAccount, BrokerAccount.id == Fill.broker_account_id)
@@ -49,12 +58,18 @@ def load_live_ledger(session_factory, day) -> dict:
             group = episodes.setdefault(identity, {"symbol": fill.symbol, "account": account,
                 "buy_qty": Decimal(0), "buy_value": Decimal(0), "sell_qty": Decimal(0),
                 "sell_value": Decimal(0), "entry": None, "entry_time_unknown": False,
+                "recorded_entry": None, "recorded_entry_unknown": False,
                 "exit": None, "exit_reason": ""})
             if group["symbol"] != fill.symbol or group["account"] != account:
                 raise Refusal("live_episode_binding_CHANGED")
             if fill.side == "buy":
                 group["buy_qty"] += fill.quantity
                 group["buy_value"] += value
+                recorded = _recorded_fill_time(fill.filled_at, now)
+                if recorded is None:
+                    group["recorded_entry_unknown"] = True
+                else:
+                    group["recorded_entry"] = min(group["recorded_entry"], recorded) if group["recorded_entry"] else recorded
                 if stamp is None:
                     group["entry_time_unknown"] = True
                 else:
@@ -74,9 +89,13 @@ def load_live_ledger(session_factory, day) -> dict:
                 raise Refusal("live_fill_balance_UNKNOWN")
             row = {"episode_id": identity, "ticker": group["symbol"], "symbol": group["symbol"],
                 "account_name": group["account"], "quantity": str(bought),
-                "entry_time": (group["entry"].astimezone(ET).isoformat()
-                               if group["entry"] and not group["entry_time_unknown"] else "UNKNOWN"),
-                "entry_time_status": "UNKNOWN" if group["entry_time_unknown"] else "BROKER_EXECUTION",
+                "entry_time": (group["recorded_entry"].astimezone(ET).isoformat()
+                               if group["recorded_entry"] and not group["recorded_entry_unknown"] else "UNKNOWN"),
+                "entry_time_status": "UNKNOWN" if group["recorded_entry_unknown"] else "RECORDED_FILL_TIME",
+                "entry_time_source": "owned_buy_fill.filled_at",
+                "first_execution_time": (group["entry"].astimezone(ET).isoformat()
+                                         if group["entry"] and not group["entry_time_unknown"] else "UNKNOWN"),
+                "first_execution_time_status": "UNKNOWN" if group["entry_time_unknown"] else "BROKER_EXECUTION",
                 "entry_price": str(group["buy_value"]/bought), "remaining_quantity": str(bought-sold)}
             if sold == bought:
                 if group["exit"].astimezone(ET).date() == day:
@@ -90,4 +109,5 @@ def load_live_ledger(session_factory, day) -> dict:
         return {"strategy_code": STRATEGY_CODE, "status": "READABLE", "positions": positions,
             "closed_today": closed, "daily_pnl": str(sum((Decimal(row["pnl"]) for row in closed), Decimal(0))),
             "source": "strategy_owned_broker_fills", "fills_read": len(rows),
-            "unknown_entry_time_episodes": sum(group["entry_time_unknown"] for group in episodes.values())}
+            "unknown_entry_time_episodes": sum(group["recorded_entry_unknown"] for group in episodes.values()),
+            "unknown_first_execution_time_episodes": sum(group["entry_time_unknown"] for group in episodes.values())}

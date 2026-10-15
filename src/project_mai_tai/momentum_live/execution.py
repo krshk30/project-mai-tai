@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 import logging
 from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
@@ -42,7 +42,7 @@ class LiveEntryExecutor:
     def _snapshot(self, episode_id: str) -> dict:
         return next(row for row in self.book.snapshot() if row["episode_id"] == episode_id)
 
-    def _request(self, signal: Signal, episode_id: str, route: Route) -> OrderRequest:
+    def _request(self, signal: Signal, episode_id: str, route: Route, *, refusal_context=None) -> OrderRequest:
         now = self.ports.clock()
         now_ns = int(now.timestamp()*1e9)
         if not 0 <= now_ns-signal.observed_ns <= 2_000_000_000:
@@ -56,6 +56,17 @@ class LiveEntryExecutor:
         quote_ns = int(stamp.timestamp()*1e9) if isinstance(stamp, datetime) and stamp.tzinfo is not None else None
         ask = Decimal(str(quote["ask"])) if quote.get("ask") is not None else None
         tick = Decimal(".0001") if ask is not None and ask <= 1 else Decimal(".01")
+        if refusal_context is not None:
+            # Diagnostic snapshot of this read, not a later/repeated quote lookup.
+            try:
+                refusal_context.update(
+                    ask=ask if ask is not None else "UNKNOWN",
+                    ask_age_ms=(now_ns-quote_ns)/1_000_000 if quote_ns is not None else "UNKNOWN",
+                    limit=(ask/tick).to_integral_value(rounding=ROUND_CEILING)*tick
+                    if ask is not None and ask.is_finite() else "UNKNOWN",
+                )
+            except Exception:
+                pass  # Diagnostics must not change pricing/refusal behavior.
         priced = price_entry(signal.signal_price, ask, quote_ns=quote_ns, now_ns=now_ns, route=route, tick=tick)
         session = "NORMAL" if (local.hour, local.minute) >= (9, 30) and local.hour < 16 else "AM"
         account = self.accounts[route]
@@ -96,26 +107,36 @@ class LiveEntryExecutor:
             raise Refusal("episode_already_durable_no_resubmit")
         if self.ports.request_quote_owner is not None:
             remaining = (signal.observed_ns+2_000_000_000-int(self.ports.clock().timestamp()*1e9))/1e9
+            refusal_context = {"ask": "UNKNOWN", "ask_age_ms": "UNKNOWN", "limit": "UNKNOWN", "cap": "UNKNOWN"}
+            try:
+                refusal_context["cap"] = signal.signal_price*Decimal("1.015")
+            except Exception:
+                pass  # A diagnostic projection cannot replace the original refusal.
             try:
                 async with asyncio.timeout(max(0, remaining)):
                     await self.ports.request_quote_owner()
                     try:
-                        self._request(signal, episode.episode_id, route)
+                        self._request(signal, episode.episode_id, route, refusal_context=refusal_context)
                     except Refusal as exc:
                         if str(exc) != "quote_missing_future_or_stale" or self.ports.wait_quote is None:
                             raise
                         # One quote notification, not polling or order retries.
                         await self.ports.wait_quote(signal.symbol)
-                        self._request(signal, episode.episode_id, route)
-            except (TimeoutError, Refusal):
+                        self._request(signal, episode.episode_id, route, refusal_context=refusal_context)
+            except (TimeoutError, Refusal) as exc:
                 # No order/send exists yet: this is proven unsent, not an unknown
                 # broker ACK. Persist expiry and keep source/move idempotence.
                 self.book.reconcile(episode.episode_id, cumulative_filled=Decimal(0), cumulative_exited=Decimal(0),
                     now_ns=int(self.ports.clock().timestamp()*1e9), terminal_entry=True)
                 await self.ports.save_episode(self._snapshot(episode.episode_id))
                 await self.ports.request_quote_owner()
-                logger.info("[MOMLIVE1-REFUSED] symbol=%s reason=quote_deadline_or_invalid no_wire=true",
-                            signal.symbol)
+                logger.info(
+                    "[MOMLIVE1-REFUSED] symbol=%s reason=%s ask=%s ask_age_ms=%s "
+                    "signal=%s cap=%s limit=%s route=%s no_wire=true",
+                    signal.symbol, str(exc) or "timeout", refusal_context["ask"],
+                    refusal_context["ask_age_ms"], signal.signal_price,
+                    refusal_context["cap"], refusal_context["limit"], route.value,
+                )
                 raise Refusal("quote_wait_expired_or_refused_no_wire") from None
         request = self._request(signal, episode.episode_id, route)
         await self.ports.durable_order(episode.episode_id, request, route.value)

@@ -5,7 +5,7 @@ import base64
 from contextlib import asynccontextmanager, contextmanager
 import csv
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from html import escape
 from io import StringIO
 import json
@@ -75,14 +75,91 @@ from project_mai_tai.strategy_core import (
     TopGainersConfig,
 )
 from project_mai_tai.trade_episodes import collect_completed_trade_cycles
+from project_mai_tai.trade_episodes import classify_exit_reason
 from project_mai_tai.trade_episodes import display_order_path
 from project_mai_tai.trade_episodes import looks_like_broker_payload_text
 from project_mai_tai.trade_episodes import parse_et_timestamp
 from project_mai_tai.trade_episodes import summarize_closed_today_reason
+from project_mai_tai.trade_episodes import summarize_exit_events
 
 
 SERVICE_NAME = "control-plane"
 EASTERN_TZ = ZoneInfo("America/New_York")
+
+
+def _atr_episode_fill_ledger(recent_fills: list[dict[str, Any]]) -> tuple[list[dict], float] | None:
+    """Attribute exits to one entry episode, never consume another episode's lot."""
+    if not recent_fills or len(recent_fills) >= 1000:
+        return None
+    fills = [row for row in recent_fills if row.get("strategy_code") == "schwab_1m_v2"]
+    if not fills:
+        return None
+    episodes: dict[tuple[str, str, str], dict[str, Any]] = {}
+    realized = Decimal(0)
+    # Broker timestamps can tie for an entry and its OCO child. Identity, not
+    # timestamp-only FIFO, decides which episode receives that exit.
+    for row in sorted(fills, key=lambda item: (
+            parse_et_timestamp(item.get("filled_at")), item.get("side") != "buy")):
+        account = str(row.get("broker_account_name") or "")
+        symbol = str(row.get("symbol") or "").upper()
+        coid = str(row.get("client_order_id") or "")
+        try:
+            quantity, price = Decimal(str(row["quantity"])), Decimal(str(row["price"]))
+        except (KeyError, ArithmeticError, ValueError):
+            return None
+        if (not account or not symbol or not coid or not row.get("filled_at")
+                or not quantity.is_finite() or not price.is_finite() or quantity <= 0 or price <= 0):
+            return None
+        if row.get("side") == "buy":
+            key = (account, symbol, coid)
+            episode = episodes.setdefault(key, {
+                "ticker": symbol, "symbol": symbol, "broker_account_name": account,
+                "entry_client_order_id": coid, "entry_time": row["filled_at"],
+                "bought": Decimal(0), "entry_value": Decimal(0), "remaining": Decimal(0),
+                "remaining_cost": Decimal(0), "sold": Decimal(0), "exit_value": Decimal(0),
+                "pnl_value": Decimal(0), "exit_events": [],
+            })
+            episode["bought"] += quantity
+            episode["entry_value"] += quantity * price
+            episode["remaining"] += quantity
+            episode["remaining_cost"] += quantity * price
+            continue
+        if row.get("side") != "sell":
+            return None
+        if "-ocoexit-" in coid:
+            episode = episodes.get((account, symbol, coid.split("-ocoexit-", 1)[0]))
+        else:
+            # A software exit has no parent coid. Only a single live episode is
+            # attributable; ambiguous/overlapping inventory is UNKNOWN, not FIFO.
+            candidates = [item for key, item in episodes.items()
+                          if key[:2] == (account, symbol) and item["remaining"] > 0]
+            episode = candidates[0] if len(candidates) == 1 else None
+        if episode is None or quantity > episode["remaining"]:
+            return None
+        cost = episode["remaining_cost"] * quantity / episode["remaining"]
+        profit = quantity * price - cost
+        realized += profit
+        episode["remaining"] -= quantity
+        episode["remaining_cost"] -= cost
+        episode["sold"] += quantity
+        episode["exit_value"] += quantity * price
+        episode["pnl_value"] += profit
+        episode["exit_time"] = row["filled_at"]
+        episode["exit_events"].append({"qty": float(quantity), "price": float(price),
+                                       "reason": classify_exit_reason(row), "intent_type": "close"})
+    closed = []
+    for episode in episodes.values():
+        if episode["remaining"] != 0:
+            continue
+        entry_price = episode["entry_value"] / episode["bought"]
+        exit_price = episode["exit_value"] / episode["sold"]
+        closed.append({key: value for key, value in episode.items() if key in {
+            "ticker", "symbol", "broker_account_name", "entry_client_order_id",
+            "entry_time", "exit_time", "exit_events",
+        }} | {"quantity": float(episode["bought"]), "entry_price": float(entry_price),
+              "exit_price": float(exit_price), "pnl": float(episode["pnl_value"]),
+              "profit_pct": float((exit_price / entry_price - 1) * 100)})
+    return closed, float(realized)
 SCHWAB_OAUTH_REDIRECT_URI = "https://hook.project-mai-tai.live/auth/callback"
 
 
@@ -2079,6 +2156,15 @@ class ControlPlaneRepository:
                     ][:25],
                 }
             )
+            if code == "schwab_1m_v2":
+                ledger = _atr_episode_fill_ledger(recent_fills)
+                if ledger is None:
+                    bot_views[-1]["closed_today_source"] = "UNKNOWN_FILL_EPISODE_COVERAGE"
+                    bot_views[-1]["closed_today"] = []
+                    bot_views[-1]["daily_pnl"] = None
+                else:
+                    bot_views[-1]["closed_today"], bot_views[-1]["daily_pnl"] = ledger
+                    bot_views[-1]["closed_today_source"] = "ATTRIBUTED_EPISODE_FILLS"
             if code == "orb_schwab":
                 live_view = bot_views[-1]
                 for key, timestamp in (("recent_orders", "updated_at"), ("recent_fills", "filled_at"), ("recent_intents", "updated_at")):
@@ -5588,8 +5674,12 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
         "pending_open_symbols": bot["pending_open_symbols"],
         "pending_close_symbols": bot["pending_close_symbols"],
         "pending_scale_levels": bot["pending_scale_levels"],
-        "daily_pnl": bot["daily_pnl"],
-        "closed_today": _normalize_closed_today_rows(bot["closed_today"]),
+        "daily_pnl": (None if bot.get("closed_today_source") == "UNKNOWN_FILL_EPISODE_COVERAGE"
+                      else bot["daily_pnl"]),
+        "closed_today": ([] if bot.get("closed_today_source") == "UNKNOWN_FILL_EPISODE_COVERAGE"
+                         else _normalize_closed_today_rows(bot["closed_today"])),
+        **({"closed_today_source": bot["closed_today_source"]}
+           if "closed_today_source" in bot else {}),
         "recent_decisions": recent_decisions,
         "recent_intents": bot["recent_intents"],
         "recent_orders": bot["recent_orders"],
@@ -6449,6 +6539,8 @@ def _render_bot_detail_page(
     tos_parity_rows = _build_tos_parity_rows(tos_parity)
     decision_rows = _build_bot_decision_rows(recent_decisions)
     failed_rows, failed_count = _build_failed_action_rows(bot)
+    if strategy_code == "schwab_1m_v2" and bot.get("closed_today_source") == "ATTRIBUTED_EPISODE_FILLS":
+        completed_pnl = _as_float(bot["daily_pnl"])
     pnl_color = "#5fff8d" if completed_pnl >= 0 else "#ff6b6b"
     recent_fill_count = len(recent_fills)
     is_paper_exit = strategy_code == "polygon_30s"
@@ -6465,6 +6557,12 @@ def _render_bot_detail_page(
     )
     if strategy_code == "orb_schwab":
         overview_trades_value = completed_count + int(bot.get("position_count", 0))
+    if strategy_code == "schwab_1m_v2" and bot.get("closed_today_source") == "UNKNOWN_FILL_EPISODE_COVERAGE":
+        overview_pnl_value = "UNKNOWN"
+        completed_count = "UNKNOWN"
+        pnl_color = "#888"
+    elif strategy_code == "schwab_1m_v2" and bot.get("closed_today_source") == "ATTRIBUTED_EPISODE_FILLS":
+        overview_pnl_value = f"${Decimal(str(completed_pnl)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):+,.2f}"
     retention_rows = list(bot.get("retention_states", []))
     active_symbols: list[str] = []
     for item in bot["positions"]:
@@ -10150,6 +10248,8 @@ def _build_completed_position_rows(
     recent_orders: list[dict[str, Any]],
     recent_fills: list[dict[str, Any]],
 ) -> tuple[str, int, float]:
+    if bot.get("closed_today_source") == "UNKNOWN_FILL_EPISODE_COVERAGE":
+        return ('<tr><td colspan="9">UNKNOWN: entry-episode fill coverage is incomplete.</td></tr>', 0, 0.0)
     completed_rows = _collect_completed_position_rows(bot, recent_orders, recent_fills)
     if not completed_rows:
         return (
@@ -10172,7 +10272,7 @@ def _build_completed_position_rows(
 def _render_completed_position_row(row: dict[str, Any], *, note: str = "", short_times: bool = False) -> str:
     """ATR's existing row component; Momentum supplies only display labels."""
     pnl = _as_float(row.get("pnl"))
-    color = "#888" if "pnl_label" in row else "#00c853" if pnl >= 0 else "#ff1744"
+    color = "#888" if "pnl_label" in row and not row.get("pnl_label_known") else "#00c853" if pnl >= 0 else "#ff1744"
     note_html = f'<br><small style="color:#98a6c8;font-size:10px;">{escape(note)}</small>' if note else ""
     def time_label(value: Any) -> str:
         label = _datetime_str(str(value) or "-")
@@ -10198,6 +10298,21 @@ def _collect_completed_position_rows(
 ) -> list[dict[str, Any]]:
     strategy_code = str(bot.get("strategy_code", "") or "")
     account_name = str(bot.get("account_name", "") or "")
+    if strategy_code == "schwab_1m_v2" and bot.get("closed_today_source") == "ATTRIBUTED_EPISODE_FILLS":
+        orders_by_coid = {str(order.get("client_order_id") or ""): order for order in recent_orders}
+        return [
+            {"ticker": row["symbol"],
+             "path": display_order_path(orders_by_coid.get(row["entry_client_order_id"], {})) or "ATR",
+             "quantity": _fmt_qty(row["quantity"]), "entry_time": row["entry_time"],
+             "entry_price": f"${Decimal(str(row['entry_price'])):f}", "exit_time": row["exit_time"],
+             "exit_price": f"${Decimal(str(row['exit_price'])):f}", "pnl": row["pnl"],
+             "pnl_label": f"${Decimal(str(row['pnl'])).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):+,.2f}",
+             "pnl_label_known": True,
+             "pnl_pct": row["profit_pct"], "summary": summarize_exit_events(row["exit_events"], row["quantity"]),
+             "sort_time": row["exit_time"],
+             "cycle_key": str(row["broker_account_name"]) + ":" + row["entry_client_order_id"]}
+            for row in bot["closed_today"]
+        ]
     cycles = collect_completed_trade_cycles(
         strategy_code=strategy_code,
         broker_account_name=account_name,
