@@ -19,6 +19,15 @@ RETIRED_ORB_KEYS = {"orb_intrabar_reclaim_enabled", "orb_resting_entry_enabled",
                     "orb_running_high_enabled"}
 CANDIDATE = {key: value for key, value in RECORDED.items() if key not in RETIRED_ORB_KEYS}
 CANDIDATE["strategy_schwab_1m_v2_line_chart_restoration_enabled"] = True
+SAFETY = "strategy_schwab_1m_v2_cw_armed_segment_safety_enabled"
+# FTFT operator fresh-flip rule, 76154752 (#993), retained by LINE=CHART.
+# These nine retained SELLs precede this factory's watch/boot boundary. They
+# are not proof of the actual historical scanner/ownership state.
+PREWATCH_CASES = {
+    ("2026-10-06", "OLOX"), ("2026-10-06", "RUBI"), ("2026-10-06", "WHLR"),
+    ("2026-10-07", "BIYA"), ("2026-10-07", "MTEN"), ("2026-10-07", "SXTC"),
+    ("2026-10-08", "IPW"), ("2026-10-08", "MEDS"), ("2026-10-09", "MI"),
+}
 
 
 def test_candidate_changes_only_line_from_recorded_process_flags():
@@ -48,8 +57,7 @@ def test_candidate_changes_only_line_from_recorded_process_flags():
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: f'{row["day"]}-{row["symbol"]}')
 async def test_joined_line_with_every_recorded_process_flag_preserves_decisions(monkeypatch, row):
     replay_module = __import__("line_repair_preopen_replay")
-    baseline = await audit_module.observe(deepcopy(row))
-    monkeypatch.setattr(replay_module, "LIVE_CONTROLS", CANDIDATE)
+    baseline_controls = {**replay_module.LIVE_CONTROLS, SAFETY: True}
     original_setup = replay_module.setup
 
     def restored_control(*args, **kwargs):
@@ -62,9 +70,37 @@ async def test_joined_line_with_every_recorded_process_flag_preserves_decisions(
         return case, provider
 
     monkeypatch.setattr(replay_module, "setup", restored_control)
+    # 76154752 + reviewer C7 19:5x: compare the same reconstructed-slot policy,
+    # not safety-OFF fresh claims against safety-ON consumed claims. All original
+    # bars, decision fields and volume-isolation assertions remain unchanged.
+    monkeypatch.setattr(replay_module, "LIVE_CONTROLS", baseline_controls)
+    baseline = await audit_module.observe(deepcopy(row))
+    monkeypatch.setattr(replay_module, "LIVE_CONTROLS", CANDIDATE)
     composed = await audit_module.observe(deepcopy(row))
     assert composed == baseline
     assert composed["general_callback_prefix_bars"] == 0
     assert composed["general_buffer_prefix_bars"] == 0
     assert composed["seed_db_bar_writes"] == 0
     assert composed["decisions"]["rebuild_buys"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("row", [r for r in ROWS if (r["day"], r["symbol"]) in PREWATCH_CASES],
+                         ids=lambda row: f'{row["day"]}-{row["symbol"]}')
+async def test_prewatch_sell_cannot_retain_safety_off_claims(monkeypatch, row):
+    """76154752 / FTFT fresh-flip card: old parity would erase this safety gate."""
+    replay_module = __import__("line_repair_preopen_replay")
+    claims = []
+    for enabled in (False, True):
+        monkeypatch.setattr(replay_module, "LIVE_CONTROLS", {**CANDIDATE, SAFETY: enabled})
+        case, _ = replay_module.setup(deepcopy(row), row["boundary_ms"], admission_control=True)
+        case.bot._boot_state_restoration_complete = True
+        case.bot._cw_boot_hold_check()
+        assert await replay_module.repair(deepcopy(row), case, row["boundary_ms"])
+        state = case.strategy.watchlist_state(row["symbol"])
+        assert state.atr_state == "short"
+        assert state.atr_short_flip_bar_ts <= case.strategy._boot_ms
+        assert state.position_qty_held == 0
+        assert case.snapshot()["buy_count"] == 0
+        claims.append((state.cw_resting_taken, state.cw_reclaim_taken))
+    assert claims == [(False, False), (True, True)]

@@ -94,6 +94,20 @@ def _console_script_targets() -> set[str]:
         if "=" in line and ":" in line and "project_mai_tai" in line:
             target = line.split("=", 1)[1].strip().strip('"').strip("'")
             out.add(target.split(":")[0])
+    # Existing reviewed SEC nightly launcher (ea60d9f7) constructs python -m
+    # explicitly. Detect that source evidence, not a blanket module exemption.
+    launcher = SRC.parents[1] / "ops/momlive1/sec_nightly_runner.py"
+    tree = ast.parse(launcher.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "command" for target in node.targets
+        ) and isinstance(node.value, ast.List):
+            args = node.value.elts
+            for index, arg in enumerate(args[:-1]):
+                if isinstance(arg, ast.Constant) and arg.value == "-m":
+                    module = args[index + 1]
+                    if isinstance(module, ast.Constant) and isinstance(module.value, str):
+                        out.add(module.value)
     return out
 
 
@@ -163,6 +177,19 @@ def test_known_inert_set_may_only_shrink():
 
 def test_every_launched_entry_says_how_it_is_launched():
     assert all(len(reason) > 15 for reason in LAUNCHED_NOT_IMPORTED.values())
+
+
+def test_sec_nightly_source_launch_does_not_exempt_unresolved_callers():
+    targets = _console_script_targets()
+    assert "project_mai_tai.services.momentum_live_sec_prepare" in targets
+    for unresolved in (
+        "project_mai_tai.momentum_paper.case_collision_append",
+        "project_mai_tai.oms.webull_identity_copy_audit",
+        "project_mai_tai.services.momentum_live_replay",
+    ):
+        assert unresolved not in targets
+        assert unresolved not in LAUNCHED_NOT_IMPORTED
+        assert unresolved not in KNOWN_INERT
 
 
 def test_broker_refusal_is_actually_wired():
