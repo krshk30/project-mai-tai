@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
 import socket
 import time
+import threading
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from datetime import UTC, datetime, timedelta
@@ -141,6 +143,10 @@ class _ExitFetchFailed:
 
 
 _EXIT_FETCH_FAILED = _ExitFetchFailed()
+
+
+class _BoundOcoHistoryUnknown(ValueError):
+    """An exact own native execution exists, but its balance cannot permit a sell."""
 
 
 class _ManagedSellEvents(list):
@@ -10214,6 +10220,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self, *, managed_row_id: str, strategy_code: str,
         broker_account_name: str, symbol: str, requested_quantity: int,
         target_context: dict[str, str] | None = None,
+        allow_pending_fill_writer: bool = False,
     ) -> int:
         def read(session):
             current = self.store.get_open_managed_position(
@@ -10225,6 +10232,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 return 0, None, "episode_or_owner_changed"
             if not self._cw_target_binding_matches(current, target_context):
                 return 0, None, "target_binding_changed"
+            pending = self.__dict__.get("_oco_exit_fill_pending", {}).get((broker_account_name, symbol))
+            if pending is not None and pending.row_id == managed_row_id and not allow_pending_fill_writer:
+                return 0, None, "same_episode_oco_exit_pending"
             strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
             account = session.scalar(select(BrokerAccount).where(
                 BrokerAccount.name == broker_account_name
@@ -10234,7 +10244,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             owned = self.store.get_virtual_position(
                 session, strategy_id=strategy.id, broker_account_id=account.id, symbol=symbol,
             )
-            return int(current.current_quantity), (
+            managed_quantity = int(current.current_quantity)
+            try:
+                native = self._stored_owned_oco_balance(session, current)
+            except _BoundOcoHistoryUnknown as exc:
+                return 0, None, f"bound_oco_history_unknown:{exc}"
+            if native is not None:
+                _, entered, exited = native
+                managed_quantity = min(managed_quantity, max(0, int(entered - exited)))
+            return managed_quantity, (
                 Decimal(owned.quantity) if owned is not None else None
             ), ""
 
@@ -10254,6 +10272,88 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                             else "own_quantity_cap"),
             )
         return quantity
+
+    async def _v2_managed_sell_native_exit_refusal(
+        self, *, managed_row_id, broker_account_name, symbol, target_context,
+        allow_pending_fill_writer,
+    ):
+        """Fence proven native executions without moving the post-release owner read."""
+        def read(session):
+            current = self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=symbol,
+            )
+            if (current is None or str(current.id) != managed_row_id
+                    or current.strategy_code != "schwab_1m_v2"):
+                return "episode_or_owner_changed"
+            if not self._cw_target_binding_matches(current, target_context):
+                return "target_binding_changed"
+            pending = self.__dict__.get("_oco_exit_fill_pending", {}).get((broker_account_name, symbol))
+            if pending is not None and pending.row_id == managed_row_id and not allow_pending_fill_writer:
+                return "same_episode_oco_exit_pending"
+            try:
+                native = self._stored_owned_oco_balance(session, current)
+            except _BoundOcoHistoryUnknown as exc:
+                return f"bound_oco_history_unknown:{exc}"
+            if native is not None and native[1] == native[2]:
+                return "owned_native_exit_fully_filled"
+            return None
+
+        return await self._run_db(read, commit=False)
+
+    def _stored_owned_oco_balance(self, session, row):
+        """Exact durable entry/child fills only; no symbol-wide FIFO or broker reads."""
+        entry = self._find_oco_entry_order(
+            session, row.broker_account_name, row.symbol, row=row,
+        )
+        if entry is None:
+            return None
+        exits = session.execute(select(Fill, BrokerOrder).join(
+            BrokerOrder, BrokerOrder.id == Fill.order_id,
+        ).where(
+            BrokerOrder.intent_id == entry.intent_id,
+            BrokerOrder.strategy_id == entry.strategy_id,
+            BrokerOrder.broker_account_id == entry.broker_account_id,
+            BrokerOrder.symbol == row.symbol, BrokerOrder.side == "sell",
+            BrokerOrder.order_type == "oco_exit",
+            Fill.strategy_id == entry.strategy_id,
+            Fill.broker_account_id == entry.broker_account_id,
+            Fill.symbol == row.symbol, Fill.side == "sell",
+        )).all()
+        bound_exits = [(fill, child) for fill, child in exits
+            if child.broker_order_id and child.client_order_id == oco_exit_client_order_id(
+                entry.client_order_id, child.broker_order_id,
+            )]
+
+        def execution_quantity(fill):
+            try:
+                quantity, price = Decimal(fill.quantity), Decimal(fill.price)
+            except (ValueError, TypeError, ArithmeticError) as exc:
+                raise _BoundOcoHistoryUnknown("invalid_execution") from exc
+            if not quantity.is_finite() or quantity < 0:
+                raise _BoundOcoHistoryUnknown("invalid_execution_quantity")
+            if quantity == 0:
+                return Decimal(0)  # Cancelled-zero siblings are not executions.
+            if not price.is_finite() or price <= 0 or not fill.broker_fill_id:
+                raise _BoundOcoHistoryUnknown("invalid_execution_price_or_identity")
+            return quantity
+
+        exited = Decimal(0)
+        for fill, child in bound_exits:
+            quantity = execution_quantity(fill)
+            if quantity > 0 and not str(fill.broker_fill_id).startswith(f"{child.broker_order_id}:"):
+                raise _BoundOcoHistoryUnknown("conflicting_exit_execution_identity")
+            exited += quantity
+        if not bound_exits or exited == 0:
+            # Unrelated child history must not veto a legitimate owned close.
+            return None
+        entered = sum((execution_quantity(fill) for fill in session.scalars(select(Fill).where(
+            Fill.order_id == entry.id, Fill.strategy_id == entry.strategy_id,
+            Fill.broker_account_id == entry.broker_account_id, Fill.symbol == row.symbol,
+            Fill.side == "buy",
+        ))), Decimal(0))
+        if not entered.is_finite() or entered <= 0 or not exited.is_finite() or exited > entered:
+            raise _BoundOcoHistoryUnknown("conflicting_entry_exit_balance")
+        return entry, entered, exited
 
     @staticmethod
     def _cw_target_prepare_observation(context):
@@ -10340,8 +10440,24 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         target_guards = self._cw_target_prepare_observation(confirmation_context) if is_target else []
         target_identity = dict(account=row.broker_account_name, symbol=row.symbol,
                                metadata=confirmation_context or {}, guards=target_guards)
-        reservation: ExitPairReleaseResult | None = None
         protective = self._is_protective_v2_exit(reason)
+        # Only positive native execution evidence fences the protective path
+        # here. Its established ownership read stays after durable pair release.
+        session.commit()
+        native_refusal = await self._v2_managed_sell_native_exit_refusal(
+            managed_row_id=str(row.id),
+            broker_account_name=row.broker_account_name, symbol=row.symbol,
+            target_context=confirmation_context, allow_pending_fill_writer=not is_target,
+        )
+        if native_refusal:
+            self.logger.warning(
+                "[OMS-V2-EXIT-OWNED-QUANTITY] acct=%s sym=%s row=%s sell=0 reason=%s",
+                row.broker_account_name, row.symbol, row.id, native_refusal,
+            )
+            if is_target:
+                self._log_cw_target_attempt(**target_identity, blocked_guard="_v2_managed_sell_native_exit_refusal")
+            return _ManagedSellEvents(ownership_refused=True)
+        reservation: ExitPairReleaseResult | None = None
         # Resolve the actual broker state before creating a durable intent. A broker-filled pair
         # always suppresses the redundant sell. Unresolved profit-taking waits; protective exits
         # continue so uncertainty cannot disable the hard stop or another safety close.
@@ -10369,6 +10485,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             "managed_row_id": str(row.id), "strategy_code": row.strategy_code,
             "broker_account_name": row.broker_account_name, "symbol": row.symbol,
         }
+        if not is_target:
+            # A pending attribution reader is not a proven fill. Keep its
+            # writer intact while retaining the existing protective close path.
+            owned_quantity_args["allow_pending_fill_writer"] = True
         # Release evidence belongs to this session. Finish its transaction before
         # opening the independent reader, even if the ownership check refuses the sell.
         session.commit()
@@ -11065,6 +11185,50 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         except Exception:  # noqa: BLE001 - evidence bookkeeping is never load-bearing here
             self.logger.warning("[POSITIONS-READ-RECEIPT] offer_failed")
 
+    def _log_momentum_owned_backing_mismatch(
+        self, mismatches, account_names, *, observed_account_ids=None,
+    ) -> None:
+        observed = (set(account_names) | {row[0] for row in mismatches}
+                    if observed_account_ids is None else set(observed_account_ids))
+        by_account = {account: [] for account in observed}
+        for account, symbol, quantity in mismatches:
+            if account in by_account:
+                by_account[account].append((symbol, str(Decimal(quantity).normalize())))
+        state = self.__dict__.setdefault("_momentum_backing_mismatch_log", {
+            "lock": threading.Lock(), "accounts": {},
+        })
+        # Sync workers may overlap; only the diagnostic receipt is serialized.
+        with state["lock"]:
+            now = time.monotonic()
+            receipts = state["accounts"]
+            changed = set()
+            for account, rows in by_account.items():
+                evidence = (account_names.get(account, str(account)), sorted(rows))
+                signature = hashlib.sha256(repr(evidence).encode()).digest() if rows else None
+                previous = receipts.pop(account, None)
+                last_logged = previous[1] if previous is not None else None
+                if signature is None:
+                    last_logged = None
+                elif not (previous is not None and previous[0] == signature
+                          and last_logged is not None and 0 <= now - last_logged < 60):
+                    changed.add(account)
+                    last_logged = now
+                receipts[account] = (signature, last_logged)
+                # Oldest observed account is evicted; at worst it logs once more.
+                if len(receipts) > 128:
+                    receipts.pop(next(iter(receipts)))
+            if not changed:
+                return
+            emitted = [row for row in mismatches if row[0] in changed]
+            detail = ", ".join(
+                f"{account_names.get(account, account)}:{symbol}={quantity}"
+                for account, symbol, quantity in emitted[:16]
+            )
+            self.logger.critical(
+                "[MOMLIVE1-OWNED-BACKING-MISMATCH] count=%d retained_owned=1 "
+                "snapshot_zero_is_not_exit=1: %s", len(emitted), detail,
+            )
+
     def _positions_wire_read_at(self, account_name: str) -> datetime:
         """Wall time of the real broker read behind the snapshot just returned (ALERTS1).
 
@@ -11237,16 +11401,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             wbquiet_shadow.note_consumed(
                 [name for aid, name in accounts if aid in account_ids], "virtual_clear",
             )
-            if momentum_mismatches:
-                account_names = {account_id: name for account_id, name in accounts}
-                detail = ", ".join(
-                    f"{account_names.get(account_id, account_id)}:{symbol}={quantity}"
-                    for account_id, symbol, quantity in momentum_mismatches[:16]
-                )
-                self.logger.critical(
-                    "[MOMLIVE1-OWNED-BACKING-MISMATCH] count=%d retained_owned=1 "
-                    "snapshot_zero_is_not_exit=1: %s", len(momentum_mismatches), detail,
-                )
+            self._log_momentum_owned_backing_mismatch(
+                momentum_mismatches, {account_id: name for account_id, name in accounts},
+                observed_account_ids=account_ids,
+            )
             if deferred:
                 account_names = {account_id: name for account_id, name in accounts}
                 detail = ", ".join(
