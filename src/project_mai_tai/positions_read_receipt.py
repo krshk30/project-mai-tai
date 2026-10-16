@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 import logging
+from time import monotonic
 from typing import Any, Iterable
 
 from sqlalchemy import select
@@ -113,9 +114,13 @@ def receipt_session_factory(settings) -> sessionmaker[Session]:
 class PositionsReadReceiptWriter:
     """Bounded, fire-and-forget receipt writer. ``offer`` never blocks and never raises."""
 
-    def __init__(self, session_factory: sessionmaker[Session] | None = None):
+    def __init__(self, session_factory: sessionmaker[Session] | None = None, *,
+                 boot_id: str | None = None, boot_started_monotonic: float | None = None):
         self.session_factory = session_factory
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_LIMIT)
+        self.boot_id = boot_id
+        self.boot_started_monotonic = boot_started_monotonic
+        self.first_commits: dict[str, dict[str, Any]] = {}
 
     def offer(self, receipts: list[tuple[str, datetime, int]]) -> bool:
         if not receipts:
@@ -140,6 +145,21 @@ class PositionsReadReceiptWriter:
         with self.session_factory() as session:
             record_receipts(session, latest.values(), recorded_at=datetime.now(UTC))
             session.commit()
+        # Observation only: recorded_at above precedes commit and is NOT used as
+        # a commit-completion clock. Never emit this metric from queue.offer.
+        if self.boot_id is not None and self.boot_started_monotonic is not None:
+            committed_at = datetime.now(UTC)
+            elapsed_ms = (monotonic() - self.boot_started_monotonic) * 1000
+            for account_name, read_at, _count in latest.values():
+                if account_name in self.first_commits:
+                    continue
+                self.first_commits[account_name] = {
+                    "boot_id": self.boot_id, "read_at": read_at,
+                    "committed_at": committed_at, "elapsed_ms": elapsed_ms,
+                }
+                logger.info("[RECEIPT-FIRST-COMMIT] account=%s boot_id=%s elapsed_ms=%.3f "
+                    "wire_read_at=%s committed_at=%s", account_name, self.boot_id,
+                    elapsed_ms, _aware(read_at).isoformat(), committed_at.isoformat())
 
     async def run(self) -> None:
         while True:

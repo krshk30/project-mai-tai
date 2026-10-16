@@ -10,10 +10,10 @@ import re
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
-from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, VirtualPosition
+from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, Strategy, SystemIncident, VirtualPosition
 from project_mai_tai.positions_read_receipt import SNAPSHOT_TYPE, load_receipts
 from project_mai_tai.momentum_live.actor import ActorPorts, LiveActor, OwnedObservation
 from project_mai_tai.momentum_live.admission import EpisodeLedger, Refusal, STRATEGY_CODE, Signal, select_route
@@ -66,6 +66,36 @@ class OmsLiveRuntime:
     def now_ns(self):
         return int(self.clock().timestamp()*1e9)
 
+    def _entry_enabled(self):
+        if not self.settings.momentum_live_enabled:
+            return False
+        if not getattr(self.settings, "bot_control_enabled", False):
+            return True
+        control = getattr(self.service, "_bot_control_runtime", None)
+        return control is not None and control.admission_open(STRATEGY_CODE)
+
+    def _stop_requested(self):
+        if not getattr(self.settings, "bot_control_enabled", False):
+            return False
+        control = getattr(self.service, "_bot_control_runtime", None)
+        return control is not None and control.stop_requested(STRATEGY_CODE)
+
+    def _entry_control_metadata(self, signal):
+        control = getattr(self.service, "_bot_control_runtime", None)
+        if control is None:
+            raise Refusal("KILLSW1:entry_control_unknown")
+        metadata = {}
+        seconds, nanos = divmod(signal.observed_ns, 1_000_000_000)
+        decided = datetime.fromtimestamp(seconds, UTC).replace(microsecond=nanos // 1000)
+        try:
+            control.stamp(metadata, STRATEGY_CODE, decided)
+        except Exception as exc:
+            raise Refusal("KILLSW1:entry_scope_not_running") from exc
+        return metadata
+
+    async def _abandon_unsent_for_stop(self, identity):
+        return await self.service._run_db(lambda unit: self.db.abandon_unsent_entry(unit, identity))
+
 
     def provider(self, account):
         value = self.settings.provider_for_account(account)
@@ -108,27 +138,119 @@ class OmsLiveRuntime:
                 self.native.generations[identity] = int(values.get("protection_generation", 1))
         entry_ports = ExecutionPorts(self.clock, self.quote, self.route_for, self._foreign_owner,
             self._claim, self._prepare, self._save, self._submit, self._record, self._route_report,
-            self._request_quote_owner, self._wait_quote)
+            self._request_quote_owner, self._wait_quote,
+            entry_metadata=self._entry_control_metadata if getattr(self.settings, "bot_control_enabled", False) else None)
         executor = LiveEntryExecutor(self.book, entry_ports, schwab_account=self.accounts[0], webull_account=self.accounts[1])
-        ports = ActorPorts(lambda: self.settings.momentum_live_enabled, self.now_ns, self._observe,
-            self._save, self._cancel_entry, self._protect, self._exit, self._exit_quote)
+        ports = ActorPorts(self._entry_enabled, self.now_ns, self._observe,
+            self._save, self._cancel_entry, self._protect, self._exit, self._exit_quote,
+            stop_requested=self._stop_requested, abandon_unsent=self._abandon_unsent_for_stop)
         self.actor = LiveActor(self.book, executor, ports, state_lock=self.state_lock)
         await self.actor.start()
         self.publisher = OwnerProofPublisher(self.service.redis, self.settings.redis_stream_prefix, self.book,
             producer_instance_id=self.identity or current_process_identity(), account_names=self.accounts,
-            bindings=self.bindings, enabled=lambda: self.settings.momentum_live_enabled,
+            bindings=self.bindings, enabled=self._entry_enabled,
             replace_owner=self._replace_owner, state_lock=self.state_lock, clock_ns=self.now_ns)
         await self.publisher.publish_once()
         await self._feedback()
         self.publication_task = asyncio.create_task(self._publish_loop())
+        control = getattr(self.service, "_bot_control_runtime", None)
+        if control is not None and getattr(self.settings, "bot_control_enabled", False):
+            self._control_driver = self._control_cleanup_progress
+            control.executor.register(STRATEGY_CODE, self._control_driver)
         return True
 
     async def close(self):
+        control = getattr(self.service, "_bot_control_runtime", None)
+        driver = self.__dict__.pop("_control_driver", None)
+        if control is not None and driver is not None:
+            if control.executor.drivers.get(STRATEGY_CODE) == driver:
+                control.executor.drivers.pop(STRATEGY_CODE, None)
         if self.publication_task:
             self.publication_task.cancel()
             await asyncio.gather(self.publication_task, return_exceptions=True)
         if self.actor:
             await self.actor.close()
+
+    async def _control_cleanup_progress(self, lease, journal):
+        from project_mai_tai.oms.bot_control_executor import StopProgress
+
+        if self.actor is None or not self.actor.restored or not lease.scope_complete:
+            return StopProgress("BLOCKED_UNKNOWN")
+        # The existing actor remains the only entry/position execution owner.
+        # Offering work is non-blocking; this coordinator never creates a second
+        # close from an account position or clears an episode's reservation.
+        for identity in tuple(self.actor.work.owners):
+            self.actor.work.offer(identity)
+        async with self.state_lock:
+            for identity, handle in tuple(self.native.handles.items()):
+                episode = self.book.episodes.get(identity)
+                if episode is None:
+                    return StopProgress("BLOCKED_UNKNOWN")
+                if episode.state in {"closed", "terminal_no_fill"} and handle.status != "terminal":
+                    observation = await self._observe(identity)
+                    if observation.position is None or observation.position.remaining != 0:
+                        return StopProgress("BLOCKED_UNKNOWN")
+                    if not await self.native.release_for_exit(observation.position):
+                        return StopProgress("RECONCILING_PROTECTION")
+            active = [identity for identity, episode in self.book.episodes.items()
+                      if episode.state not in {"closed", "terminal_no_fill"}]
+            if any(self.runtime.get(identity, {}).get("killsw1_session_blocked") for identity in active):
+                return StopProgress("BLOCKED_SESSION")
+            if any(self.runtime.get(identity, {}).get("killsw1_broker_refused")
+                   or self.runtime.get(identity, {}).get("killsw1_wait") for identity in active):
+                return StopProgress("BLOCKED_UNKNOWN")
+            if active:
+                return StopProgress("EXIT_WORKING")
+
+            def prove(session):
+                # Reuse the existing owned-parent/order/fill/VP conservation
+                # proof. This is NOT a claim that either shared account is flat.
+                self.db.prove_empty_owned_state(session, episode_ids=tuple(self.book.episodes))
+                accounts = session.scalars(select(BrokerAccount).where(
+                    BrokerAccount.id.in_(lease.account_ids),
+                )).all()
+                if len(accounts) != len(lease.account_ids) or any(
+                    account.environment != "live" or account.provider not in {"schwab", "webull"}
+                    for account in accounts
+                ):
+                    raise Refusal("KILLSW1:cleanup_account_scope_unknown")
+                strategy = session.scalar(select(Strategy).where(Strategy.code == STRATEGY_CODE))
+                if strategy is None or strategy.id != lease.strategy_id:
+                    raise Refusal("KILLSW1:cleanup_strategy_scope_changed")
+                mismatch = session.scalar(select(Fill.id).join(
+                    BrokerOrder, BrokerOrder.id == Fill.order_id,
+                ).where(BrokerOrder.strategy_id == lease.strategy_id, or_(
+                    Fill.strategy_id != BrokerOrder.strategy_id,
+                    Fill.broker_account_id != BrokerOrder.broker_account_id,
+                    Fill.symbol != BrokerOrder.symbol, Fill.side != BrokerOrder.side,
+                    Fill.quantity <= 0,
+                )).limit(1))
+                executed = select(func.coalesce(func.sum(Fill.quantity), 0)).where(
+                    Fill.order_id == BrokerOrder.id,
+                ).correlate(BrokerOrder).scalar_subquery()
+                unbacked_filled = session.scalar(select(BrokerOrder.id).where(
+                    BrokerOrder.strategy_id == lease.strategy_id,
+                    BrokerOrder.status == "filled", BrokerOrder.quantity != executed,
+                ).limit(1))
+                if mismatch is not None or unbacked_filled is not None:
+                    raise Refusal("KILLSW1:cleanup_fill_coverage_unknown")
+                observed = datetime.now(UTC).isoformat()
+                result = {}
+                for account in accounts:
+                    proof = {"source": "owned_parent_order_fill_vp_conservation",
+                             "strategy_id": str(lease.strategy_id), "account_id": str(account.id),
+                             "command_id": str(lease.command_id), "generation": lease.generation,
+                             "episodes": tuple(sorted(self.book.episodes)), "observed_at": observed}
+                    result[str(account.id)] = {
+                        "complete": True, "owned_quantity": 0, "working_orders": 0, "in_flight": 0,
+                        "observed_at": observed,
+                        "evidence_hash": sha256(json.dumps(proof, sort_keys=True).encode()).hexdigest(),
+                        "source": proof["source"],
+                    }
+                return result
+
+            census = await self.service._run_db(prove, commit=False)
+        return StopProgress("SETTLED", census)
 
     async def _cleanup_empty_boot_owner(self):
         await self.service._run_db(self.db.prove_empty_owned_state, commit=False)
@@ -278,7 +400,45 @@ class OmsLiveRuntime:
         return await self.service.broker_adapter.submit_order(request)
 
     async def _record(self, request, reports):
-        return await self.service._run_db(lambda session: self.db.record(session, request, reports))
+        result = await self.service._run_db(lambda session: self.db.record(session, request, reports))
+        if (request.metadata.get("exit_reason") == "KILLSW1_STOP"
+                and any(report.origin == "broker" and report.event_type == "rejected" for report in reports)):
+            identity = request.metadata["episode_id"]
+            values = self.runtime.setdefault(identity, {})
+            if not values.get("killsw1_broker_refused"):
+                values["killsw1_broker_refused"] = request.client_order_id
+                await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == identity))
+                def incident(session):
+                    session.add(SystemIncident(
+                        service_name="oms-risk", severity="critical", status="open",
+                        title=f"KILLSW1 broker refused owned close: {request.symbol}", opened_at=self.clock(),
+                        payload={"source": "KILLSW1", "episode_id": identity,
+                                 "client_order_id": request.client_order_id, "reason": "broker_rejected_close",
+                                 "admission": "STOP", "retry": "BLOCKED"},
+                    ))
+                self.service.logger.critical(
+                    "[KILLSW1-BLOCKED] episode=%s coid=%s reason=broker_rejected_close retry=NEVER_BLIND",
+                    identity, request.client_order_id,
+                )
+                await self.service._run_db(incident)
+        control = getattr(self.service, "_bot_control_runtime", None)
+        if control is not None and control.stop_requested(STRATEGY_CODE):
+            errors = self.__dict__.setdefault("_control_receipt_errors", {})
+            try:
+                await control.record_cleanup_read(request, reports)
+                errors.pop(request.client_order_id, None)
+            except Exception as exc:
+                # Accounting is already committed. An audit outage must not
+                # prevent protecting a newly filled slice. Unresolved attempts
+                # still prevent STOP settlement and never permit another sell.
+                reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+                if errors.get(request.client_order_id) != reason:
+                    self.service.logger.error(
+                        "[KILLSW1-RECEIPT] coid=%s audit=UNKNOWN accounting=COMMITTED reason=%s",
+                        request.client_order_id, reason,
+                    )
+                    errors[request.client_order_id] = reason
+        return result
 
     async def _route_report(self, identity, day, category):
         self.runtime.setdefault(identity, {})["route_category"] = category
@@ -365,6 +525,10 @@ class OmsLiveRuntime:
                 # ORIGINAL order read may mark the entry terminal or add its fills.
                 cancel = replace(request, intent_type="cancel",
                     quantity=Decimal(0), reason="MOMLIVE1_2S_CANCEL_REMAINDER")
+                control = getattr(self.service, "_bot_control_runtime", None)
+                if control is not None and self._stop_requested():
+                    if not await control.begin_cleanup(request, "CANCEL_ENTRY"):
+                        return
                 values["cancel_wire_sent_coid"] = request.client_order_id
                 await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == identity))
                 await self.service.broker_adapter.submit_order(cancel)
@@ -401,9 +565,32 @@ class OmsLiveRuntime:
         await self.native.ensure(position, broker=self.provider(position.account), session=session)
 
     async def _read_protection(self, handle):
-        return await self.backend.read(handle, self)
+        read = await self.backend.read(handle, self)
+        control = getattr(self.service, "_bot_control_runtime", None)
+        if control is not None and self._stop_requested():
+            if (read.episode_id != handle.episode_id or read.account != handle.account
+                    or read.entry_order_id != handle.entry_order_id or read.base_coid != handle.base_coid
+                    or handle.child_ids and read.child_ids != handle.child_ids
+                    or (read.working and read.terminal)
+                    or not read.cumulative_exited.is_finite()
+                    or read.cumulative_exited < handle.cumulative_exited):
+                raise Refusal("KILLSW1:native_tree_identity_unknown")
+            row, snapshot = await self.backend.root(handle, self)
+            if read.cumulative_exited > snapshot["quantity"]:
+                raise Refusal("KILLSW1:native_tree_quantity_unknown")
+            await control.record_cleanup_tree(row["request"], read)
+        return read
 
     async def _cancel_protection(self, handle):
+        control = getattr(self.service, "_bot_control_runtime", None)
+        if control is not None and self._stop_requested():
+            if not handle.child_ids:
+                raise Refusal("KILLSW1:native_children_unknown")
+            row, _ = await self.backend.root(handle, self)
+            if not await control.begin_cleanup(
+                row["request"], "CANCEL_PROTECTION", children=handle.child_ids,
+            ):
+                return
         await self.backend.cancel(handle, self)
 
     def _soft_exit_chase_window(self):
@@ -441,10 +628,61 @@ class OmsLiveRuntime:
                                      self._exit_quote(request.symbol).get("bid"), request.quantity, result)
         return True
 
+    async def _control_receipt_ready(self, position, values):
+        from project_mai_tai.oms.bot_control_evidence import positions_after_protection
+
+        checked = values.get("killsw1_receipt_check_ns")
+        if checked is not None and 0 <= self.now_ns() - checked < 1_000_000_000:
+            return values.get("killsw1_receipt_ready") is True
+        try:
+            terminal = datetime.fromisoformat(values["killsw1_protection_terminal_at"])
+            await self.service._run_db(lambda session: positions_after_protection(
+                session, account_name=position.account, terminal_at=terminal, now=self.clock(),
+            ), commit=False)
+        except (KeyError, ValueError) as exc:
+            blocked = str(exc)
+            if values.get("killsw1_wait") != blocked:
+                self.service.logger.warning("[KILLSW1-BLOCKED] episode=%s reason=%s sell=0",
+                                            position.episode_id, blocked)
+            values["killsw1_wait"] = blocked
+            ready = False
+        else:
+            values.pop("killsw1_wait", None)
+            ready = True
+        values["killsw1_receipt_check_ns"] = self.now_ns()
+        values["killsw1_receipt_ready"] = ready
+        return ready  # Final quantity proof rechecks freshness after the broker await.
+
     async def _exit(self, position, reason):
         values = self.runtime.setdefault(position.episode_id, {})
         if position.remaining <= 0:
             return
+        control_market = False
+        if reason == "KILLSW1_STOP":
+            if values.get("killsw1_broker_refused"):
+                return
+            local = self.clock().astimezone(ET)
+            provider = self.provider(position.account)
+            if (local.weekday() >= 5 or local.date() in US_MARKET_HOLIDAYS
+                    or not (4, 0) <= (local.hour, local.minute) < (20, 0)
+                    or provider == "schwab" and local.hour < 7):
+                last_log = values.get("killsw1_session_blocked_log_ns")
+                if last_log is None or self.now_ns() - last_log >= 30_000_000_000:
+                    self.service.logger.warning("[KILLSW1-BLOCKED] episode=%s reason=broker_session protection=retained",
+                                                position.episode_id)
+                    values["killsw1_session_blocked_log_ns"] = self.now_ns()
+                values["killsw1_session_blocked"] = True
+                return
+            values.pop("killsw1_session_blocked", None)
+            control_market = (9, 30) <= (local.hour, local.minute) < (16, 0)
+            snapshot = await self._inspect(position.episode_id)
+            if not snapshot["entry_terminal"]:
+                return  # Entry cancellation must prove terminal before any protection release.
+            handle = self.native.handles.get(position.episode_id)
+            terminal_key = handle.base_coid if handle is not None else position.entry_coid + ":no-native"
+            if (not values.get("soft_exit_sent") and values.get("killsw1_terminal_key") == terminal_key
+                    and not await self._control_receipt_ready(position, values)):
+                return
         if not values.get("soft_exit_reason"):
             values["soft_exit_reason"] = reason
             await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
@@ -531,16 +769,30 @@ class OmsLiveRuntime:
             await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
         fresh = self._exit_quote(position.symbol)
         stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
-        if (stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000
+        if not control_market and (stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000
                 or last is not None and stamp <= int(values.get("soft_exit_quote_ns", last))):
             return
         if not await self.native.release_for_exit(position) or position.remaining <= 0:
             return
+        if reason == "KILLSW1_STOP":
+            handle = self.native.handles.get(position.episode_id)
+            terminal_key = handle.base_coid if handle is not None else position.entry_coid + ":no-native"
+            if values.get("killsw1_terminal_key") != terminal_key:
+                values.update(killsw1_terminal_key=terminal_key,
+                              killsw1_protection_terminal_at=self.clock().isoformat())
+                values.pop("killsw1_receipt_check_ns", None)
+                await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
+            if not await self._control_receipt_ready(position, values):
+                return
         fresh = self._exit_quote(position.symbol)
         stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
-        if stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000:
+        if not control_market and (stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000):
             return  # Durable watched exit stays armed after confirmed release.
         holdings = await self.service.broker_adapter.list_account_positions(position.account)
+        if reason == "KILLSW1_STOP":
+            matching = [row for row in holdings if row.symbol == position.symbol]
+            if len(matching) != 1 or matching[0].broker_account_name != position.account:
+                return  # Missing/duplicate/misrouted holdings is UNKNOWN, never zero.
         total = next((row.quantity for row in holdings if row.symbol == position.symbol), None)
         def foreign(session):
             own = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
@@ -548,46 +800,99 @@ class OmsLiveRuntime:
             rows = session.scalars(select(VirtualPosition).where(VirtualPosition.broker_account_id == account,
                 VirtualPosition.symbol == position.symbol, VirtualPosition.strategy_id != own)).all()
             return sum((max(Decimal(0), row.quantity) for row in rows), Decimal(0))
-        reserved_foreign = await self.service._run_db(foreign, commit=False)
+        reserved_foreign = (Decimal(0) if reason == "KILLSW1_STOP"
+                            else await self.service._run_db(foreign, commit=False))
+        if reason == "KILLSW1_STOP":
+            from project_mai_tai.oms.bot_control_evidence import owned_exit_ceiling, positions_after_protection
+            def ceiling(session):
+                terminal_at = datetime.fromisoformat(values["killsw1_protection_terminal_at"])
+                positions_after_protection(session, account_name=position.account,
+                                           terminal_at=terminal_at, now=self.clock())
+                own = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
+                account = session.scalar(select(BrokerAccount.id).where(BrokerAccount.name == position.account))
+                snapshot = self.db.inspect_episode(session, position.episode_id)
+                matching = [item for item in snapshot["orders"]
+                            if item["request"].client_order_id == position.entry_coid
+                            and item["request"].broker_account_name == position.account
+                            and item["request"].symbol == position.symbol]
+                if (len(matching) != 1 or not snapshot["entry_terminal"] or snapshot["outstanding_exit"]
+                        or own is None or account is None):
+                    raise Refusal("KILLSW1:owned_orders_not_terminal")
+                cap = owned_exit_ceiling(session, strategy_id=own, account_id=account, symbol=position.symbol,
+                    remaining=snapshot["quantity"] - snapshot["exited"], broker_total=total)
+                return cap, snapshot["exited"]
+            try:
+                total, exited = await self.service._run_db(ceiling, commit=False)
+            except ValueError as exc:
+                blocked = str(exc)
+                if values.get("killsw1_wait") != blocked:
+                    self.service.logger.warning("[KILLSW1-BLOCKED] episode=%s reason=%s sell=0",
+                                                position.episode_id, blocked)
+                    values["killsw1_wait"] = blocked
+                return
+            values.pop("killsw1_wait", None)
+            position.exited = max(position.exited, exited)
+            reserved_foreign = Decimal(0)  # Reviewed22:2x cap is own fills/own VP/broker total.
         fresh = self._exit_quote(position.symbol)
         stamp, bid = fresh.get("observed_ns"), fresh.get("bid")
-        if stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000:
+        if not control_market and (stamp is None or bid is None or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000):
             return
+        local = self.clock().astimezone(ET)
+        session = "NORMAL" if (9, 30) <= (local.hour, local.minute) < (16, 0) else "AM" if local.hour < 9 else "PM"
+        if control_market and session != "NORMAL":
+            return  # Session changed while releasing protection; next pass reprices for EH.
+        control_market = reason == "KILLSW1_STOP" and session == "NORMAL"
         quantity = position.claim_exit_quantity(broker_available=total, foreign_reserved=reserved_foreign)
         if quantity <= 0:
             return
-        tick = Decimal(".0001") if bid < 1 else Decimal(".01")
-        limit = (bid/tick).to_integral_value(rounding=ROUND_FLOOR)*tick
-        if limit <= 0:
-            raise Refusal("exit_limit_tick_unrepresentable")
-        local = self.clock().astimezone(ET)
-        session = "NORMAL" if (9, 30) <= (local.hour, local.minute) < (16, 0) else "AM" if local.hour < 9 else "PM"
+        tick, limit = None, None
+        if not control_market:
+            tick = Decimal(".0001") if bid < 1 else Decimal(".01")
+            limit = (bid/tick).to_integral_value(rounding=ROUND_FLOOR)*tick
+            if limit <= 0:
+                raise Refusal("exit_limit_tick_unrepresentable")
         attempt = int(values.get("soft_exit_attempt", 0))+1
         coid = f"ml1-{position.symbol}-x-{position.episode_id.replace('-', '')[:20]}"
         if attempt > 1:
             coid += f"-{attempt}"
         if len(coid) > 38:
             raise Refusal("soft_exit_identity_capacity_UNKNOWN")
+        exit_metadata = {"episode_id": position.episode_id, "momlive_strategy": STRATEGY_CODE,
+             "momlive_one_shot": "true", "session": session,
+             "clock_source": position.exit_clock_source, "clock_start_ns": str(position.exit_clock_ns),
+             "extended_hours": "false" if session == "NORMAL" else "true", "exit_reason": reason}
+        if not control_market:
+            exit_metadata["limit_price"] = str(limit)
+            exit_metadata["reference_price"] = str(limit)
         request = OrderRequest(coid,
             position.account, STRATEGY_CODE, position.symbol, "sell", "close", quantity, reason,
-            {"episode_id": position.episode_id, "momlive_strategy": STRATEGY_CODE, "momlive_one_shot": "true",
-             "limit_price": str(limit), "reference_price": str(limit), "session": session,
-             "clock_source": position.exit_clock_source, "clock_start_ns": str(position.exit_clock_ns),
-             "extended_hours": "false" if session == "NORMAL" else "true", "exit_reason": reason}, "limit", "day")
+            exit_metadata, "market" if control_market else "limit", "day")
         await self._prepare(position.episode_id, request, self.provider(position.account))
         # A new uncertain call must never inherit the preceding call's pace
         # proof if the process dies before persisting its own completion.
         values.pop("soft_exit_dispatch_completed_ns", None)
         values.pop("soft_exit_terminal_verified_ns", None)
         values.pop("soft_exit_working_verified_ns", None)
+        if control_market and (stamp is None or not isinstance(bid, Decimal) or not bid.is_finite()
+                               or bid <= 0 or not 0 <= self.now_ns()-stamp <= 2_000_000_000):
+            stamp = None
         values.update(soft_exit_sent=True, soft_exit_coid=coid, soft_exit_attempt=attempt,
                       soft_exit_attempt_ns=self.now_ns(), soft_exit_quote_ns=stamp)
+        if stamp is None:
+            values.pop("soft_exit_quote_ns", None)  # UNKNOWN, not an invented quote timestamp.
+        if reason == "KILLSW1_STOP":
+            values["soft_exit_reason"] = reason  # New attempt only; prior owned-exit history is unchanged.
         await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
         checked = self._exit_quote(position.symbol)
         checked_stamp, checked_bid = checked.get("observed_ns"), checked.get("bid")
-        if (checked_stamp is None or checked_bid is None or checked_bid <= 0
+        control_session_closed = False
+        if control_market:
+            now_local = self.clock().astimezone(ET)
+            control_session_closed = not (9, 30) <= (now_local.hour, now_local.minute) < (16, 0)
+        if (not control_market and (checked_stamp is None or checked_bid is None or checked_bid <= 0
                 or not 0 <= self.now_ns()-checked_stamp <= 2_000_000_000
-                or (checked_bid/tick).to_integral_value(rounding=ROUND_FLOOR)*tick != limit):
+                or (checked_bid/tick).to_integral_value(rounding=ROUND_FLOOR)*tick != limit)
+                or control_session_closed):
             # Still in this pre-wire frame: known UNSENT, not a broker rejection
             # or ambiguous ACK. Mark only this own order; keep the exit armed.
             await self.service._run_db(lambda unit: self.db.abandon_unsent_exit(unit, request))
@@ -597,6 +902,10 @@ class OmsLiveRuntime:
             return
         self.service.logger.info("[MOMLIVE1-EXIT] episode=%s symbol=%s attempt=%s quantity=%s limit=%s reason=%s",
             position.episode_id, position.symbol, attempt, quantity, limit, values["soft_exit_reason"])
+        control = getattr(self.service, "_bot_control_runtime", None)
+        if control is not None and self._stop_requested():
+            if not await control.begin_cleanup(request, "SUBMIT_EXIT"):
+                return
         try:
             reports = await self._submit(request)
         finally:

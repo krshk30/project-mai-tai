@@ -14,6 +14,7 @@ from sqlalchemy import delete, select, text
 
 from project_mai_tai.db.models import DashboardSnapshot
 from project_mai_tai.fanout_segment_store import current_session_anchor
+from project_mai_tai.fanout_identity import ATR_COUNTRY_ROUTE_KEYS
 
 
 SNAPSHOT_TYPE = "v2_restart_rest"
@@ -44,6 +45,8 @@ def checkpoint_state(state) -> dict:
         "cw_resting_taken": bool(state.cw_resting_taken),
         "cw_reclaim_taken": bool(state.cw_reclaim_taken),
         "cancel_pending": bool(state.restart_rest_evidence_pending),
+        **({"country_route": dict(state.atr_country_route)}
+           if getattr(state, "atr_country_route", None) else {}),
         "rest": rest,
     }
 
@@ -106,6 +109,15 @@ class RestartRestStore:
                     or not anchor_ms <= saved["watch_ms"] <= int(observed.timestamp() * 1000)):
                 raise ValueError("invalid entry membership checkpoint")
             state = saved["state"]
+            country = state.get("country_route")
+            if country is not None and (
+                not isinstance(country, dict) or set(country) != set(ATR_COUNTRY_ROUTE_KEYS)
+                or any(not isinstance(value, str) or len(value) > 128 for value in country.values())
+                or country.get("atr_country_schema") != "1"
+                or country.get("atr_country_symbol") != symbol
+                or country.get("atr_country_segment_id") != str(state.get("opportunity_id"))
+            ):
+                raise ValueError("invalid country route checkpoint")
             if (any(type(state.get(name)) is not int or state[name] < 0
                     for name in ("sell_ms", "opportunity_id"))
                     or any(type(state.get(name)) is not bool

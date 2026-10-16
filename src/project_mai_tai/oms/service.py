@@ -8,6 +8,7 @@ import re
 import socket
 import time
 import threading
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from datetime import UTC, datetime, timedelta
@@ -21,6 +22,7 @@ from sqlalchemy import desc, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
+from project_mai_tai.oms.bot_control_scope import is_controlled_strategy
 from project_mai_tai.broker_adapters.target_price import target_limit_price
 from project_mai_tai.broker_adapters.protocols import (
     BrokerAdapter,
@@ -568,6 +570,44 @@ def _finalize_retained_mirror_after_intent(method):
     return finalized
 
 
+_CONTROL_MANAGED_EMIT = ContextVar("killsw1_managed_emit", default=None)
+
+
+def _control_managed_exit_owner(method):
+    @wraps(method)
+    async def owned(self, *args, **kwargs):
+        if not getattr(getattr(self, "settings", None), "bot_control_enabled", False):
+            return await method(self, *args, **kwargs)
+        account = args[0] if args else kwargs.get("acct")
+        symbol = args[1] if len(args) > 1 else kwargs.get("symbol")
+        lock = self.__dict__.setdefault("_control_managed_exit_claim_lock", threading.Lock())
+        symbol_key = (account, str(symbol).upper())
+        if not lock.acquire(blocking=False):
+            return "refused"
+        try:
+            if symbol_key in self.__dict__.get("_control_managed_exit_symbol_owners", {}):
+                return "refused"  # O(1), before even the existing rare-emit row read.
+        finally:
+            lock.release()
+        owner = {"claim": None}
+        token = _CONTROL_MANAGED_EMIT.set(owner)
+        try:
+            return await method(self, *args, **kwargs)
+        finally:
+            held = owner["claim"]
+            if held is not None:
+                lock, key = held
+                with lock:
+                    claims = self.__dict__.get("_control_managed_exit_claims", {})
+                    if claims.get(key) is owner:
+                        claims.pop(key, None)
+                    symbols = self.__dict__.get("_control_managed_exit_symbol_owners", {})
+                    if symbols.get(key[:2]) is owner:
+                        symbols.pop(key[:2], None)
+            _CONTROL_MANAGED_EMIT.reset(token)
+    return owned
+
+
 def _refresh_working_cache_after_intent(method):
     @wraps(method)
     async def refreshed(self, event):
@@ -829,6 +869,21 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         except RuntimeError:
             self._webull_identity_loop = None
         self.strategy_registrations = strategy_registration_map(self.settings)
+        self._bot_control_runtime = None
+        if getattr(self.settings, "bot_control_enabled", False):
+            from project_mai_tai.oms.bot_control_runtime import BotControlRuntime, ControlledBrokerAdapter
+            self._bot_control_runtime = BotControlRuntime(self.session_factory)
+            self.broker_adapter = ControlledBrokerAdapter(self.broker_adapter, self._bot_control_runtime)
+            from project_mai_tai.oms.bot_control_legacy import LegacyStopDriver
+            for code in ("schwab_1m_v2", "orb_schwab"):
+                if code == "schwab_1m_v2" and getattr(
+                    self.settings, "strategy_schwab_1m_v2_country_route_enabled", False
+                ):
+                    from project_mai_tai.oms.bot_control_atr import AtrStopDriver
+                    driver = AtrStopDriver(self)
+                else:
+                    driver = LegacyStopDriver(self, code)
+                self._bot_control_runtime.executor.register(code, driver)
         self._momentum_live_quote_dispatch = None
         self._momentum_live_actor = None
         self.instance_name = socket.gethostname()
@@ -1068,11 +1123,17 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         return await asyncio.to_thread(_unit)
 
     async def run(self) -> None:
+        receipt_boot_id, receipt_started_monotonic = uuid4().hex, time.monotonic()
         self._webull_identity_loop = asyncio.get_running_loop()
         stop_event = asyncio.Event()
         _install_signal_handlers(stop_event)
 
         seed_summary = self.seed_runtime_metadata()
+        control = self.__dict__.get("_bot_control_runtime")
+        if control is not None:
+            # Hydration never seeds a missing latch. Unknown scopes refuse only
+            # new exposure; the existing exit/protection restore still runs.
+            await control.refresh()
         self.logger.info(
             "seeded runtime metadata: %s strategies, %s broker accounts",
             seed_summary["strategies"],
@@ -1092,6 +1153,25 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "providers": ",".join(self.settings.active_broker_providers),
             },
         )
+        # Install the writer BEFORE boot reconciliation offers its real positions
+        # read. C6's initial boot-held capture above still precedes every sync.
+        receipt_task = None
+        try:
+            self._positions_read_receipt_writer = PositionsReadReceiptWriter(
+                receipt_session_factory(self.settings), boot_id=receipt_boot_id,
+                boot_started_monotonic=receipt_started_monotonic,
+            )
+            receipt_task = asyncio.create_task(self._positions_read_receipt_writer.run())
+        except Exception:  # Receipt failure cannot authorize STOP or stop owner restoration.
+            self.logger.warning("[POSITIONS-READ-RECEIPT] writer_unavailable — no receipts")
+        try:
+            await self._run_after_receipt_writer(stop_event, control)
+        finally:
+            if receipt_task is not None:
+                receipt_task.cancel()
+                await asyncio.gather(receipt_task, return_exceptions=True)
+
+    async def _run_after_receipt_writer(self, stop_event, control) -> None:
         # F2 (protected-before-serving): confirm every OMS-owned held position is protected
         # + broker-backed BEFORE the tick consumer starts — never serve ticks with an
         # OMS-owned position unprotected. OMS-owned only (manual holdings untouched).
@@ -1129,18 +1209,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # eval rejects event-time-stale quotes, so the call is always made on the FRESHEST
         # price, never a backlogged one.
         tick_task = asyncio.create_task(self._run_tick_consumer(stop_event))
+        bot_control_task = (
+            asyncio.create_task(control.run(stop_event))
+            if control is not None else None
+        )
         rpg_task = asyncio.create_task(self._run_rpg_retry_loop(stop_event))
-        # ALERTS1: bounded positions-read receipt writer on its own small pool. It can never
-        # stop the OMS from starting: without it no receipt is written, so the reconciler
-        # simply keeps every exposure incident open (the safe direction).
-        receipt_task = None
-        try:
-            self._positions_read_receipt_writer = PositionsReadReceiptWriter(
-                receipt_session_factory(self.settings)
-            )
-            receipt_task = asyncio.create_task(self._positions_read_receipt_writer.run())
-        except Exception:  # noqa: BLE001 - evidence bookkeeping is never load-bearing
-            self.logger.warning("[POSITIONS-READ-RECEIPT] writer_unavailable — no receipts")
         falseflip_task = (
             asyncio.create_task(self._run_falseflip_worker(stop_event))
             if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True
@@ -1155,11 +1228,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             await self._close_momentum_live_runtime(live_runtime)
             tick_task.cancel()
             rpg_task.cancel()
-            if receipt_task is not None:
-                receipt_task.cancel()
+            if bot_control_task is not None:
+                bot_control_task.cancel()
             if falseflip_task is not None:
                 falseflip_task.cancel()
-            await asyncio.gather(rpg_task, *([receipt_task] if receipt_task is not None else []),
+            await asyncio.gather(rpg_task,
+                                 *([bot_control_task] if bot_control_task is not None else []),
                                  *([falseflip_task] if falseflip_task is not None else []),
                                  return_exceptions=True)
             try:
@@ -1752,9 +1826,91 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             self._report_confirmation_fanout(decision)
             return
 
+    async def _prepare_bot_control_entry(self, session, intent, request, decided_at):
+        control = self.__dict__.get("_bot_control_runtime")
+        if (control is None or not control.controls(request.strategy_code, request.broker_account_name)
+                or request.side != "buy" or request.intent_type not in {"open", "scale"}):
+            return
+        try:
+            control.stamp(request.metadata, request.strategy_code, decided_at)
+        except Exception:
+            request.metadata.setdefault("bot_control_generation", "-1")
+            request.metadata.setdefault("bot_control_decided_at", decided_at.isoformat())
+        old_permit = request.metadata.get("bot_control_permit")
+        if old_permit:
+            try:
+                bound = json.loads(old_permit)
+            except (TypeError, ValueError):
+                bound = {}
+            if bound.get("client_order_id") and bound["client_order_id"] != request.client_order_id:
+                # A new coid does not inherit its predecessor's permission.
+                # Preserve that provenance without changing the original order.
+                request.metadata["bot_control_predecessor_permit"] = old_permit
+                request.metadata.pop("bot_control_permit", None)
+        intent_id = intent.id
+        session.commit()
+
+        def prepare(unit):
+            parent = unit.get(TradeIntent, intent_id)
+            if parent is None:
+                raise RuntimeError("KILLSW1:entry_intent_not_durable")
+            account = unit.get(BrokerAccount, parent.broker_account_id)
+            strategy = unit.get(Strategy, parent.strategy_id)
+            if (account is None or strategy is None or account.name != request.broker_account_name
+                    or strategy.code != request.strategy_code or parent.symbol != request.symbol):
+                raise RuntimeError("KILLSW1:entry_identity_changed")
+            if unit.get_bind().dialect.name == "postgresql":
+                unit.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                             {"key": f"orb-v2:{account.name}:{request.symbol.upper()}"})
+            from project_mai_tai.oms.route_owner import route_owner_conflict
+            foreign = route_owner_conflict(unit, account_id=account.id, account_name=account.name,
+                                           symbol=request.symbol, incoming_strategy=strategy.code,
+                                           now=datetime.now(UTC))
+            if foreign is not None:
+                self.logger.warning("[ROUTE-OWNER-CONFLICT] account=%s symbol=%s incoming=%s foreign=%s",
+                                    account.name, request.symbol, strategy.code, foreign)
+                raise RuntimeError("KILLSW1:foreign_owner_before_wire_preparation")
+            existing = unit.scalar(select(BrokerOrder).where(
+                BrokerOrder.client_order_id == request.client_order_id,
+            ))
+            if existing is not None:
+                # Redelivery must never reset an already working/uncertain row
+                # to pending or overwrite the original dispatch permit.
+                if (existing.strategy_id != parent.strategy_id
+                        or existing.broker_account_id != parent.broker_account_id
+                        or existing.symbol != request.symbol or existing.side != request.side
+                        or existing.quantity != request.quantity):
+                    raise RuntimeError("KILLSW1:existing_entry_identity_changed")
+                return existing.id
+            order = self.store.get_or_create_order(
+                unit, intent=parent, strategy_id=parent.strategy_id,
+                broker_account_id=parent.broker_account_id,
+                client_order_id=request.client_order_id, symbol=request.symbol,
+                side=request.side, quantity=request.quantity, metadata=dict(request.metadata),
+                order_type=request.order_type, time_in_force=request.time_in_force, status="pending",
+            )
+            order.payload = {**order.payload, "bot_control_prepared_at": order.submitted_at.isoformat()}
+            order.submitted_at = None
+            return order.id
+
+        await self._run_db(prepare)
+
     @_refresh_working_cache_after_intent
     @_finalize_retained_mirror_after_intent
     async def process_trade_intent(self, event: TradeIntentEvent) -> list[OrderEventEvent]:
+        control = self.__dict__.get("_bot_control_runtime")
+        if (control is not None and control.controls(event.payload.strategy_code, event.payload.broker_account_name)
+                and event.payload.side == "buy" and (
+            event.payload.intent_type in {"open", "scale"}
+            or event.payload.metadata.get("orb_schwab_reprice") == "true"
+        )):
+            try:
+                control.stamp(event.payload.metadata, event.payload.strategy_code, event.produced_at)
+            except Exception:
+                # Preserve the true decision timestamp. The final wire fence
+                # refuses this sentinel; it is not a default RUN generation.
+                event.payload.metadata.setdefault("bot_control_generation", "-1")
+                event.payload.metadata.setdefault("bot_control_decided_at", event.produced_at.isoformat())
         if str(getattr(event.payload, "strategy_code", "")).strip().lower() == "momentum_warn_live":
             actor = self.__dict__.get("_momentum_live_actor")
             if actor is None:
@@ -1872,7 +2028,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             }
         with self.session_factory() as session:
             if (
-                bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
+                (bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
                 and (
                     strategy_code == "orb_schwab"
                     or (
@@ -1882,6 +2038,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 )
                 and event.payload.broker_account_name
                 == self.settings.strategy_schwab_1m_v2_account_name
+                or self._country_owner_scope(event))
                 and session.get_bind().dialect.name == "postgresql"
             ):
                 # One OMS may run several async loops. Hold the per-symbol lock until
@@ -1916,6 +2073,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
 
             passed, risk_reason = self._evaluate_risk(event)
+            if passed and self._country_owner_scope(event):
+                foreign = self._country_owner_conflict(session, event, broker_account)
+                if foreign is not None:
+                    passed, risk_reason = False, f"route_owner_conflict:{foreign}"
             rpg_refusal = await self._rpg_fresh_open_refusal(event, session=session)
             if rpg_refusal:
                 passed, risk_reason = False, rpg_refusal
@@ -2518,7 +2679,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     await self._publish_order_event(prior_event)
                 await self._publish_order_event(order_event)
                 return [*pre_submit_events, order_event]
-            fanout_key = self._resting_fanout_pair_key(event)
+            fanout_key = (None if event.payload.metadata.get("atr_country_schema")
+                          else self._resting_fanout_pair_key(event))
             if (
                 fanout_key is not None
                 and not str(event.payload.metadata.get("fanout_leg", "")).strip()
@@ -2642,6 +2804,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if (deferred is not None and deferred.event.payload.broker_account_name == request.broker_account_name
                     and deferred.symbol == request.symbol):
                 deferred.local_no_wire = False
+            await self._prepare_bot_control_entry(session, intent, request, event.produced_at)
             reports = await self.broker_adapter.submit_order(request)
             self._emit_fanout_mirror_lag(event=event, reports=reports)
             published_events = [*pre_submit_events]
@@ -2731,6 +2894,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
         See docs/webull-mirror-on-fill-design.md.
         """
+        if source_metadata.get("atr_country_schema"):
+            return  # The selected BUY account owns this exposure, not a paired-copy obligation.
         if not bool(getattr(self.settings, "strategy_schwab_1m_v2_webull_mirror_enabled", False)):
             return
         # FAIL-SAFE (operator, 2026-07-15): the mirror account must be EXPLICIT. The old default
@@ -2909,6 +3074,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     order_type=order_type_str,
                     time_in_force="day",
                 )
+                await self._prepare_bot_control_entry(session, intent, request, mirror_event.produced_at)
                 reports = await self.broker_adapter.submit_order(request)
                 published_events.extend(
                     await self._record_order_reports(
@@ -4809,6 +4975,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             getattr(self.settings, "strategy_schwab_1m_v2_webull_mirror_enabled", False)
         ) or bool(
             getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)
+        ) or bool(
+            getattr(self.settings, "strategy_schwab_1m_v2_country_route_enabled", False)
         ):
             web = self.settings.strategy_schwab_1m_v2_webull_account_name
             if web and web not in accounts:
@@ -9764,6 +9932,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if schwab:
                 inflight.discard(claim)
 
+    @_control_managed_exit_owner
     async def _emit_v2_exit_on_loop_claimed(
         self,
         acct: str,
@@ -9788,11 +9957,19 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         thread. Bounded to ~5s by #391 Fix-1; fires only when an exit actually triggers.
         Behaviour of the per-kind write/close/scale + publish is byte-identical to the
         pre-split inline branches."""
+        stop_context = None
+        if reason == "KILLSW1_STOP":
+            if not getattr(self.settings, "strategy_schwab_1m_v2_country_route_enabled", False):
+                return "refused"
+            from project_mai_tai.oms.bot_control_atr import current_stop
+            stop_context = current_stop(self)
+            if stop_context is None:
+                return "refused"
         if allow_unconfirmed_overnight and (
             reason != "V2_OVERNIGHT_FLATTEN" or not self._v2_overnight_flatten_due()
         ):
             return "refused"
-        if not allow_unconfirmed_overnight and not await self._v2_eod_handover_ready(
+        if stop_context is None and not allow_unconfirmed_overnight and not await self._v2_eod_handover_ready(
             acct, symbol, expected_managed_row_id
         ):
             if reason == "oms_v2_managed_exit:CW_TARGET":
@@ -9831,6 +10008,33 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         row.id,
                     )
                     return "refused"
+                owner = _CONTROL_MANAGED_EMIT.get()
+                if owner is not None:
+                    # The existing row read supplies the actual episode identity.
+                    # No tick DB lookup, queued lock wait, or lock across broker I/O.
+                    lock = self.__dict__.setdefault("_control_managed_exit_claim_lock", threading.Lock())
+                    claim = (acct, symbol.upper(), str(row.id))
+                    if not lock.acquire(blocking=False):
+                        return "refused"
+                    try:
+                        claims = self.__dict__.setdefault("_control_managed_exit_claims", {})
+                        symbols = self.__dict__.setdefault("_control_managed_exit_symbol_owners", {})
+                        if claim in claims or claim[:2] in symbols:
+                            return "refused"
+                        claims[claim] = owner
+                        symbols[claim[:2]] = owner
+                        owner["claim"] = (lock, claim)
+                    finally:
+                        lock.release()
+                if stop_context is not None:
+                    events = await self._emit_v2_managed_sell(
+                        session, row, intent_type="close", quantity=int(position.quantity),
+                        reference_price=reference_price, reason=reason, bid=bid, decided_at=decided_at,
+                    )
+                    session.commit()
+                    for event in events:
+                        await self._publish_order_event(event)
+                    return "close_submitted" if stop_context.phase == "EXIT_WORKING" else "refused"
                 if not self._cw_target_binding_matches(row, confirmation_context):
                     if reason == "oms_v2_managed_exit:CW_TARGET":
                         self._log_cw_target_attempt(account=acct, symbol=symbol, metadata=confirmation_context or {},
@@ -10426,6 +10630,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 row.broker_account_name, row.symbol, row.id,
             )
             return _ManagedSellEvents(ownership_refused=True)
+        if reason == "KILLSW1_STOP":
+            from project_mai_tai.oms.bot_control_atr import emit_owned_stop
+            return await emit_owned_stop(self, session, row)
         strategy = session.scalar(select(Strategy).where(Strategy.code == row.strategy_code))
         broker_account = session.scalar(
             select(BrokerAccount).where(BrokerAccount.name == row.broker_account_name)
@@ -14390,6 +14597,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         return self._manual_stop_symbols
 
     def _evaluate_risk(self, event: TradeIntentEvent) -> tuple[bool, str]:
+        control = self.__dict__.get("_bot_control_runtime")
+        if (getattr(self.settings, "bot_control_enabled", False)
+                and is_controlled_strategy(event.payload.strategy_code)
+                and event.payload.intent_type in {"open", "scale"}
+                and event.payload.side == "buy"):
+            if control is None:
+                return False, "KILLSW1:entry_control_unknown"
+            if (control.is_live_account(event.payload.broker_account_name)
+                    and not control.admission_open(event.payload.strategy_code)):
+                return False, "KILLSW1:entry_scope_not_running"
         symbol = str(event.payload.symbol).strip().upper()
         if symbol and symbol in self.settings.protected_symbol_set:
             return False, f"protected_symbol:{symbol}"
@@ -14452,8 +14669,38 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return Decimal(0)
         return None
 
+    @staticmethod
+    def _country_owner_scope(event: TradeIntentEvent) -> bool:
+        return (event.payload.strategy_code == "schwab_1m_v2"
+                and event.payload.intent_type == "open" and event.payload.side == "buy"
+                and bool(event.payload.metadata.get("atr_country_schema")))
+
+    def _country_owner_conflict(self, session, event, account):
+        from project_mai_tai.oms.route_owner import route_owner_conflict
+
+        foreign = route_owner_conflict(session, account_id=account.id, account_name=account.name,
+                                       symbol=event.payload.symbol,
+                                       incoming_strategy=event.payload.strategy_code)
+        if foreign is not None:
+            self.logger.warning("[ROUTE-OWNER-CONFLICT] account=%s symbol=%s incoming=%s owner=%s",
+                                account.name, event.payload.symbol, event.payload.strategy_code, foreign)
+        return foreign
+
     def _v2_entry_size_refusal(self, event: TradeIntentEvent) -> str | None:
         notional = self._v2_entry_notional(event.payload.broker_account_name)
+        if event.payload.metadata.get("atr_country_schema"):
+            from project_mai_tai.atr_country_route import selection_from_metadata
+            try:
+                selected = selection_from_metadata(event.payload.metadata, self.settings)
+                if (selected.symbol != event.payload.symbol.upper()
+                        or selected.account != event.payload.broker_account_name
+                        or self.settings.provider_for_account(selected.account) != selected.broker
+                        or str(event.payload.metadata.get("fanout_segment_id")) != str(selected.segment_id)
+                        or datetime.fromisoformat(selected.sealed_at) > utcnow()):
+                    return "v2_country_route_binding_UNKNOWN"
+                notional = Decimal("600" if selected.broker == "schwab" else "300")
+            except ValueError:
+                return "v2_country_route_binding_UNKNOWN"
         if notional is None:
             return "v2_entry_account_unknown"
         if notional <= 0:
@@ -14505,6 +14752,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         ):
             return None
         notional = self._v2_entry_notional(event.payload.broker_account_name)
+        if event.payload.metadata.get("atr_country_schema"):
+            refusal = self._v2_entry_size_refusal(event)
+            if refusal:
+                return refusal
+            notional = Decimal(str(event.payload.metadata["atr_country_notional_usd"]))
         if notional is None:
             return "v2_entry_account_unknown"
         if notional == 0:
@@ -14710,6 +14962,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
 
     def _is_webull_resting_mirror_event(self, event: TradeIntentEvent) -> bool:
+        if event.payload.metadata.get("atr_country_schema"):
+            return False  # Chosen Webull primary: no Schwab-sibling proof or deferred copy.
         if self._resting_fanout_pair_key(event) is None:
             return False
         metadata = event.payload.metadata
@@ -15188,7 +15442,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             metadata["webull_shape_market_source"] = reading.source
             metadata["webull_shape_market_at_utc"] = reading.observed_at.astimezone(UTC).isoformat()
             metadata["webull_shape_market_max_age_ms"] = str(self._mirror_max_age_ms())
-        if self._nfq_enabled():
+        if metadata.get("atr_country_schema"):
+            # Preserve the actual wire shape/freshness guard, not a paired-copy
+            # feedback owner or a retained retry waiting for a nonexistent primary.
+            deadline = min(self._nfq_entry_deadline(), utcnow().astimezone(SESSION_TZ).replace(
+                hour=15, minute=45, second=0, microsecond=0).astimezone(UTC))
+            metadata["webull_mirror_entry_deadline_utc"] = deadline.isoformat()
+        elif self._nfq_enabled():
             metadata["nfq_price_feedback_owned"] = "true"
             deadline = self._nfq_entry_deadline()
             metadata["webull_mirror_entry_deadline_utc"] = deadline.astimezone(UTC).isoformat()
@@ -15485,6 +15745,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 intent, origin="client_abort", code=post_preview_refusal
             )
             return [self._build_rejected_event(event, intent.id, reason=post_preview_refusal)]
+        control = self.__dict__.get("_bot_control_runtime")
+        if control is not None:
+            try:
+                control.stamp(request.metadata, request.strategy_code, event.produced_at)
+            except Exception:
+                request.metadata.setdefault("bot_control_generation", "-1")
+                request.metadata.setdefault("bot_control_decided_at", event.produced_at.isoformat())
+            request.metadata["bot_control_replace_intent_id"] = str(intent.id)
+            session.commit()
         try:
             report = await self.broker_adapter.replace_bracket_order(request, old_id)
         except Exception:
@@ -18089,6 +18358,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 broker_account_name, order.symbol, replacement_client_order_id,
                 refreshed_metadata["session"], _extended_hours_session() or "NORMAL",
             )
+        if (self.__dict__.get("_bot_control_runtime") is not None
+                and self._bot_control_runtime.controls(replacement_request.strategy_code,
+                                                      replacement_request.broker_account_name)):
+            await self._prepare_bot_control_entry(session, intent, replacement_request, intent.created_at)
         replacement_reports = await self.broker_adapter.submit_order(replacement_request)
         replacement_event = TradeIntentEvent(
             source_service=SERVICE_NAME,

@@ -16,9 +16,20 @@ from project_mai_tai.services.control_plane import _build_bot_position_rows
 from tests.unit import test_oms_intent_refusal_provenance as entry
 from tests.unit import test_orbown1_exit_quantity as exits
 from tests.unit import test_webull_mirror_on_fill as mirror
-from tests.unit.test_edgeprot1_webull_edge import replay as edge_replay  # noqa: F401
+from tests.unit import test_edgeprot1_webull_edge as edge
 
 ACCOUNT = "live:orb"
+
+
+@pytest.fixture
+def owned_clock(monkeypatch):
+    # Reuse the defining fixture, but only for its borrowed replay, not unrelated tests.
+    edge.owned_clock.__wrapped__(monkeypatch)
+
+
+@pytest.fixture
+def edge_replay(monkeypatch, owned_clock):
+    yield from edge.replay.__wrapped__(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
@@ -233,6 +244,27 @@ async def test_edge_pair_uses_120_bot_shares_with_manual_1000(edge_replay):  # n
     assert len(wire.requests) == 1
     assert wire.requests[0].quantity == 120
     assert all(Decimal(leg["quantity"]) == 120 for leg in wire.legs[0])
+
+
+@pytest.mark.asyncio
+async def test_borrowed_owned_replay_keeps_original_pre0930_gate(edge_replay, monkeypatch):
+    service, _, wire = edge_replay
+    before = edge.EDGE.replace(hour=9, minute=29, second=59, microsecond=0).astimezone(UTC)
+
+    class BeforeEdge(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return before.astimezone(tz) if tz else before.replace(tzinfo=None)
+
+    monkeypatch.setattr(module, "datetime", BeforeEdge)
+    monkeypatch.setattr(module, "utcnow", lambda: before)
+    wire.fetch_armed_native_oco_symbols = AsyncMock(side_effect=AssertionError("pre0930 broker read"))
+    wire.list_account_positions = AsyncMock(side_effect=AssertionError("pre0930 positions read"))
+    assert not service._v2_rth_edge_bracket_due()
+    await service._v2_rth_edge_bracket()
+    wire.fetch_armed_native_oco_symbols.assert_not_awaited()
+    wire.list_account_positions.assert_not_awaited()
+    assert not wire.requests and not wire.legs
 
 
 @pytest.mark.asyncio

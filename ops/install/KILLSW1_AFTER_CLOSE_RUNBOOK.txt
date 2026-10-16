@@ -1,0 +1,121 @@
+KILLSW1 / COUNTRYROUTE-ATR / ORBROUTE1 - REVIEW DRAFT ONLY
+NOT READY, NOT INSTALL GO, NOT EXECUTED BY CODEX-2
+
+Standalone C6 boundary per claude-1 01:4x/02:0x: full momentum STOP; legacy
+ATR BOTH entry legs and Schwab ORB fence/cancel own entries, but ANY held
+position remains BLOCKED+CRITICAL/no STOP sell. Partial native Schwab BUY
+parents are BLOCKED without cancellation to preserve protection. Webull bare
+rests and unfilled native parents can cancel. Later routing layers add their
+full STOP sell owner; do not imply those features are in this C6-only layer.
+
+Executor: claude-1 only, AFTER 2026-10-16 16:00 ET close and fresh approved
+flat/zero-working-orders/zero-in-flight gates. This document is NOT a service
+runner and does not authorize a restart, broker request, or production probe.
+Use the separately accepted exact-head install runner; STOP if any expected
+runner/path/service binding is missing. Do not improvise paths or repin live.
+
+REQUIRED PACKET BEFORE INSTALL
+- Exact final head, immutable bundle SHA256, reviewed migration/catalog/nginx
+  diff, independent review and source-bound tests. No WIP head qualifies.
+- Literal full-unit failed-ID diff against d126 = ZERO NEW; all old failures
+  disclosed. Standalone serial quiet 60s >=200 events/sec, maximum stall<50ms,
+  plus actual enabled-feature path counters; both brokers/sessions covered.
+  ORB entry remains RTH-only. No skip/oracle/threshold waiver or best-of-N.
+- Actual PostgreSQL16 migration/locking proof; shared account/symbol owner
+  serialization proof; complete STOP owner/protection/fill/census acceptance.
+- These implementation gates are currently INCOMPLETE. No install today from
+  this draft. Package-install environmental differences vs baseline disclosed.
+
+PRE-FLIGHT (EXISTING ACCEPTED RUNNER, ONE APPROVED WINDOW)
+1 Record actual wall clock, checkout head/tree, bundle hash, schema revision,
+  environment file hash/permissions (never print values), service PIDs/start
+  times and untouched service PIDs. Confirm the approved window and no other
+  installer/test owner. Fresh exact account/strategy gates must all PASS.
+2 Save dated recoverable code/env/nginx/unit backups and the original receipt.
+  STOP if any account inventory, old protection/exit or ownership is UNKNOWN.
+  No injected order, STOP/ON click or live fill is a deployment health probe.
+3 Stop ONLY the accepted OMS/control services using the reviewed runner.
+  No gateway, strategy, ORB-engine, v2-engine, guard/paper, Redis or PostgreSQL
+  restart is authorized by this draft. The service allowlist is exact: if the
+  runner requires another service, obtain a new review rather than widening it.
+
+MIGRATION / EXPLICIT PROVISIONING (FEATURE STILL OFF)
+4 Verify actual Alembic starting revision matches the accepted migration chain.
+  New C6 revision = 20261015_bot_control;
+  down_revision = 20261014_sec_country. Exactly THREE new tables:
+  bot_control_states, bot_control_commands, bot_control_attempts.
+  Apply with the existing approved migration command on the pinned candidate.
+  Do not execute a guessed alembic.ini/DSN or database URL from this document.
+5 Explicitly seed ONLY the configured C6 set before enabling control. Run the
+  following only through the runner's existing private environment/venv, so
+  get_settings() resolves its approved database without printing credentials:
+
+  from sqlalchemy import select
+  from project_mai_tai.db.models import Strategy
+  from project_mai_tai.db.session import build_timed_session_factory
+  from project_mai_tai.oms.bot_control import BotControlStore
+  from project_mai_tai.settings import get_settings
+
+  sessions = build_timed_session_factory(get_settings(), service="killsw1-provision", profile="fast")
+  with sessions() as unit:
+      scopes = tuple(unit.execute(select(Strategy.id, Strategy.code).where(
+          Strategy.execution_mode == "live", Strategy.code.in_(
+              ("momentum_warn_live", "schwab_1m_v2", "orb_schwab")))).all())
+  assert {"momentum_warn_live", "schwab_1m_v2", "orb_schwab"} == {code for _, code in scopes}
+  store = BotControlStore(sessions)
+  for identity, code in scopes:
+      state = store.seed(identity)
+      assert state.generation == 0 and state.revision == 0
+      assert state.desired_state == "RUN" and state.active_command_id is None
+      print(code, identity, "RUN", state.generation, "explicitly-provisioned")
+  for identity, code in scopes:
+      state = store.hydrate(identity)
+      assert state.generation == 0 and state.admission_open
+
+  Seed is explicit/idempotent, NEVER startup fallback. Existing STOP/nonzero
+  generation or unknown history aborts this first-install script; do not reset
+  or delete it. If a later scope fails, leave feature OFF and retain earlier
+  committed provisioning; investigate/review rather than silently activating.
+  IDs are read from actual DB; allowed CODES are the explicit three above.
+  macd_30s/schwab_1m/webull_30s are inactive legacy codes despite mode=live:
+  no widget, no scope rows, NEVER seed them. Deployment environment=production
+  is NOT account mode; scope requires Strategy.execution_mode=live and account live: alias.
+
+AUTH / ACTIVATE / VERIFY
+6 Follow ops/nginx/KILLSW1-operator-boundary.txt exactly: canonical existing
+  authenticated TLS vhost ONLY, overwrite X-Mai-Tai-Operator with $remote_user,
+  exact backup/diff, nginx -t PASS before reload. Preserve hook /auth/ isolation.
+  Do not replace the live vhost wholesale or copy credential files into logs.
+7 ONLY after migration + complete seed + valid nginx, change approved private
+  env to MAI_TAI_BOT_CONTROL_ENABLED=true. This standalone layer does NOT
+  change country routing flags, venues, sizes or strategies. Later routing
+  layers have their own reviewed flags and complete install packets.
+  Deploy means ON, not a feature-OFF substitute. Code defaults remain OFF for
+  safe older-environment sequencing; do not alter any unrelated flag.
+8 Start OMS + control exactly once through the accepted runner. Verify actual
+  process environment flags privately, expected-flags catalog, live scope
+  hydration and visible authenticated LIVE widgets. Log-only/health receipt
+  must show no boot refusal/unknown seeded scope. Missing DB/seed/hydration
+  refuses NEW exposure only; existing exits/protection must remain serviceable.
+  Verify control's physical loopback peer/proxy_headers=False boundary and
+  negative HTTP authentication/CSRF/hook isolation WITHOUT a real STOP/ON POST.
+9 Record actual service times/head/hashes, manifests/health/flag audit and
+  unchanged forbidden PIDs. Never manually re-pin guards. Post complete receipt
+  for claude-1 review. No claim of production freshness from older test logs.
+
+ROLLBACK / LIMITS
+- On a failed gate STOP the install and preserve the complete evidence. Use
+  only the accepted runner's exact saved code/env/unit rollback, with fresh
+  order/position gates and explicit reviewer authority for service actions.
+- NEVER issue ON, clear a STOP, delete journal rows, falsify fills, drop these
+  tables or downgrade the migration to make rollback green. After commands
+  exist the durable latch is inventory/recovery evidence, not disposable data.
+- Restore the exact backed-up nginx file only if required, nginx -t before
+  reload. Removing its operator header fails new HTTP commands closed; it
+  neither undoes a prior STOP nor proves a held position flat.
+- A pre-reboot UNKNOWN normal ATR/ORB software exit cannot be reconstructed
+  from a missing order: READ-FIRST/BLOCK+alert, no second SELL. Broad normal
+  SELL pre-persistence is separate O-1015-14, explicitly NOT part of C6.
+- A broker refusal after a correctly capped STOP sell stays BLOCKED+alert;
+  retain STOP/no blind retry. No account-net flatten or foreign/manual cancel.
+- Current draft carries no install authority. No box access was used to write it.

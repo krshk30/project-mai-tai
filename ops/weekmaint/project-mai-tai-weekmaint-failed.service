@@ -1,0 +1,7 @@
+[Unit]
+Description=Loud weekly-maintenance failure, no retry or recovery actions
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/logger -p daemon.crit -t project-mai-tai-weekmaint "WEEKMAINT1 FAILED; retain operation inventory and review manually; no automatic retry"
+Restart=no

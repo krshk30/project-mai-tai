@@ -1,0 +1,43 @@
+KILLSW1 OPERATOR HEADER / PREPARED ONLY / NOT AN INSTALL GO
+
+Authority: claude-1 LATEST 2026-10-15 20:4x auth-boundary ruling.
+Execute only as part of the reviewed C6 installation by claude-1 after Oct16
+16:00 close, fresh flat/working-order/in-flight gates and exact-head approval.
+No command in this packet has been executed on the box by codex-2.
+
+Reviewed repository file: ops/nginx/project-mai-tai.live.https.conf.
+ONE location / addition, under existing auth_basic-protected canonical vhost:
+    proxy_set_header X-Mai-Tai-Operator $remote_user;
+This overwrites a client-supplied header. Never forward the incoming value.
+Do not add this header to hook.project-mai-tai.live or widen its /auth/ proxy.
+Control remains bound to127.0.0.1:8100; uvicorn proxy_headers=False retains the
+actual peer, rather than trusting X-Forwarded-For as operator authentication.
+
+INSTALL-TIME COMMAND/REVIEW ORDER (LOCAL ON BOX BY CLAUDE-1 ONLY)
+1 Identify the actual canonical enabled vhost target (readlink -f), retain its
+  complete dated backup, mode/owner and sha256. Compare to the reviewed repo
+  template. STOP if it differs beyond explained retained box configuration.
+  Do not overwrite a live vhost wholesale from this possibly stale template.
+2 In the existing canonical TLS vhost's authenticated location /, add ONLY the
+  reviewed proxy_set_header above; preserve certs, auth_basic, Host header,
+  bind addresses, proxy routes and every other vhost. Retain exact before/after
+  diff + hashes. No credential file is copied or printed.
+3 Run: nginx -t
+  If it fails, restore the exact saved file and nginx -t again; DO NOT reload
+  an invalid configuration or improvise another location/auth bypass.
+4 Only after nginx -t SUCCESS: systemctl reload nginx
+5 Reviewed control restart loads the same exact candidate with proxy_headers
+  False. This packet does not authorize an independent restart window.
+6 Verify authenticated canonical UI control, missing-identity403, bad-CSRF403,
+  cross-origin403 and hook /auth/ isolation WITHOUT sending a real STOP/ON or
+  any broker order as a deployment probe. Actual end-to-end dispatch proof is
+  provided by qualified mocked/local tests, not a live injected command.
+
+ROLLBACK
+Restore exact backed-up vhost (not a regenerated template), nginx -t, then
+reload nginx only if valid. Preserve the failure receipt and C6 durable latch.
+Never clear/delete a pending STOP journal or issue ON as automatic rollback.
+Removing the proxy header causes new STOP/ON HTTP requests to fail403 safely;
+it does not prove that a prior STOP is flat or undo existing fills/commands.
+No gateway, strategy, guard/paper, Redis or Postgres restart is part of this
+nginx header change. Final C6 runner owns all separate approved service steps.

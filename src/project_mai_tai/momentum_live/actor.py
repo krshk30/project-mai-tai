@@ -37,6 +37,8 @@ class ActorPorts:
     protect_owned: Callable[[OwnedPosition], Awaitable[None]]
     exit_owned: Callable[[OwnedPosition, str], Awaitable[None]]
     quote: Callable[[str], dict | None]
+    stop_requested: Callable[[], bool] = lambda: False
+    abandon_unsent: Callable[[str], Awaitable[bool]] | None = None
 
 
 class LiveActor:
@@ -153,6 +155,12 @@ class LiveActor:
                 if episode.state not in ACTIVE_STATES:
                     return
                 if episode.state == "claimed" and episode.first_submit_ns is None and episode.filled == 0:
+                    if (self.ports.stop_requested() and self.ports.abandon_unsent is not None
+                            and await self.ports.abandon_unsent(identity)):
+                        self.book.reconcile(identity, cumulative_filled=Decimal(0),
+                            cumulative_exited=Decimal(0), now_ns=self.ports.clock_ns(), terminal_entry=True)
+                        await self.ports.save(episode_payload(self.book, identity))
+                        self._refresh_owners()
                     return  # Quote-pending reservation; no broker order to poll yet.
                 now_ns = self.ports.clock_ns()
                 cached = self._observations.get(identity)
@@ -185,11 +193,21 @@ class LiveActor:
                     if (observation.position.exit_clock_ns is None
                             or not 0 < observation.position.exit_clock_ns <= self.ports.clock_ns()):
                         raise Refusal("owned_time_exit_anchor_UNKNOWN")
-                if self.book.cancel_due(identity, now_ns=self.ports.clock_ns()):
+                forced_cancel = (self.ports.stop_requested() and not observation.entry_terminal
+                                 and not episode.cancel_requested)
+                if forced_cancel:
+                    episode.cancel_requested = True
+                    episode.state = "cancel_requested"
+                if forced_cancel or self.book.cancel_due(identity, now_ns=self.ports.clock_ns()):
                     # Durable latch before any cancel wire, including unknown ACK.
                     await self.ports.save(episode_payload(self.book, identity))
                     await self.ports.cancel_entry_once(identity)
                 if observation.position is not None and episode.remaining > 0:
+                    if self.ports.stop_requested():
+                        if observation.entry_terminal:
+                            await self.ports.exit_owned(observation.position, "KILLSW1_STOP")
+                        self._refresh_owners()
+                        return
                     quote = self.ports.quote(episode.symbol) or {}
                     reason = observation.position.exit_reason(quote.get("bid"),
                         quote_ns=quote.get("observed_ns"), now_ns=self.ports.clock_ns())

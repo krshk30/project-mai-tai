@@ -195,6 +195,7 @@ class OHLCVBar:
 @dataclass
 class SymbolState:
     symbol: str
+    atr_country_route: dict[str, str] = field(default_factory=dict)
     line_restore_reset_after_ms: int = 0
     line_live_shadow: bool = False
     line_live_fallback: bool = False
@@ -981,6 +982,64 @@ class SchwabV2Strategy:
             self._restore_flip_owner(state)
         return state
 
+    def configure_country_routing(self, book) -> None:
+        self._country_route_book = book
+
+    def _webull_account_coverage(self) -> bool:
+        """Venue capability/ownership coverage is separate from new-entry fanout."""
+        book = getattr(self, "_country_route_book", None)
+        return bool(self._dual_broker_fanout_enabled
+                    or getattr(self.settings, "strategy_schwab_1m_v2_country_route_enabled", False)
+                    or book is not None and book.has_webull)
+
+    def _country_single_entry(self, state: SymbolState) -> bool:
+        book = getattr(self, "_country_route_book", None)
+        segment = int(state.fanout_segment_id or state.flip_owner_opportunity_id
+                      or getattr(self, "_restored_fanout_segment_ids", {}).get(state.symbol, 0) or 0)
+        if getattr(self, "_country_restore_unknown", False):
+            return True
+        if state.atr_country_route:
+            return True
+        if book is not None and (state.symbol, segment) in book.routes:
+            return True  # OFF cannot turn an existing selected entry into a paired copy.
+        if not getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_country_route_enabled", False):
+            return False
+        return book is None or book.is_single(state.symbol, segment)
+
+    def _country_existing_selection(self, state: SymbolState):
+        """Read sealed ownership for management, even with country DB unavailable."""
+        from project_mai_tai.atr_country_route import CountryRouteRefusal, selection_from_metadata
+
+        if state.atr_country_route:
+            selected = selection_from_metadata(state.atr_country_route, self.settings)
+            if selected.segment_id != int(state.fanout_segment_id or state.flip_owner_opportunity_id or 0):
+                raise CountryRouteRefusal("country_management_episode_mismatch")
+            return selected
+        book = getattr(self, "_country_route_book", None)
+        return (book.routes.get((state.symbol, int(state.fanout_segment_id or state.flip_owner_opportunity_id or 0)))
+                if book is not None else None)
+
+    def _country_entry_selection(self, state: SymbolState):
+        from project_mai_tai.atr_country_route import CountryRouteRefusal
+
+        if not self._country_single_entry(state):
+            return None
+        book = getattr(self, "_country_route_book", None)
+        if book is None:
+            raise CountryRouteRefusal("country_router_not_ready")
+        if (self._flip_owned_first_entry_enabled
+                and not (state.fanout_segment_id or state.flip_owner_opportunity_id)
+                and not self._strict_first_rest_admitted(state, slot="first")):
+            raise CountryRouteRefusal("country_owner_admission_unproven")
+        segment = (self._ensure_flip_owner_opportunity(state) if self._flip_owned_first_entry_enabled
+                   else self._ensure_fanout_segment_id(state))
+        if segment <= 0:
+            raise CountryRouteRefusal("country_opportunity_UNKNOWN")
+        selected = book.select(state.symbol, segment, datetime.fromtimestamp(self._now_ms() / 1000, UTC))
+        if selected is not None:
+            state.atr_country_route = selected.metadata()
+        return selected
+
     def configure_fanout_identity_persistence(
         self,
         persist: Callable[[str, int, bool, str], None] | None,
@@ -1083,7 +1142,7 @@ class SchwabV2Strategy:
         for symbol, opportunity_id in candidates.items():
             proof = proofs.get(symbol, {})
             accounts = {self.settings.strategy_schwab_1m_v2_account_name}
-            if self._dual_broker_fanout_enabled:
+            if self._webull_account_coverage():
                 accounts.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
             observed = proof.get("observed_at_ms", 0)
             if (proof.get("opportunity_id") != opportunity_id
@@ -1245,7 +1304,7 @@ class SchwabV2Strategy:
         if not rest["resting_active"]:
             if opportunity and (
                     legs.get(self._flip_owner_primary_account) not in {"terminal", "absent"}
-                    or self._dual_broker_fanout_enabled and
+                    or self._webull_account_coverage() and
                     legs.get(self._flip_owner_webull_account) not in {"terminal", "absent"}):
                 return refuse("inactive_rest_native_legs_unproven")
             state.restart_rest_evidence_pending = False
@@ -1257,7 +1316,7 @@ class SchwabV2Strategy:
             primary = legs.get(self._flip_owner_primary_account)
             mirror = legs.get(self._flip_owner_webull_account)
             if primary not in {"owned", "terminal", "absent"} or (
-                    self._dual_broker_fanout_enabled and mirror not in {"owned", "terminal", "absent"}):
+                    self._webull_account_coverage() and mirror not in {"owned", "terminal", "absent"}):
                 return refuse("native_rest_legs_unproven")
         else:
             if legs.get("software_dispatched") is not False:
@@ -1284,6 +1343,8 @@ class SchwabV2Strategy:
         state.restart_rest_cancel_fields.clear()
         if opportunity:
             state.fanout_segment_id = opportunity
+        if saved.get("country_route"):
+            state.atr_country_route = dict(saved["country_route"])
         logger.info("[V2-RESTART-REST] %s opportunity_id=%d restored=1 "
                     "primary=%s mirror=%s new_slot=0", state.symbol, opportunity, primary, mirror)
         return True
@@ -1370,7 +1431,7 @@ class SchwabV2Strategy:
 
     def _removed_wait_accounts(self) -> tuple[str, ...]:
         accounts = [self.settings.strategy_schwab_1m_v2_account_name]
-        if self._dual_broker_fanout_enabled:
+        if self._webull_account_coverage():
             accounts.append(self.settings.strategy_schwab_1m_v2_webull_account_name)
         return tuple(accounts)
 
@@ -1677,11 +1738,17 @@ class SchwabV2Strategy:
                           segment_id=request.opportunity_id, slot="resting"))
         # Ordinary serial-lane cancels also revoke deferred mirror/NFQ retries.
         retry_cancel = request.purpose in {"retry_exhausted", "false_flip_restore"}
-        self._pending_intents.append(TradeIntentDraft(symbol=symbol, side="buy", intent_type="cancel",
-            quantity=Decimal((state.resting_schwab_quantity or self._atr_qty) if retry_cancel else self._atr_qty),
-            reason="retry exhausted cancellation barrier" if retry_cancel else "scanner removal cancellation barrier",
-            metadata=dict(md)))
-        if self._dual_broker_fanout_enabled and self.settings.strategy_schwab_1m_v2_webull_account_name:
+        selection = self._country_existing_selection(state)
+        if selection is not None:
+            md.update(selection.metadata())
+        if selection is None or selection.broker == "schwab":
+            self._pending_intents.append(TradeIntentDraft(symbol=symbol, side="buy", intent_type="cancel",
+                quantity=Decimal((state.resting_schwab_quantity or self._atr_qty) if retry_cancel else self._atr_qty),
+                reason="retry exhausted cancellation barrier" if retry_cancel else "scanner removal cancellation barrier",
+                metadata=dict(md)))
+        if (selection is None or selection.broker == "webull") and (
+                selection is not None or self._dual_broker_fanout_enabled
+        ) and self.settings.strategy_schwab_1m_v2_webull_account_name:
             self._pending_webull_direct_intents.append(TradeIntentDraft(
                 symbol=symbol, side="buy", intent_type="cancel",
                 quantity=Decimal((state.resting_webull_quantity or self._webull_fanout_qty)
@@ -3775,6 +3842,7 @@ class SchwabV2Strategy:
     ) -> None:
         segment_id = int(state.fanout_segment_id or 0)
         state.fanout_segment_id = 0
+        state.atr_country_route = {}
         restored = getattr(self, "_restored_fanout_segment_ids", None)
         if include_unconsumed_restore and isinstance(restored, dict):
             restored_id = int(restored.pop(state.symbol.upper(), 0) or 0)
@@ -4091,6 +4159,7 @@ class SchwabV2Strategy:
             and state.position_qty_held > 0
             and self._fanout_on_fill_enabled
             and self._dual_broker_fanout_enabled
+            and not self._country_single_entry(state)
             and self._cw_v2_enabled
             and not state.fanout_webull_claimed
             # ⛔ If a MIRRORED Webull rest is live it fills itself at the broker — firing here
@@ -6149,7 +6218,7 @@ class SchwabV2Strategy:
             state.symbol, px, trig, fl, state.cw_bar_low_so_far, state.cw_entries_this_flip,
         )
         shared_fanout_identity: dict[str, str] = {}
-        if (self._dual_broker_fanout_enabled or fresh_first
+        if (self._dual_broker_fanout_enabled or fresh_first or self._country_single_entry(state)
                 or getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False)):
             shared_fanout_identity = self._fanout_identity_metadata(
                 state,
@@ -6186,7 +6255,7 @@ class SchwabV2Strategy:
         # `else` on the combined condition would count every quote of every symbol on a fan-out-off
         # deployment as a prevented duplicate: a confident wrong number, which is worse than the
         # missing one it replaces.
-        if self._dual_broker_fanout_enabled:
+        if self._dual_broker_fanout_enabled and not self._country_single_entry(state):
             if not state.fanout_webull_claimed:
                 claimed = self._claim_fanout_webull(
                     state,
@@ -6302,15 +6371,35 @@ class SchwabV2Strategy:
         self, symbol: str, *, leg: Literal["schwab", "webull"],
         price: float | Decimal | None, basis: str,
     ) -> tuple[Decimal, dict[str, str]] | None:
+        from project_mai_tai.atr_country_route import CountryRouteRefusal
+
         version = {}
+        try:
+            selected = (self._country_entry_selection(self.watchlist_state(symbol))
+                        if (getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_country_route_enabled", False)
+                            or getattr(self, "_country_route_book", None) is not None
+                            or getattr(self, "_country_restore_unknown", False))
+                        else None)
+        except CountryRouteRefusal as exc:
+            logger.warning("[ATR-COUNTRY-REFUSED] symbol=%s reason=%s", symbol, exc)
+            return None
+        if selected is not None:
+            if leg == "webull" and selected.broker != "webull":
+                return None
+            leg = selected.broker
+            version.update(selected.metadata())
+            version["fanout_segment_id"] = str(selected.segment_id)
+            if leg == "webull":
+                version["fanout_leg"] = "webull"
         if getattr(self, "_line_restoration_enabled", False):
             if not self.line_buy_ready(symbol):
                 return None
             reader = getattr(self, "_line_version_reader", None)
             if reader is None:
                 return None
-            version = {"line_restore_version": reader(symbol.upper())}
-        notional = Decimal(str(getattr(self, f"_entry_notional_{leg}", 0)))
+            version["line_restore_version"] = reader(symbol.upper())
+        notional = (Decimal("600" if selected.broker == "schwab" else "300")
+                    if selected is not None else Decimal(str(getattr(self, f"_entry_notional_{leg}", 0))))
         legacy = self._atr_qty if leg == "schwab" else self._webull_fanout_qty
         try:
             price_decimal = Decimal(str(price)) if price is not None else None
@@ -6424,12 +6513,27 @@ class SchwabV2Strategy:
             return
         if not self.line_buy_ready(state.symbol):
             return
+        from project_mai_tai.atr_country_route import CountryRouteRefusal
+
+        try:
+            country = self._country_entry_selection(state)
+        except CountryRouteRefusal as exc:
+            logger.warning("[ATR-COUNTRY-REFUSED] symbol=%s reason=%s", state.symbol, exc)
+            return
         settings = getattr(self, "settings", None)
         primary_account = str(getattr(settings, "strategy_schwab_1m_v2_account_name", ""))
         webull_account = str(getattr(settings, "strategy_schwab_1m_v2_webull_account_name", ""))
         primary_blocked = self._rpg_entry_owned(state, account=primary_account, slot=slot)
         webull_blocked = self._rpg_entry_owned(state, account=webull_account, slot=slot)
+        if country is not None:
+            primary_blocked |= country.broker != "schwab"
+            webull_blocked |= country.broker != "webull"
         primary_reason = webull_reason = "rpg_owned"
+        if country is not None:
+            if country.broker != "schwab":
+                primary_reason = "country_other_venue"
+            if country.broker != "webull":
+                webull_reason = "country_other_venue"
         if recover_accounts is not None:
             primary_blocked |= primary_account not in recover_accounts
             webull_blocked |= webull_account not in recover_accounts
@@ -6459,8 +6563,8 @@ class SchwabV2Strategy:
                         and rpg_buy_owned(job, slot=slot, segment_id=state.fanout_segment_id)), None)
                 logger.info("[V2-RESTING-LEG-SKIP] symbol=%s account=%s slot=%s reason=%s generation=%s",
                             state.symbol, account, slot, reason, generation or "unprojected")
-        if primary_blocked and (webull_blocked or not (
-                self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled)):
+        if primary_blocked and (webull_blocked or not (country is not None or (
+                self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled))):
             return
         if not self._strict_first_rest_admitted(state, slot=slot):
             return
@@ -6573,7 +6677,7 @@ class SchwabV2Strategy:
             offset_pct,
         )
         shared_fanout_identity: dict[str, str] = {}
-        if self._dual_broker_fanout_enabled or self._flip_owned_first_entry_enabled:
+        if country is not None or self._dual_broker_fanout_enabled or self._flip_owned_first_entry_enabled:
             shared_fanout_identity = self._fanout_identity_metadata(
                 state,
                 source=(
@@ -6624,7 +6728,7 @@ class SchwabV2Strategy:
         #
         # ⛔ Goes on the DIRECT queue, not the fan-out queue: the fan-out queue is drained through
         # `_maybe_emit`, and the matching CANCEL must never be gated.
-        if self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled and not webull_blocked:
+        if (country is not None or (self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled)) and not webull_blocked:
             webull_limit = Decimal(str(state.resting_webull_wire_limit)) if self._resting_round_up_enabled() else raw_limit
             webull_sized = self._sized_open(
                 state.symbol, leg="webull",
@@ -6675,7 +6779,9 @@ class SchwabV2Strategy:
                         side="buy",
                         intent_type="open",
                         quantity=webull_sized[0],
-                        reason="schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)",
+                        reason=("schwab_1m_v2 ATR Flip country-selected webull (rth_resting)"
+                                if country is not None else
+                                "schwab_1m_v2 ATR Flip fan-out webull (rth_resting_mirror)"),
                         metadata={
                             "path": "ATR Flip", "atr_variant": "CW-v2-fanout",
                             "rpg_resting_generation": generation,
@@ -6792,7 +6898,10 @@ class SchwabV2Strategy:
         settings = getattr(self, "settings", None)
         primary_account = str(getattr(settings, "strategy_schwab_1m_v2_account_name", ""))
         webull_account = str(getattr(settings, "strategy_schwab_1m_v2_webull_account_name", ""))
-        skip_primary = reason == "reprice" and self._rpg_leg_owned(state, primary_account)
+        selection = self._country_existing_selection(state)
+        country_metadata = selection.metadata() if selection is not None else {}
+        skip_primary = (selection is not None and selection.broker != "schwab") or (
+            reason == "reprice" and self._rpg_leg_owned(state, primary_account))
         if reason == "reprice" and self._rpg_leg_owned(
                 state, webull_account):
             was_webull_resting = False
@@ -6813,6 +6922,7 @@ class SchwabV2Strategy:
                 "rpg_short_segment": str(int(state.atr_short_flip_bar_ts or 0)),
                 "cw_entry_slot": was_slot, "fanout_segment_id": str(segment),
                 "rpg_old_stop_price": f"{was_trigger:.4f}",
+                **country_metadata,
             }
             self.__dict__.setdefault("_rpg_handoffs", {})[generation] = {
                 "phase": "requested", "segment_id": segment,
@@ -6892,6 +7002,7 @@ class SchwabV2Strategy:
                 quantity=Decimal(was_schwab_quantity or self._atr_qty),
                 reason="schwab_1m_v2 resting-entry cancel",
                 metadata={"resting_entry_cancel": "true", "reason": reason,
+                          **country_metadata,
                           **reprice_metadata,
                           "rpg_resting_generation": state.resting_schwab_generation,
                           "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION},
@@ -6944,6 +7055,7 @@ class SchwabV2Strategy:
                 quantity=Decimal(was_webull_quantity or self._webull_fanout_qty),
                 reason="schwab_1m_v2 resting-entry cancel (webull mirror)",
                 metadata={"resting_entry_cancel": "true", "reason": webull_reason,
+                          **country_metadata,
                           **reprice_metadata,
                           **({"rpg_old_stop_price": f"{was_webull_trigger:.4f}"}
                              if reprice_metadata else {}),
@@ -8082,7 +8194,7 @@ class SchwabV2Strategy:
             self._resting_offset_pct_value(),
         )
         shared_fanout_identity: dict[str, str] = {}
-        if (self._dual_broker_fanout_enabled or self._flip_owned_first_entry_enabled
+        if (self._dual_broker_fanout_enabled or self._flip_owned_first_entry_enabled or self._country_single_entry(state)
                 or getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False)):
             shared_fanout_identity = self._fanout_identity_metadata(
                 state,
@@ -8090,7 +8202,7 @@ class SchwabV2Strategy:
             )
         # Dual-broker fan-out: co-queue the parallel Webull EH-LIMIT leg at the same EH cross (once,
         # guarded by resting_flip_ms set above). No-op unless fan-out is on.
-        if self._dual_broker_fanout_enabled:
+        if self._dual_broker_fanout_enabled and not self._country_single_entry(state):
             # EH already owns its pre-outcome dedup through ``resting_flip_ms``. Do not introduce a
             # second provisional latch here: a rejected/unsubmitted EH leg would otherwise suppress
             # retries indefinitely. The durable filled-slot cap still applies before every emit.
@@ -8128,14 +8240,16 @@ class SchwabV2Strategy:
                 "resting_offset_pct": f"{self._resting_offset_pct_value()}",
                 "cw_flip_level": f"{line:.4f}",
                 "resting_entry": "true", "eh_resting": "true",
-                **({"nfq2_generation": state.resting_schwab_generation}
+                **({"nfq2_generation": (state.resting_webull_generation
+                                       if sizing_metadata.get("atr_country_broker") == "webull"
+                                       else state.resting_schwab_generation)}
                    if getattr(self.settings, "oms_v2_eh_fresh_price_enabled", False) else {}),
                 "cw_entry_slot": state.last_resting_placed_slot,
                 **shared_fanout_identity,
                 "source": "schwab_1m_v2", "strategy_version": STRATEGY_VERSION,
                 **sizing_metadata,
                 **decision_ask_metadata,
-                **self._resting_wire_metadata(trigger),
+                **self._resting_wire_metadata(trigger, leg=sizing_metadata.get("atr_country_broker", "schwab")),
             },
         )
 
@@ -8250,6 +8364,13 @@ class SchwabV2Strategy:
             if self._flip_owned_first_entry_enabled
             else int(segment)
         )
+        country_metadata = {}
+        book = getattr(self, "_country_route_book", None)
+        selected = book.routes.get((state.symbol, segment)) if book is not None else None
+        if selected is not None:
+            country_metadata = selected.metadata()
+            if selected.broker == "webull":
+                country_metadata.update(fanout_leg="webull", fanout_source=source)
         return {
             "fanout_segment_id": str(segment),
             # S7 (2026-09-01): first-slot resting drafts are built before the BUY arm exists, so
@@ -8265,6 +8386,7 @@ class SchwabV2Strategy:
                 else {}
             ),
             **self._fanout_slot_metadata(state, source=source, segment_id=segment),
+            **country_metadata,
         }
 
     def _queue_webull_fanout_draft(
@@ -8287,6 +8409,8 @@ class SchwabV2Strategy:
         anchors the native OCO off `entry_price` exactly like the Schwab primary); in EXTENDED HOURS
         a plain LIMIT that the bot's EH-routing + the OMS reactive-EH builder re-price to a marketable,
         band-capped EH-LIMIT off the OMS's own fresh ask (a MARKET/OCO 417s in EH on Webull)."""
+        if self._country_single_entry(state):
+            return None
         quote = sizing_quote or state.last_quote
         sized = self._sized_open(
             state.symbol, leg="webull", price=getattr(quote, "ask_price", None),
@@ -8377,7 +8501,7 @@ class SchwabV2Strategy:
         Schwab stop price) and queues the Webull MARKET leg IN PARALLEL, once per flip.
         Templated on `_eh_resting_cross_check` but RTH-only. No-op unless fan-out is ON AND a Schwab
         RTH resting order is live AND flat AND not already claimed this flip."""
-        if not self._dual_broker_fanout_enabled:
+        if not self._dual_broker_fanout_enabled or self._country_single_entry(state):
             return
         if not self.line_buy_ready(state.symbol):
             return

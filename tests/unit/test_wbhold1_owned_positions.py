@@ -16,7 +16,15 @@ from tests.unit import test_orbown1_exit_quantity as exits
 from tests.unit import test_webull_mirror_on_fill as mirror
 from tests.unit import test_edgeprot1_webull_edge as edge
 
-replay = edge.replay
+@pytest.fixture
+def owned_clock(monkeypatch):
+    # Match the defining module's retained clock only while its replay is in use.
+    edge.owned_clock.__wrapped__(monkeypatch)
+
+
+@pytest.fixture
+def replay(monkeypatch, owned_clock):
+    yield from edge.replay.__wrapped__(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
@@ -156,6 +164,27 @@ async def test_0930_pair_uses_bound_bot_quantity_not_operator_total(replay):
     await service._v2_rth_edge_bracket()
     assert [r.quantity for r in wire.requests] == [Decimal(120)]
     assert all(leg["quantity"] == "120" for leg in wire.legs[0])
+
+
+@pytest.mark.asyncio
+async def test_borrowed_owned_positions_replay_keeps_original_pre0930_gate(replay, monkeypatch):
+    service, _, wire = replay
+    before = edge.EDGE.replace(hour=9, minute=29, second=59, microsecond=0).astimezone(UTC)
+
+    class BeforeEdge(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return before.astimezone(tz) if tz else before.replace(tzinfo=None)
+
+    monkeypatch.setattr(module, "datetime", BeforeEdge)
+    monkeypatch.setattr(module, "utcnow", lambda: before)
+    wire.fetch_armed_native_oco_symbols = AsyncMock(side_effect=AssertionError("pre0930 broker read"))
+    wire.list_account_positions = AsyncMock(side_effect=AssertionError("pre0930 positions read"))
+    assert not service._v2_rth_edge_bracket_due()
+    await service._v2_rth_edge_bracket()
+    wire.fetch_armed_native_oco_symbols.assert_not_awaited()
+    wire.list_account_positions.assert_not_awaited()
+    assert not wire.requests and not wire.legs
 
 
 @pytest.mark.asyncio

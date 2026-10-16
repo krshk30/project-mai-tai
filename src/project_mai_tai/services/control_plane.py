@@ -3744,6 +3744,18 @@ def build_app(
         lifespan=lifespan,
     )
 
+    from functools import partial
+
+    from project_mai_tai.oms.bot_control import BotControlStore
+    from project_mai_tai.services.bot_control_routes import build_control_router, configured_scope
+
+    if active_settings.bot_control_enabled:
+        app.include_router(build_control_router(
+            BotControlStore(active_session_factory),
+            partial(configured_scope, active_settings, active_session_factory),
+            settings=active_settings,
+        ))
+
     def require_trade_coach_enabled() -> None:
         if not active_settings.trade_coach_enabled:
             raise HTTPException(status_code=404, detail="Not Found")
@@ -4370,12 +4382,22 @@ def build_app(
                 all_reviews=all_reviews,
                 live_regime_profiles=live_regime_profiles,
             )
-        return _render_bot_detail_page(
+        rendered = _render_bot_detail_page(
             data,
             strategy_code,
             trade_coach_live_advisories=advisories,
             trade_coach_enabled=active_settings.trade_coach_enabled,
         )
+        if active_settings.bot_control_enabled and strategy_code in {
+            "schwab_1m_v2", "orb_schwab", "momentum_30s", "momentum_60s"
+        }:
+            live_code = "momentum_warn_live" if strategy_code.startswith("momentum_") else strategy_code
+            widget = (
+                f'<iframe title="LIVE bot control: {live_code}" src="/bot-control/{live_code}" '
+                'style="width:100%;height:140px;border:0"></iframe>'
+            )
+            rendered = rendered.replace("</body>", widget + "</body>")
+        return rendered
 
     @app.get("/bot/30s", response_class=HTMLResponse)
     async def bot_30s_page() -> str:
@@ -4521,6 +4543,7 @@ def run() -> None:
         host=settings.control_plane_host,
         port=settings.control_plane_port,
         reload=False,
+        proxy_headers=False,  # Keep the actual nginx loopback peer for the KILLSW1 auth boundary.
     )
 
 

@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     control_plane_host: str = "127.0.0.1"
     control_plane_port: int = 8100
+    # Sequencing only: the approved install explicitly enables this after seeding.
+    bot_control_enabled: bool = False
     tradingview_alerts_host: str = "127.0.0.1"
     tradingview_alerts_port: int = 8110
     tradingview_alerts_enabled: bool = False
@@ -209,6 +211,7 @@ class Settings(BaseSettings):
     # Separate from broker-disconnected ORB paper observation. No live ORB
     # intent can pass OMS unless this is deliberately enabled after review.
     orb_live_schwab_orders_enabled: bool = False
+    orb_webull_account_name: str = ""
     # ORBPURPLE1: initial RTH resting buy needs the prior completed Schwab close
     # at/above the exit ATR line. ON at deploy; independent paper-free rollback.
     orb_schwab_atr_entry_gate_enabled: bool = True
@@ -458,6 +461,9 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_atr_flip_variant: str = "B"          # "A" or "B"
     strategy_schwab_1m_v2_atr_flip_quantity: int = 10          # live-paper size
     strategy_schwab_1m_v2_entry_notional_usd: int = 600
+    # COUNTRYROUTE-ATR: new segments select one venue; existing paired owners
+    # retain their original broker/account and protection lifecycle.
+    strategy_schwab_1m_v2_country_route_enabled: bool = False
     strategy_schwab_1m_v2_entry_max_shares: int = 1000
     # ⭐ 10000, matching PRODUCTION (2026-07-28). The default said 5000 while the box had run
     # `MAI_TAI_STRATEGY_SCHWAB_1M_V2_ATR_FLIP_VOL_FLOOR=10000` all along, so anyone reading this
@@ -1454,7 +1460,7 @@ class Settings(BaseSettings):
     def provider_for_account(self, account_name: str) -> str:
         normalized_account = str(account_name).strip()
         if (
-            self.strategy_schwab_1m_v2_dual_broker_fanout_enabled
+            (self.strategy_schwab_1m_v2_dual_broker_fanout_enabled or self.strategy_schwab_1m_v2_country_route_enabled)
             and normalized_account == self.strategy_schwab_1m_v2_webull_account_name
         ):
             return "webull"

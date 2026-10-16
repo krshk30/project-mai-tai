@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from dataclasses import replace
+import logging
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid5, NAMESPACE_URL
 
@@ -9,7 +10,7 @@ from sqlalchemy import or_, select, text
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
-from project_mai_tai.db.models import AccountPosition, BrokerAccount, BrokerOrder, Fill, OmsManagedPosition, Strategy, TradeIntent, VirtualPosition
+from project_mai_tai.db.models import AccountPosition, BotControlState, BrokerAccount, BrokerOrder, Fill, OmsManagedPosition, Strategy, TradeIntent, VirtualPosition
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.momentum_live.admission import ACTIVE_STATES, Refusal, STRATEGY_CODE
 
@@ -151,6 +152,50 @@ class LivePersistence:
         order.status = "aborted"
         order.payload = {**order.payload, "momlive_exit_never_dispatched": True}
 
+    def abandon_unsent_entry(self, session, episode_id: str) -> bool:
+        """Client-only proof for a claimed reservation that never reached a wire permit."""
+        strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
+        if strategy_id is None:
+            return False
+        control = session.scalar(select(BotControlState).where(
+            BotControlState.strategy_id == strategy_id,
+            BotControlState.execution_mode == "live",
+        ).with_for_update())
+        if control is None or control.desired_state != "STOP" or control.active_command_id is None:
+            return False
+        parent = session.scalar(select(TradeIntent).where(
+            TradeIntent.id == UUID(episode_id)).with_for_update())
+        if parent is None or session.get(Strategy, parent.strategy_id).code != STRATEGY_CODE:
+            raise Refusal("KILLSW1:unsent_episode_owner_unknown")
+        payload = dict(parent.payload or {})
+        episode = payload.get("momlive_episode") or {}
+        if (payload.get("momlive_parent") is not True or episode.get("episode_id") != episode_id
+                or "first_submit_ns" not in episode or episode["first_submit_ns"] is not None
+                or episode.get("state") != "claimed"
+                or Decimal(str(episode.get("filled", "NaN"))) != 0
+                or Decimal(str(episode.get("exited", "NaN"))) != 0):
+            raise Refusal("KILLSW1:unsent_episode_state_unknown")
+        orders = session.scalars(select(BrokerOrder).where(
+            BrokerOrder.intent_id == parent.id).with_for_update().limit(33)).all()
+        if len(orders) > 32:
+            raise Refusal("KILLSW1:unsent_order_count_unknown")
+        for order in orders:
+            metadata = order.payload or {}
+            if (order.strategy_id != parent.strategy_id or order.broker_account_id != parent.broker_account_id
+                    or order.symbol != parent.symbol or order.side != "buy" or order.status != "pending"
+                    or order.broker_order_id or order.submitted_at is not None
+                    or metadata.get("episode_id") != episode_id
+                    or "bot_control_generation" not in metadata or "bot_control_permit" in metadata
+                    or session.scalar(select(Fill.id).where(Fill.order_id == order.id).limit(1)) is not None):
+                raise Refusal("KILLSW1:unsent_order_identity_or_dispatch_unknown")
+        for order in orders:
+            order.status = "aborted"
+            order.payload = {**order.payload, "momlive_entry_never_dispatched": True}
+        payload["momlive_episode"] = {**episode, "state": "terminal_no_fill"}
+        payload["momlive_c6_unsent_proof"] = True
+        parent.payload, parent.status = payload, "cancelled"
+        return True
+
     def claim(self, session, *, episode: dict, account: str, provider: str, signal: dict) -> bool:
         if session.get_bind().dialect.name == "postgresql":
             session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
@@ -180,6 +225,21 @@ class LivePersistence:
 
     @staticmethod
     def foreign_owner(session, strategy_id, account_id, symbol) -> bool:
+        pending = session.scalar(select(Strategy.code).join(
+            TradeIntent, TradeIntent.strategy_id == Strategy.id).where(
+            TradeIntent.broker_account_id == account_id, TradeIntent.symbol == symbol,
+            Strategy.id != strategy_id, TradeIntent.side == "buy",
+            TradeIntent.intent_type.in_(("open", "scale")),
+            TradeIntent.status.not_in(("filled", "cancelled", "canceled", "rejected", "expired",
+                                       "aborted", "completed", "superseded")),
+        ).limit(1))
+        if pending is not None:
+            account = session.get(BrokerAccount, account_id)
+            logging.getLogger(__name__).warning(
+                "[ROUTE-OWNER-CONFLICT] account=%s symbol=%s incoming=%s foreign=%s",
+                account.name if account is not None else "UNKNOWN", symbol, STRATEGY_CODE, pending,
+            )
+            return True
         held = session.scalar(select(VirtualPosition.id).where(
             VirtualPosition.broker_account_id == account_id, VirtualPosition.symbol == symbol,
             VirtualPosition.strategy_id != strategy_id, VirtualPosition.quantity != 0).limit(1))
@@ -212,9 +272,13 @@ class LivePersistence:
             "cancelled" if episode["state"] == "terminal_no_fill" else "pending")
 
     def prepare_order(self, session, episode_id: str, request, *, provider: str) -> None:
-        parent = session.get(TradeIntent, UUID(episode_id))
+        controlled_entry = request.side == "buy" and "bot_control_generation" in request.metadata
+        parent = (session.scalar(select(TradeIntent).where(TradeIntent.id == UUID(episode_id)).with_for_update())
+                  if controlled_entry else session.get(TradeIntent, UUID(episode_id)))
         if parent is None or session.get(Strategy, parent.strategy_id).code != STRATEGY_CODE:
             raise Refusal("order_episode_owner_invalid")
+        if controlled_entry and (parent.payload or {}).get("momlive_episode", {}).get("state") != "claimed":
+            raise Refusal("KILLSW1:entry_claim_no_longer_admissible")
         broker = self.store.ensure_broker_account(session, request.broker_account_name,
                                                   provider=provider, environment="live")
         if request.side == "buy" and self.foreign_owner(session, parent.strategy_id, broker.id, request.symbol):
@@ -298,11 +362,18 @@ class LivePersistence:
                     intent_type=request.intent_type, reason=request.reason, metadata=request.metadata))
             intent = self.store.create_trade_intent(session, strategy=session.get(Strategy, parent.strategy_id),
                                                   broker_account=broker, event=event)
-        self.store.get_or_create_order(session, intent=intent, strategy_id=parent.strategy_id,
+        order = self.store.get_or_create_order(session, intent=intent, strategy_id=parent.strategy_id,
             broker_account_id=broker.id, client_order_id=request.client_order_id, symbol=request.symbol,
             side=request.side, quantity=request.quantity,
             metadata={**request.metadata, "episode_id": episode_id, "momlive_strategy": STRATEGY_CODE},
             status="pending", order_type=request.order_type, time_in_force=request.time_in_force)
+        if ("bot_control_generation" in request.metadata
+                or request.metadata.get("exit_reason") == "KILLSW1_STOP"):
+            # This branch creates a NEW prewire row (prepare_order refuses an
+            # existing coid). The generic factory's creation timestamp is not a
+            # submission receipt; unknown/existing rows are never cleared here.
+            order.payload = {**order.payload, "bot_control_prepared_at": order.submitted_at.isoformat()}
+            order.submitted_at = None
         intent.quantity = request.quantity
 
     def record(self, session, request, reports) -> dict:

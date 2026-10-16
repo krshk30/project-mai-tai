@@ -301,7 +301,11 @@ def test_all_on_effective_catalog_zero_with_controlled_process_environments():
     rc, lines = audit(entries, environment_reader=lambda service: ServiceEnvironment(
         101, environments[service], frozenset(), None))
     assert rc == 0
-    assert lines[-1] == "Final call: PASS; checked=164/164 mismatches=0 unknown=0"
+    control, = [entry for entry in entries if entry["name"] == "bot_control_enabled"]
+    assert control["expected"] is True
+    assert [control["owning_service"], *control["also_check_services"]] == ["oms", "control"]
+    # Retained164 + C6two + ATRthree, with the same zero-mismatch oracle.
+    assert lines[-1] == "Final call: PASS; checked=169/169 mismatches=0 unknown=0"
     assert len(environments) == 9  # ALERTS1 adds the reconciler
 
 

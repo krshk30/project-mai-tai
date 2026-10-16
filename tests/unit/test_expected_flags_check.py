@@ -51,7 +51,7 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 140
+    assert len(entries) == 142  # Additive KILLSW1 and ATR routing switches.
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
@@ -67,11 +67,20 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
         service for entry in entries
         for service in [entry["owning_service"], *entry.get("also_check_services", [])]
     ) == {
-        "control": 11, "market-capture": 1, "market-data": 3,
-        "momentum-paper": 4, "oms": 52, "orb-schwab": 6,
-        "reconciler": 1, "schwab-1m-v2": 49, "strategy": 29,
+        "control": 13, "market-capture": 1, "market-data": 3,
+        "momentum-paper": 4, "oms": 54, "orb-schwab": 6,
+        "reconciler": 1, "schwab-1m-v2": 50, "strategy": 29,
     }
+    country = by_name["strategy_schwab_1m_v2_country_route_enabled"]
+    assert country["expected"] is True
+    assert country["owning_service"] == "schwab-1m-v2"
+    assert country["also_check_services"] == ["oms", "control"]
+    assert Settings.model_fields["strategy_schwab_1m_v2_country_route_enabled"].default is False
     assert by_name["strategy_schwab_1m_v2_false_flip2_enabled"]["expected"] is True
+    assert by_name["bot_control_enabled"]["expected"] is True
+    assert by_name["bot_control_enabled"]["owning_service"] == "oms"
+    assert by_name["bot_control_enabled"]["also_check_services"] == ["control"]
+    assert Settings.model_fields["bot_control_enabled"].default is False
     assert by_name["strategy_schwab_1m_v2_false_flip2_enabled"]["owning_service"] == "schwab-1m-v2"
     assert Settings.model_fields["strategy_schwab_1m_v2_false_flip2_enabled"].default is True
     assert by_name["oms_v2_webull_mirror_retained_hold_enabled"]["expected"] is True
