@@ -1,0 +1,9 @@
+{
+  "pr_number": 1162,
+  "range_base": "8a0c3fe87b05261b246970ec77176ea689397cfa",
+  "range_head": "df08e90468312b8eb9199f5d5f8338d68d9a075b",
+  "reviewed_at": "2026-10-16T00:16:13Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: C7 test-side only (verified: .github/workflows/validate.yml fetch-depth 0 + one timing deselect, pyproject marker, tests/** incl. 3 verbatim history fixtures + manifest, 11 stale-oracle updates citing their cards, SEC no_inert detector component). 0 files under src/. Classification of Linux-46 reviewed 19:1x; UNKNOWN-12 verdict reviewed 19:5x. Expected Validate failing set = {no_inert_modules}."
+}
