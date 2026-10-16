@@ -1,0 +1,9 @@
+{
+  "pr_number": 1163,
+  "range_base": "d126e18f1617d62490bfbc062e1290df1af7838f",
+  "range_head": "bf73d0b02b75719ec5115842dbce03c624a11b5e",
+  "reviewed_at": "2026-10-16T20:16:18Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: squash with tree abdfc7cd identical to installed efbfa397. Reviewed KILLSW1 core (route_owner manual log-only; previous-session row ageing via submitted_at/intent anchor; receipt writer before boot reconcile), COUNTRYROUTE-ATR (US to Schwab 600, non-US/UNKNOWN to Webull 300, mirror skipped when country-routed; 10-15 route replay), WEEKMAINT1 units. Replay 792 entries: 751 clear/0 genuine/8 stale-row cost 0/33 repair. Full-suite diff vs d126 = timing nodes only; VPS speed gate 18/18 + ATR node 14/16 (gen2 GC). Installed 16:01 ET switches ON."
+}
