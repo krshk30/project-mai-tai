@@ -2,7 +2,6 @@
 from datetime import UTC, datetime, timedelta
 import ast
 from decimal import Decimal as D
-import subprocess
 import textwrap
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -16,6 +15,7 @@ from project_mai_tai.oms.service import OmsRiskService, oco_exit_client_order_id
 from project_mai_tai.oms import service as module
 from project_mai_tai.settings import Settings
 from tests.unit.test_control_plane import build_test_session_factory
+from tests.c7_history import historical_source
 
 
 def seed_episode(account="live:schwab_1m_v2", *, closed=False, exited=150, hour=13):
@@ -129,8 +129,7 @@ async def test_unbound_or_cancelled_zero_price_child_cannot_close_our_episode(de
 
 @pytest.mark.asyncio
 async def test_original_quantity_guard_mutation_is_detected(monkeypatch):
-    source = subprocess.check_output(["git", "show",
-        "20266cdf:src/project_mai_tai/oms/service.py"], text=True)
+    source = historical_source("20266cdf", "src/project_mai_tai/oms/service.py")
     tree = ast.parse(source)
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "OmsRiskService")
     node = next(node for node in cls.body if isinstance(node, ast.AsyncFunctionDef)

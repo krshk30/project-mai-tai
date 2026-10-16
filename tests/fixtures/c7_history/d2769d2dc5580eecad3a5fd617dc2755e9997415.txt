@@ -1,0 +1,6 @@
+def symbol_is_eligible(symbol: str) -> bool:
+    # Lowercase markers identify distinct share classes, not aliases of common tickers.
+    return (
+        isinstance(symbol, str) and bool(symbol) and symbol == symbol.upper()
+        and symbol == symbol.strip() and "." not in symbol and len(symbol) <= 5
+    )

@@ -25,6 +25,7 @@ from tests.unit import test_schwab_1m_v2_eh_stream_cross as stream_helpers
 sys.modules.setdefault("test_schwab_1m_v2_eh_stream_cross", stream_helpers)
 from tests.unit.test_pmprint1_pmflip1 import STRAYS, VEEA, armed, cross, flip, ms  # noqa: E402
 from tests.unit import test_pmprint1_pmflip1 as pmprint  # noqa: E402
+from tests.unit.v2_input_control import chart_input  # noqa: E402
 
 _bot, _send_levelone = stream_helpers._bot, stream_helpers._send_levelone
 
@@ -142,7 +143,7 @@ async def test_all_on_recorded_service_cross_same_ask_both_legs(monkeypatch, rou
         monkeypatch.setattr(strategy, "_update_atr_state", recorded_flip)
         # H/L/C/volume are retained; the unretained open is a controlled input.
         bar = OHLCVBar(ms("2026-10-05T12:32:00Z"), 5.2, 5.2569, 5.2, 5.2404, 27895)
-        assert strategy.on_observed_bar("VEEA", bar, observation_phase="live") is None
+        assert strategy.on_observed_bar("VEEA", chart_input("VEEA", bar), observation_phase="live") is None
         # With Restoration ON, the callback advances the bar but only the
         # worker's publication may evaluate the supplied current-bar signal.
         recorded_flip(state, bar)

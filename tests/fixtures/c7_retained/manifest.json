@@ -1,0 +1,59 @@
+{
+  "artifacts": {
+    "snapshot-market-payload.json": {
+      "compressed_sha256": "5a670a8893af6b1bfce5823ac4b1b07a923bb0384fa073a57c6964495f1908dd",
+      "compressed_size": 1069781,
+      "original_sha256": "99b7a0951cbf01837ff6ff6558050e43e1d3d8c7758e121a01cd8cf4b64df738",
+      "original_size": 6584960,
+      "selection": "Exact13269 snapshot rows and all reference_data values; unrelated envelope metadata excluded. No row/value synthesis, no account/credential fields.",
+      "sha256": "f6d6add41dc4621c7dc88d6cceb26925a72243989e5ee2ee9331b7d1362283e1",
+      "size": 6087816
+    },
+    "v2-real-GRML-20261014T090719-20.txt": {
+      "compressed_sha256": "876c82b10fb4584695b22620008c3421c1b600e6ec30cdca55e190dc3136b8e9",
+      "compressed_size": 17166,
+      "original_sha256": "e76b385fd7e8c6899202aa4a2d5dcc0288f68cd38d1296f776112b548337d57e",
+      "original_size": 360331,
+      "selection": "Entire retained timestamp-filtered burst, unchanged bytes; not a contiguous whole log.",
+      "sha256": "e76b385fd7e8c6899202aa4a2d5dcc0288f68cd38d1296f776112b548337d57e",
+      "size": 360331
+    },
+    "v2-real-GRML-20261014T090720-21.txt": {
+      "compressed_sha256": "84b1ee60e33ec88a91f8c4f2cf7f083195e012c240b477c798c8ff06a35b3ce1",
+      "compressed_size": 18854,
+      "original_sha256": "bccff8b4cd148fe0f84bdaf38eab8e8e5e98514e276cf1d37415127a9782a831",
+      "original_size": 399106,
+      "selection": "Entire retained timestamp-filtered burst, unchanged bytes; not a contiguous whole log.",
+      "sha256": "bccff8b4cd148fe0f84bdaf38eab8e8e5e98514e276cf1d37415127a9782a831",
+      "size": 399106
+    },
+    "v2-real-GRML-20261014T090720.txt": {
+      "compressed_sha256": "ab126bbd8def65e6c5d93ac050243d55721fdf8df1a78fc25e1152de73109dc7",
+      "compressed_size": 16966,
+      "original_sha256": "f493b759912726d355269de4dc310a3ec29dbe23e8c9dbc530b34d8795dd4b9d",
+      "original_size": 360041,
+      "selection": "Entire retained timestamp-filtered burst, unchanged bytes; not a contiguous whole log.",
+      "sha256": "f493b759912726d355269de4dc310a3ec29dbe23e8c9dbc530b34d8795dd4b9d",
+      "size": 360041
+    },
+    "v2-real-peak-20261013T080643.txt": {
+      "compressed_sha256": "1369615e652a3abcda9ca115fbc9b443cc255256933b2379f1b5ba55d5623ed4",
+      "compressed_size": 20044,
+      "original_sha256": "26e2af2abefa343205cc66708da83268b0450fef6790a1c4b8a28a1dac5a8b93",
+      "original_size": 982821,
+      "selection": "Entire retained timestamp-filtered burst, unchanged bytes; not a contiguous whole log.",
+      "sha256": "26e2af2abefa343205cc66708da83268b0450fef6790a1c4b8a28a1dac5a8b93",
+      "size": 982821
+    },
+    "v2-tail-1m-plus-anchor.txt": {
+      "compressed_sha256": "e2c4e808bdcaec24b1493c72498bfbe0fe254e2183b90a2503090e1d7a1f351a",
+      "compressed_size": 45935,
+      "original_sha256": "6cbecdd9ec5c47e43ef0702f5aea1d63bcded0d110ba8b7432b340095ba5bd59",
+      "original_size": 19022548,
+      "selection": "Exact original last1MiB plus preceding256-byte cursor anchor; all scanned bytes retained. Test recreates original19,022,548-byte geometry with explicitly controlled unscanned padding; NOT a full-prefix replay.",
+      "sha256": "5ccd087cae671f37a4b075a75d01a44cc26b38458400b79c1f3f0c454d6a1180",
+      "size": 1048832
+    }
+  },
+  "version": 1
+}

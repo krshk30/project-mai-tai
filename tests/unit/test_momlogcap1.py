@@ -7,9 +7,9 @@ import pytest
 from project_mai_tai.market_data.momwarn_pause_policy import WarningPausePolicy
 from project_mai_tai.market_data.momentum_warning_watchdog import WarningHealthReader, WarningWatchdog
 from tests.unit.test_momwarn1_gateway import health_reader as reader_fixture
+from tests.c7_retained import retained_bytes, retained_manifest
 
 health_reader = reader_fixture
-ACTUAL_PREFIX = Path("/Users/velkris/.codex/task-queues/analysis/momwarn1-wed-no-warnings-20261014/v2-log-prefix-0525.txt")
 RECORDED_BURSTS = (
     ("v2-real-peak-20261013T080643.txt", 982821, 5334,
      "26e2af2abefa343205cc66708da83268b0450fef6790a1c4b8a28a1dac5a8b93", "peak_second_filter"),
@@ -26,7 +26,7 @@ def recorded_burst(artifact):
     import hashlib
 
     name, size, lines, digest, _ = artifact
-    raw = ACTUAL_PREFIX.with_name(name).read_bytes()
+    raw = retained_bytes(name)
     assert len(raw) == size and raw.count(b"\n") == lines
     assert hashlib.sha256(raw).hexdigest() == digest
     return raw
@@ -100,12 +100,15 @@ def test_observed_burst_sizes_clear_one_pass_without_pause(health_reader, size):
 
 
 def test_real_19mb_copy_cursor_1mb_behind_catches_up_one_pass(health_reader):
-    import hashlib
     from project_mai_tai.momwarn_log_cursor import cursor_anchor
 
-    raw = ACTUAL_PREFIX.read_bytes()
+    # Every scanned byte and the preceding cursor anchor are real retained bytes.
+    # Only the unscanned prefix is controlled padding, not a full-prefix replay.
+    tail = retained_bytes("v2-tail-1m-plus-anchor.txt")
+    assert len(tail) == 1048832
+    raw = b" " * (19022548 - len(tail)) + tail
     assert len(raw) == 19022548
-    assert hashlib.sha256(raw).hexdigest() == "6cbecdd9ec5c47e43ef0702f5aea1d63bcded0d110ba8b7432b340095ba5bd59"
+    assert retained_manifest()["artifacts"]["v2-tail-1m-plus-anchor.txt"]["original_sha256"] == "6cbecdd9ec5c47e43ef0702f5aea1d63bcded0d110ba8b7432b340095ba5bd59"
     reader, _, directory = health_reader
     path = directory / "schwab-1m-v2.log"
     path.write_bytes(raw)
@@ -119,8 +122,7 @@ def test_real_19mb_copy_cursor_1mb_behind_catches_up_one_pass(health_reader):
 
 
 def test_partial_GRML_090720_timestamp_slice_clears_without_pause(health_reader):
-    raw = b"".join(line for line in ACTUAL_PREFIX.read_bytes().splitlines(keepends=True)
-                   if line.startswith(b"2026-10-14 09:07:20,"))
+    raw = recorded_burst(RECORDED_BURSTS[2])
     assert 350000 <= len(raw) <= 500000
     reader, _, directory = health_reader
     reader.read()

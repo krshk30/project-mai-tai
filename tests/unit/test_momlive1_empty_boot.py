@@ -2,12 +2,13 @@ import json
 from datetime import timedelta
 from decimal import Decimal as D
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
-from project_mai_tai.db.models import BrokerOrder
+from project_mai_tai.db.models import BrokerOrder, TradeIntent
 from project_mai_tai.momentum_live.admission import EpisodeLedger, Refusal, Signal, STRATEGY_CODE
 from project_mai_tai.momentum_live.owner_proof import owner_proof
 from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
@@ -36,11 +37,13 @@ async def test_next_day_off_empty_book_clears_stale_owner_only_after_actual_empt
         runtime.book.reconcile(episode.episode_id, cumulative_filled=D(33), cumulative_exited=D(33),
             now_ns=runtime.now_ns(), terminal_entry=True)
         runtime.db.save(session, runtime.book.snapshot()[0])
+        # The runtime and durable lifecycle rows must share the owned Oct14 clock.
+        for model in (TradeIntent, BrokerOrder):
+            for row in session.scalars(select(model)).all():
+                row.created_at = row.updated_at = now[0]
         if unsafe == "working":
             session.scalars(select(BrokerOrder)).first().status = "accepted"
         elif unsafe == "corrupt":
-            from uuid import UUID
-            from project_mai_tai.db.models import TradeIntent
             parent = session.get(TradeIntent, UUID(episode.episode_id))
             parent.payload = {**parent.payload, "momlive_episode": {**parent.payload["momlive_episode"], "filled": "999"}}
         session.commit()

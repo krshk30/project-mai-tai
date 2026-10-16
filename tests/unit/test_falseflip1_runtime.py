@@ -755,7 +755,8 @@ async def test_stalled_budget_write_is_offloop_and_actual_quote_and_bar_callback
         assert entered.is_set()
         start = time.perf_counter()
         strategy.on_quote(state.symbol, Quote(state.symbol, 2.78, 2.79, 2.79, clock[0], clock[0]))
-        bot._strategy_on_bar(state.symbol, _bar(clock[0]), observation_phase="live")
+        from tests.unit.v2_input_control import chart_input
+        bot._strategy_on_bar(state.symbol, chart_input(state.symbol, _bar(clock[0])), observation_phase="live")
         assert time.perf_counter()-start < .05
         assert not sql_threads  # stalled writer has not reached SQL; neither callback queried
         release.set()

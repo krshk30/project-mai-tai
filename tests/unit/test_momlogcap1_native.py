@@ -2,7 +2,6 @@
 
 import hashlib
 import inspect
-import os
 from pathlib import Path
 from threading import Event, Thread
 import time
@@ -11,7 +10,6 @@ import pytest
 
 from project_mai_tai import momwarn_live_health as live
 from project_mai_tai.momwarn_cohort_lateness import CohortTracker
-from project_mai_tai.momwarn_log_cursor import cursor_anchor
 from tests.unit import test_momwarn1_live_health as controlled
 from tests.unit.test_momwarn1_live_health import NS, NOW, line
 
@@ -60,7 +58,7 @@ def test_over_budget_commits_every_chunk_and_converges(setup):
         except ValueError as exc:
             assert "catch-up incomplete" in str(exc)
         offsets.append(env.source.offset)
-    assert offsets[:2] == [before + live.MAX_LOG_PASS_BYTES, before + 2 * live.MAX_LOG_PASS_BYTES]
+    assert offsets[:2] == [before + 2097152, before + 4194304]
     assert offsets[2] == env.source.log.stat().st_size
     assert ("NEW", NOW // (60 * NS) * 60_000 - 60_000) in env.source.bars
     assert len(env.source.partial) <= live.BOUND
@@ -81,7 +79,7 @@ def test_end_only_commit_mutation_fails_progress_control(setup):
         namespace["mutated"](env.source, NOW)
     assert env.source.offset == before
     with pytest.raises(AssertionError):
-        assert env.source.offset == before + live.MAX_LOG_PASS_BYTES
+        assert env.source.offset == before + 2097152
 
 
 def test_later_invalid_chunk_preserves_only_previous_parsed_chunk(setup):
@@ -92,13 +90,9 @@ def test_later_invalid_chunk_preserves_only_previous_parsed_chunk(setup):
     append(env, first + probe("UNCOMMITTED") + probe("FUTURE", NOW + NS))
     with pytest.raises(ValueError, match="future v2"):
         env.source._read_probes(NOW)
-    assert env.source.offset == before + live.BOUND
+    assert env.source.offset == before + 65536
     assert {symbol for symbol, _ in env.source.bars} == {"AAA", "BBB", "KEPT"}
-    fd = os.open(env.source.log, os.O_RDONLY)
-    try:
-        assert env.source.anchor == cursor_anchor(fd, env.source.offset)
-    finally:
-        os.close(fd)
+    assert env.source.anchor == b"x" * 255 + b"\n"
 
 
 @pytest.mark.parametrize("marker", ["probe", "publication", "seed"])
@@ -203,7 +197,7 @@ def test_future_markers_beyond_first_chunk_remain_unknown(setup, marker):
     append(env, b"x" * (live.BOUND - 1) + b"\n" + messages[marker])
     with pytest.raises(ValueError, match="future v2"):
         env.source._read_probes(NOW)
-    assert env.source.offset == before + live.BOUND
+    assert env.source.offset == before + 65536
 
 
 def test_seed_cohort_commit_survives_later_bad_chunk(setup):
@@ -249,7 +243,7 @@ def test_cal_malformed_bucket_after_valid_chunk_remains_fail_closed(setup):
            + line(NOW, "[V2-MACD-PROBE] sym=BAD ts_ms=123 close=10 ").encode())
     with pytest.raises(ValueError, match="CAL probe bucket is malformed"):
         env.source._read_probes(NOW)
-    assert env.source.offset == before + live.BOUND
+    assert env.source.offset == before + 65536
 
 
 def test_regular_growth_during_each_chunk_keeps_bounded_progress(setup, monkeypatch):

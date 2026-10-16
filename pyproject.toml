@@ -37,6 +37,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["timing: mandatory quiet-host pre-install speed gate; not shared-runner timing proof"]
 
 [tool.ruff]
 line-length = 100

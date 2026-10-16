@@ -206,21 +206,49 @@ def test_s2_software_rest_at_0930_does_not_cross_or_take_state(stream, tonight):
     quote = Quote("VEEA", 5.26, 5.27, 5.27, clock[0])
     assert strategy._eh_resting_cross_check(state, quote) is None
     assert cross(strategy, state, clock, 5.27, 5.27, stream=stream) is None
-    assert state.resting_active and state.resting_flip_ms == 0
+    # EH2RTH1 3d86645b, approved C7 19:5x: quotes run maintenance and
+    # disarm the old software arm at RTH; stream-cross alone does not.
+    assert state.resting_active is stream
+    assert state.resting_flip_ms == 0
     legs = strategy.drain_webull_fanout_intents()
     if stream:
         assert not legs
     else:
-        # M19 is deliberately unchanged: on_quote's existing RTH detector can
-        # queue its Webull leg although this software rest did not convert yet.
+        assert state.resting_level == state.resting_trigger == 0
+        assert state.position_qty_held == 0 and not state.cw_v2_emit_claimed
+        assert not legs
+        # Disabling the PM print/flip cards does NOT disable the independently
+        # approved EH2RTH handover. The old active/extra-leg oracle is wrong.
         legacy, legacy_state, legacy_clock = armed(confirm=False, wait=False)
         legacy_clock[0] = clock[0]
         legacy_state.bars[-1].timestamp_ms = state.bars[-1].timestamp_ms
         assert cross(legacy, legacy_state, legacy_clock, 5.27, 5.27, stream=False) is None
-        old_leg, = legacy.drain_webull_fanout_intents()
-        leg, = legs
-        assert (leg.symbol, leg.intent_type, leg.quantity, leg.metadata["fanout_source"]) == (
-            old_leg.symbol, old_leg.intent_type, old_leg.quantity, old_leg.metadata["fanout_source"])
+        assert not legacy_state.resting_active
+        assert not legacy.drain_webull_fanout_intents()
+
+
+@pytest.mark.parametrize("tonight", [False, True], ids=["both_cards", "tonight"])
+def test_s2_old_active_oracle_requires_suppressing_approved_handover(monkeypatch, tonight):
+    """EH2RTH1 3d86645b: suppressing its cancel reproduces the obsolete active arm."""
+    from tests.unit.test_pmprint1_tonight_flags import TONIGHT
+    active = []
+    for suppress in (False, True):
+        strategy, state, clock = armed(**TONIGHT) if tonight else armed()
+        clock[0] = ms("2026-10-05T13:30:00Z")
+        state.bars[-1].timestamp_ms = ms("2026-10-05T13:29:00Z")
+        cancel = strategy._queue_resting_cancel
+        reasons = []
+
+        def controlled_cancel(st, *, reason):
+            reasons.append(reason)
+            if not (suppress and reason == "eh_to_rth_handover"):
+                cancel(st, reason=reason)
+
+        monkeypatch.setattr(strategy, "_queue_resting_cancel", controlled_cancel)
+        cross(strategy, state, clock, 5.27, 5.27, stream=False)
+        assert "eh_to_rth_handover" in reasons
+        active.append(state.resting_active)
+    assert active == [False, True]
 
 
 @pytest.mark.parametrize("stream", [True, False])

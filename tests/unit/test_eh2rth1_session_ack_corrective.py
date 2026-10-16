@@ -3,13 +3,12 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from project_mai_tai.db.models import BrokerOrder, TradeIntent
 from project_mai_tai.events import OrderEventEvent, OrderEventPayload, TradeIntentEvent
-from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2IntentEmitter
 from tests.unit.test_eh2rth1_handover import (
@@ -223,12 +222,14 @@ def test_ack_can_arrive_during_xadd_but_permission_waits_for_successful_emit():
     assert strategy._primary_resting_proven(state)
 
 
-def test_scope_is_exact_primary_only_and_immutable_snapshot():
+def test_scope_is_exact_primary_only_and_immutable_snapshot(monkeypatch):
+    from project_mai_tai.strategy_core import schwab_1m_v2
+    monkeypatch.setattr(schwab_1m_v2, "uuid4", lambda: UUID("11111111-2222-4333-8444-555555555555"))
     strategy, state, clock, _, _ = submitted()
     scope = strategy.primary_resting_scope()
-    assert scope == ((state.symbol, state.resting_schwab_generation, state.fanout_segment_id,
-        fanout_slot_id(strategy_code="schwab_1m_v2", symbol=state.symbol,
-            segment_id=state.fanout_segment_id, slot="resting"), state.last_resting_placed_slot),)
+    # Last completed fixture bar is09:29; the slot is RFC4122 UUID5 of that tuple.
+    assert scope == (("TCRT", "11111111-2222-4333-8444-555555555555", 1791898140000,
+                      "75d4edf6-9a70-5cf7-b8a0-0dd4e4f9a0d3", "first"),)
     state.resting_is_broker_order = False
     assert strategy.primary_resting_scope() == ()
     assert len(scope) == 1

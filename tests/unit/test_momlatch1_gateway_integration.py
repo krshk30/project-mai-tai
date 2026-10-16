@@ -260,6 +260,7 @@ async def test_unknown_connection_body_failure_stays_sticky_while_health_paused(
 
 
 @pytest.mark.asyncio
+@pytest.mark.timing
 async def test_gateway_A_240_per_second_60s_original_budget_and_TQ_progress(pm_clock, record_property):
     """Offline real gateway/provider publisher path; not a live provider load proof."""
     svc, provider, redis, warning_redis = service()
