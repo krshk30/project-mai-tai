@@ -1,0 +1,23 @@
+[Unit]
+Description=Single report for a marked weekly-maintenance reboot
+After=network-online.target redis-server.service postgresql.service project-mai-tai-oms.service
+ConditionPathExists=/var/lib/project-mai-tai-weekmaint/reboot.json
+OnFailure=project-mai-tai-weekmaint-failed.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/trader/project-mai-tai
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+UMask=0077
+ExecStart=/home/trader/project-mai-tai/.venv/bin/python -B -m ops.weekmaint.backend --boot-verify
+Restart=no
+# Journal observation ends at OS boot + 300s, not 300s from this unit start.
+# The remaining bounded time is for census/report I/O, never service recovery.
+TimeoutStartSec=360
+TimeoutStopSec=10
+SyslogIdentifier=project-mai-tai-weekmaint-boot
+
+[Install]
+WantedBy=multi-user.target

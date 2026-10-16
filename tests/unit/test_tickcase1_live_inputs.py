@@ -83,16 +83,47 @@ def test_retained13269_rawcase_filter_and_scanner_uppercase_content_parity(monke
             for row in payload['reference_data'] if raw_symbol_is_uppercase(row['symbol'])}
     old = frozen_namespace('src/project_mai_tai/strategy_core/five_pillars.py', five_pillars)
     config = five_pillars.FivePillarsConfig()
+    # claude-1 23:4x: age reads wall time separately from the scanner's now arg.
+    # Freeze before BOTH historical/current comparisons, retaining every field.
+    monkeypatch.setattr(snapshot_utils, 'time', SimpleNamespace(time=lambda: NOW.timestamp()))
     expected = old['apply_five_pillars'](uppercase,refs,config,now=NOW)
     assert five_pillars.apply_five_pillars(snapshots,refs,config,now=NOW) == expected
     assert five_pillars.apply_five_pillars(uppercase,refs,config,now=NOW) == expected
     monkeypatch.setattr(top_gainers,'now_eastern',lambda: NOW)
-    monkeypatch.setattr(snapshot_utils, 'time', SimpleNamespace(time=lambda: NOW.timestamp()))
     old = frozen_namespace('src/project_mai_tai/strategy_core/top_gainers.py', top_gainers)
     old['now_eastern'] = lambda: NOW
     expected = old['TopGainersTracker']().update(uppercase,refs,now=NOW)
     assert top_gainers.TopGainersTracker().update(snapshots,refs,now=NOW) == expected
     assert top_gainers.TopGainersTracker().update(uppercase,refs,now=NOW) == expected
+
+
+def test_retained_scanner_stepped_wall_clock_exposes_old_late_freeze(monkeypatch):
+    payload = json.loads(retained_bytes('snapshot-market-payload.json'))['event']['payload']
+    rows = payload['snapshots']
+    assert len(rows) == 13269
+    snapshots = [strategy_engine_app.snapshot_from_payload(MarketSnapshotPayload.model_validate(row))
+                 for row in rows]
+    uppercase = [row for row in snapshots if raw_symbol_is_uppercase(row.ticker)]
+    assert len(uppercase) == 12870
+    refs = {row['symbol']: ReferenceData(row['shares_outstanding'], float(row['avg_daily_volume']))
+            for row in payload['reference_data'] if raw_symbol_is_uppercase(row['symbol'])}
+    historical = frozen_namespace('src/project_mai_tai/strategy_core/five_pillars.py', five_pillars)
+    seconds = [NOW.timestamp()]
+    monkeypatch.setattr(snapshot_utils, 'time', SimpleNamespace(time=lambda: seconds[0]))
+    config = five_pillars.FivePillarsConfig()
+    before = historical['apply_five_pillars'](uppercase, refs, config, now=NOW)
+    seconds[0] += 1  # The explicit scanner NOW argument remains identical.
+    after = five_pillars.apply_five_pillars(snapshots, refs, config, now=NOW)
+    assert before and len(before) == len(after)
+    assert before != after
+    assert [{key: value for key, value in row.items() if key != 'data_age_secs'} for row in before] == [
+        {key: value for key, value in row.items() if key != 'data_age_secs'} for row in after]
+    assert any(right['data_age_secs'] == left['data_age_secs'] + 1
+               for left, right in zip(before, after, strict=True))
+    seconds[0] = NOW.timestamp()
+    # Reapplying the approved freeze restores COMPLETE dictionary equality.
+    assert five_pillars.apply_five_pillars(snapshots, refs, config, now=NOW) == before
+    assert five_pillars.apply_five_pillars(uppercase, refs, config, now=NOW) == before
 
 
 @pytest.mark.parametrize('preferred,common', PAIRS)

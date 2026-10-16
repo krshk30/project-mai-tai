@@ -56,6 +56,8 @@ jobs:
         run: python ops/health/check_log_marker_collisions.py
 
       - name: Run unit tests
+        env:
+          KILLSW1_TEST_PG_DSN: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/project_mai_tai_test
         # This exact timing node remains mandatory in the quiet pre-install speed gate.
         run: python -m pytest -p no:cacheprovider tests/unit --deselect=tests/unit/test_momlatch1_gateway_integration.py::test_gateway_A_240_per_second_60s_original_budget_and_TQ_progress
 

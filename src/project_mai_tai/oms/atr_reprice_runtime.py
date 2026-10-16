@@ -670,6 +670,18 @@ class AtrRepriceRuntimeMixin:
         except TimeoutError:
             return "rpg_strategy_reauthorization_unreadable"
         session.expire_all()
+        if self._country_owner_scope(event):
+            if session.get_bind().dialect.name == "postgresql":
+                session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {
+                    "key": f"orb-v2:{event.payload.broker_account_name}:{event.payload.symbol.upper()}",
+                })
+            account = session.scalar(select(BrokerAccount).where(
+                BrokerAccount.name == event.payload.broker_account_name))
+            if account is None:
+                return "route_owner_account_UNKNOWN"
+            foreign = self._country_owner_conflict(session, event, account)
+            if foreign is not None:
+                return f"route_owner_conflict:{foreign}"
         if (getattr(self.settings, "orb_live_schwab_orders_enabled", False)
                 and event.payload.broker_account_name == self.settings.strategy_schwab_1m_v2_account_name
                 and session.get_bind().dialect.name == "postgresql"):

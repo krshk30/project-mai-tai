@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 FLAG = Path("/var/lib/project-mai-tai-maintenance/pending-restart.json")
 PROTECTED = re.compile(r"^(project-mai-tai-.+|redis(?:[-@.].*)?|postgresql(?:[-@.].*)?)$")
+WEEKMAINT_PERMIT = Path("/var/lib/project-mai-tai-weekmaint/package-window.json")
 
 
 def in_window(now):
@@ -20,6 +22,41 @@ def in_window(now):
         raise ValueError("aware clock required")
     local = now.astimezone(ET)
     return local.weekday() == 5 and time(0) <= local.time() < time(1)
+
+
+def weekmaint_install_window(now, *, permit=WEEKMAINT_PERMIT):
+    """Opt-in ONLY for this root systemd invocation, never a global clock override.
+
+    Protected-service policy() deliberately does not use this permit: package
+    scripts still cannot restart the trading/Redis/PG services after 01:00.
+    """
+    try:
+        local = now.astimezone(ET)
+        if os.geteuid() != 0 or local.weekday() != 5 or local.time() < time(1):
+            return False
+        parent = permit.parent.lstat()
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_mode & 0o077:
+            return False
+        descriptor = os.open(permit, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "r") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077 or info.st_size > 4096:
+                return False
+            row = json.load(stream)
+        started, expires = (datetime.fromisoformat(row[key]) for key in ("started_at", "expires_at"))
+        if started.tzinfo is None or expires.tzinfo is None:
+            return False
+        cgroup = Path("/proc/self/cgroup").read_text()
+        return (type(row.get("version")) is int and row["version"] == 1
+            and row.get("boot_id") == Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            and bool(re.fullmatch(r"[0-9a-f]{32}", str(row.get("invocation_id", ""))))
+            and row["invocation_id"] == os.environ.get("INVOCATION_ID")
+            and any(line.endswith("/project-mai-tai-weekmaint.service") for line in cgroup.splitlines())
+            and bool(re.fullmatch(r"[0-9a-f]{64}", str(row.get("SEC_success_sha256", ""))))
+            and started <= now <= expires and 0 < (expires - started).total_seconds() <= 7200
+            and started.astimezone(ET).date() == local.date() == expires.astimezone(ET).date())
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 def record_pending(reason, *, path=FLAG, now=None, services=()):
@@ -71,7 +108,8 @@ def audit_pending(now, *, flag=FLAG, run=subprocess.run, reboot=Path("/run/reboo
     if services or reboot.exists():
         record_pending("restart_required", path=flag, now=now, services=services)
     # An in-progress dpkg transaction is never killed at the window boundary.
-    if not in_window(now) and os.environ.get("MAI_TAI_MAINTENANCE_ATTENDED") != "1":
+    if (not in_window(now) and os.environ.get("MAI_TAI_MAINTENANCE_ATTENDED") != "1"
+            and not weekmaint_install_window(now)):
         record_pending("maintenance_window_overrun", path=flag, now=now, services=services)
 
 
@@ -82,7 +120,7 @@ def main(args=None):
     if args == ["window"]:
         return 0 if in_window(now) else 1
     if args == ["install"]:
-        if attended or in_window(now):
+        if attended or in_window(now) or weekmaint_install_window(now):
             return 0
         record_pending("package_install_deferred", now=now)
         return 1

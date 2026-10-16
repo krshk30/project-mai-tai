@@ -7,9 +7,11 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -947,3 +949,171 @@ class ScannerConfirmedEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, server_default=func.now(), nullable=False
     )
+
+
+class BotControlState(Base):
+    """Explicitly seeded live admission latch; absence never means RUN."""
+
+    __tablename__ = "bot_control_states"
+    __table_args__ = (
+        CheckConstraint("execution_mode = 'live'", name="ck_bot_control_state_live"),
+        CheckConstraint("generation >= 0 AND revision >= 0", name="ck_bot_control_state_version"),
+        CheckConstraint("desired_state IN ('RUN', 'STOP')", name="ck_bot_control_state_desired"),
+    )
+
+    strategy_id: Mapped[UUID] = mapped_column(ForeignKey("strategies.id"), primary_key=True)
+    execution_mode: Mapped[str] = mapped_column(String(16), primary_key=True)
+    generation: Mapped[int] = mapped_column(BigInteger)
+    revision: Mapped[int] = mapped_column(BigInteger)
+    desired_state: Mapped[str] = mapped_column(String(8))
+    active_command_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "bot_control_commands.command_id",
+            name="fk_bot_control_state_active_command",
+            use_alter=True,
+            ondelete="RESTRICT",
+        )
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BotControlCommand(Base):
+    """Generation-bound request and bounded census, not a financial ledger."""
+
+    __tablename__ = "bot_control_commands"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["strategy_id", "execution_mode"],
+            ["bot_control_states.strategy_id", "bot_control_states.execution_mode"],
+            name="fk_bot_control_command_scope",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "strategy_id", "execution_mode", "generation", name="uq_bot_control_command_generation"
+        ),
+        CheckConstraint(
+            "generation > 0 AND expected_generation >= 0 AND revision >= 0",
+            name="ck_bot_control_command_version",
+        ),
+        CheckConstraint("action IN ('STOP', 'ON')", name="ck_bot_control_command_action"),
+        Index(
+            "uq_bot_control_active_scope",
+            "strategy_id",
+            "execution_mode",
+            unique=True,
+            postgresql_where=text("active"),
+            sqlite_where=text("active"),
+        ),
+        Index("ix_bot_control_commands_recovery", "active", "updated_at"),
+    )
+
+    command_id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    strategy_id: Mapped[UUID] = mapped_column(Uuid())
+    execution_mode: Mapped[str] = mapped_column(String(16))
+    generation: Mapped[int] = mapped_column(BigInteger)
+    expected_generation: Mapped[int] = mapped_column(BigInteger)
+    revision: Mapped[int] = mapped_column(BigInteger)
+    action: Mapped[str] = mapped_column(String(8))
+    request_id: Mapped[UUID] = mapped_column(Uuid(), unique=True)
+    request_hash: Mapped[str] = mapped_column(String(64))
+    account_scope: Mapped[dict[str, object]] = mapped_column(JSON)
+    account_scope_hash: Mapped[str] = mapped_column(String(64))
+    actor_reference: Mapped[str] = mapped_column(String(128))
+    reason: Mapped[str] = mapped_column(String(256))
+    phase: Mapped[str] = mapped_column(String(40))
+    active: Mapped[bool] = mapped_column(Boolean)
+    inventory_census: Mapped[dict[str, object]] = mapped_column(JSON)
+    executor_instance_id: Mapped[str | None] = mapped_column(String(128))
+    lease_fence: Mapped[int | None] = mapped_column(BigInteger)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class BotControlAttempt(Base):
+    """Exact owned binding and side-effect identity, including uncertain sends."""
+
+    __tablename__ = "bot_control_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "command_id",
+            "account_id",
+            "symbol",
+            "binding_kind",
+            "binding_key",
+            "operation",
+            "sequence_no",
+            name="uq_bot_control_attempt_identity",
+        ),
+        CheckConstraint(
+            "generation > 0 AND sequence_no >= 0 AND revision >= 0",
+            name="ck_bot_control_attempt_version",
+        ),
+        CheckConstraint("execution_mode = 'live'", name="ck_bot_control_attempt_live"),
+        CheckConstraint(
+            "operation IN ('CANCEL_ENTRY', 'CANCEL_PROTECTION', 'SUBMIT_EXIT', 'ADOPT_EXISTING_EXIT')",
+            name="ck_bot_control_attempt_operation",
+        ),
+        CheckConstraint(
+            "status IN ('PREPARED', 'MAY_HAVE_SENT', 'WORKING', 'UNKNOWN', 'TERMINAL', 'PROVEN_NOT_SENT')",
+            name="ck_bot_control_attempt_status",
+        ),
+        Index(
+            "uq_bot_control_unresolved_exit",
+            "strategy_id",
+            "execution_mode",
+            "account_id",
+            "symbol",
+            unique=True,
+            postgresql_where=text(
+                "operation IN ('SUBMIT_EXIT', 'ADOPT_EXISTING_EXIT') AND status IN ('PREPARED', 'MAY_HAVE_SENT', 'WORKING', 'UNKNOWN')"
+            ),
+            sqlite_where=text(
+                "operation IN ('SUBMIT_EXIT', 'ADOPT_EXISTING_EXIT') AND status IN ('PREPARED', 'MAY_HAVE_SENT', 'WORKING', 'UNKNOWN')"
+            ),
+        ),
+        Index("ix_bot_control_attempts_recovery", "status", "next_eligible_at"),
+    )
+
+    attempt_id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    command_id: Mapped[UUID] = mapped_column(
+        ForeignKey("bot_control_commands.command_id", ondelete="RESTRICT")
+    )
+    strategy_id: Mapped[UUID] = mapped_column(ForeignKey("strategies.id"))
+    execution_mode: Mapped[str] = mapped_column(String(16))
+    generation: Mapped[int] = mapped_column(BigInteger)
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("broker_accounts.id"))
+    symbol: Mapped[str] = mapped_column(String(16))
+    binding_kind: Mapped[str] = mapped_column(String(24))
+    binding_key: Mapped[str] = mapped_column(String(256))
+    parent_intent_id: Mapped[UUID | None] = mapped_column(ForeignKey("trade_intents.id"))
+    entry_order_id: Mapped[UUID | None] = mapped_column(ForeignKey("broker_orders.id"))
+    managed_row_id: Mapped[UUID | None] = mapped_column(ForeignKey("oms_managed_positions.id"))
+    target_order_id: Mapped[UUID | None] = mapped_column(ForeignKey("broker_orders.id"))
+    sequence_no: Mapped[int] = mapped_column(BigInteger)
+    operation: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(24))
+    client_order_id: Mapped[str | None] = mapped_column(String(128), unique=True)
+    existing_intent_id: Mapped[UUID | None] = mapped_column(ForeignKey("trade_intents.id"))
+    existing_order_id: Mapped[UUID | None] = mapped_column(ForeignKey("broker_orders.id"))
+    requested_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    cumulative_entry_qty: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    cumulative_exit_qty: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    remaining_observed: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    owner_evidence_revision: Mapped[int | None] = mapped_column(BigInteger)
+    owner_evidence_hash: Mapped[str | None] = mapped_column(String(64))
+    session: Mapped[str | None] = mapped_column(String(16))
+    order_type: Mapped[str | None] = mapped_column(String(24))
+    time_in_force: Mapped[str | None] = mapped_column(String(16))
+    quote_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    limit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    terminal_evidence: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    executor_instance_id: Mapped[str | None] = mapped_column(String(128))
+    lease_fence: Mapped[int | None] = mapped_column(BigInteger)
+    revision: Mapped[int] = mapped_column(BigInteger)
+    prepared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    dispatch_intent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actual_call_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_authoritative_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_eligible_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

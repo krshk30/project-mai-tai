@@ -397,6 +397,9 @@ class SchwabV2BotService:
         self.webull_intent_emitter: SchwabV2IntentEmitter | None = None
         self.session_factory: sessionmaker[Session] | None = session_factory
         self.fanout_identity_store: FanoutSegmentIdentityStore | None = None
+        self._country_router = None
+        self._country_route_store = None
+        self._country_route_recorded: set[tuple[str, int]] = set()
         self.fanout_outcome_journal: FanoutOutcomeJournal | None = None
         self.flip_entry_ownership_store: FlipEntryOwnershipStore | None = None
         self._fanout_outcome_evaluations = 0
@@ -1138,6 +1141,7 @@ class SchwabV2BotService:
                 return
         accounts = {self.settings.strategy_schwab_1m_v2_account_name}
         if (self.strategy._dual_broker_fanout_enabled
+                or getattr(self.settings, "strategy_schwab_1m_v2_country_route_enabled", False)
                 or self.strategy._removed_wait_clear_rules_enabled):
             accounts.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
         try:
@@ -1240,6 +1244,8 @@ class SchwabV2BotService:
         return any(counts.get(symbol, 0) for symbol in self.strategy._removed_wait_requests)
 
     async def _emit_removal_tracked(self, emitter, draft) -> bool:
+        if not await SchwabV2BotService._country_before_publish(self, emitter, draft):
+            return False
         if (getattr(draft, "intent_type", "") == "open"
                 and draft.symbol.upper() in getattr(self, "_clearwait_committing_symbols", ())):
             return False
@@ -1265,6 +1271,115 @@ class SchwabV2BotService:
             if not counts[symbol]:
                 counts.pop(symbol)
         return True
+
+    async def _configure_country_router(self, active_segments: dict[str, int]) -> None:
+        enabled = self.settings.strategy_schwab_1m_v2_country_route_enabled
+        if self.session_factory is None and not enabled:
+            return
+        from project_mai_tai.atr_country_route import (
+            AtrCountryRouteBook, AtrCountryRouteStore, selection_from_metadata,
+        )
+        from project_mai_tai.momentum_live_sec import CountryRouter, CountryStore
+
+        try:
+            if self.session_factory is None or self.fanout_identity_store is None:
+                raise RuntimeError("country_restore_factory_UNKNOWN")
+            # Re-read the observational legacy store strictly for this cutover;
+            # its old log-only fallback must not manufacture an empty owner book.
+            active_segments = await asyncio.to_thread(self.fanout_identity_store.restore_active)
+            store = AtrCountryRouteStore(self.session_factory, self.settings)
+            restored = await asyncio.to_thread(store.restore)
+            for symbol, saved in (self._restart_checkpoint or {}).get("symbols", {}).items():
+                metadata = saved["state"].get("country_route")
+                if metadata:
+                    selected = selection_from_metadata(metadata, self.settings)
+                    key = (symbol, int(saved["state"]["opportunity_id"]))
+                    if key != (selected.symbol, selected.segment_id) or (
+                            key in restored and restored[key] != selected):
+                        raise ValueError("country_checkpoint_journal_conflict")
+                    await asyncio.to_thread(store.record, selected)
+                    restored[key] = selected
+            if not enabled and not restored:
+                return
+            router = CountryRouter(await asyncio.to_thread(CountryStore, self.session_factory))
+            await router.start()  # DB snapshot only: client=None, no provider/lookup worker.
+            legacy = {(symbol, int(segment)) for symbol, segment in active_segments.items()}
+            for symbol, saved in (self._restart_checkpoint or {}).get("symbols", {}).items():
+                opportunity = int(saved["state"]["opportunity_id"])
+                if opportunity > 0:
+                    legacy.add((symbol, opportunity))
+            self.strategy.configure_country_routing(AtrCountryRouteBook(
+                self.settings, router.route_for, restored=restored, legacy=legacy))
+            self._country_router, self._country_route_store = router, store
+            self.strategy._country_restore_unknown = False
+            self._country_route_recorded = set(restored)
+            self._country_reload_day = datetime.now(UTC).astimezone(EASTERN_TZ).date()
+        except Exception:
+            self.strategy.configure_country_routing(None)
+            self.strategy._country_restore_unknown = True
+            logger.exception("[ATR-COUNTRY-BOOT-REFUSED] new_entries=0 exits_unchanged=1")
+
+    async def _country_reload_loop(self) -> None:
+        while not self._stop_event.is_set():
+            now = datetime.now(UTC).astimezone(EASTERN_TZ)
+            if (self._country_router is not None and now.time() >= time_cls(3, 55)
+                    and self._country_reload_day != now.date()):
+                try:
+                    await self._country_router.reload_async()
+                    self.strategy._country_route_book.readable = True
+                    self._country_reload_day = now.date()
+                except Exception:
+                    self.strategy._country_route_book.readable = False
+                    logger.exception("[ATR-COUNTRY-RELOAD-REFUSED] new_entries=0 exits_unchanged=1")
+            await sleep_or_stop(self._stop_event, 15)
+
+    async def _country_before_publish(self, emitter, draft) -> bool:
+        if getattr(draft, "intent_type", "") != "open":
+            return True  # Cancels/own exits never re-read country or require its DB.
+        metadata = getattr(draft, "metadata", {})
+        if not metadata.get("atr_country_schema"):
+            if not getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_country_route_enabled", False):
+                return True
+            state = self.strategy.watchlist_state(draft.symbol)
+            return not self.strategy._country_single_entry(state)
+        from project_mai_tai.atr_country_route import country_entry_window, selection_from_metadata
+
+        try:
+            selected = selection_from_metadata(metadata, self.settings)
+            if (selected.symbol != draft.symbol.upper()
+                    or selected.account != getattr(emitter, "broker_account_name", "")
+                    or self.settings.provider_for_account(selected.account) != selected.broker
+                    or str(metadata.get("fanout_segment_id")) != str(selected.segment_id)
+                    or not country_entry_window(datetime.now(UTC), self.settings)):
+                raise ValueError("country_publish_binding")
+            key = (selected.symbol, selected.segment_id)
+            book = getattr(self.strategy, "_country_route_book", None)
+            if book is None or book.routes.get(key) != selected:
+                raise ValueError("country_publish_seal_changed")
+            if key not in self._country_route_recorded:
+                if self._country_route_store is None:
+                    raise ValueError("country_journal_not_ready")
+                await asyncio.to_thread(self._country_route_store.record, selected)
+                self._country_route_recorded.add(key)
+            if not country_entry_window(datetime.now(UTC), self.settings):
+                return False
+            state = self.strategy._symbol_states.get(selected.symbol)
+            if (state is None or int(state.fanout_segment_id or state.flip_owner_opportunity_id or 0) != selected.segment_id
+                    or self.strategy._entries_held or state.position_qty or state.position_qty_held
+                    or self.strategy.gap_hold_active(selected.symbol)):
+                return False
+            if (getattr(self, "_line_restoration_enabled", False)
+                    or getattr(self.strategy, "_removed_wait_enabled", False)) and not self._line_draft_allowed(draft):
+                return False
+            if (selected.symbol in self._exit_coverage and selected.symbol not in self._watchlist):
+                return False
+            if (str(metadata.get("order_type", "")).upper() != "STOP_LIMIT"
+                    and not self._apply_extended_hours_routing(draft, datetime.now(UTC))):
+                return False
+            return True
+        except Exception as exc:
+            logger.error("[ATR-COUNTRY-REFUSED] symbol=%s stage=publish reason=%s", draft.symbol, exc)
+            return False
 
     async def run(self) -> None:
         logging.basicConfig(
@@ -1293,6 +1408,7 @@ class SchwabV2BotService:
         active_segments = self._configure_fanout_identity_store()
         self._configure_flip_entry_ownership_store(active_segments)
         await self._configure_restart_rest_store()
+        await self._configure_country_router(active_segments)
         await self._configure_removed_wait_store()
         await self._recover_soft_rest_boot()
         self._configure_fanout_outcome_journal(active_segments)
@@ -1304,7 +1420,8 @@ class SchwabV2BotService:
         )
         # Dual-broker FAN-OUT: build the SECOND emitter bound to the Webull account only when the
         # flag is on AND the account is set. Unset => warn + stay single-leg (never point at nothing).
-        if bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
+        if (bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False))
+                or self.settings.strategy_schwab_1m_v2_country_route_enabled):
             webull_account = str(
                 getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
             ).strip()
@@ -1392,6 +1509,8 @@ class SchwabV2BotService:
             "state_publish": asyncio.create_task(self._state_publish_loop()),
         }
         if self.enabled:
+            if self.settings.strategy_schwab_1m_v2_country_route_enabled:
+                self._tasks["country_reload"] = asyncio.create_task(self._country_reload_loop())
             if self._dual_primary_book_enabled():
                 latest = await self.redis.xrevrange(
                     stream_name(self.settings.redis_stream_prefix, "order-events"), count=1)
@@ -1450,6 +1569,8 @@ class SchwabV2BotService:
                 await self.tick_writer.stop()
             if self.rest_client is not None:
                 await self.rest_client.stop()
+            if self._country_router is not None:
+                await self._country_router.close()
             if self.redis is not None:
                 await self.redis.aclose()
 
@@ -2172,7 +2293,7 @@ class SchwabV2BotService:
                 "strategy_schwab_1m_v2_flip_owned_first_entry_enabled",
                 False,
             )
-        )
+        ) or bool(getattr(self.settings, "strategy_schwab_1m_v2_country_route_enabled", False))
         if not identity_enabled:
             return "fanout_identity_source_disabled"
         return None
@@ -2415,7 +2536,8 @@ class SchwabV2BotService:
         )
 
     async def _position_poll_pass(self) -> None:
-        if getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False):
+        if (getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)
+                or getattr(self.settings, "strategy_schwab_1m_v2_country_route_enabled", False)):
             # DB evidence only: no broker call, and no local placement boolean as proof.
             observed_at_ms = int(datetime.now(UTC).timestamp() * 1000)
             scope = self.strategy.primary_resting_scope()
@@ -2516,7 +2638,8 @@ class SchwabV2BotService:
             self._persist_restart_checkpoint()
 
     def _dual_primary_book_enabled(self) -> bool:
-        return bool(self.settings.strategy_schwab_1m_v2_dual_broker_fanout_enabled)
+        return bool(self.settings.strategy_schwab_1m_v2_dual_broker_fanout_enabled
+                    or self.settings.strategy_schwab_1m_v2_country_route_enabled)
 
     async def _primary_order_events_loop(self) -> None:
         # Cursor was captured before starting market data; no historical-book replay.
@@ -3245,7 +3368,7 @@ class SchwabV2BotService:
             if long or short:
                 held.add(symbol)
         books = {primary: (started, held)}
-        if not self.strategy._dual_broker_fanout_enabled:
+        if not self.strategy._webull_account_coverage():
             return books
         webull = WebullBrokerAdapter(self.settings)
         account_id = webull.accounts_by_name[mirror].account_id
@@ -3303,7 +3426,7 @@ class SchwabV2BotService:
         books = asyncio.run(self._soft_rest_boot_positions())
         accounts = set(books)
         expected = {self.settings.strategy_schwab_1m_v2_account_name}
-        if self.strategy._dual_broker_fanout_enabled:
+        if self.strategy._webull_account_coverage():
             expected.add(self.settings.strategy_schwab_1m_v2_webull_account_name)
         if accounts != expected:
             raise ValueError("boot broker book coverage incomplete")
@@ -3762,7 +3885,7 @@ class SchwabV2BotService:
 
         primary = str(self.settings.strategy_schwab_1m_v2_account_name or "").strip()
         expected_accounts = {primary} if primary else set()
-        if bool(
+        if (bool(
             getattr(
                 self.settings,
                 "strategy_schwab_1m_v2_dual_broker_fanout_enabled",
@@ -3774,7 +3897,7 @@ class SchwabV2BotService:
                 "strategy_schwab_1m_v2_webull_resting_mirror_enabled",
                 False,
             )
-        ):
+        )) or bool(getattr(self.settings, "strategy_schwab_1m_v2_country_route_enabled", False)):
             webull = str(
                 getattr(
                     self.settings,
@@ -4425,7 +4548,8 @@ class SchwabV2BotService:
         if ineligible_exclude is None:
             unreadable_exclusion_sources.append("schwab")
             ineligible_exclude = set(self._schwab_ineligible_cache)
-        if bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
+        if (bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False))
+                or getattr(self.settings, "strategy_schwab_1m_v2_country_route_enabled", False)):
             webull_ineligible = self._webull_ineligible_symbols()
             if webull_ineligible is None:
                 unreadable_exclusion_sources.append("webull")
@@ -4842,7 +4966,8 @@ class SchwabV2BotService:
         via the `session_date`-keyed `webull_ineligible_today` table."""
         if self.session_factory is None:
             return None
-        if not bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)):
+        if not (bool(getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False))
+                or getattr(self.settings, "strategy_schwab_1m_v2_country_route_enabled", False)):
             return set()
         account_name = str(
             getattr(self.settings, "strategy_schwab_1m_v2_webull_account_name", "") or ""
@@ -6799,8 +6924,11 @@ class SchwabV2BotService:
                         or getattr(self.strategy, "_removed_wait_enabled", False)) and not self._line_draft_allowed(d):
                     continue
                 try:
-                    if getattr(self.strategy, "_removed_wait_enabled", False):
-                        await self._emit_removal_tracked(self.intent_emitter, d)
+                    selected_emitter = (self.webull_intent_emitter if d.metadata.get("atr_country_broker") == "webull"
+                                        else self.intent_emitter)
+                    if (getattr(self.strategy, "_removed_wait_enabled", False)
+                            or getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_country_route_enabled", False)):
+                        await self._emit_removal_tracked(selected_emitter, d)
                     else:
                         await self.intent_emitter.emit(d)
                 except Exception:
@@ -6834,7 +6962,8 @@ class SchwabV2BotService:
                     )
                     continue
                 try:
-                    if getattr(self.strategy, "_removed_wait_enabled", False):
+                    if (getattr(self.strategy, "_removed_wait_enabled", False)
+                            or getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_country_route_enabled", False)):
                         await self._emit_removal_tracked(self.webull_intent_emitter, d)
                     else:
                         await self.webull_intent_emitter.emit(d)
@@ -7343,6 +7472,8 @@ class SchwabV2BotService:
         if draft is None:
             return "not_applicable"
         target_emitter = emitter if emitter is not None else self.intent_emitter
+        if emitter is None and draft.metadata.get("atr_country_broker") == "webull":
+            target_emitter = self.webull_intent_emitter
         if (
             getattr(draft, "intent_type", "") == "close"
             and str(getattr(draft, "metadata", {}).get("cw_flip", "")).lower() == "true"

@@ -28,6 +28,7 @@ class ExecutionPorts:
     record_route: Callable[[str, str, str], Awaitable[None]]
     request_quote_owner: Callable[[], Awaitable[None]] | None = None
     wait_quote: Callable[[str], Awaitable[None]] | None = None
+    entry_metadata: Callable[[Signal], dict[str, str]] | None = None
 
 
 class LiveEntryExecutor:
@@ -72,13 +73,16 @@ class LiveEntryExecutor:
         account = self.accounts[route]
         if not account or not account.startswith("live:"):
             raise Refusal("live_account_binding_missing")
-        return OrderRequest(f"ml1-{signal.symbol}-e-{episode_id.replace('-', '')[:20]}",
+        request = OrderRequest(f"ml1-{signal.symbol}-e-{episode_id.replace('-', '')[:20]}",
             account, STRATEGY_CODE, signal.symbol, "buy", "open", Decimal(priced.quantity), "MOMLIVE1_DETECTED",
             {"episode_id": episode_id, "momlive_one_shot": "true", "momlive_strategy": STRATEGY_CODE,
              "order_type": "limit", "time_in_force": "day",
              "limit_price": str(priced.limit), "reference_price": str(priced.limit), "cap_price": str(priced.cap),
              "signal_price": str(signal.signal_price), "session": session,
              "extended_hours": "false" if session == "NORMAL" else "true"}, "limit", "day")
+        if self.ports.entry_metadata is not None:
+            request.metadata.update(self.ports.entry_metadata(signal))
+        return request
 
     async def admit(self, signal: Signal) -> tuple[str, OrderRequest | None, dict | None]:
         signal.validate()

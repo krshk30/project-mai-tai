@@ -3,6 +3,22 @@
   "baseline": "2026-09-29 after 3389090a deploy; read-only /proc audit of owning processes",
   "flags": [
     {
+      "name": "bot_control_enabled",
+      "expected": true,
+      "owning_service": "oms",
+      "also_check_services": ["control"],
+      "reason": "KILLSW1 durable live-scope STOP/ON; enabled admission fails closed on missing control state while exits/protection continue.",
+      "ruling": "2026-10-15 20:5x claude-1: code OFF only for install sequencing. Reviewed installation migrates/seeds RUN gen0 and adds nginx operator header first, then sets TRUE and verifies OMS/control hydration/widget. This catalog is not installation authority."
+    },
+    {
+      "name": "strategy_schwab_1m_v2_country_route_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "also_check_services": ["oms", "control"],
+      "reason": "COUNTRYROUTE-ATR seals each new opportunity to one broker: SEC US to Schwab for $600, non-US or UNKNOWN to Webull for $300. Existing owned positions and rests retain their original brokers.",
+      "ruling": "Operator 2026-10-15 20:2x/20:3x: reviewed install ON; code default OFF for sequencing. ATR entry window remains 07:00-15:45 ET. This catalog does not authorize activation or installation."
+    },
+    {
       "name": "momentum_live_enabled",
       "expected": false,
       "owning_service": "oms",

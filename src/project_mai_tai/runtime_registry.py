@@ -296,7 +296,7 @@ def configured_broker_account_registrations(settings: Settings) -> tuple[BrokerA
                 environment=settings.environment,
             ),
         )
-    if settings.strategy_schwab_1m_v2_dual_broker_fanout_enabled:
+    if settings.strategy_schwab_1m_v2_dual_broker_fanout_enabled or settings.strategy_schwab_1m_v2_country_route_enabled:
         account_name = str(settings.strategy_schwab_1m_v2_webull_account_name).strip()
         if account_name:
             registrations.setdefault(

@@ -9,6 +9,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from uuid import NAMESPACE_URL, uuid5
 
+ATR_COUNTRY_ROUTE_KEYS = (
+    "atr_country_schema", "atr_country_symbol", "atr_country_segment_id",
+    "atr_country_broker", "atr_country_account", "atr_country_notional_usd",
+    "atr_country_reason", "atr_country_status", "atr_country_as_of",
+    "atr_country_sealed_at",
+)
+
 
 FANOUT_IDENTITY_KEYS = (
     "fanout_segment_id",
@@ -17,7 +24,7 @@ FANOUT_IDENTITY_KEYS = (
     "fanout_attempt_id",
     "fanout_predecessor_attempt_id",
     "fanout_identity_schema",
-)
+) + ATR_COUNTRY_ROUTE_KEYS
 
 _SLOT_BY_SOURCE = {
     "rth_resting": "resting",
