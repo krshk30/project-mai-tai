@@ -1,0 +1,127 @@
+MOMGUARDEND1 TOP213/214 TONIGHT FINAL SOURCE ONLY
+
+Base f7afcf786892e06c2c87dd2a822afd2504645a48 (installed guard-only/main7a).
+No D, OMS, actor, ATR/ORB, schema, env flag or dated continuation edits.
+ALL new tests UNRUN. No collection/import/compile/lint/build/SQL/perf or native
+action by L. This source is NOT READY or installation-qualified.
+TOP213 operator FINISHALLTONIGHT supersedes earlier next-batch/NEXT-nightly
+restriction; main composes ONE final D+guard head on main7a, including f7.
+The filename is retained to avoid confusing the preserved7045 source pin.
+
+APPROVED HUNK MAP
+C1 daily_guard.py closed_session + continuation_session: factor exact existing
+calendar/end and historical auto-continuation predicates for shared use. Main
+retains its own manifest/settings/latch/treatment checks; no condition facts
+are cached as later authorization. Legacy explicit continuation/prestart
+routes remain unchanged; condition rejects combination with operational args.
+C2 daily_guard.py exec_condition + main dispatch: --exec-condition performs
+manifest hash verification (required guard source/unit inventory), shared
+gateway_identity_pin shape/timestamp validation WITHOUT probing its process,
+settings/
+validation-window parsing and strict existing latch lookup before capturing
+real UTC->ET time. Existing treatment_clock then shared session predicate.
+No Redis construction, child command, notify, output directory, owner write,
+paper action or page from CONDITION PROCESS. It loads shared code/settings,
+but does not call run_guard/prestart_checks. Closed1; UNKNOWN/safety255.
+C3 permanent guard service: ONE ExecCondition directive added. No other unit
+policy or env changes. Existing ExecStopPost stops paper EVEN ON CONDITION
+NONZERO, including a clean skip. Condition is read-only, whole transition is
+not a no-op. Native owner/stop semantics must be observed separately.
+P1 guard_rules.py _page: retain original15 default, permit explicit retry3
+timeout. _failure_page_with_audit performs original delivery once then at
+most ONE retry with3s timeout if failed. Delivery errors tagged ERROR/count;
+final page audit records delivery result/attempts. Audit failure remains
+UNKNOWN, never page-only success. urllib timeout is transport configuration,
+NOT an invented whole-request wall-clock deadline (DNS/I/O may add time).
+P2 guard_rules.py structured immutable PaperStopResult/FailurePageResult and
+private original stop body: exactly one original systemctl stop and original
+owner proof/release windows/fallback/audits. Record stop rc, owner proof,
+required stop/release audit success and completion of that successful branch.
+Original public stop_paper signature/integer/page behavior preserved, including
+no retry and rc2 for failed legacy page. Existing planned heartbeat steps and
+safety_shutdown/latch/78 policy unchanged; no monitor heartbeat introduced.
+P3 guard_rules.py stop_paper_for_failure: opt-in failure helper. Return0 only
+on completed actual stop0 + owner release
++ required audits + successful page-result audit. Failed page alone may then
+be rc0. Real stop/owner/audit UNKNOWN or setup exception cannot become success.
+No second stop, no log parsing, no generic2 waiver or latch suppression.
+W G1/failure_stop.py (TOP214 successor): current installed wrapper source
+retained by Claude, added to source with ONLY stop_paper ->stop_paper_for_failure
+call-site difference. Keep same single stop, Settings/Redis/output setup and
+finally close. No failure-unit or drop-in change. Packaging retains existing
+installed basename/path; Claude updates its manifest artifact key at install.
+T tests/unit/test_momguardend1_nextbatch.py: new focused controls mapped below,
+plus wrapper provenance/control/cleanup cases in the TOP214 successor.
+N this review/install note: provenance and native gates; no production action.
+
+CURRENT WRAPPER PROVENANCE / TOP214 BLOCKER RESOLVED FOR SOURCE
+Reviewer-retained CURRENT provenance, read by L (not an L production probe):
+/Users/velkris/.codex/task-queues/analysis/CLAUDE1-GUARD-FAILURE-UNIT-PROVENANCE-20261016.txt
+Effective non-template failure service selects
+/home/trader/option-a-daily-guard/failure_stop.py; full wrapper source and
+SHA256 d00e4a53992de9a01300ecf16e134a445ba86594f7a8c1fb85bc41ace7a7d58a
+are supplied, matching the current manifest entry in that packet. Failure
+service beforeimage hash9c3924ce0751d6685d68f273d173a5a02ff5886075f0ab69234f5eb38c6415e9
+is retained unchanged. Guard drop-in20-notify-access.conf is unchanged.
+Do not substitute the similarly named templated failure service or dated
+Oct14/15 artifacts. Those remain untouched. Source wiring is now authored;
+actual wrapper execution, manifest update and native acceptance remain UNPROVEN.
+
+MANIFEST/PACKAGING: current manifest is installed data, not in this source
+tree. After successor source review, main builds ONE atomic permanent
+package: changed daily_guard.py, guard_rules.py, guard service and exact wrapper
+if changed; update ONLY corresponding artifact digests. Preserve primary
+gateway_identity, application provenance, all unrelated keys and timer/failure
+unit policy. No full checkout of historical source tree. Existing C603 paired
+sources and f7 receipt remain intact. Dated Oct14/Oct15 artifacts untouched.
+
+CONTROL MAP A-H (AUTHORED, ALL UNRUN)
+A shared PM/RTH/Mon03:40->04:00, exact end, configured end, weekend/holiday and
+DST dates; original five-second sampler baseline refusal retained. A boundary
+at18:09:55 is FAIL255, not a widened session or new clean skip.
+B closed condition1 has no application effects; unit retains ExecStopPost.
+Local unit-text controls DO NOT simulate native inactive/noOnFailure or owner
+release. Claude must observe actual stop-hook outcome and owner semantics.
+C present current/old/empty/malformed/symlink/lookup UNKNOWN latch inside AND
+outside session ->255 before clock/calendar; no clear/write or skip.
+D invalid settings/manifest/calendar and real digest mismatch ->255 before
+closed skip, incompatible CLI combinations rejected without operational work.
+E condition passes, clock crosses or latch appears -> actual main rechecks,
+returns78. Original notify protocol failure MAY remain at cross-process race;
+do not infer clean state or reuse stale permission. Native disposition open.
+F page true/no retry; false/timeout/non2xx equivalent then one retry3, eventual
+success OR failure -> failure helper0 only with stop/owner/audits proof. ERROR
+on delivery failure; one actual stop; legacy page policy unchanged.
+G stop rc/timeout, owner read/release UNKNOWN, stop/release/page audit failure
+with page success OR failure ->nonzero; setup error propagates; no generic rc
+conversion. Original safety_shutdown still latches/78 with public stop.
+H same original paper-only target, original35s subprocess timeout and fallback
+consumer scope, audit order and structured result controls. Owner proof is a
+controlled stub here; existing owner-proof regressions remain required, not
+replaced by a fabricated production release. No child/provider commands run.
+Wrapper controls execute its source ONLY in later main's controlled test slot:
+Settings/Redis are fakes (no /etc env read/network), /home output mkdir is
+intercepted, any audit open redirects to tmp_path. Actual shared helper is
+covered for page-only success vs real stop/owner/audit UNKNOWN; one stop/client,
+finally close on success/nonzero/exception. A golden preimage hash control
+reverses only the helper name and compares CURRENT retained wrapper digest.
+These controls are authored, NOT run; no byte-hash or native PASS inferred.
+
+NATIVE/REVIEW GATES (CLAUDE ONLY, NOT L EXECUTION)
+Official upstream v255 systemd.service.xml401-415, main-verified/relayed: condition
+1..254 skip/notfailed;255/abnormal fail; ANY nonzero invokes ExecStopPost.
+https://raw.githubusercontent.com/systemd/systemd/v255/man/systemd.service.xml
+Claude reports box255.4-1ubuntu8.18; versioned docs are NOT actual Ubuntu/native
+behavior proof. Condition255 plus unchanged Restart=on-failure/Prevent78 may
+have different restart behavior than original STOP78; NOT claimed identical
+solely from unit text. Claude owns actual safety-failure/restart/hook evidence.
+No fakeREADY
+or SuccessExitStatus78. Actual off-hours inactive/noOnFailure/no paper START,
+stop-hook/owner behavior and Mon03:40 active/live_handoff require native proof.
+Independent main/sampler in-session safety gates remain authoritative even
+after condition passes; cross-process clock/latch changes are not bypassed.
+
+Main alone later executes reviewed focused/full serial controls on exact final
+head. No native target PASS claimed from source/mocks or prior28/214 results.
+Tonight's ONE final squash is authorized by the newer TOP213 operator ruling;
+main/Claude alone own it. No L PR/push/install actions.

@@ -15,6 +15,7 @@ User=root
 WorkingDirectory=/home/trader/project-mai-tai
 EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
 Environment=PYTHONDONTWRITEBYTECODE=1
+ExecCondition=/home/trader/project-mai-tai/.venv/bin/python -B /home/trader/option-a-daily-guard/daily_guard.py --exec-condition
 ExecStart=/home/trader/project-mai-tai/.venv/bin/python -B /home/trader/option-a-daily-guard/daily_guard.py
 ExecStartPost=/bin/systemctl start project-mai-tai-momentum-paper.service
 ExecStopPost=/bin/systemctl stop project-mai-tai-momentum-paper.service

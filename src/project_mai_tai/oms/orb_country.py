@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 import asyncio
 
 from sqlalchemy import or_, select, text
-from sqlalchemy.orm import aliased
 
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, Fill, OmsManagedPosition, Strategy, SystemIncident, TradeIntent, VirtualPosition
 from project_mai_tai.oms.bot_control_scope import controlled_live_scope
@@ -595,33 +594,10 @@ async def reconcile_protection(service):
     if lock.locked() or not service.settings.orb_webull_account_name:
         return
     async with lock:
+        from project_mai_tai.oms.orb_protection_work import load_protection_work
+
         def work(session):
-            newer = aliased(BrokerOrder)
-            superseded = select(newer.id).where(
-                newer.strategy_id == BrokerOrder.strategy_id,
-                newer.broker_account_id == BrokerOrder.broker_account_id,
-                newer.symbol == BrokerOrder.symbol, newer.side == "buy",
-                or_(newer.submitted_at > BrokerOrder.submitted_at,
-                    (newer.submitted_at == BrokerOrder.submitted_at) & (newer.id > BrokerOrder.id)),
-            ).exists()
-            has_buy_fill = select(Fill.id).where(
-                Fill.order_id == BrokerOrder.id, Fill.side == "buy", Fill.quantity > 0,
-            ).exists()
-            return session.scalars(select(BrokerOrder.id).join(Strategy).join(
-                BrokerAccount, BrokerAccount.id == BrokerOrder.broker_account_id,
-            ).outerjoin(VirtualPosition, (
-                (VirtualPosition.strategy_id == BrokerOrder.strategy_id)
-                & (VirtualPosition.broker_account_id == BrokerOrder.broker_account_id)
-                & (VirtualPosition.symbol == BrokerOrder.symbol)
-            )).where(Strategy.code == "orb_schwab",
-                BrokerAccount.name == service.settings.orb_webull_account_name,
-                BrokerOrder.side == "buy", or_(
-                    (~superseded) & or_(VirtualPosition.quantity > 0,
-                        VirtualPosition.quantity.is_(None) & has_buy_fill),
-                    BrokerOrder.payload[PROTECTION]["phase"].as_string().in_(
-                        {"submitting", "accepted", "working", "unknown"})),
-                BrokerOrder.payload["orb_country_route"].as_string() == "true",
-            )).all()
+            return load_protection_work(session, service.settings.orb_webull_account_name)
         for entry_id in await service._run_db(work, commit=False):
             try:
                 await reconcile_one(service, entry_id)

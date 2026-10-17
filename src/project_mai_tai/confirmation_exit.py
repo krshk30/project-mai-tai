@@ -168,6 +168,20 @@ class ConfirmationExitTracker:
                 return self._pending.pop(identity)
         return None
 
+    def prior_session_entries(self, session_start: datetime) -> list[ConfirmationEntry]:
+        """D3: inventory only; age never authorizes retiring a held position."""
+        return [entry for entry in self._pending.values()
+                if entry.filled_at.tzinfo is not None and entry.filled_at < session_start]
+
+    def retire_flat_before(self, session_start: datetime, flat_order_ids: set[UUID]) -> list[ConfirmationEntry]:
+        retired = []
+        for entry in self.prior_session_entries(session_start):
+            if entry.order_id in flat_order_ids:
+                removed = self.discard(entry.order_id)
+                if removed is not None:
+                    retired.append(removed)
+        return retired
+
     @property
     def pending_count(self) -> int:
         return len(self._pending)

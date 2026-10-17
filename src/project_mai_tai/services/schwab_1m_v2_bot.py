@@ -2173,7 +2173,89 @@ class SchwabV2BotService:
                 )
         return entries
 
+    def _closed_confirmation_entry_ids(self, entries: list[ConfirmationEntry]) -> set:
+        """D3: positive closed episode + flat own books; absent proof stays HELD/UNKNOWN."""
+        if not entries or self.session_factory is None:
+            return set()
+        names = {entry.broker_account_name for entry in entries}
+        if any(entry.fanout_slot_id for entry in entries):
+            configured = {str(self.settings.strategy_schwab_1m_v2_account_name or "").strip(),
+                          str(self.settings.strategy_schwab_1m_v2_webull_account_name or "").strip()}
+            if "" in configured or len(configured) != 2:
+                return set()  # A logical fanout fill cannot prove an absent mirror flat.
+            names.update(configured)
+        names.discard("")
+        symbols = {entry.symbol for entry in entries}
+        with self.session_factory() as session:
+            candidates = session.execute(select(Fill, BrokerOrder, BrokerAccount, OmsManagedPosition)
+                .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
+                .join(BrokerAccount, BrokerAccount.id == Fill.broker_account_id)
+                .join(Strategy, Strategy.id == Fill.strategy_id)
+                .join(OmsManagedPosition, OmsManagedPosition.entry_order_id == BrokerOrder.id)
+                .where(Fill.id.in_([entry.fill_id for entry in entries]), Strategy.code == STRATEGY_CODE,
+                    OmsManagedPosition.strategy_code == STRATEGY_CODE,
+                    OmsManagedPosition.status == "closed", OmsManagedPosition.current_quantity == 0)).all()
+            books = session.execute(select(VirtualPosition, BrokerAccount.name)
+                .join(BrokerAccount, BrokerAccount.id == VirtualPosition.broker_account_id)
+                .join(Strategy, Strategy.id == VirtualPosition.strategy_id)
+                .where(Strategy.code == STRATEGY_CODE, BrokerAccount.name.in_(names),
+                    VirtualPosition.symbol.in_(symbols))).all()
+            held = set(session.scalars(select(OmsManagedPosition.symbol).where(
+                OmsManagedPosition.strategy_code == STRATEGY_CODE,
+                OmsManagedPosition.broker_account_name.in_(names), OmsManagedPosition.symbol.in_(symbols),
+                or_(OmsManagedPosition.status != "closed", OmsManagedPosition.status.is_(None),
+                    OmsManagedPosition.current_quantity != 0, OmsManagedPosition.current_quantity.is_(None)))))
+        wanted = {entry.fill_id: entry for entry in entries}
+        flat = set()
+        for fill, order, account, row in candidates:
+            entry = wanted[fill.id]
+            expected_names = names if entry.fanout_slot_id else {entry.broker_account_name}
+            own = [(vp, name) for vp, name in books if vp.symbol == entry.symbol and name in expected_names]
+            if (entry.symbol not in held and order.id == entry.order_id
+                    and account.name == entry.broker_account_name and account.provider in {"schwab", "webull"}
+                    and order.strategy_id == fill.strategy_id and order.broker_account_id == fill.broker_account_id
+                    and order.symbol == fill.symbol == row.symbol == entry.symbol
+                    and order.side == fill.side == "buy" and fill.quantity.is_finite() and fill.quantity > 0
+                    and order.broker_order_id == entry.broker_order_id
+                    and fill.broker_fill_id == entry.broker_fill_id
+                    and fill.filled_at.replace(tzinfo=fill.filled_at.tzinfo or UTC) == entry.filled_at
+                    and row.broker_account_name == account.name
+                    and row.entry_client_order_id == order.client_order_id
+                    and len(own) == len(expected_names) and {name for _, name in own} == expected_names
+                    and all(vp.quantity.is_finite() and vp.quantity == 0 for vp, _ in own)):
+                flat.add(entry.order_id)
+        return flat
+
+    async def _retire_previous_confirmation_entries(self) -> None:
+        boundary = _current_scanner_session_start_utc()
+        prior = self._confirmation_exit.prior_session_entries(boundary)
+        if not prior:
+            return
+        try:
+            flat = await asyncio.to_thread(self._closed_confirmation_entry_ids, prior)
+        except Exception:
+            logger.exception("[V2-CONFIRMATION-EXIT-UNANSWERABLE] reason=prior_entry_ownership_unknown")
+            return  # Retain all HELD/UNKNOWN entries on failed evidence reads.
+        for entry in self._confirmation_exit.retire_flat_before(boundary, flat):
+            logger.info("[V2-CONFIRMATION-EXIT-PRIOR-SESSION] sym=%s fill_id=%s action=closed_flat_retired",
+                        entry.symbol, entry.fill_id)
+
+    async def _confirmation_evaluation_retired(self, entry: ConfirmationEntry) -> bool:
+        if entry.filled_at.tzinfo is None or entry.filled_at >= _current_scanner_session_start_utc():
+            return False
+        try:
+            flat = await asyncio.to_thread(self._closed_confirmation_entry_ids, [entry])
+        except Exception:
+            logger.exception("[V2-CONFIRMATION-EXIT-UNANSWERABLE] reason=prior_entry_ownership_unknown")
+            return False
+        if entry.order_id not in flat:
+            return False  # HELD/UNKNOWN keeps the original confirmation/exit path.
+        logger.info("[V2-CONFIRMATION-EXIT-PRIOR-SESSION] sym=%s fill_id=%s action=closed_flat_retired",
+                    entry.symbol, entry.fill_id)
+        return True
+
     async def _sync_confirmation_entries(self) -> None:
+        await self._retire_previous_confirmation_entries()
         try:
             entries = await asyncio.to_thread(self._load_confirmation_entries)
         except ConfirmationDiscoveryConfigurationError as exc:
@@ -2192,6 +2274,8 @@ class SchwabV2BotService:
             )
             return
         for entry in entries:
+            if await self._confirmation_evaluation_retired(entry):
+                continue
             if not self._confirmation_exit.add(
                 entry,
                 preferred_account_name=self.settings.strategy_schwab_1m_v2_account_name,
@@ -2434,6 +2518,8 @@ class SchwabV2BotService:
     async def _publish_confirmation_evaluation(
         self, evaluation: ConfirmationEvaluation
     ) -> None:
+        if await self._confirmation_evaluation_retired(evaluation.entry):
+            return
         if not self._confirmation_exit_enabled():
             logger.info(
                 "[V2-CONFIRMATION-EXIT-DARK] sym=%s fill_id=%s should_exit=%s "
@@ -2482,6 +2568,8 @@ class SchwabV2BotService:
     ) -> None:
         for evaluation in evaluations:
             entry = evaluation.entry
+            if await self._confirmation_evaluation_retired(entry):
+                continue
             try:
                 created, should_publish = await asyncio.to_thread(
                     self._record_confirmation_evaluation, evaluation
@@ -5855,6 +5943,7 @@ class SchwabV2BotService:
                 for key, value in self._confirmation_bar_states.items()
                 if key[0] != normalized or key[1] >= cutoff
             }
+            await self._retire_previous_confirmation_entries()
             for expired in self._confirmation_exit.expire_before(
                 symbol=normalized, bar_start_ms=bar.timestamp_ms
             ):
@@ -6346,6 +6435,7 @@ class SchwabV2BotService:
                 published = await self._rebuild_session_line(symbol, ledger)
                 if (not published and not self.strategy.watchlist_state(symbol).line_live_fallback
                         and ledger.current_bar_ms in self._line_live_bars.get(symbol, set())):
+                    await self._retire_previous_confirmation_entries()
                     for expired in self._confirmation_exit.expire_before(
                         symbol=symbol, bar_start_ms=ledger.current_bar_ms,
                     ):
@@ -6644,6 +6734,7 @@ class SchwabV2BotService:
             int(adjacent_live), int(self._line_buy_ready(symbol)),
             len(result.request.spanning_pairs), 2 * period if result.request.spanning_pairs else 0,
         )
+        await self._retire_previous_confirmation_entries()
         # Issued evaluations have already left the tracker's one-shot registry.
         for ts, value in sorted((ts, value) for (sym, ts), value in confirmations.items() if sym == symbol):
             if not self._line_snapshot_current(symbol):

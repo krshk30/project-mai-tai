@@ -6,12 +6,15 @@ import importlib.util
 import argparse
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import signal
 import subprocess
 import sys
+import threading
 import time as wall_time
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -19,6 +22,84 @@ ET = ZoneInfo("America/New_York")
 REPO = Path("/home/trader/project-mai-tai")
 sys.path.insert(0, str(REPO / "src"))
 ROOT = Path(__file__).resolve().parent
+LOGGER = logging.getLogger(__name__)
+
+
+class PlannedStopNotifications:
+    """Keep planned-stop transport failures separate from paper safety results."""
+
+    def __init__(self, guard):
+        self.guard = guard
+        self.errors = 0
+        self.lock = threading.Lock()
+
+    def _error(self, phase, exc):
+        with self.lock:
+            self.errors += 1
+            count = self.errors
+        LOGGER.error("MOMGUARDEND1-NOTIFY-ERROR phase=%s count=%s error=%s",
+                     phase, count, type(exc).__name__)
+
+    def send(self, message, *, timeout=1):
+        try:
+            if self.guard._notify_systemd(message, timeout=timeout) is False:
+                raise RuntimeError("notify socket absent")
+        except Exception as exc:
+            self._error(message, exc)
+
+    def pulse(self):
+        self.send("WATCHDOG=1")
+
+    def _heartbeat(self, finished, deadline):
+        try:
+            while True:
+                remaining = deadline - wall_time.monotonic()
+                if remaining <= 0 or finished.wait(min(1, remaining)):
+                    return
+                remaining = deadline - wall_time.monotonic()
+                if remaining <= 0:
+                    return
+                self.send("WATCHDOG=1", timeout=min(1, remaining))
+        except Exception as exc:
+            self._error("worker", exc)
+
+    @contextmanager
+    def during(self, seconds):
+        # A helper exists only for this blocking step's existing timeout.
+        self.pulse()
+        finished = threading.Event()
+        started = False
+        try:
+            try:
+                heartbeat = threading.Thread(target=self._heartbeat,
+                    args=(finished, wall_time.monotonic() + seconds), daemon=True)
+                heartbeat.start()
+                started = True
+            except Exception as exc:
+                self._error("worker-start", exc)
+            yield
+        finally:
+            finished.set()
+            if started:
+                try:
+                    heartbeat.join(timeout=2)
+                    if heartbeat.is_alive():
+                        raise RuntimeError("worker still alive")
+                except Exception as exc:
+                    self._error("worker-cleanup", exc)
+
+
+def planned_paper_stop(guard, reason, redis, settings, audit):
+    notifications = PlannedStopNotifications(guard)
+    previous = getattr(guard, "_planned_stop_notifications", None)
+    guard._planned_stop_notifications = notifications
+    try:
+        rc = guard.stop_paper(reason, redis, settings, audit)
+    finally:
+        guard._planned_stop_notifications = previous
+    if rc == 0:
+        notifications.send("STOPPING=1")
+    return rc
 
 
 def session_day(now, holidays, validation_window=None):
@@ -34,6 +115,50 @@ def session_day(now, holidays, validation_window=None):
 def closed_timer_day(now, holidays, validation_window=None):
     end = validation_window.guard_end_for(now.date()) if validation_window else time(18, 10)
     return now.time() < end and (now.weekday() >= 5 or now.date() in holidays)
+
+
+def closed_session(now, holidays, validation_window):
+    return (closed_timer_day(now, holidays, validation_window)
+            or now.time() >= validation_window.guard_end_for(now.date()))
+
+
+def continuation_session(et, window):
+    return (window.session_date == date(2026, 10, 13)
+            and et.date() == date(2026, 10, 13) and time(7) <= et.time() < time(18, 10))
+
+
+def exec_condition():
+    """Read-only startup gate; 255 remains subject to native manager approval."""
+    try:
+        from project_mai_tai.settings import Settings
+        from project_mai_tai.strategy_core.time_utils import US_MARKET_HOLIDAYS
+        from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
+
+        manifest = verify_manifest()
+        required = {"daily_guard.py", "guard_rules.py",
+                    "project-mai-tai-option-a-daily-guard.service"}
+        artifacts = manifest["artifacts"]
+        if not isinstance(artifacts, dict) or not required <= artifacts.keys():
+            raise ValueError("condition manifest lacks required artifacts")
+        gateway_identity_pin(manifest)
+        settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
+        window = MomentumValidationWindow.from_settings(settings)
+        guard = load_guard()
+        guard.require_no_safety_stop()
+        now = datetime.now(UTC)
+        et = now.astimezone(ET)
+        continuation = continuation_session(et, window)
+        day = et.date() if continuation else session_day(et, US_MARKET_HOLIDAYS, window)
+        # Retain the original clock gate even when calendar classification skips.
+        guard.treatment_clock(day, now, window, continuation=continuation)
+        if not continuation and closed_session(et, US_MARKET_HOLIDAYS, window):
+            print("MOMGUARDEND1-CONDITION SKIP closed session", flush=True)
+            return 1
+        return 0
+    except Exception as exc:
+        print(f"MOMGUARDEND1-CONDITION FAIL error={type(exc).__name__}",
+              file=sys.stderr, flush=True)
+        return 255
 
 
 def state(unit):
@@ -72,7 +197,8 @@ def start_instant(value):
     return stamp.replace(tzinfo=timezone(timedelta(hours=offsets[zone]))).astimezone(UTC)
 
 
-def verify_gateway_identity(manifest, gateway, *, proc_root=Path("/proc")):
+def gateway_identity_pin(manifest):
+    """Validate the baseline shape without probing a process or manager."""
     pin = manifest.get("gateway_identity")
     if not isinstance(pin, dict) or type(pin.get("version")) is not int or pin["version"] != 1:
         raise ValueError("gateway identity baseline missing or unsupported")
@@ -82,6 +208,12 @@ def verify_gateway_identity(manifest, gateway, *, proc_root=Path("/proc")):
             or not isinstance(pin.get("exec_main_start_timestamp"), str)
             or not pin["exec_main_start_timestamp"].strip()):
         raise ValueError("gateway identity baseline malformed")
+    start_instant(pin["exec_main_start_timestamp"])
+    return pin
+
+
+def verify_gateway_identity(manifest, gateway, *, proc_root=Path("/proc")):
+    pin = gateway_identity_pin(manifest)
     if (gateway.get("MainPID") != str(pin["main_pid"])
             or gateway.get("ActiveState") != "active"
             or gateway.get("NRestarts") != "0"
@@ -174,6 +306,14 @@ def prestart_checks(manifest, guard, settings, redis, now):
 
 
 def main(argv=None):
+    # No Redis construction, run output, notify, or child command on this path.
+    if argv is None:
+        argv = sys.argv[1:]
+    if "--exec-condition" in argv:
+        if argv != ["--exec-condition"]:
+            print("MOMGUARDEND1-CONDITION FAIL incompatible arguments", file=sys.stderr)
+            return 255
+        return exec_condition()
     from redis import Redis
     from project_mai_tai.settings import Settings
     from project_mai_tai.strategy_core.time_utils import US_MARKET_HOLIDAYS
@@ -189,10 +329,7 @@ def main(argv=None):
     et = now.astimezone(ET)
     settings = Settings(_env_file="/etc/project-mai-tai/project-mai-tai.env")
     validation_window = MomentumValidationWindow.from_settings(settings)
-    continuation = args.continue_oct13 or (
-        validation_window.session_date == date(2026, 10, 13)
-        and et.date() == date(2026, 10, 13) and time(7) <= et.time() < time(18, 10)
-    )
+    continuation = args.continue_oct13 or continuation_session(et, validation_window)
     guard = load_guard()
     day = et.date() if continuation else session_day(et, US_MARKET_HOLIDAYS, validation_window)
     try:
@@ -238,12 +375,9 @@ def main(argv=None):
             return guard.SAFETY_STOP_EXIT
         finally:
             redis.close()
-    if not continuation and closed_timer_day(et, US_MARKET_HOLIDAYS, validation_window):
-        print("SKIP closed trading day", flush=True)
-        return 0
-    if not continuation and et.time() >= validation_window.guard_end_for(et.date()):
+    if not continuation and closed_session(et, US_MARKET_HOLIDAYS, validation_window):
         print("SKIP closed session", flush=True)
-        return 0
+        return guard.SAFETY_STOP_EXIT
     while True:
         now = datetime.now(UTC)
         output = Path("/home/trader/after-hours") / day.isoformat() / "option-a-daily" / now.strftime("run-%Y%m%dT%H%M%S%fZ")
@@ -262,10 +396,10 @@ def main(argv=None):
             rc = (guard.run_guard(day, output, continuation=True) if continuation
                   else guard.run_guard(day, output))
             if rc == 0:
-                return guard.stop_paper("scheduled_session_close", redis, settings, audit)
+                return planned_paper_stop(guard, "scheduled_session_close", redis, settings, audit)
             return rc
         except guard.PlannedStop:
-            return guard.stop_paper("planned_service_stop", redis, settings, audit)
+            return planned_paper_stop(guard, "planned_service_stop", redis, settings, audit)
         except guard.RestartBaseline:
             continue
         except Exception as exc:

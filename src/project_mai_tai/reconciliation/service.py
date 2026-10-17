@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import logging
 import socket
+import time
 from typing import Any
 from uuid import UUID
 
@@ -17,7 +18,7 @@ from redis.exceptions import (
     RedisError,
     TimeoutError as RedisTimeoutError,
 )
-from sqlalchemy import case, desc, func, select
+from sqlalchemy import case, desc, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
@@ -37,6 +38,8 @@ from project_mai_tai.db.models import (
 from project_mai_tai.db.session import build_timed_session_factory
 from project_mai_tai.reconciliation.allowances import ALLOWANCE_KEYS, match_position_allowance
 from project_mai_tai.reconciliation.flat_incidents import resolve_flat_exposure_incidents
+from project_mai_tai.reconciliation.ownership import coherent_owned_quantity
+from project_mai_tai.reconciliation.working_lifetime import live_working_ids
 from project_mai_tai.events import HeartbeatEvent, HeartbeatPayload, stream_name
 from project_mai_tai.services.runtime import _install_signal_handlers
 from project_mai_tai.settings import Settings, get_settings
@@ -184,6 +187,7 @@ class ReconciliationService:
         await self.redis.aclose()
 
     def run_reconciliation_cycle(self) -> dict[str, Any]:
+        cycle_started = time.monotonic()
         with self.session_factory() as session:
             run = ReconciliationRun(status="running", summary={})
             session.add(run)
@@ -228,8 +232,10 @@ class ReconciliationService:
                     self.logger.exception("[RECONCILER-INCIDENT-AUTO-RESOLVE-FAILED]")
             session.commit()
 
+            duration_ms = (time.monotonic() - cycle_started) * 1000
             self.logger.info(
-                "[RECONCILER-CYCLE] run_id=%s status=%s findings=%s critical=%s warning=%s",
+                "[RECONCILER-CYCLE] run_id=%s status=%s findings=%s critical=%s warning=%s "
+                f"duration_ms={duration_ms:.3f}",
                 run.id,
                 run.status,
                 summary["total_findings"],
@@ -342,6 +348,7 @@ class ReconciliationService:
                 "strategy_codes": [],
             }
         )
+        virtual_by_strategy = defaultdict(lambda: defaultdict(lambda: Decimal(0)))
         virtual_positions = session.scalars(
             select(VirtualPosition).where(
                 VirtualPosition.quantity > 0,
@@ -354,6 +361,7 @@ class ReconciliationService:
             aggregate["quantity"] += position.quantity
             aggregate["cost"] += position.quantity * position.average_price
             strategy = strategy_lookup.get(position.strategy_id)
+            virtual_by_strategy[key][strategy.code if strategy else ""] += position.quantity
             if strategy is not None:
                 aggregate["strategy_codes"].append(strategy.code)
 
@@ -381,7 +389,16 @@ class ReconciliationService:
                         else_=0,
                     )
                 ),
+                func.sum(case((or_(
+                    Fill.quantity <= 0, func.lower(Fill.side).not_in(("buy", "sell")),
+                    BrokerOrder.id.is_(None), BrokerOrder.strategy_id != Fill.strategy_id,
+                    BrokerOrder.broker_account_id != Fill.broker_account_id,
+                    BrokerOrder.symbol != Fill.symbol,
+                    func.lower(BrokerOrder.side) != func.lower(Fill.side),
+                ), 1), else_=0)),
             )
+            .select_from(Fill)
+            .outerjoin(BrokerOrder, BrokerOrder.id == Fill.order_id)
             .where(
                 Fill.broker_account_id.in_(live_account_ids),
                 Fill.filled_at >= self.settings.reconciliation_fill_balance_since,
@@ -390,8 +407,14 @@ class ReconciliationService:
         ).all()
         fill_balances: dict[tuple[UUID, str], Decimal] = defaultdict(lambda: Decimal("0"))
         fill_strategies: dict[tuple[UUID, str], set[str]] = defaultdict(set)
-        for account_id, symbol, strategy_id, quantity in fill_balance_rows:
+        fills_by_strategy = defaultdict(lambda: defaultdict(lambda: Decimal(0)))
+        invalid_fill_keys = set()
+        for account_id, symbol, strategy_id, quantity, invalid_count in fill_balance_rows:
+            if invalid_count:
+                invalid_fill_keys.add((account_id, symbol))
             strategy_balance = Decimal(str(quantity or 0))
+            strategy = strategy_lookup.get(strategy_id)
+            fills_by_strategy[(account_id, symbol)][strategy.code if strategy else ""] += strategy_balance
             if abs(strategy_balance) <= tolerance:
                 continue
             key = (account_id, symbol)
@@ -440,6 +463,7 @@ class ReconciliationService:
         account_id_by_name = {account.name: account.id for account in account_lookup.values()}
         managed_quantities: dict[tuple[Any, str], Decimal] = {}
         managed_strategies: dict[tuple[Any, str], set[str]] = defaultdict(set)
+        managed_by_strategy = defaultdict(lambda: defaultdict(lambda: Decimal(0)))
         for managed in session.scalars(
             select(OmsManagedPosition).where(OmsManagedPosition.status == "open")
         ).all():
@@ -451,6 +475,7 @@ class ReconciliationService:
                 str(managed.current_quantity)
             )
             managed_strategies[key].add(managed.strategy_code)
+            managed_by_strategy[key][managed.strategy_code] += Decimal(str(managed.current_quantity))
 
         findings: list[FindingSpec] = []
         keys = sorted(
@@ -480,6 +505,25 @@ class ReconciliationService:
             broker_has_position = abs(account_quantity) > tolerance
             books_claim_position = our_quantity > tolerance
             fills_claim_position = abs(net_fill_balance) > tolerance
+            coherent_quantity = coherent_owned_quantity(
+                virtual=virtual_by_strategy[(account_id, symbol)],
+                managed=managed_by_strategy[(account_id, symbol)],
+                fills=fills_by_strategy[(account_id, symbol)], tolerance=tolerance,
+                require_positive_virtual=True,
+            )
+            manual_excess = (
+                (account_id, symbol) not in invalid_fill_keys
+                and coherent_quantity is not None and coherent_quantity > tolerance
+                and account_quantity.is_finite()
+                and account_quantity - coherent_quantity > tolerance
+            )
+            if manual_excess:
+                # D1: negative VP never enters the old quantity aggregate. It
+                # only vetoes a proposed manual-share INFO downgrade.
+                manual_excess = not session.scalar(select(func.count()).select_from(VirtualPosition).where(
+                    VirtualPosition.broker_account_id == account_id,
+                    VirtualPosition.symbol == symbol, VirtualPosition.quantity < 0,
+                ))
 
             direction: str | None = None
             severity: str | None = None
@@ -503,6 +547,10 @@ class ReconciliationService:
                 direction = "fill_book_ownership_conflict"
                 severity = "critical"
                 title = f"Our live book has no matching fill balance for {symbol}"
+            elif manual_excess:
+                direction = "broker_manual_excess"
+                severity = "info"
+                title = f"Broker position includes manual surplus for {symbol} - not ours, taking no action"
             elif broker_has_position and fill_delta > tolerance:
                 direction = (
                     "broker_more_than_net_fills"
@@ -584,7 +632,7 @@ class ReconciliationService:
                             "direction": direction,
                             "ownership": (
                                 "manual_not_ours"
-                                if direction == "broker_only_manual"
+                                if direction in {"broker_only_manual", "broker_manual_excess"}
                                 else "ours_or_conflicting"
                             ),
                             "operator_allowance": (
@@ -622,8 +670,9 @@ class ReconciliationService:
                     findings.append(
                         FindingSpec(
                             finding_type="average_price_mismatch",
-                            severity="warning",
-                            title=f"Average price mismatch for {symbol}",
+                            severity="info" if manual_excess else "warning",
+                            title=(f"Bot broker cost basis UNKNOWN with manual surplus for {symbol}"
+                                   if manual_excess else f"Average price mismatch for {symbol}"),
                             fingerprint=f"average-price:{account_name}:{symbol}",
                             symbol=symbol,
                             payload={
@@ -633,6 +682,8 @@ class ReconciliationService:
                                     virtual_average_price.quantize(Decimal("0.00000001"))
                                 ),
                                 "price_delta": str(price_delta.quantize(Decimal("0.00000001"))),
+                                "bot_broker_average_price": None if manual_excess else str(account_position.average_price),
+                                "basis_status": "UNKNOWN_mixed_manual" if manual_excess else "account_comparison",
                                 "strategy_codes": sorted(set(aggregate["strategy_codes"])),
                             },
                         )
@@ -655,7 +706,8 @@ class ReconciliationService:
             .where(BrokerOrder.updated_at < cutoff)
             .order_by(desc(BrokerOrder.updated_at))
         ).all()
-        resting_ids = _accepted_resting_ids(session, stale_orders, account_lookup)
+        resting_ids = live_working_ids(session, stale_orders, account_lookup, now=utcnow(),
+            cadence_seconds=self.settings.oms_broker_sync_interval_seconds)
 
         for order in stale_orders:
             if order.id in resting_ids:
@@ -708,7 +760,8 @@ class ReconciliationService:
             )).all()
             for order in linked_orders:
                 orders_by_intent[order.intent_id].append(order)
-            resting_ids = _accepted_resting_ids(session, linked_orders, account_lookup)
+            resting_ids = live_working_ids(session, linked_orders, account_lookup, now=utcnow(),
+                cadence_seconds=self.settings.oms_broker_sync_interval_seconds)
         else:
             resting_ids = set()
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -16,6 +17,7 @@ import sys
 import time
 from collections import defaultdict
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time as clock_time, timedelta
 from pathlib import Path
@@ -31,6 +33,7 @@ from project_mai_tai.momwarn_validation_window import MomentumValidationWindow
 
 
 ET = ZoneInfo("America/New_York")
+LOGGER = logging.getLogger(__name__)
 PAPER_UNIT = "project-mai-tai-momentum-paper.service"
 LOW_PAGE_URL = "https://ntfy.sh/mai-tai-routine-112964cc8f26787132a29538"
 GATEWAY_LOG = Path("/var/log/project-mai-tai/market-data.log")
@@ -72,6 +75,7 @@ class RestartBaseline(BaseException):
 
 SAFETY_STOP_FILE = Path("/var/lib/project-mai-tai/option-a/safety-stop.json")
 SAFETY_STOP_EXIT = 78
+_planned_stop_notifications = None
 
 
 def require_no_safety_stop():
@@ -512,7 +516,7 @@ def _union_line_confirms(path: Path, offset: int, removed: set[str]) -> bool:
 
 def _release_confirmed(
     redis: Redis, settings: Settings, *, before: dict[str, set[str]], stopped_at: datetime,
-    log_offset: int,
+    log_offset: int, notifications=None,
 ) -> bool:
     current = _owners(redis, settings.redis_stream_prefix)
     if current.get("momentum-paper") != set() or "momentum-paper" not in current:
@@ -526,19 +530,21 @@ def _release_confirmed(
             remaining |= symbols
     old_paper = before.get("momentum-paper", set())
     removed = old_paper - remaining
+    if notifications is not None:
+        notifications.pulse()
     count = _healthy_union_count(redis, settings.redis_stream_prefix, stopped_at)
     return count == len(remaining) and (
         not old_paper or _union_line_confirms(GATEWAY_LOG, log_offset, removed)
     )
 
 
-def _page(title: str, body: str, *, priority: str = "low") -> bool:
+def _page(title: str, body: str, *, priority: str = "low", timeout=15) -> bool:
     payload = request.Request(
         LOW_PAGE_URL, data=body.encode(),
         headers={"Title": title, "Priority": priority}, method="POST",
     )
     try:
-        with request.urlopen(payload, timeout=15) as response:
+        with request.urlopen(payload, timeout=timeout) as response:
             return 200 <= response.status < 300
     except Exception:
         return False
@@ -559,18 +565,107 @@ def _page_with_audit(title: str, body: str, audit: Path) -> bool:
     return delivered
 
 
-def _notify_systemd(message: str) -> None:
+@dataclass(frozen=True)
+class FailurePageResult:
+    delivered: bool
+    audited: bool
+    attempts: int
+
+
+def _failure_page_with_audit(title, body, audit):
+    delivered = False
+    for attempt, timeout in enumerate((15, 3), start=1):
+        try:
+            delivered = _page(title, body, timeout=timeout)
+        except Exception:
+            delivered = False
+        if delivered:
+            break
+        LOGGER.error("MOMGUARDEND1-PAGE-ERROR phase=delivery count=%s timeout=%s",
+                     attempt, timeout)
+    try:
+        _audit(audit, {"action": "page_delivery", "title": title,
+                      "delivered": delivered, "attempts": attempt,
+                      "at_utc": datetime.now(UTC).isoformat()})
+    except Exception:
+        LOGGER.error("MOMGUARDEND1-PAGE-ERROR phase=audit count=1")
+        return FailurePageResult(delivered, False, attempt)
+    return FailurePageResult(delivered, True, attempt)
+
+
+@dataclass(frozen=True)
+class PaperStopResult:
+    legacy_rc: int
+    systemctl_rc: int | None
+    owner_released: bool
+    stop_audited: bool
+    release_audited: bool
+    page: FailurePageResult | None
+    completed: bool
+
+    def failure_exit_code(self):
+        # UNKNOWN is never reconstructed from a generic rc or delivery result.
+        if (self.legacy_rc in (0, 2) and self.completed and self.systemctl_rc == 0
+                and self.owner_released and self.stop_audited
+                and self.release_audited and self.page is not None and self.page.audited):
+            return 0
+        return self.legacy_rc if self.legacy_rc != 0 else 2
+
+
+def _notify_systemd(message: str, *, timeout=None) -> bool:
     address = os.environ.get("NOTIFY_SOCKET")
     if not address:
-        return
+        return False
     if address.startswith("@"):
         address = "\0" + address[1:]
     with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        def remaining_timeout():
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("notify transport deadline")
+                sock.settimeout(remaining)
+        remaining_timeout()
         sock.connect(address)
+        remaining_timeout()
         sock.sendall(message.encode())
+    return True
 
 
 def stop_paper(reason: str, redis: Redis, settings: Settings, audit: Path) -> int:
+    return _stop_paper_result(reason, redis, settings, audit).legacy_rc
+
+
+def stop_paper_for_failure(reason: str, redis: Redis, settings: Settings, audit: Path) -> int:
+    """Failure-wrapper integration requires its exact installed source first."""
+    return _stop_paper_result(reason, redis, settings, audit,
+                              failure_page_policy=True).failure_exit_code()
+
+
+def _stop_paper_result(reason, redis, settings, audit, *, failure_page_policy=False):
+    notifications = _planned_stop_notifications
+    stop_rc = None
+    stop_audited = release_audited = owner_released = False
+    page_result = None
+
+    def outcome(rc, *, completed=False):
+        return PaperStopResult(rc, stop_rc, owner_released, stop_audited,
+                               release_audited, page_result, completed)
+
+    def pulse():
+        if notifications is not None:
+            notifications.pulse()
+
+    def page(title, body, audit_path):
+        nonlocal page_result
+        if failure_page_policy:
+            page_result = _failure_page_with_audit(title, body, audit_path)
+            return page_result.delivered and page_result.audited
+        with notifications.during(15) if notifications is not None else nullcontext():
+            return _page_with_audit(title, body, audit_path)
+
+    pulse()
     try:
         before = _owners(redis, settings.redis_stream_prefix)
         log_offset = GATEWAY_LOG.stat().st_size
@@ -579,10 +674,11 @@ def stop_paper(reason: str, redis: Redis, settings: Settings, audit: Path) -> in
         log_offset = 0
         reason += f"; before_owner_unreadable={type(exc).__name__}"
     try:
-        stopped = subprocess.run(
-            ["systemctl", "stop", PAPER_UNIT], check=False, capture_output=True, text=True,
-            timeout=35,
-        )
+        with notifications.during(35) if notifications is not None else nullcontext():
+            stopped = subprocess.run(
+                ["systemctl", "stop", PAPER_UNIT], check=False, capture_output=True, text=True,
+                timeout=35,
+            )
         stop_rc = stopped.returncode
     except (OSError, subprocess.TimeoutExpired):
         stop_rc = 2
@@ -593,36 +689,42 @@ def stop_paper(reason: str, redis: Redis, settings: Settings, audit: Path) -> in
     }
     try:
         _audit(audit, result)
+        stop_audited = True
     except Exception as exc:
-        _page_with_audit(
+        page(
             "Option A audit UNKNOWN",
             f"paper stop rc={stop_rc}; audit unreadable: {type(exc).__name__}: {exc}; {reason}",
             audit,
         )
-        return 2
+        return outcome(2)
     if stop_rc != 0:
-        _page_with_audit("Option A paper STOP UNKNOWN", json.dumps(result, sort_keys=True), audit)
-        return 2
+        page("Option A paper STOP UNKNOWN", json.dumps(result, sort_keys=True), audit)
+        return outcome(2)
     deadline = time.monotonic() + 35
     for attempt in range(2):
         while time.monotonic() < deadline:
+            pulse()
             try:
                 if before and _release_confirmed(
                     redis, settings, before=before, stopped_at=stopped_at,
                     log_offset=log_offset,
+                    **({"notifications": notifications} if notifications is not None else {}),
                 ):
+                    owner_released = True
                     try:
                         _audit(audit, {"action": "owner_release_confirmed", "attempt": attempt})
+                        release_audited = True
                     except Exception as exc:
-                        _page_with_audit(
+                        page(
                             "Option A audit UNKNOWN",
                             f"paper stopped, release confirmed but audit failed: "
                             f"{type(exc).__name__}: {exc}; {reason}", audit,
                         )
-                        return 2
-                    return 0 if _page_with_audit(
+                        return outcome(2)
+                    delivered = page(
                         "Option A paper STOP", json.dumps(result, sort_keys=True), audit,
-                    ) else 2
+                    )
+                    return outcome(0 if delivered else 2, completed=True)
             except Exception:
                 pass
             time.sleep(1)
@@ -634,6 +736,7 @@ def stop_paper(reason: str, redis: Redis, settings: Settings, audit: Path) -> in
                 ),
             )
             try:
+                pulse()
                 event_id = redis.xadd(
                     stream_name(settings.redis_stream_prefix, "market-data-subscriptions"),
                     {"data": event.model_dump_json()},
@@ -643,9 +746,9 @@ def stop_paper(reason: str, redis: Redis, settings: Settings, audit: Path) -> in
             except Exception:
                 break
             deadline = time.monotonic() + 35
-    _page_with_audit("Option A owner release UNKNOWN",
+    page("Option A owner release UNKNOWN",
                      f"paper stopped, owner release unverified: {reason}", audit)
-    return 2
+    return outcome(2)
 
 
 def _audit(path: Path, item: dict) -> None:

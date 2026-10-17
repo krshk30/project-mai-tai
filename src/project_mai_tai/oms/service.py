@@ -4235,19 +4235,33 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         for report in reports if report.event_type == "cancelled"
                         and report.filled_quantity.is_finite() and report.filled_quantity > 0],
                 }
-            incident = session.scalar(select(SystemIncident).where(
+            incidents = list(session.scalars(select(SystemIncident).where(
                 SystemIncident.service_name == SERVICE_NAME,
-                SystemIncident.payload["source"].as_string() == SOURCE,
                 SystemIncident.payload["managed_row_id"].as_string() == identity,
-            ))
+                or_(SystemIncident.payload["source"].as_string() == SOURCE,
+                    SystemIncident.payload["unaccounted_child_state"]["source"].as_string() == SOURCE),
+            )))
+            # D5: incident closure is not ownership/accounting authority. Read
+            # all durable negative state, never an arbitrarily chosen alert.
+            for saved in incidents:
+                state = saved.payload.get("unaccounted_child_state", saved.payload)
+                blocked_rows.setdefault(identity, dict(state))
+            incident = next((item for item in incidents if item.status != "closed"), None)
             if incident is not None:
-                blocked_rows.setdefault(identity, dict(incident.payload))
-            elif identity in blocked_rows:
-                session.add(SystemIncident(
-                    service_name=SERVICE_NAME, severity="critical", status="open", opened_at=utcnow(),
-                    title=f"Webull partial child unaccounted: {symbol} on {account}"[:255],
-                    payload=dict(blocked_rows[identity]),
-                ))
+                blocked_rows.setdefault(identity, dict(incident.payload.get("unaccounted_child_state", incident.payload)))
+            if identity in blocked_rows:
+                incident = incident or self._exit_release_incident(session, account, symbol, identity)
+                if incident is None:
+                    incident = SystemIncident(
+                        service_name=SERVICE_NAME, severity="critical", status="open", opened_at=utcnow(),
+                        title=f"Webull partial child unaccounted: {symbol} on {account}"[:255],
+                        payload=dict(blocked_rows[identity]),
+                    )
+                    session.add(incident)
+                incident.payload = {**incident.payload, "fence": "unaccounted_child", "owner_proof": "UNKNOWN",
+                    "entry_order_id": blocked_rows[identity].get("entry_order_id"),
+                    "execution_binding": blocked_rows[identity].get("execution_binding"),
+                    "unaccounted_child_state": dict(blocked_rows[identity])}
             # Closing the alert is not accounting proof or permission to clear this fence.
             return identity in blocked_rows
 
@@ -4464,7 +4478,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 incident
                 for incident in incidents
                 if isinstance(incident.payload, dict)
-                and incident.payload.get("source") == cls._EXIT_RELEASE_INCIDENT_SOURCE
+                and (incident.payload.get("source") == cls._EXIT_RELEASE_INCIDENT_SOURCE
+                     or (incident.payload.get("source") == "legacy_handover_unaccounted_cancelled_child"
+                         and incident.payload.get("unaccounted_child_state")))
                 and incident.payload.get("broker_account_name") == acct
                 and incident.payload.get("symbol") == symbol
                 and incident.payload.get("managed_row_id") == managed_row_id
@@ -4491,8 +4507,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 incident = self._exit_release_incident(
                     session, acct, symbol, managed_row_id
                 )
+                fence = (incident.payload or {}).get("unaccounted_child_state") if incident else None
                 if release.outcome in {"released", "resolved_by_fill"}:
-                    if incident is not None:
+                    if incident is not None and not fence:
                         incident.status = "closed"
                         incident.closed_at = utcnow()
                     return
@@ -4530,6 +4547,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     "max_attempts": self._EXIT_RESERVATION_MAX_ATTEMPTS,
                     "terminal": terminal,
                 }
+                if fence:
+                    payload.update(fence="unaccounted_child", owner_proof="UNKNOWN",
+                        entry_order_id=fence.get("entry_order_id"), unaccounted_child_state=fence)
                 title = (
                     f"Exit protection UNKNOWN: {symbol} on {acct}; check now"
                     if risk_state == "protection_unknown"
@@ -11532,6 +11552,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
 
     async def sync_broker_state(self, *, account_names: list[str] | None = None) -> dict[str, int]:
+        from project_mai_tai.sync_sdk_diagnostics import CURRENT, SdkFrame
+
         shadow_observer, shadow_frame = await wbquiet_shadow.prepare(self, account_names)
         shadow_token = wbquiet_shadow.CURRENT.set(shadow_frame)
         pass_id = self.__dict__.get("_reserve1_sync_pass_id", 0) + 1
@@ -11543,6 +11565,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             "[OMS-BROKER-SYNC-PASS] id=%d phase=start accounts=%s",
             pass_id, ",".join(account_names) if account_names is not None else "all",
         )
+        sdk_frame = SdkFrame()
+        sdk_token = CURRENT.set(sdk_frame)
         try:
             result = await self._sync_broker_state_pass(account_names=account_names)
             outcome = "ok"
@@ -11551,13 +11575,22 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             outcome = "cancelled"
             raise
         finally:
+            try:
+                sdk_invocations = sdk_frame.finish()
+            except Exception:
+                sdk_frame.closed = True
+                sdk_invocations = "UNKNOWN"
+            finally:
+                CURRENT.reset(sdk_token)
             duration_ms = (time.monotonic() - started) * 1000.0
             bound_ms = float(
                 getattr(self.settings, "oms_native_oco_confirmation_max_age_seconds", 30)
             ) * 1000.0
             self.logger.info(
                 "[OMS-BROKER-SYNC-PASS] id=%d phase=end outcome=%s duration_ms=%.3f "
-                "exceeds_note_age=%s", pass_id, outcome, duration_ms, duration_ms > bound_ms,
+                "exceeds_note_age=%s physical_http_reads=UNKNOWN sdk_invocations=%s "
+                "sdk_scope=webull_delegate_until_end", pass_id, outcome, duration_ms,
+                duration_ms > bound_ms, sdk_invocations,
             )
             wbquiet_shadow.CURRENT.reset(shadow_token)
             await wbquiet_shadow.finish(self, shadow_observer, shadow_frame, outcome)
@@ -11968,6 +12001,61 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         }
 
     async def sync_broker_orders(self, *, account_names: list[str] | None = None) -> dict[str, int]:
+        from project_mai_tai.oms.order_read_batch import OrderReadBatch
+
+        diagnostic_batch = OrderReadBatch()
+        try:
+            result = await self._sync_broker_orders_pass(
+                account_names=account_names, diagnostic_batch=diagnostic_batch)
+        except BaseException:
+            diagnostic_batch.failed = True
+            try:
+                await self._flush_passive_order_reads(diagnostic_batch)
+            except BaseException:
+                self.logger.error("[ORDER-READ-DIAGNOSTIC] failed_pass_receipt=UNKNOWN", exc_info=True)
+            raise
+        await self._flush_passive_order_reads(diagnostic_batch)
+        return result
+
+    async def _flush_passive_order_reads(self, batch):
+        if not batch.reads and not batch.revoked_accounts:
+            return
+        from project_mai_tai.oms.order_read_batch import persist_order_reads
+
+        try:
+            await self._run_db(lambda session: persist_order_reads(session, batch,
+                cadence_seconds=self.settings.oms_broker_sync_interval_seconds))
+        except Exception:
+            self.logger.error("[ORDER-READ-DIAGNOSTIC] batch_receipt=UNKNOWN", exc_info=True)
+
+    def _capture_passive_order_read(self, batch, *, order, account, report=None,
+                                   started=None, beginning=False):
+        try:
+            if not beginning and started is None:
+                batch.revoke_account(account.id)
+                return None  # Never substitute a post-await timestamp for wire start.
+            completed = utcnow()
+            if beginning:
+                started = completed
+            native_account = None
+            if report is not None:
+                leaf = self.broker_adapter
+                if hasattr(leaf, "_adapter_for_account"):
+                    leaf = leaf._adapter_for_account(account.name)
+                native_account = getattr(getattr(leaf, "accounts_by_name", {}).get(account.name), "account_id", None)
+            batch.capture(order=order, account=account, report=report,
+                started=started, completed=completed, native_account=native_account)
+            return started
+        except Exception:
+            # Only this optional instrumentation is isolated. BaseException /
+            # cancellation and the ORIGINAL broker/trading errors still propagate.
+            try:
+                batch.revoke_account(account.id)
+            except Exception:
+                pass  # No recoverable diagnostic identity, never invent a positive.
+            return None
+
+    async def _sync_broker_orders_pass(self, *, account_names, diagnostic_batch):
         # Webull mirror-on-fill (see docs/webull-mirror-on-fill-design.md): collect confirmed
         # v2-primary buy-open FILLS observed this sync, then fire the async Webull mirror AFTER
         # the session closes (submit_order is async and must not run inside the DB session).
@@ -11982,6 +12070,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             else:
                 broker_accounts = self.store.list_named_broker_accounts(session, account_names)
 
+            from project_mai_tai.sync_sdk_diagnostics import log_logical_accounts
+
+            log_logical_accounts(getattr(self, "logger", None), (account.name for account in broker_accounts))
             account_lookup = {account.id: account for account in broker_accounts}
             strategy_lookup = {
                 strategy.id: strategy
@@ -12044,7 +12135,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     order_type=str((order.payload or {}).get("order_type", order.order_type)),
                     time_in_force=str((order.payload or {}).get("time_in_force", order.time_in_force)),
                 )
+                # D2: capture scalars only; no diagnostic SQL while this trading
+                # session is open. The wrapper flushes once, off-loop, after it closes.
+                read_started = self._capture_passive_order_read(
+                    diagnostic_batch, order=order, account=account, beginning=True)
                 report = await self.broker_adapter.fetch_order_update(request)
+                self._capture_passive_order_read(diagnostic_batch, order=order, account=account,
+                    report=report, started=read_started)
                 if self._rpg_owns_old_order(session, order, account.name):
                     continue  # Ownership may have changed during this GET.
                 if report is None:
@@ -13875,6 +13972,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     and payload.get("broker_account_name") == acct
                     and payload.get("symbol") == symbol
                     and payload.get("managed_row_id") == row_id
+                    and not payload.get("unaccounted_child_state")
                 ):
                     incident.status = "closed"
                     incident.closed_at = utcnow()

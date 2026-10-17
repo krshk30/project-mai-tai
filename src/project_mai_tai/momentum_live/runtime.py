@@ -143,7 +143,8 @@ class OmsLiveRuntime:
         executor = LiveEntryExecutor(self.book, entry_ports, schwab_account=self.accounts[0], webull_account=self.accounts[1])
         ports = ActorPorts(self._entry_enabled, self.now_ns, self._observe,
             self._save, self._cancel_entry, self._protect, self._exit, self._exit_quote,
-            stop_requested=self._stop_requested, abandon_unsent=self._abandon_unsent_for_stop)
+            stop_requested=self._stop_requested, abandon_unsent=self._abandon_unsent_for_stop,
+            diagnostic_account=lambda: self.accounts[0])
         self.actor = LiveActor(self.book, executor, ports, state_lock=self.state_lock)
         await self.actor.start()
         self.publisher = OwnerProofPublisher(self.service.redis, self.settings.redis_stream_prefix, self.book,
@@ -509,7 +510,16 @@ class OmsLiveRuntime:
                 await self.native._observe(position, handle)
                 snapshot = await self._inspect(identity)
         return OwnedObservation(snapshot["quantity"], snapshot["exited"], snapshot["first_fill_ns"],
-            snapshot["entry_terminal"], snapshot["outstanding_exit"], position)
+            snapshot["entry_terminal"], snapshot["outstanding_exit"], position,
+            owner_provider=self._diagnostic_owner_provider(position))
+
+    def _diagnostic_owner_provider(self, position):
+        try:
+            if position is not None and position.account == self.accounts[0]:
+                return self.provider(position.account)
+        except Exception:
+            pass  # Optional logging evidence cannot alter the original observation.
+        return None
 
     async def _refuse_entry_identity(self, identity):
         values = self.runtime.setdefault(identity, {})

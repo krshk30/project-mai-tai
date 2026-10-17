@@ -89,6 +89,7 @@ class SystemBackend:
         self._broker_attempted = False
         self._broker_evidence = None
         self._ownership_signature = None
+        self._performance_diagnostics = {}
 
     def command(self, args, *, timeout=30, env=None):
         if not isinstance(args, list) or any(not isinstance(value, str) for value in args):
@@ -255,6 +256,7 @@ class SystemBackend:
             database, address, data = connection.execute(text("SELECT current_database(),inet_server_addr()::text,"
                 "current_setting('data_directory')")).one()
             system_id = str(connection.execute(text("SELECT system_identifier FROM pg_control_system()")).scalar_one())
+            self.observe_jit_setting(connection)
         if (database != self.config.get("expected_database") or address not in {None, "127.0.0.1", "::1"}
                 or system_id != self.config.get("expected_postgres_system_identifier")
                 or Path(data).resolve(strict=True) != Path(self.config["expected_PGDATA"]).resolve(strict=True)):
@@ -272,6 +274,23 @@ class SystemBackend:
                 or not any(line.endswith("/project-mai-tai-weekmaint.service")
                            for line in Path("/proc/self/cgroup").read_text().splitlines())):
             raise Refused("reviewed_maintenance_service_invocation_required")
+
+    def observe_jit_setting(self, connection):
+        value, failure = "UNKNOWN", None
+        try:
+            with connection.begin_nested():
+                observed = connection.execute(text("SELECT current_setting('jit')")).scalar_one()
+            if observed in {"on", "off"}:
+                value = observed
+        except Exception as exc:
+            failure = type(exc).__name__
+        critical = value != "off"
+        self._performance_diagnostics = {"jit": {
+            "effective": value, "failure_type": failure, "severity": "CRITICAL" if critical else "INFO",
+            "source": "existing_preclaim_validation_connection",
+            "report_line": f"{'CRITICAL' if critical else 'INFO'} [WEEKMAINT-JIT] "
+                           f"effective={value} required=off action=REPORT_ONLY_CONTINUE",
+        }}
 
     def operation_path(self, operation):
         return self.state / f"operation-{UUID(str(operation))}.json"
@@ -317,7 +336,8 @@ class SystemBackend:
     def persist_inventory_before_stop(self, operation, snapshot):
         self._inventory = {"version": 1, "operation": operation, "head": self.approved_head,
             "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
-            "started_at": self.clock().isoformat(), "units": snapshot["writer_units"], "steps": []}
+            "started_at": self.clock().isoformat(), "units": snapshot["writer_units"], "steps": [],
+            "performance_diagnostics": self.__dict__.get("_performance_diagnostics", {})}
         self.save(self.operation_path(operation), self._inventory)
 
     def record(self, operation, step, data):
@@ -586,6 +606,7 @@ class SystemBackend:
         restored = restored and self.recorded_unit_states_match(
             original, {name: self.unit_properties(name) for name in original["units"]})
         checks = {"recorded_services_restored": restored, **health,
+                  "performance_diagnostics": original.get("performance_diagnostics", {}),
                   "redis_read_ok": redis_ok, "pg_read_ok": pg_ok}
         schedules = self.config.get("reviewed_monday_timers", {})
         for key in ("guard_0340_scheduled", "preopen_scheduled", "universe_scheduled", "SEC_scheduled", "prune_scheduled"):
@@ -749,8 +770,14 @@ class SystemBackend:
         return None
 
     def write_boot_report_and_unique_health_line(self, operation, evidence, good):
+        diagnostics = evidence.get("performance_diagnostics", {})
+        if not isinstance(diagnostics, dict):
+            diagnostics = {"jit": {"report_line": "CRITICAL [WEEKMAINT-JIT] effective=UNKNOWN "
+                                                   "required=off action=REPORT_ONLY_CONTINUE"}}
+        lines = [item["report_line"] for item in diagnostics.values()
+                 if isinstance(item, dict) and isinstance(item.get("report_line"), str)]
         self.save(self.state / f"report-{operation}.json", {"operation": operation, "at": self.clock(),
-            "healthy": good, "evidence": evidence})
+            "healthy": good, "evidence": evidence, "report_lines": lines})
         descriptor = os.open("/var/log/project-mai-tai/weekmaint-health.log",
                              os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, "ab") as output:
