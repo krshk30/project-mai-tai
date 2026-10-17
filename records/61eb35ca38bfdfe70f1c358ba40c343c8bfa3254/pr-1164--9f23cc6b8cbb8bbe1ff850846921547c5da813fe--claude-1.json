@@ -1,0 +1,9 @@
+{
+  "pr_number": 1164,
+  "range_base": "9f23cc6b8cbb8bbe1ff850846921547c5da813fe",
+  "range_head": "61eb35ca38bfdfe70f1c358ba40c343c8bfa3254",
+  "reviewed_at": "2026-10-17T00:06:54Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: squash tree 47bba7c3 = 617d1dd7 (src byte-identical to box a33a30c2). Reviewed WB/O14/ORB db73 (source = 6abac reviewed OK; confirmation-retry clock-leak test fix + PM roll control) and MOMCANCEL1 (momentum Schwab entry ACK id from validated 201 Location; UNKNOWN keeps reservation, refuses cancel, CRITICAL once). Full-suite diffs = timing nodes only: VPS interleaved base vs cand base-equal or gen2-GC-equal; MOMLATCH clock leak reproduced on db73 -> test-only fix. Installed 18:47 + 20:00 ET switches ON; box jit=off fixes SYNC2X."
+}
