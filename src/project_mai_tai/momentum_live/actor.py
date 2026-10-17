@@ -13,6 +13,7 @@ from project_mai_tai.momentum_live.lifecycle import EpisodeWorkQueue, OwnedPosit
 from project_mai_tai.momentum_live.owner_proof import episode_payload
 
 logger = logging.getLogger("momentum-live")
+OBSERVATION_POLL_NS = 1_000_000_000
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class OwnedObservation:
     entry_terminal: bool
     outstanding_exit: bool
     position: OwnedPosition | None
+    owner_provider: str | None = None  # Optional logging evidence, never execution authority.
 
 
 @dataclass
@@ -39,6 +41,7 @@ class ActorPorts:
     quote: Callable[[str], dict | None]
     stop_requested: Callable[[], bool] = lambda: False
     abandon_unsent: Callable[[str], Awaitable[bool]] | None = None
+    diagnostic_account: Callable[[], str] | None = None
 
 
 class LiveActor:
@@ -56,6 +59,8 @@ class LiveActor:
         self.restored = False
         self.tasks: list[asyncio.Task] = []
         self._observations: dict[str, tuple[int, OwnedObservation]] = {}
+        self._quantity_mismatch_since: dict[str, int | None] = {}
+        self._quantity_mismatch_states: dict[str, str] = {}
 
     def offer_intent(self, event) -> bool:
         if not self.restored or event.payload.strategy_code != STRATEGY_CODE:
@@ -76,6 +81,10 @@ class LiveActor:
         self.work.owners = active
         self.work.dirty.intersection_update(active)
         self._observations = {identity: row for identity, row in self._observations.items() if identity in active}
+        self._quantity_mismatch_since = {identity: stamp for identity, stamp in self._quantity_mismatch_since.items()
+                                         if identity in active}
+        self._quantity_mismatch_states = {identity: state for identity, state in self._quantity_mismatch_states.items()
+                                          if identity in active}
         self.dispatch.by_symbol = {symbol: tuple(sorted(identities))
                                    for symbol, identities in self.book._active_by_symbol.items()}
         self.dispatch.quote_waiters = {symbol: waiter for symbol, waiter in self.dispatch.quote_waiters.items()
@@ -103,6 +112,8 @@ class LiveActor:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         self.tasks = []
+        self._quantity_mismatch_since.clear()
+        self._quantity_mismatch_states.clear()
 
     async def _entries(self) -> None:
         while True:
@@ -149,6 +160,7 @@ class LiveActor:
             await asyncio.sleep(.1)
 
     async def _service_owned(self, identity: str) -> None:
+        transient_quantity_mismatch = False
         try:
             async with self.state_lock:
                 episode = self.book.episodes[identity]
@@ -164,8 +176,8 @@ class LiveActor:
                     return  # Quote-pending reservation; no broker order to poll yet.
                 now_ns = self.ports.clock_ns()
                 cached = self._observations.get(identity)
-                refreshed = cached is None or not 0 <= now_ns-cached[0] < 1_000_000_000
-                if cached is not None and 0 <= now_ns-cached[0] < 1_000_000_000:
+                refreshed = cached is None or not 0 <= now_ns-cached[0] < OBSERVATION_POLL_NS
+                if cached is not None and 0 <= now_ns-cached[0] < OBSERVATION_POLL_NS:
                     observation = cached[1]
                 else:
                     observation = await self.ports.observe(identity)
@@ -175,9 +187,30 @@ class LiveActor:
                     if (position.episode_id != identity or position.symbol != episode.symbol
                             or position.strategy != STRATEGY_CODE or position.quantity != observation.quantity
                             or position.exited != observation.exited):
+                        if self.restored:
+                            try:
+                                values = (position.quantity, position.exited, observation.quantity, observation.exited)
+                                transient_quantity_mismatch = (
+                                    position.episode_id == identity and position.symbol == episode.symbol
+                                    and position.strategy == STRATEGY_CODE
+                                    and observation.owner_provider == "schwab"
+                                    and self.ports.diagnostic_account is not None
+                                    and position.account == self.ports.diagnostic_account()
+                                    and isinstance(position.entry_coid, str) and bool(position.entry_coid)
+                                    and isinstance(position.entry_order_id, str) and bool(position.entry_order_id)
+                                    and all(isinstance(value, Decimal) and value.is_finite() and value >= 0
+                                            for value in values)
+                                    and position.exited <= position.quantity
+                                    and observation.exited <= observation.quantity)
+                            except Exception:
+                                # Optional diagnostics cannot replace this original Refusal.
+                                transient_quantity_mismatch = False
                         raise Refusal("owned_observation_identity_mismatch")
                 elif observation.quantity > observation.exited:
                     raise Refusal("held_position_identity_UNKNOWN")
+                # Actual recovery, not changed quantities/state/clocks, ends continuity.
+                self._quantity_mismatch_since.pop(identity, None)
+                self._quantity_mismatch_states.pop(identity, None)
                 if refreshed:
                     self.book.reconcile(identity, cumulative_filled=observation.quantity,
                         cumulative_exited=observation.exited, first_fill_ns=observation.first_fill_ns,
@@ -219,6 +252,32 @@ class LiveActor:
         except Exception:
             # Keep exact exposure and both workers alive; uncertainty never frees
             # a reservation, resubmits an entry, or switches to foreign quantities.
-            logger.exception("[MOMLIVE1-OWNED] episode=%s reconciliation=UNKNOWN", identity)
+            in_grace = False
+            if transient_quantity_mismatch and self.restored:
+                try:
+                    stamp = self.ports.clock_ns()
+                    observed_at = self._observations[identity][0]
+                    valid_clock = (type(stamp) is int and type(now_ns) is int and type(observed_at) is int
+                        and stamp >= max(1, now_ns, observed_at)
+                        and 0 <= stamp-observed_at < OBSERVATION_POLL_NS)
+                except Exception:
+                    valid_clock = False
+                if identity not in self._quantity_mismatch_since and len(self._quantity_mismatch_since) < 2:
+                    # Unknown first time cannot become a new grace period later
+                    # without an actual matching observation or retirement.
+                    self._quantity_mismatch_since[identity] = stamp if valid_clock else None
+                first = self._quantity_mismatch_since.get(identity)
+                in_grace = valid_clock and type(first) is int and 0 <= stamp-first <= 2*OBSERVATION_POLL_NS
+                if in_grace and self._quantity_mismatch_states.get(identity) != episode.state:
+                    try:
+                        logger.info("[MOMLIVE1-OWNED] episode=%s reconciliation=UNKNOWN "
+                            "reason=owned_observation_identity_mismatch comparison=quantity_exited "
+                            "state=%s grace_ms=%.3f", identity, episode.state, (stamp-first)/1_000_000)
+                    except Exception:
+                        in_grace = False  # Retain the original ERROR/refusal path.
+                    else:
+                        self._quantity_mismatch_states[identity] = episode.state
+            if not in_grace:
+                logger.exception("[MOMLIVE1-OWNED] episode=%s reconciliation=UNKNOWN", identity)
             if not self.restored:
                 raise

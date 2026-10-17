@@ -928,8 +928,11 @@ def test_pa1_is_wired_to_intents_reports_and_both_market_tick_paths() -> None:
     assert "self._observe_webull_mirror_deferred_reports(" in inspect.getsource(
         OmsRiskService._record_order_reports
     )
+    wrapper = inspect.getsource(OmsRiskService.sync_broker_orders)
+    assert "await self._sync_broker_orders_pass(" in wrapper
+    assert "account_names=account_names, diagnostic_batch=diagnostic_batch)" in wrapper
     assert "self._observe_webull_mirror_deferred_reports(" in inspect.getsource(
-        OmsRiskService.sync_broker_orders
+        OmsRiskService._sync_broker_orders_pass
     )
     assert "self._schedule_webull_mirror_tick(symbol)" in inspect.getsource(
         OmsRiskService._handle_quote_tick_event
@@ -950,7 +953,10 @@ def test_pa1_is_wired_to_intents_reports_and_both_market_tick_paths() -> None:
 
 
 def test_reconciliation_builds_the_pa1_observer_after_ledger_writes() -> None:
-    source = inspect.getsource(OmsRiskService.sync_broker_orders)
+    wrapper = inspect.getsource(OmsRiskService.sync_broker_orders)
+    assert "await self._sync_broker_orders_pass(" in wrapper
+    assert "account_names=account_names, diagnostic_batch=diagnostic_batch)" in wrapper
+    source = inspect.getsource(OmsRiskService._sync_broker_orders_pass)
     observed = source.index("observed_event = TradeIntentEvent(")
 
     assert source.index("self.store.update_order_from_report(") < observed

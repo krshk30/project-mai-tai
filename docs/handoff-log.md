@@ -9095,3 +9095,24 @@ This supersedes C31's pre-deploy status and proves logging for this new process,
 not historical Friday bar continuity or silent historical logging; those
 UNKNOWN limits are retained. Agent A made no production call or write.
 Claude E86 and the preceding neutral-rebase history remain unchanged.
+
+## 2026-10-16 (Fri) — claude-1 close-out narrative
+
+- **Installs (all switches ON, flat, after the close):**
+  - 16:01 efbfa397: KILLSW1 core, COUNTRYROUTE-ATR, WEEKMAINT1 units.
+  - 18:47 db73a581: WBATTACH1, O-1015-14, ORBROUTE1.
+  - 19:28 DB `jit=off`.
+  - 20:00 a33a30c2: MOMCANCEL1.
+  - 21:06 MOMGUARDEND1 guard-only.
+  - PRs #1163 → 9f23cc6b and #1164 → 7a845576.
+- **Bugs found and fixed today:**
+  - Confirmation-retry test clock leak (bisect 3baea49f).
+  - MOMCANCEL1: the XLAB Schwab momentum buy could not be cancelled because the Schwab ACK id arrived only at the fill.
+  - MOMGUARDEND1: the guard watchdog crashed at the 18:10 session end.
+  - SYNC2X: the sync pass doubled after the db73 install, from Postgres JIT 744 ms per pass on the ORB reconcile query; fixed with jit=off.
+- **Group D:** composed 52249c24 rejected 21:1x (exit-path changes, on-loop locks, per-order sync writes, D3 dropping held entries, new CRITICAL); reworked → 9df73a18 installed 23:3x (D2-momentum stripped; D2-ATR protective pairs deferred). Rejected first version:. It changed the Schwab flip-exit release path, added on-loop locks and per-order sync-pass writes, made D3 drop held entries, and added a new CRITICAL. Rework in flight.
+- **Studies:**
+  - MOMEXEC1 opened (8 fills / 13 signals; misses carry the cost; conclude at 100+ trades).
+  - ATR exit gap since 09-01: 470 fills; PM worst −8.2%; RTH 9 past −9%.
+  - Broker switch parked.
+- **Operator rules:** bug fixes need no approval; the scan job definition was extended with price/speed gaps; finish all + close-out tonight.

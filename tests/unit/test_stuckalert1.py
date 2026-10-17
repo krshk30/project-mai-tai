@@ -68,9 +68,14 @@ def test_accepted_resting_marker_no_id_or_fresh_read_required(monkeypatch, provi
     factory = build_test_session_factory()
     with factory() as session:
         metadata = {marker: "true" if marker == "resting_entry" else "rth_resting_mirror"}
-        seed(session, provider=provider, now=now, order_type=kind, metadata=metadata,
+        _, order = seed(session, provider=provider, now=now, order_type=kind, metadata=metadata,
              broker_event="accepted")  # Deliberately day-old: old freshness policy superseded.
-        assert methods(session, factory) == ([], [])
+        # TOP171 supersedes v1: original day-old acceptance/NULL native ID is
+        # historical shape evidence, not current broker-working proof.
+        account = session.get(BrokerAccount, order.broker_account_id)
+        assert reconciler._accepted_resting_ids(session, [order], {account.id: account}) == {order.id}
+        orders, intents = methods(session, factory)
+        assert (len(orders), len(intents)) == (1, 1)
 
 
 @pytest.mark.parametrize("provider", ["schwab", "webull"])
@@ -146,7 +151,9 @@ def test_no_exemption_for_ambiguous_shape_or_intent_chain(monkeypatch, change):
         session.flush()
         orders, intents = methods(session, factory)
         assert len(intents) == 1
-        assert len(orders) == (0 if change == "unknown_intent" else 1)
+        # TOP171: neither original sibling has current wire proof. The old
+        # accepted shape no longer hides it, even with an UNKNOWN parent.
+        assert len(orders) == (2 if change == "mixed_noack_sibling" else 1)
 
 
 def test_exact_180s_noack_boundary_remains_strict(monkeypatch):
@@ -195,8 +202,12 @@ def test_partial_broker_event_does_not_replace_positive_accepted_event(monkeypat
             event_source="broker", event_at=now-timedelta(hours=1), payload={}))
         session.flush()
         orders, intents = methods(session, factory)
-        expected = 0 if prior_accept else 1
-        assert (len(orders), len(intents)) == (expected, expected)
+        account = session.get(BrokerAccount, order.broker_account_id)
+        assert reconciler._accepted_resting_ids(session, [order], {account.id: account}) == (
+            {order.id} if prior_accept else set())
+        # Preserve old positive-history distinction above; current live proof
+        # is still UNKNOWN for BOTH unchanged original inputs under TOP171.
+        assert (len(orders), len(intents)) == (1, 1)
 
 
 def test_recorded242_incident_reconstruction_preserves_unproven_and_terminal_alerts(monkeypatch):
@@ -236,6 +247,8 @@ def replay_recorded242(monkeypatch, *, history=None, history_sha256=None):
         assert sum(row["broker_accepted_count"] == 0 for row in legacy) == 180
     factory = build_test_session_factory()
     counts = {kind: {"before": 0, "after": 0} for kind in ("stuck_order", "stuck_intent")}
+    historical_v1_counts = {kind: {"before": 0, "after": 0} for kind in counts}
+    historical_retained = []
     retained = []
     for row in rows:
         now, updated = at(row["replay_at"]), at(row["alert_updated_at"])
@@ -288,6 +301,14 @@ def replay_recorded242(monkeypatch, *, history=None, history_sha256=None):
                     event_at=at(event["event_at"]), payload={}))
             session.flush()
             orders, intents = methods(session, factory)
+            historical_ids = reconciler._accepted_resting_ids(session, [order], {account.id: account})
+            historical_exempt = order.id in historical_ids and (
+                row["kind"] == "stuck_order" or intent.status in {"pending", "submitted", "accepted"})
+            historical_v1_counts[row["kind"]]["before"] += 1
+            historical_v1_counts[row["kind"]]["after"] += int(not historical_exempt)
+            if not historical_exempt:
+                historical_retained.append({key: row[key] for key in
+                    ("case_id", "kind", "symbol", "order_status_asof", "event_source")})
             actual = orders if row["kind"] == "stuck_order" else intents
             counts[row["kind"]]["before"] += 1  # Original age/status rule qualifies every recorded case.
             counts[row["kind"]]["after"] += len(actual)
@@ -295,24 +316,39 @@ def replay_recorded242(monkeypatch, *, history=None, history_sha256=None):
                 retained.append({key: row[key] for key in
                                  ("case_id", "kind", "symbol", "order_status_asof", "event_source")})
             session.rollback()
-    assert counts == {"stuck_order": {"before": 119, "after": 90 if history is not None else 92},
-                      "stuck_intent": {"before": 123, "after": 91 if history is not None else 93}}
+    # TOP171 cannot manufacture missing current wire/session/pair evidence in
+    # these ORIGINAL242 retained rows. Preserve the old shape totals separately.
+    assert counts == {"stuck_order": {"before": 119, "after": 119},
+                      "stuck_intent": {"before": 123, "after": 123}}
+    assert historical_v1_counts == {
+        "stuck_order": {"before": 119, "after": 90 if history is not None else 92},
+        "stuck_intent": {"before": 123, "after": 91 if history is not None else 93}}
     unproven = [row for row in retained if row["event_source"] == "unknown"]
-    assert len(unproven) == (180 if history is not None else 184)
+    assert len(unproven) == 184
     assert all(row["order_status_asof"] == "accepted" for row in unproven)
-    terminal = [row for row in retained if row["event_source"] != "unknown"]
+    recorded_broker = [row for row in retained if row["event_source"] != "unknown"]
+    assert len(recorded_broker) == 58
+    terminal = [row for row in recorded_broker if row["order_status_asof"] not in {"accepted", "partially_filled"}]
     assert terminal == [{"case_id": "1a7fdc71-60e3-410c-8d49-bcea106cb322", "kind": "stuck_intent",
                          "symbol": "GIXI", "order_status_asof": "cancelled", "event_source": "broker"}]
-    assert len(retained) == (181 if history is not None else 185)
+    historical_unproven = [row for row in historical_retained if row["event_source"] == "unknown"]
+    assert len(historical_unproven) == (180 if history is not None else 184)
+    assert all(row["order_status_asof"] == "accepted" for row in historical_unproven)
+    assert [row for row in historical_retained if row["event_source"] != "unknown"] == terminal
+    assert len(historical_retained) == (181 if history is not None else 185)
+    assert len(retained) == 242
     print("STUCKALERT1_RECORDED_REPLAY="+json.dumps({
         "evidence_kind": "RECORDED_INCIDENT_RECONSTRUCTION_NOT_SOFTWARE_ARRIVAL_REPLAY",
         "fixture_sha256": hashlib.sha256(raw).hexdigest(), "counts": counts,
+        "policy": "TOP171_CURRENT_WORKING_PROOF_REQUIRED",
+        "historical_v1_counts": historical_v1_counts,
         "history_fixture_sha256": history_sha256,
         "query_denominator": 242 if history is not None else None,
         "legacy_unknown_cases": 184,
         "legacy_now_positive_broker_accept": 4 if history is not None else None,
         "legacy_zero_stored_broker_events": 180 if history is not None else None,
-        "suppressed_positive_broker_accept": 61 if history is not None else 57,
+        "suppressed_positive_broker_accept": 0,
+        "historical_v1_suppressed_positive_broker_accept": 61 if history is not None else 57,
         "retained_unproven_unknown_origin": len(unproven),
         "retained_terminal": terminal,
         "capture_limitation": (
@@ -321,6 +357,7 @@ def replay_recorded242(monkeypatch, *, history=None, history_sha256=None):
             "Latest as-of event only; unknown origin does not prove absence of an earlier broker ACK"
         ),
         "actual_incident_open_session": "RTH only; PM/RTH breadth separately CONTROLLED",
-        "per_order_freshness": "NOT_REQUIRED_BY_APPROVED_V1",
+        "per_order_freshness": "REQUIRED_BY_TOP171_UNAVAILABLE_IN_RETAINED_INPUT",
+        "historical_v1_per_order_freshness": "NOT_REQUIRED_BY_APPROVED_V1",
         "per_account_completion_metric": "ABSENT_GAP_ALERT_SKIPPED",
     }, sort_keys=True))

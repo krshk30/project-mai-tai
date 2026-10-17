@@ -78,7 +78,8 @@ async def test_real_raw_legacy_handover_zero_unchanged_partial_refused(
     assert not closes(case[2])
     with case[1]() as unit:
         incidents = [item for item in unit.scalars(select(SystemIncident))
-                     if item.payload.get("source") == SOURCE]
+                     if item.payload.get("source") == SOURCE
+                     or item.payload.get("unaccounted_child_state", {}).get("source") == SOURCE]
         assert len(incidents) == int(bool(filled))
         assert unit.scalar(select(OmsManagedPosition.current_quantity)) == 10
         assert not list(unit.scalars(select(Fill).where(Fill.side == "sell")))
@@ -234,7 +235,9 @@ async def test_real_broker_await_late_A_execution_never_quarantines_new_B(
     outcome = await handover(case, route, row_id)
     assert outcome in {"unanswerable", "refused_cancelled_partial"} and not closes(broker)
     with factory() as unit:
-        incidents = [item for item in unit.scalars(select(SystemIncident)) if item.payload.get("source") == SOURCE]
+        incidents = [item for item in unit.scalars(select(SystemIncident))
+                     if item.payload.get("source") == SOURCE
+                     or item.payload.get("unaccounted_child_state", {}).get("source") == SOURCE]
         assert len(incidents) == 1 and incidents[0].payload["managed_row_id"] == row_id
         assert incidents[0].payload["entry_order_id"] == str(entry_id)
         assert incidents[0].payload["managed_row_id"] != new_row_id
@@ -317,7 +320,9 @@ async def test_unbound_entry_positive_stays_refused_during_retry_flag_OFF_and_re
     assert invalidated == [row_id]
     assert client.seen and not closes(case[2]) and case[2].total == 1008
     with case[1]() as unit:
-        quarantines = [item for item in unit.scalars(select(SystemIncident)) if item.payload.get("source") == SOURCE]
+        quarantines = [item for item in unit.scalars(select(SystemIncident))
+                       if item.payload.get("source") == SOURCE
+                       or item.payload.get("unaccounted_child_state", {}).get("source") == SOURCE]
         assert len(quarantines) == 1 and quarantines[0].payload["managed_row_id"] == row_id
         assert quarantines[0].payload["entry_order_id"] is None
         assert quarantines[0].payload["execution_binding"] == "UNKNOWN_CALLER_REFUSED"

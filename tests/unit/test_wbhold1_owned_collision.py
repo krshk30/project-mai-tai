@@ -431,8 +431,11 @@ async def test_real_buy_and_oversized_close_book_only_bot_fills_and_pnl():
         findings = reconciler._build_position_findings(session)
         mismatch = next(f for f in findings if f.finding_type == "position_quantity_mismatch")
         assert mismatch.payload["our_quantity"] == "3.00000000"
-        assert mismatch.payload["direction"] == "broker_more_than_net_fills"
-        assert mismatch.severity == "critical"  # existing safety signal is disclosed, not suppressed
+        # D1/TOP232: a coherent owned lot plus manual surplus is INFO, not a
+        # grant to sell that surplus. The real capped close/PnL follows below.
+        assert mismatch.payload["direction"] == "broker_manual_excess"
+        assert mismatch.severity == "info"
+        assert mismatch.payload["ownership"] == "manual_not_ours"
         assert ledger.quantity == 3 and broker.quantity == 1003
     close = entry._v2_close("SCNI")
     close.payload.quantity = Decimal(1003)  # even a wrongly oversized intent is capped

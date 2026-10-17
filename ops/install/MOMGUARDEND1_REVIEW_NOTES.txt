@@ -1,0 +1,66 @@
+MOMGUARDEND1 -- TOP185 SUCCESSOR SOURCE / ALL TESTS UNRUN
+Next batch AFTER Claude review; not tonight's WB installation.
+No installation/activation authority from this source packet.
+
+TOP185 policy (18:5x ANSWER budget)
+Keep watchdog pings through end-of-session stop step by step. Each existing
+step retains its own timeout. No invented total stop deadline or late-success
+failure/latch. Notification transport errors are tagged/counted separately;
+they cannot fail a proven successful stop or create a trading-safety latch.
+Real paper-stop/gate failures retain existing nonzero/fail-closed behavior.
+
+Permanent source behavior
+daily_guard creates supervision ONLY for scheduled/planned paper stop. The
+scoped module notification reference is restored in finally, preserving the
+original stop_paper positional interface and safety/monitor callers.
+stop_paper pulses before owner reads/release iterations/fallback publication.
+_release_confirmed pulses between separate Redis reads. A helper worker is
+created ONLY during the existing systemctl35s or page15s blocking call; its
+heartbeat allowance is that step's timeout and is never renewed by a loop.
+No background heartbeat covers run_guard monitoring or real safety_shutdown.
+The original35s release windows, sleep1, owner checks/fallback, page and audit
+results are unchanged. No whole-stop cap: proven0 stays0 after120s as well.
+
+Planned notifications use one monotonic1s transport allowance per message,
+remaining time recomputed before connect/send, fresh socket cleanup. Existing
+in-session notifier calls keep their default transport behavior. Errors log
+ERROR MOMGUARDEND1-NOTIFY-ERROR with phase/count/error class, separately from
+paper outcome. Worker exceptions/start/cleanup failures are observed/logged;
+neither dead worker nor send success proves manager receipt. Notification
+errors do not prevent paper stop or overwrite its rc. STOPPING is attempted
+after successful stop; transport failure does not relabel paper success.
+
+Limits: socket deadlines/step workers do not promise hard OS scheduling or
+total I/O bounds. Hung owner/file work can still lose watchdog, as intended;
+no worker renews its allowance forever. Helper join is2s after1s transport
+budget; cleanup UNKNOWN is explicit ERROR. There is no installed-manager
+version claim or reliance on version259 STOPPING-final-state semantics.
+
+Closed calendar/session returns78 without READY. No fake READY: ExecStartPost
+would start paper. RestartPreventExitStatus78 suppresses restart according
+to main's upstream contract review; not proof of clean startup/noOnFailure.
+No unit edits or global SuccessExitStatus78 (real safety STOP shares78).
+
+Future packaging -- review instructions only, no executable commands
+Bind final integrated HEAD, exact reviewed source hashes, original manifest
+before-image/effective units. Stage permanent daily_guard.py AND guard_rules.py
+in original guard directory; rehash ONLY those changed artifact entries.
+Preserve gateway identity/application provenance and all unchanged digests,
+sampler.py, failure_stop.py/failure service/timer/owner-compat and unit policy.
+Oct14/Oct15 dated continuation artifacts and frozen manifests stay untouched.
+No rebaseline, clock override or guard start as part of staging.
+
+Remaining main/Claude proof -- NOT performed by lane L
+Focused actual-stop controlled125s two-window/page regression plus transport
+and worker errors; existing guard/MOMRESTART regression; appropriate full
+regression in main's sole approved serial slot. Tests here remain UNRUN.
+Claude native after-install acceptance explicitly requires BOTH:
+1 Outside-session start ends inactive, NOT failed; NO OnFailure; NO restart
+  loop. This is an acceptance target, not established by exit78 or this code.
+2 Mon03:40ET timer starts guard AND paper active, live_handoff=True. Existing
+  latch refusal remains intact; no auto reset-failed or latch clear.
+Also native15s long planned shutdown succeeds without core/watchdog restart;
+in-session hung guard still killed; failure_stop affects ONLY paper; live OMS
+and other actor/service identities untouched. Capture effective units/manager
+version and actual messages/results. SHIM tests do not prove manager behavior.
+Unknown/failed native acceptance goes back to Claude, no unit-policy invention.

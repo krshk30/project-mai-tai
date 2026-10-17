@@ -4,6 +4,7 @@ import ast
 import csv
 import io
 import json
+import os
 import subprocess
 import sys
 from datetime import date
@@ -359,13 +360,14 @@ def test_cli_offline_only_csv_and_exclusive_outputs(tmp_path):
     command = [sys.executable, str(root / "scripts/momwarn1_measurements.py"), str(source),
                "--day", "2026-10-13", "--evidence-kind", "CONTROLLED",
                "--samples", str(samples), "--entries", str(entries)]
-    result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=10)
+    env = {**os.environ, "PYTHONPATH": str(root / "src")}
+    result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     with samples.open() as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 1915 and rows[0]["record_kind"] == "CONTROLLED"
     preserved = samples.read_bytes()
-    result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=10)
+    result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode == 2 and samples.read_bytes() == preserved
 
 

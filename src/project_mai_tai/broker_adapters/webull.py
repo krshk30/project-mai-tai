@@ -81,6 +81,9 @@ class _EndpointCountingClient:
         self._recorder = recorder
 
     def get_response(self, request):
+        from project_mai_tai.sync_sdk_diagnostics import note_sdk_invocation
+
+        note_sdk_invocation()
         try:
             response = self._delegate.get_response(request)
         except Exception as exc:
