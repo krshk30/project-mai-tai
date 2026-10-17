@@ -211,6 +211,7 @@ class Settings(BaseSettings):
     # Separate from broker-disconnected ORB paper observation. No live ORB
     # intent can pass OMS unless this is deliberately enabled after review.
     orb_live_schwab_orders_enabled: bool = False
+    orb_country_routing_enabled: bool = False
     orb_webull_account_name: str = ""
     # ORBPURPLE1: initial RTH resting buy needs the prior completed Schwab close
     # at/above the exit ATR line. ON at deploy; independent paper-free rollback.
@@ -1459,6 +1460,8 @@ class Settings(BaseSettings):
 
     def provider_for_account(self, account_name: str) -> str:
         normalized_account = str(account_name).strip()
+        if self.orb_webull_account_name and normalized_account == self.orb_webull_account_name:
+            return "webull"
         if (
             (self.strategy_schwab_1m_v2_dual_broker_fanout_enabled or self.strategy_schwab_1m_v2_country_route_enabled)
             and normalized_account == self.strategy_schwab_1m_v2_webull_account_name

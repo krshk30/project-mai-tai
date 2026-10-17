@@ -34,6 +34,25 @@ class Redis:
         return b"1-1"
 
 
+def test_prepared_normal_sell_with_no_wire_timestamp_fences_stop_accounting(book):
+    state = book
+    with state.sessions.begin() as unit:
+        intent = TradeIntent(strategy_id=state.strategy, broker_account_id=state.account,
+            symbol="ABC", side="sell", intent_type="close", quantity=Decimal(10),
+            reason="controlled-normal-pending", status="pending")
+        unit.add(intent)
+        unit.flush()
+        unit.add(BrokerOrder(intent_id=intent.id, strategy_id=state.strategy,
+            broker_account_id=state.account, client_order_id="normal-pending-no-wire",
+            symbol="ABC", side="sell", quantity=Decimal(10), order_type="market",
+            time_in_force="day", status="pending", submitted_at=None,
+            payload={"oms_managed_row_id": str(state.row), "managed_sell_prepared_at": state.clock.now(UTC).isoformat()}))
+    with state.sessions() as unit:
+        with pytest.raises(ControlConflict, match="atr_stop_existing_exit_working_UNKNOWN"):
+            atr._managed(state.service, unit, state.lease, state.row)
+    assert not state.submits and state.release_count == 0
+
+
 @pytest.fixture(params=["schwab", "webull"])
 def book(request, monkeypatch):
     class Clock(datetime):

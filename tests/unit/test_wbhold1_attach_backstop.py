@@ -6,9 +6,10 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot
-from project_mai_tai.db.models import BrokerOrder, VirtualPosition
+from project_mai_tai.db.models import BrokerOrder, Fill, Strategy, VirtualPosition
 from project_mai_tai.oms import service as module
 from tests.unit import test_edgeprot1_webull_edge as edge
 
@@ -248,3 +249,86 @@ async def test_bound_attach_retains_retry_budget_and_one_broker_read_per_attempt
     assert await attach(service)
     assert calls == [edge.ACCT, edge.ACCT]
     assert [r.quantity for r in wire.requests] == [Decimal(120)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("execution_mode", ["live", "paper"])
+async def test_unmarked_exact_episode_is_protection_only_without_fabricated_ledger(replay, execution_mode):
+    from project_mai_tai.oms.webull_attach_riskoff import BARE_FILL_PROOF, KEY
+    service, factory, wire = replay
+    with factory.begin() as session:
+        session.get(Strategy, edge._entry(session).strategy_id).execution_mode = execution_mode
+
+    async def positions(account):
+        return [BrokerPositionSnapshot(account, edge.SYM, Decimal(1120), Decimal("2.49"))]
+
+    wire.list_account_positions = positions
+    assert await attach(service)
+    assert len(wire.requests) == 1 and wire.requests[0].quantity == 120
+    assert wire.requests[0].metadata["webull_exit_only_pair"] == "true"
+    with factory() as session:
+        assert session.scalar(select(VirtualPosition)) is None
+        assert session.scalar(select(Fill)) is None
+        entry = edge._entry(session)
+        assert KEY not in entry.payload and BARE_FILL_PROOF not in entry.payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("side", ["stop", "target"])
+async def test_unmarked_legacy_crossed_price_never_gets_riskoff_sell_authority(replay, monkeypatch, side):
+    from project_mai_tai.oms.webull_attach_riskoff import BARE_FILL_PROOF, KEY
+    service, factory, wire = replay
+    with factory.begin() as session:
+        session.get(Strategy, edge._entry(session).strategy_id).execution_mode = "live"
+
+    async def quote(**_kwargs):
+        price = 2 if side == "stop" else 3
+        return {"bid_price": price, "ask_price": price, "last_price": price}
+
+    monkeypatch.setattr(service, "_fetch_quote_for_order", quote)
+    assert not await attach(service)
+    assert wire.requests == []
+    assert (edge.ACCT, edge.SYM) in service._webull_protect_failed
+    with factory() as session:
+        assert session.scalar(select(BrokerOrder).where(BrokerOrder.side == "sell")) is None
+        entry = edge._entry(session)
+        assert KEY not in entry.payload and BARE_FILL_PROOF not in entry.payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("marker", ["wbattach1", "wbattach1_bare_fill_observed"])
+async def test_legacy_inflight_attach_cannot_wire_after_strict_marker_appears(replay, marker, caplog):
+    service, factory, wire = replay
+    reads = []
+
+    async def positions(account):
+        reads.append(account)
+        with factory.begin() as session:
+            entry = edge._entry(session)
+            entry.payload = {**entry.payload, marker: {}}
+        return [BrokerPositionSnapshot(account, edge.SYM, Decimal(1120), Decimal("2.49"))]
+
+    wire.list_account_positions = positions
+    assert not await attach(service)
+    assert reads == [edge.ACCT] and wire.requests == []
+    assert "strict_episode_requires_strict_owner" in caplog.text
+    with factory() as session:
+        assert edge._entry(session).payload[marker] == {}
+        assert session.scalar(select(BrokerOrder).where(BrokerOrder.side == "sell")) is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_attach_rechecks_entry_uuid_binding_after_positions_await(replay, caplog):
+    service, factory, wire = replay
+    reads = []
+
+    async def positions(account):
+        reads.append(account)
+        with factory.begin() as session:
+            edge._row(session).entry_order_id = None
+        return [BrokerPositionSnapshot(account, edge.SYM, Decimal(1120), Decimal("2.49"))]
+
+    wire.list_account_positions = positions
+    assert not await attach(service)
+    assert reads == [edge.ACCT] and wire.requests == []
+    assert "episode_or_owner_changed" in caplog.text

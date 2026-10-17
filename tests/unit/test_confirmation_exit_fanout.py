@@ -50,6 +50,7 @@ def _inject_regular_session(monkeypatch: pytest.MonkeyPatch) -> None:
     # This suite drives `_attach_webull_protection`, which is RTH-gated: it must not read the
     # machine clock (test_oms_test_clock_policy). A test that needs the closed session sets it.
     monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: True)
+    monkeypatch.setattr(service_module, "_extended_hours_session", lambda now=None: None)
 
 
 class _FakeRedis:
@@ -666,6 +667,72 @@ async def test_malformed_confirmation_close_never_retries_more_than_once(
     with sf() as session:
         incidents = session.scalars(select(service_module.SystemIncident)).all()
     assert len(incidents) == 1
+
+
+@pytest.mark.asyncio
+async def test_corrected_confirmation_retry_is_aborted_when_session_rolls_to_pm(monkeypatch) -> None:
+    from project_mai_tai.oms import managed_sell_prewire
+
+    market = {"session": None}
+    monkeypatch.setattr(service_module, "_extended_hours_session", lambda now=None: market["session"])
+    monkeypatch.setattr(service_module, "_is_regular_market_session", lambda now=None: market["session"] is None)
+    adapter = _FanoutAdapter()
+    adapter.submit_results.append([lgps_133416_malformed_client_order_id_reject()])
+    service, sf = _service(fanout=True, adapter=adapter)
+    service.logger = _CapturedLogger()
+    set_protect_base(service, sf, WEBULL, SYMBOL, "known-protect-base")
+    original_prepare = managed_sell_prewire.prepare_managed_sell
+    corrected_prepared = []
+    attached = []
+
+    async def prepare_then_roll(*args, **kwargs):
+        result = await original_prepare(*args, **kwargs)
+        if kwargs["request"].metadata.get("confirmation_corrected_retry") == "true":
+            assert result is not None
+            corrected_prepared.append(kwargs["request"])
+            # Move only the coherent market input, after locked preparation.
+            # The unchanged final session guard must refuse the RTH retry.
+            market["session"] = "PM"
+        return result
+
+    async def attach(**kwargs):
+        attached.append(kwargs["symbol"])
+        return True
+
+    monkeypatch.setattr(managed_sell_prewire, "prepare_managed_sell", prepare_then_roll)
+    monkeypatch.setattr(service, "_attach_webull_protection", attach)
+    await _arm_decision(service)
+    decision = service._confirmation_fanout_decision(service._confirmation_exit_pending[(WEBULL, SYMBOL)])
+    assert decision is not None
+
+    await service._evaluate_v2_managed_exit(WEBULL, SYMBOL)
+    await service._confirmation_exit_recovery_tasks.pop()
+
+    assert len(corrected_prepared) == 1
+    assert corrected_prepared[0].order_type == "market"
+    assert not service_module._managed_exit_session_matches_clock(corrected_prepared[0].metadata)
+    assert len(adapter.submitted) == 1
+    assert adapter.submitted[0].metadata["session"] == "NORMAL"
+    # Native reattachment is RTH-only; PM must remain visibly uncovered/paged.
+    assert attached == []
+    assert decision.outcomes[WEBULL] == "uncovered"
+    assert WEBULL in decision.uncovered and WEBULL not in decision.reprotected
+    with sf() as session:
+        retries = [order for order in session.scalars(select(BrokerOrder)).all()
+                   if (order.payload or {}).get("confirmation_corrected_retry") == "true"]
+        assert len(retries) == 1
+        assert retries[0].status == "aborted"
+        assert retries[0].submitted_at is None and retries[0].broker_order_id is None
+        audits = session.scalars(select(BrokerOrderEvent).where(
+            BrokerOrderEvent.order_id == retries[0].id,
+            BrokerOrderEvent.event_type == "aborted",
+        )).all()
+        assert len(audits) == 1 and audits[0].payload["proven_not_sent"] is True
+        row = service.store.get_open_managed_position(session, broker_account_name=WEBULL, symbol=SYMBOL)
+        assert row is not None and row.current_quantity == 1
+        incidents = session.scalars(select(service_module.SystemIncident)).all()
+        assert len(incidents) == 1
+        assert incidents[0].payload["protection_restored"] is False
 
 
 @pytest.mark.asyncio

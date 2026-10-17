@@ -641,15 +641,75 @@ def test_shared_adapters_and_aliases_coalesce_one_real_account_scan(fake_sdk):
     assert first._terminal_inflight is second._terminal_inflight
 
 
+class _ExactChildDetails(_FakeClient):
+    """Controlled per-address detail responses, not a live child-history claim."""
+
+    def __init__(self, mutation=None):
+        super().__init__({})
+        self.mutation = mutation
+        self.seen = []
+
+    def get_response(self, request):
+        super().get_response(request)
+        assert request._kind == "detail"
+        coid = request.values["client_order_id"]
+        assert coid in {"ownedT", "ownedS"}
+        self.seen.append(coid)
+        body = row(coid, "CANCELLED", qty="0")
+        body["account_id"] = request.values["account_id"]
+        body["items"][0]["side"] = "SELL"
+        if coid == "ownedS":
+            if self.mutation == "missing-native-id":
+                body.pop("order_id")
+            elif self.mutation == "missing-filled-quantity":
+                body["items"][0].pop("filled_qty")
+            elif self.mutation == "foreign-coid":
+                body["client_order_id"] = "foreign-child"
+            elif self.mutation == "working":
+                body["items"][0]["order_status"] = "SUBMITTED"
+        return _Resp(body)
+
+
 @pytest.mark.asyncio
 async def test_fresh_both_child_eod_confirmation_can_release(fake_sdk):
-    client = _FakeClient({"detail": {"items": [{"order_status": "CANCELLED"}]}})
+    client = _ExactChildDetails()
     result = await primary(client).confirm_exit_pair_terminal(
         broker_account_name="live:orb", symbol="AIFA", base_client_order_id="owned"
     )
     assert result.outcome == "released"
     assert len(result.reports) == 2
     assert client.calls == {"detail": 2}
+    assert client.seen == ["ownedT", "ownedS"]
+    assert {report.broker_order_id for report in result.reports} == {"broker-ownedT", "broker-ownedS"}
+    assert all(report.origin == "broker" and report.event_type == "cancelled"
+               and report.side == "sell" and report.symbol == "AIFA"
+               and report.filled_quantity == 0 and report.broker_fill_id is None
+               and report.metadata["cancel_outcome"] == "confirmed" for report in result.reports)
+
+
+@pytest.mark.asyncio
+async def test_status_only_cancelled_children_stay_unknown_not_release_permission(fake_sdk):
+    # Preserve the original incomplete positive preimage as an explicit negative.
+    client = _FakeClient({"detail": {"items": [{"order_status": "CANCELLED"}]}})
+    result = await primary(client).confirm_exit_pair_terminal(
+        broker_account_name="live:orb", symbol="AIFA", base_client_order_id="owned")
+    assert result.outcome == "unanswerable" and len(result.reports) == 2
+    assert client.calls == {"detail": 2}
+    assert all(report.origin == "unknown" and report.metadata["cancel_outcome"] == "could_not_tell"
+               for report in result.reports)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["missing-native-id", "missing-filled-quantity", "foreign-coid", "working"])
+async def test_one_unproven_child_never_borrows_other_child_terminal_proof(fake_sdk, mutation):
+    client = _ExactChildDetails(mutation)
+    result = await primary(client).confirm_exit_pair_terminal(
+        broker_account_name="live:orb", symbol="AIFA", base_client_order_id="owned")
+    assert result.outcome == "unanswerable" and len(result.reports) == 2
+    assert client.calls == {"detail": 2} and client.seen == ["ownedT", "ownedS"]
+    assert result.reports[0].event_type == "cancelled" and result.reports[0].origin == "broker"
+    assert not (result.reports[1].event_type == "cancelled" and result.reports[1].origin == "broker"
+                and result.reports[1].metadata.get("cancel_outcome") == "confirmed")
 
 
 @pytest.mark.parametrize("key,value", [

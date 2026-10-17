@@ -51,7 +51,7 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 142  # Additive KILLSW1 and ATR routing switches.
+    assert len(entries) == 143  # C6 plus one switch for each routing layer.
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
@@ -67,8 +67,8 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
         service for entry in entries
         for service in [entry["owning_service"], *entry.get("also_check_services", [])]
     ) == {
-        "control": 13, "market-capture": 1, "market-data": 3,
-        "momentum-paper": 4, "oms": 54, "orb-schwab": 6,
+        "control": 14, "market-capture": 1, "market-data": 3,
+        "momentum-paper": 4, "oms": 55, "orb-schwab": 7,
         "reconciler": 1, "schwab-1m-v2": 50, "strategy": 29,
     }
     country = by_name["strategy_schwab_1m_v2_country_route_enabled"]
@@ -98,6 +98,10 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     assert by_name["strategy_schwab_1m_v2_gap_hold_enabled"]["expected"] is True
     assert by_name["orb_schwab_observe_enabled"]["expected"] is False
     assert by_name["orb_live_schwab_orders_enabled"]["expected"] is True
+    assert by_name["orb_country_routing_enabled"]["expected"] is True
+    assert by_name["orb_country_routing_enabled"]["owning_service"] == "orb-schwab"
+    assert by_name["orb_country_routing_enabled"]["also_check_services"] == ["oms", "control"]
+    assert Settings.model_fields["orb_country_routing_enabled"].default is False
     assert by_name["orb_schwab_atr_entry_gate_enabled"]["expected"] is True
     assert by_name["orb_schwab_atr_entry_gate_enabled"]["owning_service"] == "orb-schwab"
     assert by_name["orb_schwab_atr_entry_gate_enabled"]["also_check_services"] == ["oms"]

@@ -387,9 +387,30 @@ class LivePersistence:
                 raise Refusal("report_client_order_identity_mismatch")
             if report.filled_quantity > 0 and report.origin != "broker":
                 raise Refusal("fill_broker_provenance_unknown")
+            entry_ack = (request.side == "buy" and request.intent_type == "open"
+                         and report.event_type == "accepted"
+                         and report.metadata.get("momcancel1_place_ack") == "true")
+            if entry_ack:
+                metadata = dict(order.payload or {})
+                unknown = (report.metadata.get("momcancel1_ack_identity") != "VALID"
+                           or report.origin != "broker" or report.symbol != request.symbol
+                           or report.side != request.side or report.intent_type != request.intent_type
+                           or report.quantity != request.quantity
+                           or not report.broker_order_id
+                           or (order.broker_order_id and order.broker_order_id != report.broker_order_id))
+                if unknown:
+                    # POST already happened. Keep the reservation and existing ID;
+                    # an ambiguous ACK never authorizes a new entry or a cancel.
+                    order.payload = {**metadata, "momcancel1_ack_identity": "UNKNOWN"}
+                    continue
             preserve = (report.event_type in {"rejected", "cancelled", "expired", "aborted"} and report.origin != "broker"
-                        or order.status == "filled" and report.event_type in {"accepted", "partially_filled"})
+                        or order.status == "filled" and report.event_type in {"accepted", "partially_filled"}
+                        or entry_ack and order.status in {"cancelled", "rejected", "expired", "aborted"})
             metadata = {**order.payload, **request.metadata}
+            if (order.payload or {}).get("momcancel1_ack_identity") == "UNKNOWN":
+                metadata["momcancel1_ack_identity"] = "UNKNOWN"
+            if entry_ack:
+                metadata.setdefault("momcancel1_ack_identity", "VALID")
             if report.origin == "broker" and not preserve:
                 metadata["momlive_terminal_broker_event"] = (
                     report.event_type if report.event_type in {"filled", "cancelled", "rejected", "expired"} else "")
@@ -440,4 +461,5 @@ class LivePersistence:
         return {"quantity": quantity, "price": value / quantity if quantity else None,
                 "first_fill_ns": int(stamp.timestamp()*1e9) if stamp else None,
                 "broker_order_id": order.broker_order_id,
+                "entry_ack_identity_unknown": (order.payload or {}).get("momcancel1_ack_identity") == "UNKNOWN",
                 "status": order.status}

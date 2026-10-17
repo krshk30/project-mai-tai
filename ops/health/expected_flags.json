@@ -281,6 +281,14 @@
       ]
     },
     {
+      "name": "orb_country_routing_enabled",
+      "expected": true,
+      "owning_service": "orb-schwab",
+      "also_check_services": ["oms", "control"],
+      "reason": "ORBROUTE1 selects one SEC-country venue for new ten-share ORB entries; existing episode quantities and buying-account exits remain bound to their ledger.",
+      "ruling": "2026-10-15 20:3x operator approval: US to Schwab, non-US or UNKNOWN to existing live:orb Webull; RTH-only, NORMAL staging near 09:28, trigger-anchored +5/-8 exits. Code default OFF; install ON only with exact-source qualification, explicit live:orb account binding and reviewed deployment. No standalone activation authorized."
+    },
+    {
       "name": "orb_live_schwab_orders_enabled",
       "expected": true,
       "owning_service": "orb-schwab",

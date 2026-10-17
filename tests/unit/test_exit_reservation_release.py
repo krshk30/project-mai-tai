@@ -24,6 +24,7 @@ import logging
 from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -75,9 +76,10 @@ def _called_name(node: ast.Call) -> str:
     return ""
 
 
-def _emitted_managed_exit_reasons() -> set[str]:
+def _emitted_managed_exit_reasons(source_root: Path | None = None) -> set[str]:
     """Discover the reason contract from emit call sites, not from the classifier itself."""
-    source_root = Path(__file__).parents[2] / "src" / "project_mai_tai"
+    if source_root is None:
+        source_root = Path(__file__).parents[2] / "src" / "project_mai_tai"
     emitted: set[str] = set()
     for path in source_root.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -117,6 +119,9 @@ def _emitted_managed_exit_reasons() -> set[str]:
             if isinstance(reason, ast.Constant) and isinstance(reason.value, str):
                 if reason.value.startswith(_MANAGED_EXIT_PREFIX):
                     emitted.add(reason.value)
+            elif isinstance(reason, ast.Name) and reason.id in bindings:
+                emitted.update(value for value in bindings[reason.id]
+                               if value.startswith(_MANAGED_EXIT_PREFIX))
             elif isinstance(reason, ast.JoinedStr):
                 template = _joined_string_template(reason)
                 if template == f"{_MANAGED_EXIT_PREFIX}{{tag}}":
@@ -128,6 +133,27 @@ def _emitted_managed_exit_reasons() -> set[str]:
             elif reason is not None:
                 emitted.add(f"unresolved:{ast.dump(reason, include_attributes=False)}")
     return emitted
+
+
+@pytest.mark.parametrize("reason", ["oms_v2_managed_exit:CW_TARGET", "WEBULL_ATTACH_RISK_OFF"])
+def test_literal_reason_name_has_same_prefix_semantics_as_inline_literal(tmp_path, reason):
+    literal = tmp_path / "literal"
+    named = tmp_path / "named"
+    literal.mkdir()
+    named.mkdir()
+    (literal / "caller.py").write_text(
+        f"service._emit_v2_exit_on_loop(reason={reason!r})\n", encoding="utf-8")
+    (named / "caller.py").write_text(
+        f"REASON = {reason!r}\nservice._emit_v2_exit_on_loop(reason=REASON)\n", encoding="utf-8")
+    expected = {reason} if reason.startswith(_MANAGED_EXIT_PREFIX) else set()
+    assert _emitted_managed_exit_reasons(literal) == expected
+    assert _emitted_managed_exit_reasons(named) == expected
+
+
+def test_unbound_reason_name_remains_unresolved_not_silently_ignored(tmp_path):
+    (tmp_path / "caller.py").write_text(
+        "service._emit_v2_exit_on_loop(reason=UNKNOWN)\n", encoding="utf-8")
+    assert _emitted_managed_exit_reasons(tmp_path) == {"unresolved:Name(id='UNKNOWN', ctx=Load())"}
 
 
 # --------------------------------------------------------------- the adapter can address the legs
@@ -193,11 +219,26 @@ def _svc(adapter, *, base: str = "protect-base") -> svc.OmsRiskService:
     s.broker_adapter = adapter
     s._webull_protect_base = {("live:orb", "XHG"): base} if base else {}
     s._exit_reservation_released = set()
-    s._find_oco_entry_order = lambda *a, **k: SimpleNamespace(
+    entry = SimpleNamespace(
+        id=uuid4(),
         client_order_id="entry-coid", broker_order_id="owned-parent", payload={
             "fanout_leg": "webull", "native_oco_bracket": "false",
             "webull_protect_base_client_order_id": base,
-        }) if base else None
+        })
+    managed = SimpleNamespace(id=uuid4(), strategy_code="schwab_1m_v2",
+        broker_account_name="live:orb", symbol="XHG", entry_order_id=entry.id,
+        entry_client_order_id=entry.client_order_id, current_quantity=1, status="open")
+
+    def current_row(session, *, broker_account_name, symbol):
+        assert broker_account_name == managed.broker_account_name and symbol == managed.symbol
+        return managed
+
+    def bound_entry(session, account, symbol, **kwargs):
+        assert current_row(session, broker_account_name=account, symbol=symbol).entry_order_id == entry.id
+        return entry if base else None
+
+    s.store = SimpleNamespace(get_open_managed_position=current_row)
+    s._find_oco_entry_order = bound_entry
     return s
 
 
@@ -270,9 +311,13 @@ def test_the_latch_is_CLEARED_when_the_position_closes() -> None:
     assert len(a.cancelled) == 1
     svc.OmsRiskService._clear_exit_reservation_release(s, "live:orb", "XHG")
     s._webull_protect_base[("live:orb", "XHG")] = "protect-base-2"
-    s._find_oco_entry_order = lambda *a_, **k: SimpleNamespace(
+    entry = SimpleNamespace(id=uuid4(),
         client_order_id="next-entry", broker_order_id="next-owned-parent", payload={
             "fanout_leg": "webull", "webull_protect_base_client_order_id": "protect-base-2"})
+    managed = s.store.get_open_managed_position(None, broker_account_name="live:orb", symbol="XHG")
+    managed.id, managed.entry_order_id = uuid4(), entry.id
+    managed.entry_client_order_id = entry.client_order_id
+    s._find_oco_entry_order = lambda *a_, **k: entry
     _release(s)
     assert len(a.cancelled) == 2, "the next position must release its own legs"
 
@@ -314,8 +359,10 @@ def test_it_falls_back_to_the_ENTRY_coid_when_the_attach_id_is_forgotten() -> No
     `broker_orders` row, and the native combo's legs hang off it."""
     a = _Adapter()
     s = _svc(a, base="")
+    managed = s.store.get_open_managed_position(None, broker_account_name="live:orb", symbol="XHG")
     s._find_oco_entry_order = lambda *a_, **k: SimpleNamespace(
-        client_order_id="entry-coid", broker_order_id="owned-parent")
+        id=managed.entry_order_id, client_order_id=managed.entry_client_order_id,
+        broker_order_id="owned-parent", payload={"native_oco_bracket": "true"})
     assert _release(s).outcome == "released"
     assert a.cancelled == [("XHG", "entry-coid")]
 

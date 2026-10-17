@@ -114,8 +114,8 @@ def test_s6_catalog_matches_all_on_live_set_and_149_checks_with_restoration_on()
     assert control["expected"] is True
     assert [control["owning_service"], *control["also_check_services"]] == ["oms", "control"]
     assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries
-               if entry["name"] != "momentum_live_enabled") == 161 + 2 + 3
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 164 + 2 + 3
+               if entry["name"] != "momentum_live_enabled") == 161 + 2 + 3 + 3
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in entries) == 164 + 2 + 3 + 3
     assert flags["webull_list_primary_reads_enabled"] is True
     assert flags["strategy_schwab_1m_v2_line_chart_restoration_enabled"] is True
 

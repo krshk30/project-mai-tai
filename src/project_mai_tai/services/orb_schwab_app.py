@@ -57,6 +57,8 @@ class OrbSchwabService(OrbService):
         self._fixed_resting_mode = False
         self._reclaim_mode = False
         self._opening_orders: dict[str, OrbSchwabOpeningOrder] = {}
+        self._country_router = None
+        self._country_selections = {}
         self._closed_bars: list[tuple[str, OrbBar, datetime]] = []
         if self.settings.orb_schwab_observe_enabled and self.settings.orb_live_schwab_orders_enabled:
             raise ValueError("ORB observation and live sending cannot be enabled together")
@@ -434,9 +436,7 @@ class OrbSchwabService(OrbService):
             entries = list(self._observe_exit_entries.values())
         else:
             try:
-                entries = await asyncio.to_thread(
-                    open_entries, self.session_factory, self.settings.strategy_schwab_1m_v2_account_name
-                )
+                entries = await asyncio.to_thread(self._owned_orb_entries)
             except Exception:
                 logger.exception("[ORB-SCHWAB-EXIT-UNKNOWN] owned-fill read unavailable; subscriptions retained")
                 return
@@ -486,7 +486,12 @@ class OrbSchwabService(OrbService):
             last = self._exit_last_publish.get(entry["entry_id"])
             if last is not None and now - last < timedelta(seconds=5):
                 continue
-            event = build_orb_schwab_exit_intent(self.settings, symbol, entry["entry_id"], entry["fill_id"], context["reason"])
+            from project_mai_tai.orb_country_route import selection_from_metadata
+            selection = selection_from_metadata(symbol, entry.get("account", ""), entry.get("metadata", {}))
+            event = build_orb_schwab_exit_intent(
+                self.settings, symbol, entry["entry_id"], entry["fill_id"], context["reason"],
+                selection=selection, quantity=entry.get("quantity") if selection else None,
+            )
             await publish_orb_schwab_intent(self.redis, self.settings, event, self._processing_time())
             self._exit_last_publish[entry["entry_id"]] = now
             logger.info("[ORB-SCHWAB-EXIT-REQUEST] symbol=%s reason=%s entry=%s fill=%s",
@@ -589,7 +594,9 @@ class OrbSchwabService(OrbService):
                         decision_reason="bar_missing", macd_allowed=None,
                     )
                 elif order.placed:
-                    event = build_orb_schwab_cancel_intent(self.settings, symbol)
+                    event = build_orb_schwab_cancel_intent(
+                        self.settings, symbol, selection=getattr(self, "_country_selections", {}).get(symbol)
+                    )
                     await publish_orb_schwab_intent(self.redis, self.settings, event, now)
                 continue
             if self._macd_fill is not None:
@@ -658,21 +665,45 @@ class OrbSchwabService(OrbService):
                 continue
             if action is None:
                 continue
+            selection = getattr(self, "_country_selections", {}).get(symbol)
+            if (action.kind == "place" and symbol in getattr(self, "_country_selections", {})
+                    and (selection is None or not self.settings.orb_country_routing_enabled)):
+                logger.warning("[ORB-LEGACY-OWNER-RETAINED] symbol=%s no_new_route=1", symbol)
+                continue
+            if self.settings.orb_country_routing_enabled:
+                from project_mai_tai.orb_country_route import select_orb_country_route
+                if action.kind == "place" and selection is None:
+                    if self._country_router is None:
+                        raise ValueError("orb_country_router_not_restored")
+                    selection = select_orb_country_route(
+                        self._country_router, symbol, now,
+                        schwab_account=self.settings.strategy_schwab_1m_v2_account_name,
+                        webull_account=self.settings.orb_webull_account_name,
+                    )
+                    self._country_selections[symbol] = selection
             if action.kind == "place":
                 assert action.level is not None
                 event = build_orb_schwab_open_intent(
                     self.settings, symbol, action.level,
                     deferred_macd_bar_close=(bar.timestamp + timedelta(minutes=1)) if was_deferred else None,
+                    selection=selection,
                 )
             elif action.kind == "cancel":
-                event = build_orb_schwab_cancel_intent(self.settings, symbol)
+                event = build_orb_schwab_cancel_intent(self.settings, symbol, selection=selection)
             else:
                 assert action.level is not None
-                event = build_orb_schwab_reprice_intent(self.settings, symbol, action.level)
+                event = build_orb_schwab_reprice_intent(self.settings, symbol, action.level, selection=selection)
             await publish_orb_schwab_intent(
                 self.redis, self.settings, event, datetime.now(UTC)
             )
         self._closed_bars = pending
+
+    def _owned_orb_entries(self):
+        accounts = {self.settings.strategy_schwab_1m_v2_account_name}
+        if self.settings.orb_webull_account_name:
+            accounts.add(self.settings.orb_webull_account_name)
+        return [entry for account in sorted(accounts)
+                for entry in open_entries(self.session_factory, account)]
 
     async def run(self) -> None:
         if not self.settings.orb_enabled or not (
@@ -684,6 +715,13 @@ class OrbSchwabService(OrbService):
             self.session_factory = build_timed_session_factory(
                 self.settings, service="orb-schwab", profile="fast"
             )
+        if self.settings.orb_country_routing_enabled:
+            from project_mai_tai.momentum_live_sec import CountryRouter, CountryStore
+            self._country_router = CountryRouter(CountryStore(self.session_factory))
+            await self._country_router.start()
+        if self.settings.orb_country_routing_enabled or self.settings.orb_webull_account_name:
+            from project_mai_tai.orb_country_route import load_working_routes
+            self._country_selections = await asyncio.to_thread(load_working_routes, self.session_factory)
         logger.info(
             "[ORB-SCHWAB] mode=%s live_sending=%s atr_entry_gate_enabled=%s",
             "OBSERVE_ONLY" if self._observe_only else "LIVE",
@@ -693,15 +731,21 @@ class OrbSchwabService(OrbService):
         if self.settings.market_data_subscription_startup_enabled and not self._observe_only:
             # Hydrate ownership before any replacement, including outside RTH.
             # A failed read must escape BEFORE the finally block can release it.
-            entries = await asyncio.to_thread(
-                open_entries, self.session_factory, self.settings.strategy_schwab_1m_v2_account_name
-            )
+            entries = await asyncio.to_thread(self._owned_orb_entries)
             self._exit_held_symbols = {entry["symbol"] for entry in entries}
         heartbeat_task = asyncio.create_task(self._live_heartbeat_loop(), name="orb-schwab-heartbeat")
         self._live_decision_tape.session_factory = decision_session_factory(self.settings)
         tape_task = asyncio.create_task(self._live_decision_tape.run(), name="orb-live-decision-tape")
         try:
             while True:
+                if ((self._country_router is not None or self.settings.orb_webull_account_name)
+                        and datetime.now(UTC).astimezone(_ET).date() != self._session_date):
+                    from project_mai_tai.orb_country_route import load_working_routes
+                    if self._country_router is not None:
+                        await self._country_router.reload_async()
+                    self._country_selections = await asyncio.to_thread(
+                        load_working_routes, self.session_factory
+                    )
                 self._maybe_roll_session()
                 now = datetime.now(UTC)
                 if (
@@ -719,6 +763,8 @@ class OrbSchwabService(OrbService):
                 if processed == 0:
                     await asyncio.sleep(1)
         finally:
+            if self._country_router is not None:
+                await self._country_router.close()
             tape_task.cancel()
             with suppress(asyncio.CancelledError):
                 await tape_task

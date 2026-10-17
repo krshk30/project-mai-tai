@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from asyncio import sleep
 from datetime import datetime, time
 from decimal import Decimal
+from math import isfinite
+from time import monotonic
+from threading import Lock
 from typing import TYPE_CHECKING, Callable
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.db.models import (
@@ -25,6 +29,22 @@ _ET = ZoneInfo("America/New_York")
 _STATE = "orb_schwab_eod_close"
 _START = time(15, 55)
 _DEADLINE = time(16)
+STOP_REASON = "KILLSW1_STOP"
+
+
+def pending_generic_sell(unit, entry) -> bool:
+    """Only O14's exact internal reservation; never expire an exit-side fence."""
+    return unit.scalar(select(BrokerOrder.id).join(
+        Strategy, Strategy.id == BrokerOrder.strategy_id,
+    ).where(
+        Strategy.code == "orb_schwab", BrokerOrder.strategy_id == entry.strategy_id,
+        BrokerOrder.broker_account_id == entry.broker_account_id,
+        BrokerOrder.symbol == entry.symbol, BrokerOrder.side == "sell",
+        BrokerOrder.payload["managed_sell_entry_order_id"].as_string() == str(entry.id),
+        BrokerOrder.payload["managed_sell_prepared_at"].as_string().is_not(None),
+        or_(BrokerOrder.status.is_(None), BrokerOrder.status.not_in(
+            {"filled", "cancelled", "canceled", "rejected", "expired", "aborted"})),
+    ).limit(1)) is not None
 
 
 @dataclass(frozen=True)
@@ -37,6 +57,8 @@ class _Target:
     broker_id: str
     client_id: str
     quantity: Decimal
+    entry_quantity: Decimal = Decimal("2")
+    routed: bool = False
 
 
 async def _incident(service: OmsRiskService, target: _Target, reason: str, now: datetime) -> None:
@@ -90,24 +112,112 @@ async def _finish(service: OmsRiskService, target: _Target, phase: str, now: dat
     await service._run_db(write)
 
 
-async def _broker_quantity(service: OmsRiskService, target: _Target) -> Decimal:
+async def _broker_quantity(
+    service: OmsRiskService, target: _Target, *, after: float | None = None,
+) -> Decimal:
     positions = await service.broker_adapter.list_account_positions(target.account)
+    if after is not None:
+        # A successful cached list is not a wire receipt. Sample before reading
+        # the adapter's age so the inferred lower bound is conservative.
+        sampled = monotonic()
+        receipt_age = getattr(service.broker_adapter, "positions_wire_read_age_seconds", None)
+        age = receipt_age(target.account) if callable(receipt_age) else None
+        if isinstance(age, bool) or not isinstance(age, (int, float)) or not isfinite(age) or age < 0:
+            raise ValueError("orb_close_positions_wire_receipt_unknown")
+        if age > 30 or sampled - age <= after:
+            raise ValueError("orb_close_positions_wire_receipt_stale")
     matches = [p for p in positions if p.symbol.upper() == target.symbol]
     if len(matches) != 1 or matches[0].broker_account_name != target.account:
         raise ValueError("broker_position_not_positively_identified")
     quantity = matches[0].quantity
-    if not quantity.is_finite() or not 0 < quantity <= target.quantity <= 2:
+    if not quantity.is_finite() or not 0 < quantity <= target.quantity <= target.entry_quantity:
         raise ValueError("broker_position_not_within_orb_ownership")
     if quantity != quantity.to_integral_value():
         raise ValueError("broker_position_not_whole_shares")
+    if service.settings.provider_for_account(target.account) == "webull":
+        from project_mai_tai.oms.orb_country import _snapshot
+        def owned(session):
+            return _snapshot(service, session, target.entry_id)[3]
+        if quantity > await service._run_db(owned, commit=False):
+            raise ValueError("orb_close_exceeds_current_owned_balance")
     return quantity
+
+
+async def _post_release_quantity(service, target, released_at, clock):
+    deadline = monotonic() + 30
+    while True:
+        try:
+            return await _broker_quantity(service, target, after=released_at)
+        except ValueError as exc:
+            if str(exc) != "orb_close_positions_wire_receipt_stale":
+                raise
+            if monotonic() >= deadline or clock().astimezone(_ET).time() >= _DEADLINE:
+                raise ValueError("orb_close_positions_wire_receipt_wait_elapsed") from exc
+            await sleep(.25)
 
 
 async def _attempt(
     service: OmsRiskService, target: _Target, event_id: UUID, clock: Callable[[], datetime],
     *, reason: str = "ORB_END_OF_DAY_CLOSE", start: time = _START,
+    stop_context=None, attach_context=None,
+) -> bool:
+    """Normal and STOP reasons share one non-queued episode owner through commit."""
+    controlled = bool(getattr(service.settings, "bot_control_enabled", False))
+    from project_mai_tai.oms.webull_attach_riskoff import REASON as attach_reason
+    riskoff = reason == attach_reason
+    if riskoff and (attach_context is None or stop_context is not None
+                    or attach_context.entry_id != target.entry_id):
+        raise ValueError("orb_attach_exit_context_missing")
+    if not riskoff and attach_context is not None:
+        raise ValueError("orb_attach_exit_wrong_reason")
+    if riskoff:
+        start = time(9, 30)
+    if reason == STOP_REASON and (not controlled or stop_context is None
+            or not getattr(service.settings, "orb_country_routing_enabled", False)):
+        raise ValueError("orb_stop_context_missing")
+    key = (target.account, target.symbol, str(target.entry_id))
+    lock = service.__dict__.setdefault("_orb_exit_claim_lock", Lock()) if controlled or riskoff else None
+    if lock is not None:
+        if not lock.acquire(blocking=False):
+            return False
+        try:
+            claims = service.__dict__.setdefault("_orb_exit_claims", set())
+            if key in claims:
+                return False
+            claims.add(key)
+        finally:
+            lock.release()
+    try:
+        if attach_context is not None and await attach_context.recover_existing_exit(target):
+            return True  # Original identity read/accounting only, never another SELL.
+        if reason == STOP_REASON and not await stop_context.claim(target, event_id):
+            return False
+        await _attempt_owned(service, target, event_id, clock, reason=reason, start=start,
+                             stop_context=stop_context, attach_context=attach_context)
+        return True
+    finally:
+        if lock is not None:
+            with lock:
+                service._orb_exit_claims.discard(key)
+
+
+async def _attempt_owned(
+    service: OmsRiskService, target: _Target, event_id: UUID, clock: Callable[[], datetime],
+    *, reason: str, start: time, stop_context=None, attach_context=None,
 ) -> None:
+    stopping = reason == STOP_REASON
+    context = stop_context if stopping else attach_context
+    protected = context is not None
     now = clock()
+    if protected:
+        context.execution_metadata(target, now)  # Validate session/bid BEFORE releasing protection.
+    def validate_quantity(session):
+        from project_mai_tai.oms.orb_country import entry_quantity
+        entry = session.get(BrokerOrder, target.entry_id)
+        if (entry is None or entry_quantity(entry) != target.entry_quantity
+                or not target.quantity.is_finite() or not 0 < target.quantity <= target.entry_quantity):
+            raise ValueError("orb_close_entry_quantity_binding_invalid")
+    await service._run_db(validate_quantity, commit=False)
     event = TradeIntentEvent(
         event_id=event_id,
         source_service="oms-risk",
@@ -127,6 +237,10 @@ async def _attempt(
     if not allowed:
         raise ValueError(f"risk_refused:{risk_reason}")
     def ownership_conflict(session):
+        if attach_context is not None:
+            return attach_context.ownership_conflict(session, target)
+        if stopping:
+            return stop_context.ownership_conflict(session, target)
         other_owner = session.scalar(select(VirtualPosition.id).where(
             VirtualPosition.broker_account_id == target.account_id,
             VirtualPosition.symbol == target.symbol,
@@ -146,18 +260,37 @@ async def _attempt(
     parent = await service.broker_adapter.fetch_order_update(OrderRequest(
         client_order_id=target.client_id, broker_account_name=target.account,
         strategy_code="orb_schwab", symbol=target.symbol, side="buy", intent_type="open",
-        quantity=Decimal("2"), reason="ORB_EOD_VERIFY_PARENT",
-        metadata={"broker_order_id": target.broker_id},
+        quantity=target.entry_quantity, reason="ORB_EOD_VERIFY_PARENT",
+        metadata={"broker_order_id": target.broker_id, **({
+            "orb_country_route": "true", "orb_country_broker": "webull",
+        } if service.settings.provider_for_account(target.account) == "webull" else {})},
     ))
-    if (
-        parent is None or parent.broker_order_id != target.broker_id
-        or parent.event_type != "filled" or parent.filled_quantity != 2
-    ):
+    parent_proven = bool(parent is not None and parent.broker_order_id == target.broker_id
+                         and parent.event_type == "filled" and parent.filled_quantity == target.entry_quantity)
+    if (target.routed or stopping) and parent is not None:
+        def bought(session):
+            rows = session.scalars(select(Fill).where(
+                Fill.order_id == target.entry_id, Fill.side == "buy",
+                Fill.strategy_id == target.strategy_id, Fill.broker_account_id == target.account_id,
+                Fill.symbol == target.symbol, Fill.broker_fill_id.is_not(None),
+            )).all()
+            return sum((r.quantity for r in rows), Decimal(0))
+        verified = await service._run_db(bought, commit=False)
+        parent_proven = bool(parent.broker_order_id == target.broker_id
+            and parent.client_order_id == target.client_id and parent.symbol == target.symbol
+            and parent.side == "buy" and parent.origin == "broker"
+            and parent.event_type in {"filled", "cancelled", "rejected"}
+            and parent.reported_at.tzinfo is not None and parent.reported_at <= clock()
+            and 0 < verified == parent.filled_quantity <= target.entry_quantity)
+    if not parent_proven:
         raise ValueError("entry_fill_not_confirmed")
     async def child_closed() -> bool:
         from project_mai_tai.oms.service import oco_exit_client_order_id
 
-        await service._poll_orb_schwab_child_exits(entry_id=target.entry_id)
+        if protected and service.settings.provider_for_account(target.account) == "webull":
+            await context.poll_children(target)
+        else:
+            await service._poll_orb_schwab_child_exits(entry_id=target.entry_id)
         def read(session):
             position = service.store.get_virtual_position(
                 session, strategy_id=target.strategy_id,
@@ -168,22 +301,39 @@ async def _attempt(
                 return False
             children = session.execute(select(Fill, BrokerOrder).join(
                 BrokerOrder, BrokerOrder.id == Fill.order_id,
-            ).where(BrokerOrder.intent_id == entry.intent_id, Fill.side == "sell",
+            ).where(or_(BrokerOrder.intent_id == entry.intent_id,
+                        BrokerOrder.payload["entry_order_id"].as_string() == str(entry.id)), Fill.side == "sell",
                     Fill.broker_fill_id.is_not(None), Fill.broker_account_id == target.account_id,
                     Fill.strategy_id == target.strategy_id, Fill.symbol == target.symbol)).all()
             quantity = sum((fill.quantity for fill, child in children
-                            if child.broker_order_id and child.client_order_id == oco_exit_client_order_id(
-                                target.client_id, child.broker_order_id)), Decimal("0"))
+                            if child.broker_order_id and (
+                                child.client_order_id == oco_exit_client_order_id(target.client_id, child.broker_order_id)
+                                or ((entry.payload or {}).get("orb_country_broker") == "webull"
+                                    and (child.payload or {}).get("orbroute1_child") == "true"
+                                    and (child.payload or {}).get("entry_order_id") == str(entry.id)))), Decimal("0"))
             return quantity >= target.quantity
         return await service._run_db(read, commit=False)
 
     # The native target/stop may already have sold inside the break bar while
     # the virtual position is still stale. Attribute its exact child fill first.
-    if await child_closed():
+    if await child_closed() and not protected:
         await _finish(service, target, "resolved_by_child_fill", clock())
         return
-    await _broker_quantity(service, target)
-    release = await service.broker_adapter.release_native_oco_for_close(target.account, target.broker_id)
+    if not protected:
+        await _broker_quantity(service, target)
+    native_attempt = await stop_context.before_release(target) if stopping else None
+    if service.settings.provider_for_account(target.account) == "webull":
+        from project_mai_tai.oms.orb_country import release_protection
+        if attach_context is not None:
+            released = await release_protection(service, target.entry_id, attach_context=attach_context)
+        else:
+            released = await release_protection(service, target.entry_id, stop_context=stop_context) if stopping else (
+                await release_protection(service, target.entry_id))
+        release = "released" if released else "unanswerable"
+    else:
+        release = await service.broker_adapter.release_native_oco_for_close(target.account, target.broker_id)
+    if stopping:
+        await stop_context.after_release(native_attempt, release)
     if release == "resolved_by_fill":
         if not await child_closed():
             raise ValueError("child_fill_not_recorded")
@@ -191,27 +341,50 @@ async def _attempt(
         return
     if release != "released":
         raise ValueError("sell_pair_release_unconfirmed")
+    released_at = monotonic()
+    terminal_at = clock()
     if await child_closed():
         await _finish(service, target, "resolved_by_child_fill", clock())
         return
     # Reread after confirmed cancellation; an earlier position read cannot size this sell.
-    quantity = await _broker_quantity(service, target)
+    if protected:
+        quantity = await context.quantity_after_release(target, terminal_at)
+    else:
+        quantity = await _post_release_quantity(service, target, released_at, clock) if (
+            service.settings.provider_for_account(target.account) == "webull"
+        ) else await _broker_quantity(service, target)
     now = clock()
-    if not start <= now.astimezone(_ET).time() < _DEADLINE:
+    if not stopping and not start <= now.astimezone(_ET).time() < _DEADLINE:
         raise ValueError("close_window_elapsed_after_release")
     event.payload.quantity = quantity
+    if protected:
+        event.payload.metadata.update(context.execution_metadata(target, now))
+    if stopping:
+        event.payload.metadata.update({"bot_control_command_id": str(stop_context.lease.command_id),
+                                       "bot_control_generation": str(stop_context.lease.generation)})
     request = OrderRequest(
         client_order_id=service._build_client_order_id(event), broker_account_name=target.account,
         strategy_code="orb_schwab", symbol=target.symbol, side="sell", intent_type="close",
         quantity=quantity, reason=event.payload.reason, metadata=dict(event.payload.metadata),
-        order_type="market", time_in_force="day",
+        order_type=event.payload.metadata.get("order_type", "market"), time_in_force="day",
     )
     def prepare(session):
-        entry = session.get(BrokerOrder, target.entry_id)
+        entry = session.scalar(select(BrokerOrder).where(
+            BrokerOrder.id == target.entry_id,
+        ).with_for_update())
         strategy = session.get(Strategy, target.strategy_id)
         account = session.get(BrokerAccount, target.account_id)
         if entry is None or strategy is None or account is None:
             raise ValueError("entry_ownership_disappeared")
+        if pending_generic_sell(session, entry):
+            raise ValueError("orb_pending_generic_sell")
+        if account.provider == "webull" and not protected:
+            from project_mai_tai.oms.orb_country import _snapshot
+            remaining = _snapshot(service, session, entry.id)[3]
+            if remaining != quantity:
+                raise ValueError("orb_owned_balance_changed_before_close")
+        if protected:
+            context.validate_prepared(session, target, quantity)
         intent = service.store.create_trade_intent(
             session, strategy=strategy, broker_account=account, event=event,
         )
@@ -219,21 +392,49 @@ async def _attempt(
             session, intent=intent, strategy_id=target.strategy_id,
             broker_account_id=target.account_id, outcome="pass", reason="orb_eod_owned_released",
         )
-        service.store.get_or_create_order(
+        if protected and session.scalar(select(BrokerOrder.id).where(
+            BrokerOrder.client_order_id == request.client_order_id,
+        )) is not None:
+            raise ValueError("orb_stop_existing_exit_not_unsent")
+        prepared_order = service.store.get_or_create_order(
             session, intent=intent, strategy_id=target.strategy_id,
             broker_account_id=target.account_id, client_order_id=request.client_order_id,
             symbol=target.symbol, side="sell", quantity=quantity, metadata=request.metadata,
         )
+        if protected:
+            # New STOP row only: factory's historical timestamp default is not a wire.
+            prepared_order.submitted_at = None
         entry.payload = {**(entry.payload or {}), _STATE: {
+            **(dict((entry.payload or {}).get(_STATE) or {}) if protected else {}),
             "phase": "submitting", "event_id": str(event_id), "updated_at": now.isoformat(),
+            **({"exit_order_id": str(prepared_order.id), "exit_coid": request.client_order_id,
+                "exit_intent_id": str(intent.id)} if protected else {}),
         }}
         # Commit the attempt BEFORE POST. An uncertain response must never authorize a retry.
         return intent.id
 
     intent_id = await service._run_db(prepare)
-    if not start <= clock().astimezone(_ET).time() < _DEADLINE:
+    exit_attempt = await stop_context.before_submit(target, request) if stopping else None
+    if protected:
+        await context.validate_wire(target, request)
+        # Recheck quote/session after journal awaits; no newly priced second order.
+        if context.execution_metadata(target, clock()) != {
+            key: request.metadata[key] for key in ("order_type", "session", "extended_hours", "limit_price")
+            if key in request.metadata
+        }:
+            raise ValueError("orb_stop_quote_or_session_changed_before_wire")
+    elif not start <= clock().astimezone(_ET).time() < _DEADLINE:
         raise ValueError("close_window_elapsed_before_submit")
     reports = await service.broker_adapter.submit_order(request)
+    if protected and any(
+        report.origin != "broker" or not report.filled_quantity.is_finite()
+        or report.filled_quantity < 0 or report.quantity != quantity
+        or report.reported_at.tzinfo is None or report.reported_at > clock()
+        or (report.filled_quantity > 0 and (not report.broker_fill_id or report.fill_price is None
+            or not report.fill_price.is_finite() or report.fill_price <= 0))
+        for report in reports
+    ):
+        raise ValueError("orb_stop_exit_execution_unknown")
     if not reports or any(
         report.client_order_id != request.client_order_id
         or report.symbol != target.symbol or report.side != "sell"
@@ -250,6 +451,8 @@ async def _attempt(
         session.commit()
     for order_event in events:
         await service._publish_order_event(order_event)
+    if stopping:
+        await stop_context.after_submit(exit_attempt, request, reports)
     if not any(r.event_type in {"accepted", "filled", "partially_filled"} for r in reports):
         if all(r.event_type == "rejected" and r.origin == "broker" for r in reports):
             raise ValueError("close_rejected_after_pair_release")
@@ -314,14 +517,22 @@ async def close_orb_schwab_on_signal(
             session, strategy_id=entry.strategy_id, broker_account_id=entry.broker_account_id,
             symbol=entry.symbol,
         )
-        if position is None or not 0 < position.quantity <= 2 or (entry.payload or {}).get(_STATE):
+        from project_mai_tai.oms.orb_country import entry_quantity
+        expected_quantity = entry_quantity(entry)
+        if position is None or not 0 < position.quantity <= expected_quantity or (entry.payload or {}).get(_STATE):
             return None, None
-        if entry.status != "filled":
+        routed = (entry.payload or {}).get("orb_country_route") == "true"
+        if entry.status != "filled" and not (routed and entry.status in {"cancelled", "rejected", "expired"}):
             # Never release a partially filled parent's protection while its buy
             # remainder can still execute. A later completed fill can retry.
             return None, None
+        if pending_generic_sell(session, entry):
+            service.logger.warning("[OMS-ORB-SCHWAB-EOD] entry=%s status=BLOCKED reason=orb_pending_generic_sell",
+                                   entry.id)
+            return None, None
         target = _Target(entry.id, entry.strategy_id, entry.broker_account_id, account.name,
-                         entry.symbol, entry.broker_order_id or "", entry.client_order_id, position.quantity)
+                         entry.symbol, entry.broker_order_id or "", entry.client_order_id, position.quantity,
+                         expected_quantity, routed)
         event_id = uuid4()
         entry.payload = {**(entry.payload or {}), _STATE: {
             "phase": "checking", "event_id": str(event_id), "reason": reason, "updated_at": now.isoformat(),
@@ -354,7 +565,8 @@ async def close_orb_schwab_before_close(
             .join(BrokerAccount, BrokerAccount.id == VirtualPosition.broker_account_id)
             .where(
                 Strategy.code == "orb_schwab", VirtualPosition.quantity > 0,
-                BrokerAccount.name == service.settings.strategy_schwab_1m_v2_account_name,
+                BrokerAccount.name.in_({service.settings.strategy_schwab_1m_v2_account_name,
+                                       service.settings.orb_webull_account_name}),
             )
         ).all()
         work = []
@@ -373,6 +585,8 @@ async def close_orb_schwab_before_close(
             work.append(_Target(
                 entry.id, entry.strategy_id, entry.broker_account_id, account, entry.symbol,
                 entry.broker_order_id or "", entry.client_order_id, position.quantity,
+                entry.quantity,
+                (entry.payload or {}).get("orb_country_route") == "true",
             ))
         return work
 
@@ -388,6 +602,8 @@ async def close_orb_schwab_before_close(
             entry = session.scalar(select(BrokerOrder).where(
                 BrokerOrder.id == target.entry_id
             ).with_for_update())
+            if entry is not None and pending_generic_sell(session, entry):
+                return "generic_sell_pending", None
             state = (entry.payload or {}).get(_STATE)
             if state:
                 phase = state.get("phase", "unknown") if isinstance(state, dict) else "unknown"

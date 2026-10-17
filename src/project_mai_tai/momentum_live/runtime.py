@@ -401,6 +401,8 @@ class OmsLiveRuntime:
 
     async def _record(self, request, reports):
         result = await self.service._run_db(lambda session: self.db.record(session, request, reports))
+        if result.get("entry_ack_identity_unknown"):
+            await self._refuse_entry_identity(request.metadata["episode_id"])
         if (request.metadata.get("exit_reason") == "KILLSW1_STOP"
                 and any(report.origin == "broker" and report.event_type == "rejected" for report in reports)):
             identity = request.metadata["episode_id"]
@@ -509,6 +511,33 @@ class OmsLiveRuntime:
         return OwnedObservation(snapshot["quantity"], snapshot["exited"], snapshot["first_fill_ns"],
             snapshot["entry_terminal"], snapshot["outstanding_exit"], position)
 
+    async def _refuse_entry_identity(self, identity):
+        values = self.runtime.setdefault(identity, {})
+        if not values.get("momcancel1_identity_critical_reported"):
+            emitted = self.__dict__.setdefault("_momcancel1_identity_critical_emitted", set())
+            if identity not in emitted:
+                self.service.logger.critical(
+                    "[MOMCANCEL1] episode=%s cancel_entry_broker_identity_UNKNOWN entry_retry=NEVER",
+                    identity,
+                )
+                emitted.add(identity)
+            # Process-local emission survives a failed receipt write. Only a
+            # committed receipt suppresses emission in a restored runtime.
+            values["momcancel1_identity_critical_reported"] = True
+            try:
+                await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == identity))
+            except asyncio.CancelledError:
+                values.pop("momcancel1_identity_critical_reported", None)
+                raise
+            except Exception as exc:
+                values.pop("momcancel1_identity_critical_reported", None)
+                self.service.logger.error(
+                    "[MOMCANCEL1] episode=%s diagnostic_receipt=UNKNOWN failure=%s",
+                    identity, type(exc).__name__,
+                )
+        self.service.logger.error("[MOMCANCEL1] episode=%s cancel_entry_broker_identity_UNKNOWN", identity)
+        raise Refusal("cancel_entry_broker_identity_UNKNOWN") from None
+
     async def _cancel_entry(self, identity):
         snapshot = await self._inspect(identity)
         for row in snapshot["orders"]:
@@ -519,8 +548,10 @@ class OmsLiveRuntime:
                     if values["cancel_wire_sent_coid"] != request.client_order_id:
                         raise Refusal("cancel_original_identity_CHANGED")
                     return
-                if self.provider(request.broker_account_name) == "schwab" and not request.metadata.get("broker_order_id"):
-                    raise Refusal("cancel_entry_broker_identity_UNKNOWN")
+                if self.provider(request.broker_account_name) == "schwab" and (
+                        not request.metadata.get("broker_order_id")
+                        or request.metadata.get("momcancel1_ack_identity") == "UNKNOWN"):
+                    await self._refuse_entry_identity(identity)
                 # Reports belong to the cancel request; only the subsequent fresh
                 # ORIGINAL order read may mark the entry terminal or add its fills.
                 cancel = replace(request, intent_type="cancel",
@@ -1142,7 +1173,7 @@ class OwnedNativeBackend:
         leaf = self.leaf(request.broker_account_name, runtime)
         if runtime.provider(request.broker_account_name) == "schwab":
             identity = request.metadata.get("broker_order_id")
-            if not identity:
+            if not identity or request.metadata.get("momcancel1_ack_identity") == "UNKNOWN":
                 return None
             account = leaf.accounts_by_name.get(request.broker_account_name)
             if account is None:

@@ -115,6 +115,7 @@ def _managed(service, session, lease, identity, *, unsent_order=None, protection
         BrokerOrder.symbol == row.symbol, BrokerOrder.side == "sell",
         or_(BrokerOrder.intent_id == entry.intent_id,
             BrokerOrder.payload["entry_order_id"].as_string() == str(entry.id),
+            BrokerOrder.payload["oms_managed_row_id"].as_string() == str(row.id),
             BrokerOrder.submitted_at >= entry.submitted_at),
     ).limit(BOUND + 1)).all()
     if len(sells) > BOUND:

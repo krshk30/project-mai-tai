@@ -155,15 +155,21 @@ def build_control_router(
             )
         limit = ""
         if strategy_code in {"schwab_1m_v2", "orb_schwab"}:
-            routed_atr = strategy_code == "schwab_1m_v2" and bool(
+            routed_owner = None
+            if strategy_code == "schwab_1m_v2" and bool(
                 getattr(settings, "strategy_schwab_1m_v2_country_route_enabled", False)
-            )
+            ):
+                routed_owner = "ATR"
+            elif strategy_code == "orb_schwab" and bool(
+                getattr(settings, "orb_country_routing_enabled", False)
+            ):
+                routed_owner = "ORB"
             limit = (
                 "<p>STOP fences entries and cancels this bot's own working entries. "
                 + ("Positions held across OMS restart are BLOCKED with a CRITICAL alert; "
                    "sell manually or wait for normal exit. Only proven post-boot positions "
-                   "use the ATR exit owner to close at the buying broker. "
-                   if routed_atr else
+                   f"use the {routed_owner} exit owner to close at the buying broker. "
+                   if routed_owner else
                    "Held legacy positions are BLOCKED with a CRITICAL alert; "
                    "sell manually or wait for normal exit. STOP does not sell them. ")
                 + "A partial native Schwab BUY parent is blocked to preserve its protection.</p>"
