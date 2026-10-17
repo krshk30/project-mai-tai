@@ -1,0 +1,9 @@
+{
+  "pr_number": 1165,
+  "range_base": "7a845576e72abe2832fe3997a6d4492b1bc1c873",
+  "range_head": "16c92588ee48ba81670b52c778676231c28e82be",
+  "reviewed_at": "2026-10-17T03:37:22Z",
+  "reviewer": "claude-1",
+  "schema_version": 1,
+  "summary": "claude-1: squash tree 9546f600 = installed 9df73a18 + 10-16 handoff. Reviewed Group D rework (J 039bcac8 D3/D5, I persisted-only D2 resting/ATR-BUY + D4, D1), L 0667 guard ExecCondition, K SYNC2X hygiene; first composed 52249c24 rejected (exit-path, on-loop locks). Full 26 NEW = test oracle/wiring -> ruled test-only successor 198/198. VPS base-equal/gen2-GC-equal; box EXPLAIN 41/41 max cost 6.4k; native guard off-hours skip inactive no OnFailure; post-install sync p50 538 ms, reconciler 39-58 ms. Installed 23:3x ET switches ON."
+}
