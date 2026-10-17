@@ -64,6 +64,7 @@ def _service(*, enabled: bool, detail=None, released: bool = False):
     service.session_factory = _Session
     service.row = SimpleNamespace(
         id="row-1",
+        entry_order_id=None,
         broker_account_name=ACCT,
         symbol=SYMBOL,
         current_quantity=2,

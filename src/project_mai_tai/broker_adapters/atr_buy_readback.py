@@ -50,7 +50,12 @@ def _number(value: object) -> Decimal | None:
 
 def scoped_request(request: OrderRequest, *, allow_webull_client_identity: bool = False) -> bool:
     return (
-        request.strategy_code == "schwab_1m_v2"
+        (request.strategy_code == "schwab_1m_v2" or (
+            request.strategy_code == "orb_schwab"
+            and request.metadata.get("orb_country_route") == "true"
+            and request.metadata.get("orb_country_broker") == "webull"
+            and request.metadata.get("orb_reprice_cancel") == "true"
+        ))
         and request.side == "buy"
         and request.intent_type == "cancel"
         and request.metadata.get("resting_entry_cancel") == "true"

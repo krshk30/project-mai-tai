@@ -165,6 +165,8 @@ def open_entries(factory, account: str) -> list[dict]:
                 Fill.quantity > 0,
             ).order_by(Fill.filled_at, Fill.id).limit(1))
             result.append({"entry_id": str(entry.id), "symbol": entry.symbol,
+                           "account": account, "quantity": entry.quantity,
+                           "metadata": dict(entry.payload or {}),
                            "fill_id": str(fill.id) if fill else None,
                            "fill_at": confirmed_entry_time(fill),
                            "close_claimed": bool((entry.payload or {}).get("orb_schwab_eod_close")),

@@ -19,7 +19,8 @@ QUANTITY = Decimal("2")
 _ET = ZoneInfo("America/New_York")
 
 
-def build_orb_schwab_exit_intent(settings: Settings, symbol: str, entry_id: str, fill_id: str, reason: str) -> TradeIntentEvent:
+def build_orb_schwab_exit_intent(settings: Settings, symbol: str, entry_id: str, fill_id: str, reason: str,
+                               *, selection=None, quantity: Decimal | None = None) -> TradeIntentEvent:
     from project_mai_tai.orb_schwab_exits import ATR_REASON, BODY_REASON
 
     if reason not in {BODY_REASON, ATR_REASON}:
@@ -30,19 +31,37 @@ def build_orb_schwab_exit_intent(settings: Settings, symbol: str, entry_id: str,
         event_id=uuid5(NAMESPACE_URL, f"orb-schwab-exit:{entry_id}:{fill_id}:{reason}"),
         source_service=SOURCE_SERVICE,
         payload=TradeIntentPayload(
-            strategy_code=STRATEGY_CODE, broker_account_name=settings.strategy_schwab_1m_v2_account_name,
-            symbol=symbol.upper(), side="sell", quantity=QUANTITY, intent_type="close", reason=reason,
-            metadata={"orb_schwab_exit": "true", "entry_order_id": entry_id, "entry_fill_id": fill_id},
+            strategy_code=STRATEGY_CODE, broker_account_name=(selection.broker_account_name if selection
+                                                           else settings.strategy_schwab_1m_v2_account_name),
+            symbol=symbol.upper(), side="sell", quantity=quantity if quantity is not None else QUANTITY,
+            intent_type="close", reason=reason,
+            metadata={"orb_schwab_exit": "true", "entry_order_id": entry_id, "entry_fill_id": fill_id,
+                      **(_country_metadata(selection) if selection else {})},
         ),
     )
 
 
 def build_orb_schwab_open_intent(
     settings: Settings, symbol: str, breakout_level: Decimal,
-    *, deferred_macd_bar_close: datetime | None = None,
+    *, deferred_macd_bar_close: datetime | None = None, selection=None,
 ) -> TradeIntentEvent:
     """Build an intent only; OMS and the broker remain the execution authorities."""
     ticker = symbol.strip().upper()
+    if selection is not None:
+        from project_mai_tai.orb_country_route import ORB_ROUTE_QUANTITY, routed_orb_metadata
+
+        if not settings.orb_country_routing_enabled or selection.symbol != ticker:
+            raise ValueError("ORB country selection is not enabled or bound to symbol")
+        metadata = routed_orb_metadata(selection, breakout_level)
+        if deferred_macd_bar_close is not None:
+            metadata["orb_deferred_macd_bar_close"] = deferred_macd_bar_close.isoformat()
+        return TradeIntentEvent(source_service=SOURCE_SERVICE, payload=TradeIntentPayload(
+            strategy_code=STRATEGY_CODE, broker_account_name=selection.broker_account_name,
+            symbol=ticker, side="buy", quantity=ORB_ROUTE_QUANTITY, intent_type="open",
+            reason="ORB_FIXED_HIGH_COUNTRY_STOP_LIMIT", metadata=metadata,
+        ))
+    if settings.orb_country_routing_enabled:
+        raise ValueError("ORB new entry requires a sealed country selection")
     account = settings.strategy_schwab_1m_v2_account_name
     if not ticker or not account.startswith("live:") or settings.provider_for_account(account) != "schwab":
         raise ValueError("ORB live orders require a named Schwab account and symbol")
@@ -65,7 +84,12 @@ def build_orb_schwab_open_intent(
     )
 
 
-def build_orb_schwab_cancel_intent(settings: Settings, symbol: str) -> TradeIntentEvent:
+def _country_metadata(selection) -> dict[str, str]:
+    from project_mai_tai.orb_country_route import country_metadata
+    return country_metadata(selection)
+
+
+def build_orb_schwab_cancel_intent(settings: Settings, symbol: str, *, selection=None) -> TradeIntentEvent:
     """Request cancellation of this strategy's working buy, never its OCO exits."""
     ticker = symbol.strip().upper()
     if not ticker:
@@ -74,32 +98,38 @@ def build_orb_schwab_cancel_intent(settings: Settings, symbol: str) -> TradeInte
         source_service=SOURCE_SERVICE,
         payload=TradeIntentPayload(
             strategy_code=STRATEGY_CODE,
-            broker_account_name=settings.strategy_schwab_1m_v2_account_name,
+            broker_account_name=(selection.broker_account_name if selection
+                                 else settings.strategy_schwab_1m_v2_account_name),
             symbol=ticker,
             side="buy",
             quantity=Decimal("0"),
             intent_type="cancel",
             reason="ORB_COMPLETED_SCHWAB_MACD_NEGATIVE",
-            metadata={"orb_schwab_cancel": "true"},
+            metadata={"orb_schwab_cancel": "true", **(_country_metadata(selection) if selection else {})},
         ),
     )
 
 
 def build_orb_schwab_reprice_intent(
-    settings: Settings, symbol: str, breakout_level: Decimal
+    settings: Settings, symbol: str, breakout_level: Decimal, *, selection=None,
 ) -> TradeIntentEvent:
     """Change the existing parent in place; this must never submit a second OPEN."""
     ticker = symbol.strip().upper()
     if not ticker:
         raise ValueError("ORB reprice requires a symbol")
-    metadata = build_orb_schwab_bracket_metadata(breakout_level)
+    if selection is not None:
+        from project_mai_tai.orb_country_route import routed_orb_metadata
+        metadata = routed_orb_metadata(selection, breakout_level)
+    else:
+        metadata = build_orb_schwab_bracket_metadata(breakout_level)
     metadata["orb_intended_break_level"] = format(breakout_level, "f")
     metadata["orb_schwab_reprice"] = "true"
     return TradeIntentEvent(
         source_service=SOURCE_SERVICE,
         payload=TradeIntentPayload(
             strategy_code=STRATEGY_CODE,
-            broker_account_name=settings.strategy_schwab_1m_v2_account_name,
+            broker_account_name=(selection.broker_account_name if selection
+                                 else settings.strategy_schwab_1m_v2_account_name),
             symbol=ticker,
             side="buy",
             quantity=Decimal("0"),
@@ -114,6 +144,11 @@ def orb_schwab_intent_refusal(
     event: TradeIntentEvent, settings: Settings, now: datetime
 ) -> str | None:
     """Reject every shape that could become a naked or misrouted live entry."""
+    if event.payload.metadata.get("orb_country_route") == "true":
+        from project_mai_tai.orb_country_route import routed_orb_intent_refusal
+        return routed_orb_intent_refusal(event, settings, now)
+    if settings.orb_country_routing_enabled and event.payload.intent_type == "open":
+        return "orb_country_route_required"
     if not settings.orb_live_schwab_orders_enabled or not settings.orb_enabled:
         return "orb_schwab_live_disabled"
     payload = event.payload

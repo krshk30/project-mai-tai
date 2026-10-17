@@ -226,12 +226,19 @@ class _Pos:
     quantity = 10
 
 
-def _emit_svc(*, statuses, close_on_fill=False, row=object()):
+_UNBOUND_ROW = object()
+
+
+def _emit_svc(*, statuses, close_on_fill=False, row=_UNBOUND_ROW):
     """The REAL `_emit_v2_exit_on_loop` with only persistence/broker stubbed.
 
     `statuses` is what `_emit_v2_managed_sell` returns for each call — e.g. ["rejected"] for a
     refused close, [] for the missing strategy/account case that returns no events at all.
     """
+    if row is _UNBOUND_ROW:
+        row = SimpleNamespace(id="retry-ceiling-row", entry_order_id=None,
+            strategy_code="schwab_1m_v2", broker_account_name=KEY[0], symbol=KEY[1],
+            status="open", current_quantity=10)
     svc = OmsRiskService.__new__(OmsRiskService)
     svc.logger = logging.getLogger("test-ceiling")
     svc._v2_exit_close_failures = {}

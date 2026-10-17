@@ -68,6 +68,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms.webull_attach_riskoff import atr_handoff_call
 from project_mai_tai.oms.target_cache import BoundTargetRow, ManagedTargetCache
 from project_mai_tai.oms.target_exit_receipt import target_exit_receipt
 from project_mai_tai.oms import wbquiet_shadow
@@ -881,6 +882,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 ):
                     from project_mai_tai.oms.bot_control_atr import AtrStopDriver
                     driver = AtrStopDriver(self)
+                elif code == "orb_schwab" and self.settings.orb_country_routing_enabled:
+                    from project_mai_tai.oms.bot_control_orb import OrbStopDriver
+                    driver = OrbStopDriver(self)
                 else:
                     driver = LegacyStopDriver(self, code)
                 self._bot_control_runtime.executor.register(code, driver)
@@ -1940,6 +1944,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             return []
         if strategy_code == "orb_schwab" and not reserve1_dispatch:
             refusal = orb_schwab_intent_refusal(event, self.settings, utcnow())
+            if (refusal is None and event.payload.intent_type == "open"
+                    and event.payload.metadata.get("orb_country_route") == "true"):
+                from project_mai_tai.oms.orb_country import verify_country_admission
+                try:
+                    if not await verify_country_admission(self, event, utcnow()):
+                        refusal = "orb_country_route_changed_before_admission"
+                except Exception:
+                    refusal = "orb_country_source_unreadable"
             if refusal is None and event.payload.intent_type == "open":
                 verdict, macd_reason, _histogram = schwab_completed_bar_macd_gate(
                     self.session_factory, event.payload.symbol, utcnow()
@@ -1979,11 +1991,19 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         event.payload.symbol,
                     )
                     return []
-                if any(
+                net_held = any(
                     position.symbol.upper() == event.payload.symbol.upper()
                     and position.quantity != 0
                     for position in broker_positions
-                ):
+                )
+                if (net_held and self.settings.orb_country_routing_enabled
+                        and event.payload.metadata.get("orb_country_route") == "true"):
+                    self.logger.info(
+                        "[ROUTE-OWNER-MANUAL-PRESENT] account=%s symbol=%s net_held=1 "
+                        "action=LOG_ONLY bot_owner_census=required",
+                        event.payload.broker_account_name, event.payload.symbol,
+                    )
+                elif net_held:
                     self.logger.warning(
                         "[OMS-ORB-SCHWAB-REFUSED] symbol=%s reason=broker_position_held",
                         event.payload.symbol,
@@ -2027,8 +2047,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 "fanout_attempt_id": self._build_client_order_id(event),
             }
         with self.session_factory() as session:
-            if (
-                (bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
+            legacy_orb_lock = (
+                bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
                 and (
                     strategy_code == "orb_schwab"
                     or (
@@ -2038,9 +2058,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 )
                 and event.payload.broker_account_name
                 == self.settings.strategy_schwab_1m_v2_account_name
-                or self._country_owner_scope(event))
-                and session.get_bind().dialect.name == "postgresql"
-            ):
+            )
+            country_owner_lock = (
+                self.settings.orb_country_routing_enabled
+                and event.payload.intent_type == "open" and event.payload.side == "buy"
+                and event.payload.broker_account_name in {
+                    self.settings.strategy_schwab_1m_v2_account_name,
+                    self.settings.orb_webull_account_name,
+                }
+            )
+            if (legacy_orb_lock or country_owner_lock or self._country_owner_scope(event)) and session.get_bind().dialect.name == "postgresql":
                 # One OMS may run several async loops. Hold the per-symbol lock until
                 # commit so the second strategy sees the first strategy's order.
                 session.execute(
@@ -2065,6 +2092,22 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 provider=self.settings.provider_for_account(event.payload.broker_account_name),
                 environment=self.settings.environment,
             )
+            if (self.settings.orb_country_routing_enabled
+                    and event.payload.intent_type == "open" and event.payload.side == "buy"
+                    and broker_account.name in {
+                        self.settings.strategy_schwab_1m_v2_account_name,
+                        self.settings.orb_webull_account_name,
+                    }):
+                from project_mai_tai.oms.orb_country import orb_route_owner_conflict
+                conflict = orb_route_owner_conflict(session, broker_account.id, broker_account.name,
+                                                event.payload.symbol, strategy.id, admission=True)
+                if conflict:
+                    self.logger.warning(
+                        "[ROUTE-OWNER-CONFLICT] account=%s symbol=%s incoming_owner=%s "
+                        "existing_owner=%s existing_coid=%s",
+                        broker_account.name, event.payload.symbol, strategy.code, *conflict,
+                    )
+                    return []
             intent = self.store.create_trade_intent(
                 session,
                 strategy=strategy,
@@ -2111,13 +2154,18 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 bool(getattr(self.settings, "orb_live_schwab_orders_enabled", False))
                 and event.payload.intent_type == "open"
                 and strategy_code in {"orb_schwab", "schwab_1m_v2"}
-                and broker_account.name == self.settings.strategy_schwab_1m_v2_account_name
+                and (broker_account.name == self.settings.strategy_schwab_1m_v2_account_name
+                     or (strategy_code == "orb_schwab"
+                         and event.payload.metadata.get("orb_country_route") == "true"))
             ):
                 collision = self._orb_schwab_collision_reason(
                     session=session,
                     account_id=broker_account.id,
                     symbol=event.payload.symbol,
                     incoming_strategy=strategy_code,
+                    country_routed=(strategy_code == "orb_schwab"
+                                    and self.settings.orb_country_routing_enabled
+                                    and event.payload.metadata.get("orb_country_route") == "true"),
                 )
                 if collision:
                     self.store.mark_intent_refused(
@@ -2709,7 +2757,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 order_type=str(event.payload.metadata.get("order_type", "market")),
                 time_in_force=str(event.payload.metadata.get("time_in_force", "day")),
             )
-            if strategy_code == "orb_schwab" and event.payload.intent_type == "open":
+            if (strategy_code == "orb_schwab" and event.payload.intent_type == "open"
+                    and broker_account.provider == "schwab"):
                 preview_error = None
                 try:
                     preview_status, preview_body = await self.broker_adapter.preview_bracket_order(
@@ -2805,6 +2854,58 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     and deferred.symbol == request.symbol):
                 deferred.local_no_wire = False
             await self._prepare_bot_control_entry(session, intent, request, event.produced_at)
+            pending_sell_id = None
+            pending_sell_required = False
+            sell_prepare_session = None
+            if (request.strategy_code == "schwab_1m_v2" and request.side == "sell"
+                    and request.intent_type in {"close", "scale"}
+                    and self.settings.oms_v2_exit_management_enabled
+                    and not self._is_native_stop_guard_metadata(request.metadata)):
+                managed = self.store.get_open_managed_position(
+                    session, broker_account_name=request.broker_account_name, symbol=request.symbol,
+                )
+                if managed is not None:
+                    pending_sell_required = True
+                    sell_prepare_session = _extended_hours_session() or "NORMAL"
+                    managed_id = str(managed.id)
+                    bound = request.metadata.get("managed_sell_owner_episode_id")
+                    if bound is None or bound == managed_id:
+                        session.commit()
+                        wire_event = event.model_copy(update={"payload": event.payload.model_copy(update={
+                            "quantity": request.quantity, "metadata": dict(request.metadata),
+                        })})
+                        from project_mai_tai.oms.managed_sell_prewire import prepare_managed_sell
+                        pending_sell_id = await prepare_managed_sell(
+                            self, event=wire_event, request=request, managed_row_id=managed_id,
+                            now=utcnow(), admitted_intent_id=intent.id,
+                        )
+            elif (request.strategy_code == "orb_schwab" and reserve1_dispatch
+                    and request.side == "sell" and request.intent_type == "close"):
+                pending_sell_required = True
+                sell_prepare_session = _extended_hours_session() or "NORMAL"
+                session.commit()
+                wire_event = event.model_copy(update={"payload": event.payload.model_copy(update={
+                    "quantity": request.quantity, "metadata": dict(request.metadata),
+                })})
+                from project_mai_tai.oms.managed_sell_prewire import prepare_orb_protected_sell
+                pending_sell_id = await prepare_orb_protected_sell(
+                    self, event=wire_event, request=request, admitted_intent_id=intent.id, now=utcnow(),
+                )
+            if pending_sell_id is not None and (_extended_hours_session() or "NORMAL") != sell_prepare_session:
+                from project_mai_tai.oms.managed_sell_prewire import abandon_unposted_sell
+                await abandon_unposted_sell(self, request=request, intent_id=pending_sell_id, now=utcnow())
+                pending_sell_id = None
+            if pending_sell_required and pending_sell_id is None:
+                # A redelivery must not rewrite an original durable pending intent.
+                bound_order = session.scalar(select(BrokerOrder.id).where(BrokerOrder.intent_id == intent.id))
+                if bound_order is None:
+                    self.store.mark_intent_refused(intent, origin="skipped_before_submit",
+                                                   code="managed_sell_preparation_refused")
+                session.commit()
+                refused = self._build_rejected_event(event, intent.id, reason="managed_sell_preparation_refused")
+                for item in [*pre_submit_events, refused]:
+                    await self._publish_order_event(item)
+                return [*pre_submit_events, refused]
             reports = await self.broker_adapter.submit_order(request)
             self._emit_fanout_mirror_lag(event=event, reports=reports)
             published_events = [*pre_submit_events]
@@ -2868,6 +2969,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # combo builder ("Fork A"). The mirror now fires on the confirmed Schwab FILL from
         # `sync_broker_orders` as a MARKET master + native-OCO combo. See
         # docs/webull-mirror-on-fill-design.md.
+        if strategy_code == "orb_schwab":
+            from project_mai_tai.oms.orb_country import spawn_reconciliation
+            spawn_reconciliation(self)
         return published_events
 
     async def _mirror_v2_fill_to_webull(
@@ -3749,6 +3853,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             ))
             if strategy is None or account is None or account.provider != "webull":
                 return 0, "missing_strategy_or_account"
+            from project_mai_tai.oms.webull_attach_riskoff import marked_atr_episode
+            entry = session.get(BrokerOrder, row.entry_order_id) if row.entry_order_id is not None else None
+            if (entry is None or entry.client_order_id != entry_client_order_id
+                    or entry.strategy_id != strategy.id or entry.broker_account_id != account.id
+                    or entry.symbol != symbol or entry.side != "buy" or not entry.broker_order_id):
+                return 0, "episode_or_owner_changed"
+            if entry is not None and marked_atr_episode(entry.payload or {}):
+                return 0, "strict_episode_requires_strict_owner"
             if self.store.get_open_exit_reserved_quantity(
                 session, broker_account_id=account.id, symbol=symbol,
                 include_native_stop_guard=False,
@@ -3806,6 +3918,19 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 broker_account_name,
             )
             return False
+        if strategy_code == "schwab_1m_v2" and entry_client_order_id:
+            from project_mai_tai.oms.webull_attach_riskoff import attach_atr, atr_attach_is_strict, critical
+            try:
+                strict = await atr_attach_is_strict(self, broker_account_name, symbol, entry_client_order_id)
+            except ValueError as exc:
+                await critical(self, broker_account_name, symbol, str(exc), entry_id=entry_client_order_id)
+                return False
+            if strict:
+                return await attach_atr(self, broker_account_name=broker_account_name,
+                    symbol=symbol, quantity=quantity, entry_price=entry_price,
+                    strategy_code=strategy_code, entry_client_order_id=entry_client_order_id)
+            # Unmarked legacy protection retains its backstop/reporting contract;
+            # it never enters the strict risk-off SELL handoff.
         target_pct = float(getattr(self.settings, "oms_v2_cw_target_pct", 2.0))
         stop_pct = float(getattr(self.settings, "oms_v2_cw_hard_stop_pct", 5.0))
         target = entry_price * (1.0 + target_pct / 100.0)
@@ -4065,6 +4190,75 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         return ""
 
     # ------------------------------------------- release the exit reservation before a software close
+    async def _legacy_webull_partial_handover_refused(
+        self, account: str, symbol: str, *, release: ExitPairReleaseResult | None = None,
+        expected: tuple[str, str, str] | None = None,
+    ) -> bool:
+        from project_mai_tai.oms.legacy_cancelled_partial import SOURCE, has_cancelled_child_execution
+
+        if not self._is_v2_webull_account(account):
+            return False
+        reports = release.reports if release is not None else ()
+        positive = has_cancelled_child_execution(reports)
+        blocked_rows = self.__dict__.setdefault("_legacy_cancelled_partial_rows", {})
+
+        def _negative_proof(session):
+            from project_mai_tai.db.models import OmsManagedPosition
+            row = (session.get(OmsManagedPosition, UUID(expected[0])) if expected is not None
+                   else self.store.get_open_managed_position(
+                       session, broker_account_name=account, symbol=symbol))
+            if row is None or row.strategy_code != "schwab_1m_v2":
+                return positive
+            if row.broker_account_name != account or row.symbol != symbol:
+                return positive
+            if positive:
+                if expected is None:
+                    return True  # Never select a new episode by account/symbol after a wire read.
+                from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+                addressed = {WebullBrokerAdapter._combo_leg_coid(expected[2], suffix) for suffix in ("T", "S")}
+                binding_known = bool(expected[1] and expected[2] and str(row.entry_order_id) == expected[1]
+                    and all(report.client_order_id in addressed and report.symbol == symbol for report in reports))
+            identity = str(row.id)
+            if positive and identity not in blocked_rows:
+                # Negative-only cache also fences a repeat after a failed audit commit.
+                blocked_rows[identity] = {
+                    "source": SOURCE, "managed_row_id": identity,
+                    "entry_order_id": str(row.entry_order_id) if row.entry_order_id else None,
+                    "exit_base_client_order_id": expected[2],
+                    "reported_entry_order_id": expected[1],
+                    "execution_binding": "ORIGINAL_PAIR" if binding_known else "UNKNOWN_CALLER_REFUSED",
+                    "broker_account_name": account, "symbol": symbol,
+                    "children": [{"client_order_id": report.client_order_id,
+                        "broker_order_id": report.broker_order_id,
+                        "filled_quantity": str(report.filled_quantity), "fill_price": str(report.fill_price),
+                        "origin": report.origin, "reported_at": report.reported_at.isoformat()}
+                        for report in reports if report.event_type == "cancelled"
+                        and report.filled_quantity.is_finite() and report.filled_quantity > 0],
+                }
+            incident = session.scalar(select(SystemIncident).where(
+                SystemIncident.service_name == SERVICE_NAME,
+                SystemIncident.payload["source"].as_string() == SOURCE,
+                SystemIncident.payload["managed_row_id"].as_string() == identity,
+            ))
+            if incident is not None:
+                blocked_rows.setdefault(identity, dict(incident.payload))
+            elif identity in blocked_rows:
+                session.add(SystemIncident(
+                    service_name=SERVICE_NAME, severity="critical", status="open", opened_at=utcnow(),
+                    title=f"Webull partial child unaccounted: {symbol} on {account}"[:255],
+                    payload=dict(blocked_rows[identity]),
+                ))
+            # Closing the alert is not accounting proof or permission to clear this fence.
+            return identity in blocked_rows
+
+        refused = await self._run_db(_negative_proof, commit=True)
+        if refused:
+            self.logger.critical(
+                "[WB-LEGACY-CANCELLED-PARTIAL] account=%s symbol=%s "
+                "handover=REFUSED software_sell=BLOCKED accounting=UNKNOWN", account, symbol,
+            )
+        return refused
+
     async def _release_exit_reservation_before_close(
         self,
         *,
@@ -4096,12 +4290,17 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         retry. That prevents both a redundant close and a sell against still-reserved shares.
         """
         key = (broker_account_name, symbol.upper())
+        if await self._legacy_webull_partial_handover_refused(broker_account_name, symbol):
+            return ExitPairReleaseResult(outcome="unanswerable")
         if key in self._exit_reservation_released:
             return ExitPairReleaseResult(outcome="released")
         terminal = self.__dict__.setdefault("_exit_reservation_terminal", {}).get(key)
         if terminal in {"reserved", "unanswerable"}:
             return ExitPairReleaseResult(outcome=terminal)
         try:
+            managed_before = self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=symbol,
+            )
             entry = self._find_oco_entry_order(session, broker_account_name, symbol)
             if entry is None:
                 return ExitPairReleaseResult(outcome="unanswerable")
@@ -4114,6 +4313,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if self.__dict__.get("_webull_protect_base", {}).get(key):
                 return ExitPairReleaseResult(outcome="unanswerable")
             return ExitPairReleaseResult(outcome="unsupported")
+        expected_episode = (str(managed_before.id), str(entry.id), base) if managed_before is not None else None
         now = time.monotonic()
         last_try = self.__dict__.setdefault("_exit_reservation_last_try", {}).get(key)
         if last_try is not None and now - last_try < self._EXIT_RESERVATION_RETRY_SECONDS:
@@ -4164,6 +4364,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if release.outcome == "unsupported":
             self._clear_exit_reservation_retry_state(key)
             return release
+        if await self._legacy_webull_partial_handover_refused(
+            broker_account_name, symbol, release=release, expected=expected_episode,
+        ):
+            return replace(release, outcome="unanswerable")
         if release.outcome == "resolved_by_fill":
             self._clear_exit_reservation_retry_state(key)
             self.__dict__.setdefault("_native_oco_resolving", {})[key] = utcnow()
@@ -4854,7 +5058,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     session.flush()
                 return  # idempotent: already managing this symbol
             entry_path = str(metadata.get("path", "")).strip()
-            self.store.create_managed_position(
+            managed = self.store.create_managed_position(
                 session,
                 strategy_code=strategy_code,
                 broker_account_name=broker_account_name,
@@ -4866,6 +5070,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 entry_order_id=entry_order_id,
                 entry_client_order_id=entry_client_order_id,
             )
+            if (
+                str(metadata.get("fanout_leg", "")).lower() == "webull"
+                and str(metadata.get("native_oco_bracket", "")).lower() != "true"
+            ):
+                from project_mai_tai.oms.webull_attach_riskoff import stamp_new_bare_fill
+                stamp_new_bare_fill(session, managed, entry_id=entry_order_id,
+                                    coid=entry_client_order_id, quantity=quantity)
             self.__dict__.get("_oco_exit_fill_pending", {}).pop((broker_account_name, symbol), None)
             self.__dict__.get("_v2_native_oco_high_bid", {}).pop(
                 (broker_account_name, symbol), None
@@ -6093,21 +6304,21 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         """
         inline_started_at = time.monotonic()
 
-        def _read_base(session: Session) -> tuple[bool, str, str]:
+        def _read_base(session: Session) -> tuple[bool, str, str, str]:
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
             if row is None or str(row.id) != expected_row_id:
-                return False, "", ""
+                return False, "", "", ""
             entry = self._find_oco_entry_order(session, acct, symbol)
             if entry is None:
-                return False, "", ""
+                return False, "", "", ""
             return True, self._oco_exit_base_for_entry(
                 entry, broker_account_name=acct, symbol=symbol
-            ), str(entry.broker_order_id or "")
+            ), str(entry.broker_order_id or ""), str(entry.id)
 
         try:
-            same_row, base, entry_oid = await self._run_db(_read_base, commit=False)
+            same_row, base, entry_oid, entry_identity = await self._run_db(_read_base, commit=False)
         except Exception:  # noqa: BLE001 - an unreadable pair must remain untouched
             self.logger.exception(
                 "[OMS-V2-CONFIRMATION-EXIT-WEBULL-REFUSED] sym=%s acct=%s "
@@ -6125,6 +6336,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             return "refused"
         base = str(base or "")
+        if await self._legacy_webull_partial_handover_refused(acct, symbol):
+            return "refused_cancelled_partial"
         if not base:
             if self.__dict__.get("_webull_protect_base", {}).get((acct, symbol.upper())):
                 self.logger.warning(
@@ -6233,6 +6446,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 )
                 release = ExitPairReleaseResult(outcome="unanswerable")
 
+            if await self._legacy_webull_partial_handover_refused(
+                acct, symbol, release=release, expected=(expected_row_id, entry_identity, base),
+            ):
+                return "refused_cancelled_partial"
             if release.outcome == "resolved_by_fill":
                 release = replace(release, entry_broker_order_id=entry_oid,
                                   exit_base_client_order_id=base)
@@ -9933,6 +10150,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 inflight.discard(claim)
 
     @_control_managed_exit_owner
+    @atr_handoff_call
     async def _emit_v2_exit_on_loop_claimed(
         self,
         acct: str,
@@ -9991,6 +10209,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 row = self.store.get_open_managed_position(
                     session, broker_account_name=acct, symbol=symbol
                 )
+                if row is None and reason == "WEBULL_ATTACH_RISK_OFF" and expected_managed_row_id:
+                    from project_mai_tai.db.models import OmsManagedPosition
+                    historical = session.get(OmsManagedPosition, UUID(expected_managed_row_id))
+                    if (historical is not None and historical.status == "closed"
+                            and historical.current_quantity == 0 and historical.strategy_code == "schwab_1m_v2"
+                            and historical.broker_account_name == acct and historical.symbol == symbol):
+                        row = historical  # Original-tree cleanup only; quantity zero never reaches SELL.
                 if row is None:
                     self._managed_v2_symbols.discard((acct, symbol))
                     # #885 finding 1: no open row means the episode is already over. This lifted
@@ -10026,6 +10251,29 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         owner["claim"] = (lock, claim)
                     finally:
                         lock.release()
+                if reason != "WEBULL_ATTACH_RISK_OFF":
+                    from project_mai_tai.oms.webull_attach_riskoff import atr_other_exit_blocked, critical
+                    if atr_other_exit_blocked(session, row):
+                        session.commit()
+                        await critical(self, acct, symbol, "original_attach_or_riskoff_exit_unknown",
+                                       entry_id=row.entry_order_id)
+                        return "refused"
+                if reason == "WEBULL_ATTACH_RISK_OFF":
+                    from project_mai_tai.oms.webull_attach_riskoff import critical, strict_atr_handoff
+                    # The existing owner spans native release through the final
+                    # emitter commit; an attach task never becomes another seller.
+                    session.commit()
+                    try:
+                        quantity = await strict_atr_handoff(self, row)
+                    except Exception as exc:
+                        await critical(self, acct, symbol, str(exc), entry_id=row.entry_order_id)
+                        return "refused"
+                    session.refresh(row)
+                    if quantity == 0 and row.status == "closed":
+                        return "closed"
+                    if row.status != "open" or quantity > row.current_quantity:
+                        return "refused"
+                    position.quantity = int(quantity)
                 if stop_context is not None:
                     events = await self._emit_v2_managed_sell(
                         session, row, intent_type="close", quantity=int(position.quantity),
@@ -10427,38 +10675,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         allow_pending_fill_writer: bool = False,
     ) -> int:
         def read(session):
-            current = self.store.get_open_managed_position(
-                session, broker_account_name=broker_account_name, symbol=symbol,
+            from project_mai_tai.oms.managed_sell_prewire import read_managed_sell_quantity
+            return read_managed_sell_quantity(
+                self, session, managed_row_id=managed_row_id, strategy_code=strategy_code,
+                broker_account_name=broker_account_name, symbol=symbol,
+                target_context=target_context, allow_pending_fill_writer=allow_pending_fill_writer,
             )
-            if (strategy_code != "schwab_1m_v2" or current is None
-                    or str(current.id) != managed_row_id
-                    or current.strategy_code != strategy_code):
-                return 0, None, "episode_or_owner_changed"
-            if not self._cw_target_binding_matches(current, target_context):
-                return 0, None, "target_binding_changed"
-            pending = self.__dict__.get("_oco_exit_fill_pending", {}).get((broker_account_name, symbol))
-            if pending is not None and pending.row_id == managed_row_id and not allow_pending_fill_writer:
-                return 0, None, "same_episode_oco_exit_pending"
-            strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
-            account = session.scalar(select(BrokerAccount).where(
-                BrokerAccount.name == broker_account_name
-            ))
-            if strategy is None or account is None:
-                return 0, None, "missing_strategy_or_account"
-            owned = self.store.get_virtual_position(
-                session, strategy_id=strategy.id, broker_account_id=account.id, symbol=symbol,
-            )
-            managed_quantity = int(current.current_quantity)
-            try:
-                native = self._stored_owned_oco_balance(session, current)
-            except _BoundOcoHistoryUnknown as exc:
-                return 0, None, f"bound_oco_history_unknown:{exc}"
-            if native is not None:
-                _, entered, exited = native
-                managed_quantity = min(managed_quantity, max(0, int(entered - exited)))
-            return managed_quantity, (
-                Decimal(owned.quantity) if owned is not None else None
-            ), ""
 
         # Read after broker awaits, with a fresh off-loop session: the caller's ORM
         # identity map and the quote's hydrated Position can both contain old quantities.
@@ -10665,10 +10887,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 self._log_cw_target_attempt(**target_identity, blocked_guard="_v2_managed_sell_native_exit_refusal")
             return _ManagedSellEvents(ownership_refused=True)
         reservation: ExitPairReleaseResult | None = None
+        if (reason != "WEBULL_ATTACH_RISK_OFF"
+                and await self._legacy_webull_partial_handover_refused(
+                    row.broker_account_name, row.symbol, expected=(str(row.id), "", ""))):
+            return _ManagedSellEvents(ownership_refused=True)
         # Resolve the actual broker state before creating a durable intent. A broker-filled pair
         # always suppresses the redundant sell. Unresolved profit-taking waits; protective exits
         # continue so uncertainty cannot disable the hard stop or another safety close.
-        if bool(getattr(self.settings, "oms_v2_exit_release_reservation_enabled", False)):
+        if (bool(getattr(self.settings, "oms_v2_exit_release_reservation_enabled", False))
+                and reason != "WEBULL_ATTACH_RISK_OFF"):
             release_started = time.monotonic() if is_target else None
             reservation = await self._release_exit_reservation_before_close(
                 session=session,
@@ -10682,6 +10909,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             self._sync_exit_release_incident(
                 session, row, reservation, reason=reason, protective=protective
             )
+            if await self._legacy_webull_partial_handover_refused(
+                row.broker_account_name, row.symbol, release=reservation, expected=(str(row.id), "", ""),
+            ):
+                return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
             if reservation.outcome == "resolved_by_fill" or (
                 reservation.outcome in {"reserved", "unanswerable"} and not protective
             ):
@@ -10768,13 +10999,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 metadata=dict(metadata),
             ),
         )
-        intent = self.store.create_trade_intent(
-            session, strategy=strategy, broker_account=broker_account, event=event
-        )
-        self._record_internal_risk_pass(
-            session, intent=intent, strategy=strategy, broker_account=broker_account,
-            metadata=dict(metadata), reason="oms_v2_managed_exit",
-        )
         request = OrderRequest(
             client_order_id=self._build_client_order_id(event),
             broker_account_name=row.broker_account_name,  # <-- THE INVARIANT
@@ -10788,6 +11012,18 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             order_type=order_type,
             time_in_force="day",
         )
+        from project_mai_tai.oms.managed_sell_prewire import prepare_managed_sell
+        intent_id = await prepare_managed_sell(
+            self, event=event, request=request, managed_row_id=str(row.id), now=utcnow(),
+            target_context=confirmation_context,
+            allow_pending_fill_writer=owned_quantity_args.get("allow_pending_fill_writer", False),
+        )
+        if intent_id is None:
+            return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
+        if reason != "WEBULL_ATTACH_RISK_OFF" and not _managed_exit_session_matches_clock(request.metadata):
+            from project_mai_tai.oms.managed_sell_prewire import abandon_unposted_sell
+            await abandon_unposted_sell(self, request=request, intent_id=intent_id, now=utcnow())
+            return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
         self.logger.info(
             "[OMS-V2-EXIT-PLACE] acct=%s sym=%s client_order_id=%s "
             "session=%s clock_session=%s",
@@ -10801,8 +11037,32 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 row.broker_account_name, row.symbol,
                 metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
             )
+        if reason == "WEBULL_ATTACH_RISK_OFF":
+            from project_mai_tai.oms.webull_attach_riskoff import (
+                critical, release_atr_proven_unsent, validate_atr_before_wire,
+            )
+            try:
+                # Last proof await before the FIRST broker await; no reprice,
+                # native release or pending-row preparation may intervene.
+                await validate_atr_before_wire(self, request, str(row.id))
+            except Exception as exc:
+                from project_mai_tai.oms.managed_sell_prewire import abandon_unposted_sell
+                abort_id = await abandon_unposted_sell(
+                    self, request=request, intent_id=intent_id, now=utcnow(),
+                )
+                try:
+                    await release_atr_proven_unsent(self, request, str(row.id), abort_event_id=abort_id)
+                except Exception as cleanup_exc:
+                    await critical(self, row.broker_account_name, row.symbol,
+                        f"unsent_handoff_cleanup_UNKNOWN:{type(cleanup_exc).__name__}", entry_id=row.entry_order_id)
+                await critical(self, row.broker_account_name, row.symbol,
+                    f"final_wire_proof_refused:{type(exc).__name__}:{exc}", entry_id=row.entry_order_id)
+                return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
         reports = (await self._submit_cw_target_order(request, target_guards) if is_target
                    else await self.broker_adapter.submit_order(request))
+        intent = session.get(TradeIntent, intent_id)
+        if intent is None:
+            raise RuntimeError("managed_sell_prepared_intent_disappeared")
         events = await self._record_order_reports(
             session=session, intent=intent, strategy_id=strategy.id,
             broker_account_id=broker_account.id, intent_event=event,
@@ -10856,14 +11116,26 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         row.symbol, row.broker_account_name, request.client_order_id,
                         retry_request.client_order_id,
                     )
-                    retry_reports = (await self._submit_cw_target_order(retry_request, target_guards) if is_target
-                                     else await self.broker_adapter.submit_order(retry_request))
-                    terminal_events = await self._record_order_reports(
-                        session=session, intent=intent, strategy_id=strategy.id,
-                        broker_account_id=broker_account.id, intent_event=event,
-                        request=retry_request, reports=retry_reports,
+                    retry_id = await prepare_managed_sell(
+                        self, event=event, request=retry_request, managed_row_id=str(row.id),
+                        now=utcnow(), retry_intent_id=intent.id,
+                        target_context=confirmation_context,
+                        allow_pending_fill_writer=owned_quantity_args.get("allow_pending_fill_writer", False),
                     )
-                    events.extend(terminal_events)
+                    if retry_id is not None:
+                        if not _managed_exit_session_matches_clock(retry_request.metadata):
+                            from project_mai_tai.oms.managed_sell_prewire import abandon_unposted_sell
+                            await abandon_unposted_sell(self, request=retry_request, intent_id=retry_id, now=utcnow())
+                            return _ManagedSellEvents(events, reservation=reservation, terminal_events=terminal_events,
+                                                      submitted_quantity=quantity)
+                        retry_reports = (await self._submit_cw_target_order(retry_request, target_guards) if is_target
+                                         else await self.broker_adapter.submit_order(retry_request))
+                        terminal_events = await self._record_order_reports(
+                            session=session, intent=intent, strategy_id=strategy.id,
+                            broker_account_id=broker_account.id, intent_event=event,
+                            request=retry_request, reports=retry_reports,
+                        )
+                        events.extend(terminal_events)
             else:
                 self.logger.error(
                     "[OMS-V2-CW-FLIP-PROTECTION] sym=%s acct=%s status=COULD_NOT_TELL "
@@ -10882,6 +11154,19 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 if await self._v2_managed_sell_owned_quantity(
                     **owned_quantity_args, requested_quantity=quantity,
                 ) != quantity:
+                    corrected_request = None
+            if corrected_request is not None:
+                corrected_id = await prepare_managed_sell(
+                    self, event=event, request=corrected_request, managed_row_id=str(row.id),
+                    now=utcnow(), retry_intent_id=intent.id,
+                    target_context=confirmation_context,
+                    allow_pending_fill_writer=owned_quantity_args.get("allow_pending_fill_writer", False),
+                )
+                if corrected_id is None:
+                    corrected_request = None
+                elif not _managed_exit_session_matches_clock(corrected_request.metadata):
+                    from project_mai_tai.oms.managed_sell_prewire import abandon_unposted_sell
+                    await abandon_unposted_sell(self, request=corrected_request, intent_id=corrected_id, now=utcnow())
                     corrected_request = None
             if corrected_request is not None:
                 corrected_reports = await self.broker_adapter.submit_order(corrected_request)
@@ -11319,6 +11604,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
 
     async def _poll_orb_schwab_child_exits(self, *, entry_id: UUID | None = None) -> None:
         """Attribute only a filled SELL child owned by our exact ORB parent."""
+        if self.settings.orb_webull_account_name:
+            from project_mai_tai.oms.orb_country import reconcile_protection
+            await reconcile_protection(self)
         with self.session_factory() as session:
             entries = session.execute(
                 select(BrokerOrder, BrokerAccount.name)
@@ -11732,6 +12020,17 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 if strategy is not None and strategy.code == "momentum_warn_live":
                     continue  # The owned actor, not generic refresh/resubmit, reconciles these orders.
 
+                from project_mai_tai.oms.managed_sell_retirement import (
+                    requires_read_only_recovery, retire_previous_flat_sell,
+                )
+                if requires_read_only_recovery(
+                    order, intent, strategy.code if strategy else "", utcnow(),
+                    strategy=strategy, account=account,
+                ):
+                    # Do not let yesterday's fill mutate today's VP or reprice its POST.
+                    await retire_previous_flat_sell(self, order.id)
+                    continue
+
                 request = OrderRequest(
                     client_order_id=order.client_order_id,
                     broker_account_name=account.name,
@@ -11768,6 +12067,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 )
                 if strategy is not None and strategy.code == "orb_schwab":
                     recorded_metadata = {**(order.payload or {}), **recorded_metadata}
+                    if "orbroute1_protection" in (order.payload or {}):
+                        recorded_metadata["orbroute1_protection"] = order.payload["orbroute1_protection"]
                     if (order.payload or {}).get("orb_replace_hold"):
                         recorded_metadata["orb_replace_hold"] = order.payload["orb_replace_hold"]
                 payload = {
@@ -12126,6 +12427,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             await self._mirror_v2_fill_to_webull(
                 symbol=sym, quantity=qty, schwab_fill_price=px, source_metadata=md
             )
+        if self.settings.orb_webull_account_name:
+            from project_mai_tai.oms.orb_country import spawn_reconciliation
+            spawn_reconciliation(self)
         return {
             "orders": synced_orders,
             "terminal_orders": terminal_orders,
@@ -13641,33 +13945,46 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             return ExitPairReleaseResult(outcome=result)
 
-        def _base(session: Session) -> tuple[str, str]:
+        if await self._legacy_webull_partial_handover_refused(acct, symbol):
+            return ExitPairReleaseResult(outcome="unanswerable")
+
+        def _base(session: Session) -> tuple[str, str, str]:
             row = self.store.get_open_managed_position(
                 session, broker_account_name=acct, symbol=symbol
             )
             if row is None or str(row.id) != expected_row_id:
-                return "", ""
+                return "", "", ""
             entry = self._find_oco_entry_order(session, acct, symbol)
             return self._oco_exit_base_for_entry(
                 entry, broker_account_name=acct, symbol=symbol
-            ), str(getattr(entry, "broker_order_id", "") or "")
+            ), str(getattr(entry, "broker_order_id", "") or ""), str(getattr(entry, "id", "") or "")
 
         try:
-            base, entry_oid = await self._run_db(_base, commit=False)
+            base, entry_oid, entry_identity = await self._run_db(_base, commit=False)
             if not base:
                 return ExitPairReleaseResult(outcome="unanswerable")
             release = await self.broker_adapter.release_exit_pair_for_close(
                 broker_account_name=acct, symbol=symbol, base_client_order_id=base
             )
+            expected_episode = (expected_row_id, entry_identity, base)
+            if await self._legacy_webull_partial_handover_refused(
+                acct, symbol, release=release, expected=expected_episode,
+            ):
+                return replace(release, outcome="unanswerable")
             if release.outcome == "resolved_by_fill":
                 return replace(release, entry_broker_order_id=entry_oid,
                                exit_base_client_order_id=base)
             confirm = getattr(self.broker_adapter, "confirm_exit_pair_terminal", None)
             if confirm is None:
                 return ExitPairReleaseResult(outcome="unanswerable")
-            return await confirm(
+            confirmed = await confirm(
                 broker_account_name=acct, symbol=symbol, base_client_order_id=base
             )
+            if await self._legacy_webull_partial_handover_refused(
+                acct, symbol, release=confirmed, expected=expected_episode,
+            ):
+                return replace(confirmed, outcome="unanswerable")
+            return confirmed
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -13895,7 +14212,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 Strategy.code == stop.strategy_code, BrokerAccount.name == stop.broker_account_name,
                 VirtualPosition.symbol == stop.symbol,
             ))
-            if (position is None or position.opened_at is None or not 0 < stop.quantity <= 2
+            if (position is None or position.opened_at is None or not stop.quantity.is_finite()
+                    or stop.quantity <= 0
                     or position.quantity != stop.quantity):
                 return None
             # The current episode's broker fill binds the parent, not the latest buy or quantity.
@@ -13912,6 +14230,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if len(entries) != 1 or not entries[0].broker_order_id:
                 return None
             entry = entries[0]
+            from project_mai_tai.oms.orb_country import entry_quantity
+            try:
+                if stop.quantity > entry_quantity(entry):
+                    return None
+            except ValueError:
+                return None
             return str(position.id), str(entry.id), str(entry.broker_order_id), stop.quantity
         row = self.store.get_open_managed_position(
             session, broker_account_name=stop.broker_account_name, symbol=stop.symbol,
@@ -13995,7 +14319,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 return
             events = await self._trigger_hard_stop_send(
                 stop, trigger_price=trigger_price, trigger_source=trigger_source,
-                protected_claim=claim,
+                protected_claim=claim, protected_entry_id=episode[1],
             )
             request, reports = await self._reserve1_hard_stop_rejected_request(stop, events)
             retry_used = self.__dict__.setdefault("_reserve1_retry_used", set())
@@ -14008,7 +14332,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 return
             await self._trigger_hard_stop_send(
                 stop, trigger_price=trigger_price, trigger_source=trigger_source,
-                retry_of=request.client_order_id, protected_claim=claim,
+                retry_of=request.client_order_id, protected_claim=claim, protected_entry_id=episode[1],
             )
         except asyncio.CancelledError:
             raise
@@ -14067,6 +14391,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     async def _trigger_hard_stop_send(
         self, stop: ArmedHardStop, *, trigger_price: Decimal, trigger_source: str,
         retry_of: str = "", protected_claim: tuple[str, str, str] | None = None,
+        protected_entry_id: str = "",
     ) -> list[OrderEventEvent]:
         stop.last_trigger_attempt_at = utcnow()
         stop.close_in_flight = True
@@ -14093,7 +14418,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     stop=stop,
                     trigger_price=trigger_price,
                     trigger_source=trigger_source,
-                ) | ({"reserve1_retry": "1", "reserve1_retry_of": retry_of} if retry_of else {}),
+                ) | ({"reserve1_retry": "1", "reserve1_retry_of": retry_of} if retry_of else {})
+                | ({"managed_sell_owner_episode_id": protected_claim[2],
+                    "managed_sell_entry_order_id": protected_entry_id} if protected_claim else {}),
             ),
         )
         dispatch = self.__dict__.setdefault("_reserve1_hard_stop_dispatch", {})
@@ -15543,6 +15870,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         account_id: UUID,
         symbol: str,
         incoming_strategy: str,
+        country_routed: bool = False,
     ) -> str | None:
         """Keep ORB and v2 from opening the same Schwab symbol on one account."""
         ticker = symbol.upper()
@@ -15559,6 +15887,20 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if incoming_strategy == "orb_schwab":
             if open_buys:
                 return "orb_schwab_buy_order_already_open"
+            owned_position = session.scalar(select(VirtualPosition.id).join(Strategy).where(
+                VirtualPosition.broker_account_id == account_id, VirtualPosition.symbol == ticker,
+                Strategy.code == "orb_schwab", or_(VirtualPosition.quantity.is_(None), VirtualPosition.quantity != 0),
+            ).limit(1))
+            if owned_position is not None:
+                return "orb_schwab_position_held_or_unknown"
+            unresolved_pair = session.scalar(select(BrokerOrder.id).join(Strategy).where(
+                BrokerOrder.broker_account_id == account_id, BrokerOrder.symbol == ticker,
+                Strategy.code == "orb_schwab",
+                BrokerOrder.payload["orbroute1_protection"]["phase"].as_string().in_(
+                    {"submitting", "accepted", "working", "unknown"}),
+            ).limit(1))
+            if unresolved_pair is not None:
+                return "orb_country_prior_native_pair_unresolved"
             session_start_et = utcnow().astimezone(SESSION_TZ).replace(
                 hour=4, minute=0, second=0, microsecond=0
             )
@@ -15583,9 +15925,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     AccountPosition.symbol == ticker,
                 )
             )
-            if account_position is not None and account_position.quantity != 0:
+            if not country_routed and account_position is not None and account_position.quantity != 0:
                 return "orb_schwab_account_position_held"
-            account_name = self.settings.strategy_schwab_1m_v2_account_name
+            account_name = session.scalar(select(BrokerAccount.name).where(BrokerAccount.id == account_id))
             if self.store.get_open_managed_position(
                 session, broker_account_name=account_name, symbol=ticker
             ) is not None:
@@ -15624,22 +15966,26 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if now_et.weekday() >= 5 or now_et.hour < 9 or now_et.hour >= 16:
             return
         with self.session_factory() as session:
-            symbols = session.scalars(
-                select(BrokerOrder.symbol)
+            working = session.execute(
+                select(BrokerOrder, BrokerAccount.name)
                 .join(Strategy, Strategy.id == BrokerOrder.strategy_id)
                 .join(BrokerAccount, BrokerAccount.id == BrokerOrder.broker_account_id)
                 .where(
                     Strategy.code == "orb_schwab",
-                    BrokerAccount.name == self.settings.strategy_schwab_1m_v2_account_name,
+                    BrokerAccount.name.in_({self.settings.strategy_schwab_1m_v2_account_name,
+                                           self.settings.orb_webull_account_name}),
                     BrokerOrder.side == "buy",
                     BrokerOrder.status.in_(self.store.OPEN_ORDER_STATUSES),
                 )
-                .distinct()
             ).all()
+            from project_mai_tai.orb_country_route import selection_from_metadata
+            symbols = [(order.symbol, account, selection_from_metadata(
+                order.symbol, account, order.payload or {})) for order, account in working]
         last_attempt = self.__dict__.setdefault("_orb_schwab_watch_last_attempt", {})
         missing_close = self.__dict__.setdefault("_orb_schwab_watch_missing_close", {})
-        for symbol in symbols:
-            prior = last_attempt.get(symbol)
+        for symbol, account, selection in symbols:
+            key = (account, symbol)
+            prior = last_attempt.get(key)
             if prior is not None and (now - prior).total_seconds() < 15:
                 continue
             if now_et.hour >= 10:
@@ -15649,17 +15995,20 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     schwab_completed_bar_macd_gate, self.session_factory, symbol, now
                 )
                 if verdict == MacdVerdict.ALLOWED:
-                    missing_close.pop(symbol, None)
+                    missing_close.pop(key, None)
                     continue
                 if verdict == MacdVerdict.BAR_NOT_YET:
-                    deadline = missing_close.setdefault(symbol, last_closed_bar_close(now)) + BAR_WAIT
+                    deadline = missing_close.setdefault(key, last_closed_bar_close(now)) + BAR_WAIT
                     if now < deadline:
                         continue
                 else:
-                    missing_close.pop(symbol, None)
+                    missing_close.pop(key, None)
                 reason = "bar_missing" if verdict == MacdVerdict.BAR_NOT_YET else f"macd_{macd_reason}"
-            last_attempt[symbol] = now
-            event = build_orb_schwab_cancel_intent(self.settings, symbol)
+            last_attempt[key] = now
+            if account != self.settings.strategy_schwab_1m_v2_account_name and selection is None:
+                self.logger.error("[ORB-WATCHDOG-UNKNOWN] account=%s symbol=%s route_binding_missing", account, symbol)
+                continue
+            event = build_orb_schwab_cancel_intent(self.settings, symbol, selection=selection)
             self.logger.warning(
                 "[OMS-ORB-SCHWAB-WATCHDOG] cancel symbol=%s reason=%s", symbol, reason
             )
@@ -15674,6 +16023,28 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         target: BrokerOrder,
     ) -> list[OrderEventEvent]:
         """Replace the one known, unfilled parent without creating another buy."""
+        if (event.payload.metadata.get("orb_country_broker") == "webull"
+                and event.payload.metadata.get("orb_country_route") == "true"):
+            from project_mai_tai.oms.orb_country import reprice_webull
+            try:
+                return await reprice_webull(self, session, intent, event, target)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if not session.is_active:
+                    raise
+                reason = "orb_country_reprice_unresolved_no_retry"
+                self.store.mark_intent_refused(intent, origin="could_not_tell", code=reason)
+                session.add(SystemIncident(service_name="oms-risk", severity="critical", status="open",
+                    title="ORB Webull replacement requires reconciliation", payload={
+                        "source": "orb_country_replace_unknown", "entry_order_id": str(target.id),
+                        "event_id": str(event.event_id), "error_class": type(exc).__name__,
+                        "broker_account_name": event.payload.broker_account_name,
+                        "symbol": event.payload.symbol,
+                    }))
+                self.logger.error("[ORB-REPRICE-UNKNOWN] account=%s symbol=%s entry=%s error=%s no_retry=1",
+                    event.payload.broker_account_name, event.payload.symbol, target.id, type(exc).__name__)
+                return [self._build_rejected_event(event, intent.id, reason=reason)]
         metadata = dict(event.payload.metadata)
         old_metadata = dict(target.payload or {})
         old_id = target.broker_order_id
@@ -15683,7 +16054,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         except (KeyError, ValueError, TypeError, InvalidOperation):
             old_level = new_level = Decimal("0")
         reason = None
-        if not old_id or target.side != "buy" or target.quantity != Decimal("2"):
+        from project_mai_tai.oms.orb_country import entry_quantity
+        try:
+            entry_quantity(target)
+        except ValueError:
+            reason = "orb_schwab_reprice_parent_invalid"
+        if not old_id or target.side != "buy":
             reason = "orb_schwab_reprice_parent_invalid"
         elif old_level <= 0 or new_level <= old_level:
             reason = "orb_schwab_reprice_not_higher"
@@ -15847,7 +16223,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             intent_type="open",
             quantity=target.quantity,
             reason="VERIFY_UNFILLED_BEFORE_MACD_CANCEL",
-            metadata={"broker_order_id": target.broker_order_id},
+            metadata={"broker_order_id": target.broker_order_id, **({
+                "orb_country_route": "true", "orb_country_broker": "webull",
+            } if (target.payload or {}).get("orb_country_broker") == "webull" else {})},
         )
         try:
             broker_report = await self.broker_adapter.fetch_order_update(request)
@@ -18201,6 +18579,26 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         broker_account_name: str,
         report: ExecutionReport,
     ) -> dict[str, object]:
+        if strategy_code == "schwab_1m_v2" and order.side == "sell" and intent.reason == "WEBULL_ATTACH_RISK_OFF":
+            self.logger.critical(
+                "[WBATTACH1-EXIT-READ-ONLY] account=%s symbol=%s coid=%s replacement=0",
+                broker_account_name, order.symbol, order.client_order_id,
+            )
+            return {"orders": 0, "terminal_orders": 0, "published_events": []}
+        from project_mai_tai.oms.managed_sell_retirement import requires_read_only_recovery
+        payload = order.payload or {}
+        managed_sell_refresh = (strategy_code in {"schwab_1m_v2", "orb_schwab"}
+            and order.side == "sell" and (payload.get("managed_sell_prepared_at")
+                or strategy_code == "schwab_1m_v2"
+                and str(payload.get("oms_v2_managed_exit", "")).lower() == "true"))
+        if managed_sell_refresh and requires_read_only_recovery(
+            order, intent, strategy_code, utcnow(),
+            strategy=session.get(Strategy, order.strategy_id),
+            account=session.get(BrokerAccount, order.broker_account_id),
+        ):
+            self.logger.critical("[MANAGED-SELL-OLD-REFRESH-BLOCKED] account=%s symbol=%s coid=%s sell=0",
+                                 broker_account_name, order.symbol, order.client_order_id)
+            return {"orders": 0, "terminal_orders": 0, "published_events": []}
         if strategy_code == "orb_schwab" and (order.payload or {}).get("orb_replace_hold"):
             return {"orders": 0, "terminal_orders": 0, "published_events": []}
         if self._rpg_owns_old_order(session, order, broker_account_name):
@@ -18362,6 +18760,47 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 and self._bot_control_runtime.controls(replacement_request.strategy_code,
                                                       replacement_request.broker_account_name)):
             await self._prepare_bot_control_entry(session, intent, replacement_request, intent.created_at)
+        if (replacement_request.strategy_code == "schwab_1m_v2"
+                and replacement_request.side == "sell"
+                and replacement_request.intent_type in {"close", "scale"}
+                and str(refreshed_metadata.get("oms_v2_managed_exit", "")).strip().lower() == "true"):
+            managed = self.store.get_open_managed_position(
+                session, broker_account_name=broker_account_name, symbol=order.symbol,
+            )
+            managed_id = (order.payload or {}).get("oms_managed_row_id")
+            managed_tagged = any(key in (order.payload or {})
+                                 for key in ("oms_managed_row_id", "managed_sell_prepared_at"))
+            if managed is not None or managed_tagged:
+                if (managed is None or managed_id != str(managed.id)
+                        or managed.strategy_code != strategy_code
+                        or managed.broker_account_name != broker_account_name or managed.symbol != order.symbol):
+                    self.logger.critical("[MANAGED-SELL-REFRESH-BINDING-UNKNOWN] account=%s symbol=%s "
+                                         "coid=%s replacement=0", broker_account_name, order.symbol,
+                                         order.client_order_id)
+                    return {"orders": 0, "terminal_orders": 1, "published_events": []}
+                # Exact managed replacements retain terminal cancel accounting
+                # and commit their new pending reservation before the broker await.
+                session.commit()
+                replacement_request.metadata["managed_sell_refresh_of"] = order.client_order_id
+                pending_event = TradeIntentEvent(source_service=SERVICE_NAME, payload=TradeIntentPayload(
+                    strategy_code=strategy_code, broker_account_name=broker_account_name,
+                    symbol=order.symbol, side="sell", quantity=replacement_quantity,
+                    intent_type=intent.intent_type, reason=intent.reason,
+                    metadata=dict(replacement_request.metadata),
+                ))
+                from project_mai_tai.oms.managed_sell_prewire import prepare_managed_sell
+                prepared_id = await prepare_managed_sell(
+                    self, event=pending_event, request=replacement_request,
+                    managed_row_id=str(managed.id), now=utcnow(), retry_intent_id=intent.id,
+                )
+                if prepared_id is None:
+                    return {"orders": 0, "terminal_orders": 1, "published_events": []}
+                if not _managed_exit_session_matches_clock(replacement_request.metadata):
+                    from project_mai_tai.oms.managed_sell_prewire import abandon_unposted_sell
+                    await abandon_unposted_sell(self, request=replacement_request, intent_id=prepared_id, now=utcnow())
+                    return {"orders": 0, "terminal_orders": 1, "published_events": []}
+            # No managed row or durable managed tag: retain the legacy replacement
+            # path, without inventing a managed episode or ownership proof.
         replacement_reports = await self.broker_adapter.submit_order(replacement_request)
         replacement_event = TradeIntentEvent(
             source_service=SERVICE_NAME,

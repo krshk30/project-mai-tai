@@ -13,14 +13,16 @@ import sys
 import pytest
 
 from project_mai_tai.events import ReferenceDataPayload
-from project_mai_tai.market_data import gateway
+from project_mai_tai.market_data import gateway, massive_provider
 from project_mai_tai.market_data.models import QuoteTickRecord, SnapshotRecord, TradeTickRecord
 from tests.unit.test_momwarn1_gateway import aggregate, event, healthy, service
 
 
 @pytest.fixture
 def clock(monkeypatch):
-    monkeypatch.setattr(gateway, 'datetime', SimpleNamespace(now=lambda _: datetime(2026, 10, 13, 20, 1, tzinfo=UTC)))
+    fixed = SimpleNamespace(now=lambda _: datetime(2026, 10, 13, 20, 1, tzinfo=UTC))
+    monkeypatch.setattr(gateway, 'datetime', fixed)
+    monkeypatch.setattr(massive_provider, 'datetime', fixed)
 
 
 @pytest.fixture

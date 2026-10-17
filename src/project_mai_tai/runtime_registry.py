@@ -307,4 +307,8 @@ def configured_broker_account_registrations(settings: Settings) -> tuple[BrokerA
                     environment=settings.environment,
                 ),
             )
+    if settings.orb_webull_account_name:
+        registrations.setdefault(settings.orb_webull_account_name, BrokerAccountRegistration(
+            name=settings.orb_webull_account_name, provider="webull", environment=settings.environment,
+        ))
     return tuple(registrations.values())

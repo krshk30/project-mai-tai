@@ -1114,7 +1114,11 @@ class WebullBrokerAdapter:
                           and bool(request.metadata.get("episode_id"))
                           and (request.metadata.get("momlive_one_shot") == "true"
                                or request.metadata.get("momlive_native_child") == "true"))
-        lookups = [request.client_order_id] if momentum_owned else (
+        orb_owned = request.strategy_code == "orb_schwab" and (
+            request.metadata.get("orbroute1_child") == "true"
+            or (request.metadata.get("orb_country_route") == "true"
+                and request.metadata.get("orb_country_broker") == "webull"))
+        lookups = [request.client_order_id] if momentum_owned or orb_owned else (
             [master_coid, request.client_order_id]
             if self._is_bracket_request(request)
             else [request.client_order_id, master_coid]
@@ -1125,7 +1129,11 @@ class WebullBrokerAdapter:
             od.set_account_id(account.account_id)
             od.set_client_order_id(coid)
             try:
-                if momentum_owned and (request.metadata.get("momlive_entry_deadline_read") == "true"
+                if orb_owned and request.metadata.get("orbroute1_fresh_read") == "true":
+                    status, body = self._order_detail_body_with_fallback(account, od, coid)
+                    if status != 200:
+                        return None
+                elif momentum_owned and (request.metadata.get("momlive_entry_deadline_read") == "true"
                                        or request.metadata.get("momlive_fresh_order_read") == "true"):
                     body = self._momentum_detail_body(account, od, request)
                 else:
@@ -1151,12 +1159,21 @@ class WebullBrokerAdapter:
         if getattr(self, "_list_primary_enabled", False) and item.get("symbol") and str(item["symbol"]).upper() != request.symbol.upper():
             return None
         broker_order_id = self._first_str(body, "order_id", "orderId")
+        if orb_owned and (
+            self._validated_list_execution(body, account, request.client_order_id,
+                symbol=request.symbol, side=request.side) is None
+            or (request.metadata.get("broker_order_id")
+                and broker_order_id != request.metadata["broker_order_id"])
+            or (self._decimal_or_none(item, "quantity", "qty", "total_qty") is not None
+                and self._decimal_or_none(item, "quantity", "qty", "total_qty") != request.quantity)
+        ):
+            return None
         event_type = self._map_status(item)
         filled_quantity = (
             self._decimal_or_none(item, "filled_qty", "filledQty", "filled_quantity", "filledQuantity")
             or Decimal("0")
         )
-        terminal_partial = (getattr(self, "_list_primary_enabled", False)
+        terminal_partial = ((getattr(self, "_list_primary_enabled", False) or orb_owned)
                             and event_type in {"cancelled", "rejected"} and filled_quantity > 0)
         # filled_price = the CONFIRMED real fill-price field (was the naked-position bug:
         # a wrong field -> fill_price None -> OMS arms NO trailing stop).
@@ -1487,12 +1504,62 @@ class WebullBrokerAdapter:
             item.get("status") or item.get("order_status") or item.get("orderStatus") or ""
         ).upper()
         status = self._map_status(item) if item else "unknown"
-        if status == "filled":
-            qty = self._decimal_or_none(item, "filled_qty", "filledQty") or Decimal("0")
-            price = self._decimal_or_none(
-                item, "filled_price", "filledPrice", "avg_fill_price", "avgFillPrice"
+        strict_confirmation = request.metadata.get("eod_exit_pair_confirmation") == "true"
+        native_ids = {
+            str(part[key]) for part in (body, item) if isinstance(part, dict)
+            for key in ("order_id", "orderId") if part.get(key) not in (None, "")
+        }
+        conflicting_scope = any(
+            (str(part[key]).upper() if key == "side" else str(part[key])) != expected
+            for part in (body, item) if isinstance(part, dict)
+            for keys, expected in (
+                (("client_order_id", "clientOrderId"), request.client_order_id),
+                (("symbol",), request.symbol),
+                (("account_id", "accountId"), account.account_id),
+                (("side",), request.side.upper()),
             )
-            if qty <= 0 or price is None or price <= 0:
+            for key in keys if part.get(key) not in (None, "")
+        )
+        # A terminal status without scoped execution evidence cannot release an owner.
+        def consistent_decimal(*keys):
+            values = []
+            for key in keys:
+                raw = item.get(key)
+                if raw in (None, ""):
+                    continue
+                try:
+                    value = Decimal(str(raw))
+                except (InvalidOperation, ValueError):
+                    return None, False
+                if not value.is_finite():
+                    return None, False
+                values.append(value)
+            if not values:
+                return None, True
+            return values[0], all(value == values[0] for value in values)
+
+        qty, consistent_qty = consistent_decimal("filled_qty", "filledQty")
+        price, consistent_price = consistent_decimal(
+            "filled_price", "filledPrice", "avg_fill_price", "avgFillPrice"
+        )
+        invalid_quantity = not consistent_qty or qty is not None and qty < 0
+        invalid_execution = qty is not None and qty.is_finite() and qty > 0 and (
+            not consistent_price or price is None or price <= 0
+        )
+        if (conflicting_scope or len(native_ids) > 1 or invalid_quantity or invalid_execution
+                or strict_confirmation and (
+                    len(items or []) != 1 or not native_ids or qty is None
+                )):
+            return ExecutionReport(
+                event_type="accepted", origin="unknown",
+                client_order_id=request.client_order_id, symbol=request.symbol,
+                side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+                reason="cancel confirmation identity or cumulative execution unproven",
+                metadata={**dict(request.metadata), "cancel_outcome": "could_not_tell"},
+            )
+        broker_order_id = next(iter(native_ids), None)
+        if status == "filled":
+            if qty is None or qty <= 0 or price is None or price <= 0 or not broker_order_id:
                 return ExecutionReport(
                     event_type="accepted", origin="unknown",
                     client_order_id=request.client_order_id, symbol=request.symbol,
@@ -1500,12 +1567,11 @@ class WebullBrokerAdapter:
                     reason="filled exit leg lacked a usable quantity or price",
                     metadata={**dict(request.metadata), "cancel_outcome": "could_not_tell"},
                 )
-            broker_order_id = self._first_str(body, "order_id", "orderId")
             return ExecutionReport(
                 event_type="filled", origin="broker",
                 client_order_id=request.client_order_id,
                 broker_order_id=broker_order_id,
-                broker_fill_id=f"{broker_order_id or request.client_order_id}:{qty}",
+                broker_fill_id=f"{broker_order_id}:{qty}",
                 symbol=request.symbol, side=request.side, intent_type="close",
                 quantity=qty, filled_quantity=qty, fill_price=price,
                 reason="exit pair resolved by broker fill during release",
@@ -1518,9 +1584,15 @@ class WebullBrokerAdapter:
             return ExecutionReport(
                 event_type="cancelled", origin="broker",
                 client_order_id=request.client_order_id, symbol=request.symbol,
+                broker_order_id=broker_order_id,
+                broker_fill_id=f"{broker_order_id}:{qty}" if broker_order_id and qty else None,
                 side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+                filled_quantity=qty or Decimal("0"), fill_price=price,
                 reason=f"exit leg is terminal at broker; status={status}",
                 metadata={**dict(request.metadata), "cancel_outcome": "confirmed"},
+                reported_at=self._parse_broker_time(
+                    item.get("last_filled_time") or item.get("lastFilledTime")
+                ) or datetime.now(UTC),
             )
         if not item:
             return ExecutionReport(
@@ -1542,7 +1614,10 @@ class WebullBrokerAdapter:
             event_type="partially_filled" if status == "partially_filled" else "accepted",
             origin="broker",
             client_order_id=request.client_order_id, symbol=request.symbol,
+            broker_order_id=broker_order_id,
+            broker_fill_id=f"{broker_order_id}:{qty}" if broker_order_id and qty else None,
             side=request.side, intent_type=request.intent_type, quantity=request.quantity,
+            filled_quantity=qty or Decimal("0"), fill_price=price,
             reason=f"cancel requested but not confirmed; broker status={status}",
             metadata={**dict(request.metadata), "cancel_outcome": "not_confirmed"},
         )

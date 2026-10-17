@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import urllib.error
 import urllib.request
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
 from project_mai_tai.broker_adapters.protocols import (
     BrokerPositionSnapshot,
@@ -702,6 +702,20 @@ class SchwabBrokerAdapter:
                 )
             ]
 
+        if self._is_momlive_entry(request):
+            broker_order_id = self._momlive_ack_order_id(account, status_code, headers, response)
+            # The POST has happened even when its identity is unknown. Return a
+            # nonterminal receipt, never a client rejection permitting a retry.
+            return [ExecutionReport(
+                event_type="accepted", client_order_id=request.client_order_id,
+                broker_order_id=broker_order_id, symbol=request.symbol, side=request.side,
+                intent_type=request.intent_type, quantity=request.quantity, reason=request.reason,
+                origin="broker" if broker_order_id else "unknown",
+                metadata={**report_metadata,
+                          "momcancel1_place_ack": "true",
+                          "momcancel1_ack_identity": "VALID" if broker_order_id else "UNKNOWN"},
+            )]
+
         broker_order_id = self._extract_order_id(response, headers)
         reports = [
             ExecutionReport(
@@ -737,6 +751,50 @@ class SchwabBrokerAdapter:
             )
         )
         return reports
+
+    @staticmethod
+    def _is_momlive_entry(request: OrderRequest) -> bool:
+        try:
+            metadata = request.metadata
+            if not isinstance(metadata, dict):
+                return False
+            episode_id = metadata.get("episode_id")
+            return (type(episode_id) is str and bool(episode_id)
+                    and request.strategy_code == "momentum_warn_live"
+                    and request.side == "buy" and request.intent_type == "open"
+                    and request.reason == "MOMLIVE1_DETECTED"
+                    and request.order_type == "limit"
+                    and metadata.get("momlive_strategy") == "momentum_warn_live"
+                    and metadata.get("momlive_one_shot") == "true"
+                    and request.client_order_id == f"ml1-{request.symbol}-e-{episode_id.replace('-', '')[:20]}")
+        except Exception:
+            return False  # Malformed scope markers must not change another caller's flow.
+
+    def _momlive_ack_order_id(self, account, status_code, headers, payload) -> str | None:
+        try:
+            if status_code != 201 or not isinstance(headers, dict) or any(type(key) is not str for key in headers):
+                return None
+            locations = [value for key, value in headers.items() if key.lower() == "location"]
+            if len(locations) != 1 or type(locations[0]) is not str:
+                return None
+            location = urlsplit(locations[0])
+            endpoint = urlsplit(self.base_url)
+            prefix = f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/"
+            if (location.scheme != "https" or location.netloc != endpoint.netloc
+                    or location.query or location.fragment or not location.path.startswith(prefix)):
+                return None
+            identity = location.path[len(prefix):]
+            if not identity or any(char not in "0123456789" for char in identity):
+                return None
+            if isinstance(payload, dict):
+                for key in ("orderId", "id"):
+                    if key in payload and str(payload[key]) != identity:
+                        return None
+            return identity
+        except Exception:
+            # Pure response validation happens after POST: parser failures mean
+            # unknown identity, never an exception masquerading as an unsent order.
+            return None
 
     def _should_return_accepted_immediately(self, request: OrderRequest) -> bool:
         metadata = request.metadata

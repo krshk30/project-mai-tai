@@ -1083,6 +1083,11 @@ class OmsStore:
                                                    str(virtual_position.symbol or ""), virtual_position.quantity))
                 continue
 
+            if strategy_code == "orb_schwab":
+                from project_mai_tai.oms.orb_country import retain_owned_routed_position
+                if retain_owned_routed_position(session, virtual_position):
+                    continue
+
             cleared.append(
                 (
                     virtual_position.broker_account_id,
