@@ -23,6 +23,23 @@ SESSION_CLOCK = {"AM": "2026-10-19T12:29:43.376Z",
     "NORMAL": "2026-10-19T14:00:00Z", "PM": "2026-10-19T21:00:00Z"}
 
 
+@pytest.fixture(autouse=True)
+def capture_after_oms_logging_setup(monkeypatch, caplog):
+    from project_mai_tai.oms import service as oms_module
+
+    configure = oms_module.configure_logging
+
+    def configure_with_capture(*args, **kwargs):
+        logger = configure(*args, **kwargs)
+        # Production force=True replaces root handlers, including pytest's capture.
+        root = logging.getLogger()
+        if caplog.handler not in root.handlers:
+            root.addHandler(caplog.handler)
+        return logger
+
+    monkeypatch.setattr(oms_module, "configure_logging", configure_with_capture)
+
+
 def exits(h):
     return [row.request for row in h.venue.orders.values() if row.request.metadata.get("exit_reason")]
 
@@ -43,7 +60,8 @@ async def held_native(tmp_path, provider, session_name="NORMAL"):
                 if row.request.side == "sell" and not row.request.metadata.get("exit_reason")
                 and (session_name != "NORMAL" or row.request.client_order_id != h.handle.base_coid)])
         reports = await submit(request)
-        if provider == "schwab" and request.metadata.get("exit_only_oco"):
+        if (provider == "schwab" and request.intent_type != "cancel"
+                and request.metadata.get("exit_only_oco")):
             children = (request.client_order_id + "T", request.client_order_id + "S")
             h.trees[request.client_order_id] = children
             for coid in children:
@@ -72,7 +90,10 @@ async def held_native(tmp_path, provider, session_name="NORMAL"):
         assert account == h.handle.account
         for identity in ids:
             row = h.venue.orders[identity.removeprefix("venue-")]
+            orders_before, trees_before = set(h.venue.orders), dict(h.trees)
             await h.venue.submit_order(replace(row.request, intent_type="cancel", quantity=D(0)))
+            assert set(h.venue.orders) == orders_before
+            assert h.trees == trees_before  # CANCEL cannot manufacture another OCO tree.
 
     h.venue.submit_order = submit_with_tree
     h.venue.schwab._authorized_request_json = tree_http
