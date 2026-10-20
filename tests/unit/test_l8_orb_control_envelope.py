@@ -73,10 +73,11 @@ def test_routed_plan_accepts_only_the_decision_envelope_without_mutating_it(brok
         assert event.payload.metadata["bot_control_decided_at"] == OPEN.isoformat()
 
 
-@pytest.mark.parametrize("routed", [False, True])
+@pytest.mark.parametrize("routed,broker", [(False, "schwab"), (True, "schwab"), (True, "webull")])
 @pytest.mark.parametrize("reprice", [False, True])
-def test_legacy_and_routed_reprice_checks_preserve_exact_control_stamps(routed, reprice):
-    settings, event = plan("schwab", "READY", routed=routed, reprice=reprice)
+def test_legacy_and_routed_reprice_checks_preserve_exact_control_stamps(routed, broker, reprice):
+    settings, event = plan(broker, "READY" if broker == "schwab" else "INCOMPLETE",
+                           routed=routed, reprice=reprice)
     stamp(event)
     before = dict(event.payload.metadata)
     now = OPEN+timedelta(minutes=1) if reprice else OPEN
