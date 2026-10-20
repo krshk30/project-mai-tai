@@ -1,0 +1,438 @@
+"""Q05/O13 controlled shared-account exits, not retained vendor execution replay.
+
+TOP15:56 approves these quantity caps; M03 admission remains unchanged.
+Only broker responses are controlled. The real durable fallback/EOD writers,
+ownership readers, native release coordinator and incident writer stay active.
+"""
+
+import asyncio
+from copy import deepcopy
+from dataclasses import replace
+from datetime import timedelta
+from decimal import Decimal
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+import pytest
+from sqlalchemy import event as sql_event, select
+
+from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
+from project_mai_tai.db.models import (
+    AccountPosition, BrokerAccount, BrokerOrder, Fill, OmsManagedPosition,
+    Strategy, SystemIncident, TradeIntent, VirtualPosition,
+)
+from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
+from project_mai_tai.momentum_live_sec import CountryRecord, CountryRouter, CountryStore
+from project_mai_tai.orb_country_route import select_orb_country_route
+from project_mai_tai.orb_schwab_order_route import build_orb_schwab_open_intent
+from tests.unit.test_orb_schwab_order_route import ACCOUNT, OPEN, _EodBroker, _service
+
+
+SYMBOL = "CAPQ"
+
+
+class FallbackBroker:
+    def __init__(self):
+        self.sent = []
+
+    async def submit_order(self, request):
+        self.sent.append(request)
+        return [ExecutionReport(event_type="accepted", origin="broker",
+            client_order_id=request.client_order_id, broker_order_id="controlled-cap-accepted",
+            symbol=request.symbol, side=request.side, intent_type=request.intent_type,
+            quantity=request.quantity, metadata=dict(request.metadata))]
+
+
+def fallback_case(monkeypatch, *, owned="95", projection="both", raw="1095",
+                  event_quantity="95", request_quantity="95"):
+    broker = FallbackBroker()
+    service, factory, _ = _service(monkeypatch, broker=broker)
+    with factory.begin() as session:
+        strategy = service.store.ensure_strategy(session, "schwab_1m_v2")
+        account = service.store.ensure_broker_account(session, ACCOUNT, provider="schwab", environment="test")
+        strategy_id, account_id = strategy.id, account.id
+        session.add(AccountPosition(broker_account_id=account_id, symbol=SYMBOL,
+            quantity=Decimal("1095"), average_price=Decimal("3")))
+        if owned is not None and projection in {"virtual", "both"}:
+            session.add(VirtualPosition(strategy_id=strategy_id, broker_account_id=account_id,
+                symbol=SYMBOL, quantity=Decimal(owned), average_price=Decimal("3")))
+        if owned is not None and projection in {"managed", "both"}:
+            session.add(service.store.create_managed_position(session,
+                strategy_code="schwab_1m_v2", broker_account_name=ACCOUNT, symbol=SYMBOL,
+                entry_price=Decimal("3"), quantity=Decimal(owned)))
+        # A different strategy's positive quantity is never an own fallback cap.
+        foreign = service.store.ensure_strategy(session, "orb_schwab")
+        session.add(VirtualPosition(strategy_id=foreign.id, broker_account_id=account_id,
+            symbol=SYMBOL, quantity=Decimal("1000"), average_price=Decimal("3")))
+    reads = []
+
+    async def broker_position(**kwargs):
+        reads.append(kwargs)
+        return None if raw is None else Decimal(raw)
+
+    service._refresh_broker_position_quantity = broker_position
+    event = TradeIntentEvent(source_service="controlled-ownmix2", payload=TradeIntentPayload(
+        strategy_code="schwab_1m_v2", broker_account_name=ACCOUNT, symbol=SYMBOL,
+        side="sell", intent_type="close", quantity=Decimal(event_quantity), reason="HARD_STOP"))
+    request = OrderRequest(client_order_id="controlled-ownmix2-rejected-stop",
+        broker_account_name=ACCOUNT, strategy_code="schwab_1m_v2", symbol=SYMBOL,
+        side="sell", intent_type="close", quantity=Decimal(request_quantity), reason="HARD_STOP")
+    return SimpleNamespace(service=service, factory=factory, broker=broker, reads=reads,
+        strategy_id=strategy_id, account_id=account_id, event=event, request=request)
+
+
+async def fallback(case):
+    with case.factory.begin() as session:
+        return await case.service._process_stop_reject_market_fallback(session=session,
+            strategy=session.get(Strategy, case.strategy_id),
+            broker_account=session.get(BrokerAccount, case.account_id),
+            original_event=case.event, original_request=case.request,
+            rejection_reason="CONTROLLED stop rejected")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("projection", ["virtual", "managed", "both"])
+@pytest.mark.parametrize("raw,event_quantity,request_quantity,expected", [
+    ("1095", "95", "95", "95"), ("1000", "95", "95", "95"),
+    ("20", "95", "95", "20"), ("1095", "7", "95", "7"),
+    ("1095", "95", "9", "9"),
+])
+async def test_schwab_rejected_stop_caps_actual_wire_by_raw_own_and_both_requests(
+        monkeypatch, projection, raw, event_quantity, request_quantity, expected):
+    case = fallback_case(monkeypatch, projection=projection, raw=raw,
+                         event_quantity=event_quantity, request_quantity=request_quantity)
+    try:
+        await fallback(case)
+        request, = case.broker.sent
+        assert request.quantity == Decimal(expected)
+        assert request.broker_account_name == ACCOUNT and request.strategy_code == "schwab_1m_v2"
+        assert request.side == "sell" and request.intent_type == "close" and request.order_type == "market"
+        assert request.reason == "STOP_REJECTED_FALLBACK"
+        assert request.metadata["fallback_for_client_order_id"] == case.request.client_order_id
+        assert len(case.reads) == 1 and case.reads[0]["broker_account_name"] == ACCOUNT
+        with case.factory() as session:
+            order, = session.scalars(select(BrokerOrder).where(BrokerOrder.side == "sell")).all()
+            assert order.quantity == Decimal(expected) and order.strategy_id == case.strategy_id
+            assert session.scalar(select(AccountPosition.quantity)) == 1095
+            foreign = session.scalar(select(Strategy.id).where(Strategy.code == "orb_schwab"))
+            assert session.scalar(select(VirtualPosition.quantity).where(VirtualPosition.strategy_id == foreign)) == 1000
+    finally:
+        case.factory.kw["bind"].dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["missing-own", "negative-own", "unknown-managed", "book-mismatch", "read-error", "runtime-read-error"])
+async def test_schwab_unknown_ownership_never_sells_manual_or_foreign_shares_and_pages(monkeypatch, fault):
+    case = fallback_case(monkeypatch, owned=None if fault == "missing-own" else "95", projection="virtual")
+    capture = None
+    try:
+        if fault == "negative-own":
+            with case.factory.begin() as session:
+                session.scalar(select(VirtualPosition).where(
+                    VirtualPosition.strategy_id == case.strategy_id)).quantity = -1
+        if fault in {"unknown-managed", "book-mismatch"}:
+            with case.factory.begin() as session:
+                row = case.service.store.create_managed_position(session,
+                    strategy_code="schwab_1m_v2", broker_account_name=ACCOUNT, symbol=SYMBOL,
+                    entry_price=Decimal("3"), quantity=94)
+                if fault == "unknown-managed":
+                    row.status, row.current_quantity = "unknown", 0
+        if fault in {"read-error", "runtime-read-error"}:
+            # The ownership lookup itself is unreadable, not a broker-flat
+            # response. The raw broker ceiling still succeeds once.
+            def unreadable(_connection, _cursor, statement, _parameters, _context, _many):
+                if statement.lstrip().lower().startswith("select") and "virtual_positions" in statement.lower():
+                    error = RuntimeError if fault == "runtime-read-error" else ValueError
+                    raise error("CONTROLLED own-book read unavailable")
+
+            capture = unreadable
+            sql_event.listen(case.factory.kw["bind"], "before_cursor_execute", capture)
+        await fallback(case)
+        await fallback(case)  # Same rejected stop must not create incident spam.
+        assert not case.broker.sent
+        assert len(case.reads) == 2
+        with case.factory() as session:
+            assert not session.scalars(select(BrokerOrder).where(BrokerOrder.side == "sell")).all()
+            incidents = session.scalars(select(SystemIncident)).all()
+            assert len(incidents) == 1
+            incident, = incidents
+            assert incident.severity == "critical" and incident.status == "open"
+            assert incident.payload["source"] == "schwab_stop_reject_fallback_ownership"
+            assert incident.payload["client_order_id"] == case.request.client_order_id
+            assert incident.payload["broker_account_name"] == ACCOUNT
+            assert incident.payload["symbol"] == SYMBOL and incident.payload["sell_submitted"] is False
+            assert session.scalar(select(AccountPosition.quantity)) == 1095
+    finally:
+        if capture is not None:
+            sql_event.remove(case.factory.kw["bind"], "before_cursor_execute", capture)
+        case.factory.kw["bind"].dispose()
+
+
+@pytest.mark.asyncio
+async def test_schwab_page_write_failure_still_never_sells_and_reports_unknown_delivery(monkeypatch, caplog):
+    case = fallback_case(monkeypatch, owned=None, projection="virtual")
+    try:
+        with case.factory.begin() as session:
+            parent = TradeIntent(id=uuid4(), strategy_id=case.strategy_id, broker_account_id=case.account_id,
+                symbol=SYMBOL, side="sell", intent_type="close", quantity=95, status="rejected",
+                reason="CONTROLLED original stop rejection", payload={})
+            session.add(parent)
+            session.flush()
+            original = BrokerOrder(id=uuid4(), intent_id=parent.id, strategy_id=case.strategy_id,
+                broker_account_id=case.account_id, client_order_id=case.request.client_order_id,
+                broker_order_id=None, symbol=SYMBOL, side="sell", quantity=95, status="rejected",
+                order_type="stop", time_in_force="day", payload={})
+            session.add(original)
+            original_id = original.id
+            real_add = session.add
+
+            def page_unavailable(instance, *args, **kwargs):
+                if isinstance(instance, SystemIncident):
+                    raise RuntimeError("CONTROLLED incident writer unavailable")
+                return real_add(instance, *args, **kwargs)
+
+            monkeypatch.setattr(session, "add", page_unavailable)
+            await case.service._process_stop_reject_market_fallback(session=session,
+                strategy=session.get(Strategy, case.strategy_id),
+                broker_account=session.get(BrokerAccount, case.account_id),
+                original_event=case.event, original_request=case.request,
+                rejection_reason="CONTROLLED stop rejected")
+        assert not case.broker.sent
+        messages = caplog.messages
+        critical = next(i for i, message in enumerate(messages) if "[SCHWAB-FALLBACK-OWNERSHIP-UNKNOWN]" in message)
+        undelivered = next(i for i, message in enumerate(messages) if "[SCHWAB-FALLBACK-OWNERSHIP-PAGE-UNKNOWN]" in message)
+        assert critical < undelivered
+        with case.factory() as session:
+            assert session.get(BrokerOrder, original_id).status == "rejected"
+            assert session.get(TradeIntent, parent.id).status == "rejected"
+            assert not session.scalars(select(SystemIncident)).all()  # Delivery is NOT claimed.
+    finally:
+        case.factory.kw["bind"].dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("projection", ["virtual", "managed"])
+@pytest.mark.parametrize("remaining", [0, 5])
+async def test_schwab_cap_uses_current_book_after_broker_await_not_cached_session_row(monkeypatch, projection, remaining):
+    case = fallback_case(monkeypatch, projection=projection)
+    try:
+        async def shrink_during_broker_read(**_kwargs):
+            with case.factory.begin() as other:
+                if projection == "virtual":
+                    other.scalar(select(VirtualPosition).where(
+                        VirtualPosition.strategy_id == case.strategy_id)).quantity = remaining
+                else:
+                    other.scalar(select(OmsManagedPosition).where(
+                        OmsManagedPosition.strategy_code == "schwab_1m_v2")).current_quantity = remaining
+            return Decimal(1000+remaining)
+
+        case.service._refresh_broker_position_quantity = shrink_during_broker_read
+        with case.factory.begin() as session:
+            if projection == "virtual":
+                loaded = session.scalar(select(VirtualPosition).where(VirtualPosition.strategy_id == case.strategy_id))
+                assert loaded.quantity == 95
+            else:
+                loaded = session.scalar(select(OmsManagedPosition).where(OmsManagedPosition.strategy_code == "schwab_1m_v2"))
+                assert loaded.current_quantity == 95
+            # Hold the entity strongly, matching process_trade_intent's local
+            # pre-await virtual_position; expire_on_commit=False is production.
+            await case.service._process_stop_reject_market_fallback(session=session,
+                strategy=session.get(Strategy, case.strategy_id),
+                broker_account=session.get(BrokerAccount, case.account_id),
+                original_event=case.event, original_request=case.request,
+                rejection_reason="CONTROLLED stop rejected")
+        assert [request.quantity for request in case.broker.sent] == ([Decimal(remaining)] if remaining else [])
+    finally:
+        case.factory.kw["bind"].dispose()
+
+
+def orb_case(monkeypatch, *, raw="1010", after_release="1010"):
+    # Use the actual country selector/builder: mutating a legacy two-share
+    # order into ten would bypass ORB's real entry_quantity binding contract.
+    broker = _EodBroker()
+    service, factory, _ = _service(monkeypatch, broker=broker)
+    service.settings.orb_country_routing_enabled = True
+    service.settings.orb_webull_account_name = "live:orb"
+    store = CountryStore(factory)
+    store.put(CountryRecord("CLRO", "0000000001", "NY", "DE", True,
+                           OPEN-timedelta(days=1), "READY", OPEN.date()))
+    router = CountryRouter(store)
+    router._records = store.load()
+    selection = select_orb_country_route(router, "CLRO", OPEN,
+        schwab_account=ACCOUNT, webull_account="live:orb")
+    event = build_orb_schwab_open_intent(service.settings, "CLRO", Decimal("5.5284"), selection=selection)
+    asyncio.run(service.process_trade_intent(event))
+    bought = OPEN.replace(hour=14, minute=0)
+    with factory.begin() as session:
+        entry = session.scalar(select(BrokerOrder).where(BrokerOrder.side == "buy"))
+        assert entry.quantity == 10 and entry.payload["orb_country_route"] == "true"
+        entry.status = "filled"
+        entry_id = entry.id
+        session.add(Fill(order_id=entry.id, strategy_id=entry.strategy_id,
+            broker_account_id=entry.broker_account_id, broker_fill_id="controlled-ownmix2-orb-buy10",
+            symbol="CLRO", side="buy", quantity=10, price=Decimal("5.53"), filled_at=bought, payload={}))
+        session.add(VirtualPosition(strategy_id=entry.strategy_id, broker_account_id=entry.broker_account_id,
+            symbol="CLRO", quantity=10, average_price=Decimal("5.53"), opened_at=bought))
+        raw_quantity = Decimal(raw)
+        session.add(AccountPosition(broker_account_id=entry.broker_account_id,
+            symbol="CLRO", quantity=(raw_quantity if raw_quantity.is_finite() and raw_quantity > 0 else Decimal(1010)),
+            average_price=Decimal("5.53")))
+    parent_read = broker.fetch_order_update
+
+    async def read_parent(request):
+        report = await parent_read(request)
+        return replace(report, quantity=Decimal(10), filled_quantity=Decimal(10), origin="broker", reported_at=bought)
+
+    broker.fetch_order_update = read_parent
+    # This controlled adapter performs each list anew, never a cached snapshot.
+    broker.positions_wire_read_age_seconds = lambda _account: 0.0
+    broker.quantity = Decimal(raw)
+    broker.after_release_quantity = Decimal(after_release)
+    broker.sequence.clear()
+    clock = [OPEN.replace(hour=19, minute=55)]
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: clock[0])
+    return SimpleNamespace(service=service, factory=factory, broker=broker, entry_id=entry_id, clock=clock)
+
+
+@pytest.mark.parametrize("raw", ["1010", "1010.25"], ids=["manual-whole", "manual-fractional-surplus"])
+def test_orb_ten_plus_manual_thousand_closes_only_ten_once_after_pair_release(monkeypatch, raw):
+    case = orb_case(monkeypatch, raw=raw, after_release=raw)
+    try:
+        asyncio.run(case.service._orb_schwab_eod_close())
+        asyncio.run(case.service._orb_schwab_eod_close())
+        closes = [request for request in case.broker.submitted if request.intent_type == "close"]
+        assert len(closes) == 1 and closes[0].quantity == 10
+        assert closes[0].broker_account_name == ACCOUNT and closes[0].strategy_code == "orb_schwab"
+        assert case.broker.release_calls == [(ACCOUNT, "SCHWAB-ORB-1")]
+        assert case.broker.sequence == ["parent", "positions", "release", "positions", "sell"]
+        assert case.broker.quantity == Decimal(raw)-10
+        with case.factory() as session:
+            assert session.scalar(select(VirtualPosition.quantity)) == 0
+            fills = session.scalars(select(Fill).where(Fill.side == "sell")).all()
+            assert len(fills) == 1 and fills[0].quantity == 10
+            assert session.scalar(select(AccountPosition.quantity)) == Decimal(raw)-10
+    finally:
+        case.factory.kw["bind"].dispose()
+
+
+@pytest.mark.parametrize("raw", ["9", "0", "NaN", "Infinity"])
+def test_orb_underbacking_zero_or_nonfinite_never_releases_native_pair_or_sells_and_pages(monkeypatch, raw):
+    case = orb_case(monkeypatch, raw=raw)
+    try:
+        asyncio.run(case.service._orb_schwab_eod_close())
+        assert not case.broker.release_calls
+        assert not [request for request in case.broker.submitted if request.intent_type == "close"]
+        with case.factory() as session:
+            assert session.scalar(select(VirtualPosition.quantity)) == 10
+            incidents = session.scalars(select(SystemIncident)).all()
+            assert incidents and all(row.severity == "critical" for row in incidents)
+            assert not session.scalars(select(Fill).where(Fill.side == "sell")).all()
+    finally:
+        case.factory.kw["bind"].dispose()
+
+
+@pytest.mark.parametrize("after", ["9", "0", "NaN", "Infinity"])
+def test_orb_fresh_post_release_underbacking_or_unknown_still_prevents_sell(monkeypatch, after):
+    case = orb_case(monkeypatch, after_release=after)
+    try:
+        asyncio.run(case.service._orb_schwab_eod_close())
+        assert len(case.broker.release_calls) == 1
+        assert not [request for request in case.broker.submitted if request.intent_type == "close"]
+        with case.factory() as session:
+            assert session.scalar(select(VirtualPosition.quantity)) == 10
+            assert session.scalar(select(SystemIncident)) is not None
+            assert not session.scalars(select(Fill).where(Fill.side == "sell")).all()
+    finally:
+        case.factory.kw["bind"].dispose()
+
+
+@pytest.mark.parametrize("read_number", [1, 2], ids=["before-native-release", "after-native-release"])
+@pytest.mark.parametrize("submitted_mode", ["newer", "equal", "null"])
+def test_orb_newer_buy_during_broker_read_cannot_adopt_new_lot_or_manual_surplus(monkeypatch, read_number, submitted_mode):
+    case = orb_case(monkeypatch)
+    original_positions, reads = case.broker.list_account_positions, []
+
+    async def positions(account):
+        reads.append(account)
+        if len(reads) == read_number:
+            with case.factory.begin() as session:
+                old = session.get(BrokerOrder, case.entry_id)
+                parent = TradeIntent(id=uuid4(), strategy_id=old.strategy_id,
+                    broker_account_id=old.broker_account_id, symbol=old.symbol, side="buy",
+                    intent_type="open", quantity=10, status="filled", reason="CONTROLLED changed owner lot",
+                    payload={}, created_at=case.clock[0]-timedelta(seconds=1),
+                    updated_at=case.clock[0]-timedelta(seconds=1))
+                session.add(parent)
+                session.flush()
+                assert old.id.int < (1 << 128)-1
+                session.add(BrokerOrder(id=UUID(int=old.id.int+1), intent_id=parent.id,
+                    strategy_id=old.strategy_id, broker_account_id=old.broker_account_id,
+                    client_order_id="controlled-ownmix2-newer-orb", broker_order_id="controlled-newer-root",
+                    symbol=old.symbol, side="buy", quantity=10, status="filled", order_type="limit",
+                    time_in_force="day", payload=deepcopy(old.payload),
+                    submitted_at=(old.submitted_at if submitted_mode == "equal" else None
+                                  if submitted_mode == "null" else case.clock[0]-timedelta(seconds=1)),
+                    updated_at=case.clock[0]-timedelta(seconds=1)))
+        return await original_positions(account)
+
+    case.broker.list_account_positions = positions
+    try:
+        asyncio.run(case.service._orb_schwab_eod_close())
+        assert len(reads) == read_number
+        assert len(case.broker.release_calls) == read_number-1
+        assert not [request for request in case.broker.submitted if request.intent_type == "close"]
+        with case.factory() as session:
+            assert session.scalar(select(VirtualPosition.quantity)) == 10
+            incident = session.scalar(select(SystemIncident))
+            assert incident is not None and incident.severity == "critical"
+            assert incident.payload["entry_order_id"] == str(case.entry_id)
+            assert not session.scalars(select(Fill).where(Fill.side == "sell")).all()
+    finally:
+        case.factory.kw["bind"].dispose()
+
+
+def test_orb_current_parent_with_unknown_submitted_time_never_releases_or_sells(monkeypatch):
+    case = orb_case(monkeypatch)
+    try:
+        with case.factory.begin() as session:
+            session.get(BrokerOrder, case.entry_id).submitted_at = None
+        asyncio.run(case.service._orb_schwab_eod_close())
+        assert not case.broker.release_calls
+        assert not [request for request in case.broker.submitted if request.intent_type == "close"]
+        with case.factory() as session:
+            assert session.scalar(select(VirtualPosition.quantity)) == 10
+            incident = session.scalar(select(SystemIncident))
+            assert incident is not None and incident.severity == "critical"
+            assert incident.payload["entry_order_id"] == str(case.entry_id)
+    finally:
+        case.factory.kw["bind"].dispose()
+
+
+@pytest.mark.parametrize("remaining", [0, 5])
+def test_orb_owned_balance_change_after_last_broker_read_before_prepare_never_sells(monkeypatch, remaining):
+    case = orb_case(monkeypatch)
+    original_db, changed = case.service._run_db, []
+
+    async def change_before_prepare(work, **kwargs):
+        if work.__name__ == "prepare":
+            with case.factory.begin() as other:
+                other.scalar(select(VirtualPosition)).quantity = remaining
+            changed.append(work.__name__)
+        return await original_db(work, **kwargs)
+
+    case.service._run_db = change_before_prepare
+    try:
+        asyncio.run(case.service._orb_schwab_eod_close())
+        assert changed == ["prepare"]
+        assert case.broker.sequence == ["parent", "positions", "release", "positions"]
+        assert len(case.broker.release_calls) == 1
+        assert not [request for request in case.broker.submitted if request.intent_type == "close"]
+        with case.factory() as session:
+            assert session.scalar(select(VirtualPosition.quantity)) == remaining
+            assert not session.scalars(select(Fill).where(Fill.side == "sell")).all()
+            assert not session.scalars(select(BrokerOrder).where(BrokerOrder.side == "sell")).all()
+            incident = session.scalar(select(SystemIncident))
+            assert incident is not None and incident.severity == "critical"
+            assert incident.payload["entry_order_id"] == str(case.entry_id)
+    finally:
+        case.factory.kw["bind"].dispose()
