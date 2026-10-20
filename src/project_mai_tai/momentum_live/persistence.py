@@ -404,7 +404,7 @@ class LivePersistence:
                     order.payload = {**metadata, "momcancel1_ack_identity": "UNKNOWN"}
                     continue
             preserve = (report.event_type in {"rejected", "cancelled", "expired", "aborted"} and report.origin != "broker"
-                        or order.status == "filled" and report.event_type in {"accepted", "partially_filled"}
+                        or order.status == "filled" and report.event_type != "filled"
                         or entry_ack and order.status in {"cancelled", "rejected", "expired", "aborted"})
             metadata = {**order.payload, **request.metadata}
             if (order.payload or {}).get("momcancel1_ack_identity") == "UNKNOWN":
