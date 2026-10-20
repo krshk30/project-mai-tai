@@ -112,6 +112,26 @@ async def _finish(service: OmsRiskService, target: _Target, phase: str, now: dat
     await service._run_db(write)
 
 
+def _schwab_owned_quantity(session, target):
+    from project_mai_tai.oms.schwab_owned_positions import own_open_quantity
+
+    entry = session.get(BrokerOrder, target.entry_id, populate_existing=True)
+    latest = session.scalars(select(BrokerOrder).where(
+        BrokerOrder.strategy_id == target.strategy_id, BrokerOrder.broker_account_id == target.account_id,
+        BrokerOrder.symbol == target.symbol, BrokerOrder.side == "buy",
+    ).order_by(BrokerOrder.submitted_at.desc().nulls_first(), BrokerOrder.id.desc())
+      .limit(2).execution_options(populate_existing=True)).all()
+    if (not latest or latest[0].submitted_at is None
+            or len(latest) > 1 and latest[0].submitted_at == latest[1].submitted_at):
+        raise ValueError("orb_close_entry_chronology_UNKNOWN")
+    if (entry is None or latest[0].id != target.entry_id or entry.strategy_id != target.strategy_id
+            or entry.broker_account_id != target.account_id or entry.symbol != target.symbol
+            or entry.broker_order_id != target.broker_id):
+        raise ValueError("orb_close_owned_entry_CHANGED")
+    return own_open_quantity(session, strategy_id=target.strategy_id,
+        account_id=target.account_id, symbol=target.symbol)
+
+
 async def _broker_quantity(
     service: OmsRiskService, target: _Target, *, after: float | None = None,
 ) -> Decimal:
@@ -130,17 +150,24 @@ async def _broker_quantity(
     if len(matches) != 1 or matches[0].broker_account_name != target.account:
         raise ValueError("broker_position_not_positively_identified")
     quantity = matches[0].quantity
-    if not quantity.is_finite() or not 0 < quantity <= target.quantity <= target.entry_quantity:
+    if (not quantity.is_finite() or quantity <= 0 or not target.quantity.is_finite()
+            or not 0 < target.quantity <= target.entry_quantity):
         raise ValueError("broker_position_not_within_orb_ownership")
-    if quantity != quantity.to_integral_value():
-        raise ValueError("broker_position_not_whole_shares")
     if service.settings.provider_for_account(target.account) == "webull":
         from project_mai_tai.oms.orb_country import _snapshot
         def owned(session):
             return _snapshot(service, session, target.entry_id)[3]
-        if quantity > await service._run_db(owned, commit=False):
-            raise ValueError("orb_close_exceeds_current_owned_balance")
-    return quantity
+    else:
+        def owned(session):
+            return _schwab_owned_quantity(session, target)
+    own_quantity = await service._run_db(owned, commit=False)
+    if not own_quantity.is_finite() or not 0 < own_quantity <= target.quantity:
+        raise ValueError("orb_close_current_owned_balance_UNKNOWN")
+    if quantity < own_quantity:
+        raise ValueError("broker_position_below_orb_ownership")
+    if own_quantity != own_quantity.to_integral_value():
+        raise ValueError("orb_close_owned_quantity_not_whole_shares")
+    return own_quantity
 
 
 async def _post_release_quantity(service, target, released_at, clock):
@@ -382,6 +409,9 @@ async def _attempt_owned(
             from project_mai_tai.oms.orb_country import _snapshot
             remaining = _snapshot(service, session, entry.id)[3]
             if remaining != quantity:
+                raise ValueError("orb_owned_balance_changed_before_close")
+        elif account.provider == "schwab" and not protected:
+            if _schwab_owned_quantity(session, target) != quantity:
                 raise ValueError("orb_owned_balance_changed_before_close")
         if protected:
             context.validate_prepared(session, target, quantity)
