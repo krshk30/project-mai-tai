@@ -725,7 +725,9 @@ class OmsLiveRuntime:
             if (not values.get("soft_exit_sent") and values.get("killsw1_terminal_key") == terminal_key
                     and not await self._control_receipt_ready(position, values)):
                 return
-        if not values.get("soft_exit_reason"):
+        if (not values.get("soft_exit_reason")
+                or values.get("soft_exit_reason") == "target_5pct"
+                and reason in {"hard_stop_15pct", "time_300s", "KILLSW1_STOP"}):
             values["soft_exit_reason"] = reason
             await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
         position.pending_exit_reason = values["soft_exit_reason"]
