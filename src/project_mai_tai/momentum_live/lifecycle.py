@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Awaitable, Callable
 
 from project_mai_tai.momentum_live.admission import Refusal, STRATEGY_CODE
+from project_mai_tai.momentum_live.exit_policy import stop_loss_level
 
 
 @dataclass
@@ -62,7 +63,8 @@ class OwnedPosition:
         if not self.native_confirmed:
             if self.software_target_allowed and bid >= self.entry_price*Decimal("1.05"):
                 return "target_5pct"
-            if bid <= self.entry_price*Decimal(".85"):
+            if bid <= stop_loss_level(self.entry_price):
+                # Legacy mandatory-exit reason; MOMEXIT-B now stops at -10%.
                 return "hard_stop_15pct"
         return None
 

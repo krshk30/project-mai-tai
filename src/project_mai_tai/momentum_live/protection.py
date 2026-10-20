@@ -6,6 +6,7 @@ from typing import Awaitable, Callable
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.momentum_live.admission import Refusal, STRATEGY_CODE
+from project_mai_tai.momentum_live.exit_policy import stop_loss_level
 from project_mai_tai.momentum_live.lifecycle import OwnedPosition
 
 
@@ -143,7 +144,7 @@ class NativeProtection:
             raise Refusal("native_protection_identity_capacity")
         tick = Decimal(".0001") if position.entry_price < 1 else Decimal(".01")
         target = (position.entry_price*Decimal("1.05")/tick).to_integral_value(rounding=ROUND_CEILING)*tick
-        stop = (position.entry_price*Decimal(".85")/tick).to_integral_value(rounding=ROUND_FLOOR)*tick
+        stop = (stop_loss_level(position.entry_price)/tick).to_integral_value(rounding=ROUND_FLOOR)*tick
         if stop <= 0:
             raise Refusal("native_stop_tick_unrepresentable")
         metadata = {"episode_id": position.episode_id, "momlive_strategy": STRATEGY_CODE,
