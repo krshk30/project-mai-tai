@@ -1,6 +1,7 @@
 """L1 shared-account rules and runtime fences; controlled books are labelled."""
 
 from dataclasses import replace
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 import asyncio
 from decimal import Decimal
@@ -13,6 +14,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.db.models import (
     AccountPosition, Base, BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot,
@@ -145,6 +147,16 @@ def test_scanner_empty_without_complete_fresh_both_account_receipts_stays_unknow
                 row.payload = {**payload, "writer": "CONTROLLED non-authoritative cache"}
             elif fault == "boolean-count":
                 row.payload = {**payload, "position_count": False}
+                # Dict equality treats 0 == False; force the malformed JSON
+                # input to persist rather than silently retaining valid zero.
+                flag_modified(row, "payload")
+    if fault == "boolean-count":
+        with factory() as session:
+            saved = session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == POSITIONS_RECEIPT_TYPE)).all()
+            assert len(saved) == 2
+            assert all(type(row.payload["position_count"]) is bool
+                       and row.payload["position_count"] is False for row in saved)
     proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
     assert not proof.clear and proof.reason == "own_position_evidence_UNKNOWN"
     assert store.restore()[req.symbol] == req
@@ -846,11 +858,16 @@ def test_atomic_retirement_precommit_mismatch_rolls_back_all_rows(db):
     proof = RemovedWaitProof(req, MS, True, "scanner_removal_flat")
     strat.stage_removed_wait_clear(proof, retire_owner=True)
     plan = strat._removed_wait_pending_clears[req]
+    def snapshot_preimages():
+        with factory() as session:
+            return {row.id: (row.snapshot_type, deepcopy(row.payload), row.created_at)
+                    for row in session.scalars(select(DashboardSnapshot))}
+
+    before = snapshot_preimages()
     answers = iter((True, False))
     with pytest.raises(ValueError, match="before commit"):
         store.commit_clear(plan, lambda: next(answers))
-    from sqlalchemy import func, select
-    from project_mai_tai.db.models import DashboardSnapshot
-    with factory() as session:
-        assert session.scalar(select(func.count()).select_from(DashboardSnapshot)) == 1
+    # Preserve EVERY preexisting snapshot field, including both broker-read
+    # receipts; no extra retirement snapshot may survive the failed commit.
+    assert snapshot_preimages() == before
     assert store.restore() == {req.symbol: req}

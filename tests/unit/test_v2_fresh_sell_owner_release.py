@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.db.base import Base
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import (
-    AccountPosition, BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, TradeIntent,
+    AccountPosition, BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, TradeIntent, VirtualPosition,
 )
 from project_mai_tai.events import TradeIntentEvent
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
@@ -236,7 +236,11 @@ async def test_blocking_controls(monkeypatch, caplog, pm, account, fault):
         own = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
         foreign = session.scalar(select(Strategy).where(Strategy.code == "orb_schwab"))
         if fault == "position":
-            session.add(AccountPosition(broker_account_id=acct.id, symbol="FLYE", quantity=1))
+            # TOP16:33: manual AP alone is not bot ownership. This negative
+            # control must contain a real own holding, without changing gates.
+            session.add(AccountPosition(broker_account_id=acct.id, symbol="FLYE", quantity=1000))
+            session.add(VirtualPosition(strategy_id=own.id, broker_account_id=acct.id,
+                symbol="FLYE", quantity=1, average_price=Decimal("2.3")))
         elif fault in {"order", "orb"}:
             session.add(BrokerOrder(strategy_id=foreign.id if fault == "orb" else own.id,
                 broker_account_id=acct.id, symbol="FLYE", side="buy", status="accepted",
@@ -281,6 +285,35 @@ async def test_blocking_controls(monkeypatch, caplog, pm, account, fault):
     assert not bot.strategy._strict_first_rest_admitted(state, slot="first")
     assert not bot.strategy.drain_pending_intents()
     engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("account", [PRIMARY, MIRROR])
+async def test_manual_only_thousand_shares_releases_without_debit_or_new_dispatch(monkeypatch, pm, account):
+    bot, state, clock, request, writes, engine = setup(monkeypatch, pm=pm)
+    try:
+        with bot.session_factory.begin() as session:
+            acct = session.scalar(select(BrokerAccount).where(BrokerAccount.name == account))
+            account_id = acct.id
+            session.add(AccountPosition(broker_account_id=account_id, symbol="FLYE", quantity=1000))
+        refresh(bot, clock)
+        await bot._fresh_sell_owner_release_poll()
+        assert bot.strategy._fresh_sell_release_evidence["FLYE"].clear
+        assert state.flip_owner_phase == "bound" and bot.strategy._removed_wait_gate_closed("FLYE")
+        sell(bot, state)
+        await commit_and_later_bar(bot, state, clock)
+        assert state.flip_owner_phase == "idle" and not bot.strategy._removed_wait_requests
+        assert bot._removed_wait_store.restore() == {}
+        assert state.fanout_last_retired_opportunity_id == request.opportunity_id
+        assert writes == []
+        assert not bot.strategy.drain_pending_intents() and not bot.strategy.drain_webull_direct_intents()
+        with bot.session_factory() as session:
+            raw = session.scalar(select(AccountPosition).where(
+                AccountPosition.broker_account_id == account_id, AccountPosition.symbol == "FLYE"))
+            assert raw.quantity == 1000
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.asyncio
