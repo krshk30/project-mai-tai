@@ -39,6 +39,16 @@ def test_synthetic_seven_fills_keep_two_worx_rows_and_one_unknown_saiq_group():
     assert rows == original
 
 
+def test_omitted_collector_cannot_silently_return_partial_ledger():
+    rows = synthetic_seven_fills()
+    original = deepcopy(rows)
+    assert control._atr_episode_fill_ledger(rows) is None
+    unresolved = []
+    closed, pnl = control._atr_episode_fill_ledger(rows, unattributed_exits=unresolved)
+    assert len(closed) == 2 and pnl == 10 and len(unresolved) == 1
+    assert rows == original
+
+
 def test_synthetic_repaired_external_lot_restores_exact_attribution_not_sql_execution():
     rows = synthetic_seven_fills()
     # Explicit synthetic evidence of the old lot's close BEFORE the new entry.

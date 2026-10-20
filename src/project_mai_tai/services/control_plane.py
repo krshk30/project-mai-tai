@@ -91,7 +91,7 @@ EASTERN_TZ = ZoneInfo("America/New_York")
 def _atr_episode_fill_ledger(
     recent_fills: list[dict[str, Any]], *, unattributed_exits: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict], float] | None:
-    """Return proven rows/P&L; optionally collect grouped unresolved exits, never FIFO."""
+    """Return proven rows/P&L; partial results require an unresolved-exit collector."""
     if not recent_fills or len(recent_fills) >= 1000:
         return None
     fills = [row for row in recent_fills if row.get("strategy_code") == "schwab_1m_v2"]
@@ -181,6 +181,8 @@ def _atr_episode_fill_ledger(
         }} | {"quantity": float(episode["bought"]), "entry_price": float(entry_price),
               "exit_price": float(exit_price), "pnl": float(episode["pnl_value"]),
               "profit_pct": float((exit_price / entry_price - 1) * 100)})
+    if unknown and unattributed_exits is None:
+        return None  # A legacy caller must not mistake a partial total for a complete ledger.
     if unattributed_exits is not None:
         unattributed_exits.extend({**row, "quantity": float(row["quantity"])} for row in unknown.values())
     return closed, float(realized)
