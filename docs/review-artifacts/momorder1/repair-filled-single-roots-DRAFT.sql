@@ -29,6 +29,9 @@ DECLARE
   m jsonb; n integer;
   audit_id constant uuid := '316d9531-24be-4b48-a1fb-1ac68ba9dc5c';
 BEGIN
+  IF current_database() IS DISTINCT FROM 'project_mai_tai' THEN
+    RAISE EXCEPTION 'wrong database for MOMORDER1 repair';
+  END IF;
   SELECT v INTO STRICT m FROM momorder1_inputs WHERE k='meta';
   IF coalesce(m->>'backup_ref','') !~ '[^[:space:]]'
      OR coalesce(m->>'backup_sha256','') !~ '^[0-9a-f]{64}$'
@@ -79,6 +82,14 @@ BEGIN
           AND f.broker_account_id=aid AND f.symbol=spec.symbol AND f.side='sell'
           AND f.quantity=spec.qty AND f.price=spec.price AND f.filled_at=spec.fill_time
           AND f.broker_fill_id=spec.broker_id || ':' || spec.qty::integer::text)
+       OR EXISTS (SELECT FROM fills f JOIN broker_orders b ON b.id=f.order_id
+           WHERE b.strategy_id=sid AND b.payload::jsonb->>'episode_id'=spec.parent_id::text
+             AND (f.strategy_id IS DISTINCT FROM b.strategy_id
+               OR f.broker_account_id IS DISTINCT FROM b.broker_account_id
+               OR f.symbol IS DISTINCT FROM b.symbol OR f.side IS DISTINCT FROM b.side
+               OR f.side NOT IN ('buy','sell') OR f.quantity IS NULL OR f.quantity <= 0
+               OR f.quantity::text IN ('NaN','Infinity','-Infinity')
+               OR b.broker_account_id IS DISTINCT FROM aid OR b.symbol IS DISTINCT FROM spec.symbol))
        OR (SELECT sum(CASE WHEN f.side='buy' THEN f.quantity ELSE -f.quantity END)
            FROM fills f JOIN broker_orders b ON b.id=f.order_id
            WHERE b.strategy_id=sid AND b.broker_account_id=aid
