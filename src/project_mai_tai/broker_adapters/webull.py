@@ -1284,6 +1284,12 @@ class WebullBrokerAdapter:
             self._decimal_or_none(item, "filled_qty", "filledQty", "filled_quantity", "filledQuantity")
             or Decimal("0")
         )
+        if momentum_fresh and (
+            not filled_quantity.is_finite() or not request.quantity.is_finite()
+            or request.quantity <= 0 or not 0 <= filled_quantity <= request.quantity
+            or event_type == "filled" and filled_quantity != request.quantity
+        ):
+            return None
         terminal_partial = ((getattr(self, "_list_primary_enabled", False) or orb_owned or momentum_fresh)
                             and event_type in {"cancelled", "rejected"} and filled_quantity > 0)
         # filled_price = the CONFIRMED real fill-price field (was the naked-position bug:
