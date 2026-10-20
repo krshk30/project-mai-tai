@@ -7020,15 +7020,32 @@ class SchwabV2BotService:
                 finally:
                     worker["completed"].set()
 
+            def worker_done(task, worker=owner, symbol=record.symbol):
+                # Retrieve a late exception even when the poll waiter was cancelled.
+                # Task completion itself is NEVER evidence that the native worker ran.
+                if task.cancelled():
+                    logger.warning("[V2-FALSEFLIP2] %s reason=rearm_worker_task_cancelled pending_retained=1", symbol)
+                else:
+                    failure = task.exception()
+                    if failure is not None and worker["waiter_finished"]:
+                        logger.error("[V2-FALSEFLIP2] %s reason=rearm_worker_failed_after_waiter "
+                                     "error_class=%s pending_retained=1", symbol, type(failure).__name__)
+
             try:
-                await asyncio.to_thread(write_rearm)
+                # Retain and shield the task BEFORE yielding: cancellation while
+                # queued must not prevent the actual worker's finally from running.
+                owner["invocation"] = asyncio.to_thread(write_rearm)
+                owner["task"] = asyncio.create_task(owner["invocation"], name="falseflip2-rearm-"+record.symbol)
+                owner["task"].add_done_callback(worker_done)
+                await asyncio.shield(owner["task"])
             except Exception:  # noqa: BLE001 - keep the old false opportunity fenced
                 if state is not None and self.strategy._resting_return_reason(state, "atomic_rearm_write_pending"):
                     logger.exception("[V2-FALSEFLIP2] %s reason=rearm_write_pending", record.symbol)
                 continue
             finally:
                 owner["waiter_finished"] = True
-                # An unresolved worker keeps ownership even after CancelledError.
+                # Submission errors may have enqueued work before raising. Neither
+                # failure nor CancelledError proves no invocation or rollback.
                 self.strategy.falseflip2_rearm_worker_pending(record.symbol)
             if valid():
                 armed = self.strategy.acknowledge_falseflip2_rearm(plan)

@@ -2519,7 +2519,9 @@ class SchwabV2Strategy:
         # The event belongs to the actual synchronous worker, not its asyncio
         # future: cancelling the waiter cannot prove that the DB invocation ended.
         completed = owner.get("completed")
-        if completed is None or not completed.is_set() or not owner.get("waiter_finished"):
+        task = owner.get("task")
+        if (completed is None or not completed.is_set() or not owner.get("waiter_finished")
+                or task is None or not task.done()):
             return True
         if workers.get(symbol) is owner:
             workers.pop(symbol)

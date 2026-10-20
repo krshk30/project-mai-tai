@@ -24,6 +24,7 @@ from project_mai_tai.falseflip1_runtime import BUDGET_TYPE, FalseBudget, FalseFl
 from project_mai_tai.momentum_live_sec import CountryRoute
 from project_mai_tai.positions_read_receipt import record_receipts
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
+from project_mai_tai.services import schwab_1m_v2_bot as service_module
 from project_mai_tai.strategy_core.schwab_1m_v2 import Quote, SchwabV2Strategy
 from project_mai_tai.v2_flip_entry_ownership import FlipEntryOwnershipStore
 from project_mai_tai.v2_removed_wait import RemovedWaitStore
@@ -585,6 +586,7 @@ async def test_cancelled_waiter_never_refreshes_or_reinvokes_until_actual_worker
         with pytest.raises(asyncio.CancelledError):
             await task
         assert owner["waiter_finished"] is True and not owner["completed"].is_set()
+        assert not owner["task"].done() and not owner["task"].cancelled()
         case.strategy._falseflip_restoring_track(case.state)
         await case.bot._falseflip2_poll(case.strategy._falseflip_book)
         assert case.strategy.pending_falseflip2_rearms() == (plan,)
@@ -592,6 +594,7 @@ async def test_cancelled_waiter_never_refreshes_or_reinvokes_until_actual_worker
         assert len(calls) == 1 and not case.routes and not case.state.resting_active
         go.set()
         assert await asyncio.to_thread(owner["completed"].wait, 3)
+        await asyncio.gather(owner["task"], return_exceptions=True)
         monkeypatch.undo()
         retried = install_writer(monkeypatch, case)
         await case.bot._falseflip2_poll(case.strategy._falseflip_book)
@@ -609,6 +612,7 @@ async def test_cancelled_waiter_never_refreshes_or_reinvokes_until_actual_worker
             await asyncio.gather(task, return_exceptions=True)
         if owner is not None:
             assert await asyncio.to_thread(owner["completed"].wait, 3)
+            await asyncio.gather(owner["task"], return_exceptions=True)
         case.engine.dispose()
 
 
@@ -704,6 +708,127 @@ async def test_new_strategy_and_service_restore_native_stores_after_release_then
                 DashboardSnapshot.snapshot_type == "v2_wait_dispatch")).all()
             assert len(begins) == 1
     finally:
+        case.engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_before_worker_entry_keeps_shielded_task_then_retries_same_candidate(monkeypatch):
+    case = country_case()
+    queued, enter = asyncio.Event(), asyncio.Event()
+    original_to_thread = asyncio.to_thread
+    owner = task = None
+    queued_count = []
+    try:
+        async def queued_worker(function, *args, **kwargs):
+            if function.__name__ == "write_rearm":
+                queued_count.append(function)
+                queued.set()
+                await enter.wait()  # Explicitly BEFORE the actual worker entry.
+            return await original_to_thread(function, *args, **kwargs)
+
+        calls = install_writer(monkeypatch,case)
+        monkeypatch.setattr(service_module.asyncio,"to_thread",queued_worker)
+        task = asyncio.create_task(case.bot._falseflip2_poll(book(case)))
+        await asyncio.wait_for(queued.wait(),3)
+        plan, = case.strategy.pending_falseflip2_rearms()
+        owner = case.strategy._falseflip2_rearm_workers[case.state.symbol]
+        retained_task = owner["task"]
+        assert len(calls) == 1 and not owner["completed"].is_set()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert owner["task"] is retained_task and not retained_task.done() and not retained_task.cancelled()
+        case.state.atr_trail += .01
+        await case.bot._falseflip2_poll(case.strategy._falseflip_book)
+        assert len(queued_count) == 1 and len(calls) == 1
+        assert case.strategy.pending_falseflip2_rearms() == (plan,)
+        assert not case.state.resting_active and not case.routes
+        enter.set()
+        await asyncio.gather(retained_task,return_exceptions=True)
+        assert owner["completed"].is_set()
+        monkeypatch.undo()
+        retried = install_writer(monkeypatch,case)
+        await case.bot._falseflip2_poll(case.strategy._falseflip_book)
+        assert retried == [(plan[0].opportunity_id,plan[2])]
+        assert case.state.resting_active and case.state.resting_level == case.state.atr_trail
+        assert case.state.fanout_segment_id == plan[0].opportunity_id
+        with case.factory() as session:
+            begins = session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == "v2_wait_dispatch")).all()
+            assert len(begins) == 1
+    finally:
+        enter.set()
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
+        if owner is not None:
+            await asyncio.gather(owner["task"],return_exceptions=True)
+        case.engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["unproven_no_entry", "accepted_delayed", "accepted_committed"])
+async def test_untyped_submission_failure_never_implies_no_wire_or_rollback(monkeypatch,outcome):
+    case = country_case()
+    original_to_thread = asyncio.to_thread
+    release_worker = threading.Event()
+    entered = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    detached = []
+    try:
+        async def uncertain_submit(function,*args,**kwargs):
+            if function.__name__ != "write_rearm":
+                return await original_to_thread(function,*args,**kwargs)
+            if outcome == "accepted_delayed":
+                def submitted():
+                    loop.call_soon_threadsafe(entered.set)
+                    assert release_worker.wait(3)
+                    return function(*args,**kwargs)
+
+                detached.append(asyncio.create_task(original_to_thread(submitted)))
+                await entered.wait()
+            elif outcome == "accepted_committed":
+                await original_to_thread(function,*args,**kwargs)
+            # Identical error shape in all cases: it cannot classify whether a
+            # pool accepted the job. Only native completion permits a retry.
+            raise RuntimeError("controlled submission outcome UNKNOWN")
+
+        calls = install_writer(monkeypatch,case)
+        monkeypatch.setattr(service_module.asyncio,"to_thread",uncertain_submit)
+        await case.bot._falseflip2_poll(book(case))
+        plan, = case.strategy.pending_falseflip2_rearms()
+        case.state.atr_trail += .01
+        assert not case.state.resting_active and not case.routes and not case.identities
+        if outcome == "accepted_committed":
+            assert len(calls) == 2
+        else:
+            owner = case.strategy._falseflip2_rearm_workers[case.state.symbol]
+            assert owner["task"].done() and not owner["completed"].is_set()
+            await case.bot._falseflip2_poll(case.strategy._falseflip_book)
+            assert case.strategy.pending_falseflip2_rearms() == (plan,)
+            assert len(calls) == 1 and not case.state.resting_active
+            if outcome == "unproven_no_entry":
+                # The test knows it never called the function, but production
+                # has no typed rejection receipt. Keep UNKNOWN; do not clear it.
+                assert case.strategy.falseflip2_rearm_worker_pending(case.state.symbol)
+                return
+            release_worker.set()
+            await asyncio.gather(*detached,return_exceptions=True)
+            assert owner["completed"].is_set()
+        monkeypatch.undo()
+        retried = install_writer(monkeypatch,case)
+        await case.bot._falseflip2_poll(case.strategy._falseflip_book)
+        assert retried == [(plan[0].opportunity_id,plan[2])]
+        assert case.state.resting_active and case.state.resting_level == case.state.atr_trail
+        assert case.state.fanout_segment_id == plan[0].opportunity_id
+        with case.factory() as session:
+            begins = session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == "v2_wait_dispatch")).all()
+            assert len(begins) == 1
+    finally:
+        release_worker.set()
+        if detached:
+            await asyncio.gather(*detached,return_exceptions=True)
         case.engine.dispose()
 
 
