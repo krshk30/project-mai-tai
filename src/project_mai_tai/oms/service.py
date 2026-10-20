@@ -5980,14 +5980,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     def _cw_target_binding_matches(row, context):
         if not context or "cw_target_bound_row_id" not in context:
             return True
+        if (str(getattr(row, "managed_row_id", getattr(row, "id", ""))) != context["cw_target_bound_row_id"]
+                or str(row.entry_order_id or "") != context["cw_target_entry_order_id"]):
+            return False
         try:
             price_matches = stored_price(row.entry_price) == stored_price(context["cw_target_entry_price"])
         except (InvalidOperation, ValueError):
             return False
         return (
-            str(getattr(row, "managed_row_id", getattr(row, "id", ""))) == context["cw_target_bound_row_id"]
-            and str(row.entry_order_id or "") == context["cw_target_entry_order_id"]
-            and price_matches
+            price_matches
             and int(row.current_quantity) == int(context["cw_target_quantity"])
             and getattr(row, "status", "open") == "open"
         )
