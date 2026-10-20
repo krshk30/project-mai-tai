@@ -20,11 +20,11 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import event as sql_event, select
+from sqlalchemy import MetaData, event as sql_event, select
 from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.db.models import (
-    AccountPosition, BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition,
+    AccountPosition, Base, BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition,
     Strategy, TradeIntent, VirtualPosition,
 )
 from project_mai_tai.owned_inventory import owned_position_present
@@ -77,7 +77,18 @@ def receipt(case, *, unreadable=False, position_count=1):
 
 
 def inventory_case(monkeypatch, account, scenario):
-    bot, state, clock, request, writes, engine = setup(monkeypatch, purpose="retry_exhausted")
+    schema_metadata = None
+    if scenario == "manual_and_own_null_buy":
+        # Disposable legacy-schema control only: clone ALL tables/FKs, never
+        # mutate Base or pretend the production NOT NULL schema accepts NULL.
+        assert Base.metadata.tables["broker_orders"].c.status.nullable is False
+        schema_metadata = MetaData(naming_convention=Base.metadata.naming_convention)
+        for table in Base.metadata.tables.values():
+            table.to_metadata(schema_metadata)
+        schema_metadata.tables["broker_orders"].c.status.nullable = True
+        assert Base.metadata.tables["broker_orders"].c.status.nullable is False
+    bot, state, clock, request, writes, engine = setup(
+        monkeypatch, purpose="retry_exhausted", schema_metadata=schema_metadata)
     case = SimpleNamespace(bot=bot, state=state, clock=clock, request=request,
                            writes=writes, engine=engine, account=account)
     at = instant(clock[0]-60000)
@@ -152,6 +163,13 @@ def inventory_case(monkeypatch, account, scenario):
                     side="buy", quantity=quantity, price=Decimal(5), filled_at=at,
                     payload={"source": "CONTROLLED broker execution"}))
     receipt(case, unreadable=scenario == "unreadable_account")
+    if scenario == "manual_and_own_null_buy":
+        assert Base.metadata.tables["broker_orders"].c.status.nullable is False
+        with bot.session_factory() as session:
+            # A separate committed read proves an actual SQL NULL row exists.
+            assert session.scalar(select(BrokerOrder.id).where(
+                BrokerOrder.id == order.id, BrokerOrder.status.is_(None))) == order.id
+            assert session.scalar(select(BrokerOrder.status).where(BrokerOrder.id == order.id)) is None
     return case
 
 

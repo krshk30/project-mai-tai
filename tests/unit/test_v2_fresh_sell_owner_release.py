@@ -51,7 +51,8 @@ def instant(ms):
     return datetime.fromtimestamp(ms / 1000, UTC)
 
 
-def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False, request_present=True):
+def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False, request_present=True,
+          schema_metadata=None):
     shift = -6 * 60 * 60_000 if pm else 0  # Explicit PM time-shift control, not original event time.
     settings = Settings(
         strategy_schwab_1m_v2_confirmed_window_enabled=True,
@@ -117,7 +118,7 @@ def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False, req
     state.atr_short_flip_bar_ts = FLYE["fresh_sell_bar_ms"] + shift
     strategy.apply_flip_position_book(FlipPositionBook(clock[0], True, {}))
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
+    (Base.metadata if schema_metadata is None else schema_metadata).create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     with factory() as session:
         own = Strategy(code="schwab_1m_v2", name="B2 replay")
@@ -138,7 +139,11 @@ def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False, req
                 updated_at=datetime.fromisoformat(row["updated_at"]) + timedelta(milliseconds=shift)))
         session.commit()
 
-    class ClockDatetime(datetime):
+    class ClockMeta(type):
+        def __instancecheck__(cls, value):
+            return isinstance(value, datetime)
+
+    class ClockDatetime(datetime, metaclass=ClockMeta):
         @classmethod
         def now(cls, tz=None):
             return datetime.fromtimestamp(clock[0] / 1000, tz or UTC)
@@ -715,8 +720,44 @@ async def test_safety_controls_kill_mutations(monkeypatch, caplog, fault, before
     namespace["datetime"] = ClockProxy
     exec(compile(source.replace(before, after), "<B2-safety-mutant>", "exec"), namespace)
     monkeypatch.setattr(SchwabV2BotService, original.__name__, namespace[original.__name__])
-    with pytest.raises(AssertionError):
+    if fault == "receipt":
+        # The independent own-inventory freshness fence must still hold when
+        # only the outer freshness check is removed.
         await test_blocking_controls(monkeypatch, caplog, False, PRIMARY, fault)
+    else:
+        with pytest.raises(AssertionError):
+            await test_blocking_controls(monkeypatch, caplog, False, PRIMARY, fault)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outer", [False, True], ids=["inner-only-held", "dual-freshness-killed"])
+async def test_independent_receipt_freshness_fences_and_dual_mutation(monkeypatch, caplog, outer):
+    from project_mai_tai import owned_inventory as inventory_module
+
+    helper = bot_module.owned_position_present
+    source = textwrap.dedent(inspect.getsource(helper))
+    inner = "not 0 <= (now - read_at).total_seconds() * 1000 <= max_age_ms"
+    assert source.count(inner) == 1
+    namespace = dict(inventory_module.__dict__)
+    exec(compile(source.replace(inner, "False"), "<B2-inner-freshness-mutant>", "exec"), namespace)
+    monkeypatch.setattr(bot_module, "owned_position_present", namespace[helper.__name__])
+    if outer:
+        original = SchwabV2BotService._fetch_fresh_sell_release_evidence
+        source = textwrap.dedent(inspect.getsource(original))
+        before = "not 0 <= observed - read_at <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS"
+        assert source.count(before) == 1
+        namespace = dict(bot_module.__dict__)
+        class ClockProxy:
+            now = staticmethod(lambda tz=None: bot_module.datetime.now(tz))
+            fromtimestamp = staticmethod(datetime.fromtimestamp)
+        namespace["datetime"] = ClockProxy
+        exec(compile(source.replace(before, "False"), "<B2-dual-freshness-mutant>", "exec"), namespace)
+        monkeypatch.setattr(SchwabV2BotService, original.__name__, namespace[original.__name__])
+        with pytest.raises(AssertionError):
+            await test_blocking_controls(monkeypatch, caplog, False, PRIMARY, "receipt")
+    else:
+        # The outer receipt check independently rejects the same stale input.
+        await test_blocking_controls(monkeypatch, caplog, False, PRIMARY, "receipt")
 
 
 def test_default_on_flag_and_v2_catalog_owner():
