@@ -124,6 +124,54 @@ async def test_existing_trusted_stamp_adds_zero_reads_and_preserves_fill(tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["stale_partial_50_of_111", "nonterminal", "missing_marker", "wrong_origin"])
+async def test_incomplete_readback_never_stamps_durable_full_fill(tmp_path, monkeypatch, fault):
+    h, row = await terminal_case(tmp_path, "schwab", "sell")
+    try:
+        coid = row["request"].client_order_id
+        before_metadata, before_fills, _ = durable(h, coid)
+        report = replace(h.venue.report(row["request"]), metadata={
+            **row["request"].metadata, "momlive_execution_time_source": "broker_execution_time"})
+        if fault == "stale_partial_50_of_111":
+            report = replace(report, event_type="partially_filled", filled_quantity=D(50))
+        elif fault == "nonterminal":
+            report = replace(report, event_type="accepted")
+        elif fault == "missing_marker":
+            report = replace(report, metadata={key: value for key, value in report.metadata.items()
+                                              if key != "momlive_execution_time_source"})
+        else:
+            report = replace(report, origin="client")
+        reads, records = [], []
+
+        async def controlled_read(request, runtime, *, fresh=False):
+            assert fresh is True and request.client_order_id == coid
+            assert durable(h, coid)[2]["momlive_runtime"]["execution_time_readback_coids"] == [coid]
+            reads.append(request.client_order_id)
+            # Deliberately test the helper boundary, not native mapper acceptance.
+            return report
+
+        async def forbidden_record(*args, **kwargs):
+            records.append((args, kwargs))
+            raise AssertionError("incomplete timing proof must never reach persistence")
+
+        monkeypatch.setattr(h.runtime.backend, "fetch_entry_update", controlled_read)
+        monkeypatch.setattr(h.runtime, "_record", forbidden_record)
+        wire_before = list(h.venue.calls)
+        await h.runtime._read_missing_execution_time(IDENTITY, row)
+        await h.runtime._read_missing_execution_time(IDENTITY, row)
+        metadata, fills, parent = durable(h, coid)
+        assert reads == [coid] and records == []
+        assert metadata == before_metadata and fills == before_fills
+        assert "momlive_last_exit_fill_ns" not in metadata
+        assert metadata["momlive_terminal_broker_event"] == "filled"
+        assert sum(quantity for _, quantity, _ in fills) == 111
+        assert parent["momlive_runtime"]["execution_time_readback_coids"] == [coid]
+        assert h.venue.calls == wire_before
+    finally:
+        h.engine.dispose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("side", ["buy", "sell"])
 async def test_actual_observe_reaches_terminal_instant_fill_readback(tmp_path, monkeypatch, side):
     h, row = await terminal_case(tmp_path, "schwab", side)
