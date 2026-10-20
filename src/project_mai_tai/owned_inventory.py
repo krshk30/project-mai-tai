@@ -14,10 +14,11 @@ ROW_LIMIT = 8192
 
 
 def owned_position_present(session, *, symbol, accounts, strategy_id, now, max_age_ms=15_000):
-    """Only this strategy's live books hold its local release gate.
+    """Live bot books, not manual account surplus, hold the local release gate.
 
-    Historical fills and other strategies' books cannot resurrect inventory
-    already cleared by the OMS. Native, cancellation and broker-flat proofs
+    Historical fills cannot resurrect inventory already cleared by the OMS.
+    Other bots' live books retain their existing conservative hold. Native,
+    cancellation and broker-flat proofs
     remain separate consumers; this helper cannot replace them.
     """
     def bounded(query):
@@ -72,6 +73,31 @@ def owned_position_present(session, *, symbol, accounts, strategy_id, now, max_a
             TradeIntent.symbol == symbol, TradeIntent.side == "buy", TradeIntent.intent_type == "open",
             or_(TradeIntent.status.is_(None), TradeIntent.status.notin_(terminal | {"completed"})))):
         return True
+
+    for position in bounded(select(VirtualPosition).where(
+            VirtualPosition.strategy_id != strategy_id, VirtualPosition.symbol == symbol,
+            VirtualPosition.broker_account_id.in_(accounts))):
+        try:
+            amount = Decimal(str(position.quantity))
+        except (ValueError, TypeError, ArithmeticError) as exc:
+            raise ValueError("owned_inventory_other_bot_UNKNOWN") from exc
+        if not amount.is_finite():
+            raise ValueError("owned_inventory_other_bot_UNKNOWN")
+        if amount != 0:
+            return True
+    for row in bounded(select(OmsManagedPosition).where(
+            or_(OmsManagedPosition.strategy_code.is_(None),
+                OmsManagedPosition.strategy_code != strategy.code),
+            OmsManagedPosition.symbol == symbol,
+            OmsManagedPosition.broker_account_name.in_(tuple(accounts.values())),
+            or_(OmsManagedPosition.status.is_(None), OmsManagedPosition.status != "closed",
+                OmsManagedPosition.current_quantity != 0))):
+        amount = quantity(row.current_quantity)
+        if (not row.strategy_code or row.status not in {"open", "closed"}
+                or row.status == "closed" and amount):
+            raise ValueError("owned_inventory_other_bot_UNKNOWN")
+        if row.status == "open":
+            return True
 
     receipts = load_receipts(session)
     for name in accounts.values():
