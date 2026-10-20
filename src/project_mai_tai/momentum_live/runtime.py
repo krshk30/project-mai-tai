@@ -1335,6 +1335,13 @@ class OwnedNativeBackend:
         if len(sent) > 2 or len(set(sent)) != len(sent):
             raise Refusal("native_cancel_wire_identity_UNKNOWN")
         if handle.session != "NORMAL":
+            if (self._known_cancel_binding(row, handle, handle.base_coid)
+                    and row["status"] in {"filled", "cancelled", "rejected", "expired", "aborted"}
+                    and row["request"].metadata.get("momlive_terminal_broker_event") == row["status"]):
+                # This is a real single order, not a synthetic pair root. Its
+                # exact durable terminal proof needs neither a read nor a cancel;
+                # the caller still owns reconciliation/release of the reservation.
+                return
             identities = (handle.base_coid,)
         elif provider == "webull":
             identities = tuple(self.leaf(handle.account, runtime).exit_pair_leg_client_order_ids(handle.base_coid))
@@ -1395,6 +1402,13 @@ class OwnedNativeBackend:
                 # still fail above; cancellation NEVER releases the reservation.
             else:
                 outcome = await runtime._fresh_cancel_outcome(child, handle=handle if native_child else None)
+                if handle.session != "NORMAL" and row["status"] == "filled":
+                    # Let the fresh read account/reconcile, but never cancel a
+                    # stored filled single root through unavailable fallback or
+                    # a regressive working read lacking canonical terminal proof.
+                    if not runtime._cancel_read_terminal(outcome.report, child):
+                        deferred = True
+                    continue
                 if outcome.kind != "report" and not (mandatory
                         and outcome.kind in {"unavailable", "status_unknown"}
                         and self._known_cancel_binding(durable if native_child else row, handle, identity)):
