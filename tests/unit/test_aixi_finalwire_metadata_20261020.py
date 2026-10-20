@@ -20,7 +20,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-from project_mai_tai.broker_adapters.protocols import OrderRequest
+from project_mai_tai.broker_adapters.protocols import ExitPairReleaseResult, OrderRequest
 from project_mai_tai.db.models import (
     AccountPosition, BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill,
     OmsManagedPosition, Strategy, SystemIncident, TradeIntent, VirtualPosition,
@@ -236,10 +236,19 @@ def aixi_case(make_case, monkeypatch):
                        filled_quantity=QTY if request.side == "buy" else actual.filled_quantity,
                        fill_price=PRICE if request.side == "buy" else actual.fill_price)
 
+    async def release_pair(**binding):
+        # Cancel ACK alone is not release proof. Preserve the controlled
+        # terminal reader's typed outcome, including reserved/unanswerable.
+        await broker.cancel_exit_pair(**binding)
+        result = await broker.confirm_exit_pair_terminal(**binding)
+        assert isinstance(result, ExitPairReleaseResult)
+        return result
+
     monkeypatch.setattr(broker, "list_account_positions", positions)
     monkeypatch.setattr(broker, "report", report)
     monkeypatch.setattr(broker, "submit_order", submit)
     monkeypatch.setattr(broker, "fetch_order_update", fetch)
+    monkeypatch.setattr(broker, "release_exit_pair_for_close", release_pair, raising=False)
     return case
 
 
@@ -589,14 +598,19 @@ async def test_unsent_extended_hours_retry_requires_fresh_bid_and_uses_limit(mak
 
 
 @pytest.mark.asyncio
-async def test_retry_eh_quote_aging_during_last_broker_proof_aborts_without_sell(make_case, monkeypatch):
+@pytest.mark.parametrize("quote_age,proof_delay,expected_reason", [
+    (1.0, 1.6, "wbattach1_unsent_retry_quote_stale_before_wire"),
+    (0.0, 2.6, "wbattach1_final_broker_ceiling_or_request_changed"),
+], ids=["quote-stale-list-fresh", "list-stale-precedes-quote"])
+async def test_retry_eh_quote_aging_during_last_broker_proof_aborts_without_sell(
+        make_case, monkeypatch, quote_age, proof_delay, expected_reason):
     from project_mai_tai.oms import service as oms
     case = await proven_unsent_case(make_case, monkeypatch)
     service, factory, broker, _, clock = case
     clock[0] = PREPARED.replace(hour=21)
     monkeypatch.setattr(oms, "_extended_hours_session", lambda now=None: "PM")
     monkeypatch.setattr(service, "_market_is_fillable", lambda: True)
-    quote_at = clock[0]
+    quote_at = clock[0] - timedelta(seconds=quote_age)
     service._latest_quotes_by_symbol = {"AIXI": {"received_at": quote_at, "bid": 3.0}}
     with factory() as unit:
         identity = str(unit.scalar(select(OmsManagedPosition.id)))
@@ -608,8 +622,9 @@ async def test_retry_eh_quote_aging_during_last_broker_proof_aborts_without_sell
         reads.append(account)
         if len(reads) == 2:
             # First position read is handoff. Second is validator's LAST broker
-            # await; quote was valid on entry and ages only during that proof.
-            clock[0] += timedelta(seconds=2.6)
+            # await. An initially 1s-old quote expires while LIST stays fresh;
+            # when both age 2.6s, the stricter 2s LIST guard must win first.
+            clock[0] += timedelta(seconds=proof_delay)
         return result
 
     async def checked(service, request, row_id):
@@ -627,7 +642,7 @@ async def test_retry_eh_quote_aging_during_last_broker_proof_aborts_without_sell
     monkeypatch.setattr(broker, "list_account_positions", positions)
     monkeypatch.setattr(wb, "validate_atr_before_wire", checked)
     assert await wb.retry_atr_proven_unsent_exit(service, broker.account, "AIXI", identity) == "refused"
-    assert len(reads) == 2 and failures == ["wbattach1_unsent_retry_quote_stale_before_wire"]
+    assert len(reads) == 2 and failures == [expected_reason]
     assert closes(broker) == [] and broker.total == QTY
     with factory() as unit:
         entry = unit.get(BrokerOrder, case[3])
