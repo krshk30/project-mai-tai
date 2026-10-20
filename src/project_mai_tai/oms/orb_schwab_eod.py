@@ -61,36 +61,37 @@ class _Target:
     routed: bool = False
 
 
-async def _incident(service: OmsRiskService, target: _Target, reason: str, now: datetime) -> None:
-    def write(session):
-        existing = session.scalar(
-            select(SystemIncident).where(
-                SystemIncident.service_name == "oms-risk",
-                SystemIncident.payload["source"].as_string() == _STATE,
-                SystemIncident.payload["entry_order_id"].as_string() == str(target.entry_id),
-            )
+def _write_incident(session, target, reason, now):
+    existing = session.scalar(
+        select(SystemIncident).where(
+            SystemIncident.service_name == "oms-risk",
+            SystemIncident.payload["source"].as_string() == _STATE,
+            SystemIncident.payload["entry_order_id"].as_string() == str(target.entry_id),
         )
-        if existing is not None:
-            return False
-        session.add(SystemIncident(
-            service_name="oms-risk",
-            severity="critical",
-            status="open",
-            title=f"ORB close needs attention: {target.symbol} on {target.account}",
-            opened_at=now,
-            payload={
-                "source": _STATE,
-                "entry_order_id": str(target.entry_id),
-                "entry_broker_order_id": target.broker_id,
-                "broker_account_name": target.account,
-                "symbol": target.symbol,
-                "reason": reason,
-                "observed_at": now.isoformat(),
-            },
-        ))
-        return True
+    )
+    if existing is not None:
+        return False
+    session.add(SystemIncident(
+        service_name="oms-risk",
+        severity="critical",
+        status="open",
+        title=f"ORB close needs attention: {target.symbol} on {target.account}",
+        opened_at=now,
+        payload={
+            "source": _STATE,
+            "entry_order_id": str(target.entry_id),
+            "entry_broker_order_id": target.broker_id,
+            "broker_account_name": target.account,
+            "symbol": target.symbol,
+            "reason": reason,
+            "observed_at": now.isoformat(),
+        },
+    ))
+    return True
 
-    if not await service._run_db(write):
+
+async def _incident(service: OmsRiskService, target: _Target, reason: str, now: datetime) -> None:
+    if not await service._run_db(lambda session: _write_incident(session, target, reason, now)):
         return
     service.logger.error(
         "[OMS-ORB-SCHWAB-EOD] symbol=%s parent=%s status=NEEDS_ATTENTION reason=%s",
@@ -112,28 +113,31 @@ async def _finish(service: OmsRiskService, target: _Target, phase: str, now: dat
     await service._run_db(write)
 
 
-def _schwab_owned_quantity(session, target):
-    from project_mai_tai.oms.schwab_owned_positions import own_open_quantity
-
+def _schwab_entry(session, target):
     entry = session.get(BrokerOrder, target.entry_id, populate_existing=True)
-    latest = session.scalars(select(BrokerOrder).where(
+    if (entry is None or entry.side != "buy" or entry.strategy_id != target.strategy_id
+            or entry.broker_account_id != target.account_id or entry.symbol != target.symbol
+            or entry.broker_order_id != target.broker_id or not target.broker_id):
+        raise ValueError("orb_close_owned_entry_CHANGED")
+    # Unsent/terminal zero-fill attempts are not another inventory lot.
+    filled = select(Fill.id).where(Fill.order_id == BrokerOrder.id,
+        Fill.side == "buy", Fill.quantity > 0).exists()
+    others = session.scalars(select(BrokerOrder).where(
         BrokerOrder.strategy_id == target.strategy_id, BrokerOrder.broker_account_id == target.account_id,
         BrokerOrder.symbol == target.symbol, BrokerOrder.side == "buy",
-    ).order_by(BrokerOrder.submitted_at.desc().nulls_first(), BrokerOrder.id.desc())
-      .limit(2).execution_options(populate_existing=True)).all()
-    if (not latest or latest[0].submitted_at is None
-            or len(latest) > 1 and latest[0].submitted_at == latest[1].submitted_at):
+        BrokerOrder.id != target.entry_id,
+        or_(BrokerOrder.status.in_({"filled", "partially_filled"}), filled),
+        or_(BrokerOrder.submitted_at.is_(None),
+            BrokerOrder.submitted_at >= entry.submitted_at if entry.submitted_at is not None else True),
+    ).limit(1).execution_options(populate_existing=True)).all()
+    if others:
         raise ValueError("orb_close_entry_chronology_UNKNOWN")
-    if (entry is None or latest[0].id != target.entry_id or entry.strategy_id != target.strategy_id
-            or entry.broker_account_id != target.account_id or entry.symbol != target.symbol
-            or entry.broker_order_id != target.broker_id):
-        raise ValueError("orb_close_owned_entry_CHANGED")
-    return own_open_quantity(session, strategy_id=target.strategy_id,
-        account_id=target.account_id, symbol=target.symbol)
+    return entry
 
 
 async def _broker_quantity(
     service: OmsRiskService, target: _Target, *, after: float | None = None,
+    legacy_eod_receipt: dict | None = None,
 ) -> Decimal:
     positions = await service.broker_adapter.list_account_positions(target.account)
     if after is not None:
@@ -159,15 +163,42 @@ async def _broker_quantity(
             return _snapshot(service, session, target.entry_id)[3]
     else:
         def owned(session):
-            return _schwab_owned_quantity(session, target)
-    own_quantity = await service._run_db(owned, commit=False)
+            return _schwab_close_quantity(session, target, quantity,
+                allow_legacy=legacy_eod_receipt is not None)
+    result = await service._run_db(owned, commit=False)
+    if service.settings.provider_for_account(target.account) == "webull":
+        own_quantity, unknown = result, None
+    else:
+        own_quantity, unknown = result
+    if unknown is not None:
+        await _incident(service, target, unknown, datetime.now(_ET))
     if not own_quantity.is_finite() or not 0 < own_quantity <= target.quantity:
         raise ValueError("orb_close_current_owned_balance_UNKNOWN")
     if quantity < own_quantity:
         raise ValueError("broker_position_below_orb_ownership")
     if own_quantity != own_quantity.to_integral_value():
         raise ValueError("orb_close_owned_quantity_not_whole_shares")
+    if legacy_eod_receipt is not None:
+        legacy_eod_receipt["broker_quantity"] = quantity
     return own_quantity
+
+
+def _schwab_close_quantity(session, target, broker_quantity, *, allow_legacy):
+    from project_mai_tai.oms.schwab_owned_positions import own_open_quantity
+
+    _schwab_entry(session, target)  # Identity/real-lot conflicts never use a quantity fallback.
+    try:
+        owned = own_open_quantity(session, strategy_id=target.strategy_id,
+            account_id=target.account_id, symbol=target.symbol)
+        if owned > target.quantity:
+            raise ValueError("orb_close_current_owned_balance_UNKNOWN")
+        if allow_legacy and 0 < broker_quantity < owned:
+            return broker_quantity, "orb_close_ownership_UNKNOWN_legacy_eod:broker_below_owned"
+        return owned, None
+    except (ValueError, TypeError, ArithmeticError) as exc:
+        if not allow_legacy or not 0 < broker_quantity <= target.quantity:
+            raise
+        return min(broker_quantity, target.quantity), f"orb_close_ownership_UNKNOWN_legacy_eod:{exc}"
 
 
 async def _post_release_quantity(service, target, released_at, clock):
@@ -235,6 +266,7 @@ async def _attempt_owned(
     stopping = reason == STOP_REASON
     context = stop_context if stopping else attach_context
     protected = context is not None
+    legacy_eod_receipt = {} if reason == "ORB_END_OF_DAY_CLOSE" and not protected else None
     now = clock()
     if protected:
         context.execution_metadata(target, now)  # Validate session/bid BEFORE releasing protection.
@@ -347,7 +379,7 @@ async def _attempt_owned(
         await _finish(service, target, "resolved_by_child_fill", clock())
         return
     if not protected:
-        await _broker_quantity(service, target)
+        await _broker_quantity(service, target, legacy_eod_receipt=legacy_eod_receipt)
     native_attempt = await stop_context.before_release(target) if stopping else None
     if service.settings.provider_for_account(target.account) == "webull":
         from project_mai_tai.oms.orb_country import release_protection
@@ -379,7 +411,7 @@ async def _attempt_owned(
     else:
         quantity = await _post_release_quantity(service, target, released_at, clock) if (
             service.settings.provider_for_account(target.account) == "webull"
-        ) else await _broker_quantity(service, target)
+        ) else await _broker_quantity(service, target, legacy_eod_receipt=legacy_eod_receipt)
     now = clock()
     if not stopping and not start <= now.astimezone(_ET).time() < _DEADLINE:
         raise ValueError("close_window_elapsed_after_release")
@@ -411,8 +443,14 @@ async def _attempt_owned(
             if remaining != quantity:
                 raise ValueError("orb_owned_balance_changed_before_close")
         elif account.provider == "schwab" and not protected:
-            if _schwab_owned_quantity(session, target) != quantity:
+            remaining, unknown = _schwab_close_quantity(session, target,
+                (legacy_eod_receipt or {}).get("broker_quantity", Decimal(0)),
+                allow_legacy=legacy_eod_receipt is not None)
+            if remaining != quantity:
                 raise ValueError("orb_owned_balance_changed_before_close")
+            if unknown is not None:
+                _write_incident(session, target, unknown, now)
+                service.logger.error("[OMS-ORB-SCHWAB-EOD] symbol=%s reason=%s", target.symbol, unknown)
         if protected:
             context.validate_prepared(session, target, quantity)
         intent = service.store.create_trade_intent(
@@ -605,6 +643,10 @@ async def close_orb_schwab_before_close(
                 BrokerOrder.strategy_id == position.strategy_id,
                 BrokerOrder.broker_account_id == position.broker_account_id,
                 BrokerOrder.symbol == position.symbol, BrokerOrder.side == "buy",
+                or_(service.settings.provider_for_account(account) != "schwab",
+                    BrokerOrder.status.in_({"filled", "partially_filled"}),
+                    select(Fill.id).where(Fill.order_id == BrokerOrder.id,
+                        Fill.side == "buy", Fill.quantity > 0).exists()),
             ).order_by(BrokerOrder.submitted_at.desc()).limit(1))
             if entry is None:
                 work.append(_Target(
