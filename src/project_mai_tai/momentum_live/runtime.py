@@ -502,7 +502,8 @@ class OmsLiveRuntime:
             position = OwnedPosition(identity, entry.broker_account_name, entry.symbol, entry.client_order_id,
                 entry.metadata["broker_order_id"], snapshot["quantity"], snapshot["price"], snapshot["first_fill_ns"],
                 exited=snapshot["exited"], entry_send_ns=self.book.episodes[identity].first_submit_ns,
-                pending_exit_reason=self.runtime.get(identity, {}).get("soft_exit_reason"))
+                pending_exit_reason=self.runtime.get(identity, {}).get("soft_exit_reason"),
+                market_session=self._protection_market_session())
             self.runtime.setdefault(identity, {}).update(time_exit_clock_source=position.exit_clock_source,
                                                         time_exit_clock_ns=position.exit_clock_ns)
             handle = self.native.handles.get(identity)
@@ -618,7 +619,13 @@ class OmsLiveRuntime:
         await self._record(request, reports)
         return reports
 
+    def _protection_market_session(self):
+        local = self.clock().astimezone(ET)
+        return ("AM" if (local.hour, local.minute) < (9, 30)
+                else "NORMAL" if (local.hour, local.minute) < (16, 0) else "PM")
+
     async def _protect(self, position):
+        position.market_session = self._protection_market_session()
         snapshot = await self._inspect(position.episode_id)
         if any(row["request"].metadata.get("exit_reason")
                and row["status"] not in {"filled", "cancelled", "rejected", "expired", "aborted"}
@@ -629,10 +636,8 @@ class OmsLiveRuntime:
             # The triggered software exit remains watched until flat. Do not
             # attach a new pair while its close/cancel result is unresolved.
             return
-        local = self.clock().astimezone(ET)
-        session = ("AM" if (local.hour, local.minute) < (9, 30)
-                   else "NORMAL" if (local.hour, local.minute) < (16, 0) else "PM")
-        await self.native.ensure(position, broker=self.provider(position.account), session=session)
+        await self.native.ensure(position, broker=self.provider(position.account),
+                                 session=position.market_session)
 
     async def _read_protection(self, handle):
         read = await self.backend.read(handle, self)
