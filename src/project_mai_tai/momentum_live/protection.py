@@ -183,7 +183,8 @@ class NativeProtection:
             position.reserved = Decimal(0)
             position.release_unknown = False
             return True
-        if not read.working:
+        if (not read.working and position.pending_exit_reason not in {
+                "hard_stop_15pct", "time_300s", "KILLSW1_STOP"}):
             position.release_unknown = True
             return False
         if handle.status != "cancel_requested":
