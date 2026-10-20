@@ -1147,7 +1147,13 @@ class OwnedNativeBackend:
                         or session.get(Strategy, root.strategy_id).code != STRATEGY_CODE
                         or session.get(BrokerAccount, root.broker_account_id).name != handle.account):
                     raise Refusal("native_terminal_root_owner_UNKNOWN")
-                root.status = "cancelled"  # Root reservation released; child fills remain separate actual executions.
+                if handle.session != "NORMAL":
+                    # Outside RTH the root is the actual single sell, not a
+                    # synthetic pair reservation. Keep its broker terminal event.
+                    if root.status not in {"filled", "cancelled", "rejected", "expired", "aborted"}:
+                        raise Refusal("native_single_root_terminal_status_UNKNOWN")
+                    return
+                root.status = "cancelled"  # Synthetic pair reservation; executions belong to children.
             await runtime.service._run_db(close_root)
         return ProtectionRead(handle.episode_id, handle.account, handle.entry_order_id, handle.base_coid,
                               child_ids, working, terminal, snapshot["exited"])
