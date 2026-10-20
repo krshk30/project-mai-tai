@@ -752,8 +752,13 @@ class RemovedWaitStore:
                     DashboardSnapshot.created_at >= anchor))
                 if latest_request is not None:
                     snapshots.append(latest_request)
-                has_position = owned_position_present(session, symbol=request.symbol, accounts=accounts,
-                    strategy_id=strategy_id, now=observed)
+                try:
+                    has_position = owned_position_present(session, symbol=request.symbol, accounts=accounts,
+                        strategy_id=strategy_id, now=observed)
+                except (ValueError, TypeError, ArithmeticError):
+                    results.append(RemovedWaitProof(request, int(observed.timestamp() * 1000), False,
+                                                    "own_position_evidence_UNKNOWN"))
+                    continue
                 results.append(assess_clear_rules(request, now=observed, accounts=accounts,
                     intents=intents, orders=orders, filled_order_ids=fills, order_events=events,
                     snapshots=snapshots, has_position=has_position, strategy_id=strategy_id))
@@ -929,8 +934,13 @@ class RemovedWaitStore:
                     )
                     .order_by(DashboardSnapshot.created_at, DashboardSnapshot.id)
                 )
-                has_position = owned_position_present(session, symbol=request.symbol, accounts=accounts,
-                    strategy_id=strategy_id, now=observed)
+                try:
+                    has_position = owned_position_present(session, symbol=request.symbol, accounts=accounts,
+                        strategy_id=strategy_id, now=observed)
+                except (ValueError, TypeError, ArithmeticError):
+                    results.append(RemovedWaitProof(request, int(observed.timestamp() * 1000), False,
+                                                    "own_position_evidence_UNKNOWN"))
+                    continue
                 results.append(
                     assess_removed_wait(
                         request,

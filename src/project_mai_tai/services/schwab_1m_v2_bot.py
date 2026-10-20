@@ -3622,8 +3622,12 @@ class SchwabV2BotService:
                 evidence_at = min(evidence_at, read_at)
             symbol = request.symbol
             strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
-            if owned_position_present(session, symbol=symbol, accounts=account_names,
-                    strategy_id=strategy_id, now=now, max_age_ms=FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
+            try:
+                has_position = owned_position_present(session, symbol=symbol, accounts=account_names,
+                    strategy_id=strategy_id, now=now, max_age_ms=FLIP_OWNER_EVIDENCE_MAX_AGE_MS)
+            except (ValueError, TypeError, ArithmeticError):
+                return result("own_position_evidence_UNKNOWN")
+            if has_position:
                 return result("position_stays_owned")
             # Deliberately no strategy/account restriction: shared Schwab ORB also owns a BUY.
             if (session.scalar(select(BrokerOrder.id).where(BrokerOrder.symbol == symbol,
