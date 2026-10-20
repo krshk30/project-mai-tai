@@ -141,6 +141,10 @@ def inventory_case(monkeypatch, account, scenario):
             cancel = session.scalar(select(TradeIntent).where(
                 TradeIntent.broker_account_id == account_id, TradeIntent.intent_type == "cancel"))
             metadata = dict(cancel.payload["metadata"])
+            # An OPEN shares the opportunity, never the cancellation receipt identity.
+            for key in ("clearwait_removal_token", "clearwait_opportunity_id", "clearwait_buy_only",
+                        "resting_entry_cancel", "reason"):
+                metadata.pop(key, None)
             working = scenario == "manual_and_own_working_buy"
             null = scenario == "manual_and_own_null_buy"
             parent = TradeIntent(id=uuid4(), strategy_id=strategy.id, broker_account_id=account_id,
