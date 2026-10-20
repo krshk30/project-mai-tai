@@ -797,4 +797,4 @@ async def test_original_flye_acceptance_kills_flag_off_mutation(monkeypatch, cap
     monkeypatch.setitem(test_original_flye_recorded_bar_runtime_reaches_1517_buy.__globals__, "setup", disabled)
     with pytest.raises(AssertionError):
         await test_original_flye_recorded_bar_runtime_reaches_1517_buy(
-            monkeypatch, caplog, False, False)
+            monkeypatch, caplog, False, True)
