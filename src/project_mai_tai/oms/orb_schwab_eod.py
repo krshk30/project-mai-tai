@@ -117,7 +117,8 @@ def _schwab_entry(session, target):
     entry = session.get(BrokerOrder, target.entry_id, populate_existing=True)
     if (entry is None or entry.side != "buy" or entry.strategy_id != target.strategy_id
             or entry.broker_account_id != target.account_id or entry.symbol != target.symbol
-            or entry.broker_order_id != target.broker_id or not target.broker_id):
+            or entry.broker_order_id != target.broker_id or not target.broker_id
+            or entry.client_order_id != target.client_id):
         raise ValueError("orb_close_owned_entry_CHANGED")
     # Unsent/terminal zero-fill attempts are not another inventory lot.
     filled = select(Fill.id).where(Fill.order_id == BrokerOrder.id,
