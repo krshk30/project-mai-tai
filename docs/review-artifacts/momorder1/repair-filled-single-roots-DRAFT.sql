@@ -95,7 +95,8 @@ BEGIN
            WHERE b.strategy_id=sid AND b.broker_account_id=aid
              AND b.payload::jsonb->>'episode_id'=spec.parent_id::text) IS DISTINCT FROM 0::numeric
        OR EXISTS (SELECT FROM broker_orders b WHERE b.broker_account_id=aid
-          AND b.symbol=spec.symbol AND b.status NOT IN ('filled','cancelled','rejected','expired','aborted'))
+          AND b.symbol=spec.symbol
+          AND (b.status IS NULL OR b.status NOT IN ('filled','cancelled','rejected','expired','aborted')))
        OR EXISTS (SELECT FROM virtual_positions v WHERE v.broker_account_id=aid
           AND v.symbol=spec.symbol AND v.quantity IS DISTINCT FROM 0::numeric)
        OR EXISTS (SELECT FROM oms_managed_positions x WHERE x.broker_account_name='live:orb'
