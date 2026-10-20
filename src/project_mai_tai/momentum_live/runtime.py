@@ -58,6 +58,7 @@ class OmsLiveRuntime:
         self.bindings = {}
         self.runtime = {}
         self.boot_owned_exposures = {}
+        self._legacy_stop_blocks = {}
         self.state_lock = asyncio.Lock()
         self.actor = None
         self.publisher = None
@@ -70,6 +71,8 @@ class OmsLiveRuntime:
         return int(self.clock().timestamp()*1e9)
 
     def _entry_enabled(self):
+        if self._legacy_stop_blocks:
+            return False
         if not self.settings.momentum_live_enabled:
             return False
         if not getattr(self.settings, "bot_control_enabled", False):
@@ -139,6 +142,7 @@ class OmsLiveRuntime:
                     "cumulative_exited": Decimal(raw["cumulative_exited"]), "child_ids": tuple(raw["child_ids"])})
                 self.native.handles[identity] = handle
                 self.native.generations[identity] = int(values.get("protection_generation", 1))
+        await self._check_restored_native_stops()
         entry_ports = ExecutionPorts(self.clock, self.quote, self.route_for, self._foreign_owner,
             self._claim, self._prepare, self._save, self._submit, self._record, self._route_report,
             self._request_quote_owner, self._wait_quote,
@@ -162,6 +166,144 @@ class OmsLiveRuntime:
             self._control_driver = self._control_cleanup_progress
             control.executor.register(STRATEGY_CODE, self._control_driver)
         return True
+
+    async def _check_restored_native_stops(self):
+        """Admission-only boot fence; existing owned cleanup stays operational."""
+        findings = []
+        for identity, handle in self.native.handles.items():
+            if handle.session != "NORMAL":
+                continue
+            reason = "geometry_unknown"
+            try:
+                from project_mai_tai.momentum_live.exit_policy import stop_loss_level
+
+                snapshot = await self._inspect(identity)
+                roots = [item for item in snapshot["orders"]
+                         if item["request"].client_order_id == handle.base_coid]
+                if len(roots) != 1:
+                    raise Refusal("restored_native_root_unknown")
+                request = roots[0]["request"]
+                price = snapshot["price"]
+                stop = Decimal(request.metadata["bracket_stop_price"])
+                if (request.broker_account_name != handle.account or request.symbol != handle.symbol
+                        or request.strategy_code != STRATEGY_CODE or request.side != "sell"
+                        or request.intent_type != "close" or request.quantity != handle.quantity
+                        or request.metadata.get("episode_id") != identity
+                        or request.metadata.get("session") != "NORMAL"
+                        or price is None or not price.is_finite() or price <= 0
+                        or not stop.is_finite() or stop <= 0):
+                    raise Refusal("restored_native_geometry_unknown")
+                tick = Decimal(".0001") if price < 1 else Decimal(".01")
+                expected = (stop_loss_level(price)/tick).to_integral_value(rounding=ROUND_FLOOR)*tick
+                if stop == expected:
+                    continue
+                legacy = (price*Decimal(".85")/tick).to_integral_value(rounding=ROUND_FLOOR)*tick
+                reason = "legacy_15pct" if stop == legacy else "geometry_unknown"
+            except Exception:
+                # Unknown geometry is an admission refusal, never an OMS crash
+                # or permission to replace/cancel an existing protection tree.
+                snapshot = None
+            self._legacy_stop_blocks[identity] = handle.base_coid
+            findings.append(f"{identity}:{reason}")
+            if snapshot is not None:
+                try:
+                    reconciled = await self._reconcile_closed_native_restore(identity, handle, snapshot)
+                    if reconciled is not None:
+                        snapshot = reconciled
+                except Exception:
+                    pass  # An incomplete local proof retains the admission fence.
+                self._clear_legacy_stop_block(identity, snapshot, handle)
+        if findings:
+            self.service.logger.critical(
+                "[MOMEXIT-B-RESTORE-GUARD] episodes=%s entry_admission=%s owned_cleanup=enabled",
+                ",".join(findings), "blocked" if self._legacy_stop_blocks else "flat_terminal",
+            )
+
+    async def _reconcile_closed_native_restore(self, identity, handle, snapshot):
+        episode = self.book.episodes.get(identity)
+        if (episode is None or episode.state not in {"closed", "terminal_no_fill"}
+                or handle.session != "NORMAL" or not snapshot["entry_terminal"]
+                or snapshot["quantity"] != snapshot["exited"] or snapshot["outstanding_exit"]
+                or len(handle.child_ids) != 2 or len(set(handle.child_ids)) != 2):
+            return None
+        if self.provider(handle.account) == "webull":
+            expected = tuple(self.backend.leaf(handle.account, self).exit_pair_leg_client_order_ids(handle.base_coid))
+            if set(expected) != set(handle.child_ids):
+                return None
+            children = {coid: None for coid in expected}
+        else:
+            children = {f"ml1-{handle.symbol}-n-{sha256(native.encode()).hexdigest()[:16]}": native
+                        for native in handle.child_ids}
+
+        def proof(session):
+            current = self.db.inspect_episode(session, identity)
+            if (not current["entry_terminal"] or current["quantity"] != current["exited"]
+                    or current["outstanding_exit"]):
+                return None
+            rows = session.scalars(select(BrokerOrder).where(
+                BrokerOrder.client_order_id.in_({handle.base_coid, *children}),
+                BrokerOrder.payload["episode_id"].as_string() == identity)).all()
+            by_coid = {row.client_order_id: row for row in rows}
+            if set(by_coid) != {handle.base_coid, *children}:
+                return None  # Missing child is UNKNOWN, never inferred from flat.
+            terminal = {"filled", "cancelled", "rejected", "expired", "aborted"}
+            native_ids = set()
+            child_quantity = Decimal(0)
+            for coid, row in by_coid.items():
+                account = session.get(BrokerAccount, row.broker_account_id)
+                strategy = session.get(Strategy, row.strategy_id)
+                metadata = row.payload or {}
+                if (account is None or account.name != handle.account or strategy is None
+                        or strategy.code != STRATEGY_CODE or row.symbol != handle.symbol or row.side != "sell"
+                        or row.quantity != handle.quantity or row.status not in terminal or not row.broker_order_id
+                        or row.broker_order_id in native_ids):
+                    return None
+                native_ids.add(row.broker_order_id)
+                fills = session.scalars(select(Fill).where(Fill.order_id == row.id)).all()
+                quantity = Decimal(0)
+                for fill in fills:
+                    if (fill.strategy_id != row.strategy_id or fill.broker_account_id != row.broker_account_id
+                            or fill.side != "sell" or not fill.quantity.is_finite() or fill.quantity < 0):
+                        return None
+                    quantity += fill.quantity
+                if not 0 <= quantity <= row.quantity:
+                    return None
+                if coid == handle.base_coid:
+                    if (quantity != 0 or metadata.get("session") != "NORMAL"
+                            or metadata.get("momlive_one_shot") != "true"
+                            or not (metadata.get("webull_exit_only_pair") == "true"
+                                    or metadata.get("exit_only_oco") == "true")
+                            or metadata.get("entry_broker_order_id") != handle.entry_order_id):
+                        return None
+                else:
+                    if (metadata.get("momlive_native_child") != "true"
+                            or metadata.get("momlive_terminal_broker_event") != row.status
+                            or children[coid] is not None and str(row.broker_order_id) != children[coid]
+                            or row.status == "filled" and quantity != row.quantity):
+                        return None
+                    child_quantity += quantity
+            if child_quantity > handle.quantity:
+                return None
+            return current
+
+        current = await self.service._run_db(proof, commit=False)
+        if current is not None:
+            # Reconcile only the stale handle journal, never orders, fills or
+            # broker state. Closed-today episodes have no actor work owner.
+            prior_status, prior_exited = handle.status, handle.cumulative_exited
+            handle.status, handle.cumulative_exited = "terminal", current["exited"]
+            try:
+                await self._save_handle(handle)
+            except BaseException:
+                handle.status, handle.cumulative_exited = prior_status, prior_exited
+                raise
+        return current
+
+    def _clear_legacy_stop_block(self, identity, snapshot, handle):
+        if (self._legacy_stop_blocks.get(identity) == handle.base_coid and handle.status == "terminal"
+                and snapshot["entry_terminal"] and snapshot["quantity"] == snapshot["exited"]
+                and not snapshot["outstanding_exit"]):
+            self._legacy_stop_blocks.pop(identity, None)
 
     async def close(self):
         control = getattr(self.service, "_bot_control_runtime", None)
@@ -513,6 +655,7 @@ class OmsLiveRuntime:
             if handle:
                 await self.native._observe(position, handle)
                 snapshot = await self._inspect(identity)
+                self._clear_legacy_stop_block(identity, snapshot, handle)
         return OwnedObservation(snapshot["quantity"], snapshot["exited"], snapshot["first_fill_ns"],
             snapshot["entry_terminal"], snapshot["outstanding_exit"], position,
             owner_provider=self._diagnostic_owner_provider(position))
