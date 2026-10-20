@@ -661,7 +661,7 @@ async def test_pending_slow_commit_does_not_block_bar_or_release_at_buy(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_recorded_deferred_release_kills_sell_bar_only_mutation(monkeypatch):
+async def test_recorded_deferred_release_kills_sell_bar_only_mutation(monkeypatch, caplog):
     original = SchwabV2Strategy._cw_v2_track
     source = textwrap.dedent(inspect.getsource(original))
     before = 'elif state.fresh_sell_owner_release_segment_ms and flip != "SELL":'
@@ -670,11 +670,12 @@ async def test_recorded_deferred_release_kills_sell_bar_only_mutation(monkeypatc
     exec(compile(source.replace(before, "elif False:"), "<B2-deferred-mutant>", "exec"), namespace)
     monkeypatch.setattr(SchwabV2Strategy, original.__name__, namespace[original.__name__])
     with pytest.raises(AssertionError):
-        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, True, False)
+        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(
+            monkeypatch, caplog, True, False)
 
 
 @pytest.mark.asyncio
-async def test_post_sell_request_kills_request_dependent_latch_mutation(monkeypatch):
+async def test_post_sell_request_kills_request_dependent_latch_mutation(monkeypatch, caplog):
     original = SchwabV2Strategy._latch_fresh_sell_owner_release_boundary
     source = textwrap.dedent(inspect.getsource(original))
     before = "        state.fresh_sell_owner_release_segment_ms = bar_ms"
@@ -684,7 +685,8 @@ async def test_post_sell_request_kills_request_dependent_latch_mutation(monkeypa
                                        "    " + before), "<B2-late-request-mutant>", "exec"), namespace)
     monkeypatch.setattr(SchwabV2Strategy, original.__name__, namespace[original.__name__])
     with pytest.raises(AssertionError):
-        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, False, True)
+        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(
+            monkeypatch, caplog, False, True)
 
 
 @pytest.mark.asyncio
@@ -785,7 +787,7 @@ def test_default_on_flag_and_v2_catalog_owner():
 
 
 @pytest.mark.asyncio
-async def test_original_flye_acceptance_kills_flag_off_mutation(monkeypatch):
+async def test_original_flye_acceptance_kills_flag_off_mutation(monkeypatch, caplog):
     assert callable(getattr(SchwabV2Strategy, "stage_removed_wait_clear", None))
     original = setup
     def disabled(*args, **kwargs):
@@ -794,4 +796,5 @@ async def test_original_flye_acceptance_kills_flag_off_mutation(monkeypatch):
         return result
     monkeypatch.setitem(test_original_flye_recorded_bar_runtime_reaches_1517_buy.__globals__, "setup", disabled)
     with pytest.raises(AssertionError):
-        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, False, False)
+        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(
+            monkeypatch, caplog, False, False)
