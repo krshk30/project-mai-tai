@@ -15,6 +15,7 @@ from sqlalchemy import func, or_, select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
 from project_mai_tai.broker_adapters.momentum_order_read import MomentumOrderRead, MomentumReadUnavailable
+from project_mai_tai.broker_adapters.webull_order_reads import QueryBudgetUnavailable
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, Strategy, SystemIncident, VirtualPosition
 from project_mai_tai.positions_read_receipt import SNAPSHOT_TYPE, load_receipts
 from project_mai_tai.momentum_live.actor import ActorPorts, LiveActor, OwnedObservation
@@ -1464,7 +1465,9 @@ class OwnedNativeBackend:
                         return MomentumOrderRead("invalid", reason="execution_quantity")
                     raw = {**raw, "status": "PARTIALLY_FILLED" if declared else "WORKING"}
                 report = await self._fetch_entry_update(request, runtime, supplied_raw=raw)
-            elif callable(getattr(leaf, "fetch_momentum_cancel_read", None)):
+            elif (callable(getattr(leaf, "fetch_momentum_cancel_read", None))
+                    and request.broker_account_name in getattr(leaf, "accounts_by_name", {})
+                    and getattr(leaf, "_query_budget", None) is not None):
                 outcome = await asyncio.wait_for(leaf.fetch_momentum_cancel_read(request), timeout=2)
                 if not isinstance(outcome, MomentumOrderRead):
                     return MomentumOrderRead("invalid", reason="outcome_shape")
@@ -1478,13 +1481,15 @@ class OwnedNativeBackend:
                 report = await self._fetch_entry_update(request, runtime, supplied_report=outcome.report)
             else:
                 # A legacy adapter's None has no provenance: never infer outage.
-                report = await self.fetch_entry_update(request, runtime, fresh=True)
+                report = await asyncio.wait_for(self._fetch_entry_update(request, runtime), timeout=2)
                 kind = "report"
             if report is None:
                 return MomentumOrderRead("invalid", reason="report_unusable")
             return MomentumOrderRead(kind, self._validate_fresh_report(report, request))
         except MomentumReadUnavailable as exc:
             return MomentumOrderRead("unavailable", reason=str(exc))
+        except QueryBudgetUnavailable:
+            return MomentumOrderRead("unavailable", reason="budget")
         except (TimeoutError, ConnectionError, OSError):
             return MomentumOrderRead("unavailable", reason="transport")
         except Exception:
