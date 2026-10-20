@@ -131,12 +131,13 @@ async def test_fractional_price_does_not_block_independent_riskoff_owner(make_ca
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session", ["AM", "NORMAL", "PM"])
-@pytest.mark.parametrize("account", ["live:schwab_1m_v2", "live:orb"])
+@pytest.mark.parametrize("account", ["paper:schwab_1m_v2", "paper:webull_v2"])
 async def test_actual_cw_hard_stop_not_blocked_by_fractional_stored_price(monkeypatch, session, account):
     from tests.unit.test_v2_cw_managed_exit import _make_sf, _svc, _arm, _quote, SYM
     from project_mai_tai.oms import service as module
 
     factory = _make_sf()
+    # Configured fixture roles use simulated I/O, not native account qualification.
     service = _svc(factory, cw=True, dual=True)
     monkeypatch.setattr(module, "_is_regular_market_session", lambda now=None: session == "NORMAL")
     monkeypatch.setattr(module, "_extended_hours_session", lambda now=None: None if session == "NORMAL" else session)
