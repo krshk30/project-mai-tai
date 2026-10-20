@@ -854,9 +854,15 @@ async def test_riskoff_auto_recovery_coalesces_recursive_refusals_and_stops_at_t
     assert len(validated) == len(set(validated)) == 4  # Initial +3, no recursive fourth retry.
     assert closes(broker) == [] and broker.total == QTY
     assert not service._webull_recovery_in_progress(broker.account, "AIXI")
+    assert not service.__dict__.get("_webull_protect_tasks")
+    assert len(broker.requests) == 1  # Original pair only, never a replacement attach.
     with factory() as unit:
         state = unit.get(BrokerOrder, case[3]).payload[wb.KEY]
         assert len(state["unsent_handoffs"]) == 4 and not state.get("exit_phase")
         assert all(r["reason"] == wb.REASON and r["exit_reason"] == "CONTROLLED bounded riskoff origin"
                    for r in state["unsent_handoffs"])
-        assert unit.scalar(select(SystemIncident.id)) is not None  # Exhaustion remains explicitly unresolved.
+        assert state["exit_reason"] == "CONTROLLED bounded riskoff origin"
+        incidents = unit.scalars(select(SystemIncident)).all()
+        assert any(i.severity == "critical" and i.status == "open"
+                   and i.payload.get("reason") == "proven_unsent_retry_exhausted"
+                   and i.payload.get("protection_restored") is False for i in incidents)

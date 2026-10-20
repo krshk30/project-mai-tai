@@ -6708,13 +6708,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         reason: str,
         missing_legs: str,
         inline_started_at: float | None = None,
+        allow_reprotect: bool = True,
     ) -> str:
         inline_started_at = (
             time.monotonic() if inline_started_at is None else inline_started_at
         )
-        spec = await self._confirmation_reprotect_spec(
+        spec = (await self._confirmation_reprotect_spec(
             acct, symbol, expected_row_id=expected_row_id
-        )
+        )) if allow_reprotect else None
         task = (
             self._reprotect_after_failed_release(acct, symbol, spec)
             if spec is not None and _is_regular_market_session()
@@ -6810,6 +6811,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 )
                 return
             from project_mai_tai.oms.webull_attach_riskoff import retry_atr_proven_unsent_exit
+            retry_exhausted = False
             for attempt in range(3):
                 if attempt:
                     await asyncio.sleep(0.25 * attempt)
@@ -6833,13 +6835,20 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         decision, acct, outcome=retry, released=released,
                     )
                     return
+            else:
+                retry_exhausted = True
+            # A native reattach with an unsent receipt re-enters request_atr_exit.
+            # After the bounded retries, page as uncovered instead of silently
+            # starting a fourth retry or replacing the original trigger reason.
             result = await self._reprotect_confirmation_webull_leg(
                 decision,
                 acct,
                 symbol,
                 expected_row_id=expected_row_id,
-                reason=f"close_{(confirmation or {}).get('confirmation_close_outcome', 'refused')}",
+                reason=("proven_unsent_retry_exhausted" if retry_exhausted else
+                        f"close_{(confirmation or {}).get('confirmation_close_outcome', 'refused')}"),
                 missing_legs="target,stop",
+                allow_reprotect=not retry_exhausted,
             )
             self._finish_confirmation_fanout_leg(
                 decision,
