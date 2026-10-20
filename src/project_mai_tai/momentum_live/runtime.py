@@ -602,7 +602,8 @@ class OmsLiveRuntime:
             # attach a new pair while its close/cancel result is unresolved.
             return
         local = self.clock().astimezone(ET)
-        session = "NORMAL" if (9, 30) <= (local.hour, local.minute) < (16, 0) else "AM" if local.hour < 9 else "PM"
+        session = ("AM" if (local.hour, local.minute) < (9, 30)
+                   else "NORMAL" if (local.hour, local.minute) < (16, 0) else "PM")
         await self.native.ensure(position, broker=self.provider(position.account), session=session)
 
     async def _read_protection(self, handle):
