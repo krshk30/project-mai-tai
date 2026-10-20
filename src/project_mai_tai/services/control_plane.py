@@ -6608,13 +6608,16 @@ def _render_momentum_page(data: dict[str, Any], *, live: dict[str, Any], warning
     """One live-fill account view; reference rows cannot enter its aggregates."""
     live = _momentum_page_ledger_copy(live)
     warnings = [_momentum_page_ledger_copy(row) for row in warnings]
-    readable = live.get("status") == "READABLE"
+    readable = live.get("status") in {"READABLE", "PARTIAL"}
+    partial = live.get("status") == "PARTIAL" or bool(live.get("daily_pnl_partial"))
     owner_readable = owner.get("status") == "READABLE"
     status = ("LIVE" if owner["entry_admission_enabled"] else "OFF") if owner_readable else "UNKNOWN"
     total = (f'${_as_float(live["daily_pnl"]):+.2f}'
              if readable and _momentum_number_known(live.get("daily_pnl")) else "UNKNOWN")
+    if partial:
+        total += " (partial)"
     positions = list(live.get("positions") or []) if readable else []
-    closed = len(live.get("closed_today") or []) if readable and not live["page_closed_today_incomplete"] else "UNKNOWN"
+    closed = len(live.get("closed_today") or []) if readable and not partial and not live["page_closed_today_incomplete"] else "UNKNOWN"
     pending = sum(Decimal(row["filled_quantity"]) == 0 for row in owner["episodes"]) if owner_readable else "UNKNOWN"
     live_orders = [item for item in data.get("recent_orders", [])
                    if isinstance(item, dict) and item.get("strategy_code") == "momentum_warn_live"
@@ -6639,7 +6642,7 @@ def _render_momentum_page(data: dict[str, Any], *, live: dict[str, Any], warning
             continue
         path = "LIVE " + _leg_broker_label(str(row.get("account_name") or ""))
         open_rows.append(rendered.replace('</td>', f'</td><td>{escape(path)}</td>', 1))
-    positions_known = readable and not live["page_positions_incomplete"]
+    positions_known = readable and not partial and not live["page_positions_incomplete"]
     open_count = len(positions) if positions_known else "UNKNOWN"
     open_body = ''.join(open_rows) or f'<tr><td colspan="8">{"No open positions" if positions_known else "Live positions UNKNOWN"}</td></tr>'
     order_rows = ''.join('<tr>' + ''.join(f'<td>{escape(str(value))}</td>' for value in (
@@ -6658,6 +6661,8 @@ def _render_momentum_page(data: dict[str, Any], *, live: dict[str, Any], warning
         or row["page_closed_today_incomplete"] for row in warnings) else ''
     live_warning = ('<p role="alert">Live row data is incomplete; affected counts and totals are UNKNOWN.</p>'
                     if any(live[f"page_{field}_incomplete"] for field in ("closed_today", "positions")) else '')
+    if partial:
+        live_warning += '<p role="alert">Partial LIVE ledger: UNKNOWN episodes are shown separately; P&amp;L excludes them. Open and completed counts are UNKNOWN.</p>'
     return f'''<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <meta http-equiv="refresh" content="30"><title>Momentum</title><style>
     :root{{--bg:#101723;--panel:#192334;--ink:#edf3fb;--muted:#afbed1;--line:#334359;--accent:#ffc857}}
@@ -6780,11 +6785,14 @@ def _render_momentum_ledger(
     ledger: dict[str, Any], *, title: str, method: str, other_rows: list[dict[str, Any]], paper: bool = True,
     reference_only: bool = False,
 ) -> str:
-    readable = ledger.get("status", "READABLE") == "READABLE"
+    readable = ledger.get("status", "READABLE") in {"READABLE", "PARTIAL"}
+    partial = ledger.get("status") == "PARTIAL" or bool(ledger.get("daily_pnl_partial"))
     closed = list(ledger.get("closed_today") or []) if readable else []
+    unknown = list(ledger.get("unknown_episodes") or []) if readable else []
     rows = []
-    for row in sorted(closed, key=lambda item: _momentum_page_sort_time(item.get("entry_time")), reverse=True)[:25]:
-        note = _momentum_entry_comparison(row, other_rows, method)
+    visible = sorted(closed, key=lambda item: _momentum_page_sort_time(item.get("entry_time")), reverse=True)[:25]
+    for row in [*visible, *unknown]:
+        note = "UNKNOWN episode; excluded from P&L" if row.get("status") == "UNKNOWN" else _momentum_entry_comparison(row, other_rows, method)
         display = {**row, "ticker": row.get("ticker") or row.get("symbol") or "UNKNOWN",
                    "path": method if paper else "LIVE " + (str(row.get("broker")).title() if row.get("broker") else _leg_broker_label(str(row.get("account_name") or row.get("accountName") or ""))),
                    "quantity": _fmt_qty(_as_float(row["quantity"])) if _momentum_number_known(row.get("quantity")) else "UNKNOWN",
@@ -6792,7 +6800,9 @@ def _render_momentum_ledger(
                    "exit_time": row.get("exit_time") or "UNKNOWN",
                    "entry_price": _momentum_price_label(row.get("entry_price")),
                    "exit_price": _momentum_price_label(row.get("exit_price")),
-                   "summary": row.get("exit_reason") or row.get("reason") or "UNKNOWN"}
+                   "summary": ("UNKNOWN: " + str(row.get("reason") or "episode proof missing")
+                               if row.get("status") == "UNKNOWN"
+                               else row.get("exit_reason") or row.get("reason") or "UNKNOWN")}
         if not _momentum_number_known(row.get("pnl_pct")):
             display["pnl_pct_label"] = "UNKNOWN"
         if not _momentum_number_known(row.get("pnl")):
@@ -6806,6 +6816,8 @@ def _render_momentum_ledger(
         total_label = f"${total:+.2f}" if _momentum_number_known(ledger.get("daily_pnl")) else "UNKNOWN"
         summary = (f"Signal reference &mdash; not real orders; {len(closed)} completed references. No P&amp;L total."
                    if reference_only else f"Day total: {total_label} &middot; {len(closed)} completed {'paper' if paper else 'broker'} trades")
+        if partial:
+            summary = f"Day total: {total_label} (partial) &middot; {len(closed)} readable completed broker trades; {len(unknown)} UNKNOWN episodes excluded. Total completed count UNKNOWN."
         if ledger.get("page_closed_today_incomplete"):
             summary = "UNKNOWN. No total calculated. Readable rows shown; completed count UNKNOWN."
         body = "".join(rows) or '<tr><td colspan="9">No completed positions</td></tr>'

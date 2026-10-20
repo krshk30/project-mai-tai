@@ -36,57 +36,89 @@ def load_live_ledger(session_factory, day) -> dict:
             raise Refusal("live_fill_ledger_history_limit_UNKNOWN")
         episodes = {}
         for fill, order, account in rows:
-            metadata = (fill.payload or {}).get("metadata") or order.payload or {}
-            identity = str(metadata.get("episode_id", ""))
+            metadata = {}
+            identity = ""
             try:
+                metadata = (fill.payload or {}).get("metadata") or order.payload or {}
+                identity = str(metadata.get("episode_id", ""))
                 UUID(identity)
-            except ValueError as exc:
-                raise Refusal("live_fill_episode_identity_UNKNOWN") from exc
-            if (fill.strategy_id != order.strategy_id or fill.broker_account_id != order.broker_account_id
-                    or fill.symbol != order.symbol or fill.side != order.side
-                    or (fill.payload or {}).get("momlive_fill_source") != "broker"
-                    or fill.quantity <= 0 or fill.price <= 0 or not account.startswith("live:")):
-                raise Refusal("live_fill_provenance_UNKNOWN")
-            time_key = "momlive_first_fill_ns" if fill.side == "buy" else "momlive_last_exit_fill_ns"
-            trusted_stamp = (order.payload or {}).get(time_key)
-            if trusted_stamp is None and fill.side != "buy":
-                raise Refusal("live_fill_execution_time_UNKNOWN")
-            stamp = datetime.fromtimestamp(int(trusted_stamp)/1e9, UTC) if trusted_stamp is not None else None
-            value = LivePersistence.fill_value(fill)
-            if not value.is_finite() or value <= 0:
-                raise Refusal("live_fill_value_UNKNOWN")
-            group = episodes.setdefault(identity, {"symbol": fill.symbol, "account": account,
+                key = identity
+                identity_error = None
+            except (ValueError, TypeError, AttributeError):
+                # An unbound fill cannot borrow a neighbouring episode's identity.
+                key = f"unbound-fill:{fill.id}"
+                identity_error = "live_fill_episode_identity_UNKNOWN"
+            group = episodes.setdefault(key, {"identity": identity if identity_error is None else "UNKNOWN",
+                "symbol": fill.symbol, "account": account, "errors": set(),
+                "fill_ids": [],
                 "buy_qty": Decimal(0), "buy_value": Decimal(0), "sell_qty": Decimal(0),
                 "sell_value": Decimal(0), "entry": None, "entry_time_unknown": False,
                 "recorded_entry": None, "recorded_entry_unknown": False,
                 "exit": None, "exit_reason": ""})
-            if group["symbol"] != fill.symbol or group["account"] != account:
-                raise Refusal("live_episode_binding_CHANGED")
-            if fill.side == "buy":
-                group["buy_qty"] += fill.quantity
-                group["buy_value"] += value
-                recorded = _recorded_fill_time(fill.filled_at, now)
-                if recorded is None:
-                    group["recorded_entry_unknown"] = True
+            group["fill_ids"].append(str(fill.id))
+            try:
+                if identity_error:
+                    raise Refusal(identity_error)
+                if group["symbol"] != fill.symbol or group["account"] != account:
+                    group["symbol"], group["account"] = "UNKNOWN", "UNKNOWN"
+                    raise Refusal("live_episode_binding_CHANGED")
+                if (fill.strategy_id != order.strategy_id or fill.broker_account_id != order.broker_account_id
+                        or fill.symbol != order.symbol or fill.side != order.side
+                        or (fill.payload or {}).get("momlive_fill_source") != "broker"
+                        or not fill.quantity.is_finite() or not fill.price.is_finite()
+                        or fill.quantity <= 0 or fill.price <= 0 or not account.startswith("live:")):
+                    raise Refusal("live_fill_provenance_UNKNOWN")
+                if fill.side not in {"buy", "sell"}:
+                    raise Refusal("live_fill_side_UNKNOWN")
+                time_key = "momlive_first_fill_ns" if fill.side == "buy" else "momlive_last_exit_fill_ns"
+                trusted_stamp = (order.payload or {}).get(time_key)
+                stamp = None
+                if trusted_stamp is not None:
+                    stamp = datetime.fromtimestamp(int(trusted_stamp)/1e9, UTC)
+                    if isinstance(trusted_stamp, bool) or _recorded_fill_time(stamp, now) is None:
+                        raise Refusal("live_fill_execution_time_UNKNOWN")
+                if stamp is None and fill.side == "sell":
+                    raise Refusal("live_fill_execution_time_UNKNOWN")
+                value = LivePersistence.fill_value(fill)
+                if not value.is_finite() or value <= 0:
+                    raise Refusal("live_fill_value_UNKNOWN")
+                if fill.side == "buy":
+                    group["buy_qty"] += fill.quantity
+                    group["buy_value"] += value
+                    recorded = _recorded_fill_time(fill.filled_at, now)
+                    if recorded is None:
+                        group["recorded_entry_unknown"] = True
+                    else:
+                        group["recorded_entry"] = min(group["recorded_entry"], recorded) if group["recorded_entry"] else recorded
+                    if stamp is None:
+                        group["entry_time_unknown"] = True
+                    else:
+                        group["entry"] = min(group["entry"], stamp) if group["entry"] else stamp
                 else:
-                    group["recorded_entry"] = min(group["recorded_entry"], recorded) if group["recorded_entry"] else recorded
-                if stamp is None:
-                    group["entry_time_unknown"] = True
-                else:
-                    group["entry"] = min(group["entry"], stamp) if group["entry"] else stamp
-            elif fill.side == "sell":
-                group["sell_qty"] += fill.quantity
-                group["sell_value"] += value
-                group["exit"] = max(group["exit"], stamp) if group["exit"] else stamp
-                group["exit_reason"] = str(metadata.get("exit_reason") or "broker_fill")
-            else:
-                raise Refusal("live_fill_side_UNKNOWN")
-        closed, positions = [], []
-        for identity, group in episodes.items():
+                    group["sell_qty"] += fill.quantity
+                    group["sell_value"] += value
+                    group["exit"] = max(group["exit"], stamp) if group["exit"] else stamp
+                    group["exit_reason"] = str(metadata.get("exit_reason") or "broker_fill")
+            except Refusal as exc:
+                group["errors"].add(str(exc))
+            except (ValueError, TypeError, AttributeError, ArithmeticError, OSError):
+                group["errors"].add("live_fill_fields_UNKNOWN")
+        closed, positions, unknown = [], [], []
+        for group in episodes.values():
+            identity = group["identity"]
             bought, sold = group["buy_qty"], group["sell_qty"]
             if (bought <= 0 or sold > bought
                     or group["exit"] and group["entry"] and group["exit"] < group["entry"]):
-                raise Refusal("live_fill_balance_UNKNOWN")
+                group["errors"].add("live_fill_balance_UNKNOWN")
+            if group["errors"]:
+                unknown.append({"episode_id": identity, "status": "UNKNOWN",
+                    "ticker": group["symbol"], "symbol": group["symbol"],
+                    "account_name": group["account"], "fill_ids": group["fill_ids"],
+                    "reason": "; ".join(sorted(group["errors"])),
+                    "quantity": "UNKNOWN", "remaining_quantity": "UNKNOWN",
+                    "entry_time": "UNKNOWN", "exit_time": "UNKNOWN",
+                    "entry_price": "UNKNOWN", "exit_price": "UNKNOWN", "pnl": "UNKNOWN"})
+                continue
             row = {"episode_id": identity, "ticker": group["symbol"], "symbol": group["symbol"],
                 "account_name": group["account"], "quantity": str(bought),
                 "entry_time": (group["recorded_entry"].astimezone(ET).isoformat()
@@ -106,8 +138,9 @@ def load_live_ledger(session_factory, day) -> dict:
                         "exit_reason": group["exit_reason"]})
             else:
                 positions.append(row)
-        return {"strategy_code": STRATEGY_CODE, "status": "READABLE", "positions": positions,
+        return {"strategy_code": STRATEGY_CODE, "status": "PARTIAL" if unknown else "READABLE", "positions": positions,
             "closed_today": closed, "daily_pnl": str(sum((Decimal(row["pnl"]) for row in closed), Decimal(0))),
+            "daily_pnl_partial": bool(unknown), "unknown_episodes": unknown,
             "source": "strategy_owned_broker_fills", "fills_read": len(rows),
             "unknown_entry_time_episodes": sum(group["recorded_entry_unknown"] for group in episodes.values()),
             "unknown_first_execution_time_episodes": sum(group["entry_time_unknown"] for group in episodes.values())}

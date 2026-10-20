@@ -606,6 +606,27 @@ class OmsLiveRuntime:
                 "quantity": str(quantity-exited), "account": entries[0].broker_account_name}
         return snapshot
 
+    async def _read_missing_execution_time(self, identity, row):
+        """One bounded original-order read; never infer an execution clock."""
+        request = row["request"]
+        key = "momlive_first_fill_ns" if request.side == "buy" else "momlive_last_exit_fill_ns"
+        if row["status"] != "filled" or request.metadata.get(key) is not None:
+            return
+        values = self.runtime.setdefault(identity, {})
+        attempted = list(values.get("execution_time_readback_coids") or [])
+        if request.client_order_id in attempted or len(attempted) >= 64:
+            return
+        attempted.append(request.client_order_id)
+        values["execution_time_readback_coids"] = attempted
+        # Save before the read so a restart cannot turn missing proof into a poll loop.
+        await self._save(next(item for item in self.book.snapshot() if item["episode_id"] == identity))
+        report = await self.backend.fetch_entry_update(request, self, fresh=True)
+        if report is not None:
+            await self._record(request, [report])
+        if report is None or report.metadata.get("momlive_execution_time_source") != "broker_execution_time":
+            self.service.logger.warning("[MOMLIVE1-EXECUTION-TIME-UNKNOWN] episode=%s coid=%s side=%s",
+                identity, request.client_order_id, request.side)
+
     async def _observe(self, identity):
         snapshot = await self._inspect(identity)
         entry = None
@@ -613,6 +634,9 @@ class OmsLiveRuntime:
             request = row["request"]
             if request.side == "buy" and request.intent_type == "open":
                 entry = request
+                if row["status"] == "filled" and request.metadata.get("momlive_first_fill_ns") is None:
+                    await self._read_missing_execution_time(identity, row)
+                    continue
                 if (row["status"] not in {"filled", "cancelled", "rejected", "expired", "aborted"}
                         or snapshot["quantity"] > 0 and snapshot["first_fill_ns"] is None
                         and self.runtime.get(identity, {}).get("first_execution_time_status") != "UNKNOWN"):
@@ -623,6 +647,8 @@ class OmsLiveRuntime:
                     report = await self.backend.fetch_entry_update(request, self)
                     if report is not None:
                         await self._record(request, [report])
+            elif request.side == "sell" and row["status"] == "filled":
+                await self._read_missing_execution_time(identity, row)
             elif (request.side == "sell" and request.metadata.get("exit_reason")
                   and row["status"] not in {"filled", "cancelled", "rejected", "expired", "aborted"}):
                 report = await self.backend.fetch_entry_update(request, self)
@@ -938,6 +964,7 @@ class OmsLiveRuntime:
             if len(exits) != 1:
                 raise Refusal("soft_exit_order_identity_UNKNOWN")
             row = exits[0]
+            await self._read_missing_execution_time(position.episode_id, row)
             terminal = {"filled", "cancelled", "rejected", "expired"}
             if (row["status"] not in terminal and self._soft_exit_chase_window()
                     and values.get("soft_exit_cancel_coid") == values.get("soft_exit_coid")
@@ -1153,6 +1180,12 @@ class OmsLiveRuntime:
         self.service.logger.info("[MOMLIVE1-EXIT-CHASE] episode=%s attempt=%s action=submit bid=%s quantity=%s result=%s",
                                  position.episode_id, attempt, bid, quantity,
                                  ",".join(report.event_type for report in reports) or "UNKNOWN")
+        if any(report.origin == "broker" and report.event_type == "filled" for report in reports):
+            current = await self._inspect(position.episode_id)
+            filled = next((row for row in current["orders"]
+                           if row["request"].client_order_id == request.client_order_id), None)
+            if filled is not None:
+                await self._read_missing_execution_time(position.episode_id, filled)
 
 
 class OwnedNativeBackend:
