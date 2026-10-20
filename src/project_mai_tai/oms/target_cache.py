@@ -62,7 +62,7 @@ class ManagedTargetCache:
     def _value(self, row):
         if (row.strategy_code != "schwab_1m_v2" or row.broker_account_name not in self._accounts
                 or row.status != "open" or not row.entry_order_id
-                or row.current_quantity <= 0 or row.entry_price <= 0):
+                or row.current_quantity <= 0):
             return None
         try:
             price = stored_price(row.entry_price)
