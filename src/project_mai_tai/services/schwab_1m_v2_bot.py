@@ -147,7 +147,9 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     TradeIntentDraft,
     session_start_ts_ms,
 )
-from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitStore, request_only_retirement
+from project_mai_tai.v2_removed_wait import (
+    RemovedWait, RemovedWaitPublicationChanged, RemovedWaitStore, request_only_retirement,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -6877,6 +6879,19 @@ class SchwabV2BotService:
                     pending[key] = value
         return result
 
+    def _falseflip_cancel_wait_warning(self, request: RemovedWait, reason: str) -> None:
+        """Diagnostic only: retain the exact cancellation obligation and all gates."""
+        warnings = self.__dict__.setdefault("_falseflip_cancel_wait_warnings", {})
+        now = time.monotonic()
+        prior = warnings.get(request)
+        if prior is not None and now - prior < 300:
+            return
+        warnings[request] = now
+        logger.warning("[V2-FALSEFLIP2] sym=%s opportunity_id=%d request_token=%s "
+                       "reason=cancel_publication_waiting detail=%s pending_retained=1 "
+                       "retirement_proven=0 entry_override=0",
+                       request.symbol, request.opportunity_id, request.token, reason)
+
     async def _falseflip_poll(self) -> None:
         if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is not True:
             return
@@ -6899,7 +6914,12 @@ class SchwabV2BotService:
                 self.strategy.acknowledge_falseflip_budget(before, after)
         if self.__dict__.get("_falseflip_defer_cancel_publication", False):
             return  # Refresh both accounts before deciding whether a cancel is necessary.
-        for request in self.strategy.pending_falseflip_cancel_publications():
+        requests = self.strategy.pending_falseflip_cancel_publications()
+        warnings = self.__dict__.get("_falseflip_cancel_wait_warnings", {})
+        for old in tuple(warnings):
+            if old not in requests:
+                warnings.pop(old)  # Diagnostic bookkeeping only, never retire a publication.
+        for request in requests:
             state = self.strategy._symbol_states.get(request.symbol)
             if (self.strategy._falseflip2_enabled() and state is not None
                     and self.strategy._falseflip2_proven(state, request.opportunity_id)):
@@ -6908,6 +6928,7 @@ class SchwabV2BotService:
                 if self.strategy._falseflip2_enabled():
                     store = getattr(self, "_removed_wait_store", None)
                     if store is None:
+                        self._falseflip_cancel_wait_warning(request, "store_unavailable")
                         continue
                     generation = self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(request.symbol, 0)
 
@@ -6916,14 +6937,23 @@ class SchwabV2BotService:
                                 and not self.__dict__.get("_clearwait_open_emits", {}).get(r.symbol, 0)
                                 and self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(r.symbol, 0) == g)
 
+                    if not valid():
+                        self._falseflip_cancel_wait_warning(request, "request_or_emit_fence_invalid")
+                        continue
                     await asyncio.to_thread(store.record_rules, request, True, valid)
                     if not valid():
+                        self._falseflip_cancel_wait_warning(request, "ack_fence_changed")
                         continue
                 else:
                     await asyncio.to_thread(self.strategy._removed_wait_persist, request, True)
+            except RemovedWaitPublicationChanged:
+                # Only the writer's typed fence result is classified as changed.
+                # An unrelated DB error remains visible even if memory also moved.
+                self._falseflip_cancel_wait_warning(request, "writer_fence_changed")
+                continue
             except Exception:  # noqa: BLE001 - no cancel publication before its durable request
                 logger.exception("[V2-FALSE-FLIP] sym=%s reason=cancel_barrier_write_failed", request.symbol)
-                break
+                continue
             self.strategy.acknowledge_falseflip_cancel_publication(request)
 
     async def _falseflip2_poll(self, position_book: FlipPositionBook) -> None:

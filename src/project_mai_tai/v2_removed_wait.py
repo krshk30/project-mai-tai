@@ -36,6 +36,10 @@ ORDER_TERMINAL = TERMINAL | {"filled", "replaced"}
 INTENT_TERMINAL = TERMINAL | {"filled", "aborted"}
 
 
+class RemovedWaitPublicationChanged(ValueError):
+    """The publication's supplied memory fence failed, not a storage failure."""
+
+
 def previous_session_request(request: RemovedWait, now: datetime) -> bool:
     identity_ms = request.opportunity_id or request.requested_at_ms
     return 0 < identity_ms < int(current_session_anchor(now).timestamp() * 1000)
@@ -647,7 +651,7 @@ class RemovedWaitStore:
                 session.execute(select(func.pg_advisory_xact_lock(
                     func.hashtext("v2_removed_wait:" + request.symbol))))
             if valid is not None and not valid():
-                raise ValueError("removal publication changed")
+                raise RemovedWaitPublicationChanged("removal publication changed")
             if not active:
                 latest = session.scalar(select(DashboardSnapshot).where(
                     DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
@@ -659,7 +663,7 @@ class RemovedWaitStore:
             session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE, payload=request.payload(active=active)))
             session.flush()
             if valid is not None and not valid():
-                raise ValueError("removal publication changed before commit")
+                raise RemovedWaitPublicationChanged("removal publication changed before commit")
             session.commit()
 
     def commit_clear(self, plan: RemovedWaitClear, valid: Callable[[], bool]) -> None:
