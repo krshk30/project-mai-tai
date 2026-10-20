@@ -621,9 +621,12 @@ class OmsLiveRuntime:
         # Save before the read so a restart cannot turn missing proof into a poll loop.
         await self._save(next(item for item in self.book.snapshot() if item["episode_id"] == identity))
         report = await self.backend.fetch_entry_update(request, self, fresh=True)
-        if report is not None:
+        complete = (report is not None and report.origin == "broker" and report.event_type == "filled"
+                    and report.filled_quantity == request.quantity
+                    and report.metadata.get("momlive_execution_time_source") == "broker_execution_time")
+        if complete:
             await self._record(request, [report])
-        if report is None or report.metadata.get("momlive_execution_time_source") != "broker_execution_time":
+        else:
             self.service.logger.warning("[MOMLIVE1-EXECUTION-TIME-UNKNOWN] episode=%s coid=%s side=%s",
                 identity, request.client_order_id, request.side)
 
