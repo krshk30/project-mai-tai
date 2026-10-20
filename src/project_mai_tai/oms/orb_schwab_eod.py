@@ -65,6 +65,7 @@ def _write_incident(session, target, reason, now):
     existing = session.scalar(
         select(SystemIncident).where(
             SystemIncident.service_name == "oms-risk",
+            SystemIncident.status == "open",
             SystemIncident.payload["source"].as_string() == _STATE,
             SystemIncident.payload["entry_order_id"].as_string() == str(target.entry_id),
         )
