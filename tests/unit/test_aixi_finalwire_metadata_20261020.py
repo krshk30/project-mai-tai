@@ -1,8 +1,9 @@
 """AUTHOR ONLY / UNRUN until16 ET.
 
 Controlled DB/broker replies plus hashed actual AIXI stored payloads/logs.
-The packet exports the close AFTER abort and positions AFTER external flatten.
-Pending/no-event/owned-VP prewire reconstruction below is explicitly CONTROLLED,
+Both packet parts retain the actual BUY parent, Fill and entry-event rows.
+They export the close AFTER abort and positions AFTER external flatten.
+Pending/no-event/prior-VP prewire reconstruction below is explicitly CONTROLLED,
 not a verbatim earlier database snapshot or a claimed executed b79 replay.
 """
 
@@ -38,6 +39,8 @@ QTY, PRICE = Decimal(95), Decimal("3.14")
 # Main copies those exact hashed bytes; no application runtime/file export here.
 PACKET = Path(__file__).resolve().parents[1] / "fixtures" / "aixi_1327_packet_20261020.txt"
 PACKET_SHA = "d6e9806c14884f7f84cb63512cd973d9f8f536d68f5d1b4591ebb8d53c3687f0"
+PART2 = PACKET.with_name("aixi_1327_packet_part2_20261020.txt")
+PART2_SHA = "b99d870da34edaf0b7f3c61e119e6af5f3f2bc45fb147bbbaceaee4a2f0ff822"
 
 
 def actual_packet():
@@ -59,9 +62,40 @@ def actual_packet():
             "managed": one("managed row"), "lines": raw.decode()}
 
 
+def actual_packet_part2():
+    # Upstream: task-queues/analysis/aixi-1327-packet/aixi_packet_part2.txt.
+    raw = PART2.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == PART2_SHA
+    sections, heading = {}, None
+    for line in raw.decode().splitlines():
+        if line.startswith("== "):
+            heading = line[3:]
+            sections[heading] = []
+        elif heading is not None and line.startswith("{"):
+            sections[heading].append(json.loads(line, parse_float=Decimal))
+    assert len(sections["entry BUY parent intent"]) == 1
+    assert sections["entry fills"] and sections["entry order events"]
+    return sections
+
+
 def model_values(row):
     values = deepcopy(row)
+
+    def json_numbers(value):
+        # parse_float=Decimal preserves numeric database-column precision.
+        # JSON columns, however, use the model's ordinary JSON number types,
+        # not Decimal objects (and never decimal-as-string substitutions).
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, dict):
+            return {key: json_numbers(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [json_numbers(item) for item in value]
+        return value
+
     for key, value in values.items():
+        if key in {"payload", "entry_classification"}:
+            values[key] = json_numbers(value)
         if value is not None and (key == "id" or key.endswith("_id")):
             # COIDs and native IDs are strings; only canonical model UUID columns.
             if key in {"id", "intent_id", "strategy_id", "broker_account_id", "entry_order_id", "order_id"}:
@@ -75,7 +109,23 @@ def model_values(row):
 def test_hashed_actual_aixi_payload_through_atr_with_explicit_prewire_reconstruction(
         make_case, monkeypatch, late_stamp):
     packet = actual_packet()
+    part2 = actual_packet_part2()
     close, parent, entry, managed = (packet[k] for k in ("close", "intent", "entry", "managed"))
+    buy_parent = part2["entry BUY parent intent"][0]
+    assert buy_parent["id"] == entry["intent_id"]
+    assert buy_parent in part2["protect intents"]  # Actual heading includes the last3h intent census.
+    assert close in part2["all AIXI live:orb sell orders today (any status)"]
+    for fill in part2["entry fills"]:
+        assert fill["order_id"] == entry["id"] and fill["side"] == "buy"
+        assert fill["strategy_id"] == entry["strategy_id"]
+        assert fill["broker_account_id"] == entry["broker_account_id"]
+        assert fill["broker_fill_id"] == entry["broker_order_id"] + ":95"
+    assert sum(f["quantity"] for f in part2["entry fills"]) == QTY
+    assert sum(f["quantity"] * f["price"] for f in part2["entry fills"]) == QTY * PRICE
+    vps = [r for r in part2["VP row (all)"] if r["strategy_id"] == entry["strategy_id"]
+           and r["broker_account_id"] == entry["broker_account_id"] and r["symbol"] == "AIXI"]
+    assert len(vps) == 1 and vps[0]["quantity"] == 0 and vps[0]["average_price"] == 0
+    assert vps[0]["updated_at"] == "2026-10-20T17:34:42.523128+00:00"
     assert close["status"] == parent["status"] == "aborted"
     assert close["submitted_at"] is close["broker_order_id"] is None
     assert close["payload"] == parent["payload"]["metadata"]
@@ -95,26 +145,30 @@ def test_hashed_actual_aixi_payload_through_atr_with_explicit_prewire_reconstruc
         account = BrokerAccount(id=UUID(entry["broker_account_id"]), name=broker.account, provider="webull", environment="production")
         unit.add_all([strategy, account])
         unit.flush()
-        # Full BUY parent and entry Fill rows were not exported. Bind CONTROLLED
-        # mirrors to actual entry IDs/execution evidence, never call them raw rows.
-        unit.add(TradeIntent(id=UUID(entry["intent_id"]), strategy_id=strategy.id,
-            broker_account_id=account.id, symbol="AIXI", side="buy", intent_type="open",
-            quantity=QTY, reason="CONTROLLED missing BUY parent mirror", status="filled",
-            payload={}, created_at=datetime.fromisoformat(entry["submitted_at"])))
+        # Part2 now supplies actual complete BUY parent/Fill/event rows. Keep
+        # those values unchanged; only the close's lifecycle frame is restored.
+        unit.add(TradeIntent(**model_values(buy_parent)))
+        for exported in part2["protect intents"]:
+            if (exported["strategy_id"] == entry["strategy_id"]
+                    and exported["broker_account_id"] == entry["broker_account_id"]
+                    and exported["id"] not in {buy_parent["id"], parent["id"]}):
+                unit.add(TradeIntent(**model_values(exported)))
         unit.add(TradeIntent(**{**model_values(parent), "status": "pending"}))
         unit.flush()
         unit.add(BrokerOrder(**model_values(entry)))
         # Only lifecycle frame is reconstructed: before abort was pending/noevent.
         unit.add(BrokerOrder(**{**model_values(close), "status": "pending"}))
         unit.flush()
-        execution = json.loads(entry["payload"]["_webull_terminal_proof"])["execution"]
-        unit.add(Fill(order_id=UUID(entry["id"]), strategy_id=strategy.id, broker_account_id=account.id,
-            broker_fill_id="CONTROLLED-entry-execution-mirror", symbol="AIXI", side="buy",
-            quantity=Decimal(execution[2]), price=Decimal(execution[3]),
-            filled_at=datetime.fromisoformat(execution[4]), payload={"source": "CONTROLLED evidence mirror"}))
+        for fill in part2["entry fills"]:
+            unit.add(Fill(**model_values(fill)))
+        for event in part2["entry order events"]:
+            assert event["order_id"] == entry["id"]
+            unit.add(BrokerOrderEvent(**model_values(event)))
         unit.add(OmsManagedPosition(**model_values(managed)))
-        unit.add(VirtualPosition(strategy_id=strategy.id, broker_account_id=account.id,
-            symbol="AIXI", quantity=QTY, average_price=PRICE))
+        # The exported VP is already0 after17:34 external flatten. Preserve its
+        # exact identity/cumulative PnL, but CONTROLLED historical quantity/cost
+        # are needed to isolate the earlier prewire metadata predicate.
+        unit.add(VirtualPosition(**{**model_values(vps[0]), "quantity": QTY, "average_price": PRICE}))
     metadata = deepcopy(close["payload"])
     if late_stamp:
         metadata["cw_submitted_at"] = SUBMITTED.isoformat(timespec="microseconds")
@@ -620,3 +674,174 @@ async def test_actual_recovery_coordinator_tries_at_most_three_positive_unsent_o
         assert len(journal["unsent_handoffs"]) == 4  # Initial plus three retry abort receipts.
         assert not journal.get("exit_phase")
         assert unit.scalar(select(SystemIncident.id)) is not None  # Exhaustion is visible, not a fake close.
+
+
+async def drain_auto_recovery(service):
+    """Observe actual spawned coordinator completion, not a success stub."""
+    while tasks := tuple(service.__dict__.get("_confirmation_exit_recovery_tasks", ())):
+        await asyncio.gather(*tasks)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flat", [False, True], ids=["fresh-owner-one-sell", "flat-no-sell"])
+async def test_riskoff_positive_never_sent_abort_automatically_recovers_once(make_case, monkeypatch, flat):
+    case = aixi_case(make_case, monkeypatch)
+    service, factory, broker, _, _ = case
+    assert await attach_aixi(case) is True
+    validator, spawn = wb.validate_atr_before_wire, service._spawn_confirmation_webull_recovery
+    validated, spawned = [], []
+
+    async def fail_once(actual_service, request, identity):
+        await validator(actual_service, request, identity)
+        assert request.reason == wb.REASON
+        validated.append(request.client_order_id)
+        if len(validated) == 1:
+            if flat:
+                broker.total = Decimal(0)  # Explicit CONTROLLED external flatten.
+            raise ValueError("CONTROLLED canonical riskoff postrelease refusal")
+
+    def observe_spawn(*args, **kwargs):
+        before = set(service.__dict__.get("_confirmation_exit_recovery_tasks", ()))
+        result = spawn(*args, **kwargs)
+        spawned.extend(set(service.__dict__.get("_confirmation_exit_recovery_tasks", ())) - before)
+        return result
+
+    monkeypatch.setattr(wb, "validate_atr_before_wire", fail_once)
+    monkeypatch.setattr(service, "_spawn_confirmation_webull_recovery", observe_spawn)
+    assert await wb.request_atr_exit(service, broker.account, "AIXI", COID,
+        "CONTROLLED original attach risk-off trigger") is False
+    await drain_auto_recovery(service)
+    assert len(spawned) == 1 and all(task.done() for task in spawned)
+    assert len(validated) == (1 if flat else 2)
+    assert len(set(validated)) == len(validated)
+    assert len(closes(broker)) == (0 if flat else 1) and broker.total == 0
+    if not flat:
+        assert closes(broker)[0].reason == wb.REASON and closes(broker)[0].quantity == QTY
+        assert closes(broker)[0].client_order_id == validated[-1]
+    with factory() as unit:
+        entry = unit.get(BrokerOrder, case[3])
+        receipt = entry.payload[wb.KEY]["unsent_handoffs"][0]
+        assert receipt["reason"] == wb.REASON
+        assert receipt["exit_reason"] == "CONTROLLED original attach risk-off trigger"
+        order = unit.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == validated[0]))
+        assert order.status == "aborted" and order.submitted_at is None and order.broker_order_id is None
+        assert unit.scalar(select(Fill.id).where(Fill.order_id == order.id)) is None
+        managed = unit.scalar(select(OmsManagedPosition))
+        assert managed.status == "closed" and managed.current_quantity == 0
+    assert not service.__dict__.get("_wbattach_exit_owners")
+    assert not service._webull_recovery_in_progress(broker.account, "AIXI")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["claimed", "unknown-children", "unproven-abort"])
+async def test_riskoff_unknown_or_claimed_never_spawns_another_recovery_sell(make_case, monkeypatch, fault):
+    case = aixi_case(make_case, monkeypatch)
+    service, factory, broker, _, _ = case
+    assert await attach_aixi(case) is True
+    validator = wb.validate_atr_before_wire
+    spawns = []
+    original_spawn = service._spawn_confirmation_webull_recovery
+
+    def observe_spawn(*args, **kwargs):
+        spawns.append((args, kwargs))
+        return original_spawn(*args, **kwargs)
+
+    async def opaque_abort(actual_service, request, identity):
+        await validator(actual_service, request, identity)
+        request.metadata["CONTROLLED-unproven-request-change"] = "true"
+        raise ValueError("CONTROLLED no exact unsent release receipt")
+
+    monkeypatch.setattr(service, "_spawn_confirmation_webull_recovery", observe_spawn)
+    if fault == "claimed":
+        with factory.begin() as unit:
+            entry = unit.get(BrokerOrder, case[3])
+            entry.payload = {**entry.payload, wb.KEY: {**entry.payload[wb.KEY],
+                "exit_phase": "claimed", "exit_call_id": "CONTROLLED-other-inflight-call"}}
+    elif fault == "unknown-children":
+        broker.child_unknown = True
+    else:
+        monkeypatch.setattr(wb, "validate_atr_before_wire", opaque_abort)
+    assert await wb.request_atr_exit(service, broker.account, "AIXI", COID,
+        "CONTROLLED uncertain attach risk-off") is False
+    await drain_auto_recovery(service)
+    assert spawns == [] and closes(broker) == [] and broker.total == QTY
+    with factory() as unit:
+        state = unit.get(BrokerOrder, case[3]).payload[wb.KEY]
+        assert not state.get("unsent_handoffs")
+        if fault in {"claimed", "unproven-abort"}:
+            assert state["exit_phase"] == "claimed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", ["old-receipt-no-reason", "changed-origin", "riskoff-outside-rth"])
+async def test_riskoff_retry_requires_new_reason_bound_receipt_and_rth(make_case, monkeypatch, damage):
+    from project_mai_tai.oms import service as oms
+    case = aixi_case(make_case, monkeypatch)
+    service, factory, broker, _, clock = case
+    assert await attach_aixi(case) is True
+    validator = wb.validate_atr_before_wire
+    scheduled = []
+
+    async def refuse(actual_service, request, identity):
+        await validator(actual_service, request, identity)
+        raise ValueError("CONTROLLED isolate eligible canonical riskoff receipt")
+
+    # Counterfactual preparation only: actual automatic scheduling has dedicated
+    # controls above. Here inspect helper denial before any recovery can consume it.
+    with monkeypatch.context() as patch:
+        patch.setattr(wb, "validate_atr_before_wire", refuse)
+        patch.setattr(service, "_spawn_confirmation_webull_recovery", lambda *a, **k: scheduled.append((a, k)))
+        await wb.request_atr_exit(service, broker.account, "AIXI", COID, "CONTROLLED origin")
+    assert len(scheduled) == 1
+    with factory.begin() as unit:
+        entry = unit.get(BrokerOrder, case[3])
+        state = deepcopy(entry.payload[wb.KEY])
+        assert not state.get("exit_phase") and state["unsent_handoffs"][-1]["reason"] == wb.REASON
+        if damage == "old-receipt-no-reason":
+            state["unsent_handoffs"][-1].pop("reason")
+        elif damage == "changed-origin":
+            state["exit_reason"] = "CONTROLLED different trigger"
+        entry.payload = {**entry.payload, wb.KEY: state}
+        identity = str(unit.scalar(select(OmsManagedPosition.id)))
+    if damage == "riskoff-outside-rth":
+        clock[0] = PREPARED.replace(hour=21)
+        monkeypatch.setattr(oms, "_extended_hours_session", lambda now=None: "PM")
+        monkeypatch.setattr(service, "_market_is_fillable", lambda: True)
+        service._latest_quotes_by_symbol = {"AIXI": {"received_at": clock[0], "bid": 3.0}}
+    assert await wb.retry_atr_proven_unsent_exit(service, broker.account, "AIXI", identity) is None
+    assert closes(broker) == [] and broker.total == QTY
+
+
+@pytest.mark.asyncio
+async def test_riskoff_auto_recovery_coalesces_recursive_refusals_and_stops_at_three(make_case, monkeypatch):
+    case = aixi_case(make_case, monkeypatch)
+    service, factory, broker, _, _ = case
+    assert await attach_aixi(case) is True
+    validator, spawn = wb.validate_atr_before_wire, service._spawn_confirmation_webull_recovery
+    validated, workers = [], []
+
+    async def always_refuse(actual_service, request, identity):
+        await validator(actual_service, request, identity)
+        validated.append(request.client_order_id)
+        raise ValueError("CONTROLLED repeat canonical riskoff refusal")
+
+    def observed_spawn(*args, **kwargs):
+        before = set(service.__dict__.get("_confirmation_exit_recovery_tasks", ()))
+        result = spawn(*args, **kwargs)
+        workers.extend(set(service.__dict__.get("_confirmation_exit_recovery_tasks", ())) - before)
+        return result
+
+    monkeypatch.setattr(wb, "validate_atr_before_wire", always_refuse)
+    monkeypatch.setattr(service, "_spawn_confirmation_webull_recovery", observed_spawn)
+    await wb.request_atr_exit(service, broker.account, "AIXI", COID, "CONTROLLED bounded riskoff origin")
+    await drain_auto_recovery(service)
+    assert len(workers) == 1 and workers[0].done()
+    assert len(validated) == len(set(validated)) == 4  # Initial +3, no recursive fourth retry.
+    assert closes(broker) == [] and broker.total == QTY
+    assert not service._webull_recovery_in_progress(broker.account, "AIXI")
+    with factory() as unit:
+        state = unit.get(BrokerOrder, case[3]).payload[wb.KEY]
+        assert len(state["unsent_handoffs"]) == 4 and not state.get("exit_phase")
+        assert all(r["reason"] == wb.REASON and r["exit_reason"] == "CONTROLLED bounded riskoff origin"
+                   for r in state["unsent_handoffs"])
+        assert unit.scalar(select(SystemIncident.id)) is not None  # Exhaustion remains explicitly unresolved.

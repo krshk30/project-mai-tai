@@ -687,7 +687,10 @@ async def retry_atr_proven_unsent_exit(service, account, symbol, managed_id):
                 or intent.strategy_id != entry.strategy_id or intent.broker_account_id != entry.broker_account_id
                 or intent.symbol != symbol or intent.side != "sell" or intent.intent_type != "close"
                 or intent.status != "aborted" or intent.quantity != order.quantity
-                or intent.reason not in SOFTWARE_EXIT_REASONS or state.get("exit_reason") != intent.reason
+                or intent.reason not in SOFTWARE_EXIT_REASONS | {REASON}
+                or receipt.get("reason") != intent.reason
+                or not receipt.get("exit_reason") or receipt["exit_reason"] != state.get("exit_reason")
+                or intent.reason in SOFTWARE_EXIT_REASONS and state.get("exit_reason") != intent.reason
                 or metadata.get("oms_managed_row_id") != managed_id
                 or metadata.get("entry_order_id") != str(entry.id)
                 or prepared_at.tzinfo is None
@@ -707,6 +710,8 @@ async def retry_atr_proven_unsent_exit(service, account, symbol, managed_id):
     if bound is None:
         return None
     position, entry_price, reason = bound
+    if reason == REASON and not _rth(service):
+        return None  # Canonical attach risk-off has never authorized an EH market close.
     bid = 0.0
     context = None
     if not _rth(service):
@@ -1222,7 +1227,8 @@ async def release_atr_proven_unsent(service, request, managed_row_id, *, abort_e
             raise ValueError("wbattach1_unsent_receipt_not_proven")
         state["unsent_handoffs"] = [*state.get("unsent_handoffs", []), {
             "call_id": call.call_id, "client_order_id": request.client_order_id,
-            "abort_event_id": str(event.id), "outcome": "PROVEN_NOT_SENT"}]
+            "abort_event_id": str(event.id), "outcome": "PROVEN_NOT_SENT",
+            "reason": call.reason, "exit_reason": state.get("exit_reason")}]
         state.pop("exit_phase", None)
         state.pop("exit_call_id", None)
         entry.payload = {**entry.payload, KEY: state}

@@ -10,10 +10,27 @@ from project_mai_tai.oms import service as oms, webull_attach_riskoff as wb
 from tests.unit.test_wbattach1_riskoff import attach, closes, crossed, make_case as make_case
 
 
+@pytest.fixture
+def manual_continuation_without_auto_recovery(monkeypatch):
+    """Counterfactual: inspect one abort, then explicitly invoke the next owner.
+
+    Actual automatic risk-off recovery is covered in the AIXI metadata module.
+    Keep this test's original first-call no-wire/abort/next-call assertions.
+    """
+    scheduled = []
+
+    def record_only(service, decision, account, symbol, **kwargs):
+        scheduled.append((account, symbol, kwargs))
+
+    monkeypatch.setattr(oms.OmsRiskService, "_spawn_confirmation_webull_recovery", record_only)
+    return scheduled
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("control", [False, True])
 @pytest.mark.parametrize("fault", [None, "stale-wire", "lower-wire", "session-ended"])
-async def test_actual_composed_first_wire_and_proven_unsent_next_call(make_case, monkeypatch, control, fault):
+async def test_actual_composed_first_wire_and_proven_unsent_next_call(
+        make_case, monkeypatch, control, fault, manual_continuation_without_auto_recovery):
     case = make_case(control=control)
     service, factory, broker, entry_id, clock = case
     if control:
@@ -62,6 +79,7 @@ async def test_actual_composed_first_wire_and_proven_unsent_next_call(make_case,
     broker.submit_order = sender
     await attach(case)
     assert len(checked) == 1
+    assert len(manual_continuation_without_auto_recovery) == (0 if fault is None else 1)
     with factory() as unit:
         prepared = unit.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == checked[0]))
         if fault is None:

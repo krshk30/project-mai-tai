@@ -6891,6 +6891,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         confirmation: dict[str, object] | None = None,
         protection: str = "released",
     ) -> None:
+        if self._webull_recovery_in_progress(acct, symbol):
+            return
         task = asyncio.create_task(
             self._recover_released_confirmation_webull_leg(
                 decision,
@@ -11112,8 +11114,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     self, request=request, intent_id=intent_id, now=utcnow(),
                 )
                 broker_flat = False
+                unsent_released = False
                 try:
                     await release_atr_proven_unsent(self, request, str(row.id), abort_event_id=abort_id)
+                    unsent_released = True
                     broker_flat = await resolve_atr_broker_flat(self, str(row.id))
                 except Exception as cleanup_exc:
                     await critical(self, row.broker_account_name, row.symbol,
@@ -11122,6 +11126,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     f"final_wire_proof_refused:{type(exc).__name__}:{exc}", entry_id=row.entry_order_id)
                 if broker_flat:
                     return _ManagedSellEvents(broker_flat_row_id=str(row.id))
+                if unsent_released and reason == "WEBULL_ATTACH_RISK_OFF":
+                    self._spawn_confirmation_webull_recovery(
+                        _ConfirmationFanoutDecision(
+                            symbol=row.symbol, source_fill_id=f"WBATTACH1_UNSENT:{abort_id}",
+                            accounts=(row.broker_account_name,), exit_tag="WBATTACH1_UNSENT",
+                        ),
+                        row.broker_account_name, row.symbol, expected_row_id=str(row.id),
+                        protection="released",
+                    )
                 return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
         # Keep the prepared binding immutable through the final proof and its
         # proven-unsent cleanup. This observation belongs to the wire boundary.
