@@ -291,23 +291,24 @@ async def test_partial_execution_and_cancelled_remainder_still_stays_cancelled(t
 
 @pytest.mark.asyncio
 async def test_normal_synthetic_root_releases_reservation_without_fabricating_root_fill(tmp_path):
-    h = await seed(tmp_path, at=datetime(2026, 10, 20, 14, tzinfo=UTC))
+    # A completed RTH session, not a future execution relative to this morning.
+    h = await seed(tmp_path, CASES[1], at=datetime(2026, 10, 19, 14, tzinfo=UTC))
     try:
         _, handle = await held_case(h)
         assert handle.session == "NORMAL" and len(handle.child_ids) == 2
         target, stop = handle.child_ids
         target_request, stop_request = h.venue.orders[target].request, h.venue.orders[stop].request
-        h.venue.put(target_request, "filled", D(31), D("3.27"))
+        h.venue.put(target_request, "filled", D(50), D("2.10"))
         h.venue.put(stop_request, "cancelled")
         read = await h.runtime.backend.read(handle, h.runtime)
-        assert read.terminal and read.cumulative_exited == 31
+        assert read.terminal and read.cumulative_exited == 50
         with h.sf() as session:
             root = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == handle.base_coid))
             child = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == target))
             assert root.status == "cancelled" and child.status == "filled"
             assert session.scalars(select(Fill).where(Fill.order_id == root.id)).all() == []
             fills = session.scalars(select(Fill).where(Fill.order_id == child.id)).all()
-            assert len(fills) == 1 and fills[0].quantity == 31
+            assert len(fills) == 1 and fills[0].quantity == 50
     finally:
         h.engine.dispose()
 
