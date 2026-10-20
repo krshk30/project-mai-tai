@@ -55,12 +55,13 @@ def test_shared_atr_columns_badges_separate_totals_and_short_times(monkeypatch, 
     completed = [row for row in tables.tables if row[:3] == ["Ticker", "Path", "Qty"]]
     columns = ["Ticker", "Path", "Qty", "Entry Time", "Entry", "Exit Time", "Exit", "P&L", "Exit Summary"]
     assert completed == [columns] * 3
-    assert '<span class="count accent">PAPER</span>' in html
+    assert '<span class="count accent">REFERENCE</span>' in html
     assert '<span class="count accent">LIVE</span>' in html
-    assert "Day total: $+49.40" in html and "Day total: $+28.80" in html
+    assert "$+49.40" in html and "$+28.80" in html
+    assert html.count('Day total:') == 1
     assert "Day total: $+78.20" not in html
-    assert "Warning caught 49s earlier (filled entry times)" in html
-    assert 'color:#98a6c8;font-size:10px;' in html
+    assert 'caught 49s' not in html
+    assert 'color:#98a6c8;font-size:10px;' not in html  # Retired snapshot-comparison note.
     assert "08:00:34 AM ET" in html and "2026-10-14 08:00:34 AM ET" not in html
     assert "Broker Qty<br>Current Price" in html
     assert html.count('<h3>Open Positions') == 1
@@ -71,6 +72,7 @@ def test_shared_atr_columns_badges_separate_totals_and_short_times(monkeypatch, 
 @pytest.mark.parametrize("enabled", [True, False])
 def test_live_note_plain_words_actual_flag_and_no_vwap(monkeypatch, route, enabled):
     from html import unescape
+    from unittest.mock import AsyncMock
 
     build_app = cp.build_app
 
@@ -79,12 +81,14 @@ def test_live_note_plain_words_actual_flag_and_no_vwap(monkeypatch, route, enabl
         return build_app(*args, **kwargs)
 
     monkeypatch.setattr(cp, "build_app", configured_app)
+    monkeypatch.setattr(cp, '_read_momentum_page_owner', AsyncMock(return_value={
+        'status': 'READABLE', 'entry_admission_enabled': enabled, 'episodes': []}))
     html, _ = page(monkeypatch, route)
-    state = "ON" if enabled else "OFF"
-    assert f"LIVE entries {state} (OFF: open positions still exit)." in html
-    assert "P&L uses actual fill prices. Orders that have not filled are not counted." in unescape(html)
+    state = "LIVE" if enabled else "OFF"
+    assert f'<dt>Status</dt><dd>{state}</dd>' in html
+    assert "P&L uses actual LIVE broker fills only." in unescape(html)
     assert "VWAP" not in html
-    assert "Day total: $+49.40" in html and "Day total: $+28.80" in html
+    assert "$+49.40" in html and "$+28.80" in html and html.count('Day total:') == 1
 
 
 def test_atr_and_momentum_call_same_actual_row_component(monkeypatch):
@@ -175,11 +179,11 @@ def test_actual_retained_sixteen_warning_six_snapshot(monkeypatch):
     snapshot = raw["ledgers"]["momentum_30s"]
     assert warning["row_count"] == 16 and snapshot["row_count"] == 6
     before = deepcopy(raw)
-    html, _ = page(monkeypatch, "/bot/momentum-30", warning=warning["closed_today"], snapshot=snapshot["closed_today"])
-    assert "16 completed paper trades" in html and "6 completed paper trades" in html
-    assert html.count('<td><strong>') == 22
-    assert f'Day total: ${float(warning["daily_pnl"]):+.2f}' in html
-    assert f'Day total: ${float(snapshot["daily_pnl"]):+.2f}' in html
+    html, _ = page(monkeypatch, "/bot/momentum-30", warning=warning["closed_today"], snapshot=[])
+    assert "16 completed references" in html and "6 completed paper trades" not in html
+    assert html.count('<td><strong>') == 16
+    assert f'Day total: ${float(warning["daily_pnl"]):+.2f}' not in html
+    assert f'Day total: ${float(snapshot["daily_pnl"]):+.2f}' not in html
     assert raw == before
 
 
@@ -247,14 +251,16 @@ def test_warning_open_endpoint_loads_offloop_and_empty_after_final(monkeypatch):
     with TestClient(app) as client:
         html = client.get('/bot/momentum-30').text
         assert html.count('<h3>Open Positions') == 1
-        assert '<strong>SCNI</strong>' in html and '<td>Warning</td>' in html
+        open_panel = html.split('<h3>Open Positions (LIVE)</h3>', 1)[1].split('</section>', 1)[0]
+        assert '<strong>SCNI</strong>' not in open_panel and 'No open positions' in open_panel
+        assert '<td>SCNI</td>' in html  # Warning evidence remains in the merged tape.
         assert 'open positions unreadable' not in html and '1970' not in html
         with factory() as session:
             add_event(session, "endpoint-open", "FINAL")
             session.commit()
         html = client.get('/bot/momentum-30').text
         assert 'No open positions' in html and '<td>Warning</td>' not in html
-    assert len(threads) == 2 and all(loop is None for _, loop in threads)
+    assert len(threads) == 4 and all(loop is None for _, loop in threads)
 
 
 def test_combined_paths_preserve_same_symbol_rows_and_live_gate():

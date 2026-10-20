@@ -600,11 +600,11 @@ def test_momentum_enablement_retires_the_polygon_runtime_not_only_its_card() -> 
     assert "if polygon_paper_enabled:" in source
 
 
-def test_dashboard_routes_keep_momentum_cards_separate_and_paper_aware() -> None:
-    assert BOT_PAGE_META["momentum_30s"]["title"] == "Momentum 30"
-    assert BOT_PAGE_META["momentum_60s"]["title"] == "Momentum 60"
-    assert _compact_bot_page_url("momentum_30s") == "/bot/momentum-30"
-    assert _compact_bot_page_url("momentum_60s") == "/bot/momentum-60"
+def test_dashboard_routes_merge_momentum_presentation_without_changing_registrations() -> None:
+    assert BOT_PAGE_META["momentum_30s"]["title"] == "Momentum"
+    assert BOT_PAGE_META["momentum_60s"]["title"] == "Momentum"
+    assert _compact_bot_page_url("momentum_30s") == "/bot/momentum"
+    assert _compact_bot_page_url("momentum_60s") == "/bot/momentum"
     assert "momentum_30s" in CONTROL_PLANE_ACTIVE_BOT_CODES
     assert "momentum_60s" in CONTROL_PLANE_ACTIVE_BOT_CODES
 

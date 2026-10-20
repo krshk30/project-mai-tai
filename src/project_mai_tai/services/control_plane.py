@@ -4476,13 +4476,42 @@ def build_app(
         data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "orb_schwab")
 
-    @app.get("/bot/momentum-30", response_class=HTMLResponse)
-    async def bot_momentum_30_page() -> str:
-        return await _render_bot_page_with_trade_coach("momentum_30s")
+    @app.get("/bot/momentum", response_class=HTMLResponse)
+    async def bot_momentum_page() -> str:
+        data = await app.state.repository.load_bot_dashboard_data()
+        day = utcnow().astimezone(EASTERN_TZ).date()
+        warnings = []
+        for code in ("momentum_60s_warn", "momentum_30s_warn"):
+            try:
+                warning = await asyncio.to_thread(_load_warning_page_ledger, active_session_factory, code, day)
+            except Exception:
+                logging.getLogger(__name__).warning("[MOMPAGE4] ledger=%s UNKNOWN", code, exc_info=True)
+                warning = {"strategy_code": code, "status": "UNKNOWN"}
+            warnings.append(warning)
+        from project_mai_tai.momentum_live.ledger import load_live_ledger
+        try:
+            live = await asyncio.wait_for(asyncio.to_thread(load_live_ledger, active_session_factory, day), timeout=3)
+        except Exception:
+            logging.getLogger(__name__).warning("[MOMPAGE4] live_fill_ledger=UNKNOWN", exc_info=True)
+            live = {"status": "UNKNOWN"}
+        owner = await _read_momentum_page_owner(app.state.repository.redis, active_settings.redis_stream_prefix,
+            now_ns=time.time_ns())
+        metrics = ({"status": "UNKNOWN"} if not active_settings.market_data_momentum_warning_enabled
+                   else await _read_momentum_warning_gateway_metrics(app.state.repository.redis,
+                       active_settings.redis_stream_prefix, now_ns=time.time_ns()))
+        rendered = _render_momentum_page(data, live=live, warnings=warnings, owner=owner, metrics=metrics)
+        if active_settings.bot_control_enabled:
+            rendered = rendered.replace("</body>", '<iframe title="LIVE bot control: momentum_warn_live" '
+                'src="/bot-control/momentum_warn_live" style="width:100%;height:140px;border:0"></iframe></body>')
+        return rendered
 
-    @app.get("/bot/momentum-60", response_class=HTMLResponse)
-    async def bot_momentum_60_page() -> str:
-        return await _render_bot_page_with_trade_coach("momentum_60s")
+    @app.get("/bot/momentum-30")
+    async def bot_momentum_30_page() -> RedirectResponse:
+        return RedirectResponse("/bot/momentum", status_code=302)
+
+    @app.get("/bot/momentum-60")
+    async def bot_momentum_60_page() -> RedirectResponse:
+        return RedirectResponse("/bot/momentum", status_code=302)
 
     @app.get("/bot/30s-probe", response_class=HTMLResponse)
     async def bot_30s_probe_page() -> str:
@@ -4634,6 +4663,7 @@ def _render_compact_dashboard(data: dict[str, Any]) -> str:
         bot_by_code[code]
         for code in CONTROL_PLANE_ACTIVE_BOT_CODES
         if code in bot_by_code
+        and not (code == "momentum_60s" and "momentum_30s" in bot_by_code)
     ]
 
     service_statuses = [
@@ -4874,8 +4904,8 @@ def _compact_service_status(service: dict[str, Any] | None, *, token_status: dic
 def _compact_bot_page_url(code: str) -> str:
     return {
         "schwab_1m_v2": "/bot/1m-schwab-v2",
-        "momentum_30s": "/bot/momentum-30",
-        "momentum_60s": "/bot/momentum-60",
+        "momentum_30s": "/bot/momentum",
+        "momentum_60s": "/bot/momentum",
         "polygon_30s": "/bot/30s-polygon",
         "orb_schwab": "/bot/orb",
     }.get(code, "/")
@@ -4887,8 +4917,7 @@ def _compact_bot_route_line(code: str, bot: dict[str, Any]) -> str:
     if code == "polygon_30s":
         return "paper exit · mirrored Schwab + Webull fills · Polygon feed"
     if code in {"momentum_30s", "momentum_60s"}:
-        window = "30-second" if code == "momentum_30s" else "60-second"
-        return f"paper · +30% over trailing {window} low · Massive raw trades"
+        return "live · Webull + Schwab (SEC route) · 30s + 60s"
     if code == "orb_schwab":
         return f'live · Schwab · {bot.get("account_name", "-")}'
     return f'{bot.get("execution_mode", "-")} · {bot.get("provider", "-")} · {bot.get("account_display_name", "-")}'
@@ -4967,10 +4996,13 @@ def _compact_bot_card(
     name = str(bot.get("display_name") or code.replace("_", " ").title())
     if code == "orb_schwab":
         name = "ORB Live"
+    elif code in {"momentum_30s", "momentum_60s"}:
+        name = "Momentum"
     route = _compact_bot_route_line(code, bot)
     bot_page_url = _compact_bot_page_url(code)
     # Paper vs live badge — paper-routed accounts (e.g. "paper:orb") must not read as LIVE.
-    is_paper = str(bot.get("account_name") or "").startswith("paper:")
+    is_paper = (str(bot.get("account_name") or "").startswith("paper:")
+                and code not in {"momentum_30s", "momentum_60s"})
     mode_tone = "warn" if is_paper else "good"
     mode_label = "PAPER" if is_paper else "LIVE"
     return f"""
@@ -5237,18 +5269,18 @@ BOT_PAGE_META = {
         "path": "/bot/30s-polygon",
     },
     "momentum_30s": {
-        "title": "Momentum 30",
-        "nav_title": "Momentum 30",
+        "title": "Momentum",
+        "nav_title": "Momentum",
         "badge": "M30",
         "color": "#ff8a3d",
-        "path": "/bot/momentum-30",
+        "path": "/bot/momentum",
     },
     "momentum_60s": {
-        "title": "Momentum 60",
-        "nav_title": "Momentum 60",
+        "title": "Momentum",
+        "nav_title": "Momentum",
         "badge": "M60",
         "color": "#ffc857",
-        "path": "/bot/momentum-60",
+        "path": "/bot/momentum",
     },
     "macd_30s_probe": {
         "title": "Mai Tai 30-Second Probe Bot",
@@ -5311,7 +5343,12 @@ BOT_PAGE_META = {
 
 def _visible_bot_page_meta(available_codes: list[str] | None = None) -> list[tuple[str, dict[str, str]]]:
     ordered_codes = available_codes or list(BOT_PAGE_META.keys())
-    return [(code, BOT_PAGE_META[code]) for code in ordered_codes if code in BOT_PAGE_META]
+    result, seen_paths = [], set()
+    for code in ordered_codes:
+        if code in BOT_PAGE_META and BOT_PAGE_META[code]["path"] not in seen_paths:
+            result.append((code, BOT_PAGE_META[code]))
+            seen_paths.add(BOT_PAGE_META[code]["path"])
+    return result
 
 
 def _trade_coach_nav_html(*, enabled: bool, active: bool = False) -> str:
@@ -6443,8 +6480,184 @@ def _load_warning_page_ledger(session_factory, strategy_code, session_date) -> d
                           "quantity": payload.get("quantity"), "entry_price": fill.get("price"),
                           "entry_time": datetime.fromtimestamp(int(timestamp) / 1000, tz=UTC).isoformat()
                           if timestamp is not None else "UNKNOWN"})
+    decisions = [{"symbol": event.symbol, "status": event.event_type,
+                  "reason": str((event.payload or {}).get("reason") or (event.payload or {}).get("exit_reason") or event.event_type),
+                  "last_bar_at": _datetime_str(event.observed_at)}
+                 for event in retained if event.event_type != "PATH_PRINT"]
     return {"strategy_code": strategy_code, "status": "READABLE", "closed_today": closed,
-            "daily_pnl": str(total), "positions": positions}
+            "daily_pnl": str(total), "positions": positions, "recent_decisions": decisions}
+
+
+async def _read_momentum_page_owner(redis, prefix: str, *, now_ns: int) -> dict[str, Any]:
+    """Presentation-only bounded read; absent/stale ownership is not OFF or flat."""
+    unknown = {"status": "UNKNOWN"}
+    try:
+        async with asyncio.timeout(1):
+            rows = await redis.xrevrange(f"{prefix}:momentum-live-owner-proof", count=1)
+        if not isinstance(rows, list) or len(rows) != 1:
+            return unknown
+        encoded = rows[0][1].get("data", rows[0][1].get(b"data"))
+        if not isinstance(encoded, (str, bytes)) or len(encoded) > 65536:
+            return unknown
+        proof = json.loads(encoded)
+        json.dumps(proof, allow_nan=False)
+        observed = proof.get("observed_ns")
+        accounts = {"live:orb", "live:schwab_1m_v2"}
+        episodes = proof.get("episodes")
+        if (type(proof.get("version")) is not int or proof["version"] != 1
+                or proof.get("source_service") != "oms" or proof.get("strategy_code") != "momentum_warn_live"
+                or proof.get("restore_ready") is not True
+                or type(proof.get("entry_admission_enabled")) is not bool
+                or type(observed) is not int or not 0 <= now_ns-observed <= 3_000_000_000
+                or not re.fullmatch(r"[1-9][0-9]*:[1-9][0-9]*", str(proof.get("producer_instance_id")))
+                or proof.get("account_names") != sorted(accounts)
+                or not isinstance(episodes, list) or len(episodes) > 2):
+            return unknown
+        for row in episodes:
+            filled, exited = Decimal(row["filled_quantity"]), Decimal(row["exited_quantity"])
+            if (row["account_name"] not in accounts or not row.get("episode_id")
+                    or not re.fullmatch(r"[A-Z]{1,5}", str(row.get("symbol")))
+                    or not filled.is_finite() or not exited.is_finite() or not 0 <= exited <= filled):
+                return unknown
+        if (len({row["episode_id"] for row in episodes}) != len(episodes)
+                or proof.get("quote_symbols") != sorted({row["symbol"] for row in episodes})):
+            return unknown
+        return {**proof, "status": "READABLE"}
+    except Exception:
+        return unknown
+
+
+def _momentum_page_sort_time(value: Any) -> datetime:
+    try:
+        return parse_et_timestamp(str(value or ""))
+    except (ValueError, TypeError, OverflowError):
+        return datetime.min.replace(tzinfo=EASTERN_TZ)
+
+
+def _momentum_page_ledger_copy(ledger: dict[str, Any]) -> dict[str, Any]:
+    result = dict(ledger)
+    for field in ("closed_today", "positions", "recent_decisions"):
+        rows = ledger.get(field, [])
+        valid = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+        incomplete = not isinstance(rows, list) or len(valid) != len(rows)
+        if field == "positions" and ledger.get("strategy_code") == "momentum_warn_live" and field not in ledger:
+            incomplete = True
+        result[field] = valid
+        result[f"page_{field}_incomplete"] = incomplete
+    if result["page_closed_today_incomplete"]:
+        result["daily_pnl"] = None  # Never make a known total from only readable rows.
+    return result
+
+
+def _momentum_page_tape_rows(warnings: list[dict[str, Any]], *, failures: bool = False,
+                            live_orders: list[dict[str, Any]] | None = None) -> str:
+    rows = []
+    failed = {"NO_FILL", "UNANSWERABLE", "REJECTED", "ABORTED", "FAILED", "EXPIRED", "ERROR", "BLOCKED"}
+    for warning in warnings:
+        interval = "60s" if warning.get("strategy_code") == "momentum_60s_warn" else "30s"
+        for item in _momentum_page_ledger_copy(warning)["recent_decisions"]:
+            if not failures or str(item.get("status", "")).upper() in failed:
+                rows.append({**item, "interval": interval})
+    if failures:
+        # Existing order serialization has no warning interval: never guess it
+        # from a matching symbol/time or a different episode's reference row.
+        rows.extend({"symbol": row.get("symbol"), "status": row.get("status"),
+                     "last_bar_at": row.get("updated_at"), "interval": "UNKNOWN (live order)",
+                     "reason": _failure_reason_label(str(row.get("status")), row.get("reason"))}
+                    for row in live_orders or [] if str(row.get("status", "")).upper() in failed | {"CANCELED", "CANCELLED"})
+    rows.sort(key=lambda item: _momentum_page_sort_time(item.get("last_bar_at")), reverse=True)
+    return "".join('<tr>' + ''.join(f'<td>{escape(str(value))}</td>' for value in (
+        item.get("last_bar_at") or "UNKNOWN", item["interval"], item.get("symbol") or "UNKNOWN",
+        item.get("status") or "UNKNOWN", _decision_reason_with_details(item) or "UNKNOWN")) + '</tr>'
+        for item in rows[:100]) or '<tr><td colspan="5">No recorded actions in the available warning history</td></tr>'
+
+
+def _render_momentum_page(data: dict[str, Any], *, live: dict[str, Any], warnings: list[dict[str, Any]],
+                          owner: dict[str, Any], metrics: dict[str, Any]) -> str:
+    """One live-fill account view; reference rows cannot enter its aggregates."""
+    live = _momentum_page_ledger_copy(live)
+    warnings = [_momentum_page_ledger_copy(row) for row in warnings]
+    readable = live.get("status") == "READABLE"
+    owner_readable = owner.get("status") == "READABLE"
+    status = ("LIVE" if owner["entry_admission_enabled"] else "OFF") if owner_readable else "UNKNOWN"
+    total = (f'${_as_float(live["daily_pnl"]):+.2f}'
+             if readable and _momentum_number_known(live.get("daily_pnl")) else "UNKNOWN")
+    positions = list(live.get("positions") or []) if readable else []
+    closed = len(live.get("closed_today") or []) if readable and not live["page_closed_today_incomplete"] else "UNKNOWN"
+    pending = sum(Decimal(row["filled_quantity"]) == 0 for row in owner["episodes"]) if owner_readable else "UNKNOWN"
+    live_orders = [item for item in data.get("recent_orders", [])
+                   if isinstance(item, dict) and item.get("strategy_code") == "momentum_warn_live"
+                   and item.get("broker_account_name") in {"live:orb", "live:schwab_1m_v2"}]
+    open_rows = []
+    for row in positions:
+        if (row.get("account_name") not in {"live:orb", "live:schwab_1m_v2"}
+                or not row.get("ticker") or not _momentum_number_known(row.get("remaining_quantity"))):
+            live["page_positions_incomplete"] = True
+            continue
+        bot = {"positions": [{**row, "quantity": row.get("remaining_quantity")}],
+               "strategy_code": "momentum_warn_live", "account_name": row.get("account_name"),
+               "runtime_kind": "momentum_live", "momentum_unknown_values": True}
+        leg_data = {**data, "account_positions": data.get("account_positions", []),
+                    "virtual_positions": [item for item in data.get("virtual_positions", [])
+                    if item.get("broker_account_name") == row.get("account_name")
+                    and item.get("symbol") == row.get("ticker")]}
+        try:
+            rendered = _build_bot_position_rows(leg_data, bot)
+        except (ValueError, TypeError, KeyError, ArithmeticError):
+            live["page_positions_incomplete"] = True
+            continue
+        path = "LIVE " + _leg_broker_label(str(row.get("account_name") or ""))
+        open_rows.append(rendered.replace('</td>', f'</td><td>{escape(path)}</td>', 1))
+    positions_known = readable and not live["page_positions_incomplete"]
+    open_count = len(positions) if positions_known else "UNKNOWN"
+    open_body = ''.join(open_rows) or f'<tr><td colspan="8">{"No open positions" if positions_known else "Live positions UNKNOWN"}</td></tr>'
+    order_rows = ''.join('<tr>' + ''.join(f'<td>{escape(str(value))}</td>' for value in (
+        row.get("updated_at") or "UNKNOWN", row.get("broker_account_name"), row.get("symbol"),
+        row.get("side"), row.get("quantity"), row.get("status"), _display_order_reason(row))) + '</tr>'
+        for row in sorted(live_orders, key=lambda item: _momentum_page_sort_time(item.get("updated_at")), reverse=True))
+    order_rows = order_rows or '<tr><td colspan="7">No live orders in the available order history</td></tr>'
+    references = ''.join(_render_momentum_ledger(warning,
+        title=f'Warning method {60 if warning.get("strategy_code") == "momentum_60s_warn" else 30} s completed',
+        method="Signal reference", other_rows=[], reference_only=True) for warning in warnings)
+    failed_rows = _momentum_page_tape_rows(warnings, failures=True, live_orders=live_orders)
+    nav = _build_bot_nav_html([str(bot["strategy_code"]) for bot in data.get("bots", [])])
+    live_table = _render_momentum_ledger(live, title="LIVE (real orders)", method="LIVE", other_rows=[], paper=False)
+    unknown_warning = '<p role="alert">Warning history UNKNOWN; decision and failure coverage is incomplete.</p>' if any(
+        row.get("status") != "READABLE" or row["page_recent_decisions_incomplete"]
+        or row["page_closed_today_incomplete"] for row in warnings) else ''
+    live_warning = ('<p role="alert">Live row data is incomplete; affected counts and totals are UNKNOWN.</p>'
+                    if any(live[f"page_{field}_incomplete"] for field in ("closed_today", "positions")) else '')
+    return f'''<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="refresh" content="30"><title>Momentum</title><style>
+    :root{{--bg:#101723;--panel:#192334;--ink:#edf3fb;--muted:#afbed1;--line:#334359;--accent:#ffc857}}
+    *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font-family:Verdana,sans-serif;font-size:14px}}
+    a{{color:var(--accent)}}nav{{display:flex;gap:18px;flex-wrap:wrap;padding:18px;border-bottom:1px solid var(--line)}}
+    .layout{{display:grid;grid-template-columns:250px minmax(0,1fr);gap:24px;max-width:1600px;margin:auto;padding:24px}}
+    aside,.panel{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:20px}}
+    main{{min-width:0}}h1{{margin-top:0}}h3{{margin:0 0 12px}}dt,.sub,.panel-copy{{color:var(--muted);line-height:1.6}}
+    dd{{margin:4px 0 20px;overflow-wrap:anywhere}}.overview{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}}
+    .overview strong{{display:block;font-size:24px;margin-top:8px}}.table-wrap{{overflow-x:auto}}table{{width:100%;border-collapse:collapse}}
+    th,td{{text-align:left;padding:12px;border-bottom:1px solid var(--line);white-space:nowrap}}th{{color:var(--muted)}}
+    .panel-header{{display:flex;justify-content:space-between;gap:12px}}.count{{color:var(--accent)}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}
+    @media(max-width:800px){{.layout{{grid-template-columns:1fr;padding:12px}}.overview{{grid-template-columns:repeat(2,1fr)}}}}
+    </style></head><body><nav><a href="/">Control Plane</a>{nav}</nav><div class="layout">
+    <aside id="momentum-sidebar"><h2>Momentum</h2><dl><dt>Status</dt><dd>{status}</dd>
+    <dt>Account</dt><dd>live:orb (Webull) · live:schwab_1m_v2 (Schwab)</dd><dt>Mode</dt><dd>LIVE</dd>
+    <dt>Provider</dt><dd>Webull + Schwab (SEC route)</dd><dt>Interval</dt><dd>30s + 60s</dd></dl>
+    <p class="sub">Status is entry admission from the current OMS owner proof. OFF does not disable owned exits. Missing or stale proof is UNKNOWN.</p></aside>
+    <main><h1>Momentum</h1>{_render_database_row_warnings(data)}<div class="overview">
+    <section class="panel"><span>Day P&amp;L (LIVE)</span><strong>{total}</strong></section>
+    <section class="panel"><span>Open</span><strong>{open_count}</strong></section>
+    <section class="panel"><span>Completed trades</span><strong>{closed}</strong></section>
+    <section class="panel"><span>Pending entries</span><strong>{pending}</strong></section></div>
+    <p class="panel-copy">P&amp;L uses actual LIVE broker fills only. Warning methods are signal references, not real orders, and never enter live totals.</p>
+    {live_warning}{live_table}{references}
+    <section class="panel"><h3>Open Positions (LIVE)</h3><div class="table-wrap">{_render_open_position_table(open_body, with_path=True)}</div></section>
+    <section class="panel"><h3>Order History (LIVE)</h3><div class="table-wrap"><table><thead><tr><th>Time</th><th>Account</th><th>Ticker</th><th>Side</th><th>Qty</th><th>Status</th><th>Reason</th></tr></thead><tbody>{order_rows}</tbody></table></div></section>
+    <section class="panel"><h3>Decision Tape</h3>{unknown_warning}<div class="table-wrap"><table><thead><tr><th>Time (ET)</th><th>Interval</th><th>Ticker</th><th>Status</th><th>Reason</th></tr></thead><tbody>{_momentum_page_tape_rows(warnings)}</tbody></table></div></section>
+    <section class="panel"><h3>Failed Actions</h3>{unknown_warning}<div class="table-wrap"><table><thead><tr><th>Time (ET)</th><th>Interval</th><th>Ticker</th><th>Status</th><th>Reason</th></tr></thead><tbody>{failed_rows}</tbody></table></div></section>
+    <section class="panel"><h3>Listening Status</h3>{_render_momentum_warning_gateway_metrics(metrics)}</section>
+    </main></div></body></html>'''
 
 
 def _render_momentum_open_positions(bot: dict[str, Any]) -> str:
@@ -6507,7 +6720,7 @@ def _momentum_entry_comparison(row: dict[str, Any], other_rows: list[dict[str, A
     raw_entry = str(row.get("entry_time") or "")
     if not re.match(r"^\d{4}-\d\d-\d\d[ T]", raw_entry):
         return ""
-    entered = parse_et_timestamp(raw_entry)
+    entered = _momentum_page_sort_time(raw_entry)
     if entered.year <= 1:
         return ""
     matches = []
@@ -6517,7 +6730,7 @@ def _momentum_entry_comparison(row: dict[str, Any], other_rows: list[dict[str, A
         raw_other = str(other.get("entry_time") or "")
         if not re.match(r"^\d{4}-\d\d-\d\d[ T]", raw_other):
             continue
-        other_time = parse_et_timestamp(raw_other)
+        other_time = _momentum_page_sort_time(raw_other)
         if other_time.year > 1 and other_time.date() == entered.date():
             matches.append((other_time - entered).total_seconds())
     if not matches:
@@ -6534,11 +6747,12 @@ def _momentum_entry_comparison(row: dict[str, Any], other_rows: list[dict[str, A
 
 def _render_momentum_ledger(
     ledger: dict[str, Any], *, title: str, method: str, other_rows: list[dict[str, Any]], paper: bool = True,
+    reference_only: bool = False,
 ) -> str:
     readable = ledger.get("status", "READABLE") == "READABLE"
     closed = list(ledger.get("closed_today") or []) if readable else []
     rows = []
-    for row in sorted(closed, key=lambda item: parse_et_timestamp(str(item.get("entry_time") or "")), reverse=True)[:25]:
+    for row in sorted(closed, key=lambda item: _momentum_page_sort_time(item.get("entry_time")), reverse=True)[:25]:
         note = _momentum_entry_comparison(row, other_rows, method)
         display = {**row, "ticker": row.get("ticker") or row.get("symbol") or "UNKNOWN",
                    "path": method if paper else "LIVE " + (str(row.get("broker")).title() if row.get("broker") else _leg_broker_label(str(row.get("account_name") or row.get("accountName") or ""))),
@@ -6559,9 +6773,12 @@ def _render_momentum_ledger(
     else:
         total = _as_float(ledger.get("daily_pnl"))
         total_label = f"${total:+.2f}" if _momentum_number_known(ledger.get("daily_pnl")) else "UNKNOWN"
-        summary = f"Day total: {total_label} &middot; {len(closed)} completed {'paper' if paper else 'broker'} trades"
+        summary = (f"Signal reference &mdash; not real orders; {len(closed)} completed references. No P&amp;L total."
+                   if reference_only else f"Day total: {total_label} &middot; {len(closed)} completed {'paper' if paper else 'broker'} trades")
+        if ledger.get("page_closed_today_incomplete"):
+            summary = "UNKNOWN. No total calculated. Readable rows shown; completed count UNKNOWN."
         body = "".join(rows) or '<tr><td colspan="9">No completed positions</td></tr>'
-    badge = "PAPER" if paper else "LIVE"
+    badge = "REFERENCE" if reference_only else "PAPER" if paper else "LIVE"
     return f"""<section class="panel full momentum-ledger">
         <div class="panel-header"><div><h3>{escape(title)}</h3>
         <div class="sub">{summary}</div></div><span class="count accent">{badge}</span></div>

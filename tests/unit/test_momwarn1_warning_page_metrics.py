@@ -167,7 +167,8 @@ async def test_actual_gateway_overflow_counter_through_page_preserves_snapshot(m
     assert page.status_code == 200
     assert "Queue drops: 3" in page.text and "total discarded: 3" in page.text
     assert "queue depth: 2" in page.text and produced["gateway_instance_id"] in page.text
-    assert "$+31.80" in page.text  # Unchanged legacy Snapshot total.
+    assert "$+31.80" not in page.text  # Snapshot total is no longer page P&L.
+    assert 'LIVE (real orders)' in page.text
     assert "Feed details" in page.text and "existing safety auto-revert: YES" not in page.text
     assert len(client.metric_calls) == 1
 
@@ -192,7 +193,8 @@ def test_page_missing_or_stale_never_renders_fabricated_zero(monkeypatch, entrie
         app.state.repository.redis = MetricsRedis(entries)
         page = http.get("/bot/momentum-60")
     assert "Queue drops: UNKNOWN" in page.text and "total discarded: UNKNOWN" in page.text
-    assert "Queue drops: 0" not in page.text and "$+176.00" in page.text
+    assert "Queue drops: 0" not in page.text and "$+176.00" not in page.text
+    assert 'LIVE (real orders)' in page.text
 
 
 def test_fresh_counter_remains_separate_from_unreadable_ledger(monkeypatch):
@@ -205,5 +207,5 @@ def test_fresh_counter_remains_separate_from_unreadable_ledger(monkeypatch):
     with TestClient(app) as http:
         app.state.repository.redis = MetricsRedis([entry(live_sample)])
         page = http.get("/bot/momentum-30")
-    assert "Warning ledger unreadable: UNKNOWN" in page.text
-    assert "Queue drops: 3" in page.text and "$+31.80" in page.text
+    assert "Signal reference ledger unreadable: UNKNOWN" in page.text
+    assert "Queue drops: 3" in page.text and "$+31.80" not in page.text

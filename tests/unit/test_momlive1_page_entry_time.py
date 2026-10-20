@@ -71,13 +71,13 @@ def test_actual_boards_recorded_bbci_mlec_times_and_existing_api_contract(monkey
     bbci_mlec(factory)
     monkeypatch.setattr(cp, "utcnow", lambda: datetime(2026, 10, 15, 20, tzinfo=UTC))
     captured = []
-    original = cp._render_bot_detail_page
+    original = cp._render_momentum_page
 
-    def render(data, strategy_code, **kwargs):
-        captured.append(cp._find_bot_view(data, strategy_code)["momentum_live"])
-        return original(data, strategy_code, **kwargs)
+    def render(data, **kwargs):
+        captured.append(kwargs["live"])
+        return original(data, **kwargs)
 
-    monkeypatch.setattr(cp, "_render_bot_detail_page", render)
+    monkeypatch.setattr(cp, "_render_momentum_page", render)
     with TestClient(app) as client:
         before = client.get("/api/bots").json()
         response = client.get(route)
