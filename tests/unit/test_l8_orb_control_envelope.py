@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
+from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.db.models import BrokerOrder
 from project_mai_tai.momentum_live_sec import CountryRecord, CountryRoute, CountryStore
 from project_mai_tai.oms import bot_control as control_module
@@ -221,3 +222,13 @@ def test_real_oms_native_control_still_prevents_dispatch(setup, monkeypatch, is_
     assert broker.sent == []
     if fence == "STOP":
         assert broker.previews == []
+        # Even a formerly valid decision envelope cannot bypass the actual
+        # adapter's STOP authority after strategy-plan validation succeeds.
+        metadata = {**event.payload.metadata, "bot_control_generation": "0",
+                    "bot_control_decided_at": OPEN.isoformat()}
+        request = OrderRequest("l8-controlled-stop-wire", event.payload.broker_account_name,
+            "orb_schwab", "ABC", "buy", "open", Decimal(10), "L8_STOP_CONTROL",
+            metadata, "STOP_LIMIT", "day")
+        with pytest.raises(ControlConflict, match="KILLSW1:entry_scope_not_running"):
+            asyncio.run(service.broker_adapter.submit_order(request))
+        assert broker.sent == []
