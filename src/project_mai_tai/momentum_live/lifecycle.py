@@ -28,6 +28,7 @@ class OwnedPosition:
     pending_exit_reason: str | None = None
     protection_session: str | None = None
     broker_target_state: str = "unknown"
+    market_session: str | None = None
 
     @property
     def exit_clock_source(self) -> str:
@@ -43,10 +44,11 @@ class OwnedPosition:
 
     @property
     def software_target_allowed(self) -> bool:
-        if self.protection_session == "AM":
+        policy_session = self.market_session or self.protection_session
+        if policy_session == "AM":
             return (self.broker_target_state == "terminal_zero_fill" and self.exited == 0
                     and self.reserved == 0 and not self.release_unknown)
-        return self.protection_session in {"NORMAL", "PM"}
+        return policy_session in {"NORMAL", "PM"}
 
     def exit_reason(self, bid: Decimal | None, *, quote_ns: int | None, now_ns: int) -> str | None:
         if (bid is None or not bid.is_finite() or bid <= 0 or quote_ns is None
@@ -84,7 +86,7 @@ class OwnedPosition:
             raise Refusal("protection_release_owner_mismatch")
         self.exited = cumulative_own_exit
         self.release_unknown = not terminal
-        if self.protection_session == "AM":
+        if (self.market_session or self.protection_session) == "AM":
             self.broker_target_state = ("terminal_zero_fill" if cumulative_own_exit == 0
                 else "terminal_with_fills") if terminal else "unknown"
         if terminal:

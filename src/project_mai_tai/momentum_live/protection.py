@@ -64,7 +64,8 @@ class NativeProtection:
     async def _observe(self, position: OwnedPosition, handle: ProtectionHandle) -> ProtectionRead:
         self._check(position, handle)
         position.protection_session = handle.session
-        if handle.session == "AM":
+        policy_session = position.market_session or handle.session
+        if policy_session == "AM":
             # An unreadable or mismatched read cannot resurrect a software target.
             handle.broker_target_state = position.broker_target_state = "unknown"
             position.reserved = min(handle.quantity, position.remaining)
@@ -78,7 +79,8 @@ class NativeProtection:
                 or read.cumulative_exited > position.quantity
                 or (read.working and read.terminal)
                 or (read.working and not read.child_ids)
-                or (handle.session == "AM" and (read.child_ids not in ((), (handle.base_coid,))
+                or (policy_session == "AM" and handle.session != "NORMAL"
+                    and (read.child_ids not in ((), (handle.base_coid,))
                     or read.terminal and not read.child_ids))):
             raise Refusal("native_protection_read_unknown")
         if handle.child_ids and read.child_ids != handle.child_ids:
@@ -88,9 +90,10 @@ class NativeProtection:
         position.exited = max(position.exited, read.cumulative_exited)
         position.child_ids = handle.child_ids
         previously_working = handle.status in {"working", "cancel_requested"}
-        possibly_working = read.working or not read.terminal and (previously_working or handle.session == "AM")
-        position.native_confirmed = possibly_working and handle.session == "NORMAL"
-        if handle.session == "AM":
+        native_possibly_working = read.working or not read.terminal and previously_working
+        possibly_working = native_possibly_working or not read.terminal and policy_session == "AM"
+        position.native_confirmed = native_possibly_working and handle.session == "NORMAL"
+        if policy_session == "AM":
             handle.broker_target_state = ("terminal_zero_fill" if position.exited == 0
                 else "terminal_with_fills") if read.terminal else "working" if read.working else "unknown"
         else:
@@ -114,7 +117,8 @@ class NativeProtection:
         if broker not in {"schwab", "webull"} or session not in {"NORMAL", "AM", "PM"}:
             raise Refusal("native_session_or_provider_unknown")
         position.protection_session = session
-        position.broker_target_state = "unknown" if session == "AM" else "not_applicable"
+        policy_session = position.market_session or session
+        position.broker_target_state = "unknown" if policy_session == "AM" else "not_applicable"
         handle = self.handles.get(position.episode_id)
         if handle is not None:
             read = await self._observe(position, handle)
@@ -161,7 +165,7 @@ class NativeProtection:
         handle.status = "submitted_unknown"
         await self.ports.save(handle)
         position.release_unknown = True
-        if session == "AM":
+        if policy_session == "AM":
             position.reserved = min(handle.quantity, position.remaining)
         await self.ports.submit(request)
         await self._observe(position, handle)
