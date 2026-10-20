@@ -393,7 +393,7 @@ async def test_one_trade_in_new_sell_segment_cannot_release_again(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("deferred_cancel,late_request", [(False, False), (True, False), (False, True)])
-async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, deferred_cancel,
+async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, caplog, deferred_cancel,
                                                                 late_request):
     bot, state, clock, request, _, engine = setup(monkeypatch, all_on=True,
                                                 request_present=not late_request)
@@ -450,6 +450,12 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, 
                 assert any(o.bar_time_ms == ts for o in bot.intent_emitter.atr_sell_observations)
                 bot.strategy._cancel_retry_leftovers(state)
                 assert not bot.strategy._removed_wait_requests  # Holding still owns its position.
+            elif not deferred_cancel:
+                # The corrected-clock fallback confirms settled cancels clear before this SELL.
+                assert not bot.strategy._removed_wait_requests
+                assert state.fanout_last_retired_opportunity_id == request.opportunity_id
+                assert any("[V2-FLIP-OWNER-RELEASED] FLYE" in row.message
+                           and "reason=sell_flip_flat" in row.message for row in caplog.records)
             else:
                 assert bot.strategy._removed_wait_requests == {"FLYE": request}
         if state.atr_state != before:
