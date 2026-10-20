@@ -174,6 +174,8 @@ async def test_schwab_unknown_ownership_never_sells_manual_or_foreign_shares_and
 @pytest.mark.asyncio
 async def test_schwab_page_write_failure_still_never_sells_and_reports_unknown_delivery(monkeypatch, caplog):
     case = fallback_case(monkeypatch, owned=None, projection="virtual")
+    case.service.logger.addHandler(caplog.handler)
+    page_attempts = []
     try:
         with case.factory.begin() as session:
             parent = TradeIntent(id=uuid4(), strategy_id=case.strategy_id, broker_account_id=case.account_id,
@@ -191,6 +193,7 @@ async def test_schwab_page_write_failure_still_never_sells_and_reports_unknown_d
 
             def page_unavailable(instance, *args, **kwargs):
                 if isinstance(instance, SystemIncident):
+                    page_attempts.append(instance)
                     raise RuntimeError("CONTROLLED incident writer unavailable")
                 return real_add(instance, *args, **kwargs)
 
@@ -201,6 +204,7 @@ async def test_schwab_page_write_failure_still_never_sells_and_reports_unknown_d
                 original_event=case.event, original_request=case.request,
                 rejection_reason="CONTROLLED stop rejected")
         assert not case.broker.sent
+        assert len(page_attempts) == 1
         messages = caplog.messages
         critical = next(i for i, message in enumerate(messages) if "[SCHWAB-FALLBACK-OWNERSHIP-UNKNOWN]" in message)
         undelivered = next(i for i, message in enumerate(messages) if "[SCHWAB-FALLBACK-OWNERSHIP-PAGE-UNKNOWN]" in message)
@@ -210,6 +214,7 @@ async def test_schwab_page_write_failure_still_never_sells_and_reports_unknown_d
             assert session.get(TradeIntent, parent.id).status == "rejected"
             assert not session.scalars(select(SystemIncident)).all()  # Delivery is NOT claimed.
     finally:
+        case.service.logger.removeHandler(caplog.handler)
         case.factory.kw["bind"].dispose()
 
 
