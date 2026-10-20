@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 import textwrap
 
+import pytest
+
 
 SCRIPT = Path(__file__).resolve().parents[2] / "ops" / "health" / "check_log_marker_collisions.py"
 SPEC = importlib.util.spec_from_file_location("check_log_marker_collisions", SCRIPT)
@@ -136,3 +138,91 @@ def test_parse_failure_is_could_not_tell(tmp_path: Path, capsys) -> None:
 
     assert guard.run([python_root], [shell_root]) == 3
     assert "COULD_NOT_TELL" in capsys.readouterr().err
+
+
+CANCEL_PREFIX = ("[WBATTACH1-CANCEL] account=%s symbol=%s entry=%s entry_id=%s base=%s "
+                 "reason=%s attempt=%s/%s call=%s actor=ATR_OWNER ")
+
+
+def _cancel_source(tmp_path: Path, *, prefix: str = CANCEL_PREFIX, extra: str = "",
+                   suffix: str = "'action=confirmed terminal=PROVEN'") -> Path:
+    path = tmp_path / "src/project_mai_tai/oms/webull_attach_riskoff.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "async def strict_atr_handoff(service, row):\n"
+        f"    cancel_format = {prefix!r}\n"
+        f"{extra}"
+        f"    service.logger.info(cancel_format + {suffix}, row)\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_reviewed_cancel_format_resolves_actual_literal(tmp_path: Path) -> None:
+    findings, calls, population = guard.inspect_python_file(_cancel_source(tmp_path))
+    assert findings == []
+    assert calls == 1
+    assert population == {"WBATTACH1-CANCEL"}
+
+
+@pytest.mark.parametrize("extra", [
+    "    cancel_format = row\n",
+    "    cancel_format += '[OTHER-MARKER]'\n",
+    "    del cancel_format\n",
+    "    import other as cancel_format\n",
+    "    def cancel_format(): pass\n",
+])
+def test_reviewed_cancel_format_rebinding_stays_unknown(tmp_path: Path, extra: str) -> None:
+    with pytest.raises(guard.PopulationUnknown):
+        guard.inspect_python_file(_cancel_source(tmp_path, extra=extra))
+
+
+@pytest.mark.parametrize("prefix", ["[OTHER-MARKER]", CANCEL_PREFIX + "[OTHER-MARKER]"])
+def test_reviewed_cancel_format_changed_literal_stays_unknown(tmp_path: Path, prefix: str) -> None:
+    with pytest.raises(guard.PopulationUnknown):
+        guard.inspect_python_file(_cancel_source(tmp_path, prefix=prefix))
+
+
+def test_reviewed_cancel_format_suffix_marker_still_fails(tmp_path: Path) -> None:
+    findings, calls, population = guard.inspect_python_file(
+        _cancel_source(tmp_path, suffix="'[OTHER-MARKER]'"),
+    )
+    assert calls == 1
+    assert population == {"WBATTACH1-CANCEL", "OTHER-MARKER"}
+    assert len(findings) == 1
+
+
+def test_reviewed_cancel_format_dynamic_suffix_stays_unknown(tmp_path: Path) -> None:
+    with pytest.raises(guard.PopulationUnknown):
+        guard.inspect_python_file(_cancel_source(tmp_path, suffix="row"))
+
+
+@pytest.mark.parametrize("change", ["file", "function", "nested"])
+def test_reviewed_cancel_format_does_not_escape_scope(tmp_path: Path, change: str) -> None:
+    path = _cancel_source(tmp_path)
+    if change == "file":
+        other = path.with_name("other.py")
+        other.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        path = other
+    elif change == "function":
+        path.write_text(path.read_text(encoding="utf-8").replace("strict_atr_handoff", "other"), encoding="utf-8")
+    else:
+        path.write_text(path.read_text(encoding="utf-8").replace(
+            "    service.logger.info", "    def nested():\n        service.logger.info"), encoding="utf-8")
+    with pytest.raises(guard.PopulationUnknown):
+        guard.inspect_python_file(path)
+
+
+@pytest.mark.parametrize("declaration", ["def nested():", "class Nested:"])
+def test_nested_binding_cannot_whitelist_outer_format(tmp_path: Path, declaration: str) -> None:
+    path = _cancel_source(tmp_path)
+    path.write_text(
+        "cancel_format = '[OTHER-MARKER]'\n"
+        "async def strict_atr_handoff(service, row):\n"
+        f"    {declaration}\n"
+        f"        cancel_format = {CANCEL_PREFIX!r}\n"
+        "    service.logger.info(cancel_format + 'action=request', row)\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(guard.PopulationUnknown):
+        guard.inspect_python_file(path)

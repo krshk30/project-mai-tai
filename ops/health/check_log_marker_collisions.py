@@ -82,9 +82,11 @@ def _is_logging_call(node: ast.Call) -> bool:
     )
 
 
-def _static_text(node: ast.AST) -> str:
+def _static_text(node: ast.AST, *, resolved: dict[str, str] | None = None) -> str:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
+    if isinstance(node, ast.Name) and resolved and node.id in resolved:
+        return resolved[node.id]
     if isinstance(node, ast.JoinedStr):
         parts: list[str] = []
         for value in node.values:
@@ -99,10 +101,53 @@ def _static_text(node: ast.AST) -> str:
                 raise PopulationUnknown(f"unsupported f-string node {type(value).__name__}")
         return "".join(parts)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _static_text(node.left) + _static_text(node.right)
+        return _static_text(node.left, resolved=resolved) + _static_text(node.right, resolved=resolved)
     raise PopulationUnknown(
         f"dynamic logging format `{ast.unparse(node)}` may conceal an emitted marker"
     )
+
+
+def _lexical_scope(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> ast.AST | None:
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef,
+                             ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            return node
+    return None
+
+
+def _reviewed_format_names(
+    path: Path, call: ast.Call, parents: dict[ast.AST, ast.AST],
+) -> dict[str, str]:
+    """Resolve only the reviewed, single-assignment WBATTACH1 cancel prefix."""
+    if path.parts[-4:] != ("src", "project_mai_tai", "oms", "webull_attach_riskoff.py"):
+        return {}
+    scope = _lexical_scope(call, parents)
+    if not isinstance(scope, ast.AsyncFunctionDef) or scope.name != "strict_atr_handoff":
+        return {}
+    name = "cancel_format"
+    nodes = list(ast.walk(scope))
+    writes = [n for n in nodes if isinstance(n, ast.Name) and n.id == name
+              and isinstance(n.ctx, (ast.Store, ast.Del))]
+    if len(writes) != 1 or _lexical_scope(writes[0], parents) is not scope:
+        return {}
+    for node in nodes:
+        if (isinstance(node, ast.arg) and node.arg == name
+                or isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names
+                or isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name
+                or isinstance(node, ast.alias) and (node.asname or node.name.split(".")[0]) == name
+                or isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name == name
+                or isinstance(node, ast.MatchMapping) and node.rest == name):
+            return {}
+    assignment = parents[writes[0]]
+    expected = ("[WBATTACH1-CANCEL] account=%s symbol=%s entry=%s entry_id=%s base=%s "
+                "reason=%s attempt=%s/%s call=%s actor=ATR_OWNER ")
+    if (not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1
+            or assignment.targets[0] is not writes[0]
+            or not isinstance(assignment.value, ast.Constant) or assignment.value.value != expected
+            or assignment.lineno >= call.lineno):
+        return {}
+    return {name: expected}
 
 
 def inspect_python_file(path: Path) -> tuple[list[EmissionFinding], int, set[str]]:
@@ -118,13 +163,14 @@ def inspect_python_file(path: Path) -> tuple[list[EmissionFinding], int, set[str
     findings: list[EmissionFinding] = []
     calls = 0
     population: set[str] = set()
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not _is_logging_call(node):
             continue
         calls += 1
         if not node.args:
             raise PopulationUnknown(f"logging call has no format at {path}:{node.lineno}")
-        text = _static_text(node.args[0])
+        text = _static_text(node.args[0], resolved=_reviewed_format_names(path, node, parents))
         markers = tuple(sorted(set(MARKER_RE.findall(text))))
         population.update(markers)
         if len(markers) > 1:
