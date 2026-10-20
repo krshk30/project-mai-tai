@@ -7,9 +7,11 @@ controlled. GLND/WETO labels exercise the previously successful rearm shape.
 """
 
 from dataclasses import replace
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+import threading
 
 import pytest
 from sqlalchemy import select
@@ -17,11 +19,14 @@ from sqlalchemy import select
 from project_mai_tai.atr_country_route import AtrCountryRouteBook, CountryRouteRefusal
 from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition
 from project_mai_tai.fanout_identity import fanout_slot_id
+from project_mai_tai.fanout_segment_store import FanoutSegmentIdentityStore
 from project_mai_tai.falseflip1_runtime import BUDGET_TYPE, FalseBudget, FalseFlipStore
 from project_mai_tai.momentum_live_sec import CountryRoute
 from project_mai_tai.positions_read_receipt import record_receipts
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.strategy_core.schwab_1m_v2 import Quote, SchwabV2Strategy
+from project_mai_tai.v2_flip_entry_ownership import FlipEntryOwnershipStore
+from project_mai_tai.v2_removed_wait import RemovedWaitStore
 from tests.unit.test_falseflip2_release import (
     ACCOUNTS, AT, OPPORTUNITY, SEGMENT, apply_book, captured_database,
     release, settle, tcrt_runtime,
@@ -248,7 +253,7 @@ async def test_second_false_flip_country_keeps_skip_then_atomic_recross(monkeypa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("broker", ["schwab", "webull"])
-async def test_restart_after_release_replans_before_country_and_commits_once(monkeypatch, broker):
+async def test_same_process_budget_reload_after_release_replans_before_country_and_commits_once(monkeypatch, broker):
     case = country_case(broker=broker)
     try:
         def stop_before_rearm(_case):
@@ -258,8 +263,8 @@ async def test_restart_after_release_replans_before_country_and_commits_once(mon
         await case.bot._falseflip2_poll(book(case))
         assert len(calls) == 1 and case.state.flip_owner_phase == "idle"
         assert not case.state.fanout_segment_id and not case.routes
-        # Pending plans are not durable authority. Restore only the native saved
-        # budget; reconstruct a fresh old-episode proof, as normal boot does.
+        # Same-process budget reload, NOT a fresh-process restore proof. Pending
+        # plans are not durable authority; reconstruct the old episode's proof.
         with case.factory() as session:
             saved = FalseBudget.read(latest_snapshot(session, BUDGET_TYPE).payload)
             assert latest_snapshot(session, "v2_fanout_segment_identity").payload["active"] is False
@@ -419,6 +424,7 @@ def test_pending_idle_rearm_any_country_caller_cannot_mint(caller, broker, phase
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fault", [
     "generation", "open_emit", "owner", "commit", "durable_owner", "late_fill", "stale_receipt",
+    "partial_pair", "conflicting_pair",
 ])
 async def test_rearm_native_writer_refuses_changed_proof_owner_or_fence(monkeypatch, fault):
     case = country_case()
@@ -446,6 +452,18 @@ async def test_rearm_native_writer_refuses_changed_proof_owner_or_fence(monkeypa
                 with c.factory() as session:
                     record_receipts(session, [(a, at-timedelta(seconds=16), 0) for a in ACCOUNTS], recorded_at=at)
                     session.commit()
+            elif fault in {"partial_pair", "conflicting_pair"}:
+                plan, = c.strategy.pending_falseflip2_rearms()
+                at = datetime.fromtimestamp(c.clock[0]/1000, UTC)+timedelta(seconds=1)
+                with c.factory() as session:
+                    session.add(DashboardSnapshot(snapshot_type="v2_fanout_segment_identity", created_at=at,
+                        payload={"symbol":c.state.symbol, "fanout_segment_id":str(plan[0].opportunity_id),
+                                 "active":True, "reason":"first_rest_working"}))
+                    if fault == "conflicting_pair":
+                        session.add(DashboardSnapshot(snapshot_type="v2_flip_entry_ownership", created_at=at,
+                            payload=replace(plan[0], opportunity_id=999).as_payload(
+                                active=True, reason="first_rest_working")))
+                    session.commit()
             else:
                 raise OSError("controlled unavailable writer")
 
@@ -460,6 +478,231 @@ async def test_rearm_native_writer_refuses_changed_proof_owner_or_fence(monkeypa
             assert not session.scalars(select(DashboardSnapshot).where(
                 DashboardSnapshot.snapshot_type == "v2_wait_dispatch")).all()
         assert len(calls) == (1 if fault == "commit" else 2)
+    finally:
+        case.engine.dispose()
+
+
+@pytest.mark.parametrize("caller", ["selector", "sizing"])
+@pytest.mark.parametrize("binding", ["owner_zero", "fanout_zero", "owner_mismatch", "fanout_mismatch"])
+def test_committed_prebound_country_guard_checks_both_ids_independently(caller, binding):
+    case = country_case()
+    try:
+        settle(case.strategy, case.state, case.clock, case.proofs)
+        release(case.strategy, case.state)
+        candidate = case.clock[0]
+        case.state.fanout_segment_id = case.state.flip_owner_opportunity_id = candidate
+        case.state.flip_owner_phase = "resting"
+        case.state.flip_owner_retry_segment_id = case.state.retry_one_segment_id
+        case.state.flip_owner_retry_closes_at_place = case.state.retry_one_closes_in_segment
+        case.strategy._falseflip2_prebound[case.state.symbol] = case.strategy._flip_owner_record(case.state)
+        if binding.startswith("owner"):
+            case.state.flip_owner_opportunity_id = 0 if binding.endswith("zero") else candidate+1
+        else:
+            case.state.fanout_segment_id = 0 if binding.endswith("zero") else candidate+1
+        before = (case.state.fanout_segment_id,case.state.flip_owner_opportunity_id)
+        if caller == "selector":
+            with pytest.raises(CountryRouteRefusal, match="country_waiting_atomic_rearm"):
+                case.strategy._country_entry_selection(case.state)
+        else:
+            assert case.strategy._sized_open(case.state.symbol, leg="schwab",
+                price=Decimal("2"), basis="stop_limit_wire_limit") is None
+        assert (case.state.fanout_segment_id,case.state.flip_owner_opportunity_id) == before
+        assert not case.routes and not case.identities
+    finally:
+        case.engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", [
+    "before_invocation", "during_precommit", "after_commit_before_ack", "commit_then_raise",
+])
+async def test_line_refresh_eventually_arms_current_price_with_exact_candidate_and_one_dispatch(monkeypatch, boundary):
+    case = country_case()
+    try:
+        def move_line(c):
+            c.state.atr_trail += .01
+
+        def committed_move(c):
+            move_line(c)
+            if boundary == "commit_then_raise":
+                raise OSError("controlled lost commit acknowledgement")
+
+        if boundary == "before_invocation":
+            tracking = case.strategy._falseflip_restoring_track
+            monkeypatch.setattr(case.strategy, "_falseflip_restoring_track", lambda _:None)
+            calls = install_writer(monkeypatch, case)
+            await case.bot._falseflip2_poll(book(case))
+            assert len(calls) == 1 and case.state.flip_owner_phase == "idle"
+            monkeypatch.setattr(case.strategy, "_falseflip_restoring_track", tracking)
+            tracking(case.state)
+            plan, = case.strategy.pending_falseflip2_rearms()
+            move_line(case)
+        else:
+            install_writer(monkeypatch, case,
+                fault=move_line if boundary == "during_precommit" else None,
+                after_commit=committed_move if boundary != "during_precommit" else None)
+            await case.bot._falseflip2_poll(book(case))
+            plan, = case.strategy.pending_falseflip2_rearms()
+        assert not case.state.resting_active and not case.routes and not case.identities
+        assert case.state.atr_trail != plan[1]
+        before = case.strategy._falseflip_budget(case.state)
+        monkeypatch.undo()
+        retried = install_writer(monkeypatch, case)
+        await case.bot._falseflip2_poll(case.strategy._falseflip_book)
+        assert retried == [(plan[0].opportunity_id,plan[2])]
+        assert case.state.resting_active and case.state.resting_level == case.state.atr_trail
+        assert case.state.fanout_segment_id == case.state.flip_owner_opportunity_id == plan[0].opportunity_id
+        after = case.strategy._falseflip_budget(case.state)
+        assert after.episodes == before.episodes and after.refunded_counts == before.refunded_counts
+        assert case.state.retry_one_closes_in_segment == plan[0].retry_closes_at_place
+        assert len(case.routes) == 1 and not case.identities
+        with case.factory() as session:
+            begins = session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == "v2_wait_dispatch")).all()
+            assert len(begins) == 1 and begins[0].payload["opportunity_id"] == str(plan[0].opportunity_id)
+    finally:
+        case.engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiter_never_refreshes_or_reinvokes_until_actual_worker_finally(monkeypatch):
+    case = country_case()
+    entered, go = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    owner = task = None
+    try:
+        def paused(_case):
+            loop.call_soon_threadsafe(entered.set)
+            assert go.wait(3)
+
+        calls = install_writer(monkeypatch, case, fault=paused)
+        task = asyncio.create_task(case.bot._falseflip2_poll(book(case)))
+        await asyncio.wait_for(entered.wait(), 3)
+        plan, = case.strategy.pending_falseflip2_rearms()
+        owner = case.strategy._falseflip2_rearm_workers[case.state.symbol]
+        case.state.atr_trail += .01
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert owner["waiter_finished"] is True and not owner["completed"].is_set()
+        case.strategy._falseflip_restoring_track(case.state)
+        await case.bot._falseflip2_poll(case.strategy._falseflip_book)
+        assert case.strategy.pending_falseflip2_rearms() == (plan,)
+        assert case.strategy._falseflip2_rearm_workers[case.state.symbol] is owner
+        assert len(calls) == 1 and not case.routes and not case.state.resting_active
+        go.set()
+        assert await asyncio.to_thread(owner["completed"].wait, 3)
+        monkeypatch.undo()
+        retried = install_writer(monkeypatch, case)
+        await case.bot._falseflip2_poll(case.strategy._falseflip_book)
+        assert retried == [(plan[0].opportunity_id,plan[2])]
+        assert case.state.resting_active and case.state.resting_level == case.state.atr_trail
+        assert case.state.fanout_segment_id == plan[0].opportunity_id
+        with case.factory() as session:
+            begins = session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == "v2_wait_dispatch")).all()
+            assert len(begins) == 1
+    finally:
+        go.set()
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if owner is not None:
+            assert await asyncio.to_thread(owner["completed"].wait, 3)
+        case.engine.dispose()
+
+
+def test_unknown_worker_completion_cannot_refresh_existing_candidate():
+    case = country_case()
+    try:
+        settle(case.strategy, case.state, case.clock, case.proofs)
+        release(case.strategy, case.state)
+        case.strategy._falseflip_restoring_track(case.state)
+        plan, = case.strategy.pending_falseflip2_rearms()
+        case.strategy._falseflip2_rearm_workers = {case.state.symbol:{
+            "plan":plan, "completed":threading.Event(), "waiter_finished":True}}
+        case.state.atr_trail += .01
+        case.strategy._falseflip_restoring_track(case.state)
+        assert case.strategy.pending_falseflip2_rearms() == (plan,)
+        assert not case.state.resting_active and not case.routes and not case.identities
+    finally:
+        case.engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("broker", ["schwab", "webull"])
+@pytest.mark.parametrize("pm", [True, False], ids=["PM", "RTH"])
+async def test_new_strategy_and_service_restore_native_stores_after_release_then_rearm(monkeypatch, broker, pm):
+    case = country_case(broker=broker, pm=pm)
+    try:
+        # First process commits only the old release. No candidate has been
+        # committed or routed when this controlled process boundary occurs.
+        monkeypatch.setattr(case.strategy, "_falseflip_restoring_track", lambda _:None)
+        calls = install_writer(monkeypatch, case)
+        await case.bot._falseflip2_poll(book(case))
+        assert len(calls) == 1 and case.state.flip_owner_phase == "idle"
+        old_strategy, old_state, old_bot = case.strategy, case.state, case.bot
+        at = datetime.fromtimestamp(case.clock[0]/1000, UTC)
+        fanout_store = FanoutSegmentIdentityStore(case.factory)
+        owner_store = FlipEntryOwnershipStore(case.factory)
+        owner_store.record_retry_budget(old_state.symbol, old_state.retry_one_segment_id,
+                                       old_state.retry_one_closes_in_segment, now=at)
+        active = fanout_store.restore_active(now=at)
+        owners = owner_store.restore_active(now=at)
+        retries = owner_store.restore_retry_budgets(now=at)
+        budgets = FalseFlipStore(case.factory).restore(now=at)
+        assert not active and not owners
+        monkeypatch.undo()
+        fresh = SchwabV2Strategy(old_strategy.settings.model_copy(deep=True))
+        fresh._now_ms = lambda:case.clock[0]
+
+        def identity(*args):
+            case.identities.append(args)
+            fanout_store.record(*args, now=at)
+
+        fresh.configure_fanout_identity_persistence(identity, restored=active)
+        fresh.configure_flip_entry_ownership(
+            lambda record, active, reason:owner_store.record(record,active=active,reason=reason,now=at),
+            active_segments=active, restored=owners, restored_retry_budgets=retries,
+            retry_budget_persist=lambda symbol, segment, count:
+                owner_store.record_retry_budget(symbol,segment,count,now=at))
+        removed = RemovedWaitStore(case.factory)
+        fresh.configure_removed_wait(removed.record_rules, restored=removed.restore(), readable=True)
+        fresh.configure_falseflip(budgets, readable=True)
+        state = fresh.watchlist_state(old_state.symbol)
+        assert state.retry_one_segment_id == old_state.retry_one_segment_id
+        assert state.retry_one_closes_in_segment == old_state.retry_one_closes_in_segment
+        state.atr_short_flip_bar_ts = state.retry_one_segment_id
+        state.atr_state, state.atr_trail, state.atr_state_age = "short",old_state.atr_trail,old_state.atr_state_age
+        state.bars = type(old_state.bars)(old_state.bars, maxlen=old_state.bars.maxlen)
+        fresh._resting_in_window = lambda now=None:SchwabV2Strategy._resting_in_window(fresh,now or at)
+        fresh._resting_session_is_eh = lambda now=None:SchwabV2Strategy._resting_session_is_eh(fresh,now or at)
+        fresh._eh_resting_enabled = pm
+        fresh._resting_stop_ask_allows = lambda *_args,**_kwargs:True
+        fresh._liquidity_floor_ok = lambda _:True
+
+        def route_for(symbol, now):
+            case.routes.append((symbol,now,state.fanout_segment_id,state.flip_owner_phase))
+            return CountryRoute(broker,"sec_us" if broker == "schwab" else "sec_non_us",
+                                "READY",broker == "schwab","0000000001",now)
+
+        fresh.configure_country_routing(AtrCountryRouteBook(fresh.settings,route_for))
+        bot = SchwabV2BotService.__new__(SchwabV2BotService)
+        bot.strategy,bot.settings,bot.session_factory = fresh,fresh.settings,case.factory
+        bot._falseflip_store = SimpleNamespace(commit=lambda before,after:
+            FalseFlipStore(case.factory).commit(before,after,now=at))
+        case.strategy,case.state,case.bot = fresh,state,bot
+        assert fresh is not old_strategy and state is not old_state and bot is not old_bot
+        assert not fresh.pending_falseflip2_rearms() and not fresh._falseflip2_rearm
+        calls = install_writer(monkeypatch,case)
+        await bot._falseflip2_poll(book(case))
+        assert len(calls) == 1 and calls[0][1][1] == OPPORTUNITY
+        assert state.resting_active and len(case.routes) == 1 and not case.identities
+        assert state.atr_country_route["atr_country_broker"] == broker
+        with case.factory() as session:
+            begins = session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == "v2_wait_dispatch")).all()
+            assert len(begins) == 1
     finally:
         case.engine.dispose()
 

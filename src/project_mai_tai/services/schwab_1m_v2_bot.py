@@ -28,6 +28,7 @@ import logging
 import math
 import os
 import signal
+import threading
 import time
 from collections import deque
 from copy import deepcopy
@@ -7000,18 +7001,35 @@ class SchwabV2BotService:
         for plan in self.strategy.pending_falseflip2_rearms():
             record, _, previous = plan
             state = self.strategy._symbol_states.get(record.symbol)
+            if self.strategy.falseflip2_rearm_worker_pending(record.symbol):
+                if state is not None:
+                    self.strategy._resting_return_reason(state, "atomic_rearm_worker_unresolved")
+                continue
             valid = fenced(record.symbol, lambda p=plan: self.strategy.falseflip2_rearm_valid(p))
             if not valid():
                 if state is not None:
                     self.strategy._resting_return_reason(state, "atomic_rearm_state_or_emit_fence_blocked")
                 continue
+            workers = self.strategy.__dict__.setdefault("_falseflip2_rearm_workers", {})
+            owner = {"plan":plan, "completed":threading.Event(), "waiter_finished":False}
+            workers[record.symbol] = owner
+
+            def write_rearm(r=record, old=previous, check=valid, worker=owner):
+                try:
+                    return persist_owner_transition(self.session_factory, r, accounts, check, previous=old)
+                finally:
+                    worker["completed"].set()
+
             try:
-                await asyncio.to_thread(persist_owner_transition, self.session_factory, record,
-                                        accounts, valid, previous=previous)
+                await asyncio.to_thread(write_rearm)
             except Exception:  # noqa: BLE001 - keep the old false opportunity fenced
                 if state is not None and self.strategy._resting_return_reason(state, "atomic_rearm_write_pending"):
                     logger.exception("[V2-FALSEFLIP2] %s reason=rearm_write_pending", record.symbol)
                 continue
+            finally:
+                owner["waiter_finished"] = True
+                # An unresolved worker keeps ownership even after CancelledError.
+                self.strategy.falseflip2_rearm_worker_pending(record.symbol)
             if valid():
                 armed = self.strategy.acknowledge_falseflip2_rearm(plan)
                 if state is not None:

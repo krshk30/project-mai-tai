@@ -1027,6 +1027,8 @@ class SchwabV2Strategy:
         if self._falseflip2_enabled() and state.symbol in self.__dict__.get("_falseflip2_rearm", {}):
             prebound = self.__dict__.get("_falseflip2_prebound", {}).get(state.symbol)
             if (state.flip_owner_phase != "resting" or prebound is None
+                    or state.fanout_segment_id != prebound.opportunity_id
+                    or state.flip_owner_opportunity_id != prebound.opportunity_id
                     or self._flip_owner_record(state) != prebound):
                 self._resting_return_reason(state, "country_waiting_atomic_rearm")
                 raise CountryRouteRefusal("country_waiting_atomic_rearm")
@@ -2508,6 +2510,20 @@ class SchwabV2Strategy:
 
     def pending_falseflip2_rearms(self):
         return tuple(self.__dict__.get("_falseflip2_rearm_plans", {}).values())
+
+    def falseflip2_rearm_worker_pending(self, symbol):
+        workers = self.__dict__.get("_falseflip2_rearm_workers", {})
+        owner = workers.get(symbol)
+        if owner is None:
+            return False
+        # The event belongs to the actual synchronous worker, not its asyncio
+        # future: cancelling the waiter cannot prove that the DB invocation ended.
+        completed = owner.get("completed")
+        if completed is None or not completed.is_set() or not owner.get("waiter_finished"):
+            return True
+        if workers.get(symbol) is owner:
+            workers.pop(symbol)
+        return False
 
     def falseflip2_rearm_valid(self, plan):
         record, line, previous = plan
@@ -6548,17 +6564,32 @@ class SchwabV2Strategy:
             return
         previous = self.__dict__.get("_falseflip2_rearm", {}).get(state.symbol)
         if self._falseflip2_enabled() and previous is not None and state.flip_owner_phase == "idle":
+            if self.falseflip2_rearm_worker_pending(state.symbol):
+                self._resting_return_reason(state, "atomic_rearm_worker_unresolved", slot=slot)
+                return
             if state.fanout_segment_id or state.flip_owner_opportunity_id:
                 self._resting_return_reason(state, "rearm_identity_already_bound", slot=slot)
                 return  # Existing stranded identities need separately reviewed recovery.
             if not self._strict_first_rest_admitted(state, slot=slot):
                 self._resting_return_reason(state, "rearm_admission_blocked", slot=slot)
                 return
-            candidate = max(self._now_ms(), state.fanout_last_retired_opportunity_id + 1)
-            record = FlipEntryOwnershipRecord(state.symbol, candidate, "resting", 0, 0,
-                (), {}, {}, state.retry_one_segment_id, state.retry_one_closes_in_segment)
-            self.__dict__.setdefault("_falseflip2_rearm_plans", {}).setdefault(
-                state.symbol, (record, line, previous))
+            plans = self.__dict__.setdefault("_falseflip2_rearm_plans", {})
+            plan = plans.get(state.symbol)
+            if plan is None:
+                candidate = max(self._now_ms(), state.fanout_last_retired_opportunity_id + 1)
+                record = FlipEntryOwnershipRecord(state.symbol, candidate, "resting", 0, 0,
+                    (), {}, {}, state.retry_one_segment_id, state.retry_one_closes_in_segment)
+                plans[state.symbol] = (record, line, previous)
+            elif (plan[2] != previous or plan[0].retry_segment_id != state.retry_one_segment_id
+                  or plan[0].retry_closes_at_place != state.retry_one_closes_in_segment):
+                self._resting_return_reason(state, "atomic_rearm_record_changed", slot=slot)
+                return
+            elif plan[1] != line:
+                # A failed/uncertain invocation may already have committed. Keep
+                # its exact candidate/record/old binding and retry native CAS;
+                # only the current price snapshot changes after worker completion.
+                plans[state.symbol] = (plan[0], line, plan[2])
+                self._resting_return_reason(state, "atomic_rearm_price_refreshed", slot=slot)
             self._resting_return_reason(state, "atomic_rearm_plan_queued", slot=slot)
             return
         from project_mai_tai.atr_country_route import CountryRouteRefusal
