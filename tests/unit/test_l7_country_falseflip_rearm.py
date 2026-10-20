@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import threading
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import BigInteger, cast, select
 
 from project_mai_tai.atr_country_route import AtrCountryRouteBook, CountryRouteRefusal
 from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition
@@ -168,6 +168,17 @@ def latest_snapshot(session, kind):
         .order_by(DashboardSnapshot.created_at.desc(), DashboardSnapshot.id.desc()).limit(1))
 
 
+def latest_budget(session, symbol, segment):
+    # Budget revisions share the controlled clock; random UUID order is not CAS order.
+    row = session.scalar(select(DashboardSnapshot).where(
+        DashboardSnapshot.snapshot_type == BUDGET_TYPE,
+        DashboardSnapshot.payload["symbol"].as_string() == symbol,
+        cast(DashboardSnapshot.payload["segment"].as_string(), BigInteger) == segment,
+    ).order_by(DashboardSnapshot.payload["revision"].as_integer().desc()).limit(1))
+    assert row is not None
+    return FalseBudget.read(row.payload)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("symbol", ["WORX", "SAIQ", "GLND", "WETO"])
 @pytest.mark.parametrize("broker", ["schwab", "webull"])
@@ -246,7 +257,7 @@ async def test_second_false_flip_country_keeps_skip_then_atomic_recross(monkeypa
         assert len(case.routes) == 1 and not case.identities
         assert case.state.retry_one_segment_id == segment
         with case.factory() as session:
-            saved = FalseBudget.read(latest_snapshot(session, BUDGET_TYPE).payload)
+            saved = latest_budget(session, case.state.symbol, segment)
             assert saved.skipped and len(saved.episodes) == 2
     finally:
         case.engine.dispose()
@@ -267,7 +278,7 @@ async def test_same_process_budget_reload_after_release_replans_before_country_a
         # Same-process budget reload, NOT a fresh-process restore proof. Pending
         # plans are not durable authority; reconstruct the old episode's proof.
         with case.factory() as session:
-            saved = FalseBudget.read(latest_snapshot(session, BUDGET_TYPE).payload)
+            saved = latest_budget(session, case.state.symbol, case.state.retry_one_segment_id)
             assert latest_snapshot(session, "v2_fanout_segment_identity").payload["active"] is False
         case.strategy.configure_falseflip({(saved.symbol,saved.segment):saved}, readable=True)
         monkeypatch.undo()
