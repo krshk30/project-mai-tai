@@ -130,3 +130,55 @@ def test_fresh_cancel_read_keeps_partial_cancellation_distinct_from_full_fill(fa
     assert result.event_type == event and result.filled_quantity == D(filled)
     assert result.origin == "broker" and result.client_order_id == req.client_order_id
     assert client.calls == {"detail": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode,expected", [
+    ("budget", "unavailable"), ("transport", "unavailable"), ("429", "unavailable"),
+    ("provider_refusal", "invalid"), ("none", "invalid"), ("missing_items", "invalid"),
+    ("account", "invalid"), ("coid", "invalid"), ("native_id", "invalid"),
+    ("overfill", "invalid"), ("status_missing", "invalid"),
+    ("status_unknown", "status_unknown"), ("status_unknown_partial", "status_unknown"),
+    ("filled", "report"),
+])
+async def test_configured_webull_typed_cancel_read_classifies_real_wire_evidence(fake_sdk, mode, expected):
+    req, clock = request(), Clock()
+    raw = body(req, status="SUBMITTED", filled="0")
+    if mode == "none":
+        raw = None
+    elif mode == "missing_items":
+        raw.pop("items")
+    elif mode in {"account", "coid", "native_id"}:
+        raw[{"account": "account_id", "coid": "client_order_id", "native_id": "order_id"}[mode]] = "FOREIGN"
+    elif mode == "overfill":
+        raw["items"][0].update(order_status="FILLED", filled_qty="32")
+    elif mode == "status_missing":
+        raw["items"][0].pop("order_status")
+    elif mode in {"status_unknown", "status_unknown_partial"}:
+        raw["items"][0]["order_status"] = "VENDOR_STATUS_NOT_IN_VOCABULARY"
+        if mode == "status_unknown_partial":
+            raw["items"][0]["filled_qty"] = "7"
+    elif mode == "filled":
+        raw = body(req)
+    original = deepcopy(raw)
+    client = _FakeClient({"detail": raw})
+    if mode == "transport":
+        client.raises["detail"] = TimeoutError("controlled positions-independent detail timeout")
+    elif mode == "429":
+        client.raises["detail"] = _ServerException("TOO_MANY_REQUESTS", "controlled 429", 429)
+    elif mode == "provider_refusal":
+        client.raises["detail"] = _ServerException("BAD_REQUEST", "controlled refusal", 417)
+    adapter = primary(client, clock)
+    if mode == "budget":
+        adapter._query_budget.claim("detail", "ATR", strict=True)
+        adapter._query_budget.claim("detail", "ORB", strict=True)
+    outcome = await adapter.fetch_momentum_cancel_read(req)
+    assert outcome.kind == expected
+    assert client.calls == ({} if mode == "budget" else {"detail": 1})
+    assert raw == original  # Unknown-status normalization must never mutate the wire body.
+    if expected in {"invalid", "unavailable"}:
+        assert outcome.report is None
+    else:
+        assert outcome.report.client_order_id == req.client_order_id and outcome.report.origin == "broker"
+        assert outcome.report.filled_quantity == {"status_unknown": D(0),
+            "status_unknown_partial": D(7), "filled": D(31)}[mode]
