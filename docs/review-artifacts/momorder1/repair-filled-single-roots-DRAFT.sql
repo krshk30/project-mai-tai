@@ -77,7 +77,9 @@ BEGIN
        OR (p.payload::jsonb->'momlive_episode'->>'exited')::numeric IS DISTINCT FROM spec.qty THEN
       RAISE EXCEPTION 'exact closed single-root identity/terminal evidence changed: %', spec.symbol;
     END IF;
-    IF (SELECT count(*) FROM fills WHERE order_id=o.id) IS DISTINCT FROM 1
+    IF (SELECT count(*) FROM broker_orders b WHERE b.strategy_id=sid
+          AND b.payload::jsonb->>'episode_id'=spec.parent_id::text) IS DISTINCT FROM 2
+       OR (SELECT count(*) FROM fills WHERE order_id=o.id) IS DISTINCT FROM 1
        OR NOT EXISTS (SELECT FROM fills f WHERE f.order_id=o.id AND f.strategy_id=sid
           AND f.broker_account_id=aid AND f.symbol=spec.symbol AND f.side='sell'
           AND f.quantity=spec.qty AND f.price=spec.price AND f.filled_at=spec.fill_time
@@ -90,6 +92,10 @@ BEGIN
                OR f.side NOT IN ('buy','sell') OR f.quantity IS NULL OR f.quantity <= 0
                OR f.quantity::text IN ('NaN','Infinity','-Infinity')
                OR b.broker_account_id IS DISTINCT FROM aid OR b.symbol IS DISTINCT FROM spec.symbol))
+       OR (SELECT sum(CASE WHEN f.side='buy' THEN f.quantity ELSE 0 END)
+           FROM fills f JOIN broker_orders b ON b.id=f.order_id
+           WHERE b.strategy_id=sid AND b.broker_account_id=aid
+             AND b.payload::jsonb->>'episode_id'=spec.parent_id::text) IS DISTINCT FROM spec.qty
        OR (SELECT sum(CASE WHEN f.side='buy' THEN f.quantity ELSE -f.quantity END)
            FROM fills f JOIN broker_orders b ON b.id=f.order_id
            WHERE b.strategy_id=sid AND b.broker_account_id=aid
