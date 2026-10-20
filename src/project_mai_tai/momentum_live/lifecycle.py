@@ -26,6 +26,8 @@ class OwnedPosition:
     strategy: str = STRATEGY_CODE
     entry_send_ns: int | None = None
     pending_exit_reason: str | None = None
+    protection_session: str | None = None
+    broker_target_state: str = "unknown"
 
     @property
     def exit_clock_source(self) -> str:
@@ -39,16 +41,24 @@ class OwnedPosition:
     def remaining(self) -> Decimal:
         return max(Decimal(0), self.quantity-self.exited)
 
+    @property
+    def software_target_allowed(self) -> bool:
+        if self.protection_session == "AM":
+            return (self.broker_target_state == "terminal_zero_fill" and self.exited == 0
+                    and self.reserved == 0 and not self.release_unknown)
+        return self.protection_session in {"NORMAL", "PM"}
+
     def exit_reason(self, bid: Decimal | None, *, quote_ns: int | None, now_ns: int) -> str | None:
         if (bid is None or not bid.is_finite() or bid <= 0 or quote_ns is None
                 or not 0 <= now_ns-quote_ns <= 2_000_000_000 or self.remaining <= 0):
             return None
-        if self.pending_exit_reason is not None:
+        if (self.pending_exit_reason is not None
+                and (self.pending_exit_reason != "target_5pct" or self.software_target_allowed)):
             return self.pending_exit_reason
         if self.exit_clock_ns is not None and now_ns-self.exit_clock_ns >= 300_000_000_000:
             return "time_300s"
         if not self.native_confirmed:
-            if bid >= self.entry_price*Decimal("1.05"):
+            if self.software_target_allowed and bid >= self.entry_price*Decimal("1.05"):
                 return "target_5pct"
             if bid <= self.entry_price*Decimal(".85"):
                 return "hard_stop_15pct"
@@ -74,6 +84,9 @@ class OwnedPosition:
             raise Refusal("protection_release_owner_mismatch")
         self.exited = cumulative_own_exit
         self.release_unknown = not terminal
+        if self.protection_session == "AM":
+            self.broker_target_state = ("terminal_zero_fill" if cumulative_own_exit == 0
+                else "terminal_with_fills") if terminal else "unknown"
         if terminal:
             self.native_confirmed = False
             self.child_ids = ()

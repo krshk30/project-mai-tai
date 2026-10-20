@@ -21,6 +21,7 @@ class ProtectionHandle:
     child_ids: tuple[str, ...] = ()
     status: str = "unsent"
     cumulative_exited: Decimal = Decimal(0)
+    broker_target_state: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,12 @@ class NativeProtection:
 
     async def _observe(self, position: OwnedPosition, handle: ProtectionHandle) -> ProtectionRead:
         self._check(position, handle)
+        position.protection_session = handle.session
+        if handle.session == "AM":
+            # An unreadable or mismatched read cannot resurrect a software target.
+            handle.broker_target_state = position.broker_target_state = "unknown"
+            position.reserved = min(handle.quantity, position.remaining)
+            position.release_unknown = True
         read = await self.ports.read(handle)
         if (read.episode_id != handle.episode_id or read.account != handle.account
                 or read.entry_order_id != handle.entry_order_id or read.base_coid != handle.base_coid
@@ -70,7 +77,9 @@ class NativeProtection:
                 or read.cumulative_exited < handle.cumulative_exited
                 or read.cumulative_exited > position.quantity
                 or (read.working and read.terminal)
-                or (read.working and not read.child_ids)):
+                or (read.working and not read.child_ids)
+                or (handle.session == "AM" and (read.child_ids not in ((), (handle.base_coid,))
+                    or read.terminal and not read.child_ids))):
             raise Refusal("native_protection_read_unknown")
         if handle.child_ids and read.child_ids != handle.child_ids:
             raise Refusal("native_protection_child_identity_changed")
@@ -79,8 +88,14 @@ class NativeProtection:
         position.exited = max(position.exited, read.cumulative_exited)
         position.child_ids = handle.child_ids
         previously_working = handle.status in {"working", "cancel_requested"}
-        possibly_working = read.working or not read.terminal and previously_working
+        possibly_working = read.working or not read.terminal and (previously_working or handle.session == "AM")
         position.native_confirmed = possibly_working and handle.session == "NORMAL"
+        if handle.session == "AM":
+            handle.broker_target_state = ("terminal_zero_fill" if position.exited == 0
+                else "terminal_with_fills") if read.terminal else "working" if read.working else "unknown"
+        else:
+            handle.broker_target_state = "not_applicable"
+        position.broker_target_state = handle.broker_target_state
         position.reserved = min(handle.quantity, position.remaining) if possibly_working else Decimal(0)
         position.release_unknown = not (read.working or read.terminal)
         if read.terminal:
@@ -98,6 +113,8 @@ class NativeProtection:
             return
         if broker not in {"schwab", "webull"} or session not in {"NORMAL", "AM", "PM"}:
             raise Refusal("native_session_or_provider_unknown")
+        position.protection_session = session
+        position.broker_target_state = "unknown" if session == "AM" else "not_applicable"
         handle = self.handles.get(position.episode_id)
         if handle is not None:
             read = await self._observe(position, handle)
@@ -144,6 +161,8 @@ class NativeProtection:
         handle.status = "submitted_unknown"
         await self.ports.save(handle)
         position.release_unknown = True
+        if session == "AM":
+            position.reserved = min(handle.quantity, position.remaining)
         await self.ports.submit(request)
         await self._observe(position, handle)
 
