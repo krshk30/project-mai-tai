@@ -127,8 +127,7 @@ def _schwab_entry(session, target):
     fill_event = select(BrokerOrderEvent.id).where(
         BrokerOrderEvent.order_id == BrokerOrder.id,
         or_(BrokerOrderEvent.event_type.in_({"filled", "partially_filled"}),
-            BrokerOrderEvent.payload["filled_quantity"].as_string().not_in(
-                {"0", "0.0", "0.00000000", ""})),
+            BrokerOrderEvent.payload["filled_quantity"].as_string().is_not(None)),
     ).exists()
     others = session.scalars(select(BrokerOrder).where(
         BrokerOrder.strategy_id == target.strategy_id, BrokerOrder.broker_account_id == target.account_id,
@@ -137,9 +136,25 @@ def _schwab_entry(session, target):
         or_(BrokerOrder.status.in_({"filled", "partially_filled"}), filled, fill_event),
         or_(BrokerOrder.submitted_at.is_(None),
             BrokerOrder.submitted_at >= entry.submitted_at if entry.submitted_at is not None else True),
-    ).limit(1).execution_options(populate_existing=True)).all()
-    if others:
-        raise ValueError("orb_close_entry_chronology_UNKNOWN")
+    ).execution_options(populate_existing=True)).all()
+    for other in others:
+        if (other.status in {"filled", "partially_filled"}
+                or session.scalar(select(Fill.id).where(Fill.order_id == other.id).limit(1)) is not None):
+            raise ValueError("orb_close_entry_chronology_UNKNOWN")
+        events = session.scalars(select(BrokerOrderEvent).where(
+            BrokerOrderEvent.order_id == other.id).execution_options(populate_existing=True)).all()
+        for event in events:
+            if event.event_type in {"filled", "partially_filled"}:
+                raise ValueError("orb_close_entry_chronology_UNKNOWN")
+            value = (event.payload or {}).get("filled_quantity")
+            if value is None:
+                continue
+            try:
+                amount = Decimal(str(value))
+            except (ValueError, TypeError, ArithmeticError) as exc:
+                raise ValueError("orb_close_entry_fill_UNKNOWN") from exc
+            if not amount.is_finite() or amount != 0:
+                raise ValueError("orb_close_entry_fill_UNKNOWN")
     return entry
 
 
