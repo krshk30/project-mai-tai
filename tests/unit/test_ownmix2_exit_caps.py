@@ -620,3 +620,70 @@ def test_orb_manual_excess_and_legacy_bounded_case_still_require_terminal_native
             assert session.scalar(select(SystemIncident)).payload["reason"] == "sell_pair_release_unconfirmed"
     finally:
         case.factory.kw["bind"].dispose()
+
+
+def test_orb_closed_incident_history_does_not_suppress_new_unknown_legacy_exit_page(monkeypatch):
+    from project_mai_tai.oms import schwab_owned_positions as own_module
+
+    case = orb_case(monkeypatch, raw="10", after_release="10")
+    closed_id, reads = uuid4(), []
+
+    def unreadable(*_args, **_kwargs):
+        reads.append("CONTROLLED UNKNOWN")
+        raise ValueError("CONTROLLED own projection unreadable")
+
+    monkeypatch.setattr(own_module, "own_open_quantity", unreadable)
+    try:
+        with case.factory.begin() as session:
+            session.add(SystemIncident(id=closed_id, service_name="oms-risk", severity="critical",
+                status="closed", title=f"ORB close needs attention: CLRO on {ACCOUNT}",
+                opened_at=case.clock[0]-timedelta(days=2), closed_at=case.clock[0]-timedelta(days=1),
+                payload={"source": "orb_schwab_eod_close", "entry_order_id": str(case.entry_id),
+                    "entry_broker_order_id": "SCHWAB-ORB-1", "broker_account_name": ACCOUNT,
+                    "symbol": "CLRO", "reason": "CONTROLLED previously resolved incident",
+                    "historical_receipt": {"preserve": "exact closed history"}}))
+        with case.factory() as session:
+            closed = session.get(SystemIncident, closed_id)
+            before = (closed.status, closed.severity, closed.title, closed.opened_at,
+                      closed.closed_at, deepcopy(closed.payload))
+        asyncio.run(case.service._orb_schwab_eod_close())
+        # Both broker quantity reads and locked prepare try the real incident
+        # writer. A second EOD pass must neither duplicate the page nor SELL.
+        assert len(reads) >= 3
+        asyncio.run(case.service._orb_schwab_eod_close())
+        closes = [request for request in case.broker.submitted if request.intent_type == "close"]
+        assert len(closes) == 1 and closes[0].quantity == 10
+        with case.factory() as session:
+            rows = session.scalars(select(SystemIncident)).all()
+            assert len(rows) == 2
+            closed = session.get(SystemIncident, closed_id)
+            assert (closed.status, closed.severity, closed.title, closed.opened_at,
+                    closed.closed_at, closed.payload) == before
+            fresh, = [row for row in rows if row.status == "open"]
+            assert fresh.id != closed_id and fresh.severity == "critical" and fresh.closed_at is None
+            assert fresh.payload["source"] == "orb_schwab_eod_close"
+            assert fresh.payload["entry_order_id"] == str(case.entry_id)
+            assert "ownership_UNKNOWN_legacy_eod" in fresh.payload["reason"]
+            assert session.scalar(select(VirtualPosition.quantity)) == 0
+    finally:
+        case.factory.kw["bind"].dispose()
+
+
+@pytest.mark.parametrize("zero", ["0.00", "0.0000", "0E-8", 0, 0.0])
+def test_orb_terminal_zero_event_quantity_is_numeric_not_a_string_whitelist(monkeypatch, zero):
+    case = orb_case(monkeypatch)
+    try:
+        later_id = later_buy(case, status="cancelled", submitted_mode="newer")
+        with case.factory.begin() as session:
+            event = session.scalar(select(BrokerOrderEvent).where(BrokerOrderEvent.order_id == later_id))
+            event.payload = {**event.payload, "filled_quantity": zero}
+        asyncio.run(case.service._orb_schwab_eod_close())
+        closes = [request for request in case.broker.submitted if request.intent_type == "close"]
+        assert len(closes) == 1 and closes[0].quantity == 10
+        assert closes[0].metadata["entry_order_id"] == str(case.entry_id)
+        with case.factory() as session:
+            assert session.scalar(select(VirtualPosition.quantity)) == 0
+            assert not session.scalars(select(Fill).where(Fill.order_id == later_id)).all()
+            assert session.scalar(select(SystemIncident)) is None
+    finally:
+        case.factory.kw["bind"].dispose()
