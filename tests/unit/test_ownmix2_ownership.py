@@ -5,6 +5,7 @@ shared-account inventory varies here; no provider, native-flat or cancel proof
 is replaced with an always-clear stub.
 """
 
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
@@ -236,5 +237,42 @@ async def test_manual_thousand_release_uses_actual_cancel_proofs_and_later_fresh
         with bot.session_factory() as session:
             raw = session.scalar(select(AccountPosition).where(AccountPosition.symbol == case.request.symbol))
             assert raw.quantity == 1000  # No account debit, sell or synthetic flat rewrite.
+    finally:
+        case.engine.dispose()
+
+
+@pytest.mark.parametrize("account", [PRIMARY, MIRROR])
+@pytest.mark.parametrize("unreadable", [False, True], ids=["complete", "missing-receipt"])
+def test_single_account_legacy_helper_and_actual_proofs_keep_supported_scope(monkeypatch, account, unreadable):
+    case = inventory_case(monkeypatch, account, "manual1000_own_flat")
+    try:
+        case.request = replace(case.request, account_names=(account,))
+        case.accounts = {identity: name for identity, name in case.accounts.items() if name == account}
+        # This control has exactly one cancellation account. Do not let the
+        # two-account fixture's unrelated receipt masquerade as a matching one.
+        with case.bot.session_factory.begin() as session:
+            other_ids = session.scalars(select(BrokerAccount.id).where(BrokerAccount.name != account)).all()
+            for intent in session.scalars(select(TradeIntent).where(
+                    TradeIntent.intent_type == "cancel", TradeIntent.broker_account_id.in_(other_ids))):
+                session.delete(intent)
+        case.bot._removed_wait_store.record(case.request, True)
+        if unreadable:
+            receipt(case, unreadable=True)
+        with case.bot.session_factory() as session:
+            if unreadable:
+                with pytest.raises(ValueError, match="owned_inventory_account_read_UNKNOWN"):
+                    owned_position_present(session, symbol=case.request.symbol, accounts=case.accounts,
+                        strategy_id=case.strategy_id, now=instant(case.clock[0]))
+            else:
+                assert owned_position_present(session, symbol=case.request.symbol, accounts=case.accounts,
+                    strategy_id=case.strategy_id, now=instant(case.clock[0])) is False
+        if unreadable:
+            with pytest.raises(ValueError, match="owned_inventory_account_read_UNKNOWN"):
+                case.bot._removed_wait_store.proofs((case.request,), {account}, now=instant(case.clock[0]))
+        else:
+            proof, = case.bot._removed_wait_store.proofs((case.request,), {account}, now=instant(case.clock[0]))
+            assert proof.request == case.request and proof.clear
+            assert proof.reason == "retry_leftovers_cancelled_owner_kept"
+        assert case.bot._removed_wait_store.restore()[case.request.symbol] == case.request
     finally:
         case.engine.dispose()
