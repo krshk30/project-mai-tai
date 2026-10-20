@@ -88,14 +88,18 @@ SERVICE_NAME = "control-plane"
 EASTERN_TZ = ZoneInfo("America/New_York")
 
 
-def _atr_episode_fill_ledger(recent_fills: list[dict[str, Any]]) -> tuple[list[dict], float] | None:
-    """Attribute exits to one entry episode, never consume another episode's lot."""
+def _atr_episode_fill_ledger(
+    recent_fills: list[dict[str, Any]], *, unattributed_exits: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict], float] | None:
+    """Return proven rows/P&L; optionally collect grouped unresolved exits, never FIFO."""
     if not recent_fills or len(recent_fills) >= 1000:
         return None
     fills = [row for row in recent_fills if row.get("strategy_code") == "schwab_1m_v2"]
     if not fills:
         return None
     episodes: dict[tuple[str, str, str], dict[str, Any]] = {}
+    uncertain_episodes: set[tuple[str, str, str]] = set()
+    unknown: dict[tuple[str, str], dict[str, Any]] = {}
     realized = Decimal(0)
     # Broker timestamps can tie for an entry and its OCO child. Identity, not
     # timestamp-only FIFO, decides which episode receives that exit.
@@ -135,8 +139,25 @@ def _atr_episode_fill_ledger(recent_fills: list[dict[str, Any]]) -> tuple[list[d
             candidates = [item for key, item in episodes.items()
                           if key[:2] == (account, symbol) and item["remaining"] > 0]
             episode = candidates[0] if len(candidates) == 1 else None
-        if episode is None or quantity > episode["remaining"]:
-            return None
+        if (episode is None or quantity > episode["remaining"]
+                or (account, symbol, episode["entry_client_order_id"]) in uncertain_episodes):
+            # Do not allocate this exit, even provisionally. Later software exits
+            # must not reuse the now-uncertain inventory as if this fill never ran.
+            if "-ocoexit-" in coid:
+                if episode is not None:
+                    uncertain_episodes.add((account, symbol, episode["entry_client_order_id"]))
+            else:
+                uncertain_episodes.update(key for key, item in episodes.items()
+                                          if key[:2] == (account, symbol) and item["remaining"] > 0)
+            unresolved = unknown.setdefault((account, symbol), {
+                "symbol": symbol, "broker_account_name": account,
+                "quantity": Decimal(0), "exit_events": [],
+                "reason": "exit not attributable",
+            })
+            unresolved["quantity"] += quantity
+            unresolved["exit_events"].append({"client_order_id": coid, "filled_at": row["filled_at"],
+                                               "quantity": float(quantity), "price": float(price)})
+            continue
         cost = episode["remaining_cost"] * quantity / episode["remaining"]
         profit = quantity * price - cost
         realized += profit
@@ -160,6 +181,8 @@ def _atr_episode_fill_ledger(recent_fills: list[dict[str, Any]]) -> tuple[list[d
         }} | {"quantity": float(episode["bought"]), "entry_price": float(entry_price),
               "exit_price": float(exit_price), "pnl": float(episode["pnl_value"]),
               "profit_pct": float((exit_price / entry_price - 1) * 100)})
+    if unattributed_exits is not None:
+        unattributed_exits.extend({**row, "quantity": float(row["quantity"])} for row in unknown.values())
     return closed, float(realized)
 SCHWAB_OAUTH_REDIRECT_URI = "https://hook.project-mai-tai.live/auth/callback"
 
@@ -2201,7 +2224,8 @@ class ControlPlaneRepository:
                 }
             )
             if code == "schwab_1m_v2":
-                ledger = _atr_episode_fill_ledger(recent_fills)
+                unattributed_exits: list[dict[str, Any]] = []
+                ledger = _atr_episode_fill_ledger(recent_fills, unattributed_exits=unattributed_exits)
                 if ledger is None:
                     bot_views[-1]["closed_today_source"] = "UNKNOWN_FILL_EPISODE_COVERAGE"
                     bot_views[-1]["closed_today"] = []
@@ -2209,6 +2233,8 @@ class ControlPlaneRepository:
                 else:
                     bot_views[-1]["closed_today"], bot_views[-1]["daily_pnl"] = ledger
                     bot_views[-1]["closed_today_source"] = "ATTRIBUTED_EPISODE_FILLS"
+                    bot_views[-1]["unattributed_exits"] = unattributed_exits
+                    bot_views[-1]["daily_pnl_partial"] = bool(unattributed_exits)
             if code == "orb_schwab":
                 live_view = bot_views[-1]
                 for key, timestamp in (("recent_orders", "updated_at"), ("recent_fills", "filled_at"), ("recent_intents", "updated_at")):
@@ -5813,6 +5839,9 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
                          else _normalize_closed_today_rows(bot["closed_today"])),
         **({"closed_today_source": bot["closed_today_source"]}
            if "closed_today_source" in bot else {}),
+        **({"unattributed_exits": bot["unattributed_exits"],
+            "daily_pnl_partial": bot["daily_pnl_partial"]}
+           if "unattributed_exits" in bot else {}),
         "recent_decisions": recent_decisions,
         "recent_intents": bot["recent_intents"],
         "recent_orders": bot["recent_orders"],
@@ -6877,6 +6906,10 @@ def _render_bot_detail_page(
         pnl_color = "#888"
     elif strategy_code == "schwab_1m_v2" and bot.get("closed_today_source") == "ATTRIBUTED_EPISODE_FILLS":
         overview_pnl_value = f"${Decimal(str(completed_pnl)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):+,.2f}"
+        if bot.get("daily_pnl_partial"):
+            partial_label = f"partial: {len(bot['unattributed_exits'])} unattributed"
+            overview_pnl_value += f" ({partial_label})"
+            completed_count = f"{completed_count} ({partial_label})"
     retention_rows = list(bot.get("retention_states", []))
     active_symbols: list[str] = []
     for item in bot["positions"]:
@@ -10566,7 +10599,8 @@ def _build_completed_position_rows(
     if bot.get("closed_today_source") == "UNKNOWN_FILL_EPISODE_COVERAGE":
         return ('<tr><td colspan="9">UNKNOWN: entry-episode fill coverage is incomplete.</td></tr>', 0, 0.0)
     completed_rows = _collect_completed_position_rows(bot, recent_orders, recent_fills)
-    if not completed_rows:
+    unknown_rows = bot.get("unattributed_exits", []) if bot.get("strategy_code") == "schwab_1m_v2" else []
+    if not completed_rows and not unknown_rows:
         return (
             '<tr><td colspan="9" style="text-align:center;color:#888;">No completed positions</td></tr>',
             0,
@@ -10581,6 +10615,12 @@ def _build_completed_position_rows(
         reverse=True,
     )[:25]:
         rendered_rows.append(_render_completed_position_row(row))
+    for row in unknown_rows:
+        rendered_rows.append(
+            f'<tr><td><strong>{escape(str(row["symbol"]))}</strong></td>'
+            f'<td>{escape(str(row["broker_account_name"]))}</td>'
+            f'<td colspan="7">UNKNOWN: {_fmt_qty(row["quantity"])} sh exit not attributable</td></tr>'
+        )
     return "".join(rendered_rows), len(completed_rows), completed_pnl
 
 

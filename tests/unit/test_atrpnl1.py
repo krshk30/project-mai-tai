@@ -32,10 +32,12 @@ def test_distinct_entries_never_lend_inventory_to_an_oco_child():
 
 
 def test_unlinked_exit_with_multiple_live_episodes_is_unknown_not_fifo():
+    unresolved = []
     assert _atr_episode_fill_ledger([
         fill("buy", 10, 4, "old"), fill("buy", 20, 3, "new"),
         fill("sell", 10, "3.5", "close"),
-    ]) is None
+    ], unattributed_exits=unresolved) == ([], 0)
+    assert len(unresolved) == 1 and unresolved[0]["quantity"] == 10
 
 
 def test_partial_fills_use_actual_entry_and_exit_vwap():
@@ -47,10 +49,12 @@ def test_partial_fills_use_actual_entry_and_exit_vwap():
 
 
 def test_accounts_do_not_share_inventory():
+    unresolved = []
     assert _atr_episode_fill_ledger([
         fill("buy", 10, 4, "entry", account="one"),
         fill("sell", 10, 5, "entry-ocoexit-native", account="two"),
-    ]) is None
+    ], unattributed_exits=unresolved) == ([], 0)
+    assert unresolved[0]["broker_account_name"] == "two"
 
 
 @pytest.mark.parametrize("stamp", ["2026-10-14T09:00:00+00:00", "2026-10-14T15:00:00+00:00"])
@@ -64,10 +68,12 @@ def test_same_episode_accounting_in_premarket_and_rth_on_both_accounts(stamp, ac
 
 
 def test_overfilled_child_cannot_borrow_another_entry_quantity():
+    unresolved = []
     assert _atr_episode_fill_ledger([
         fill("buy", 10, 4, "old"), fill("buy", 20, 3, "new"),
         fill("sell", 30, 5, "new-ocoexit-native"),
-    ]) is None
+    ], unattributed_exits=unresolved) == ([], 0)
+    assert unresolved[0]["quantity"] == 30
 
 
 def test_truncated_display_history_is_unknown():
@@ -131,13 +137,15 @@ def test_actual_html_and_api_show_unknown_not_stale_runtime_numbers():
     data = page_data([fill("buy", 10, 4, "old"), fill("buy", 20, 3, "new"),
                       fill("sell", 10, 5, "close")])
     payload = control._build_bot_api_payload(data, "schwab_1m_v2")
-    assert payload["daily_pnl"] is None and payload["closed_today"] == []
-    assert payload["closed_today_source"] == "UNKNOWN_FILL_EPISODE_COVERAGE"
+    assert payload["daily_pnl"] == 0 and payload["closed_today"] == []
+    assert payload["closed_today_source"] == "ATTRIBUTED_EPISODE_FILLS"
+    assert payload["daily_pnl_partial"] is True
+    assert payload["unattributed_exits"][0]["quantity"] == 10
     html = control._render_bot_detail_page(data, "schwab_1m_v2")
-    assert "UNKNOWN: entry-episode fill coverage is incomplete" in html
+    assert "10 sh exit not attributable" in html and "partial: 1 unattributed" in html
     assert "$-999.00" not in html
     atr = next(row for row in data["bots"] if row["strategy_code"] == "schwab_1m_v2")
-    assert atr["daily_pnl"] is None and atr["closed_today"] == []
+    assert atr["daily_pnl"] == 0 and atr["closed_today"] == []
 
 
 def test_actual_html_uses_broker_precision_and_half_up_cash_rounding():
