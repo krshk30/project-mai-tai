@@ -2,73 +2,54 @@
 
 > **OVERWRITE this file.** It answers: *what is true right now?* Historical narrative belongs in
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
-> Previous day notes (10-02 → 10-09) are in git history of this file (main 7a845576 and earlier).
+> The 10-16 state (Group D install) is in git history of this file (main 54549912).
 
-## PRODUCTION NOW — as of Fri 2026-10-16 23:4x ET (claude-1 close-out read of the box)
+## PRODUCTION NOW — as of Mon 2026-10-19 20:4x ET (claude-1 close-out read of the box)
 
 | Item | State now | Evidence (as-of) |
 |---|---|---|
-| Box checkout | `9df73a18` (branch `install-9df-20261016`): Group D (D1, D2 resting/ATR-BUY, D3, D4, D5) + MOMGUARDEND1 next-batch + SYNC2X hygiene on main `7a845576` | `git rev-parse` 21:4x |
-| Installed today | 16:01 efbfa397 (KILLSW1 core, COUNTRYROUTE-ATR, WEEKMAINT1 units) · 18:47 db73a581 (WBATTACH1 + O-1015-14 + ORBROUTE1) · 19:28 DB `jit=off` (SYNC2X) · 20:00 a33a30c2 (MOMCANCEL1) · 21:06 MOMGUARDEND1 guard-only · **23:3x Group D + guard ExecCondition + SYNC2X hygiene (9df73a18)**: oms/v2/reconciler restarted; guard 4 artifacts + unit ExecCondition + manifest + daemon-reload; native off-hours start → `exec-condition` skip, inactive, no OnFailure, no paper | install records in claude-1 memory `project_mai_tai_live_rule_cards.md` |
-| Services | oms (since 19:56), schwab-1m-v2 / orb-schwab / control (18:47), strategy (10-13 20:29), market-data (10-14 12:31), reconciler (10-13 19:47), market-capture (10-03). Momentum guard + paper **inactive until Mon 03:40 ET timer** (by design, session closed) | `systemctl` 21:4x |
-| Switches (OMS `/proc`) | `BOT_CONTROL_ENABLED=true`, `STRATEGY_SCHWAB_1M_V2_COUNTRY_ROUTE_ENABLED=true`, `ORB_COUNTRY_ROUTING_ENABLED=true`, `ORB_WEBULL_ACCOUNT_NAME=live:orb`, `MOMLIVE_SEC_APPROVED_HEAD=a33a30c2…` | `/proc/<pid>/environ` 21:4x |
-| Database | alembic `20261015_bot_control`; **`ALTER DATABASE project_mai_tai SET jit = off`** (required: the ORB reconcile query cost ~1.08M → JIT 744 ms per sync pass; rollback `ALTER DATABASE … RESET jit`) | 19:28 |
-| Positions / orders | Flat both brokers; 0 working orders; 0 open managed rows; 0 nonzero VP | gates 21:4x |
-| Loop numbers | OMS broker-sync pass p50 ≈ 0.45–0.57 s (baseline 0.525 s) after jit=off; reconciler cycle excess p50 65 ms / p90 91 ms (baseline before Group D) | 19:3x / 20:46 |
-| Timers next | Sat 01:00 ET momlive-sec (SEC weekly) · Sat 05:00 prune-ticks · Sun prune-capture/retention · **Mon 03:40 ET momentum guard** · Mon 06:20 preopen | `systemctl list-timers` 21:4x |
+| Box checkout | **`b79ef160`** = installed `9df73a18` + Track A only: **Q** (O-1019-15 Webull unreadable-ACK never blocks the software stop/exit; list-proof exits; C6 original-pair proof; kill-switch inventory) + **O17** (control-plane survives one malformed DB row) | `git rev-parse` 20:0x; tree clean |
+| Installed tonight | 19:58 ET Track A, operator-approved ("go ahead with the install") **despite node-8 ORB rate absolute FAIL**, which fails identically on installed 9df (O-1019-25) | install receipts `analysis/` |
+| Services | all 8 restarted 19:58 ET; OMS restarted again 20:3x ET (after O-1019-26). Momentum guard + paper inactive since the 18:10 scheduled close → **Tue 03:40 ET timer** | `systemctl` 20:3x |
+| Guard | manifest `gateway_identity` re-pinned to market-data pid 408893 / start 23:58:07Z (backup `install-20261019-trackA/manifest.json.before-repin`); `daily_guard.py --dry-run-prestart` **PASS** 00:35Z; no safety-stop file | 20:35 |
+| Live momentum | boots clean (0 `MOMLIVE1-BOOT-REFUSED`) after O-1019-26 guarded settlement of WORX episode f723 (claimed → terminal_no_fill; codex main+Q+R AGREE 7fa2da28) | 20:3x |
+| Records | YMAT #2 external close booked (operator manual sell 165 @ 1.78 15:53 ET; guarded repair 2684e9c0, dry run then commit); 4 YMAT incidents closed | 19:38 |
+| Pages | ATR page closed=3, day **+$24.33** = broker; momentum live −$19.34; PAGES CLEAN | 20:0x |
+| Positions / orders | flat both brokers; 0 working orders; 0 open managed rows | 20:3x |
+| Backups | DB dump `install-20261019-trackA/project_mai_tai.dump` sha256 3caf4487…; tree 9df tgz f28dd562… | 19:26 |
 
-## TO BE EXERCISED (installed, waiting for the first real event — read these first on Monday)
+## TOMORROW (Tue 10-20) — first checks, in order
 
-| Fix | First live event | What proves it |
+| Time ET | Check | Pass looks like |
 |---|---|---|
-| MOMCANCEL1 (O-1016-10) | next Schwab momentum buy resting > 2 s | `cancel_wire_sent_coid` set within ~2 s; no `cancel_entry_broker_identity_UNKNOWN`; `[MOMCANCEL1]` CRITICAL only if Schwab ACK id unknown |
-| MOMGUARDEND1 (O-1016-12) | Mon 03:40 ET start; Mon 18:10 ET close | 03:40: guard + paper active, `live_handoff=True`; 18:10: STOPPING + exit 0, no watchdog core, unit inactive (not failed) |
-| WBATTACH1 + O-1015-14 | first Webull bare fill / first managed software sell | attach within first try; prepared sell row durable before wire |
-| ORBROUTE1 (ORB country routing ON) | first ORB entry 09:2x | US name → Schwab, non-US/UNKNOWN → Webull; ORB protection reconcile quiet |
-| KILLSW1 core + COUNTRYROUTE-ATR | first ATR entry Monday | route decision logged; no stale-row refusals |
-| SYNC2X (jit=off) | every sync pass | p50 ≈ baseline; other services pick up jit=off on next restart |
+| 03:47 | momentum guard + paper start | both active, `live_handoff=True`, no safety-stop file |
+| 04:05 | v2 session roll: prior-session `v2_removed_wait` rows (WORX ec6d28d9 retry_exhausted, EXYN bccca82e) | cleared / not gating; the scan's "WAITING BUY PER WATCHED STOCK" shows no `<<< NO WAITING BUY` from a 10-19 row |
+| 06:20 | preopen | known RED until O-1019-2 re-baseline lands (not a trading block) |
+| 07:00→ | full scan every 30 min + momentum watch every 10 min | first ATR Webull fill: pair attaches or Q list-proof software exit; no `WBATTACH1-BLOCKED` without an "Exit waiting for broker proof" incident |
 
-## INSTALLED LATE 10-16 (23:3x) — Group D, verify Monday
+## TO BE EXERCISED (installed tonight)
 
-| Item | What changed | Monday proof |
+| Fix | First live event | Proof |
 |---|---|---|
-| D1 | position/avg-price alerts: operator's manual shares → INFO (positive VP per strategy required); reconciler cycle now logs `duration_ms` | no CRITICAL for manual shares; reconciler duration ≈ 40–60 ms |
-| D2 (resting + fresh ATR resting BUY) | no false "stuck accepted/pending" alerts when a live working proof exists (one off-loop coalesced write per sync pass, ≤ 64 orders) | **compare stuck-alert counts vs last week** — stricter proof raised alerts on historical replays (92→119 orders) because history lacks live receipts; if noisier live, tune next week |
-| D3 | prior-session confirmation entries retired only when proven closed + flat (off-loop) | no 07:01 ERROR for previous-session fills; held positions keep their confirmation exit |
-| D4 | momentum transient identity mismatch → INFO once; `cancel_entry_broker_identity_UNKNOWN` stays ERROR | fewer ERROR lines on momentum exits |
-| D5 | legacy cancelled-partial child: durable fence + ONE incident (no exit-path change) | no duplicate incidents |
-| Guard next-batch | `ExecCondition` closed-session skip; failure unit exit 0 when only the page fails | Mon 03:40 start runs (condition passes in session); 18:10 clean close |
-| SYNC2X hygiene | ORB reconcile query rewritten (plan cost 1.08M → 6.4k) + guard + logical-account log line; WEEKMAINT reports `jit` setting | sync p50 ≈ 0.53 s |
+| Q (O-1019-15) | first ATR Webull bare fill | no pair cancel on unreadable ACK (`attach_ack_unknown_requires_child_proof` incident instead); any stop/flip/hard-stop exit runs after a complete TODAY-list proof; never a blind sell |
+| O17 | any malformed DB row | page banner + `[CONTROL-PLANE-ROW-SKIPPED]`, rest of the page intact |
 
-Deferred to next week (board): **D2-momentum** (stripped — 52 failing controls), **O-1016-14 D2-ATR protective pairs** (no persisted complete-child evidence), O-1016-11 D5 recovery read.
-Rejected tonight (52249c24, do not resurrect): Schwab flip exit via strict close receipts, Webull un-fence into release, FOR UPDATE on the OMS loop, per-order snapshot rewrite in the sync pass, D3 dropping held entries, new D1 CRITICAL.
+## OPEN — Track B (tomorrow night; NOT installed)
 
-## OPEN BOARD (not tonight) — owner / next step
-
-| ID | Item | Next |
+| ID | Item | Why not tonight |
 |---|---|---|
-| O-1016-9 | MOMEXEC1 study: momentum execution price/speed/misses (13 signals/8 fills so far; misses, not slippage, carry the cost) | collect 100+ live trades, then conclude; broker switch (Lightspeed/DAS) PARKED |
-| O-1015-10 | MOMCUTOFF1 (live momentum entries after 10:00) | watch & analyse until next week (operator) |
-| O-1016-5 / O-1016-7 | XLAB late fill (root cause = MOMCANCEL1, installed) · FUFU 300 s live vs 600 s paper time exit | watch / board |
-| O-1016-11 | D5 closed-episode recovery read | PARKED next week (class count from codex) |
-| O-1016-8 | WB/ORB native-guard paths hold a DB session across broker awaits | next week |
-| O-1016-6 | SEC → WEEK automatic chain (receipt ownership) | Sat supervised manual start |
-| O-1016-1 | WEEKMAINT1 weekly maintenance | **Sat 10-17 supervised test with the operator** (fill `/etc/project-mai-tai/weekmaint.json` first; dry-run then real) |
-| GC follow-up | gen2 GC pauses in pytest heap (90–130 ms) on new rate tests; prod impact unmeasured | lane L assessment card (gc.freeze after boot?) |
-| O-1015-9 | VALIDATE-GREEN (CI test debt) | board |
+| O-1019-18 | fresh-sell owner release counts an `aborted` buy as working (WORX blocked 14:18→) — root cause confirmed by claude-1 + codex | in full set with 63 NEW failures |
+| O-1019-16 | OMS admission refusal never reaches v2 (ghost rest) + momentum unsent order holds shared account | same |
+| O-1019-26 class | momentum ledger keeps a claimed unsent episode active (live release, J) | same; tonight settled by data fix |
+| MOMNEG / N2 | down-day filter; re-price within +1.5% | VPS speed FAIL (93–162 ms / 129–170 ms max handler) |
+| MOMBOOT1, COUNTRYUS2, PAPEREXIT5, M (AAME), M2 (restart orphan) | reviewed | carried with the full set |
+| O-1019-22 | 63 NEW full-suite failures on 1c245c0e | triage per lane |
+| O-1019-23 | guard exits 2 at scheduled close → 2 false pages | policy gap proven; cause of owner-release UNKNOWN open |
+| O-1019-24 / -25 | gateway A 60 s (~100 ms) and ORB aggregate (~90 ms) loop stalls on the box — fail on installed 9df too | diagnose |
 
-## RULES ADDED TODAY (operator 10-16) — apply without asking
+## Today's record (10-19)
 
-- **Bug fixes need no approval:** found bug → build, review, full test, VPS speed test, install after close, switch ON; tell him after. Ask him only when a fix would break trading with no fix available, or for a new rule.
-- **Validation scan job** (every 15 min, both tools): its purpose is to catch every trading issue before he does — cross-broker price gaps, unwatched holdings, refused sells, plus (new today) **momentum price + speed gap per buy, momentum exit gap vs target/stop, momentum buy vs tape (+5/+30/+60 s), ATR exit price gap vs bracket/meant price**. Tools: `~/.claude/tools/mai-tai-fullscan-watch/run.sh` and `~/.claude/tools/mai-tai-fullscan/run.sh` (+ `extra.sql`, `exgap.py`, `mombuy.py`).
-- **One speed test per bundle**, on the final composed head (VPS interleaved base vs candidate; GC-attributed or base-equal stalls are not regressions).
-- **Every install reads loop numbers within 30 min** (sync-pass buckets) — SYNC2X was caught this way 30 min after the 18:47 install.
-- **A large "alert fix" diff gets a hunk-to-item map before tests**; anything touching exits, cancels or sizing is out of scope unless named.
-- **Broker:** stay with Schwab/Webull; professional broker parked as an option; keep measuring.
-
-## MONDAY 10-19 FIRST READS (claude-1, unprompted)
-
-1. 03:40 guard/paper start (MOMGUARDEND1) · 04:00 roll · loop numbers (sync p50, reconciler).
-2. 07:0x scanner + watchlist adds + squeeze alerts (rule 9b) after the weekend maintenance restarts.
-3. First Schwab momentum buy → MOMCANCEL1; first ORB entry → country route; first Webull bare fill → attach.
-4. 15-min scans with the new price/speed gap sections; 18:10 guard close.
+- ATR +$24.33 (YMAT +0.03, WORX +29.25, YMAT #2 −4.95); momentum live −19.34; ORB 0.
+- O-1019-15 happened twice (YMAT 11:36, 15:33): pair cancelled on unreadable ACK, software exits blocked → flattened by claude-1 (12:07) and by the operator (15:53).
+- Operator rulings: no rollback, fix forward; every root cause validated by codex; scan lists a waiting buy per watched stock; no in-session restarts as band-aids.
+- MOMEXIT2 replay: trails/splits worse (90% of +5% touches fall back within 1 s); "take the bid if ≥ +5% at the touch" best (+0.5 pp mean). `analysis/MOMEXIT2-REPLAY-RESULTS-20261019.md`.

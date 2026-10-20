@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from copy import deepcopy
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -25,6 +26,10 @@ REASON = "WEBULL_ATTACH_RISK_OFF"
 KEY = "wbattach1"
 BARE_FILL_PROOF = "wbattach1_bare_fill_observed"
 TERMINAL = {"filled", "cancelled", "rejected", "expired"}
+SOFTWARE_EXIT_REASONS = frozenset({
+    "oms_v2_managed_exit:CW_FLIP", "oms_v2_managed_exit:CW_HARD_STOP",
+    "oms_v2_managed_exit:CONFIRMATION_EXIT", "oms_v2_managed_exit:CW_FLOOR",
+})
 
 
 def marked_atr_episode(payload):
@@ -63,6 +68,10 @@ class _AtrCall:
     terminal_at: float | None = None
     prepared: tuple | None = None
     consumed: bool = False
+    reason: str = REASON
+    owner_key: tuple | None = None
+    broker_flat: bool = False
+    list_proof_at: datetime | None = None
 
 
 _ATR_CALL = ContextVar("wbattach1_atr_call", default=None)
@@ -72,19 +81,49 @@ def atr_handoff_call(method):
     """Scope proof to the actual claimed-owner invocation, including flag-OFF use."""
     @wraps(method)
     async def bound(service, *args, **kwargs):
-        if kwargs.get("reason") != REASON:
+        reason = kwargs.get("reason")
+        if reason != REASON and reason not in SOFTWARE_EXIT_REASONS:
             return await method(service, *args, **kwargs)
         account = args[0] if args else kwargs.get("acct")
         symbol = args[1] if len(args) > 1 else kwargs.get("symbol")
         call = _AtrCall(service, asyncio.current_task(), account, symbol,
                         kwargs.get("expected_managed_row_id", ""), str(uuid4()))
+        call.reason = reason
         token = _ATR_CALL.set(call)
         try:
             return await method(service, *args, **kwargs)
         finally:
-            call.consumed = True
-            _ATR_CALL.reset(token)
+            try:
+                if call.entry_coid and call.prepared is None and not call.consumed:
+                    await _release_unprepared_software_handoff(service, call)
+            finally:
+                call.consumed = True
+                owners = service.__dict__.get("_wbattach_exit_owners", {})
+                if call.owner_key is not None and owners.get(call.owner_key) is call:
+                    owners.pop(call.owner_key)
+                _ATR_CALL.reset(token)
     return bound
+
+
+async def _release_unprepared_software_handoff(service, call):
+    try:
+        def unprepared(session):
+            entry, row, _, _, owned = _atr(service, session, call.account, call.symbol, call.entry_coid)
+            state = dict(entry.payload[KEY])
+            if not state.get("exit_phase"):
+                return  # The shielded claim transaction refused before committing a claim.
+            if (str(row.id) != call.managed_id or owned != call.owned_quantity
+                    or state.get("exit_phase") != "claimed" or state.get("exit_call_id") != call.call_id):
+                raise ValueError("wbattach1_unprepared_handoff_changed")
+            # No prepared request reached final validation, and _atr rejects
+            # any remaining nonterminal SELL reservation.
+            state.pop("exit_phase")
+            state.pop("exit_call_id")
+            entry.payload = {**entry.payload, KEY: state}
+        await service._run_db(unprepared, commit=True)
+    except Exception as exc:
+        await critical(service, call.account, call.symbol,
+            f"unprepared_software_handoff_UNKNOWN:{type(exc).__name__}", entry_id=call.entry_coid)
 
 
 def _current_atr_call(service, managed_id, *, require_rth=True):
@@ -92,8 +131,11 @@ def _current_atr_call(service, managed_id, *, require_rth=True):
     call = _ATR_CALL.get()
     if (call is None or call.consumed or call.service is not service
             or call.task is not asyncio.current_task() or call.managed_id != str(managed_id)
-            or not call.managed_id or require_rth and not _rth(service)):
+            or not call.managed_id or require_rth and call.reason == REASON and not _rth(service)):
         raise ValueError("wbattach1_live_owner_call_unknown")
+    if (call.owner_key is not None
+            and service.__dict__.get("_wbattach_exit_owners", {}).get(call.owner_key) is not call):
+        raise ValueError("wbattach1_exit_owner_claim_lost")
     if getattr(service.settings, "bot_control_enabled", False):
         owner = module._CONTROL_MANAGED_EMIT.get()
         key = (call.account, call.symbol.upper(), call.managed_id)
@@ -171,18 +213,44 @@ async def critical(service, account, symbol, reason, *, entry_id=""):
     service.logger.critical("[WBATTACH1-BLOCKED] account=%s symbol=%s entry=%s reason=%s sell=0",
                             account, symbol, entry_id, reason)
     def write(session):
-        old = session.scalar(select(SystemIncident.id).where(
+        reference = str(entry_id)
+        matches = [BrokerOrder.client_order_id == reference]
+        try:
+            matches.append(BrokerOrder.id == UUID(reference))
+        except (ValueError, TypeError, AttributeError):
+            pass
+        entries = session.scalars(select(BrokerOrder).join(
+            BrokerAccount, BrokerAccount.id == BrokerOrder.broker_account_id).where(
+            or_(*matches), BrokerAccount.name == account, BrokerAccount.provider == "webull",
+            BrokerOrder.symbol == symbol, BrokerOrder.side == "buy").limit(2)).all()
+        entry = entries[0] if len(entries) == 1 else None
+        canonical = str(entry.id) if entry is not None else "UNRESOLVED:" + reference
+        aliases = {canonical, entry.client_order_id} if entry is not None else {canonical}
+        old = session.scalar(select(SystemIncident).where(
             SystemIncident.payload["source"].as_string() == KEY,
             SystemIncident.payload["account"].as_string() == account,
             SystemIncident.payload["symbol"].as_string() == symbol,
-            SystemIncident.payload["entry_id"].as_string() == str(entry_id),
+            SystemIncident.payload["entry_id"].as_string().in_(aliases),
             SystemIncident.status == "open",
-        ))
+        ).order_by(SystemIncident.opened_at, SystemIncident.id).limit(1))
+        identity = {"entry_id": canonical,
+                    "entry_client_order_id": entry.client_order_id if entry is not None else "",
+                    "entry_identity": "canonical" if entry is not None else "unknown"}
+        if old is not None:
+            # Adopt only exact account/symbol-bound legacy COID aliases. The
+            # original incident id/opened_at and unrelated payload survive.
+            old.payload = {**(old.payload or {}), **identity}
+        waiting = "exit waiting for broker proof:" in reason.lower()
+        if old is not None and waiting:
+            old.title = f"Exit waiting for broker proof: {symbol}"[:255]
+            old.payload = {**(old.payload or {}), "reason": reason, "sell": "BLOCKED"}
         if old is None:
             session.add(SystemIncident(service_name="oms-risk", severity="critical", status="open",
-                title=f"Webull attach/exit UNKNOWN: {symbol} on {account}"[:255],
+                title=(f"Exit waiting for broker proof: {symbol}" if waiting else
+                       f"Webull attach/exit UNKNOWN: {symbol} on {account}")[:255],
                 opened_at=datetime.now(UTC), payload={"source": KEY, "account": account,
-                "symbol": symbol, "entry_id": str(entry_id), "reason": reason, "sell": "BLOCKED"}))
+                "symbol": symbol, **identity, "entry_reference": reference,
+                "reason": reason, "sell": "BLOCKED"}))
     await service._run_db(write)
 
 
@@ -232,11 +300,11 @@ def _atr(service, session, account_name, symbol, coid, *, allow_closed=False, pr
         metadata = order.payload or {}
         if prepared is not None and order.client_order_id == prepared.client_order_id:
             if (order.status != "pending" or order.submitted_at is not None or order.broker_order_id
-                    or order.quantity != prepared.quantity or order.order_type != "market"
+                    or order.quantity != prepared.quantity or order.order_type != prepared.order_type
                     or order.time_in_force != "day" or parent is None
                     or parent.strategy_id != strategy.id or parent.broker_account_id != account.id
                     or parent.symbol != symbol or parent.side != "sell" or parent.intent_type != "close"
-                    or parent.reason != REASON or parent.quantity != prepared.quantity
+                    or parent.reason != prepared.reason or parent.quantity != prepared.quantity
                     or metadata.get("oms_managed_row_id") != str(row.id)
                     or not metadata.get("managed_sell_prepared_at")
                     or metadata.get("managed_sell_prepared_at") != prepared.metadata.get("managed_sell_prepared_at")
@@ -261,6 +329,8 @@ def _atr(service, session, account_name, symbol, coid, *, allow_closed=False, pr
 
 
 def _control_free(service, account, symbol):
+    if (account, symbol) in service.__dict__.get("_wbattach_exit_owners", {}):
+        return False
     if (account, symbol) in service.__dict__.get("_control_managed_exit_symbol_owners", {}):
         return False
     control = getattr(service, "_bot_control_runtime", None)
@@ -386,7 +456,7 @@ async def reconcile_orb_rejection(service, entry_id, base):
     await service._run_db(write)
 
 
-async def broker_ceiling(service, account, symbol, quantity, *, after=None):
+async def broker_ceiling(service, account, symbol, quantity, *, after=None, allow_flat=False):
     async with asyncio.timeout(2):
         rows = await service.broker_adapter.list_account_positions(account)
     sampled = monotonic()
@@ -396,6 +466,9 @@ async def broker_ceiling(service, account, symbol, quantity, *, after=None):
             or not 0 <= age <= 30 or after is not None and sampled - age <= after):
         raise ValueError("wbattach1_positions_wire_receipt_unknown_or_stale")
     matches = [p for p in rows if p.symbol == symbol]
+    if allow_flat and (not matches or len(matches) == 1 and matches[0].broker_account_name == account
+                       and matches[0].quantity.is_finite() and matches[0].quantity == 0):
+        return Decimal(0)  # Only after the complete positions reader's fresh wire receipt check.
     if (len(matches) != 1 or matches[0].broker_account_name != account
             or not matches[0].quantity.is_finite() or matches[0].quantity <= 0):
         raise ValueError("wbattach1_broker_quantity_unknown")
@@ -484,10 +557,20 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
                 raise ValueError("wbattach1_entry_price_binding_changed")
             if state.get("exit_phase"):
                 return False  # An existing owner, not another attach, owns the episode now.
+            if state.get("exit_reason") in SOFTWARE_EXIT_REASONS:
+                return False  # A proof-waiting real exit must not re-arm a second native writer.
             if state.get("unsent_handoffs"):
                 return await request_atr_exit(service, account, symbol, coid,
                     "original_exit_proven_unsent_requires_fresh_owner")
+            # ACK uncertainty is not an exit signal. Keep the original address
+            # reserved for reconciliation, never cancel/re-place it from attach.
+            if any(a["phase"] in {"submitting", "unknown"} for a in state["attempts"]):
+                await critical(service, account, symbol, "attach_ack_unknown_requires_child_proof",
+                               entry_id=coid)
+                return False
             if len(state["attempts"]) >= attempts:
+                if any(a["phase"] == "accepted" for a in state["attempts"]):
+                    return True
                 return await request_atr_exit(service, account, symbol, coid,
                     "attach_refused_attempts_exhausted")
             unplaceable = await service._webull_protect_unplaceable_reason(
@@ -557,7 +640,9 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
                     "session=RTH attempt=%s", symbol, account, owned, entry_price, target, protect, number)
                 return True
             if not rejected:
-                return await request_atr_exit(service, account, symbol, coid, "attach_ack_unknown")
+                await critical(service, account, symbol, "attach_ack_unknown_requires_child_proof",
+                               entry_id=coid)
+                return False
             if not await _atr_rejection_terminal_read(service, account, symbol, coid, base, owned):
                 return await request_atr_exit(service, account, symbol, coid, "rejected_original_tree_requires_owner")
             if number < attempts and interval:
@@ -702,43 +787,146 @@ async def _atr_resolved_by_child(service, state, account, symbol, coid, base, re
     return await service._run_db(write)
 
 
+def _cancel_read_summary(reports):
+    """Bounded diagnostics only; malformed receipts remain explicitly unknown."""
+    if not isinstance(reports, (list, tuple)):
+        return "UNKNOWN"
+    values = []
+    for report in reports[:2]:
+        if not isinstance(report, ExecutionReport):
+            values.append("UNKNOWN")
+            continue
+        metadata = report.metadata if isinstance(report.metadata, dict) else {}
+        values.append(f"{report.client_order_id}/{report.broker_order_id or 'UNKNOWN'}/"
+                      f"{report.event_type}/{report.origin}/{metadata.get('cancel_outcome', 'UNKNOWN')}")
+    return f"count={len(reports)}:" + (",".join(values) or "UNKNOWN")
+
+
 async def strict_atr_handoff(service, row):
     """Called only INSIDE the real managed owner; it never wires the close itself."""
     account, symbol, coid = row.broker_account_name, row.symbol, row.entry_client_order_id
+    candidate = _ATR_CALL.get()
+    if (candidate is not None and candidate.service is service
+            and candidate.task is asyncio.current_task() and candidate.reason in SOFTWARE_EXIT_REASONS
+            and candidate.account == account and candidate.symbol == symbol and not candidate.managed_id):
+        candidate.managed_id = str(row.id)  # Exact row read by this existing owner invocation.
     call = _current_atr_call(service, row.id)
     if call.account != account or call.symbol != symbol or call.entry_coid:
         raise ValueError("wbattach1_handoff_call_binding_changed")
-    if not _rth(service):
+    if call.reason == REASON and not _rth(service):
         raise ValueError("wbattach1_outside_rth")
+    key = (account, symbol)
+    owners = service.__dict__.setdefault("_wbattach_exit_owners", {})
+    if key in owners:
+        raise ValueError("wbattach1_existing_exit_owner")
+    owners[key], call.owner_key = call, key
+    if call.reason in SOFTWARE_EXIT_REASONS:
+        def triggered(session, entry, managed, acct, strategy, owned, journal):
+            if journal.get("exit_phase") or any(a["phase"] == "submitting" for a in journal["attempts"]):
+                raise ValueError("wbattach1_protection_dispatch_or_exit_inflight")
+            journal["exit_reason"] = call.reason
+        await _atr_state(service, account, symbol, coid, triggered, allow_closed=True)
     state, _, entry_id, _, _ = await _atr_state(service, account, symbol, coid, allow_closed=True)
     if (not state.get("exit_reason") or state.get("exit_phase") or state.get("legacy_base")
             or state.get("history_proven") is not True):
         raise ValueError("wbattach1_original_tree_or_close_unknown")
     terminal_at = monotonic()
-    for attempt in state["attempts"]:
+    proof_base = None
+    if call.reason in SOFTWARE_EXIT_REASONS and state["attempts"]:
+        unreleased = [a for a in state["attempts"] if a["phase"] != "released"]
+        if len(unreleased) > 1:
+            raise ValueError("exit waiting for broker proof: " + symbol)
+        proof_base = (unreleased or state["attempts"])[-1]["base"]
+    for attempt_number, attempt in enumerate(state["attempts"], 1):
         base, quantity = attempt["base"], Decimal(attempt["quantity"])
+        list_proof = call.reason in SOFTWARE_EXIT_REASONS
+        after_cancel = None
+        cancel_context = (account, symbol, coid, entry_id, base, state["exit_reason"],
+                          attempt_number, len(state["attempts"]), call.call_id)
+        cancel_format = ("[WBATTACH1-CANCEL] account=%s symbol=%s entry=%s entry_id=%s base=%s "
+                         "reason=%s attempt=%s/%s call=%s actor=ATR_OWNER ")
         # Historical rejected_no_wire flags are untrusted; reconcile their exact
         # original children through the same cancel/read path as UNKNOWN.
         if attempt["phase"] == "released":
             receipts = [saved_report(p) for p in attempt.get("terminal_proof", [])]
             if not terminal_pair(receipts, base, quantity, datetime.now(UTC), symbol=symbol):
                 raise ValueError("wbattach1_saved_release_not_proven")
-            continue
-        if not attempt.get("cancel_requested"):
+            if not list_proof or base != proof_base:
+                continue
+        if attempt["phase"] != "released" and not attempt.get("cancel_requested"):
             def cancel(session, entry, managed, acct, strategy, owned, journal):
                 journal["attempts"] = [{**a, "cancel_requested": True} if a["base"] == base else a
                                        for a in journal["attempts"]]
             await _atr_state(service, account, symbol, coid, cancel, allow_closed=True)
-            await service.broker_adapter.cancel_exit_pair(broker_account_name=account,
-                symbol=symbol, base_client_order_id=base)
-        result = await service.broker_adapter.confirm_exit_pair_terminal(
-            broker_account_name=account, symbol=symbol, base_client_order_id=base)
+            service.logger.info(cancel_format + "action=request terminal=UNKNOWN", *cancel_context)
+            try:
+                cancel_reports = await service.broker_adapter.cancel_exit_pair(broker_account_name=account,
+                    symbol=symbol, base_client_order_id=base)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                service.logger.warning(cancel_format + "action=call_unknown terminal=UNKNOWN failure=%s",
+                                       *cancel_context, type(exc).__name__)
+                if not list_proof:
+                    raise
+            else:
+                service.logger.info(cancel_format + "action=returned terminal=UNPROVEN receipts=%s",
+                                    *cancel_context, _cancel_read_summary(cancel_reports))
+            after_cancel = datetime.now(UTC)
+        else:
+            service.logger.info(cancel_format + "action=not_resent prior_cancel_requested=true terminal=UNKNOWN",
+                                *cancel_context)
+        try:
+            if list_proof:
+                result = await service.broker_adapter.confirm_exit_pair_from_today_list(
+                    broker_account_name=account, symbol=symbol, base_client_order_id=base,
+                    quantity=quantity, after=after_cancel, original_attempts=state["attempts"])
+                for original in state["attempts"]:
+                    expected = {WebullBrokerAdapter._combo_leg_coid(original["base"], suffix) for suffix in ("T", "S")}
+                    reads = tuple(r for r in result.reports if r is not None and r.client_order_id in expected)
+                    known = validated_child_reads(reads, original["base"], Decimal(original["quantity"]),
+                                                  symbol, datetime.now(UTC))
+                    if any(r.filled_quantity > 0 for r in known):
+                        await _record_atr_children(service, account, symbol, coid, original, known)
+                expected = {WebullBrokerAdapter._combo_leg_coid(base, suffix) for suffix in ("T", "S")}
+                result = replace(result, reports=tuple(r for r in result.reports
+                    if r is not None and r.client_order_id in expected))
+            else:
+                result = await service.broker_adapter.confirm_exit_pair_terminal(
+                    broker_account_name=account, symbol=symbol, base_client_order_id=base)
+        except (Exception, asyncio.CancelledError) as exc:
+            service.logger.warning(cancel_format + "action=confirm_unknown terminal=UNKNOWN failure=%s",
+                                   *cancel_context, type(exc).__name__)
+            raise
         reports = result.reports
+        service.logger.info(cancel_format + "action=confirmation_read outcome=%s receipts=%s validation=PENDING",
+                            *cancel_context, result.outcome, _cancel_read_summary(reports))
         known = validated_child_reads(reports, base, quantity, symbol, datetime.now(UTC))
-        if any(r.filled_quantity > 0 for r in known):
+        if not list_proof and any(r.filled_quantity > 0 for r in known):
             await _record_atr_children(service, account, symbol, coid, attempt, known)
-        if not terminal_pair(reports, base, quantity, datetime.now(UTC), symbol=symbol):
-            raise ValueError("wbattach1_original_children_not_terminal")
+        if ((list_proof and result.outcome != "released")
+                or not terminal_pair(reports, base, quantity, datetime.now(UTC), symbol=symbol)):
+            service.logger.warning(cancel_format + "action=blocked terminal=UNKNOWN sell=0", *cancel_context)
+            raise ValueError("exit waiting for broker proof: " + symbol if list_proof
+                             else "wbattach1_original_children_not_terminal")
+        if list_proof:
+            for report in reports:
+                proof = json.loads(report.metadata.get("wbattach1_list_census", "null"))
+                if (not isinstance(proof, dict) or proof.get("complete") is not True
+                        or proof.get("truncated") is not False or proof.get("broker_account_name") != account
+                        or proof.get("symbol") != symbol or proof.get("base") != base
+                        or proof.get("original_bases") != sorted(a["base"] for a in state["attempts"])
+                        or type(proof.get("pages")) is not int or not 1 <= proof["pages"] <= 20):
+                    raise ValueError("exit waiting for broker proof: " + symbol)
+                acquired = datetime.fromisoformat(proof["acquired_at"])
+                started = datetime.fromisoformat(proof["started_at"])
+                if (acquired.tzinfo is None or started.tzinfo is None
+                        or not 0 <= (datetime.now(UTC) - acquired).total_seconds() <= 2
+                        or not 0 <= (acquired - started).total_seconds() <= 30
+                        or after_cancel is not None and started < after_cancel):
+                    raise ValueError("exit waiting for broker proof: " + symbol)
+                call.list_proof_at = min(call.list_proof_at or acquired, acquired)
+        service.logger.info(cancel_format + "action=confirmed terminal=PROVEN", *cancel_context)
         if await _atr_resolved_by_child(service, state, account, symbol, coid, base, reports):
             return Decimal(0)
         def released(session, entry, managed, acct, strategy, owned, journal):
@@ -751,16 +939,30 @@ async def strict_atr_handoff(service, row):
         await _atr_state(service, account, symbol, coid, released, allow_closed=True)
         terminal_at = monotonic()
     def claim(session, entry, managed, acct, strategy, owned, journal):
-        if entry.status not in TERMINAL or not _rth(service) or owned < quantity or journal.get("exit_phase"):
+        if (entry.status not in TERMINAL or call.reason == REASON and not _rth(service)
+                or owned < quantity or journal.get("exit_phase")
+                or any(a["phase"] != "released" for a in journal["attempts"])):
             raise ValueError("wbattach1_buy_remainder_or_session_unknown")
         journal["exit_phase"] = "claimed"
         journal["exit_call_id"] = call.call_id
     _, _, _, owned, _ = await _atr_state(service, account, symbol, coid)
-    quantity = await broker_ceiling(service, account, symbol, owned, after=terminal_at)
-    await _atr_state(service, account, symbol, coid, claim)
+    quantity = await broker_ceiling(service, account, symbol, owned, after=terminal_at,
+                                   allow_flat=call.reason in SOFTWARE_EXIT_REASONS)
+    if quantity == 0:
+        call.entry_coid, call.broker_flat = coid, True
+        await resolve_atr_broker_flat(service, str(row.id))
+        return Decimal(0)
+    # Register before the durable claim await: cancellation after its commit
+    # must still find this exact, never-dispatched owner in the finally cleanup.
+    call.entry_coid, call.quantity, call.owned_quantity, call.terminal_at = coid, quantity, owned, terminal_at
+    claim_task = asyncio.create_task(_atr_state(service, account, symbol, coid, claim))
+    try:
+        await asyncio.shield(claim_task)
+    except asyncio.CancelledError:
+        await claim_task  # Do not race cleanup against a still-committing DB worker.
+        raise
     service._exit_reservation_released.add((account, symbol))
     await service._persist_webull_protect_state(account, symbol, "released")
-    call.entry_coid, call.quantity, call.owned_quantity, call.terminal_at = coid, quantity, owned, terminal_at
     service.logger.info("[WBATTACH1-HANDOFF] account=%s symbol=%s entry=%s quantity=%s owner=ATR",
                         account, symbol, entry_id, quantity)
     return quantity
@@ -773,6 +975,51 @@ def _request_binding(request):
             deepcopy(request.metadata), request.metadata.get("managed_sell_prepared_at"))
 
 
+def atr_software_exit_required(service, session, row, reason):
+    try:
+        if reason not in SOFTWARE_EXIT_REASONS or getattr(row, "strategy_code", None) != "schwab_1m_v2":
+            return False
+        provider = getattr(service.settings, "provider_for_account", None)
+        if not callable(provider) or provider(getattr(row, "broker_account_name", None)) != "webull":
+            return False  # Registered routing configuration is in-memory; no unrelated broker reads.
+        entry_id = getattr(row, "entry_order_id", None)
+        entry = session.get(BrokerOrder, entry_id) if entry_id is not None else None
+        account = session.get(BrokerAccount, entry.broker_account_id) if entry is not None else None
+        return account is not None and account.provider == "webull" and marked_atr_episode(entry.payload or {})
+    except Exception:
+        service.logger.exception("[WBATTACH1-SOFTWARE-CHECK-UNKNOWN] reason=%s legacy_exit_guards=retained", reason)
+        return False
+
+
+def atr_handoff_ready(service, managed_row_id):
+    call = _ATR_CALL.get()
+    return bool(call is not None and not call.consumed and call.service is service
+                and call.task is asyncio.current_task() and call.managed_id == str(managed_row_id)
+                and call.entry_coid and call.terminal_at is not None)
+
+
+async def resolve_atr_broker_flat(service, managed_row_id):
+    call = _ATR_CALL.get()
+    if (call is None or not call.broker_flat or call.service is not service
+            or call.task is not asyncio.current_task() or call.managed_id != str(managed_row_id)):
+        return False
+    def flat(session, entry, row, account, strategy, owned, journal):
+        if (str(row.id) != call.managed_id or journal.get("exit_phase")
+                or any(a["phase"] != "released" for a in journal["attempts"])):
+            raise ValueError("wbattach1_flat_owner_or_original_children_changed")
+        service.store.close_managed_position(session, row)
+        journal["exit_phase"] = "resolved_by_broker_flat"
+        journal["broker_flat_confirmed_at"] = datetime.now(UTC).isoformat()
+    await _atr_state(service, call.account, call.symbol, call.entry_coid, flat, allow_closed=True)
+    call.consumed = True
+    service._managed_v2_symbols.discard((call.account, call.symbol))
+    # No fill/ledger execution is fabricated from inventory. Native fills were
+    # already attributed; an external discrepancy remains visible for reconciliation.
+    await critical(service, call.account, call.symbol,
+        "broker flat before software exit; execution ledger reconciliation required", entry_id=call.entry_coid)
+    return True
+
+
 async def validate_atr_before_wire(service, request, managed_row_id):
     """Main calls this AFTER O14 preparation, immediately before the FIRST broker await.
 
@@ -781,11 +1028,12 @@ async def validate_atr_before_wire(service, request, managed_row_id):
     """
     call = _current_atr_call(service, managed_row_id, require_rth=False)
     if (not call.entry_coid or call.quantity is None or call.terminal_at is None
-            or request.reason != REASON or request.strategy_code != "schwab_1m_v2"
+            or request.reason != call.reason or request.strategy_code != "schwab_1m_v2"
             or request.broker_account_name != call.account or request.symbol != call.symbol
             or request.side != "sell" or request.intent_type != "close"
             or not request.quantity.is_finite() or request.quantity != call.quantity
-            or request.order_type != "market" or request.time_in_force != "day"
+            or request.order_type not in ({"market"} if call.reason == REASON else {"market", "limit"})
+            or request.time_in_force != "day"
             or not request.client_order_id or request.metadata.get("oms_managed_row_id") != call.managed_id
             or not request.metadata.get("managed_sell_prepared_at")):
         raise ValueError("wbattach1_final_request_binding_unknown")
@@ -796,6 +1044,18 @@ async def validate_atr_before_wire(service, request, managed_row_id):
     # event can release this never-sent handoff while this invocation is alive.
     call.prepared = binding
     _current_atr_call(service, managed_row_id)
+    if call.reason in SOFTWARE_EXIT_REASONS:
+        from project_mai_tai.oms.service import _managed_exit_session_matches_clock
+        if not _managed_exit_session_matches_clock(request.metadata):
+            raise ValueError("wbattach1_software_exit_session_changed")
+        if call.list_proof_at is not None and not 0 <= (
+                datetime.now(UTC) - call.list_proof_at).total_seconds() <= 2:
+            raise ValueError("wbattach1_final_list_proof_stale")
+        if request.metadata.get("session") != "NORMAL":
+            limit = Decimal(request.metadata.get("limit_price", "0"))
+            if (request.order_type != "limit" or not limit.is_finite() or limit <= 0
+                    or request.metadata.get("extended_hours") != "true"):
+                raise ValueError("wbattach1_software_exit_extended_hours_price_unknown")
 
     def check(session):
         entry, row, account, strategy, owned = _atr(service, session, call.account,
@@ -820,10 +1080,20 @@ async def validate_atr_before_wire(service, request, managed_row_id):
     await service._run_db(check)
     # This is deliberately the last await: do not refresh quotes, reprice or
     # prepare anything between this proof and the caller's broker submit.
-    ceiling = await broker_ceiling(service, call.account, call.symbol, call.quantity, after=call.terminal_at)
+    ceiling = await broker_ceiling(service, call.account, call.symbol, call.quantity, after=call.terminal_at,
+                                  allow_flat=call.reason in SOFTWARE_EXIT_REASONS)
+    if ceiling == 0:
+        call.broker_flat = True
+        raise ValueError("wbattach1_broker_flat_before_wire")
     _current_atr_call(service, managed_row_id)
-    if ceiling != call.quantity or _request_binding(request) != binding:
+    if (ceiling != call.quantity or _request_binding(request) != binding
+            or call.list_proof_at is not None and not 0 <= (
+                datetime.now(UTC) - call.list_proof_at).total_seconds() <= 2):
         raise ValueError("wbattach1_final_broker_ceiling_or_request_changed")
+    if call.reason in SOFTWARE_EXIT_REASONS:
+        from project_mai_tai.oms.service import _managed_exit_session_matches_clock
+        if not _managed_exit_session_matches_clock(request.metadata):
+            raise ValueError("wbattach1_software_exit_session_changed")
 
 
 async def release_atr_proven_unsent(service, request, managed_row_id, *, abort_event_id):
@@ -855,8 +1125,8 @@ async def release_atr_proven_unsent(service, request, managed_row_id, *, abort_e
                 or order.status != "aborted" or order.submitted_at is not None or order.broker_order_id
                 or intent.strategy_id != entry.strategy_id or intent.broker_account_id != entry.broker_account_id
                 or intent.symbol != call.symbol or intent.side != "sell" or intent.intent_type != "close"
-                or intent.reason != REASON or intent.status != "aborted" or intent.quantity != request.quantity
-                or order.order_type != "market" or order.time_in_force != "day"
+                or intent.reason != call.reason or intent.status != "aborted" or intent.quantity != request.quantity
+                or order.order_type != request.order_type or order.time_in_force != "day"
                 or order.payload != request.metadata or (intent.payload or {}).get("metadata") != request.metadata
                 or event.order_id != order.id or event.event_source != "client" or event.event_type != "aborted"
                 or (event.payload or {}).get("proven_not_sent") is not True

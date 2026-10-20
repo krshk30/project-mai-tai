@@ -11,7 +11,7 @@ import json
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.db.models import (
@@ -42,6 +42,7 @@ class StopContext:
     journal: object
     managed_id: str
     phase: str = "BLOCKED_UNKNOWN"
+    owner_task: object = None
 
 
 def current_stop(service, managed_id=""):
@@ -71,13 +72,15 @@ def _native(entry, order):
                 entry.client_order_id, order.broker_order_id))
 
 
-def _managed(service, session, lease, identity, *, unsent_order=None, protection_terminal=False):
+def _managed(service, session, lease, identity, *, unsent_order=None, protection_terminal=False,
+             allow_closed_original=False):
 
     row = session.get(OmsManagedPosition, UUID(str(identity)))
     strategy = session.get(Strategy, lease.strategy_id)
     account = session.scalar(select(BrokerAccount).where(
         BrokerAccount.name == row.broker_account_name)) if row is not None else None
-    if (row is None or row.strategy_code != STRATEGY or row.status != "open"
+    if (row is None or row.strategy_code != STRATEGY or (row.status != "open" and not (
+            allow_closed_original and row.status == "closed" and row.current_quantity == 0))
             or strategy is None or strategy.code != STRATEGY
             or account is None or account.id not in lease.account_ids
             or not controlled_live_scope(strategy.code, strategy.execution_mode, account.name)
@@ -90,6 +93,10 @@ def _managed(service, session, lease, identity, *, unsent_order=None, protection
             or entry.client_order_id != row.entry_client_order_id
             or entry.status not in TERMINAL or not entry.submitted_at):
         raise ControlConflict("atr_stop_entry_terminal_UNKNOWN")
+    from project_mai_tai.oms.webull_c6_proof import inventory, original_child
+    originals = inventory(session, row, entry, account)
+    if row.status == "closed" and not originals:
+        raise ControlConflict("atr_stop_closed_original_inventory_UNKNOWN")
 
     def quantity(order):
         total = Decimal(0)
@@ -122,7 +129,9 @@ def _managed(service, session, lease, identity, *, unsent_order=None, protection
         raise ControlConflict("atr_stop_history_bound_UNKNOWN")
     for sell in sells:
         metadata = sell.payload or {}
-        native = _native(entry, sell)
+        canonical = _native(entry, sell)
+        original = original_child(sell, originals, entry, account)
+        native = canonical or original
         if sell.id == unsent_order:
             if (sell.status != "pending" or sell.broker_order_id or sell.submitted_at
                     or metadata.get("killsw1_command") != str(lease.command_id)):
@@ -137,7 +146,7 @@ def _managed(service, session, lease, identity, *, unsent_order=None, protection
             continue
         if not native and metadata.get("entry_order_id") != str(entry.id):
             raise ControlConflict("atr_stop_normal_exit_episode_UNKNOWN")
-        if native:
+        if canonical:
             for fill in session.scalars(select(Fill).where(Fill.order_id == sell.id)).all():
                 if _number(fill.quantity) > 0 and not str(fill.broker_fill_id or "").startswith(
                         f"{sell.broker_order_id}:"):
@@ -150,6 +159,8 @@ def _managed(service, session, lease, identity, *, unsent_order=None, protection
         VirtualPosition.symbol == row.symbol)).all()
     if len(vp) != 1:
         raise ControlConflict("atr_stop_owned_vp_UNKNOWN")
+    if row.status == "closed" and (vp[0].quantity != 0 or entered != exited):
+        raise ControlConflict("atr_stop_closed_original_execution_UNKNOWN")
     return row, entry, account, min(entered - exited, _number(vp[0].quantity),
                                     _number(row.current_quantity))
 
@@ -223,20 +234,36 @@ async def emit_owned_stop(service, session, row):
     lease, journal = context.lease, context.journal
     session.commit()
     try:
-        bound = await service._run_db(lambda unit: _managed(service, unit, lease, row.id), commit=False)
+        bound = await service._run_db(lambda unit: _managed(service, unit, lease, row.id,
+            allow_closed_original=True), commit=False)
         current, entry, account, remaining = bound
         if str(current.id) in (service._bot_control_runtime.boot_managed_ids or ()):
             raise ControlConflict(HELD_BOOT_MESSAGE)
         if service._bot_control_runtime.boot_managed_ids is None:
             raise ControlConflict("atr_stop_boot_census_UNKNOWN")
         _session_plan(account.provider, datetime.now(UTC), _quote(service, row.symbol))
+        from project_mai_tai.oms import webull_c6_proof as original_proof
+        originals = ()
+        if account.provider == "webull" and "wbattach1" in (entry.payload or {}):
+            originals = await service._run_db(lambda unit: original_proof.inventory(
+                unit, unit.get(OmsManagedPosition, row.id), unit.get(BrokerOrder, entry.id), account), commit=False)
+        if originals:
+            proof = await original_proof.prepare(service, context, current, entry, account, originals)
+            # Native child executions committed in another session. The later
+            # canonical software-fill writer must subtract from that fresh row.
+            session.refresh(row)
+            if row.status == "closed" and row.current_quantity == 0:
+                context.phase = "RECONCILING_NATIVE"
+                return []
+        else:
+            proof = None
         binding = _hash({"managed": str(row.id), "entry": str(entry.id),
                          "coid": entry.client_order_id, "broker_root": entry.broker_order_id,
                          "base": service._oco_exit_base_for_entry(entry,
                              broker_account_name=account.name, symbol=row.symbol)})
-        prepared = await asyncio.to_thread(journal.prepare_native, lease, entry_id=entry.id,
-            managed_id=row.id, binding_key=binding, now=datetime.now(UTC))
-        if prepared.status == "PREPARED":
+        prepared = (await asyncio.to_thread(journal.prepare_native, lease, entry_id=entry.id,
+            managed_id=row.id, binding_key=binding, now=datetime.now(UTC))) if proof is None else None
+        if proof is None and prepared.status == "PREPARED":
             await asyncio.to_thread(journal.dispatch, lease, prepared.attempt_id, now=datetime.now(UTC))
             if account.provider == "schwab":
                 outcome = await service._release_native_oco_for_cw_flip(
@@ -259,7 +286,7 @@ async def emit_owned_stop(service, session, row):
                     raise
             prepared = await asyncio.to_thread(journal.record_native_outcome, lease,
                 prepared.attempt_id, outcome=outcome, now=datetime.now(UTC))
-        if prepared.status != "TERMINAL":
+        if proof is None and prepared.status != "TERMINAL":
             # Recovery is read-only: only a complete known child inventory can
             # resolve an uncertain prior release, never another cancellation.
             _, remaining_native = await _read_native_children(service, lease, row.id, require_inventory=True)
@@ -268,11 +295,12 @@ async def emit_owned_stop(service, session, row):
                 now=datetime.now(UTC))
         def native_evidence(unit):
             return dict(unit.get(BotControlAttempt, prepared.attempt_id).terminal_evidence or {})
-        evidence = await service._run_db(native_evidence, commit=False)
+        evidence = await service._run_db(native_evidence, commit=False) if proof is None else {"outcome": "released"}
         if evidence.get("outcome") == "resolved_by_fill":
             context.phase = "RECONCILING_NATIVE"
             return []
-        await _read_native_children(service, lease, row.id)
+        if proof is None:
+            await _read_native_children(service, lease, row.id)
 
         unsent_order = None
         def ceiling(unit):
@@ -302,7 +330,15 @@ async def emit_owned_stop(service, session, row):
                 raise ControlConflict("atr_stop_owned_sell_quantity_UNKNOWN")
             return current, parent, acct, amount, read_at
 
-        current, entry, account, quantity, _ = await service._run_db(ceiling, commit=False)
+        async def current_ceiling():
+            if proof is not None:
+                return await original_proof.ceiling(service, context, row.id, unsent_order=unsent_order)
+            return await service._run_db(ceiling, commit=False)
+
+        current, entry, account, quantity, _ = await current_ceiling()
+        if proof is not None and quantity == 0:
+            await original_proof.flat(service, context, row.id)
+            return []
         now = datetime.now(UTC)
         order_type, market_session, limit = _session_plan(account.provider, now, _quote(service, row.symbol))
         coid = f"ks1-atr-{lease.command_id.hex[:16]}-{row.id.hex[:16]}"
@@ -336,11 +372,11 @@ async def emit_owned_stop(service, session, row):
         if attempt.status != "PREPARED":
             raise ControlConflict("atr_stop_exit_already_uncertain")
         # Recheck own fills/VP/receipt/bid after every asynchronous preparation.
-        latest = await service._run_db(ceiling, commit=False)
+        latest = await current_ceiling()
         if latest[3] != quantity:
             raise ControlConflict("atr_stop_quantity_changed_before_wire")
         await asyncio.to_thread(journal.dispatch, lease, attempt.attempt_id, now=datetime.now(UTC))
-        latest = await service._run_db(ceiling, commit=False)
+        latest = await current_ceiling()
         now = datetime.now(UTC)
         if not 0 <= (now - latest[4]).total_seconds() <= 30:
             raise ControlConflict("atr_stop_receipt_aged_before_wire")
@@ -363,8 +399,13 @@ async def emit_owned_stop(service, session, row):
         raise
     except Exception as exc:
         session.rollback()
+        from project_mai_tai.oms.webull_c6_proof import report_wait
+        await report_wait(service, context)
         await _block(service, context, str(exc))
         return []
+    finally:
+        from project_mai_tai.oms.webull_c6_proof import release_owner
+        release_owner(service, context)
 
 
 def _validated_sell(report, request, order):
@@ -616,10 +657,20 @@ class AtrStopDriver:
                            for acct in accounts)):
                 raise ControlConflict("atr_stop_scope_UNKNOWN")
             names = [acct.name for acct in accounts]
+            recovery = select(BotControlAttempt.managed_row_id).where(
+                BotControlAttempt.command_id == lease.command_id,
+                BotControlAttempt.binding_kind == "managed_native_tree",
+                BotControlAttempt.status != "TERMINAL")
+            original_recovery = select(BrokerOrder.id).where(
+                BrokerOrder.payload["wbattach1"]["c6_list_after"].as_string().is_not(None))
             rows = unit.scalars(select(OmsManagedPosition).where(
                 OmsManagedPosition.strategy_code == STRATEGY,
                 OmsManagedPosition.broker_account_name.in_(names),
-                OmsManagedPosition.status == "open").limit(BOUND + 1)).all()
+                or_(OmsManagedPosition.status == "open", and_(
+                    OmsManagedPosition.status == "closed", OmsManagedPosition.current_quantity == 0,
+                    OmsManagedPosition.broker_account_name.in_([acct.name for acct in accounts if acct.provider == "webull"]),
+                    OmsManagedPosition.entry_order_id.in_(original_recovery),
+                    OmsManagedPosition.id.in_(recovery)))).limit(BOUND + 1)).all()
             working = unit.scalars(select(BrokerOrder).where(
                 BrokerOrder.strategy_id == lease.strategy_id,
                 BrokerOrder.broker_account_id.in_(lease.account_ids),
@@ -627,16 +678,27 @@ class AtrStopDriver:
             ).limit(BOUND + 1)).all()
             if len(rows) > BOUND or len(working) > BOUND:
                 raise ControlConflict("atr_stop_inventory_bound_UNKNOWN")
-            known_native = set()
+            known_native, original_errors = set(), []
             for managed in rows:
                 entry = unit.get(BrokerOrder, managed.entry_order_id) if managed.entry_order_id else None
                 if (entry is None or entry.strategy_id != lease.strategy_id
                         or entry.client_order_id != managed.entry_client_order_id):
                     continue
+                from project_mai_tai.oms.webull_c6_proof import inventory as original_inventory, original_child
+                account = next(acct for acct in accounts if acct.name == managed.broker_account_name)
+                try:
+                    originals = original_inventory(unit, managed, entry, account)
+                except Exception as exc:
+                    original_errors.append((str(managed.id), str(exc)))
+                    continue
                 for order in working:
-                    if (order.side == "sell" and order.broker_account_id == entry.broker_account_id
-                            and order.symbol == entry.symbol and _native(entry, order)):
-                        known_native.add(order.id)
+                    try:
+                        if (order.side == "sell" and order.broker_account_id == entry.broker_account_id
+                                and order.symbol == entry.symbol and (_native(entry, order)
+                                    or original_child(order, originals, entry, account))):
+                            known_native.add(order.id)
+                    except Exception as exc:
+                        original_errors.append((str(managed.id), str(exc)))
             refused = unit.scalar(select(BrokerOrder.id).where(
                 BrokerOrder.strategy_id == lease.strategy_id,
                 BrokerOrder.payload["killsw1_command"].as_string() == str(lease.command_id),
@@ -644,9 +706,16 @@ class AtrStopDriver:
             if refused is not None:
                 raise ControlConflict("atr_stop_refusal_persisted_no_retry")
             return tuple(str(row.id) for row in rows), tuple(
-                (order.id, order.side) for order in working if order.id not in known_native)
+                (order.id, order.side) for order in working if order.id not in known_native), tuple(original_errors)
         try:
-            identities, working = await service._run_db(inventory, commit=False)
+            identities, working, original_errors = await service._run_db(inventory, commit=False)
+            if original_errors:
+                from project_mai_tai.oms.webull_c6_proof import report_wait
+                for identity, reason in original_errors:
+                    context = StopContext(service, lease, journal, identity)
+                    await report_wait(service, context)
+                    await _block(service, context, reason)
+                return StopProgress("BLOCKED_UNKNOWN")
             if working:
                 for order_id, side in working:
                     if side == "buy":
@@ -662,7 +731,7 @@ class AtrStopDriver:
                 return StopProgress("SETTLED", census)
             blocked = False
             for identity in identities:
-                context = StopContext(service, lease, journal, identity)
+                context = StopContext(service, lease, journal, identity, owner_task=asyncio.current_task())
                 token = _CONTEXT.set(context)
                 try:
                     boot_ids = service._bot_control_runtime.boot_managed_ids
@@ -672,7 +741,7 @@ class AtrStopDriver:
                         blocked = True
                         continue
                     def read(unit):
-                        row, _, _, _ = _managed(service, unit, lease, identity)
+                        row, _, _, _ = _managed(service, unit, lease, identity, allow_closed_original=True)
                         return row.broker_account_name, row.symbol, service._hydrate_v2_position(row), float(row.entry_price)
                     account, symbol, position, entry_price = await service._run_db(read, commit=False)
                     await service._emit_v2_exit_on_loop_claimed(account, symbol, position, entry_price,
@@ -683,6 +752,8 @@ class AtrStopDriver:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
+                    from project_mai_tai.oms.webull_c6_proof import report_wait
+                    await report_wait(service, context)
                     await _block(service, context, str(exc))
                     blocked = True
                 finally:

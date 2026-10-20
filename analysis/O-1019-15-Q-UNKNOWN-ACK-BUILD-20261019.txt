@@ -1,0 +1,99 @@
+O-1019-15 Q UNKNOWN-ACK safety candidate / source-only handoff
+2026-10-19; TOP12:5x BUILD supersedes R/F HOLD; parent d99c8afc.
+Primary565/f18 untouched; prior cause/build/direction/rollback cards retained.
+This card is NOT an unconditional never-block policy acceptance or install approval.
+
+INDEPENDENT ASSESSMENT / EXPLICIT QUESTION BLOCKER
+Fresh positive broker inventory alone cannot exclude an unreadable native SELL
+later filling. Position alone does not prove available/unreserved owned inventory.
+Current adapter has no verified reduce-only/atomic cancel-and-close primitive.
+webull.confirm_exit_pair_terminal340-371 requires each exact original child read.
+Strict _order_detail_body_with_fallback1083+ refuses cached ordinary-list proof
+when list-primary is enabled. TodayOrderReader.read102-175 explicitly keeps NO
+affirmative absence; missing/malformed/stale ordinary execution returns UNKNOWN.
+Thus no inspected existing list/open/today/fill census contract authorizes absence
+when both child detail reads are genuinely unreadable. Empty is NOT absence.
+QUESTION for main/operator: authorize a separately reviewed fresh complete census
+proof contract (scope/pagination/account/coid/fill conservation/acquisition chronology/
+concurrent in-flight placements), or supply a verified broker reduce-only primitive?
+Until then the unconditional 'unknown NEVER blocks SELL' + no-SHORT combination
+is BLOCKED. This candidate NEVER silently waives child/position proof. It fixes
+ACK-loss-triggered cancellation and lets actual software exits progress when the
+original children CAN be authoritatively released. No full-never-block claim.
+
+CHANGES ON d99 (d99 valid real SDK ACK provenance fix remains)
+owner.attach_atr: unknown/submitting original attempt refuses second protection
+writer, retains base and pending intent, raises existing incident, NO cancellation,
+NO synthesized software signal/market exit and NO replacement pair from ACK loss.
+owner.atr_handoff_call / strict_atr_handoff: genuine CW_HARD_STOP, CW_FLIP,
+CONFIRMATION_EXIT or CW_FLOOR may enter the existing protection handoff instead of
+the unconditional atr_other_exit_blocked refusal. Original trigger reason retained.
+Existing child cancellation budget/marker retained; cancellation now belongs to a
+real exit signal, NOT unreadable ACK. Existing exact terminal_pair unchanged.
+Partial/full child execution recorded before residual owned quantity; no speculative
+SELL if either child remains unknown/working. Submitting dispatch stays blocked.
+In-memory account/symbol owner excludes concurrent second exit/protection writer,
+also with bot-control OFF; cleanup in finally retains no stale in-memory owner.
+Unprepared software claim releases only exact active-call, unchanged-owned-balance,
+no-nonterminal-SELL state. Once final validation prepared a request, existing O14
+PROVEN_NOT_SENT abort evidence is still required; uncertain/working wire stays claimed.
+owner.validate_atr_before_wire / _atr / release_atr_proven_unsent: bind exact original
+reason/request type, accept existing session-specific protective limit in EH, reject
+invalid EH price/session changes, and keep final fresh positions AFTER child release
+and durable preparation as last adapter await before SELL. Zero/unknown/stale -> no SELL.
+service._emit_v2_exit_on_loop_claimed: routes selected strict Webull software close
+through owner; original ACK-only gate no longer vetoes these real signals outright.
+service._emit_v2_managed_sell: requires proof even for direct callers, avoids second
+legacy pair-release writer, retains O14/prewire validation immediately before dispatch.
+KILLSW1_STOP bypasses only the old blanket ACK gate into its EXISTING C6 STOP emitter;
+that emitter's native inventory, command journal and positions-after-protection gates
+are unchanged. No generic SELL shortcut or Q proof substitution for C6.
+
+SCOPE / SESSIONS / CALLERS
+Q selector first checks strategy/reason and registered settings.provider_for_account
+IN MEMORY. No added Q session.get on unrelated Schwab exits; Webull-only exact entry/
+account reads are in the rare real-exit path, NOT quote/tick/admission callbacks.
+Schwab bracket/adapters/source unchanged. Shared emitter/context has memory-only
+branch overhead for unrelated protective reasons, not byte-identical file claims.
+ORB imports same module helpers; its dedicated attach/riskoff/EOD behavior unchanged.
+Momentum runtime/exits/provider/session/5%-15%-300s rules untouched.
+RTH: known pair retained on attach; real exit requires terminal pair then fresh owned SELL.
+After16: same-session marked bare episode can use existing LIMIT/PM pricing; no new pair.
+PM04-09:30: same-session bare episode with no native dispatch can software exit with
+fresh owned position and LIMIT/AM pricing. Prior-session unknown children still require
+audited recovery (current-session guard unchanged): explicit coverage GAP, not waiver.
+If details stay unreadable in ANY session, native proof blocker remains explicit.
+No new polling task, broker endpoint, retry, provider primitive or tick I/O introduced.
+Existing budgeted confirmation/position reads used only by actual exit owner.
+No current YMAT journal repair/SQL/live actions by Q; external settlement is Claude's.
+
+CONTROLS / EXACT SELECTION (ALL UNRUN; NO imports/collection)
+Retained tests/unit/test_q_webull_pair_ack_seam.py: same5 functions/17 parameters.
+Two assertions changed from obsolete ACK-only cancellation to no cancel; broker
+refusal branch and all strict identity/missing combo/unknown transport tests retained.
+New tests/unit/test_q_unknown_ack_software_exit.py:12 functions/31 parameters by
+source count, NOT collected; plus17 =48 authored Q cases, NOT48PASS.
+Function node IDs (prefix tests/unit/test_q_unknown_ack_software_exit.py::):
+test_unknown_ack_and_restart_never_cancel_or_replace_without_exit_trigger
+test_unknown_ack_real_software_trigger_releases_children_then_fresh_owned_sell
+test_positive_position_cannot_waive_unknown_children_or_duplicate_cancel
+test_readable_live_pair_never_allows_sell_until_both_children_terminal
+test_existing_software_owner_excludes_second_exit_and_protection_writer
+test_working_software_sell_remains_reserved_and_is_never_resubmitted
+test_software_trigger_accounts_child_fill_before_owned_residual
+test_fresh_position_failure_never_sells_even_with_terminal_children
+test_submitting_pair_dispatch_is_not_treated_as_absent
+test_prior_session_unknown_children_in_premarket_require_audited_recovery
+test_same_session_bare_fill_without_any_native_dispatch_keeps_software_exit
+test_schwab_and_other_strategies_do_not_select_q_software_handoff
+Existing riskoff/raw-confirmation controls keep original residual/manual-lot,
+partial/filled/unknown-child/restart assertions; explicit CONTROLLED_REAL_EXIT added
+where they previously relied on ACK loss automatically being an exit trigger.
+Main-owned tests/unit/test_fix_forward_all_on.py not edited.
+
+PROPOSED MAIN-ONLY SERIAL FOCUS COMMAND (NOT RUN)
+uv run pytest -q tests/unit/test_q_webull_pair_ack_seam.py tests/unit/test_q_unknown_ack_software_exit.py tests/unit/test_wbattach1_riskoff.py tests/unit/test_wbattach1_raw_confirmation.py tests/unit/test_wbattach1_prewire_integration.py tests/unit/test_wbhold1_attach_backstop.py tests/unit/test_killsw1_atr_stop.py tests/unit/test_schwab_native_bracket.py tests/unit/test_webull_hard_stop_floor_shared_path.py
+Main owns fixture failure classification/composed all-ON focus; ONE full/tick/rate
+only after16 and exact approved frozen composition. Independent J review pending.
+Source-only git diff --check clear; not syntax/import/runtime/test proof.
+No queue/status, primary, FRGT, production/SQL/provider/SSH/orders/install/push actions.

@@ -473,9 +473,9 @@ async def test_boot_held_first_does_not_starve_new_position_existing_exit_owner(
     async def old_first(operation, **kwargs):
         result = await original_run_db(operation, **kwargs)
         if getattr(operation, "__name__", "") == "inventory":
-            identities, working = result
+            identities, working, original_errors = result
             assert set(identities) == {str(book.row), new_identity}
-            return (str(book.row), new_identity), working
+            return (str(book.row), new_identity), working, original_errors
         return result
     monkeypatch.setattr(book.service, "_run_db", old_first)
     async def existing_owner_sender(unit, row, **kwargs):

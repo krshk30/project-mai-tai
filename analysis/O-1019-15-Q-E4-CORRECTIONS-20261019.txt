@@ -1,0 +1,54 @@
+Q successor corrections to e4d9eee7; source-only / UNRUN
+
+RAW RECEIPT RETAINED, NOT AMENDED
+Main e4 focus:83PASS1FAIL11.10s.
+/Users/velkris/.codex/task-queues/analysis/O-1019-15-Q-E4D9EEE7-FOCUS-20261019.xml
+Failure:test_unreadable_list_opens_visible_incident_then_existing_retry_succeeds,
+len(incidents)==2 vs required1. Original assertion is retained and strengthened.
+This successor does not borrow e4/dbd PASS evidence. Main sole executor.
+
+CANONICAL INCIDENT IDENTITY CAUSE / FIX
+attach_atr calls critical(entry_id=coid), e.g. 'owned-entry'; the real software
+exit caller passes row.entry_order_id, a UUID. e4 critical used str(entry_id)
+literally in both lookup and payload, producing two keys for one episode.
+critical now resolves UUID or COID to a unique BrokerOrder BUY through an exact
+Webull BrokerAccount name + symbol binding, in the existing rare off-loop writer.
+Canonical payload entry_id is the entry UUID; entry_client_order_id retains COID.
+It adopts the oldest open exact-scoped UUID/legacy-COID alias incident and updates
+its payload/title in place. id, opened_at and unrelated payload remain unchanged.
+Missing/ambiguous/foreign binding is explicitly UNRESOLVED, never symbol-only merge.
+No deletion/retirement of pre-existing incident rows or production SQL is performed.
+New visible proof-wait title remains durable; per-retry UUID/COID alternation reuses
+the same incident. Entry lookup is rare incident-path DB work, not tick/quote I/O.
+
+R REQUEST-START FRESHNESS CAUSE / FIX
+e4 assigned first_at/first_clock after first fetch returned: a slow first HTTP call
+was excluded from the30s acquisition duration. A response after another cancel
+could also disguise a request actually started before that cancel.
+ExitCensusReader now captures BOTH first request UTC and monotonic START before
+calling fetch_page. Completion/acquired_at stays after fetch. Same <=30s window,
+after_cancel fence, shared budgets,2page/cycle,20page cap, ordinary-reader behavior,
+proof freshness and no-new-timer policy remain unchanged.
+An incomplete account-shared scan whose request started before the new cancel
+is reset to page1, not resumed as post-cancel evidence.
+Earlier R corrected-retry and cancellation-claim fixes are unchanged.
+
+CONTROLS
+All prior84 Q cases retained, not weakened. Existing failing case additionally
+checks initial canonical UUID/COID, legacy-COID adoption, original incident id and
+opened_at preservation, UUID/COID repeat deduplication, visible title and subsequent
+readable-list release. Original len(incidents)==1 and two LIST-read assertions stay.
+Deterministic SDK fixture advances its clock BEFORE invoking the list proof so
+request start, rather than just response arrival, follows cancel completion.
+Two additive controls in tests/unit/test_q_authoritative_exit_list.py:
+::test_slow_first_http_counts_from_request_start_not_response_arrival
+::test_cancel_during_existing_request_discards_pre_cancel_partial_census
+Source count:48 retained seam/software +38 authoritative-list =86 cases, UNRUN on
+this revision;15 functions in authoritative-list file. No imports/collection/tests.
+
+PROPOSED MAIN-ONLY FOCUS, NOT RUN
+uv run pytest -q tests/unit/test_q_webull_pair_ack_seam.py tests/unit/test_q_unknown_ack_software_exit.py tests/unit/test_q_authoritative_exit_list.py
+Main/R review and fresh execution required. Raw e4 failure/earlier compatibility
+teardown warning receipts retained; no teardown change in this correction.
+No primary9d8/565/f18, FRGT, queue/status, provider/SSH/SQL/orders/install/push writes.
+Source git diff --check clear; not syntax/import/runtime proof.

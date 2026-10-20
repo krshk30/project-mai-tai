@@ -1,0 +1,40 @@
+O-1019-15 Q: TOP13:5x narrow source corrections
+Parent: bd643e80ca99ccb59a9f2c37536c8feec2fab6dc
+Worker lane: isolated /private/tmp/mai-tai-q-ymat-protection-20261019
+
+Ruling read: LATEST TOP13:5x CHANGES REQUIRED, full block.
+External receipts retained: Claude reports 249 Q/WBATTACH PASS and safety
+1561 PASS / 2 FAIL on bd; original late-close module 8/8 PASS on 565.
+These are supplied results, not worker executions.
+
+Cause: atr_software_exit_required directly read strategy_code on a thin row.
+The new classification check raised before the pre-Q managed exit path.
+Fix: optional row fields use getattr; the whole check catches Exception,
+logs WBATTACH1-SOFTWARE-CHECK-UNKNOWN, and returns False. This selects the
+established path, NOT an accepted order or an inventory/release waiver.
+Both callers retain atr_other_exit_blocked, native release and ownership
+guards. Schwab routing, pricing, orders, retries and C6 source are unchanged.
+
+New tests, unexecuted by worker:
+tests/unit/test_q_stop_fallback_controls.py::test_software_check_exception_retains_actual_legacy_exit_attempts
+  Injects a raising row attribute in the new check using the retained
+  late-close harness. Two real loop invocations reach that harness's
+  controlled rejected sender; neither is cut off by the classification error.
+  Requires the new diagnostic, no inferred closure, no OCO fetch.
+tests/unit/test_q_stop_fallback_controls.py::test_killsw1_unknown_attach_releases_and_reads_complete_children_before_sell[webull]
+  Real C6 driver, claimed managed emitter and emit_owned_stop. Existing
+  controlled C6 release/broker fixture; exact two native children, UNKNOWN
+  WBATTACH journal. Records release -> both terminal child reads -> sell.
+  A later complete positions receipt is required; release occurs once.
+tests/unit/test_q_stop_fallback_controls.py::test_killsw1_unknown_attach_unreadable_inventory_has_no_sell_and_incident[webull]
+  Same real C6 path; unreadable child response on initial and existing retry.
+  One release, no SELL/fill, owned row stays open/10, one exact command/row
+  critical open incident. No production guard is stubbed or weakened.
+
+Original tests/unit/test_oms_webull_late_close_guard.py remains byte-unchanged.
+Main-only proposed focused command (3 new + all 8 retained controls):
+uv run pytest -q tests/unit/test_q_stop_fallback_controls.py tests/unit/test_oms_webull_late_close_guard.py
+
+Worker verification: source/diff inspection only, no imports/collection/tests.
+Main sole execution owner. No primary/twin/queue/status/live changes.
+No runtime qualification or final composition claim; J remains independent.

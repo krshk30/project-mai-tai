@@ -1,0 +1,172 @@
+O-1019-15 / Lane Q / CAUSE CARD / 2026-10-19
+SOURCE ONLY. NO repair, cancel, attach, provider, SSH, live SQL, import or test.
+Isolated worktree: /private/tmp/mai-tai-q-ymat-protection-20261019
+Analyzed head: 56577919d68e2fd96c50fbae4da82f2c7ebb7677
+Static Git comparison: webull.py, protocols.py, routing.py and
+oms/webull_attach_riskoff.py have NO diff between base 54549912 and 56577919.
+This is repository provenance, not a fresh deployed-byte verification.
+Primary 565 and prior K FRGT files remain untouched. Main owns receipt intake,
+class coverage and execution. This assessment preceded main's narrow approval;
+the subsequent isolated source candidate is described in
+O-1019-15-Q-BUILD-CARD-20261019.txt. Actual incident attribution remains UNKNOWN.
+
+DISPOSITION
+Confirmed source defect at the real adapter/strict ATR attach boundary:
+successful protective-pair reports omit broker provenance, and the strict
+consumer requires it. This makes a placed pair look like an unknown ACK and
+requests cancellation through the existing ATR exit owner. This is a concrete
+explanation for placement followed by an unlogged cancellation attempt.
+The ACTUAL YMAT cancellation actor, exact reason and broker cancel acceptance
+remain UNKNOWN until the current episode journal/raw receipts are supplied.
+Source analysis does not prove deployed file bytes or reconstruct actual calls.
+
+REPORTED EPISODE (Claude TOP11:4x, not independently probed)
+11:36:28 ET: Webull bare BUY fill, 161 @ 1.86,
+  schwab_1m_v2-YMAT-open-a7d599906239.
+11:36:28.837: pair target 1.9530 / stop 1.7112,
+  schwab_1m_v2-YMAT-protect-749ba426de9d,
+  combo KPJ8T5VDN6QP4K8P74H7POPSTA.
+11:36:31: wbattach1_original_children_not_terminal, sell=0.
+11:43 broker TODAY: both SELL children CANCELLED, OPEN empty, position 161.
+Managed row reported 5585f677 open; floor 1.9121 display-only.
+No repeat repair or re-placement has been requested or performed by Q.
+
+SOURCE TRACE (paths relative to this exact isolated checkout)
+1. oms/service.py:5097 stamps wbattach1_bare_fill_observed on the new managed
+   bare-fill branch; :5156 calls _spawn_webull_protection with exact entry coid.
+   The #689 fill attach is a CALLER, not evidence of a separate placement writer.
+2. oms/service.py:3787 coalesces in-flight attach by account/symbol; :3925-3941
+   routes marked ATR entries to webull_attach_riskoff.attach_atr. The legacy
+   path refuses strict episodes via _v2_webull_protection_owned_quantity:3871.
+3. oms/webull_attach_riskoff.py:501-529 prepares a durable attempt before submit:
+   base/quantity/intent_id/phase=submitting/cancel_requested=False, exact entry
+   handle and in-memory binding. Then it submits the protective pair once.
+4. broker_adapters/webull.py:209-224 passes exit-only requests to the real
+   _submit_exit_pair_blocking via to_thread and returns reports unchanged.
+   :385-392 calls the SDK and logs WEBULL-EXIT-PAIR-PLACED after its return.
+   :395-422 constructs event_type=accepted with combo id, symbol, sell side,
+   zero filled quantity, BUT NO origin (and no intent_type).
+   broker_adapters/protocols.py:29-57 defaults origin=unknown, intent_type=open.
+   broker_adapters/routing.py:32-34 only delegates; no provenance normalization.
+5. oms/webull_attach_riskoff.py:533-536 requires ONE accepted report with
+   origin=broker, nonempty broker id, exact coid/symbol/sell and zero fill.
+   The real successful report necessarily FAILS origin=broker. The rejection
+   predicate also fails because event_type is accepted, not rejected.
+   :542-552 saves phase=unknown / protection intent pending.
+   :559-560 requests request_atr_exit(..., "attach_ack_unknown").
+   Missing intent_type is a second report-contract omission, but NOT the cause
+   of this predicate failing: this particular acceptance check does not test it.
+6. request_atr_exit:571-593 persists exit_reason if exit_phase is unset, binds
+   the managed row and invokes existing _emit_v2_exit_on_loop with kind=WBATTACH1,
+   reason=WEBULL_ATTACH_RISK_OFF and expected_managed_row_id. It does not create
+   a second SELL owner itself.
+7. oms/service.py:10173-10174 wraps the existing emitter with real managed-owner
+   claim + ATR context. :10281-10290 commits its read transaction then calls
+   strict_atr_handoff; exceptions become WBATTACH1-BLOCKED via critical().
+8. strict_atr_handoff:705-741 requires this exact live owner/context, RTH,
+   persisted exit_reason, proven history and no prior exit claim/legacy base.
+   It iterates ORIGINAL attempts. For a non-released attempt with no cancel
+   marker, :727-731 FIRST durably sets cancel_requested=True, THEN :732-733
+   directly awaits broker_adapter.cancel_exit_pair(base). There is NO explicit
+   actor/intent/base cancel log around that call.
+   :734-741 performs ANOTHER fresh confirm_exit_pair_terminal, validates child
+   reads, books known executions and raises original_children_not_terminal if
+   terminal_pair fails. The cancel call's returned reports are not retained in
+   this journal branch; fresh confirmation determines whether handoff proceeds.
+9. broker_adapters/webull.py:252-309 addresses exact deterministic T/S children,
+   issues cancellation of both, waits the existing 2 s when requested, and
+   confirms them. _cancel_blocking:1400-1433 submits the SDK cancel and returns
+   reports without an explicit actor cancel log. _confirm_cancel_order:1460
+   can return accepted/origin=unknown/could_not_tell for unreadable responses.
+   Therefore a successful cancel can coexist with an immediate unreadable or
+   nonterminal confirmation, then a later TODAY list showing CANCELLED.
+   Which confirmation condition failed in this episode is UNKNOWN.
+10. terminal_pair:288 requires two exact T/S identities, valid native IDs or
+    strict already-absent proof, broker origin, terminal statuses, symbol/side,
+    time and execution bounds. Original_children_not_terminal does NOT mean
+    'no cancel was sent'. It means this strict proof failed at that read.
+
+WHY A SECOND WRITER IS NOT YET PROVEN
+The known #689 caller enters the strict attach path on marked bare fills.
+In-flight attach coalescing and persisted attempts already exist. The concrete
+source chain needs no racing second placement writer to explain the sequence.
+An actual concurrent caller, broker-side combo action or external cancel is
+not excluded without receipts. Do not claim any of them as the actual actor.
+
+SOFTWARE COVER QUALIFICATION
+An active managed row and stop/flip settings establish eligibility, not proof
+that a software SELL could dispatch after this error. atr_other_exit_blocked
+(:884-888) blocks ordinary exits while a journal attempt is submitting/unknown
+or exit_phase is set; oms/service.py:10274-10280 applies that gate. The default
+source path above persists an unknown attempt. Main/Claude should compare the
+actual current journal to this predicate before describing executable software
+coverage. This is NOT a request to bypass the gate, sell, or change live state.
+
+EXISTING OMS-OWNED REATTACH ASSESSMENT (READ ONLY)
+No verified external safe reattach CLI/API was found in the inspected repository
+commands, control-plane/bot-control paths or scripts. None is recommended here.
+Internal mechanisms exist but are NOT standalone recovery commands:
+- _reprotect_after_failed_release (oms/service.py:4600) delegates to the same
+  coalesced _spawn_webull_protection and strict journal. Unknown original
+  attempts / persisted exit_reason can route back to handoff rather than a new
+  pair. Calling this by hand does not prove a safe restoration.
+- _emit_v2_rth_edge_webull_protection (:13317) refuses to duplicate a known base;
+  a known non-released handle can return True without fresh broker armed proof.
+  That result is not a repair receipt and must not authorize an independent pair.
+- Raw adapter submit / probe scripts create orders outside the live OMS owner's
+  binding and are not safe substitutes for an owner-managed recovery.
+A separately reviewed recovery must re-read exact original T/S outcomes and
+owned fills/quantity, retain one managed owner, bind any replacement durably
+before wire and keep software/native reservation release mutually exclusive.
+No journal clearing, new identity, reattach, retry or repair is authorized here.
+
+NEEDED LOCAL RECEIPTS (main collecting from Claude; Q will not probe)
+1. Full unfiltered OMS span for this account/symbol/entry/managed row, before
+   11:36 fill through 11:43+ reads, with timestamps, process/boot identity and
+   deployed hashes for webull.py, protocols.py, webull_attach_riskoff.py and
+   relevant service.py; any successful WEBULL-PROTECT-ATTACHED line.
+2. Entry broker_orders full payload: bare-fill proof, wbattach1.attempts,
+   history_proven, legacy_base, exit_reason, exit_phase, cancel_requested,
+   unsent_handoffs, saved terminal_proof, protect base/state, linked intents.
+   Prefer before/after snapshots; a lone True cancel marker is pre-wire intent,
+   not proof the broker accepted the cancel (it commits before the call).
+3. Actual pair submit result/transport receipt and combo root/child identities.
+   Both exact cancellation request/response receipts plus the subsequent fresh
+   terminal-confirmation report objects/raw bodies (status/origin/cancel_outcome,
+   IDs, times and errors). Critical incident full payload and generation/time.
+4. Exact current managed row, owned buys/sells, broker position/open/TODAY read
+   receipts with capture times and terminal child histories. Account-level
+   position alone cannot prove episode ownership or cancel actor.
+5. Caller journal/retry/reattach/recovery events and any operator/provider action
+   audit in this span, so non-OMS actor and repeated-handoff cases can be tested.
+
+CLASS COVERAGE
+Main owns the requested all-Webull-ATR-bare-fill census from 2026-10-16 onward.
+Q has no supplied complete order/event/position/journal receipt set and does not
+claim a denominator, class count or absence of other cases. Current actor search
+found no current YMAT IDs in the searched local bounded text receipts; historical
+test logs containing the same error on ABC are NOT production evidence.
+
+PROPOSED MINIMAL SOURCE DIRECTION (NOT IMPLEMENTED; cause approval required)
+- Correct the real successful exit-only-pair report's provenance at the adapter
+  constructor after actual venue success; preserve request intent_type=close.
+  Keep the strict consumer's exact identity/nonempty combo/zero-fill gates.
+  Do not make unknown or failed transports broker-accepted.
+- Add a real-adapter-to-strict-ATR seam control with SDK boundary stub only:
+  valid placed combo -> accepted journal, one pair, no risk-off/cancel/SELL.
+  Include invalid/missing combo, lost ACK, genuine refusal, unknown child,
+  cancel-accepted/read-unknown/later-terminal, restart/no-second-cancel cases.
+- Audit cancel-actor observability in the EXISTING owner: before-wire intent
+  and post-call outcome identify account/symbol/entry/base/reason/attempt; keep
+  uncertainty and exact child-read validation. Logging alone is not recovery.
+- Any native reattach/owner-resume behavior for the already-cancelled episode
+  needs the actual journal and a separate reviewed single-owner transition.
+  A future-fill provenance fix must not be presented as repair of current YMAT.
+
+EXISTING TEST GAP (STATIC INSPECTION ONLY)
+tests/unit/test_wbattach1_riskoff.py:68-87 uses a fake accepted pair report that
+already stamps origin=broker, hiding this adapter mismatch.
+tests/unit/test_webull_attach_report_seam.py:48-55 transcribes the older legacy
+predicate (anything not rejected), not the current strict acceptance predicate.
+Its real-constructor coverage therefore does not establish strict acceptance.
+No test, import, benchmark, provider action or production change was performed.

@@ -26,6 +26,7 @@ from fastapi import FastAPI, HTTPException, Request as FastAPIRequest
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from redis.asyncio import Redis
 from sqlalchemy import case, desc, func, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 import uvicorn
 
@@ -346,6 +347,31 @@ async def _publish_manual_stop_update(
         ),
     )
     await redis.xadd(stream, {"data": event.model_dump_json()})
+
+
+def _append_converted_database_row(target, table, row_id, convert, warnings):
+    """Isolate projection failures, never database reads or their exceptions."""
+    try:
+        value = convert()
+    except SQLAlchemyError:
+        raise
+    except Exception as exc:
+        key = (table, str(row_id))
+        if key not in warnings:
+            warnings[key] = {"table": table, "row_id": str(row_id), "error_type": type(exc).__name__}
+            logging.getLogger(__name__).warning(
+                "[CONTROL-PLANE-ROW-SKIPPED] table=%s id=%s error_type=%s",
+                table, row_id, type(exc).__name__,
+            )
+        return
+    target.append(value)
+
+
+def _dashboard_order_event_payload(entry):
+    if not isinstance(entry.payload, dict):
+        raise TypeError("event payload must be an object")
+    _decimal_str(entry.payload.get("fill_price"))
+    return entry.payload
 
 
 class ControlPlaneRepository:
@@ -965,6 +991,7 @@ class ControlPlaneRepository:
                 "heartbeats": stream_name(self.settings.redis_stream_prefix, "heartbeats"),
             },
             "counts": db_state["counts"],
+            "row_conversion_warnings": db_state.get("row_conversion_warnings", []),
             "services": stream_state["services"],
             "market_data": stream_state["market_data"],
             "scanner": scanner,
@@ -1058,8 +1085,17 @@ class ControlPlaneRepository:
                     self.load_paper_exit_evidence
                 )
 
+        row_warnings = {(item["table"], item["row_id"]): item
+                        for item in db_state.get("row_conversion_warnings", [])}
+        for report in trade_forensics.values():
+            for item in report.get("row_conversion_warnings", []):
+                row_warnings[(item["table"], item["row_id"])] = item
+        errors = db_state["errors"] + stream_state["errors"]
+        if row_warnings and not db_state.get("row_conversion_warnings"):
+            errors.append(f"database_row_conversion: skipped {len(row_warnings)} malformed rows; "
+                          "see row_conversion_warnings for table/row IDs")
         overall_status = "healthy"
-        if db_state["errors"] or stream_state["errors"]:
+        if errors:
             overall_status = "degraded"
         elif any(
             service.get("effective_status", service["status"]) not in {"healthy", "starting"}
@@ -1085,7 +1121,8 @@ class ControlPlaneRepository:
             "account_positions": db_state["account_positions"],
             "strategy_runtime": normalized_strategy_runtime,
             "legacy_shadow": legacy_shadow,
-            "errors": db_state["errors"] + stream_state["errors"],
+            "errors": errors,
+            "row_conversion_warnings": list(row_warnings.values()),
         }
 
     def load_paper_exit_evidence(self) -> list[dict[str, Any]]:
@@ -1163,12 +1200,14 @@ class ControlPlaneRepository:
         reports: dict[tuple[str, str], dict[str, Any]] = {}
         with self.session_factory() as session:
             for strategy_code, broker_account_name in unique_pairs:
+                row_warnings = {}
                 recent_orders = self._load_trade_forensics_orders(
                     session=session,
                     strategy_code=strategy_code,
                     broker_account_name=broker_account_name,
                     window_start=history_start,
                     window_end=today_end,
+                    row_warnings=row_warnings,
                 )
                 recent_fills = self._load_trade_forensics_fills(
                     session=session,
@@ -1176,6 +1215,7 @@ class ControlPlaneRepository:
                     broker_account_name=broker_account_name,
                     window_start=history_start,
                     window_end=today_end,
+                    row_warnings=row_warnings,
                 )
                 cycles = collect_completed_trade_cycles(
                     strategy_code=strategy_code,
@@ -1191,6 +1231,7 @@ class ControlPlaneRepository:
                     history_start=history_start,
                     lookback_days=resolved_lookback,
                 )
+                reports[(strategy_code, broker_account_name)]["row_conversion_warnings"] = list(row_warnings.values())
         if cache_ttl > 0 and now is None:
             self._trade_forensics_cache[cache_key] = (time.monotonic(), reports)
         return reports
@@ -1203,6 +1244,7 @@ class ControlPlaneRepository:
         broker_account_name: str,
         window_start: datetime,
         window_end: datetime,
+        row_warnings: dict | None = None,
     ) -> list[dict[str, Any]]:
         strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
         broker_account = session.scalar(
@@ -1211,7 +1253,9 @@ class ControlPlaneRepository:
         if strategy is None or broker_account is None:
             return []
 
-        latest_order_event_by_order: dict[Any, BrokerOrderEvent] = {}
+        warnings = row_warnings if row_warnings is not None else {}
+        latest_order_event_by_order: dict[Any, dict] = {}
+        converted_events = []
         for entry in session.scalars(
             select(BrokerOrderEvent)
             .join(BrokerOrder, BrokerOrder.id == BrokerOrderEvent.order_id)
@@ -1223,7 +1267,10 @@ class ControlPlaneRepository:
             )
             .order_by(desc(BrokerOrderEvent.event_at))
         ).all():
-            latest_order_event_by_order.setdefault(entry.order_id, entry)
+            _append_converted_database_row(converted_events, "broker_order_events", entry.id,
+                lambda: (entry.order_id, _dashboard_order_event_payload(entry)), warnings)
+        for order_id, payload in converted_events:
+            latest_order_event_by_order.setdefault(order_id, payload)
 
         order_rows = list(
             session.scalars(
@@ -1250,12 +1297,7 @@ class ControlPlaneRepository:
         rows: list[dict[str, Any]] = []
         for order in order_rows:
             intent = intent_lookup.get(order.intent_id) if order.intent_id else None
-            latest_event = latest_order_event_by_order.get(order.id)
-            latest_event_payload = (
-                latest_event.payload
-                if latest_event is not None and isinstance(latest_event.payload, dict)
-                else {}
-            )
+            latest_event_payload = latest_order_event_by_order.get(order.id, {})
             intent_payload = intent.payload if intent is not None and isinstance(intent.payload, dict) else {}
             intent_metadata = (
                 intent_payload.get("metadata", {})
@@ -1263,7 +1305,7 @@ class ControlPlaneRepository:
                 else {}
             )
             intent_reason = intent.reason if intent is not None else ""
-            rows.append(
+            _append_converted_database_row(rows, "broker_orders", order.id, lambda:
                 {
                     "strategy_code": strategy_code,
                     "broker_account_name": broker_account_name,
@@ -1285,7 +1327,7 @@ class ControlPlaneRepository:
                         }
                     ),
                     "updated_at": _datetime_str(order.updated_at),
-                }
+                }, warnings
             )
         return rows
 
@@ -1297,6 +1339,7 @@ class ControlPlaneRepository:
         broker_account_name: str,
         window_start: datetime,
         window_end: datetime,
+        row_warnings: dict | None = None,
     ) -> list[dict[str, Any]]:
         strategy = session.scalar(select(Strategy).where(Strategy.code == strategy_code))
         broker_account = session.scalar(
@@ -1305,6 +1348,7 @@ class ControlPlaneRepository:
         if strategy is None or broker_account is None:
             return []
 
+        warnings = row_warnings if row_warnings is not None else {}
         rows: list[dict[str, Any]] = []
         for fill in session.scalars(
             select(Fill)
@@ -1316,7 +1360,7 @@ class ControlPlaneRepository:
             )
             .order_by(desc(Fill.filled_at))
         ).all():
-            rows.append(
+            _append_converted_database_row(rows, "fills", fill.id, lambda:
                 {
                     "strategy_code": strategy_code,
                     "broker_account_name": broker_account_name,
@@ -1325,7 +1369,7 @@ class ControlPlaneRepository:
                     "quantity": _decimal_str(fill.quantity),
                     "price": _decimal_str(fill.price),
                     "filled_at": _datetime_str(fill.filled_at),
-                }
+                }, warnings
             )
         return rows
 
@@ -2661,6 +2705,11 @@ class ControlPlaneRepository:
 
     def _load_database_state(self, *, lightweight: bool = False) -> dict[str, Any]:
         errors: list[str] = []
+        row_warnings: dict[tuple[str, str], dict[str, str]] = {}
+
+        def append_converted(target, table, row_id, convert):
+            _append_converted_database_row(target, table, row_id, convert, row_warnings)
+
         counts = {
             "strategies": 0,
             "broker_accounts": 0,
@@ -2806,14 +2855,18 @@ class ControlPlaneRepository:
                         }
                     )
 
-                latest_order_event_by_order: dict[Any, BrokerOrderEvent] = {}
+                latest_order_event_by_order: dict[Any, dict] = {}
+                converted_events = []
                 for entry in session.scalars(
                     select(BrokerOrderEvent)
                     .where(BrokerOrderEvent.event_at >= session_start, BrokerOrderEvent.event_at < session_end)
                     .order_by(desc(BrokerOrderEvent.event_at))
                     .limit(2000)
                 ).all():
-                    latest_order_event_by_order.setdefault(entry.order_id, entry)
+                    append_converted(converted_events, "broker_order_events", entry.id,
+                        lambda: (entry.order_id, _dashboard_order_event_payload(entry)))
+                for order_id, payload in converted_events:
+                    latest_order_event_by_order.setdefault(order_id, payload)
 
                 # Filled orders feed completed-cycle reconstruction, so they must
                 # never be pushed out of this result by a flood of cancelled or
@@ -2866,12 +2919,7 @@ class ControlPlaneRepository:
                     strategy = strategy_lookup.get(order.strategy_id)
                     account = account_lookup.get(order.broker_account_id)
                     intent = intent_lookup.get(order.intent_id) if order.intent_id else None
-                    latest_event = latest_order_event_by_order.get(order.id)
-                    latest_event_payload = (
-                        latest_event.payload
-                        if latest_event is not None and isinstance(latest_event.payload, dict)
-                        else {}
-                    )
+                    latest_event_payload = latest_order_event_by_order.get(order.id, {})
                     intent_payload = intent.payload if intent is not None and isinstance(intent.payload, dict) else {}
                     intent_metadata = (
                         intent_payload.get("metadata", {})
@@ -2879,7 +2927,7 @@ class ControlPlaneRepository:
                         else {}
                     )
                     intent_reason = intent.reason if intent is not None else ""
-                    recent_orders.append(
+                    append_converted(recent_orders, "broker_orders", order.id, lambda:
                         {
                             "order_id": str(order.id),
                             "entry_classification": (order.payload or {}).get("entry_classification"),
@@ -2925,7 +2973,7 @@ class ControlPlaneRepository:
                     account = account_lookup.get(order.broker_account_id)
                     intent = intent_lookup.get(order.intent_id) if order.intent_id else None
                     payload = order.payload if isinstance(order.payload, dict) else {}
-                    open_orders.append(
+                    append_converted(open_orders, "broker_orders", order.id, lambda:
                         {
                             "strategy_code": strategy.code if strategy else str(order.strategy_id),
                             "broker_account_name": account.name if account else str(order.broker_account_id),
@@ -2942,8 +2990,8 @@ class ControlPlaneRepository:
                     row.id: str(row.client_order_id or "")
                     for row in (recent_order_rows + open_order_rows)
                 }
-                entry_class_by_id = {row.id: (row.payload or {}).get("entry_classification")
-                                     for row in recent_order_rows}
+                entry_class_by_id = {row.id: row.payload.get("entry_classification")
+                                     for row in recent_order_rows if isinstance(row.payload, dict)}
                 for fill in session.scalars(
                     select(Fill)
                     .where(Fill.filled_at >= session_start, Fill.filled_at < session_end)
@@ -2958,7 +3006,7 @@ class ControlPlaneRepository:
                         if isinstance(fill_payload.get("metadata", {}), dict)
                         else {}
                     )
-                    recent_fills.append(
+                    append_converted(recent_fills, "fills", fill.id, lambda:
                         {
                             "order_id": str(fill.order_id),
                             "entry_classification": entry_class_by_id.get(fill.order_id),
@@ -3284,6 +3332,10 @@ class ControlPlaneRepository:
         except Exception as exc:
             errors.append(f"database:{exc}")
 
+        counts["skipped_database_rows"] = len(row_warnings)
+        if row_warnings:
+            errors.append(f"database_row_conversion: skipped {len(row_warnings)} malformed rows; "
+                          "see row_conversion_warnings for table/row IDs")
         recent_intents = self._filter_symbol_rows(recent_intents)
         recent_orders = self._filter_symbol_rows(recent_orders)
         recent_fills = self._filter_symbol_rows(recent_fills)
@@ -3309,6 +3361,7 @@ class ControlPlaneRepository:
             "incidents": incidents,
             "dashboard_snapshots": dashboard_snapshots,
             "scanner_blacklist": scanner_blacklist,
+            "row_conversion_warnings": list(row_warnings.values()),
             "errors": errors,
         }
 
@@ -3862,6 +3915,9 @@ def build_app(
     async def bots() -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
         return {
+            "status": data.get("status", "unknown"),
+            "row_conversion_warnings": data.get("row_conversion_warnings", []),
+            "skipped_database_rows": len(data.get("row_conversion_warnings", [])),
             "bots": [
                 {
                     **bot,
@@ -4547,6 +4603,20 @@ def run() -> None:
     )
 
 
+def _render_database_row_warnings(data: dict[str, Any]) -> str:
+    warnings = list(data.get("row_conversion_warnings", []) or [])
+    if not warnings:
+        return ""
+    rows = "".join(f"<li>{escape(str(item['table']))} / {escape(str(item['row_id']))} "
+                   f"({escape(str(item['error_type']))})</li>" for item in warnings[:20])
+    remainder = (f"<p>{len(warnings) - 20} additional row IDs are available in the API and control-plane log.</p>"
+                 if len(warnings) > 20 else "")
+    return (f'<section class="panel full card" role="alert" style="border:1px solid #d99a3a;padding:16px;">'
+            f'<strong>Database row warning: skipped {len(warnings)} malformed rows.</strong>'
+            '<p>Data is incomplete. Other readable orders and fills remain available.</p>'
+            f'<details open><summary>Skipped row IDs</summary><ul>{rows}</ul>{remainder}</details></section>')
+
+
 def _render_compact_dashboard(data: dict[str, Any]) -> str:
     refresh_seconds = 5
     scanner = data.get("scanner", {})
@@ -4724,6 +4794,7 @@ def _render_compact_dashboard(data: dict[str, Any]) -> str:
       </head>
       <body>
         <div class="wrap">
+          {_render_database_row_warnings(data)}
           <div class="topbar">
             <div class="brand">
               <h1>Mai Tai</h1>
@@ -5692,6 +5763,8 @@ def _build_bot_api_payload(data: dict[str, Any], strategy_code: str) -> dict[str
     listening_status = _build_bot_listening_status(data, bot, recent_decisions)
     return {
         "status": bot["wiring_status"],
+        "row_conversion_warnings": data.get("row_conversion_warnings", []),
+        "skipped_database_rows": len(data.get("row_conversion_warnings", [])),
         "watched_tickers": bot["watchlist"],
         "positions": bot["positions"],
         "pending_open_symbols": bot["pending_open_symbols"],
@@ -6108,6 +6181,7 @@ def _render_scanner_dashboard(
         </aside>
 
         <main class="workspace">
+            {_render_database_row_warnings(data)}
             <section class="panel full">
                 <div class="panel-header">
                     <div>
@@ -6512,7 +6586,7 @@ def _render_bot_detail_page(
 ) -> str:
     bot = _find_bot_view(data, strategy_code)
     if bot is None:
-        return "<h1>Bot not initialized</h1>"
+        return _render_database_row_warnings(data) + "<h1>Bot not initialized</h1>"
 
     meta = BOT_PAGE_META[strategy_code]
     section_date = (
@@ -7491,6 +7565,7 @@ def _render_bot_detail_page(
         </aside>
 
         <main class="workspace">
+            {_render_database_row_warnings(data)}
             {momentum_banner}
             <section class="panel full accent-panel">
                 <div class="panel-header">

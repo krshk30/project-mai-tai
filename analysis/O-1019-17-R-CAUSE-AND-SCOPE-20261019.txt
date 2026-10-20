@@ -1,0 +1,66 @@
+O-1019-17 R loader isolation / source-only base56577919
+Independent source assessment before edits:
+control_plane.py11520 _decimal_str expects Decimal.normalize(). Loader
+order conversion2889 passes latest_event.payload.fill_price directly;
+JSON string "1.8602" raises AttributeError, caught only by outer database
+handler3284. Everything after that order (including fills) is not loaded.
+Claude TOP12:4x reports exact repaired SQL event29962272 caused12:26-12:30
+outage, backed up/removed key and page recovered; no fresh worker DB probe.
+The prior static SQL audit missed this runtime JSON Decimal boundary.
+
+Scope: control_plane.py only production writer; new dedicated test module.
+Guard ONLY per-row in-memory event/order/fill conversions. SQL queries and
+SQLAlchemy errors remain under the existing database error path, never
+mislabelled skipped rows. Drop invalid event projection, retaining its
+order and unrelated fills. Drop invalid order/fill projections separately.
+Count unique failed table/id pairs, publish structured warnings and a
+degraded error summary; visible escaped count/IDs on overview/scanner/bot
+pages. Logging includes table/id/exception class only, not values/payloads.
+No decimal helper coercion, synthetic zero, DB writes or trading changes.
+
+Source controls: original JSON string-price event, malformed event/order,
+isolated fill-conversion failure, SQL query/conversion SQLAlchemy failure
+not swallowed, clean controls, warning escape/count/IDs, PM/RTH/after-hours
+and relevant all-ON settings. Existing control-plane tests are neighbors.
+Worker executes NO tests/imports/collection/rate. Main sole serial executor;
+full/rate NOT before16. Target local source handoff by13:30, subject source
+review. Original M2 source frozen, prior M census retained.
+
+FINAL SOURCE HANDOFF (all execution remains main-owned)
+Production change ONLY src/project_mai_tai/services/control_plane.py:
+  :352 shared in-memory conversion guard; SQLAlchemyError re-raises;
+  :370 event payload conversion catches the original string price boundary;
+  :1239/:1334 forensics order/event/fill projection isolation;
+  :2706 dashboard loader isolation (full and lightweight);
+  :994/:1088 overview/bot data warning publication and unique-row merge;
+  :3918 /api/bots warnings/count/status; :5766 single-bot API warnings;
+  :4606 visible escaped warning renderer, first20IDs plus explicit truncation;
+  used on overview, scanner and bot pages, including uninitialized bot output.
+  All full row IDs remain in structured API warnings and sanitized logs.
+Queries still execute outside conversion callbacks. No new SQL/provider
+work is added; existing loader work remains on the existing worker thread.
+No OMS/strategy/adapter/Q/J files or main all-ON test module touched.
+
+tests/unit/test_o1019_17_loader.py: 23 cases by parameter/source inspection,
+NOT collected, imported, compiled, executed or benchmarked by worker.
+Exact node prefixes:
+test_bad_event_keeps_orders_fills_and_visible_warning_on_pages_and_api
+  [string_price/object_shape x featureOFF/relevantON x PM0430/PM0730/RTH/after1600] =16
+test_historical_forensics_only_warning_propagates_to_bot_api_and_page =1
+test_bad_order_and_fill_conversion_are_isolated_in_dashboard_and_forensics =1
+test_database_failures_remain_database_errors_not_skipped_rows [query/conversion] =2
+test_clean_rows_have_no_warning_or_changed_projection [OFF/relevantON] =2
+test_row_warning_escapes_identifiers_and_discloses_truncation =1
+The malformed event uses real SQLite JSON string fill_price. Event/order/
+fill identity is synthetic controlled data, not a claim to reconstruct all
+live YMAT receipt rows. Unrepresentable numeric-row projection failures use
+explicit formatter failure controls; query failure is independently injected.
+The historical-only case checks forensics warning propagation even when
+today's DB loader has no warning. Both loaders preserve unrelated rows.
+All-ON here covers loader-relevant country/fanout/ORB/control/forensics flags;
+main owns test_fix_forward_all_on.py and broader trading cross-feature proof.
+
+Static git diff --check clean. Worker changes frozen on local handoff.
+Main should independently review then run this module and control-plane /
+trade-forensics / ATR-page neighbors serially. No result borrowed from a
+different head; full/rate never before16. No production repair/install claim.

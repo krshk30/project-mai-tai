@@ -175,6 +175,16 @@ class RoutingBrokerAdapter:
             base_client_order_id=base_client_order_id,
         )
 
+    async def confirm_exit_pair_from_today_list(
+        self, *, broker_account_name, symbol, base_client_order_id, quantity, after=None, original_attempts=None,
+    ) -> ExitPairReleaseResult:
+        adapter = self._adapter_for_account(broker_account_name)
+        fn = getattr(adapter, "confirm_exit_pair_from_today_list", None)
+        if fn is None:
+            return ExitPairReleaseResult(outcome="unanswerable")
+        return await fn(broker_account_name=broker_account_name, symbol=symbol,
+            base_client_order_id=base_client_order_id, quantity=quantity, after=after, original_attempts=original_attempts)
+
     async def fetch_quotes(self, symbols: list[str]) -> dict[str, dict[str, float | None]]:
         """Quotes for ``symbols``, from ANY configured provider that can serve them.
 

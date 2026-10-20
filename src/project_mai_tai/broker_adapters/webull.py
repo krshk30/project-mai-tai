@@ -370,6 +370,104 @@ class WebullBrokerAdapter:
             return ExitPairReleaseResult(outcome="released", reports=tuple(reports))
         return ExitPairReleaseResult(outcome="unanswerable", reports=tuple(reports))
 
+    async def confirm_exit_pair_from_today_list(
+        self, *, broker_account_name: str, symbol: str, base_client_order_id: str,
+        quantity: Decimal, after: datetime | None = None, original_attempts=None,
+    ) -> ExitPairReleaseResult:
+        """Rare software-exit proof: complete account census, never DETAIL/cache absence."""
+        account = self.accounts_by_name.get(broker_account_name)
+        if account is None:
+            return ExitPairReleaseResult(outcome="unanswerable")
+        try:
+            return await asyncio.to_thread(self._exit_pair_list_proof, account,
+                broker_account_name, symbol, base_client_order_id, quantity, after, original_attempts)
+        except Exception:
+            logger.exception("[WBATTACH1-LIST-UNKNOWN] account=%s symbol=%s base=%s",
+                             broker_account_name, symbol, base_client_order_id)
+            return ExitPairReleaseResult(outcome="unanswerable")
+
+    def _exit_pair_list_proof(self, account, account_name, symbol, base, quantity, after, original_attempts):
+        from project_mai_tai.broker_adapters.webull_exit_census import shared_exit_census
+        reader = shared_exit_census(self.host, self.app_key, self._query_budget,
+                                   self._today_reader.cycle_seconds)
+        census = reader.read(account.account_id, lambda cursor: self._today_page(account, cursor), after=after)
+        if census is None:
+            return ExitPairReleaseResult(outcome="unanswerable")
+        originals = original_attempts or [{"base": base, "quantity": str(quantity)}]
+        expected = {coid: (attempt["base"], Decimal(attempt["quantity"])) for attempt in originals
+                    for coid in self.exit_pair_leg_client_order_ids(attempt["base"])}
+        prior_proofs = {saved["coid"]: saved for attempt in originals
+                        for saved in attempt.get("terminal_proof", [])}
+        if len(expected) != 2 * len(originals) or base not in {a["base"] for a in originals}:
+            return ExitPairReleaseResult(outcome="unanswerable")
+        reports, other_working, invalid = {}, False, False
+        proof = {key: census[key] for key in ("account_id", "complete", "truncated", "pages", "started_at", "acquired_at")}
+        proof.update(broker_account_name=account_name, symbol=symbol,
+                     original_bases=sorted(a["base"] for a in originals))
+        for raw in census["orders"]:
+            coid = self._first_str(raw, "client_order_id", "clientOrderId")
+            items = raw.get("items")
+            if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+                invalid = True
+                continue
+            item = items[0]
+            symbols = [str(part[k]).upper() for part in (raw, item) for k in ("symbol",) if part.get(k) is not None]
+            sides = [str(part[k]).lower() for part in (raw, item) for k in ("side",) if part.get(k) is not None]
+            if (not symbols or not sides or len(set(symbols)) != 1 or len(set(sides)) != 1
+                    or symbols[0] != str(item.get("symbol", "")).upper()
+                    or sides[0] != str(item.get("side", "")).lower() or sides[0] not in {"buy", "sell"}):
+                invalid = True
+                continue
+            if coid not in expected and (symbols[0] != symbol.upper() or sides[0] != "sell"):
+                continue
+            execution = self._validated_list_execution(raw, account, coid, symbol=symbol, side="sell")
+            if execution is None or symbols[0] != symbol.upper() or sides[0] != "sell":
+                invalid = True
+                continue
+            event, native_id, filled, price, filled_at = execution
+            filled = Decimal(filled)
+            if (any(self._map_status({"status": raw[k]}) != event for k in
+                    ("status", "order_status", "orderStatus") if raw.get(k) is not None)
+                    or any(self._decimal_or_none({k: raw[k]}, k) != filled for k in
+                           ("filled_qty", "filledQty", "filled_quantity", "filledQuantity") if raw.get(k) is not None)
+                    or filled > 0 and any(self._decimal_or_none({k: raw[k]}, k) != Decimal(price) for k in
+                           ("filled_price", "filledPrice", "avg_fill_price", "avgFillPrice") if raw.get(k) is not None)):
+                invalid = True
+                continue
+            if coid not in expected:
+                if event not in {"filled", "cancelled", "rejected", "expired"}:
+                    other_working = True
+                continue
+            child_base, child_quantity = expected[coid]
+            prior = prior_proofs.get(coid, {})
+            requested = [self._decimal_or_none({k: part[k]}, k) for part in (raw, item)
+                         for k in ("qty", "quantity", "order_qty", "orderQty") if part.get(k) is not None]
+            if (not native_id or not requested or any(value != child_quantity for value in requested)
+                    or prior.get("broker_order_id") and prior["broker_order_id"] != native_id
+                    or filled < Decimal(prior.get("filled_quantity", "0"))
+                    or not 0 <= filled <= child_quantity or event == "filled" and filled != child_quantity):
+                invalid = True
+                continue
+            metadata = {"cancel_outcome": "confirmed" if event in {"cancelled", "rejected", "filled"} else "not_confirmed",
+                        "wbattach1_list_census": json.dumps({**proof, "base": child_base}, sort_keys=True)}
+            if filled and event in {"cancelled", "rejected"}:
+                metadata["webull_terminal_with_partial_fill"] = event
+            reports[coid] = ExecutionReport(event, coid, broker_order_id=native_id,
+                broker_fill_id=f"{native_id}:{filled}" if filled else None,
+                symbol=symbol, side="sell", intent_type="close", quantity=child_quantity,
+                filled_quantity=filled, fill_price=Decimal(price) if price is not None else None,
+                reported_at=datetime.fromisoformat(filled_at) if filled_at else datetime.fromisoformat(census["acquired_at"]),
+                origin="broker", metadata=metadata)
+        known = tuple(reports[coid] for coid in sorted(reports))
+        if (invalid or other_working or set(reports) != set(expected)
+                or any(sum((r.filled_quantity for r in known if expected[r.client_order_id][0] == a["base"]),
+                           Decimal(0)) > Decimal(a["quantity"]) for a in originals)
+                or not 0 <= (datetime.now(UTC) - datetime.fromisoformat(census["acquired_at"])).total_seconds() <= 2.):
+            return ExitPairReleaseResult(outcome="unanswerable", reports=known)
+        if any(report.event_type not in {"filled", "cancelled", "rejected"} for report in known):
+            return ExitPairReleaseResult(outcome="reserved", reports=known)
+        return ExitPairReleaseResult(outcome="released", reports=known)
+
     def _submit_exit_pair_blocking(
         self, account: WebullAccountConfig, request: OrderRequest
     ) -> list[ExecutionReport]:
@@ -383,10 +481,17 @@ class WebullBrokerAdapter:
 
         legs = self._build_exit_only_pair_payload(request)
         op = OrderOperationV3(self._get_client())
-        body = self._body(op.place_order(
-            account.account_id, legs, client_combo_order_id=request.client_order_id))
+        response = op.place_order(account.account_id, legs, client_combo_order_id=request.client_order_id)
+        body = self._body(response)
+        status = self._response_status(response)
+        if not 200 <= status < 300:
+            return [self._reject(request, f"Webull exit pair rejected: HTTP {status}; body={body!r}",
+                origin="broker", metadata={"webull_http_status": str(status)})]
+        combo_id = body.get("combo_order_id") if isinstance(body, dict) else None
+        proven_ack = isinstance(combo_id, str) and bool(combo_id) and combo_id == combo_id.strip()
         logger.info(
-            "[WEBULL-EXIT-PAIR-PLACED] %s target=%s stop=%s coid=%s -> %s",
+            "[%s] %s target=%s stop=%s coid=%s -> %s",
+            "WEBULL-EXIT-PAIR-PLACED" if proven_ack else "WEBULL-EXIT-PAIR-ACK-UNKNOWN",
             request.symbol, request.metadata.get("bracket_target_price"),
             request.metadata.get("bracket_stop_price"), request.client_order_id,
             str(body)[:160],
@@ -394,10 +499,12 @@ class WebullBrokerAdapter:
         return [
             ExecutionReport(
                 client_order_id=request.client_order_id,
-                broker_order_id=str((body or {}).get("combo_order_id") or ""),
+                broker_order_id=combo_id if proven_ack else None,
+                origin="broker" if proven_ack else "unknown",
                 broker_fill_id=None,
                 symbol=request.symbol,
                 side=request.side,
+                intent_type=request.intent_type,
                 quantity=request.quantity,
                 filled_quantity=Decimal("0"),
                 # ⛔⭐⭐ THE FIELD IS `fill_price` (§257, 2026-08-23). `price=` was an unexpected
@@ -412,7 +519,7 @@ class WebullBrokerAdapter:
                 # (`_webull_protect_base`) — a pair we placed and could never release.
                 fill_price=None,
                 event_type="accepted",
-                reason="webull exit-only protective pair",
+                reason="webull exit-only protective pair" if proven_ack else "webull exit-only pair ACK unproven",
                 metadata={**dict(request.metadata), "webull_exit_only_pair": "true"},
             )
         ]

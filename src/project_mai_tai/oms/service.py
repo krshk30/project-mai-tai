@@ -162,6 +162,7 @@ class _ManagedSellEvents(list):
         reservation: ExitPairReleaseResult | None = None,
         terminal_events=None,
         native_fill_row_id: str = "",
+        broker_flat_row_id: str = "",
         ownership_refused: bool = False,
         submitted_quantity: int | None = None,
     ) -> None:
@@ -169,6 +170,7 @@ class _ManagedSellEvents(list):
         super().__init__(materialized)
         self.reservation = reservation
         self.native_fill_row_id = native_fill_row_id
+        self.broker_flat_row_id = broker_flat_row_id
         self.ownership_refused = ownership_refused
         self.submitted_quantity = submitted_quantity
         self.terminal_events = list(
@@ -10229,7 +10231,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 row = self.store.get_open_managed_position(
                     session, broker_account_name=acct, symbol=symbol
                 )
-                if row is None and reason == "WEBULL_ATTACH_RISK_OFF" and expected_managed_row_id:
+                if (row is None and expected_managed_row_id and (reason == "WEBULL_ATTACH_RISK_OFF"
+                        or reason == "KILLSW1_STOP" and stop_context is not None
+                        and stop_context.managed_id == expected_managed_row_id)):
                     from project_mai_tai.db.models import OmsManagedPosition
                     historical = session.get(OmsManagedPosition, UUID(expected_managed_row_id))
                     if (historical is not None and historical.status == "closed"
@@ -10271,14 +10275,17 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         owner["claim"] = (lock, claim)
                     finally:
                         lock.release()
+                from project_mai_tai.oms.webull_attach_riskoff import atr_software_exit_required
+                software_handoff = kind != "SCALE" and atr_software_exit_required(self, session, row, reason)
                 if reason != "WEBULL_ATTACH_RISK_OFF":
                     from project_mai_tai.oms.webull_attach_riskoff import atr_other_exit_blocked, critical
-                    if atr_other_exit_blocked(session, row):
+                    if (atr_other_exit_blocked(session, row) and not software_handoff
+                            and reason != "KILLSW1_STOP"):
                         session.commit()
                         await critical(self, acct, symbol, "original_attach_or_riskoff_exit_unknown",
                                        entry_id=row.entry_order_id)
                         return "refused"
-                if reason == "WEBULL_ATTACH_RISK_OFF":
+                if reason == "WEBULL_ATTACH_RISK_OFF" or software_handoff:
                     from project_mai_tai.oms.webull_attach_riskoff import critical, strict_atr_handoff
                     # The existing owner spans native release through the final
                     # emitter commit; an attach task never becomes another seller.
@@ -10286,7 +10293,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     try:
                         quantity = await strict_atr_handoff(self, row)
                     except Exception as exc:
-                        await critical(self, acct, symbol, str(exc), entry_id=row.entry_order_id)
+                        await critical(self, acct, symbol,
+                            f"software_exit_child_proof_required:{exc}" if software_handoff else str(exc),
+                            entry_id=row.entry_order_id)
                         return "refused"
                     session.refresh(row)
                     if quantity == 0 and row.status == "closed":
@@ -10392,6 +10401,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         confirmation_context=confirmation_context,
                     )
                     events = managed_sell
+                    if getattr(managed_sell, "broker_flat_row_id", "") == str(row.id):
+                        session.refresh(row)
+                        return "closed" if row.status == "closed" and row.current_quantity == 0 else "refused"
                     if getattr(managed_sell, "ownership_refused", False):
                         session.commit()
                         return "refused"
@@ -10885,6 +10897,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 row.strategy_code, row.broker_account_name,
             )
             return _ManagedSellEvents()
+        from project_mai_tai.oms.webull_attach_riskoff import atr_handoff_ready, atr_software_exit_required
+        strict_handoff = atr_handoff_ready(self, row.id)
+        if atr_software_exit_required(self, session, row, reason) and not strict_handoff:
+            self.logger.error("[WBATTACH1-BLOCKED] account=%s symbol=%s reason=software_exit_owner_proof_missing sell=0",
+                              row.broker_account_name, row.symbol)
+            return _ManagedSellEvents(ownership_refused=True)
         is_target = reason == "oms_v2_managed_exit:CW_TARGET"
         target_guards = self._cw_target_prepare_observation(confirmation_context) if is_target else []
         target_identity = dict(account=row.broker_account_name, symbol=row.symbol,
@@ -10907,7 +10925,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 self._log_cw_target_attempt(**target_identity, blocked_guard="_v2_managed_sell_native_exit_refusal")
             return _ManagedSellEvents(ownership_refused=True)
         reservation: ExitPairReleaseResult | None = None
-        if (reason != "WEBULL_ATTACH_RISK_OFF"
+        if (reason != "WEBULL_ATTACH_RISK_OFF" and not strict_handoff
                 and await self._legacy_webull_partial_handover_refused(
                     row.broker_account_name, row.symbol, expected=(str(row.id), "", ""))):
             return _ManagedSellEvents(ownership_refused=True)
@@ -10915,7 +10933,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # always suppresses the redundant sell. Unresolved profit-taking waits; protective exits
         # continue so uncertainty cannot disable the hard stop or another safety close.
         if (bool(getattr(self.settings, "oms_v2_exit_release_reservation_enabled", False))
-                and reason != "WEBULL_ATTACH_RISK_OFF"):
+                and reason != "WEBULL_ATTACH_RISK_OFF" and not strict_handoff):
             release_started = time.monotonic() if is_target else None
             reservation = await self._release_exit_reservation_before_close(
                 session=session,
@@ -11057,9 +11075,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 row.broker_account_name, row.symbol,
                 metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
             )
-        if reason == "WEBULL_ATTACH_RISK_OFF":
+        if reason == "WEBULL_ATTACH_RISK_OFF" or strict_handoff:
             from project_mai_tai.oms.webull_attach_riskoff import (
-                critical, release_atr_proven_unsent, validate_atr_before_wire,
+                critical, release_atr_proven_unsent, resolve_atr_broker_flat, validate_atr_before_wire,
             )
             try:
                 # Last proof await before the FIRST broker await; no reprice,
@@ -11070,13 +11088,17 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 abort_id = await abandon_unposted_sell(
                     self, request=request, intent_id=intent_id, now=utcnow(),
                 )
+                broker_flat = False
                 try:
                     await release_atr_proven_unsent(self, request, str(row.id), abort_event_id=abort_id)
+                    broker_flat = await resolve_atr_broker_flat(self, str(row.id))
                 except Exception as cleanup_exc:
                     await critical(self, row.broker_account_name, row.symbol,
                         f"unsent_handoff_cleanup_UNKNOWN:{type(cleanup_exc).__name__}", entry_id=row.entry_order_id)
                 await critical(self, row.broker_account_name, row.symbol,
                     f"final_wire_proof_refused:{type(exc).__name__}:{exc}", entry_id=row.entry_order_id)
+                if broker_flat:
+                    return _ManagedSellEvents(broker_flat_row_id=str(row.id))
                 return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
         reports = (await self._submit_cw_target_order(request, target_guards) if is_target
                    else await self.broker_adapter.submit_order(request))
@@ -11164,6 +11186,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 )
         if (
             confirmation_context
+            and not strict_handoff
             and self._is_v2_webull_account(row.broker_account_name)
             and self._webull_confirmation_close_can_retry_corrected(reports)
         ):

@@ -1,0 +1,43 @@
+O15C6: partial native + software residual canonical managed closure
+Parent: 6bccd913ac7437130bbe3d66782e106b756a77f0
+
+Retained main receipt: O15C6-Q-6BCCD913-FOCUS-20261019.xml,
+RAW 136 PASS / 1 FAIL / 11.60s, same 137 cases.
+Only failing selector:
+tests/unit/test_q_c6_original_list.py::test_complete_paged_list_native_fills_conserved_before_any_sell[2-webull]
+SELL8 and total SELL fills10 were already correct; managed status stayed open.
+Worker has not run/imported/collected anything.
+
+Source cause:
+The claimed emitter's outer Session loaded the managed row at quantity10.
+Original LIST proof's _record_atr_children committed native SELL2 through
+the existing writer in a separate Session, reducing the database row to8.
+The outer Session uses expire_on_commit=False and retained its identity-map
+row at10. The same outer Session later feeds the existing canonical software
+SELL8 writer. _apply_managed_position_after_fill subtracts from its cached
+managed row, so 10-8 leaves2 despite the conserved2+8 fill ledger/zero VP.
+
+Narrow correction:
+After original proof/native accounting completes, refresh ONLY that exact
+managed row in the outer Session, while the existing C6 managed claim remains
+held. Its later canonical software-fill writer now starts at8 and decrements
+to0/closed itself. Replace the prior independent closed-row lookup with this
+refresh; no extra broker call or new managed writer/forced closure/fill.
+The full-native-fill closed-row branch still returns without any SELL.
+Schwab/canonical paths do not enter this new refresh branch.
+
+Existing control strengthened, no new/removed cases:
+Observes the REAL _apply_managed_position_after_fill (delegates unchanged),
+asserting actual software writer transition8 ->0 closed for residual8.
+Full native10 must never invoke the software writer. A separate Session
+still requires total SELL fills10, managed0/closed and exact owned VP0.
+No closure assertion was weakened, no fill was fabricated.
+
+Expected same first focus137, UNRUN on this new head; main sole executor.
+Use the same four modules: test_q_c6_original_list.py,
+test_q_stop_fallback_controls.py, test_oms_webull_late_close_guard.py,
+test_killsw1_atr_stop.py. No rate/benchmark nodes.
+R fresh source review and main corrected runtime required; no synthesizedPASS.
+
+Static check only: git diff --check. Primary/twin/queue/status unchanged.
+No provider/SQL/SSH/orders/production action. External uv.lock preserved.

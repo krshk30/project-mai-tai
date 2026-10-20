@@ -1,0 +1,121 @@
+O15C6: approved TOP14:1x original protection proof under the existing C6 owner
+Parent: 76d93b8598455842fe3c02a266ad45672553ea03
+Worktree: /private/tmp/mai-tai-q-ymat-protection-20261019
+SOURCE ONLY. Main sole runtime/test executor. R independent review pending.
+
+Retained receipts (never amended or rewritten):
+- Main c935: stop fallback plus original late_close_guard 11 PASS / 0.82s.
+- Main 76 original-pair regressions: RAW 5 FAIL / 0.90s, all before release,
+  existing_sell_READ_FIRST_UNKNOWN. XML in task-queue analysis:
+  O-1019-15-Q-76D93B85-ORIGINAL-PAIR-20261019.xml.
+
+Production paths:
+1. New oms/webull_c6_proof.py validates the exact journal entry UUID/coid,
+   managed UUID, account, strategy, protection intent, quantity, all bases
+   and original T/S addresses. No symbol/age child discovery. Submitting
+   attempts, malformed/missing intent and foreign child bindings fail closed.
+2. C6's existing inventory/_managed recognize ONLY those exact originals as
+   native protection; they no longer send them to STOP-specific reconciliation.
+   Canonical children and Schwab retain their original release/read/send path.
+3. Existing current_stop context, native journal generation/lease and managed
+   wire claim remain mandatory. No _ATR_CALL bypass or second sell writer.
+   The proof is registered in the existing protection-owner exclusion map.
+4. Each original cancellation is preceded by a transaction revalidating lease
+   AND the complete captured inventory. Durable cancel_requested is preserved;
+   retries and cached-release recovery do not resend the original cancel.
+   The post-cancel c6_list_after fence is durable/stable over paged retries.
+5. Reuses the reviewed adapter confirm_exit_pair_from_today_list, complete
+   ExitCensusReader, shared list-today budgets/page limits and terminal-pair
+   validator. One census covers ALL original attempts, including locally
+   absent children. No DETAIL, per-symbol lookup or inferred empty absence.
+   The separate strict_atr_handoff len(unreleased)>1 shortcut is not invoked
+   by C6; C6 retains and proves all original attempts, not only the latest.
+6. Positive original fills use existing _record_atr_children/ledger accounting
+   before any sell, even when another child is missing/working. Exact local
+   child quantities/native IDs and cumulative fill conservation are checked
+   before terminal journal settlement. Known fills are not discarded on wait.
+7. Every original must be freshly terminal in the complete LIST, with no other
+   working SELL. Proof completion <=2s, total acquisition <=30s, start AFTER
+   the stable cancel fence. Fresh broker positions are read after that proof;
+   quantity=min(current own ledger/managed, fresh broker). The lease and
+   inventory are rechecked after the provider await and before any sell.
+8. Broker-flat closure checks lease, exact inventory, terminal proof and proof
+   freshness INSIDE its close transaction. It closes the managed row without
+   inventing a fill or clearing a discrepant VP; ledger discrepancy stays visible.
+9. A full original fill can close a row before a sibling is proved terminal.
+   The driver retains only the exact closed UUID bound to this command's
+   unresolved native audit and original-proof journal. The claimed emitter
+   can continue that closed episode's cleanup, never reopen it or SELL from
+   it. Once all originals are terminal, the native audit settles. Closed
+   recovery requires full owned fill conservation and zero VP.
+10. Missing/unreadable proof and early journal/intent binding failures produce
+    the canonical exact-entry incident, title exactly:
+    Exit waiting for broker proof: SYMBOL
+    Existing row/command C6 blocked accounting is also retained. No new timer.
+11. CW_TARGET reason eligibility is unchanged; no age-based release, provider,
+    live repair, retry ladder, order pricing or unrelated strategy changes.
+    No tick queries were added; work occurs only in the existing C6 STOP path.
+
+Changed source files:
+src/project_mai_tai/oms/webull_c6_proof.py (new exact-original proof adapter)
+src/project_mai_tai/oms/bot_control_atr.py (C6 branch and closed audit recovery)
+src/project_mai_tai/oms/service.py (exact closed UUID cleanup under current_stop)
+src/project_mai_tai/oms/webull_attach_riskoff.py (proof-wait title now exact)
+
+Test contract change, explicitly approved TOP14:1x / main reminder:
+The 76 five controls used fetch_order_update/DETAIL-shaped observations.
+They now use the real complete paged LIST parser with controlled _today_page
+responses; DETAIL raises if touched. All five evidence labels are retained,
+with terminal vs missing T/S vs unreadable proof, exact original intent/base,
+sell prohibition, conservation and incident assertions. An unreadable LIST
+cannot identify which individual child was unreadable: BOTH old unreadable
+labels now exercise whole-LIST uncertainty, without a DETAIL fallback.
+The earlier c935 canonical pseudo-original fixtures are replaced by coherent
+original-intent/LIST controls. Existing independent canonical and Schwab C6
+tests are byte-unchanged and must run as neighbours.
+
+Clock/session controls:
+Book, ATR/control/executor/legacy, WB proof, new C6 proof, adapter and census
+use the SAME frozen clock. HTTP request start advances beyond c6_list_after;
+lease/freshness checks are not relaxed. Original success/unknown/fresh qty
+cover UTC 08/11/14/21 (ET 04/07/10/17). Market vs AM/PM LIMIT, session,
+extended-hours flag and positive fresh-bid-bounded price are asserted.
+
+Source-counted, NOT collected/executed:
+tests/unit/test_q_stop_fallback_controls.py: 4 functions / 29 cases
+tests/unit/test_q_c6_original_list.py: 19 functions / 38 cases
+TOTAL 67 authored cases, all UNRUN on this head.
+Plus unchanged late_close_guard 8 cases = proposed 75 narrow cases.
+Whole retained test_killsw1_atr_stop.py is also requested; no count borrowed.
+
+Limits / principal selectors (in test_q_c6_original_list.py unless noted):
+1 exact-only: test_only_exact_journal_originals_not_symbol_matching_children
+2 paged+fills: test_complete_paged_list_native_fills_conserved_before_any_sell
+3 min/flat: test_fresh_broker_minimum_and_flat_closes_without_sell
+4 missing/unreadable: test_q_stop_fallback_controls.py::test_killsw1_reconciles_exact_journal_original_pair_not_entry_canonical_children
+5 age/target: test_old_original_episode_never_releases_by_age;
+  test_cw_target_still_waits_on_unknown_original_pair
+6 YMAT structural replay (controlled quantity/symbol, NOT claimed live replay):
+  test_ymat_shape_placed_unknown_cancelled_zero_fill_c6_proceeds_after_list
+Recovery/fence selectors:
+test_all_original_attempts_including_locally_missing_rows_are_required
+test_known_partial_fill_missing_sibling_retry_does_not_double_account
+test_full_child_fill_closed_episode_still_recovers_original_sibling_without_sell
+test_cached_legacy_release_never_substitutes_for_fresh_original_census
+test_terminal_c6_audit_still_requires_new_list_after_position_failure
+test_early_original_binding_errors_have_exact_visible_row_incident
+test_command_revoked_during_proof_cannot_cancel_next_attempt_or_sell
+test_inventory_changed_after_first_cancel_cannot_dispatch_next_original
+test_flat_close_transaction_rechecks_current_lease_and_original_inventory
+test_lease_changed_during_fresh_position_await_is_refused_before_sell
+test_c6_census_resumes_more_than_two_pages_and_checks_later_working_sell
+test_c6_and_cw_stop_share_managed_wire_claim_during_original_list_await
+
+MAIN-ONLY first focused command (no embedded rate/benchmark node):
+PYTHONPATH=src .venv/bin/python -m pytest -q tests/unit/test_q_c6_original_list.py tests/unit/test_q_stop_fallback_controls.py tests/unit/test_oms_webull_late_close_guard.py tests/unit/test_killsw1_atr_stop.py
+Main chooses actual shared interpreter/environment; worker has not run it.
+
+Static verification: diff --check only, no imports/compile/collection/tests.
+No primary/twin, queue/status, live DB, provider, SSH, orders or push actions.
+Untracked uv.lock appeared externally and is left untouched/uncommitted.
+HOLD after freeze for main's first runtime receipt and R review; not qualified.
