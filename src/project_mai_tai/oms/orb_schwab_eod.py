@@ -17,7 +17,7 @@ from sqlalchemy import or_, select
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.db.models import (
-    BrokerAccount, BrokerOrder, Fill, Strategy, SystemIncident, TradeIntent, VirtualPosition,
+    BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill, Strategy, SystemIncident, TradeIntent, VirtualPosition,
 )
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.orb_schwab_exits import CONTEXT_KEY, confirmed_entry_time, exit_signal
@@ -122,13 +122,19 @@ def _schwab_entry(session, target):
             or entry.client_order_id != target.client_id):
         raise ValueError("orb_close_owned_entry_CHANGED")
     # Unsent/terminal zero-fill attempts are not another inventory lot.
-    filled = select(Fill.id).where(Fill.order_id == BrokerOrder.id,
-        Fill.side == "buy", Fill.quantity > 0).exists()
+    # A malformed Fill or an unbooked fill event is not proof of zero fill.
+    filled = select(Fill.id).where(Fill.order_id == BrokerOrder.id).exists()
+    fill_event = select(BrokerOrderEvent.id).where(
+        BrokerOrderEvent.order_id == BrokerOrder.id,
+        or_(BrokerOrderEvent.event_type.in_({"filled", "partially_filled"}),
+            BrokerOrderEvent.payload["filled_quantity"].as_string().not_in(
+                {"0", "0.0", "0.00000000", ""})),
+    ).exists()
     others = session.scalars(select(BrokerOrder).where(
         BrokerOrder.strategy_id == target.strategy_id, BrokerOrder.broker_account_id == target.account_id,
         BrokerOrder.symbol == target.symbol, BrokerOrder.side == "buy",
         BrokerOrder.id != target.entry_id,
-        or_(BrokerOrder.status.in_({"filled", "partially_filled"}), filled),
+        or_(BrokerOrder.status.in_({"filled", "partially_filled"}), filled, fill_event),
         or_(BrokerOrder.submitted_at.is_(None),
             BrokerOrder.submitted_at >= entry.submitted_at if entry.submitted_at is not None else True),
     ).limit(1).execution_options(populate_existing=True)).all()
