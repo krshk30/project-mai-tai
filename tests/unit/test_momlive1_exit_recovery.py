@@ -60,13 +60,17 @@ async def test_definite_terminal_exit_replaces_once_on_next_fresh_quote_after_tw
 @pytest.mark.asyncio
 async def test_no_fresh_quote_after_native_release_stays_armed_then_sends():
     now, broker, service, runtime, identity = await held()
-    cancel = broker.cancel_exit_pair
-    async def cancel_and_age(**kwargs):
-        result = await cancel(**kwargs)
-        now[0] += timedelta(seconds=3)
+    submit, aged = broker.submit_order, []
+    async def cancel_and_age(request):
+        result = await submit(request)
+        if request.intent_type == "cancel":
+            # MOMORDER1 cancels exact legs, not the generic pair transport.
+            aged.append(request.client_order_id)
+            now[0] += timedelta(seconds=3)
         return result
-    broker.cancel_exit_pair = cancel_and_age
+    broker.submit_order = cancel_and_age
     await runtime._exit((await runtime._observe(identity)).position, "time_300s")
+    assert set(aged) == set(runtime.native.handles[identity].child_ids) and len(aged) == 2
     assert sells(broker) == []
     assert runtime.runtime[identity]["soft_exit_reason"] == "time_300s"
     position = (await runtime._observe(identity)).position

@@ -32,7 +32,9 @@ async def test_rth_payload_has_own_account_quantity_fill_vwap_and_native_sdk_mar
     assert request.side == "sell" and request.quantity == 3 and request.order_type == "limit"
     assert request.time_in_force == "day" and request.metadata["session"] == "NORMAL"
     assert request.metadata["bracket_target_price"] == "3.16"
-    assert request.metadata["bracket_stop_price"] == "2.55"
+    # Stop-10: 3.0012 * .90, floored; actual payloads are independently checked
+    # in test_momstop10_policy::test_native_stop_wire_geometry_is_ten_percent_only_where_supported.
+    assert request.metadata["bracket_stop_price"] == "2.70"
     assert request.metadata["exit_only_oco" if broker == "schwab" else "webull_exit_only_pair"] == "true"
     assert position.native_confirmed and position.reserved == 3
     assert request.metadata["entry_broker_order_id"] == "own-entry-broker-id"
