@@ -6969,17 +6969,26 @@ class SchwabV2BotService:
                 self.strategy._falseflip_restoring_track(state)
         for plan in self.strategy.pending_falseflip2_rearms():
             record, _, previous = plan
+            state = self.strategy._symbol_states.get(record.symbol)
             valid = fenced(record.symbol, lambda p=plan: self.strategy.falseflip2_rearm_valid(p))
             if not valid():
+                if state is not None:
+                    self.strategy._resting_return_reason(state, "atomic_rearm_state_or_emit_fence_blocked")
                 continue
             try:
                 await asyncio.to_thread(persist_owner_transition, self.session_factory, record,
                                         accounts, valid, previous=previous)
             except Exception:  # noqa: BLE001 - keep the old false opportunity fenced
-                logger.exception("[V2-FALSEFLIP2] %s reason=rearm_write_pending", record.symbol)
+                if state is not None and self.strategy._resting_return_reason(state, "atomic_rearm_write_pending"):
+                    logger.exception("[V2-FALSEFLIP2] %s reason=rearm_write_pending", record.symbol)
                 continue
             if valid():
-                self.strategy.acknowledge_falseflip2_rearm(plan)
+                armed = self.strategy.acknowledge_falseflip2_rearm(plan)
+                if state is not None:
+                    self.strategy._resting_return_reason(state,
+                        "atomic_rearm_committed_armed" if armed else "atomic_rearm_committed_placement_deferred")
+            elif state is not None:
+                self.strategy._resting_return_reason(state, "atomic_rearm_ack_superseded")
         await self._falseflip_poll()
         requests = tuple(request for request in self.strategy._removed_wait_requests.values()
                          if request.purpose == "false_flip_restore")
