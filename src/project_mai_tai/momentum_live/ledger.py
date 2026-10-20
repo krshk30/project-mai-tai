@@ -35,20 +35,30 @@ def load_live_ledger(session_factory, day) -> dict:
         if len(rows) > 8192:
             raise Refusal("live_fill_ledger_history_limit_UNKNOWN")
         episodes = {}
+        quarantined = set()
         for fill, order, account in rows:
             metadata = {}
             identity = ""
             try:
+                order_identity = str(UUID(str((order.payload or {}).get("episode_id", ""))))
+            except (ValueError, TypeError, AttributeError):
+                order_identity = None
+            try:
                 metadata = (fill.payload or {}).get("metadata") or order.payload or {}
-                identity = str(metadata.get("episode_id", ""))
-                UUID(identity)
+                identity = str(UUID(str(metadata.get("episode_id", ""))))
                 key = identity
                 identity_error = None
+                if order_identity is not None and identity != order_identity:
+                    quarantined.update({identity, order_identity})
+                    identity_error = "live_episode_binding_CHANGED"
             except (ValueError, TypeError, AttributeError):
-                # An unbound fill cannot borrow a neighbouring episode's identity.
-                key = f"unbound-fill:{fill.id}"
+                # The exact linked order can quarantine its episode, never a neighbouring lot.
+                identity = order_identity or "UNKNOWN"
+                key = order_identity or f"unbound-fill:{fill.id}"
+                if order_identity is not None:
+                    quarantined.add(order_identity)
                 identity_error = "live_fill_episode_identity_UNKNOWN"
-            group = episodes.setdefault(key, {"identity": identity if identity_error is None else "UNKNOWN",
+            group = episodes.setdefault(key, {"identity": identity,
                 "symbol": fill.symbol, "account": account, "errors": set(),
                 "fill_ids": [],
                 "buy_qty": Decimal(0), "buy_value": Decimal(0), "sell_qty": Decimal(0),
@@ -106,6 +116,8 @@ def load_live_ledger(session_factory, day) -> dict:
         closed, positions, unknown = [], [], []
         for group in episodes.values():
             identity = group["identity"]
+            if identity in quarantined:
+                group["errors"].add("live_fill_episode_identity_UNKNOWN")
             bought, sold = group["buy_qty"], group["sell_qty"]
             if (bought <= 0 or sold > bought
                     or group["exit"] and group["entry"] and group["exit"] < group["entry"]):
