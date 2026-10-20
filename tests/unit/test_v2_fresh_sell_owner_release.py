@@ -397,6 +397,7 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, 
                                                                 late_request):
     bot, state, clock, request, _, engine = setup(monkeypatch, all_on=True,
                                                 request_present=not late_request)
+    caplog.set_level("INFO", logger=strategy_module.__name__)
     state.bars.clear()
     state.atr_short_flip_bar_ts = 0
     bot.strategy._entries_held = True
