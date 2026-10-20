@@ -275,6 +275,7 @@ def orb_case(monkeypatch, *, raw="1010", after_release="1010"):
         entry = session.scalar(select(BrokerOrder).where(BrokerOrder.side == "buy"))
         assert entry.quantity == 10 and entry.payload["orb_country_route"] == "true"
         entry.status = "filled"
+        entry.submitted_at = OPEN
         entry_id = entry.id
         session.add(Fill(order_id=entry.id, strategy_id=entry.strategy_id,
             broker_account_id=entry.broker_account_id, broker_fill_id="controlled-ownmix2-orb-buy10",
@@ -359,6 +360,8 @@ def later_buy(case, *, status, submitted_mode, fill_quantity=None, malformed=Non
     with case.factory.begin() as session:
         old = session.get(BrokerOrder, case.entry_id)
         at = case.clock[0]-timedelta(seconds=1)
+        if submitted_mode == "newer":
+            assert at > old.submitted_at.replace(tzinfo=at.tzinfo)
         unsent = status == "aborted" and submitted_mode == "null" and fill_quantity is None and malformed is None
         parent = TradeIntent(id=uuid4(), strategy_id=old.strategy_id,
             broker_account_id=old.broker_account_id, symbol=old.symbol, side="buy", intent_type="open",
