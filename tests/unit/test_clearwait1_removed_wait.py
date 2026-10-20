@@ -25,6 +25,7 @@ from project_mai_tai.db.models import (
 )
 from project_mai_tai.events import StrategyStateSnapshotEvent, StrategyStateSnapshotPayload
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.positions_read_receipt import record_receipts
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy, TradeIntentDraft
@@ -619,6 +620,10 @@ def test_real_db_reader_replays_recorded_aixi_and_requires_configured_accounts()
                 session.add(DashboardSnapshot(snapshot_type=DISPATCH_SNAPSHOT_TYPE,
                                               payload=row.payload,
                                               created_at=row.created_at))
+        # Complete EMPTY broker reads controlled at this fixture's clock;
+        # these are not retained Oct6 vendor position/flatness receipts.
+        record_receipts(session, [(name, NOW, 0) for name in request.account_names],
+                        recorded_at=NOW)
         session.commit()
     proof = store.proofs([request], {PRIMARY, WEBULL}, now=NOW)[0]
     assert proof.clear, proof.reason
