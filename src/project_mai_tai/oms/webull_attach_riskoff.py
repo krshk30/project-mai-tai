@@ -21,6 +21,7 @@ from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, Strategy, SystemIncident, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.bot_control_scope import controlled_live_scope
+from project_mai_tai.oms.price_binding import stored_price
 
 REASON = "WEBULL_ATTACH_RISK_OFF"
 KEY = "wbattach1"
@@ -503,7 +504,7 @@ async def _atr_state(service, account, symbol, coid, mutate=None, *, allow_close
         if mutate is not None:
             mutate(session, entry, row, acct, strategy, quantity, state)
             entry.payload = {**entry.payload, KEY: state}
-        return state, str(row.id), str(entry.id), quantity, float(row.entry_price)
+        return state, str(row.id), str(entry.id), quantity, row.entry_price
     return await service._run_db(unit, commit=mutate is not None)
 
 
@@ -553,7 +554,7 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
             if not _rth(service) or not _control_free(service, account, symbol):
                 return False
             state, _, _, owned, proven_price = await _atr_state(service, account, symbol, coid, allow_closed=True)
-            if entry_price != proven_price:
+            if stored_price(entry_price) != stored_price(proven_price):
                 raise ValueError("wbattach1_entry_price_binding_changed")
             if state.get("exit_phase"):
                 return False  # An existing owner, not another attach, owns the episode now.

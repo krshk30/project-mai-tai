@@ -68,6 +68,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms.price_binding import stored_price
 from project_mai_tai.oms.webull_attach_riskoff import atr_handoff_call
 from project_mai_tai.oms.target_cache import BoundTargetRow, ManagedTargetCache
 from project_mai_tai.oms.target_exit_receipt import target_exit_receipt
@@ -5979,10 +5980,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     def _cw_target_binding_matches(row, context):
         if not context or "cw_target_bound_row_id" not in context:
             return True
+        try:
+            price_matches = stored_price(row.entry_price) == stored_price(context["cw_target_entry_price"])
+        except (InvalidOperation, ValueError):
+            return False
         return (
             str(getattr(row, "managed_row_id", getattr(row, "id", ""))) == context["cw_target_bound_row_id"]
             and str(row.entry_order_id or "") == context["cw_target_entry_order_id"]
-            and Decimal(str(row.entry_price)) == Decimal(context["cw_target_entry_price"])
+            and price_matches
             and int(row.current_quantity) == int(context["cw_target_quantity"])
             and getattr(row, "status", "open") == "open"
         )
