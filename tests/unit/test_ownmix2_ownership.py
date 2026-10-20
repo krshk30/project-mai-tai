@@ -21,6 +21,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import event as sql_event, select
+from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.db.models import (
     AccountPosition, BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, OmsManagedPosition,
@@ -208,6 +209,16 @@ def test_malformed_completeness_receipt_never_proves_readable_account(monkeypatc
             else:
                 payload["position_count"] = count
             row.payload = payload
+            # JSON equality treats 1 == True; persist the invalid typed input
+            # rather than allowing change detection to retain a valid count.
+            flag_modified(row, "payload")
+        if count is True:
+            with case.bot.session_factory() as session:
+                saved = session.scalar(select(DashboardSnapshot).where(
+                    DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
+                    DashboardSnapshot.payload["broker_account_name"].as_string() == account))
+                assert type(saved.payload["position_count"]) is bool
+                assert saved.payload["position_count"] is True
         with case.bot.session_factory() as session:
             with pytest.raises(ValueError):
                 owned_position_present(session, symbol=case.request.symbol, accounts=case.accounts,
