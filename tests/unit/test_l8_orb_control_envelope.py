@@ -19,8 +19,12 @@ from project_mai_tai.oms import bot_control as control_module
 from project_mai_tai.oms import bot_control_runtime as runtime_module
 from project_mai_tai.oms.bot_control import ControlConflict
 from project_mai_tai.oms.bot_control_runtime import BotControlRuntime, ControlledBrokerAdapter
-from project_mai_tai.orb_country_route import OrbCountrySelection, routed_orb_intent_refusal
+from project_mai_tai.orb_country_route import (
+    OrbCountrySelection, routed_orb_intent_refusal, selection_from_metadata,
+)
+from project_mai_tai.orb_schwab_exits import ATR_REASON
 from project_mai_tai.orb_schwab_order_route import (
+    build_orb_schwab_cancel_intent, build_orb_schwab_exit_intent,
     build_orb_schwab_open_intent, build_orb_schwab_reprice_intent,
     orb_schwab_intent_refusal,
 )
@@ -122,6 +126,23 @@ def test_decision_stamps_do_not_relax_strategy_guards(problem, broker):
         event.payload.metadata["limit_price"] = "100"
     else:
         event.payload.metadata["orb_country_reason"] = "sec_us" if broker == "webull" else "sec_unknown"
+    assert orb_schwab_intent_refusal(event, settings, now) is not None
+
+
+@pytest.mark.parametrize("broker", ["schwab", "webull"])
+@pytest.mark.parametrize("cleanup", ["cancel", "close"])
+def test_plain_cancel_and_sell_exit_do_not_gain_an_entry_envelope_exemption(broker, cleanup):
+    settings, entry = plan(broker, "READY" if broker == "schwab" else "INCOMPLETE")
+    selection = selection_from_metadata("SAIQ", entry.payload.broker_account_name, entry.payload.metadata)
+    if cleanup == "cancel":
+        event = build_orb_schwab_cancel_intent(settings, "SAIQ", selection=selection)
+        now = OPEN
+    else:
+        event = build_orb_schwab_exit_intent(settings, "SAIQ", str(uuid4()), str(uuid4()),
+            ATR_REASON, selection=selection, quantity=Decimal(10))
+        now = OPEN+timedelta(minutes=2)
+    assert orb_schwab_intent_refusal(event, settings, now) is None
+    event.payload.metadata.update(bot_control_generation="7", bot_control_decided_at=OPEN.isoformat())
     assert orb_schwab_intent_refusal(event, settings, now) is not None
 
 
