@@ -9,10 +9,12 @@ import json
 import re
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
+from urllib.parse import quote
 
 from sqlalchemy import func, or_, select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
+from project_mai_tai.broker_adapters.momentum_order_read import MomentumOrderRead, MomentumReadUnavailable
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, Strategy, SystemIncident, VirtualPosition
 from project_mai_tai.positions_read_receipt import SNAPSHOT_TYPE, load_receipts
 from project_mai_tai.momentum_live.actor import ActorPorts, LiveActor, OwnedObservation
@@ -558,6 +560,17 @@ class OmsLiveRuntime:
             else:
                 await self.backend._record_child(handle, self, report, request)
         return report
+
+    async def _fresh_cancel_outcome(self, request, *, handle=None):
+        outcome = await self.backend.fresh_cancel_read(request, self)
+        report = outcome.report
+        if report is not None and (outcome.kind == "report"
+                or outcome.kind == "status_unknown" and report.filled_quantity > 0):
+            if handle is None:
+                await self._record(request, [report])
+            else:
+                await self.backend._record_child(handle, self, report, request)
+        return outcome
 
     @staticmethod
     def _cancel_read_terminal(report, request):
@@ -1210,11 +1223,29 @@ class OwnedNativeBackend:
         return ProtectionRead(handle.episode_id, handle.account, handle.entry_order_id,
                               handle.base_coid, child_ids, False, False, snapshot["exited"])
 
-    async def _schwab_fresh_raw(self, leaf, account, identity):
+    async def _schwab_fresh_raw(self, leaf, account, identity, *, typed=False):
         if account is None:
             return None
+        async def read():
+            if typed and hasattr(leaf, "_authorized_request_json") and getattr(account, "account_hash", None):
+                status, _, raw = await leaf._authorized_request_json("GET",
+                    f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/{quote(str(identity), safe='')}")
+                if status == 429 or 500 <= status <= 599:
+                    raise MomentumReadUnavailable("http_unavailable")
+                return raw if status == 200 and isinstance(raw, dict) else None
+            # Older/custom adapters can prove a returned tree, but their bare
+            # None cannot prove transport failure and never enables fallback.
+            return await leaf._fetch_order(account, identity)
         try:
-            return await asyncio.wait_for(leaf._fetch_order(account, identity), timeout=2)
+            return await asyncio.wait_for(read(), timeout=2)
+        except (TimeoutError, ConnectionError, OSError):
+            if typed:
+                raise MomentumReadUnavailable("transport") from None
+            return None
+        except MomentumReadUnavailable:
+            if typed:
+                raise
+            return None
         except Exception:
             return None
 
@@ -1224,7 +1255,7 @@ class OwnedNativeBackend:
         if not identity:
             raise Refusal("native_schwab_root_receipt_UNKNOWN")
         leaf = self.leaf(handle.account, runtime)
-        raw = await self._schwab_fresh_raw(leaf, leaf.accounts_by_name.get(handle.account), identity)
+        raw = await self._schwab_fresh_raw(leaf, leaf.accounts_by_name.get(handle.account), identity, typed=True)
         if raw is None:
             raise Refusal("native_cancel_fresh_read_UNKNOWN")
         children = self.schwab_children(raw, handle, leaf, root_id=identity,
@@ -1276,6 +1307,20 @@ class OwnedNativeBackend:
                 or current.executor_id != lease.executor_id or current.fence != lease.fence):
             raise Refusal("KILLSW1:native_cancel_cleanup_owner_CHANGED")
         values[key] = expected
+
+    @staticmethod
+    def _known_cancel_binding(row, handle, identity):
+        if row is None:
+            return False
+        request = row["request"]
+        return bool(row["broker_order_id"] and request.client_order_id == identity
+            and request.broker_account_name == handle.account and request.strategy_code == STRATEGY_CODE
+            and request.symbol == handle.symbol and request.side == "sell" and request.intent_type == "close"
+            and request.quantity == handle.quantity and request.metadata.get("episode_id") == handle.episode_id
+            and str(request.metadata.get("broker_order_id", "")) == str(row["broker_order_id"])
+            and (request.metadata.get("momlive_native_child") == "true"
+                 or identity == handle.base_coid and request.metadata.get("momlive_one_shot") == "true"
+                 and request.metadata.get("entry_broker_order_id") == handle.entry_order_id))
 
     async def cancel(self, handle, runtime):
         row, snapshot = await self.root(handle, runtime)
@@ -1330,23 +1375,31 @@ class OwnedNativeBackend:
                         "momlive_native_child": "true",
                         **({"broker_order_id": durable["broker_order_id"]} if durable and durable["broker_order_id"] else {})})
             if handle.session == "NORMAL" and provider == "schwab":
-                children = await self._schwab_cancel_children(handle, runtime)
-                candidates = [item for item in children if item[0] == identity]
-                if len(candidates) != 1:
-                    raise Refusal("native_cancel_fresh_read_UNKNOWN")
-                if candidates[0][1] or candidates[0][2] == handle.quantity:
-                    continue
-                if candidates[0][5] == "unknown" and not mandatory:
-                    raise Refusal("native_cancel_fresh_read_UNKNOWN")
+                try:
+                    children = await self._schwab_cancel_children(handle, runtime)
+                except MomentumReadUnavailable:
+                    if not mandatory or not self._known_cancel_binding(row, handle, handle.base_coid):
+                        raise Refusal("native_cancel_fresh_read_UNKNOWN") from None
+                    children = None
+                if children is not None:
+                    candidates = [item for item in children if item[0] == identity]
+                    if len(candidates) != 1:
+                        raise Refusal("native_cancel_fresh_read_UNKNOWN")
+                    if candidates[0][1] or candidates[0][2] == handle.quantity:
+                        continue
+                    if candidates[0][5] == "unknown" and not mandatory:
+                        raise Refusal("native_cancel_fresh_read_UNKNOWN")
                 # Mandatory exits may cancel a proven own ID despite unknown
                 # status after the fresh tree read. Missing/mismatched trees
                 # still fail above; cancellation NEVER releases the reservation.
             else:
-                report = await runtime._fresh_cancel_read(child, handle=handle if native_child else None)
-                if report is None:
+                outcome = await runtime._fresh_cancel_outcome(child, handle=handle if native_child else None)
+                if outcome.kind != "report" and not (mandatory
+                        and outcome.kind in {"unavailable", "status_unknown"}
+                        and self._known_cancel_binding(durable if native_child else row, handle, identity)):
                     deferred = True
                     continue
-                if runtime._cancel_read_terminal(report, child):
+                if runtime._cancel_read_terminal(outcome.report, child):
                     continue
             await self._authorize_native_cancel(handle, runtime, row["request"], values)
             sent.append(identity)
@@ -1371,6 +1424,72 @@ class OwnedNativeBackend:
         adapter = runtime.service.broker_adapter
         return adapter._adapter_for_account(account) if hasattr(adapter, "_adapter_for_account") else adapter
 
+    @staticmethod
+    def _validate_fresh_report(report, request):
+        quantity = report.filled_quantity
+        if (report.origin != "broker" or report.client_order_id != request.client_order_id
+                or report.symbol != request.symbol or report.side != request.side
+                or report.intent_type != request.intent_type or not report.broker_order_id
+                or (request.metadata.get("broker_order_id")
+                    and str(report.broker_order_id) != str(request.metadata["broker_order_id"]))
+                or not quantity.is_finite() or not 0 <= quantity <= request.quantity
+                or report.event_type not in {"accepted", "partially_filled", "filled", "cancelled", "rejected", "expired", "aborted"}
+                or report.event_type == "filled" and quantity != request.quantity):
+            raise Refusal("fresh_order_identity_or_quantity_UNKNOWN")
+        return report
+
+    async def fresh_cancel_read(self, request, runtime):
+        """Per-call evidence for cancellation, never an absence/release proof."""
+        request = replace(request, metadata={**request.metadata, "momlive_fresh_order_read": "true"})
+        if request.intent_type == "cancel":
+            return MomentumOrderRead("invalid", reason="original_request_required")
+        leaf = self.leaf(request.broker_account_name, runtime)
+        try:
+            if runtime.provider(request.broker_account_name) == "schwab":
+                identity = request.metadata.get("broker_order_id")
+                if not identity or request.metadata.get("momcancel1_ack_identity") == "UNKNOWN":
+                    return MomentumOrderRead("invalid", reason="native_identity_missing")
+                raw = await self._schwab_fresh_raw(leaf, leaf.accounts_by_name.get(request.broker_account_name),
+                    identity, typed=True)
+                if not isinstance(raw, dict):
+                    return MomentumOrderRead("invalid", reason="body_shape")
+                status = raw.get("status")
+                if not isinstance(status, str) or not status.strip():
+                    return MomentumOrderRead("invalid", reason="status_missing")
+                known = leaf.ACCEPTED_STATUSES | leaf.PARTIAL_FILL_STATUSES | leaf.CANCELLED_STATUSES | leaf.REJECTED_STATUSES | {"FILLED", "PARTIALLY_FILLED"}
+                kind = "report" if status.upper() in known else "status_unknown"
+                if kind == "status_unknown":
+                    declared = Decimal(str(raw.get("filledQuantity", 0)))
+                    if not declared.is_finite() or declared < 0:
+                        return MomentumOrderRead("invalid", reason="execution_quantity")
+                    raw = {**raw, "status": "PARTIALLY_FILLED" if declared else "WORKING"}
+                report = await self._fetch_entry_update(request, runtime, supplied_raw=raw)
+            elif callable(getattr(leaf, "fetch_momentum_cancel_read", None)):
+                outcome = await asyncio.wait_for(leaf.fetch_momentum_cancel_read(request), timeout=2)
+                if not isinstance(outcome, MomentumOrderRead):
+                    return MomentumOrderRead("invalid", reason="outcome_shape")
+                if outcome.kind in {"invalid", "unavailable"}:
+                    if outcome.report is not None:
+                        return MomentumOrderRead("invalid", reason="conflicting_outcome")
+                    return outcome
+                if outcome.report is None:
+                    return MomentumOrderRead("invalid", reason="report_missing")
+                kind = outcome.kind
+                report = await self._fetch_entry_update(request, runtime, supplied_report=outcome.report)
+            else:
+                # A legacy adapter's None has no provenance: never infer outage.
+                report = await self.fetch_entry_update(request, runtime, fresh=True)
+                kind = "report"
+            if report is None:
+                return MomentumOrderRead("invalid", reason="report_unusable")
+            return MomentumOrderRead(kind, self._validate_fresh_report(report, request))
+        except MomentumReadUnavailable as exc:
+            return MomentumOrderRead("unavailable", reason=str(exc))
+        except (TimeoutError, ConnectionError, OSError):
+            return MomentumOrderRead("unavailable", reason="transport")
+        except Exception:
+            return MomentumOrderRead("invalid", reason="identity_or_execution")
+
     async def fetch_entry_update(self, request, runtime, *, fresh=False):
         if not fresh:
             return await self._fetch_entry_update(request, runtime)
@@ -1381,23 +1500,13 @@ class OwnedNativeBackend:
             report = await asyncio.wait_for(self._fetch_entry_update(request, runtime), timeout=2)
             if report is None:
                 raise Refusal("fresh_order_unavailable")
-            quantity = report.filled_quantity
-            if (report.origin != "broker" or report.client_order_id != request.client_order_id
-                    or report.symbol != request.symbol or report.side != request.side
-                    or report.intent_type != request.intent_type or not report.broker_order_id
-                    or (request.metadata.get("broker_order_id")
-                        and str(report.broker_order_id) != str(request.metadata["broker_order_id"]))
-                    or not quantity.is_finite() or not 0 <= quantity <= request.quantity
-                    or report.event_type not in {"accepted", "partially_filled", "filled", "cancelled", "rejected", "expired", "aborted"}
-                    or report.event_type == "filled" and quantity != request.quantity):
-                raise Refusal("fresh_order_identity_or_quantity_UNKNOWN")
-            return report
+            return self._validate_fresh_report(report, request)
         except Exception as exc:
             runtime.service.logger.warning("[MOMORDER1-FRESH-UNKNOWN] account=%s coid=%s failure=%s",
                 request.broker_account_name, request.client_order_id, type(exc).__name__)
             return None
 
-    async def _fetch_entry_update(self, request, runtime):
+    async def _fetch_entry_update(self, request, runtime, *, supplied_report=None, supplied_raw=None):
         leaf = self.leaf(request.broker_account_name, runtime)
         if runtime.provider(request.broker_account_name) == "schwab":
             identity = request.metadata.get("broker_order_id")
@@ -1406,7 +1515,7 @@ class OwnedNativeBackend:
             account = leaf.accounts_by_name.get(request.broker_account_name)
             if account is None:
                 raise Refusal("owned_entry_account_UNKNOWN")
-            raw = await leaf._fetch_order(account, identity)
+            raw = supplied_raw if supplied_raw is not None else await leaf._fetch_order(account, identity)
             if raw is None:
                 return None
             legs = raw.get("orderLegCollection") or []
@@ -1451,7 +1560,7 @@ class OwnedNativeBackend:
                 event_type="partially_filled" if raw_status == "PARTIALLY_FILLED" else report.event_type)
             stamp = (min(times) if request.side == "buy" else max(times)) if times else None
         else:
-            report = await runtime.service.broker_adapter.fetch_order_update(request)
+            report = supplied_report if supplied_report is not None else await runtime.service.broker_adapter.fetch_order_update(request)
             if report is None:
                 return None
             stamp = leaf._parse_broker_time(report.metadata.get("webull_broker_filled_time"))
