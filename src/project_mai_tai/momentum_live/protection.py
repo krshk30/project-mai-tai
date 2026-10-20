@@ -183,6 +183,9 @@ class NativeProtection:
             position.reserved = Decimal(0)
             position.release_unknown = False
             return True
+        if not read.working:
+            position.release_unknown = True
+            return False
         if handle.status != "cancel_requested":
             handle.status = "cancel_requested"
             await self.ports.save(handle)
