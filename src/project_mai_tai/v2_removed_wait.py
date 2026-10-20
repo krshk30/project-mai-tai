@@ -11,21 +11,19 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
-    AccountPosition,
     BrokerAccount,
     BrokerOrder,
     BrokerOrderEvent,
     DashboardSnapshot,
     Fill,
-    OmsManagedPosition,
     Strategy,
     SystemIncident,
     TradeIntent,
-    VirtualPosition,
 )
 from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear
+from project_mai_tai.owned_inventory import owned_position_present
 
 SNAPSHOT_TYPE = "v2_removed_wait"
 DISPATCH_SNAPSHOT_TYPE = "v2_wait_dispatch"
@@ -754,18 +752,11 @@ class RemovedWaitStore:
                     DashboardSnapshot.created_at >= anchor))
                 if latest_request is not None:
                     snapshots.append(latest_request)
-                position_queries = [
-                    select(AccountPosition.id).where(AccountPosition.symbol == request.symbol,
-                        AccountPosition.broker_account_id.in_(accounts), AccountPosition.quantity != 0),
-                    select(VirtualPosition.id).where(VirtualPosition.symbol == request.symbol,
-                        VirtualPosition.broker_account_id.in_(accounts), VirtualPosition.quantity != 0),
-                    select(OmsManagedPosition.id).where(OmsManagedPosition.symbol == request.symbol,
-                        OmsManagedPosition.broker_account_name.in_(account_names), OmsManagedPosition.status == "open"),
-                ]
+                has_position = owned_position_present(session, symbol=request.symbol, accounts=accounts,
+                    strategy_id=strategy_id, now=observed)
                 results.append(assess_clear_rules(request, now=observed, accounts=accounts,
                     intents=intents, orders=orders, filled_order_ids=fills, order_events=events,
-                    snapshots=snapshots, has_position=any(session.scalar(q.limit(1)) is not None
-                                                        for q in position_queries), strategy_id=strategy_id))
+                    snapshots=snapshots, has_position=has_position, strategy_id=strategy_id))
         return tuple(results)
 
     def restore(self) -> dict[str, RemovedWait]:
@@ -938,24 +929,8 @@ class RemovedWaitStore:
                     )
                     .order_by(DashboardSnapshot.created_at, DashboardSnapshot.id)
                 )
-                position_queries = [
-                    select(AccountPosition.id).where(
-                        AccountPosition.symbol == request.symbol,
-                        AccountPosition.broker_account_id.in_(accounts),
-                        AccountPosition.quantity != 0,
-                    ),
-                    select(VirtualPosition.id).where(
-                        VirtualPosition.symbol == request.symbol,
-                        VirtualPosition.strategy_id == strategy_id,
-                        VirtualPosition.quantity != 0,
-                    ),
-                    select(OmsManagedPosition.id).where(
-                        OmsManagedPosition.symbol == request.symbol,
-                        OmsManagedPosition.strategy_code == "schwab_1m_v2",
-                        OmsManagedPosition.status == "open",
-                    ),
-                ]
-                has_position = any(session.scalar(q.limit(1)) is not None for q in position_queries)
+                has_position = owned_position_present(session, symbol=request.symbol, accounts=accounts,
+                    strategy_id=strategy_id, now=observed)
                 results.append(
                     assess_removed_wait(
                         request,

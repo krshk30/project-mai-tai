@@ -116,6 +116,7 @@ from project_mai_tai.market_data.schwab_v2_streamer import SchwabTick, SchwabV2S
 from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.positions_read_receipt import load_receipts
+from project_mai_tai.owned_inventory import owned_position_present
 from project_mai_tai.strategy_core.time_utils import (
     US_MARKET_HOLIDAYS,
     session_day_eastern_str,
@@ -3620,16 +3621,9 @@ class SchwabV2BotService:
                     return result("broker_position_evidence_unknown_or_stale")
                 evidence_at = min(evidence_at, read_at)
             symbol = request.symbol
-            if (session.scalar(select(AccountPosition.id).where(
-                    AccountPosition.broker_account_id.in_(account_names), AccountPosition.symbol == symbol,
-                    AccountPosition.quantity != 0).limit(1))
-                    or session.scalar(select(VirtualPosition.id).where(
-                        VirtualPosition.broker_account_id.in_(account_names), VirtualPosition.symbol == symbol,
-                        VirtualPosition.quantity != 0).limit(1))
-                    or session.scalar(select(OmsManagedPosition.id).where(
-                        OmsManagedPosition.broker_account_name.in_(names), OmsManagedPosition.symbol == symbol,
-                        or_(OmsManagedPosition.status == "open", OmsManagedPosition.current_quantity != 0)
-                    ).limit(1))):
+            strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
+            if owned_position_present(session, symbol=symbol, accounts=account_names,
+                    strategy_id=strategy_id, now=now, max_age_ms=FLIP_OWNER_EVIDENCE_MAX_AGE_MS):
                 return result("position_stays_owned")
             # Deliberately no strategy/account restriction: shared Schwab ORB also owns a BUY.
             if (session.scalar(select(BrokerOrder.id).where(BrokerOrder.symbol == symbol,
