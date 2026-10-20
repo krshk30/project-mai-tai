@@ -308,6 +308,8 @@ def test_r1_saiq_buy60_unbooked_external_sale_does_not_resurrect_local_holding(m
     try:
         case.clock[0] = int(datetime(2026, 10, 20, 18, 21, 2, tzinfo=UTC).timestamp() * 1000)
         request = add_exact_request(case, "SAIQ", current_session=True)
+        # Observe the controlled cancellation after the unchanged 15-second fence.
+        case.clock[0] += 5001
         bought = datetime(2026, 10, 20, 12, 1, tzinfo=UTC)
         with case.bot.session_factory.begin() as session:
             account_id = next(key for key, name in case.accounts.items() if name == account)
@@ -437,10 +439,15 @@ async def test_actual_poll_dispatches_owned_book_reads_off_event_loop(monkeypatc
             case.bot.strategy._removed_wait_clear_rules_enabled = site == "clear_rules"
             await case.bot._removed_wait_poll()
         assert seen and all(thread != loop_thread for thread in seen)
-        # Rules mode can persist its normal clear receipt; this is not a fresh
-        # SELL acknowledgement or permission to replace the still-owned actor.
-        assert case.bot.strategy._removed_wait_requests[case.request.symbol] == case.request
+        if site == "fresh_sell":
+            assert case.bot.strategy._removed_wait_requests[case.request.symbol] == case.request
+        else:
+            key = (case.request.symbol, case.request.opportunity_id)
+            assert case.request.symbol not in case.bot.strategy._removed_wait_requests
+            assert case.bot.strategy._removed_wait_completed_requests[key] == case.request
+            assert key in case.bot.strategy._retry_leftover_receipts
         assert case.state.flip_owner_phase == "bound"
+        assert case.state.fanout_last_retired_opportunity_id != case.request.opportunity_id
         assert not case.bot.strategy.drain_pending_intents()
         assert not case.bot.strategy.drain_webull_direct_intents()
     finally:
