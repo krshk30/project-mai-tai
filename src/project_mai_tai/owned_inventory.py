@@ -53,7 +53,7 @@ def owned_position_present(session, *, symbol, accounts, strategy_id, now, max_a
     for row in bounded(select(OmsManagedPosition).where(
             OmsManagedPosition.strategy_code == strategy.code, OmsManagedPosition.symbol == symbol,
             OmsManagedPosition.broker_account_name.in_(tuple(accounts.values())),
-            or_(OmsManagedPosition.status.is_(None), OmsManagedPosition.status == "open",
+            or_(OmsManagedPosition.status.is_(None), OmsManagedPosition.status != "closed",
                 OmsManagedPosition.current_quantity != 0))):
         amount = quantity(row.current_quantity)
         if row.status not in {"open", "closed"} or row.status == "closed" and amount:
@@ -77,7 +77,9 @@ def owned_position_present(session, *, symbol, accounts, strategy_id, now, max_a
     for name in accounts.values():
         receipt = receipts.get(name, {})
         read_at = receipt.get("read_at")
+        count = receipt.get("position_count")
         if (receipt.get("writer") != "oms.sync_broker_positions" or not isinstance(read_at, datetime)
+                or type(count) is not int or count < 0
                 or read_at.tzinfo is None or not 0 <= (now - read_at).total_seconds() * 1000 <= max_age_ms):
             raise ValueError("owned_inventory_account_read_UNKNOWN")
     return False
