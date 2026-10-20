@@ -1231,8 +1231,13 @@ class OwnedNativeBackend:
             first_fill_ns=snapshot["first_fill_ns"] or 0, now_ns=runtime.now_ns(),
             allow_unknown_status=True)
         for broker_id, _, quantity, price, stamp, event_type in children:
-            if not quantity or event_type == "unknown":
+            if not quantity:
                 continue
+            # Identity and executions were validated independently of status.
+            # Preserve actual fills even when the venue's status is unknown;
+            # this does not prove the remaining reservation terminal.
+            if event_type == "unknown":
+                event_type = "partially_filled"
             coid = f"ml1-{handle.symbol}-n-{sha256(broker_id.encode()).hexdigest()[:16]}"
             child = replace(row["request"], client_order_id=coid,
                 metadata={"episode_id": handle.episode_id, "momlive_strategy": STRATEGY_CODE,
@@ -1277,6 +1282,8 @@ class OwnedNativeBackend:
         adapter = runtime.service.broker_adapter
         provider = runtime.provider(handle.account)
         values = runtime.runtime.setdefault(handle.episode_id, {})
+        mandatory = values.get("soft_exit_reason") in {
+            "hard_stop_15pct", "time_300s", "KILLSW1_STOP"}
         wire_key = f"native_cancel_wires:{handle.base_coid}"
         sent = list(values.get(wire_key, []))
         if len(sent) > 2 or len(set(sent)) != len(sent):
@@ -1304,6 +1311,20 @@ class OwnedNativeBackend:
             if native_child:
                 durable = next((item for item in snapshot["orders"]
                     if item["request"].client_order_id == identity), None)
+                if (durable is not None and durable["broker_order_id"]
+                        and durable["request"].broker_account_name == handle.account
+                        and durable["request"].strategy_code == STRATEGY_CODE
+                        and durable["request"].symbol == handle.symbol
+                        and durable["request"].side == "sell"
+                        and durable["request"].intent_type == "close"
+                        and durable["request"].quantity == handle.quantity
+                        and durable["request"].metadata.get("episode_id") == handle.episode_id
+                        and durable["request"].metadata.get("momlive_native_child") == "true"
+                        and durable["status"] in {"filled", "cancelled", "rejected", "expired", "aborted"}
+                        and durable["request"].metadata.get("momlive_terminal_broker_event") == durable["status"]):
+                    # No cancel is needed for this exact terminal child. Do not
+                    # spend the working sibling's reserved permit or fake a wire.
+                    continue
                 child = replace(child, client_order_id=identity,
                     metadata={"episode_id": handle.episode_id, "momlive_strategy": STRATEGY_CODE,
                         "momlive_native_child": "true",
@@ -1311,10 +1332,15 @@ class OwnedNativeBackend:
             if handle.session == "NORMAL" and provider == "schwab":
                 children = await self._schwab_cancel_children(handle, runtime)
                 candidates = [item for item in children if item[0] == identity]
-                if len(candidates) != 1 or candidates[0][5] == "unknown":
+                if len(candidates) != 1:
                     raise Refusal("native_cancel_fresh_read_UNKNOWN")
-                if candidates[0][1]:
+                if candidates[0][1] or candidates[0][2] == handle.quantity:
                     continue
+                if candidates[0][5] == "unknown" and not mandatory:
+                    raise Refusal("native_cancel_fresh_read_UNKNOWN")
+                # Mandatory exits may cancel a proven own ID despite unknown
+                # status after the fresh tree read. Missing/mismatched trees
+                # still fail above; cancellation NEVER releases the reservation.
             else:
                 report = await runtime._fresh_cancel_read(child, handle=handle if native_child else None)
                 if report is None:
