@@ -654,6 +654,78 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
         return False
 
 
+async def retry_atr_proven_unsent_exit(service, account, symbol, managed_id):
+    """A new owner may retry an exact aborted close, never an uncertain wire."""
+    def read(session):
+        row = session.get(OmsManagedPosition, UUID(managed_id))
+        if (row is None or row.status != "open" or row.broker_account_name != account
+                or row.symbol != symbol or row.strategy_code != "schwab_1m_v2"):
+            return None
+        entry, row, _, _, _ = _atr(service, session, account, symbol, row.entry_client_order_id)
+        state = (entry.payload or {}).get(KEY) or {}
+        receipts = state.get("unsent_handoffs", [])
+        if (state.get("exit_phase") or not receipts or not state.get("attempts")
+                or any(a.get("phase") != "released" for a in state["attempts"])):
+            return None
+        receipt = receipts[-1]
+        if receipt.get("outcome") != "PROVEN_NOT_SENT" or not receipt.get("call_id"):
+            return None
+        order = session.scalar(select(BrokerOrder).where(
+            BrokerOrder.client_order_id == receipt.get("client_order_id")))
+        event = session.get(BrokerOrderEvent, UUID(receipt["abort_event_id"]))
+        intent = session.get(TradeIntent, order.intent_id) if order is not None else None
+        metadata = order.payload or {} if order is not None else {}
+        try:
+            prepared_at = datetime.fromisoformat(metadata["managed_sell_prepared_at"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (order is None or event is None or intent is None
+                or order.strategy_id != entry.strategy_id or order.broker_account_id != entry.broker_account_id
+                or order.symbol != symbol or order.side != "sell" or order.status != "aborted"
+                or order.submitted_at is not None or order.broker_order_id
+                or order.order_type not in {"market", "limit"} or order.time_in_force != "day"
+                or intent.strategy_id != entry.strategy_id or intent.broker_account_id != entry.broker_account_id
+                or intent.symbol != symbol or intent.side != "sell" or intent.intent_type != "close"
+                or intent.status != "aborted" or intent.quantity != order.quantity
+                or intent.reason not in SOFTWARE_EXIT_REASONS or state.get("exit_reason") != intent.reason
+                or metadata.get("oms_managed_row_id") != managed_id
+                or metadata.get("entry_order_id") != str(entry.id)
+                or prepared_at.tzinfo is None
+                or not prepared_at <= _aware_utc(event.event_at) <= datetime.now(UTC)
+                or (intent.payload or {}).get("metadata") != metadata
+                or event.order_id != order.id or event.event_source != "client" or event.event_type != "aborted"
+                or (event.payload or {}).get("proven_not_sent") is not True
+                or (event.payload or {}).get("client_order_id") != order.client_order_id
+                or (event.payload or {}).get("metadata") != metadata
+                or session.scalar(select(Fill.id).where(Fill.order_id == order.id)) is not None
+                or session.scalar(select(BrokerOrderEvent.id).where(BrokerOrderEvent.order_id == order.id,
+                    BrokerOrderEvent.id != event.id)) is not None):
+            return None
+        return service._hydrate_v2_position(row), float(row.entry_price), intent.reason
+
+    bound = await service._run_db(read, commit=False)
+    if bound is None:
+        return None
+    position, entry_price, reason = bound
+    bid = 0.0
+    context = None
+    if not _rth(service):
+        quote = service.__dict__.get("_latest_quotes_by_symbol", {}).get(symbol) or {}
+        at = quote.get("received_at")
+        bid = float(quote.get("bid") or 0)
+        if (not service._market_is_fillable() or not isinstance(at, datetime) or at.tzinfo is None
+                or not 0 <= (datetime.now(UTC) - at).total_seconds() <= 2.5
+                or not isfinite(bid) or bid <= 0):
+            return "refused"
+        context = {"wbattach1_unsent_retry_quote_at": at.isoformat()}
+    # The regular emitter reclaims ownership, re-reads every original child and
+    # broker quantity, and prepares a NEW identity. It also enforces EH pricing.
+    return await service._emit_v2_exit_on_loop(account, symbol, position, entry_price,
+        kind="HARD", reference_price=bid or entry_price, reason=reason,
+        bid=bid, close_on_fill=True, expected_managed_row_id=managed_id,
+        confirmation_context=context)
+
+
 async def request_atr_exit(service, account, symbol, coid, reason):
     def mark(session, entry, row, acct, strategy, quantity, state):
         if not state.get("exit_phase"):
@@ -1095,6 +1167,12 @@ async def validate_atr_before_wire(service, request, managed_row_id):
         from project_mai_tai.oms.service import _managed_exit_session_matches_clock
         if not _managed_exit_session_matches_clock(request.metadata):
             raise ValueError("wbattach1_software_exit_session_changed")
+
+    quote_at = request.metadata.get("wbattach1_unsent_retry_quote_at")
+    if quote_at is not None:
+        at = datetime.fromisoformat(quote_at)
+        if at.tzinfo is None or not 0 <= (datetime.now(UTC) - at).total_seconds() <= 2.5:
+            raise ValueError("wbattach1_unsent_retry_quote_stale_before_wire")
 
 
 async def release_atr_proven_unsent(service, request, managed_row_id, *, abort_event_id):

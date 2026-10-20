@@ -6809,6 +6809,30 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     decision, acct, outcome="flat", released=released
                 )
                 return
+            from project_mai_tai.oms.webull_attach_riskoff import retry_atr_proven_unsent_exit
+            for attempt in range(3):
+                if attempt:
+                    await asyncio.sleep(0.25 * attempt)
+                try:
+                    retry = await retry_atr_proven_unsent_exit(self, acct, symbol, expected_row_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception(
+                        "[OMS-WEBULL-UNSENT-RECOVERY] acct=%s sym=%s row=%s proof=UNKNOWN",
+                        acct, symbol, expected_row_id,
+                    )
+                    break
+                if retry is None:
+                    break  # No exact never-sent receipt: never retry an uncertain order.
+                if retry in {"closed", "close_submitted"}:
+                    self._end_confirmation_unprotected_interval(
+                        decision, acct, symbol, resolution=retry,
+                    )
+                    self._finish_confirmation_fanout_leg(
+                        decision, acct, outcome=retry, released=released,
+                    )
+                    return
             result = await self._reprotect_confirmation_webull_leg(
                 decision,
                 acct,
@@ -11074,13 +11098,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             row.broker_account_name, row.symbol, request.client_order_id,
             metadata["session"], _extended_hours_session() or "NORMAL",
         )
-        if metadata.get("cw_decided_at") and not is_target:
-            request.metadata["cw_submitted_at"] = utcnow().isoformat(timespec="microseconds")
-            self.logger.info(
-                "[OMS-V2-CW-SUBMISSION] acct=%s sym=%s decided_at=%s submitted_at=%s",
-                row.broker_account_name, row.symbol,
-                metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
-            )
         if reason == "WEBULL_ATTACH_RISK_OFF" or strict_handoff:
             from project_mai_tai.oms.webull_attach_riskoff import (
                 critical, release_atr_proven_unsent, resolve_atr_broker_flat, validate_atr_before_wire,
@@ -11106,6 +11123,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 if broker_flat:
                     return _ManagedSellEvents(broker_flat_row_id=str(row.id))
                 return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
+        # Keep the prepared binding immutable through the final proof and its
+        # proven-unsent cleanup. This observation belongs to the wire boundary.
+        if metadata.get("cw_decided_at") and not is_target:
+            request.metadata["cw_submitted_at"] = utcnow().isoformat(timespec="microseconds")
+            self.logger.info(
+                "[OMS-V2-CW-SUBMISSION] acct=%s sym=%s decided_at=%s submitted_at=%s",
+                row.broker_account_name, row.symbol,
+                metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
+            )
         reports = (await self._submit_cw_target_order(request, target_guards) if is_target
                    else await self.broker_adapter.submit_order(request))
         intent = session.get(TradeIntent, intent_id)
