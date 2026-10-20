@@ -1,7 +1,8 @@
 """Controlled shared-account ownership cases, not a live SAIQ replay.
 
-R1/R2 TOP15:47 supersedes historical Fill/raw/foreign-book coherence at this
-LOCAL ownership gate. Those rows remain inputs to the original consumers'
+R1/R2 TOP15:47 excludes historical Fill/raw-account coherence at this
+LOCAL ownership gate. TOP16:33 explicitly restores other bots' live-book holds;
+manual surplus alone may clear. Historical rows remain inputs to the consumers'
 independent cancellation/native/fill proofs, never execution attribution here.
 The existing FLYE fixture supplies exact settled cancellation tokens. Only the
 shared-account inventory varies here; no provider, native-flat or cancel proof
@@ -36,16 +37,20 @@ from tests.unit.test_v2_fresh_sell_owner_release import (
 
 SCENARIOS = [
     ("manual1000_own_flat", True),
+    ("manual4000_own_flat", True),
     ("own_virtual_open", False),
     ("own_managed_open", False),
+    ("own_managed_open_zero", False),
     ("manual_and_own_working_buy", False),
     ("manual_and_own_null_buy", False),
     ("unreadable_account", False),
     ("own149_manual4000", False),
-    ("foreign_virtual_backed", True),
-    # Explicit R1 supersession: these are not LOCAL live holdings. Do not
-    # resurrect externally sold inventory or infer other strategies' books.
-    ("foreign_virtual_underbacked", True),
+    # TOP16:33 supersedes the earlier foreign-book CLEAR interpretation only.
+    ("foreign_virtual_backed", False),
+    ("foreign_virtual_underbacked", False),
+    ("foreign_managed_open", False),
+    ("foreign_managed_open_zero", False),
+    # Historical fill absence/coherence is still not a live holding predicate.
     ("own_fill_without_projection", True),
     ("own_filled_buy_missing_fill", True),
     ("negative_own_virtual", False),
@@ -83,6 +88,7 @@ def inventory_case(monkeypatch, account, scenario):
         case.strategy_id = own.id
         account_id = accounts[account].id
         raw = Decimal(4149 if scenario == "own149_manual4000" else
+                      4000 if scenario == "manual4000_own_flat" else
                       1050 if scenario == "foreign_virtual_backed" else
                       20 if scenario == "foreign_virtual_underbacked" else 1000)
         session.add(AccountPosition(broker_account_id=account_id, symbol=request.symbol,
@@ -98,9 +104,15 @@ def inventory_case(monkeypatch, account, scenario):
             session.add(OmsManagedPosition(strategy_code=own.code, broker_account_name=account,
                 symbol=request.symbol, status="unknown", original_quantity=149, current_quantity=0,
                 entry_price=Decimal(5), entry_time=at))
-        if scenario in {"own_managed_open", "own149_manual4000"}:
+        if scenario in {"own_managed_open", "own_managed_open_zero", "own149_manual4000"}:
             session.add(OmsManagedPosition(strategy_code=own.code, broker_account_name=account,
-                symbol=request.symbol, status="open", original_quantity=149, current_quantity=149,
+                symbol=request.symbol, status="open", original_quantity=149,
+                current_quantity=0 if scenario == "own_managed_open_zero" else 149,
+                entry_price=Decimal(5), entry_time=at))
+        if scenario in {"foreign_managed_open", "foreign_managed_open_zero"}:
+            session.add(OmsManagedPosition(strategy_code=foreign.code, broker_account_name=account,
+                symbol=request.symbol, status="open", original_quantity=50,
+                current_quantity=0 if scenario == "foreign_managed_open_zero" else 50,
                 entry_price=Decimal(5), entry_time=at))
         if scenario in {"foreign_virtual_backed", "foreign_virtual_underbacked"}:
             session.add(VirtualPosition(strategy_id=foreign.id, broker_account_id=account_id,
@@ -414,7 +426,8 @@ def test_flat_local_gate_has_bounded_select_only_query_cost_without_fill_or_raw_
         with case.bot.session_factory() as session:
             assert owned_position_present(session, symbol=case.request.symbol, accounts=case.accounts,
                 strategy_id=case.strategy_id, now=instant(case.clock[0])) is False
-        assert len(statements) == 7  # Accounts, strategy, VP, managed, BUY, intent, receipt.
+        # Accounts, strategy, own VP/managed/BUY/intent, other VP/managed, receipt.
+        assert len(statements) == 9
         assert all(statement.lstrip().lower().startswith("select") for statement in statements)
         assert not any("from fills" in statement.lower() or "from account_positions" in statement.lower()
                        for statement in statements)

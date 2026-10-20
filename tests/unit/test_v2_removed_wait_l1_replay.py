@@ -25,7 +25,9 @@ from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SchwabV2IntentEmitter
 from project_mai_tai.v2_flip_entry_ownership import FlipPositionBook
-from tests.unit.test_v2_removed_wait_clear_rules import PRIMARY, WEBULL, db as l1_database  # noqa: F401
+from tests.unit.test_v2_removed_wait_clear_rules import (  # noqa: F401
+    PRIMARY, WEBULL, controlled_empty_position_reads, db as l1_database,
+)
 
 db = l1_database
 
@@ -207,12 +209,18 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
     bot.redis = transport
     bot.intent_emitter = SchwabV2IntentEmitter(settings, transport, PRIMARY)
     bot.webull_intent_emitter = SchwabV2IntentEmitter(settings, transport, WEBULL)
+    # The shared fixture's NOW is Oct9; DKI is Oct8 and the JZ settle-boundary
+    # replay starts earlier than NOW. Replace it with explicitly controlled
+    # complete EMPTY reads on this replay's current aware clock before the
+    # configuration method's first real proof poll. Never restamp vendor data.
+    controlled_empty_position_reads(factory, Clock.now(UTC))
     await bot._configure_removed_wait_store()
     cleared_at = None
     if native_line and name == "jz" and enabled:
         req = strat._removed_wait_requests[symbol]
         assert req.opportunity_id == 0
         clock[0] = req.requested_at_ms + 14_999
+        controlled_empty_position_reads(factory, Clock.now(UTC))
         await bot._removed_wait_poll()
         assert symbol in strat._removed_wait_requests
         # The recorded cancel rows settle slightly later than the request itself.
@@ -220,9 +228,11 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
                           *(ceil(datetime.fromisoformat(r["updated_at"]).timestamp() * 1000)
                             for r in case["receipts"])) + 15_000
         clock[0] = first_valid - 1
+        controlled_empty_position_reads(factory, Clock.now(UTC))
         await bot._removed_wait_poll()
         assert symbol in strat._removed_wait_requests
         clock[0] = first_valid
+        controlled_empty_position_reads(factory, Clock.now(UTC))
         await bot._removed_wait_poll()
         assert not strat._removed_wait_requests and store.restore() == {}
         cleared_at = first_valid
@@ -274,6 +284,7 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
                         created_at=datetime.fromisoformat(row["created_at"]), source="live"))
                     session.commit()
         strat.apply_flip_position_book(FlipPositionBook(clock[0], True, {}))  # controlled empty book
+        controlled_empty_position_reads(factory, Clock.now(UTC))
         await bot._removed_wait_poll()
         phase = "replay" if current.timestamp_ms < ms(start) - 60_000 else "live"
         if name == "jz":
@@ -303,6 +314,7 @@ async def replay_case(db, monkeypatch, name, enabled, *, native_line=False):
                 continue
             clock[0] = received
             strat.apply_flip_position_book(FlipPositionBook(clock[0], True, {}))
+            controlled_empty_position_reads(factory, Clock.now(UTC))
             await bot._removed_wait_poll()
             if kind == "bar":
                 current = bar(row)
