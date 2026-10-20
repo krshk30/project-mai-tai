@@ -1269,7 +1269,8 @@ class WebullBrokerAdapter:
         if getattr(self, "_list_primary_enabled", False) and item.get("symbol") and str(item["symbol"]).upper() != request.symbol.upper():
             return None
         broker_order_id = self._first_str(body, "order_id", "orderId")
-        if orb_owned and (
+        momentum_fresh = momentum_owned and request.metadata.get("momlive_fresh_order_read") == "true"
+        if (orb_owned or momentum_fresh) and (
             self._validated_list_execution(body, account, request.client_order_id,
                 symbol=request.symbol, side=request.side) is None
             or (request.metadata.get("broker_order_id")
@@ -1283,7 +1284,7 @@ class WebullBrokerAdapter:
             self._decimal_or_none(item, "filled_qty", "filledQty", "filled_quantity", "filledQuantity")
             or Decimal("0")
         )
-        terminal_partial = ((getattr(self, "_list_primary_enabled", False) or orb_owned)
+        terminal_partial = ((getattr(self, "_list_primary_enabled", False) or orb_owned or momentum_fresh)
                             and event_type in {"cancelled", "rejected"} and filled_quantity > 0)
         # filled_price = the CONFIRMED real fill-price field (was the naked-position bug:
         # a wrong field -> fill_price None -> OMS arms NO trailing stop).
@@ -1327,8 +1328,8 @@ class WebullBrokerAdapter:
         for key in ("_webull_list_evidence", "_webull_terminal_proof"):
             if key in body:
                 metadata[key] = json.dumps(body[key], sort_keys=True)
-        if item.get("last_filled_time"):
-            metadata["webull_broker_filled_time"] = str(item.get("last_filled_time"))
+        if item.get("last_filled_time") or (momentum_fresh and item.get("lastFilledTime")):
+            metadata["webull_broker_filled_time"] = str(item.get("last_filled_time") or item.get("lastFilledTime"))
         if item.get("place_time"):
             metadata["webull_broker_place_time"] = str(item.get("place_time"))
         # ⛔⭐⭐ §196 — DO NOT SUBSTITUTE OUR INTENT TEXT FOR A REASON THE BROKER DID NOT GIVE.
@@ -1366,9 +1367,11 @@ class WebullBrokerAdapter:
 
     def _momentum_detail_body(self, account, detail_request, request):
         # Missing list children are UNKNOWN, not permission to probe guessed IDs.
-        # Use the existing ordinary permit, leaving strict cancel/RPG capacity.
+        # Pre-cancel reads reserve capacity within the SAME host/app-key budget;
+        # ordinary polling keeps its existing lower ceiling and list-first path.
         try:
-            self._query_budget.claim("detail", f"{account.account_id}:{request.client_order_id}")
+            self._query_budget.claim("detail", f"{account.account_id}:{request.client_order_id}",
+                strict=request.metadata.get("momlive_fresh_order_read") == "true")
         except QueryBudgetUnavailable:
             return None
         response = self._get_client().get_response(detail_request)
