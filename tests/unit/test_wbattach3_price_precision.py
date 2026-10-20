@@ -41,9 +41,9 @@ def test_non_finite_zero_negative_or_out_of_column_prices_fail_closed(bad):
         stored_price(bad)
 
 
-def saiq_case(make_case, raw=RAW, stored=STORED):
+def saiq_case(make_case, raw=RAW, stored=STORED, *, at=None):
     service, factory, broker, entry_id, clock = make_case()
-    clock[0] = datetime(2026, 10, 20, 14, 38, 43, tzinfo=UTC)
+    clock[0] = at or datetime(2026, 10, 20, 14, 38, 43, tzinfo=UTC)
     with factory.begin() as session:
         entry = session.get(BrokerOrder, entry_id)
         entry.symbol, entry.client_order_id, entry.quantity = "SAIQ", COID, Decimal(59)
@@ -70,7 +70,7 @@ def saiq_case(make_case, raw=RAW, stored=STORED):
         return [replace(p, symbol="SAIQ", average_price=stored) for p in await original_positions(account)]
 
     async def submit(request):
-        return [replace(report, symbol="SAIQ",
+        return [replace(report, symbol="SAIQ", reported_at=clock[0],
                         fill_price=Decimal("4.50") if report.filled_quantity else report.fill_price)
                 for report in await original_submit(request)]
 
@@ -114,20 +114,40 @@ async def test_whole_cent_ymat_class_price_unchanged(make_case):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("hour", [12, 21])
 async def test_pm_ah_attach_remains_off_without_touching_software_ladder(make_case, hour):
-    case = saiq_case(make_case)
-    case.clock[0] = case.clock[0].replace(hour=hour)
+    case = saiq_case(make_case, at=datetime(2026, 10, 20, hour, 38, 43, tzinfo=UTC))
     assert await attach(case) is False
     assert not case.broker.requests and not case.broker.cancelled
 
 
 @pytest.mark.asyncio
-async def test_fractional_price_does_not_block_independent_software_stop_owner(make_case):
+async def test_fractional_price_does_not_block_independent_riskoff_owner(make_case):
     case = saiq_case(make_case)
     await wb.request_atr_exit(case.service, case.broker.account, "SAIQ", COID, "hard_stop_15pct")
     assert len(closes(case.broker)) == 1 and closes(case.broker)[0].quantity == 59
     with case.factory() as session:
         row = session.scalar(select(OmsManagedPosition))
         assert row.current_quantity == 0 and row.status == "closed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session", ["AM", "NORMAL", "PM"])
+@pytest.mark.parametrize("account", ["live:schwab_1m_v2", "live:orb"])
+async def test_actual_cw_hard_stop_not_blocked_by_fractional_stored_price(monkeypatch, session, account):
+    from tests.unit.test_v2_cw_managed_exit import _make_sf, _svc, _arm, _quote, SYM
+    from project_mai_tai.oms import service as module
+
+    factory = _make_sf()
+    service = _svc(factory, cw=True, dual=True)
+    monkeypatch.setattr(module, "_is_regular_market_session", lambda now=None: session == "NORMAL")
+    monkeypatch.setattr(module, "_extended_hours_session", lambda now=None: None if session == "NORMAL" else session)
+    monkeypatch.setattr(service, "_market_is_fillable", lambda: True)
+    _arm(service, factory, account=account, entry=float(RAW), qty=59)
+    _quote(service, bid=4.40)
+    await service._evaluate_v2_managed_exit(account, SYM)
+    with factory() as unit:
+        intents = unit.scalars(select(TradeIntent).where(TradeIntent.side == "sell")).all()
+        assert len(intents) == 1 and intents[0].quantity == 59
+        assert intents[0].reason.endswith("CW_HARD_STOP")
 
 
 @pytest.mark.parametrize("account", ["live:schwab_1m_v2", "live:orb"])
