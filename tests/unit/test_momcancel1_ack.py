@@ -135,7 +135,8 @@ async def test_controlled_xlap_rest_past_2s_commits_ack_then_cancels_exact_nativ
         order = session.scalar(select(BrokerOrder).where(BrokerOrder.client_order_id == original.client_order_id))
         assert order.broker_order_id == "12345" and order.status == "accepted"
     await deadline_cancel(h, identity)
-    assert [call[0] for call in h.wire.calls] == ["POST", "DELETE", "GET"]
+    # MOMORDER1 reads before DELETE and attributes a final original-order read.
+    assert [call[0] for call in h.wire.calls] == ["POST", "GET", "DELETE", "GET", "GET"]
     await h.runtime._cancel_entry(identity)
     assert len([call for call in h.wire.calls if call[0] == "DELETE"]) == 1
     await h.executor.admit(h.signal)
@@ -224,7 +225,7 @@ async def test_restart_between_ack_and_cancel_recovers_id_and_latch_from_rows(mo
     restarted.runtime = bundle["runtime"]
     await restarted._cancel_entry(identity)
     assert restarted.runtime[identity]["cancel_wire_sent_coid"] == original.client_order_id
-    assert [call[0] for call in h.wire.calls] == ["POST", "DELETE", "GET"]
+    assert [call[0] for call in h.wire.calls] == ["POST", "GET", "DELETE", "GET", "GET"]
 
 
 @pytest.mark.asyncio
@@ -247,7 +248,8 @@ async def test_fill_wins_and_partial_is_booked_once_from_original_order(monkeypa
             h.wire.fill_on_delete = True
         await deadline_cancel(h, identity)
         if race == "fill_on_delete":
-            assert (await h.runtime._inspect(identity))["quantity"] == 0
+            # The cancel's finally-read now books the fill before another cadence.
+            assert (await h.runtime._inspect(identity))["quantity"] == original.quantity
         observation = await h.runtime._observe(identity)
     assert observation.entry_terminal
     expected = D(7) if race == "partial_before_cancel" else original.quantity
