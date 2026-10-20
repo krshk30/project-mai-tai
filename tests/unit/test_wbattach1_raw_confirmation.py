@@ -8,7 +8,7 @@ from sqlalchemy import select
 from project_mai_tai.broker_adapters import webull as adapter_module
 from project_mai_tai.broker_adapters.webull import WebullAccountConfig
 from project_mai_tai.db.models import Fill, VirtualPosition
-from project_mai_tai.oms import orb_country, service as oms
+from project_mai_tai.oms import orb_country, service as oms, webull_attach_riskoff as wb
 from tests.unit.test_webull_adapter import _LegClient, _adapter, fake_sdk as fake_sdk
 from tests.unit.test_wbattach1_riskoff import NOW, attach, closes, make_case as make_case
 
@@ -67,6 +67,8 @@ def install_raw_confirmation(case, monkeypatch, *, filled=0, damage=None, execut
 async def drive(case, strategy):
     if strategy == "schwab_1m_v2":
         await attach(case)
+        assert case[2].cancelled == [] and closes(case[2]) == []
+        await wb.request_atr_exit(case[0], case[2].account, "ABC", "owned-entry", "CONTROLLED_REAL_EXIT")
     else:
         with pytest.raises(TimeoutError):
             await orb_country.reconcile_one(case[0], case[3])
@@ -114,6 +116,7 @@ async def test_real_raw_fallback_reports_use_the_defining_protocol_clock(
     case = make_case()
     reports = install_raw_confirmation(case, monkeypatch, damage=damage)
     await attach(case)
+    await wb.request_atr_exit(case[0], case[2].account, "ABC", "owned-entry", "CONTROLLED_REAL_EXIT")
     assert reports and all(report.reported_at == NOW for report in reports)
     coid = adapter_module.WebullBrokerAdapter._combo_leg_coid(case[2].base, "S")
     sibling = [report for report in reports if report.client_order_id == coid]

@@ -1,0 +1,51 @@
+O-1019-15 Q / C6 original-child identity: PRODUCTION FINDING, not source-clear
+Parent: c9356743241debf7de100870e61f4b51f96a71a2
+Scope: source inspection and new unrun regression controls only.
+
+R P2 is confirmed. c935's two C6 controls bind their children to the entry
+intent with entry-derived canonical IDs. Their journal uses a different
+original base. Those 2 PASS controls prove canonical-child reconciliation,
+NOT reconciliation of that journal's original protection pair.
+The retained 11 PASS receipt is historical and is not withdrawn or expanded.
+
+Production mismatch:
+- webull_attach_riskoff.attach_atr prepares a separate WBATTACH1_PROTECTION
+  intent and saves its UUID/base in journal attempts. Its child requests
+  use original combo T/S coids, with wbattach1_child/entry_order_id metadata.
+- bot_control_atr._native (line 67) requires entry.intent_id, oco_exit type
+  and an entry-derived canonical coid. This is not that original identity.
+- AtrStopDriver.inventory (around 630) excludes only _native children from
+  ordinary working orders. Original protection children are instead sent
+  to _read_exit, which requires a STOP-specific killsw1_command/attempt.
+  Such original working children therefore block before native release.
+  The outer inventory exception path returns BLOCKED_UNKNOWN without the
+  row-scoped _block incident. No actual broker read is demonstrated here.
+- _read_native_children (431) also selects only _native. require_inventory
+  validates count, not journal original T/S identity; initial released path
+  uses require_inventory=False. C6 never enumerates wbattach1.attempts.
+- The real release method can resolve the persisted current protection base,
+  but it does not establish a complete all-original-attempt journal census.
+  An existing released latch also returns before fresh child reads.
+
+Consequence proven by source: the original-identity C6 acceptance requested
+by TOP13:5x is NOT established. Working original protection rows hit the
+wrong reconciliation route. A shortage/short sale in production is NOT
+claimed; guards may block safely. Fix policy/source approval is needed
+before extending C6's identity/ledger/recovery contract.
+
+Added one parameterized regression (5 authored cases, UNRUN):
+tests/unit/test_q_stop_fallback_controls.py::test_killsw1_reconciles_exact_journal_original_pair_not_entry_canonical_children
+evidence=terminal / missing-T / missing-S / unreadable-T / unreadable-S;
+book=webull. Uses separate real protection intent and exact original combo
+T/S addresses, real C6 driver/emitter/release implementation, controlled
+adapter release/read/submit responses. No entry-canonical child substitution.
+Requires exact original release and readback before sell; missing/unreadable
+must not sell or infer flat and must open the exact row/command incident.
+These controls are expected to expose the source mismatch, NOT claimed green.
+Existing canonical controls retained and explicitly annotated as such.
+
+Main-only proposed command:
+uv run pytest -q tests/unit/test_q_stop_fallback_controls.py
+
+NO production edits, imports, tests, collection, provider, SQL, orders,
+primary/twin changes or queue/status writes. Main sole executor/writer.

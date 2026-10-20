@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -12,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from project_mai_tai.broker_adapters.protocols import BrokerPositionSnapshot, ExecutionReport, ExitPairReleaseResult, OrderRequest
 from project_mai_tai.broker_adapters import protocols as protocols_module
-from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
+from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter, WebullPositionsUnavailable
 from project_mai_tai.db.base import Base
 from project_mai_tai.db import models as models_module
 from project_mai_tai.db.models import AccountPosition, BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, SystemIncident, TradeIntent, VirtualPosition
@@ -54,7 +55,7 @@ class Broker:
 
     async def list_account_positions(self, account):
         if not self.known:
-            return []
+            raise WebullPositionsUnavailable("CONTROLLED incomplete positions read")
         return [BrokerPositionSnapshot(broker_account_name=account, symbol="ABC", quantity=self.total,
                                        average_price=Decimal(10))]
 
@@ -125,6 +126,17 @@ class Broker:
                 event="filled" if self.child_filled == 10 and suffix == "T" else "cancelled",
                 filled=self.child_filled if suffix == "T" else Decimal(0)) for suffix in ("T", "S"))
         return ExitPairReleaseResult(outcome="released", reports=reports)
+
+    async def confirm_exit_pair_from_today_list(self, *, quantity, after=None, original_attempts=None, **binding):
+        # Synthetic complete-census boundary; real paging/parser controls are separate.
+        result = await self.confirm_exit_pair_terminal(**binding)
+        proof = json.dumps({"broker_account_name": self.account, "symbol": binding["symbol"],
+            "base": binding["base_client_order_id"], "complete": True, "truncated": False,
+            "original_bases": sorted(a["base"] for a in original_attempts or [{"base": binding["base_client_order_id"]}]),
+            "pages": 1, "started_at": wb.datetime.now(UTC).isoformat(),
+            "acquired_at": wb.datetime.now(UTC).isoformat()})
+        return replace(result, reports=tuple(replace(r, metadata={**r.metadata,
+            "wbattach1_list_census": proof}) if r is not None else None for r in result.reports))
 
     async def fetch_order_update(self, request):
         if request.side == "buy":
@@ -324,10 +336,12 @@ async def test_malformed_strict_marker_never_falls_back_to_legacy(make_case, mon
             incident = session.scalar(select(SystemIncident).where(
                 SystemIncident.service_name == "oms-risk", SystemIncident.status == "open",
                 SystemIncident.payload["source"].as_string() == wb.KEY,
-                SystemIncident.payload["entry_id"].as_string() == "owned-entry",
+                SystemIncident.payload["entry_id"].as_string() == str(entry_id),
                 SystemIncident.payload["account"].as_string() == broker.account,
                 SystemIncident.payload["symbol"].as_string() == "ABC"))
             assert incident is not None and incident.severity == "critical"
+            assert incident.payload["entry_client_order_id"] == "owned-entry"
+            assert incident.payload["entry_identity"] == "canonical"
             assert incident.payload["sell"] == "BLOCKED"
             assert incident.payload["reason"] in {
                 "wbattach1_journal_corrupt", "wbattach1_journal_episode_changed",
@@ -478,6 +492,8 @@ async def test_applied_attach_lost_ack_original_pair_cancelled_once_or_blocks(ma
     case = make_case()
     case[2].mode, case[2].child_unknown = "late", child_unknown
     await attach(case)
+    assert case[2].cancelled == [] and closes(case[2]) == []
+    await wb.request_atr_exit(case[0], case[2].account, "ABC", "owned-entry", "CONTROLLED_REAL_EXIT")
     assert len(case[2].cancelled) == 1
     assert len(closes(case[2])) == (0 if child_unknown else 1)
     assert len([r for r in case[2].requests if r.metadata.get("webull_exit_only_pair") == "true"]) == 1
@@ -488,6 +504,8 @@ async def test_cancelled_partial_child_deducted_before_residual_eight(make_case)
     case = make_case()
     case[2].mode, case[2].child_filled = "late", Decimal(2)
     await attach(case)
+    assert case[2].cancelled == [] and closes(case[2]) == []
+    await wb.request_atr_exit(case[0], case[2].account, "ABC", "owned-entry", "CONTROLLED_REAL_EXIT")
     assert [r.quantity for r in closes(case[2])] == [Decimal(8)]
     assert case[2].total == 1000
     with case[1]() as session:
@@ -548,6 +566,7 @@ async def test_known_filled_child_recorded_even_when_sibling_read_unknown_no_ext
     case = make_case()
     case[2].mode, case[2].child_filled, case[2].child_unknown = "late", Decimal(10), "S"
     await attach(case)
+    await wb.request_atr_exit(case[0], case[2].account, "ABC", "owned-entry", "CONTROLLED_REAL_EXIT")
     assert not closes(case[2])
     with case[1]() as session:
         sold = session.scalars(select(Fill).where(Fill.side == "sell")).all()
@@ -560,9 +579,10 @@ async def test_restart_flat_atr_reads_original_sibling_without_recancel_or_sell(
     case = make_case()
     case[2].mode, case[2].child_filled, case[2].child_unknown = "late", Decimal(10), "S"
     await attach(case)
+    await wb.request_atr_exit(case[0], case[2].account, "ABC", "owned-entry", "CONTROLLED_REAL_EXIT")
     case[2].child_unknown = False
     case = restarted(case)
-    await attach(case)
+    await wb.request_atr_exit(case[0], case[2].account, "ABC", "owned-entry", "CONTROLLED_REAL_EXIT")
     assert len(case[2].cancelled) == 1 and not closes(case[2])
     with case[1]() as session:
         entry = session.get(BrokerOrder, case[3])

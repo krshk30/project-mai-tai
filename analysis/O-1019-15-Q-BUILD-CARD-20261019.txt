@@ -1,0 +1,71 @@
+O-1019-15 / Q / NARROW SOURCE CANDIDATE / 2026-10-19
+Base: 56577919d68e2fd96c50fbae4da82f2c7ebb7677
+Worktree: /private/tmp/mai-tai-q-ymat-protection-20261019
+Main approved source defect correction after verifying Q's cause card.
+Frozen candidate commit is returned separately; no runtime qualification implied.
+
+SOURCE
+1. src/project_mai_tai/broker_adapters/webull.py
+   Real exit-only pair SDK return is parsed once, without any extra SDK call.
+   An explicit non-2xx HTTP return produces a broker-origin rejection, never an
+   accepted pair, even if that error body includes a combo-looking field.
+   Successful SDK return with a nonempty STRING combo id (no outer whitespace)
+   carries origin=broker, exact combo id and request.intent_type.
+   Missing/empty/whitespace/nonstrings remain origin=unknown, no broker id;
+   no fabricated identity or generic default-provenance change.
+   PLACED marker is limited to proven ACKs; otherwise ACK-UNKNOWN is logged.
+   Exceptions keep existing _reject_from_exception provenance classification.
+   Existing strict accepted-pair and original-child terminal predicates unchanged.
+
+2. src/project_mai_tai/oms/webull_attach_riskoff.py
+   Existing ATR-owner cancellation now logs exact account/symbol/entry coid/
+   entry UUID/base/exit_reason/attempt index+total/call id and actor=ATR_OWNER.
+   Logs distinguish durable intent before call, returned (UNPROVEN), exception
+   (UNKNOWN), already-requested/not-resent, fresh confirmation (validation
+   pending), blocked UNKNOWN, and confirmed PROVEN only after terminal_pair.
+   Receipt summaries are bounded to two children and include coid/native id,
+   event type/origin/cancel_outcome. They are diagnostic, not handoff evidence.
+   Cancellation/confirmation exceptions are re-raised unchanged, including
+   CancelledError. No added retries, journal mutations, broker or DB calls.
+   Original cancel_requested persistence, single owner/context and exact-child
+   release/quantity/terminal gates remain in place. No second SELL writer.
+
+CONTROLS (SOURCE AUTHORED; NONE IMPORTED/COLLECTED/EXECUTED BY Q)
+New file: tests/unit/test_q_webull_pair_ack_seam.py
+The production pair submit method and report constructor feed actual strict ATR
+attach/handoff. Only SDK pair placement is stubbed on that report seam. Existing
+owned DB/position/cancellation/confirmation fixtures are synthetic and explicitly
+not current YMAT receipts; no copied acceptance predicate or fake accepted pair.
+
+Exact selectors, main executes only in an authorized serial window:
+tests/unit/test_q_webull_pair_ack_seam.py::test_real_sdk_pair_ack_is_accepted_by_strict_atr_owner_without_cancel_or_second_writer
+tests/unit/test_q_webull_pair_ack_seam.py::test_missing_or_invalid_sdk_combo_never_becomes_broker_accepted
+tests/unit/test_q_webull_pair_ack_seam.py::test_failed_sdk_pair_ack_preserves_unknown_or_real_broker_refusal
+tests/unit/test_q_webull_pair_ack_seam.py::test_known_cancel_then_unknown_read_logs_owner_and_restart_never_recancels
+tests/unit/test_q_webull_pair_ack_seam.py::test_cancel_or_confirmation_exception_stays_unknown_without_retry
+
+Source parameter count: 17 (1 valid + 10 invalid/missing + 3 failed ACK +
+1 known-cancel/unknown-read/restart + 2 exception controls). Not a collected count.
+Positive control proves accepted journal/base binding, no cancel/close, and
+repeat attach uses same accepted journal without a second SDK placement.
+Negative controls retain unknown state and no replacement/SELL while original
+children are unreadable. Known-cancel control proves returned terminal-looking
+receipts do NOT bypass a later unknown fresh confirmation; restart reuses the
+durable cancel marker, sends no second cancel, and keeps the managed row held.
+Exception controls retain durable cancel intent and UNKNOWN outcome, no SELL.
+
+Suggested existing neighbors for main's reviewed selection, not run by Q:
+test_webull_attach_report_seam.py, test_webull_attach_protection.py,
+test_webull_exit_pair_session.py, test_wbattach1_riskoff.py,
+test_wbattach1_raw_confirmation.py, test_wbattach1_prewire_integration.py,
+test_wbattach1_r2_refresh_compat.py, test_edgeprot1_webull_edge.py.
+
+LIMITS / PENDING
+Actual current YMAT cancel actor and class denominator remain blocked on
+Claude's supplied journal/cancel/child/position/deployed-byte receipts. Main
+owns that intake and class sweep. This source prevents the proven future ACK
+misclassification and exposes existing-owner actions; it does NOT repair an
+already-unknown journal or prove live software coverage.
+No current episode clearing, reattach, recovery, provider/SSH/live SQL/order
+action, import/test/benchmark, push or installation was performed.
+Primary 565, N2-free f18 and prior K FRGT source/test files remain unchanged.

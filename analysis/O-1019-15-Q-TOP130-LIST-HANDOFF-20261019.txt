@@ -1,0 +1,124 @@
+Q TOP13:0x complete-LIST proof successor to dbd611db
+Source-only; main sole executor, main/R independent review pending.
+No primary9d8/565/f18 edits; no tests/imports/collection/provider/SQL/SSH/orders/push.
+
+RULING / SUPERSESSION
+TOP13:0x approves the existing today LIST endpoint as authoritative proof, provided
+there is a COMPLETE scoped census. This supersedes the prior policy/primitive
+question in the retained Q direction/dbd build cards. It does NOT authorize empty
+single-order lookups or cached matches as absence, nor blind SELL on unreadable LIST.
+Previous d99/dbd source and their receipts/cards remain historical, not discarded.
+
+SCOPE / CALL CHAIN
+New broker_adapters/webull_exit_census.py is EXIT-ONLY. It uses existing shared
+QueryBudget list-today permits and existing _today_page SDK request builder.
+Ordinary TodayOrderReader.read and _validated_list_execution are unchanged.
+Webull.confirm_exit_pair_from_today_list / RoutingBrokerAdapter forwarding is called
+only by the original ATR managed owner on an actual selected software exit trigger.
+No new tick read, periodic job, timer, retry loop or independent protection writer.
+Known readable attach ACK still only attaches; ACK uncertainty alone never cancels.
+Software CW_FLIP/HARD_STOP/CONFIRMATION_EXIT/FLOOR retains trigger/session pricing.
+Both readable and unknown original attempts must satisfy the software-exit census;
+still-working native children or another working SELL suppress the software SELL.
+One census binds ALL original attempt identities/quantities, not a separate paged
+read per old released attempt. Every original child must be positively present;
+the last unreleased attempt (at most one in a valid producer journal) owns cancel.
+Multiple unreleased attempts fail visibly rather than inventing a recovery writer.
+Schwab selector remains in-memory before Q entry reads; Schwab adapters/OCO are
+unchanged. ORB's dedicated detail/EOD owner and MOM exits are not retargeted to census.
+C6 STOP remains its separate native/command-journal/position evidence path.
+
+COMPLETE-CENSUS CONTRACT
+Fresh traversal starts after a NEW original cancel attempt. Completed scans are
+never returned from a cache. Unknown-cancel/417 response is not release proof and
+does not stop the subsequent census. Durable cancel_requested prevents recancel.
+after_cancel is assigned ONLY in the branch that actually sends cancellation;
+retry invocations pass no new timestamp and can resume an incomplete traversal.
+Separate exit scan state cannot turn an ordinary early-match lookup into a census.
+Max2 pages per existing read cycle, shared2HTTP/2s budget; max20 pages; no sleeps.
+Every page requires HTTP200, valid rows, explicit boolean continuation, consistent
+has_next/hasNext, bound account/coid aliases, progressing cursor, and no truncation.
+All pages must complete. Both original T/S coids must be positively PRESENT.
+Missing child / empty LIST is UNKNOWN, never inferred absence or released inventory.
+Use existing _validated_list_execution plus required item symbol/side, top-level
+scope/status/execution alias agreement, native id, original requested quantity and
+filled quantity bounds. FAILED maps to rejected. Filled execution needs actual price
+and broker fill time; cumulative native fill identity remains stable/idempotent.
+Inspect EVERY row, including later pages, for any other working SELL for exact
+account/symbol. Missing/ambiguous relevant scope cannot be ignored as unrelated.
+Proof carries bounded summary only: account/base/symbol/pages/start/completion,
+not a durable copy of other customers' or unrelated orders' full list bodies.
+Acquisition window <=30s; completion freshness <=2s; final prewire check revalidates
+completion age AFTER durable preparation AND AFTER the last positions await.
+These are bounded endpoint observations, NOT a transactional broker snapshot/lock.
+With a large account and unchanged shared budgets, a census that cannot complete
+within the window remains visibly UNKNOWN; no budget/freshness waiver is added.
+
+OWNER / LEDGER / ZERO
+Known native fills are accounted before computing residual; unknown sibling or
+foreign SELL never permits a speculative residual SELL. Repeated FAILED/partial
+list execution books only new cumulative delta. No second protection writer while
+a real software exit is waiting for proof, including after an unsent preparation.
+Then existing complete positions reader must supply a fresh wire receipt AFTER
+native release; SELL=min(fresh broker qty, exact managed/ledger owned residual).
+Fresh explicit zero / complete fresh position snapshot with no symbol: managed
+row closes and no SELL is dispatched. No external fill or ledger execution is
+invented from inventory; any unexplained inventory/ledger discrepancy is incidented
+for actual execution reconciliation. Final-prewire zero first aborts the prepared
+never-sent order with O14 proof, releases the exact claim, then closes the row.
+No generic native-fill marker is used for this broker-flat/no-fill close outcome.
+
+FIRST-FAILURE INCIDENT / RETRY
+Unreadable/incomplete/ambiguous LIST creates or updates the episode's durable
+SystemIncident (not just logging): title "Exit waiting for broker proof: SYMBOL on
+ACCOUNT", payload reason includes "exit waiting for broker proof: SYMBOL".
+Existing episode id/opened time preserved; no duplicate pager incident per retry.
+Existing real-exit cadence retries list proof. No new timer and no recancel.
+Readable terminal children + no foreign SELL can then release and SELL fresh qty.
+
+R REVIEW CORRECTIONS
+P1: Q strict_handoff exits cannot enter the automatic corrected Webull confirmation
+retry branch after first rejection. First-wire proof is consumed; no second SELL
+or corrected request preparation without a separately approved new owner/proof.
+Unrelated legacy corrected retries remain unchanged.
+P2: exact call entry/coid/quantity/owned balance/terminal boundary registered BEFORE
+the durable claim await. Claim commit is shielded and joined on cancellation, so
+cleanup cannot race a still-committing DB worker. Cancellation during claim commit
+or later protect-state persistence releases only exact unprepared active-call,
+unchanged-owned-balance/no-nonterminal-SELL state; both software and ATR-riskoff
+owners covered. O14 prepared requests still need their exact PROVEN_NOT_SENT event;
+entered/uncertain wire remains reserved. In-memory owner always removed in finally.
+
+SOURCE CONTROLS / NOT RUN ON THIS REVISION
+Retained Q:17 adapter-seam +31 dbd software-exit cases =48 (prior main48PASS applies
+ONLY to dbd, not this changed source). Zero-position expectations now require close
+without SELL; synthetic incomplete-position fixture raises typed UNKNOWN, not [].
+New tests/unit/test_q_authoritative_exit_list.py:13 functions/36 parameter cases
+by source count, NOT collected. Total Q selection now84 authored cases, all UNRUN
+on this revision. Main retains prior332PASS compat with disclosed teardown warnings;
+do not label those warnings clean runtime or borrow old PASS for this source.
+New function node IDs (prefix tests/unit/test_q_authoritative_exit_list.py::):
+test_detail_unreadable_valid_list_accounts_children_and_sells_only_owned_residual
+test_readable_list_working_child_keeps_native_owner_and_no_software_sell
+test_more_than_two_pages_resume_without_recancel_and_late_foreign_sell_blocks
+test_one_complete_census_proves_all_original_attempts_without_repeated_page_reads
+test_unreadable_list_opens_visible_incident_then_existing_retry_succeeds
+test_cancel_refusal_is_not_proof_but_valid_complete_list_still_releases
+test_failed_partial_child_is_booked_once_across_list_wait_and_readable_retry
+test_incomplete_or_conflicting_list_never_becomes_absence_proof
+test_cancel_after_claim_commit_cleans_exact_unsent_owner_then_retry
+test_q_corrected_retry_cannot_reuse_first_wire_proof_after_rejection
+test_failed_real_exit_does_not_rearm_native_writer_before_next_exit_trigger
+test_exit_census_nonprogress_and_page_cap_never_prove_complete
+test_list_proof_ages_during_preparation_and_cannot_reach_sell
+SDK/page boundary stubs only for LIST controls; real parser/census/owner/persistence
+are composed. DETAIL stub returns bodyNone and must never be called for this proof.
+
+PROPOSED MAIN-ONLY SERIAL Q FOCUS (NOT RUN)
+uv run pytest -q tests/unit/test_q_webull_pair_ack_seam.py tests/unit/test_q_unknown_ack_software_exit.py tests/unit/test_q_authoritative_exit_list.py
+Then main chooses the existing7file compatibility selection plus
+tests/unit/test_webull_list_primary.py and routing/adapter regressions as appropriate.
+Main-owned all-ON file untouched. Full/rate/tick not before16; native/VPS/operator
+qualification remains separate. Source git diff --check only, no syntax/import proof.
+Old pending-task teardown investigation was explicitly preempted/deferred by TOP13;
+no fixture task-drain change or test rerun was made here.

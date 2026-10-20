@@ -1,0 +1,48 @@
+O15C6 corrective source freeze after main's first runtime receipt
+Parent: 76655400dd0f0cf902b721ab1a2bd7a12e94383b
+
+Retained main receipts, not rewritten:
+O15C6-Q-76655400-FOCUS-20261019.xml: RAW 99 PASS / 38 FAIL / 11.03s,
+137 total. O15C6-Q-76655400-DIAGNOSTIC-20261019.xml: 4 FAIL / 0.99s.
+Worker has not run/imported/collected anything.
+R independently confirmed the nested-JSON defect; any earlier source-clear
+claim for 766 is withdrawn. The full 38 failure set remains uncleared until
+main's corrected 137-case rerun; these corrections do not synthesize PASS.
+
+1. Production persistence cause and fix:
+_atr_state shallow-copies the JSON journal. settled() called attempt.update()
+on nested dictionaries still shared with the old payload. The ORM could see
+equal old/new values and omit the journal update, leaving persisted phase
+unknown and no terminal proof. A subsequent independent ceiling read then
+correctly refused c6_original_terminal_inventory_UNKNOWN.
+settled() now builds a fresh attempt list and fresh dictionaries, retaining
+all original fields and adding released/proof values without mutating the
+old nested payload. The transaction and every terminal/inventory guard remain.
+The existing terminal replay control also asserts released + two child proofs
+from an independent session. No test or trading guard was weakened.
+
+2. UTC08 fixture boundary (test-only):
+The retained base fixture sets submitted_at = clock - one minute, which is
+03:59 ET when clock is 04:00. The production prior/current-session guard is
+correct and unchanged. original_case now puts this controlled new entry and
+its managed/fill timestamps at 04:00, advances the SAME shared clock one
+second and refreshes the controlled quote at 04:00:01. This does not age the
+lease out or relax any session/freshness/lease gate. Other hours unchanged.
+
+3. Boot-held-first instrumentation (test-only, explicitly authorized):
+test_boot_held_first_does_not_starve_new_position_existing_exit_owner's
+old_first wrapper now unpacks and passes through original_errors as the
+inventory extension's third value. ALL existing held-first, exactly-new-ID,
+real-managed-claim, no-old-release/no-sell and retained-quantity assertions
+are unchanged. Production held inventory/boot guards are not bypassed.
+
+No cases removed or added: expected first focused total remains 137.
+Main-only exact same four-module selector:
+tests/unit/test_q_c6_original_list.py
+tests/unit/test_q_stop_fallback_controls.py
+tests/unit/test_oms_webull_late_close_guard.py
+tests/unit/test_killsw1_atr_stop.py
+
+Static verification only: git diff --check. New head unqualified until main
+serial runtime and R source review. No primary/twin/queue/status/provider/
+production edits. Existing externally created untracked uv.lock preserved.

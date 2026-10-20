@@ -101,7 +101,8 @@ async def test_real_raw_legacy_handover_zero_unchanged_partial_refused(
 async def test_actual_protective_owner_cannot_override_partial_refusal_or_double_sell(
     make_case, fake_sdk, monkeypatch, account, control
 ):
-    case = make_case(account=account, control=control)
+    # A legacy tree predates the strict new-bare-fill provenance marker.
+    case = make_case(account=account, control=control, provenance=False)
     service, factory, broker, _, _ = case
     row_id, client, _wire = legacy_case(case, monkeypatch, 2)
     if control:
@@ -119,6 +120,28 @@ async def test_actual_protective_owner_cannot_override_partial_refusal_or_double
     assert result == "refused" and client.seen
     assert not closes(broker) and broker.total == 1008
     assert not service.__dict__.get("_control_managed_exit_claims")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", ["live:orb", "live:webull-alt"])
+async def test_mixed_strict_marker_and_legacy_tree_cannot_bypass_original_proof(
+    make_case, fake_sdk, monkeypatch, account
+):
+    case = make_case(account=account)
+    row_id, client, _wire = legacy_case(case, monkeypatch, 2)
+    assert await protective_close(case, row_id) == "refused"
+    assert not client.seen and not closes(case[2]) and case[2].total == 1008
+    with case[1]() as unit:
+        entry = unit.get(BrokerOrder, case[3])
+        assert entry.payload["wbattach1_bare_fill_observed"]["source"] == "new_bare_fill_writer"
+        assert entry.payload["wbattach1"]["legacy_base"] == "original-legacy-tree"
+        assert entry.payload["wbattach1"]["history_proven"] is True
+        assert unit.get(OmsManagedPosition, UUID(row_id)).current_quantity == 10
+        incidents = list(unit.scalars(select(SystemIncident)))
+        assert len(incidents) == 1
+        assert incidents[0].payload["entry_id"] == str(case[3])
+        assert incidents[0].payload["reason"] == (
+            "software_exit_child_proof_required:wbattach1_original_tree_or_close_unknown")
 
 
 @pytest.mark.asyncio
@@ -300,7 +323,8 @@ async def test_failed_negative_audit_commit_cannot_erase_partial_into_retry_perm
 async def test_unbound_entry_positive_stays_refused_during_retry_flag_OFF_and_restart(
     make_case, fake_sdk, monkeypatch
 ):
-    case = make_case()
+    # Reach the real legacy reader before injecting the original-binding loss.
+    case = make_case(provenance=False)
     row_id, client, _ = legacy_case(case, monkeypatch, 2)
     release = case[2].release_exit_pair_for_close
     invalidated = []
