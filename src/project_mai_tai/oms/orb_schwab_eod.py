@@ -126,8 +126,6 @@ def _schwab_entry(session, target):
     filled = select(Fill.id).where(Fill.order_id == BrokerOrder.id).exists()
     fill_event = select(BrokerOrderEvent.id).where(
         BrokerOrderEvent.order_id == BrokerOrder.id,
-        or_(BrokerOrderEvent.event_type.in_({"filled", "partially_filled"}),
-            BrokerOrderEvent.payload["filled_quantity"].as_string().is_not(None)),
     ).exists()
     others = session.scalars(select(BrokerOrder).where(
         BrokerOrder.strategy_id == target.strategy_id, BrokerOrder.broker_account_id == target.account_id,
@@ -146,9 +144,10 @@ def _schwab_entry(session, target):
         for event in events:
             if event.event_type in {"filled", "partially_filled"}:
                 raise ValueError("orb_close_entry_chronology_UNKNOWN")
-            value = (event.payload or {}).get("filled_quantity")
-            if value is None:
+            payload = event.payload or {}
+            if "filled_quantity" not in payload:
                 continue
+            value = payload["filled_quantity"]
             try:
                 amount = Decimal(str(value))
             except (ValueError, TypeError, ArithmeticError) as exc:
