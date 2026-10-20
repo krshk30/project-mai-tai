@@ -11,6 +11,7 @@ from project_mai_tai.momentum_live.admission import Refusal, STRATEGY_CODE
 from project_mai_tai.momentum_live.ledger import load_live_ledger
 from project_mai_tai.services.control_plane import _render_momentum_ledger
 from tests.unit.test_momlive1_persistence import setup
+from tests.unit.test_momlive1_page_entry_time import cycle
 
 DAY = date(2026, 10, 14)
 
@@ -69,10 +70,47 @@ def test_missing_broker_provenance_raises_unknown_not_healthy_zero():
     factory = filled_cycle()
     with factory() as session:
         row = session.scalars(select(Fill)).first()
+        affected = session.get(BrokerOrder, row.order_id).payload["episode_id"]
         row.payload = {**row.payload, "momlive_fill_source": "UNKNOWN"}
         session.commit()
-    with pytest.raises(Refusal, match="provenance_UNKNOWN"):
-        load_live_ledger(factory, DAY)
+    result = load_live_ledger(factory, DAY)
+    assert result["status"] == "PARTIAL" and result["daily_pnl_partial"] is True
+    assert result["positions"] == [] and result["closed_today"] == []
+    unknown, = result["unknown_episodes"]
+    assert unknown["episode_id"] == affected
+    assert "live_fill_provenance_UNKNOWN" in unknown["reason"]
+    assert unknown["pnl"] == unknown["quantity"] == "UNKNOWN"
+    rendered = _render_momentum_ledger(result, title="LIVE (real orders)", method="LIVE",
+                                     other_rows=[], paper=False)
+    assert "Day total: $+0.00 (partial)" in rendered
+    assert "1 UNKNOWN episodes excluded. Total completed count UNKNOWN." in rendered
+    assert "Day total: $+0.00 &middot;" not in rendered
+
+
+def test_bad_provenance_episode_keeps_good_episode_and_its_attributed_pnl():
+    factory = filled_cycle()
+    with factory() as session:
+        row = session.scalars(select(Fill)).first()
+        affected = session.get(BrokerOrder, row.order_id).payload["episode_id"]
+        row.payload = {**row.payload, "momlive_fill_source": "UNKNOWN"}
+        session.commit()
+    stamp = datetime(2026, 10, 14, 14, tzinfo=UTC)
+    good = cycle(factory, "GOOD", [(stamp, "2", "3")], stamp, "4", provider="schwab", first=stamp)
+    result = load_live_ledger(factory, DAY)
+    assert result["status"] == "PARTIAL" and result["daily_pnl_partial"] is True
+    assert result["positions"] == []
+    closed, = result["closed_today"]
+    assert closed["episode_id"] == good and closed["symbol"] == "GOOD"
+    assert D(closed["quantity"]) == 2 and D(closed["entry_price"]) == 3
+    assert D(closed["exit_price"]) == 4 and D(closed["pnl"]) == 2
+    assert D(result["daily_pnl"]) == 2
+    unknown, = result["unknown_episodes"]
+    assert unknown["episode_id"] == affected and unknown["pnl"] == "UNKNOWN"
+    assert "live_fill_provenance_UNKNOWN" in unknown["reason"]
+    rendered = _render_momentum_ledger(result, title="LIVE (real orders)", method="LIVE",
+                                     other_rows=[], paper=False)
+    assert "Day total: $+2.00 (partial)" in rendered
+    assert "1 readable completed broker trades; 1 UNKNOWN episodes excluded" in rendered
 
 
 def test_client_claimed_fill_cannot_enter_live_broker_ledger():
