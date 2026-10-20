@@ -8,12 +8,13 @@ from project_mai_tai.momentum_live.lifecycle import OwnedPosition
 from project_mai_tai.momentum_live.protection import NativeProtection, ProtectionPorts, ProtectionRead
 
 
-def setup():
+def setup(*, session="NORMAL"):
     position = OwnedPosition("00000000-0000-0000-0000-000000000001", "live:schwab_1m_v2",
         "SCNI", "own-entry-coid", "own-entry-broker-id", D(3), D("3.0012"), 1)
     async def read(handle):
         return ProtectionRead(handle.episode_id, handle.account, handle.entry_order_id,
-            handle.base_coid, ("own-target", "own-stop"), True, False, D(0))
+            handle.base_coid, ("own-target", "own-stop") if session == "NORMAL" else (handle.base_coid,),
+            True, False, D(0))
     ports = ProtectionPorts(AsyncMock(), AsyncMock(), AsyncMock(return_value=[]),
                             AsyncMock(side_effect=read), AsyncMock())
     return position, ports, NativeProtection(ports)
@@ -55,7 +56,7 @@ async def test_rth_payload_has_own_account_quantity_fill_vwap_and_native_sdk_mar
 @pytest.mark.asyncio
 @pytest.mark.parametrize("broker,session", [("webull", "AM"), ("schwab", "AM"), ("webull", "PM"), ("schwab", "PM")])
 async def test_extended_session_only_resting_target_not_unsupported_native_stop(broker, session):
-    position, ports, native = setup()
+    position, ports, native = setup(session=session)
     await native.ensure(position, broker=broker, session=session)
     request = ports.submit.await_args.args[0]
     assert request.metadata["extended_hours"] == "true"
