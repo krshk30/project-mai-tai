@@ -669,7 +669,7 @@ def test_orb_closed_incident_history_does_not_suppress_new_unknown_legacy_exit_p
         case.factory.kw["bind"].dispose()
 
 
-@pytest.mark.parametrize("zero", ["0.00", "0.0000", "0E-8", 0, 0.0])
+@pytest.mark.parametrize("zero", ["0", "0.00", "0.000", "0.0000", "0E-8", 0, 0.0])
 def test_orb_terminal_zero_event_quantity_is_numeric_not_a_string_whitelist(monkeypatch, zero):
     case = orb_case(monkeypatch)
     try:
@@ -685,5 +685,25 @@ def test_orb_terminal_zero_event_quantity_is_numeric_not_a_string_whitelist(monk
             assert session.scalar(select(VirtualPosition.quantity)) == 0
             assert not session.scalars(select(Fill).where(Fill.order_id == later_id)).all()
             assert session.scalar(select(SystemIncident)) is None
+    finally:
+        case.factory.kw["bind"].dispose()
+
+
+@pytest.mark.parametrize("value", [None, "NaN", "malformed", "-1", "1", False])
+def test_orb_present_unreadable_or_nonzero_event_quantity_is_not_absent_zero_fill(monkeypatch, value):
+    case = orb_case(monkeypatch)
+    try:
+        later_id = later_buy(case, status="cancelled", submitted_mode="newer")
+        with case.factory.begin() as session:
+            event = session.scalar(select(BrokerOrderEvent).where(BrokerOrderEvent.order_id == later_id))
+            event.payload = {**event.payload, "filled_quantity": value}
+        asyncio.run(case.service._orb_schwab_eod_close())
+        assert not case.broker.release_calls
+        assert not [request for request in case.broker.submitted if request.intent_type == "close"]
+        with case.factory() as session:
+            assert session.scalar(select(VirtualPosition.quantity)) == 10
+            incident = session.scalar(select(SystemIncident))
+            assert incident is not None and incident.severity == "critical"
+            assert incident.payload["entry_order_id"] == str(case.entry_id)
     finally:
         case.factory.kw["bind"].dispose()
