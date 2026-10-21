@@ -188,13 +188,13 @@ async def test_ledger_and_episode_binding_are_required(make_case, monkeypatch, d
             row = session.scalar(select(OmsManagedPosition))
             case[0].store.close_managed_position(session, row)
     elif damage == "open-managed":
+        await close_economically(case)
         with case[1].begin() as session:
-            entry = session.get(BrokerOrder, case[3])
-            assert case[0]._persist_oco_exit_fill(session, "live:orb", "ABC", entry, {
-                "symbol": "ABC", "entry_broker_order_id": "entry-native",
-                "exit_base_client_order_id": entry.payload[wb.KEY]["attempts"][-1]["base"],
-                "quantity": Decimal(10), "price": Decimal(11), "filled_at": NOW,
-                "broker_order_id": "native-T"})
+            row = session.scalar(select(OmsManagedPosition))
+            assert row.entry_order_id == case[3] and row.status == "closed" and row.current_quantity == 0
+            # Deliberate negative state AFTER the real economic wrapper; do not
+            # bypass its managed-entry proof with an unstamped direct writer call.
+            row.status, row.current_quantity = "open", 10
     cached_adapter(case, monkeypatch, filled=2 if damage == "partial" else 0 if damage == "zero-conflicting-ledger" else 10)
     with case[1].begin() as session:
         intent = protection(session)
