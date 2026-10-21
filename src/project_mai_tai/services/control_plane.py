@@ -5697,6 +5697,28 @@ def _build_bot_listening_status(
     recent_decisions: list[dict[str, Any]],
     *, strategy_service_name: str = "strategy-engine",
 ) -> dict[str, Any]:
+    if bot.get("strategy_code") in MOMENTUM_REFERENCE_CODES:
+        service = _service_by_name(data, "momentum-paper") or {}
+        details = dict(service.get("details") or {})
+        heartbeat_at = str(service.get("observed_at") or "")
+        age = _seconds_since_eastern_label(heartbeat_at)
+        status = str(service.get("effective_status", service.get("status", "unknown"))).lower()
+        fresh = age is not None and 0 <= age <= 90
+        healthy = (fresh and status == "healthy"
+                   and details.get("streamer_connected") == "true"
+                   and details.get("trade_conditions_verified") == "true")
+        return {
+            "state": "PAPER REFERENCE" if healthy else "UNKNOWN" if not fresh else "DEGRADED",
+            "detail": ("Warning paper reference feed is healthy; this is not LIVE account status."
+                       if healthy else "Warning paper reference feed health is not verified."),
+            "color": "#5fff8d" if healthy else "#ffcc5b",
+            "latest_decision_at": "", "latest_bot_tick_at": "",
+            "latest_market_data_at": "", "latest_heartbeat_at": heartbeat_at,
+            "watchlist_count": len(bot.get("watchlist", [])),
+            "position_count": len(bot.get("positions", [])), "tracked_bar_count": None,
+            "data_health": {"status": "healthy" if healthy else "degraded" if fresh else "unknown",
+                            "execution_mode": "paper", "broker_route": "none"},
+        }
     market_data_source = ControlPlaneRepository._market_data_source_label(str(bot.get("provider", "") or ""))
     strategy_service = _service_by_name(data, strategy_service_name) or {}
     market_data = data.get("market_data", {})
