@@ -200,9 +200,15 @@ def test_malformed_row_is_isolated_without_known_partial_total_or_lost_good_row(
     original = deepcopy((warning, live))
     html = cp._render_momentum_page({'bots': [], 'recent_orders': []}, live=live, warnings=[warning],
                                    owner={'status': 'UNKNOWN'}, metrics={'status': 'UNKNOWN'})
-    assert '<strong>READABLE</strong>' in html and '<strong>LIVEGOOD</strong>' in html
+    # 06:28 removes reference trades, not readable LIVE siblings or the signal tape.
+    assert '<strong>READABLE</strong>' not in html
+    assert '<strong>LIVEGOOD</strong>' in html
     assert '<td>TAPEGOOD</td>' in html
+    assert 'Warning method' not in html and 'REFERENCE' not in html
     assert 'Live row data is incomplete' in html and 'Warning history UNKNOWN' in html
+    assert '<span>Open</span><strong>UNKNOWN</strong>' in html
+    assert '<span>Completed trades</span><strong>UNKNOWN</strong>' in html
+    assert 'UNKNOWN. No total calculated. Readable rows shown; completed count UNKNOWN.' in html
     assert '<strong>$+9999.00</strong>' not in html and 'Day total: $+9999' not in html
     assert 'No open positions' not in html
     assert (warning, live) == original

@@ -108,12 +108,25 @@ def test_partial_unknown_episode_remains_visible_without_false_flat_or_zero():
 
 
 def test_actual_atr_and_momentum_pages_share_workspace_shell_and_nav(monkeypatch):
+    original_build_app = cp.build_app
+
+    def with_atr_registration(*args, **kwargs):
+        # The shared MOM fixture otherwise configures no ATR bot; a 200 fallback
+        # is not an ATR workspace and cannot establish component parity.
+        kwargs['settings'] = kwargs['settings'].model_copy(update={
+            'strategy_schwab_1m_v2_enabled': True})
+        return original_build_app(*args, **kwargs)
+
+    monkeypatch.setattr(cp, 'build_app', with_atr_registration)
     app, _, redis = app_fixture(monkeypatch, with_fill=False)
     with TestClient(app) as client:
         app.state.repository.redis = redis
+        bots = client.get('/api/bots').json()['bots']
+        assert any(bot['strategy_code'] == 'schwab_1m_v2' for bot in bots)
         atr = client.get('/bot/1m-schwab-v2')
         momentum = client.get('/bot/momentum')
     assert atr.status_code == momentum.status_code == 200
+    assert 'Bot not initialized' not in atr.text
     for component in ('class="shell"', 'class="sidebar"', 'class="brand"', 'class="metric-grid"',
                       'class="workspace"', 'class="panel-header"', 'class="nav-strip"'):
         assert component in atr.text and component in momentum.text
