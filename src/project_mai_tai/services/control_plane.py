@@ -90,13 +90,14 @@ EASTERN_TZ = ZoneInfo("America/New_York")
 
 def _atr_episode_fill_ledger(
     recent_fills: list[dict[str, Any]], *, unattributed_exits: list[dict[str, Any]] | None = None,
+    fills_read_status: str | None = None,
 ) -> tuple[list[dict], float] | None:
     """Return proven rows/P&L; partial results require an unresolved-exit collector."""
-    if not recent_fills or len(recent_fills) >= 1000:
+    if (fills_read_status is not None and fills_read_status != "READABLE") or len(recent_fills) >= 1000:
         return None
     fills = [row for row in recent_fills if row.get("strategy_code") == "schwab_1m_v2"]
     if not fills:
-        return None
+        return ([], 0.0) if fills_read_status == "READABLE" else None
     episodes: dict[tuple[str, str, str], dict[str, Any]] = {}
     uncertain_episodes: set[tuple[str, str, str]] = set()
     unknown: dict[tuple[str, str], dict[str, Any]] = {}
@@ -959,6 +960,7 @@ class ControlPlaneRepository:
             recent_intents=db_state["recent_intents"],
             recent_orders=db_state["recent_orders"],
             recent_fills=db_state["recent_fills"],
+            fills_read_status=db_state.get("recent_fills_read_status", "UNKNOWN"),
             recent_trade_coach_reviews=db_state["recent_trade_coach_reviews"],
             recent_bar_decisions=db_state["recent_bar_decisions"],
             open_orders=db_state["open_orders"],
@@ -1080,6 +1082,7 @@ class ControlPlaneRepository:
             recent_intents=db_state["recent_intents"],
             recent_orders=db_state["recent_orders"],
             recent_fills=db_state["recent_fills"],
+            fills_read_status=db_state.get("recent_fills_read_status", "UNKNOWN"),
             recent_trade_coach_reviews=db_state["recent_trade_coach_reviews"],
             recent_bar_decisions=db_state["recent_bar_decisions"],
             open_orders=db_state["open_orders"],
@@ -1884,6 +1887,7 @@ class ControlPlaneRepository:
         open_orders: list[dict[str, Any]],
         persisted_snapshots: dict[str, Any],
         virtual_positions: list[dict[str, Any]] | None = None,
+        fills_read_status: str | None = None,
     ) -> list[dict[str, Any]]:
         registrations = configured_strategy_registrations(self.settings)
         ordered_codes = [registration.code for registration in registrations]
@@ -2227,7 +2231,10 @@ class ControlPlaneRepository:
             )
             if code == "schwab_1m_v2":
                 unattributed_exits: list[dict[str, Any]] = []
-                ledger = _atr_episode_fill_ledger(recent_fills, unattributed_exits=unattributed_exits)
+                ledger = _atr_episode_fill_ledger(
+                    recent_fills, unattributed_exits=unattributed_exits,
+                    fills_read_status=fills_read_status,
+                )
                 if ledger is None:
                     bot_views[-1]["closed_today_source"] = "UNKNOWN_FILL_EPISODE_COVERAGE"
                     bot_views[-1]["closed_today"] = []
@@ -2752,6 +2759,8 @@ class ControlPlaneRepository:
         recent_intents: list[dict[str, Any]] = []
         recent_orders: list[dict[str, Any]] = []
         recent_fills: list[dict[str, Any]] = []
+        recent_fills_read_status = "UNKNOWN"
+        recent_fills_raw_count: int | None = None
         recent_trade_coach_reviews: list[dict[str, Any]] = []
         recent_bar_decisions: list[dict[str, Any]] = []
         latest_strategy_bars: dict[str, dict[str, Any]] = {}
@@ -3020,12 +3029,14 @@ class ControlPlaneRepository:
                 }
                 entry_class_by_id = {row.id: row.payload.get("entry_classification")
                                      for row in recent_order_rows if isinstance(row.payload, dict)}
-                for fill in session.scalars(
+                fill_rows = session.scalars(
                     select(Fill)
                     .where(Fill.filled_at >= session_start, Fill.filled_at < session_end)
                     .order_by(desc(Fill.filled_at))
                     .limit(1000)
-                ).all():
+                ).all()
+                recent_fills_raw_count = len(fill_rows)
+                for fill in fill_rows:
                     strategy = strategy_lookup.get(fill.strategy_id)
                     account = account_lookup.get(fill.broker_account_id)
                     fill_payload = fill.payload if isinstance(fill.payload, dict) else {}
@@ -3059,6 +3070,10 @@ class ControlPlaneRepository:
                             "broker_provider": account.provider if account else "",
                         }
                     )
+                # Count before conversion and hidden-symbol filtering: neither
+                # dropped evidence nor a capped query proves an empty day.
+                if len(recent_fills) == recent_fills_raw_count and recent_fills_raw_count < 1000:
+                    recent_fills_read_status = "READABLE"
 
                 if self.settings.trade_coach_enabled:
                     for review in session.scalars(
@@ -3358,6 +3373,7 @@ class ControlPlaneRepository:
                     for entry in blacklist_entries
                 ]
         except Exception as exc:
+            recent_fills_read_status = "UNKNOWN"
             errors.append(f"database:{exc}")
 
         counts["skipped_database_rows"] = len(row_warnings)
@@ -3379,6 +3395,8 @@ class ControlPlaneRepository:
             "recent_intents": recent_intents,
             "recent_orders": recent_orders,
             "recent_fills": recent_fills,
+            "recent_fills_read_status": recent_fills_read_status,
+            "recent_fills_raw_count": recent_fills_raw_count,
             "recent_trade_coach_reviews": recent_trade_coach_reviews,
             "recent_bar_decisions": recent_bar_decisions,
             "latest_strategy_bars": latest_strategy_bars,
