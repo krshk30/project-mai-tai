@@ -5137,10 +5137,21 @@ def _compact_bot_card(
 def _momentum_live_dashboard_view(data: dict[str, Any], live: dict[str, Any],
                                   owner: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
     ledger = _momentum_page_ledger_copy({**live, "strategy_code": MOMENTUM_LIVE_CODE})
+    def valid_position(row: dict[str, Any]) -> bool:
+        try:
+            quantity = Decimal(str(row.get("remaining_quantity")))
+            entry = Decimal(str(row.get("entry_price")))
+            return (bool(row.get("symbol") or row.get("ticker"))
+                    and str(row.get("account_name", "")).startswith("live:")
+                    and quantity.is_finite() and quantity > 0 and entry.is_finite() and entry > 0)
+        except (ValueError, ArithmeticError):
+            return False
+
     known = (live.get("strategy_code") == MOMENTUM_LIVE_CODE
              and live.get("source") == "strategy_owned_broker_fills"
              and ledger.get("status") == "READABLE" and not ledger.get("daily_pnl_partial")
-             and not ledger.get("page_positions_incomplete") and not ledger.get("page_closed_today_incomplete"))
+             and not ledger.get("page_positions_incomplete") and not ledger.get("page_closed_today_incomplete")
+             and all(valid_position(row) for row in ledger["positions"]))
     pnl = None
     if known:
         try:
@@ -5148,6 +5159,8 @@ def _momentum_live_dashboard_view(data: dict[str, Any], live: dict[str, Any],
             pnl = str(value) if value.is_finite() else None
         except (ValueError, ArithmeticError):
             pass
+    if pnl is None:
+        known = False
     provenance_known = (live.get("strategy_code") == MOMENTUM_LIVE_CODE
                         and live.get("source") == "strategy_owned_broker_fills")
     positions = [{**row, "quantity": row.get("remaining_quantity", "UNKNOWN"),
