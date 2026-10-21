@@ -25,7 +25,10 @@ It records exact method and AST hashes, literal cache-staleness constants and
 byte-equal JSON offer calls: symbol, strategy, trigger, ns, logical ID, retained
 payload hash and forwarded volume. Inputs are all retained warning DETECTED rows
 from the hashed October 20 CSV, plus the exact AMOD October 21 08:15 row when
-delivered. The companion test also compares the current bound service method.
+delivered. tests/acceptance/test_momold1_retained_acceptance.py preserves every
+actual assertion, including comparison to the current bound service method.
+Portable unit controls use explicitly SYNTH records and controlled source copies;
+they do not require an untracked export or the pinned historical git object.
 
 Observation time is the retained sealed observed_decision_ns; no current-clock
 fallback exists. Cache absent/fresh/exact-boundary/stale/future cases are explicitly
@@ -128,8 +131,10 @@ broker account. Existing paper broker rows, if any, are retained rather than del
 Existing reconciliation findings are reported, not erased to make the run green.
 
 SYNTH fixture tests use UUIDs 000...001/002 explicitly labeled synthetic. They
-cannot satisfy tonight-copy acceptance. The actual-copy test fails explicitly if
-the copy/manifest is missing. This protocol covers selected local SQLite boot
+cannot satisfy tonight-copy acceptance. The actual-copy test in the separate
+acceptance module fails explicitly if the copy/manifest is missing. Unit tests
+also verify missing-input refusal using controlled temporary paths, without
+depending on an actual export. This protocol covers selected local SQLite boot
 readers only: Redis restore, actual LIVE actor boot, PostgreSQL dialect behavior,
 external provider health and production boot remain separate acceptance evidence.
 
@@ -139,12 +144,22 @@ Workdir /private/tmp/mai-tai-momold1-20261021; paths below are requested inputs,
 not assertions that those files exist. Choose fresh receipt filenames.
 
 ```sh
-env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS -u MAI_TAI_DATABASE_URL -u DATABASE_URL -u PGDSN -u PGPASSWORD PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -vv --tb=long tests/unit/test_momold1_live_proofs.py tests/unit/test_momold1_copy_boot_proofs.py
+env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS -u MAI_TAI_DATABASE_URL -u DATABASE_URL -u PGDSN -u PGPASSWORD PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -vv --tb=long tests/unit/test_momold1_live_proofs.py tests/unit/test_momold1_copy_boot_proofs.py tests/unit/test_momold1_live_dashboard.py tests/unit/test_momold1_retirement.py tests/unit/test_momentum_paper_service.py
+env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS -u MAI_TAI_DATABASE_URL -u DATABASE_URL -u PGDSN -u PGPASSWORD PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -vv --tb=long tests/acceptance/test_momold1_retained_acceptance.py
 /Users/velkris/Projects/project-mai-tai/.venv/bin/python scripts/momold1_live_offer_proof.py --amod /Users/velkris/.codex/task-queues/analysis/MOMOLD1-EXPORT-1020/amod_warning_detected_1021_0815.json --output /Users/velkris/.codex/task-queues/analysis/MOMOLD1-MUST1-OFFER-PROOF-20261021.json
 env -u MAI_TAI_DATABASE_URL -u DATABASE_URL -u PGDSN -u PGPASSWORD PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python scripts/momold1_copy_boot_proof.py --copy /Users/velkris/.codex/task-queues/analysis/MOMOLD1-TONIGHT-COPY/retained.sqlite --manifest /Users/velkris/.codex/task-queues/analysis/MOMOLD1-TONIGHT-COPY/manifest.json --output /Users/velkris/.codex/task-queues/analysis/MOMOLD1-MUST3-COPY-BOOT-20261021.json
 ```
 
-Set MAI_TAI_MOMOLD1_AMOD_EXPORT, MAI_TAI_MOMOLD1_TONIGHT_COPY and
+Run the portable unit command after the full slot is released. Run the whole
+mandatory acceptance module only after actual AMOD and tonight-copy delivery;
+no filters, skips or unit-focused pass can stand in for its three actual gates.
+This relocation changes resource placement, not mandatory MUST1/MUST3 scope.
+Repository testpaths=["tests"] still discovers acceptance in an unqualified full
+run; it intentionally fails closed without inputs. Do not claim tests/unit is
+the entire repository's acceptance or add a new exclusion to an approved full run.
+
+Set MAI_TAI_MOMOLD1_1020_EXPORT (optional full CSV path override),
+MAI_TAI_MOMOLD1_AMOD_EXPORT, MAI_TAI_MOMOLD1_TONIGHT_COPY and
 MAI_TAI_MOMOLD1_TONIGHT_MANIFEST to the delivered files for the actual-input tests.
 Missing required inputs intentionally fail their must-gates; no skips or SYNTH
 substitution clear them. Main reviews differences/results and final composition.

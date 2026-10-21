@@ -1,25 +1,26 @@
-"""MOMOLD1 MUST1/2. Actual retained call-boundary inputs; SYNTH owner transport.
+"""Portable SYNTH offer contracts and MUST2 owner transport controls.
 
-Missing actual AMOD input is an explicit gate failure, never a skipped pass.
-Nothing here claims native order acceptance or current installed-box ownership.
+Mandatory actual MUST1 inputs live in tests/acceptance/test_momold1_retained_acceptance.py.
+These unit controls cannot satisfy retained-input or installed-box acceptance.
 """
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
-import os
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
 from scripts.momold1_live_offer_proof import (
-    ET, EXPORT, compare, load_records, offer_method, record_calls, sha, source_pair,
+    APP, compare, load_records, offer_method, record_calls,
 )
 from project_mai_tai.events import MarketDataSubscriptionEvent
 from project_mai_tai.momentum_live.admission import EpisodeLedger, Route, Signal
 from project_mai_tai.momentum_live.owner_proof import OwnerProofPublisher, replace_quote_owner
 from project_mai_tai.momentum_paper.engine import MomentumPaperEngine
+from project_mai_tai.momentum_paper.models import MomentumTapeRecord
 from project_mai_tai.momentum_paper.warning_consumer import MomentumWarningConsumer
 from project_mai_tai.services.momentum_paper_app import MomentumPaperService
 from project_mai_tai.settings import Settings
@@ -29,13 +30,23 @@ from tests.unit.test_momwarn1_gateway import event, service as gateway_service
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_actual_1020_warning_detected_offer_bytes_match_pre_post_and_bound_method():
-    path = EXPORT / "momentum_paper_events_1020.csv"
-    assert sha(path.read_bytes()) == "30ab970778f89bcd1dcaff783f04a30a1c61735081658c3bce3db7d8d572cb1c"
-    records = load_records(path)
-    assert all(str(record.session_date) == "2026-10-20" for record in records)
-    pre, post = source_pair(ROOT)
-    report = compare(pre, post, records)
+@pytest.fixture
+def synth_records():
+    now = datetime(2026, 10, 21, 14, tzinfo=UTC)
+    stamp = int(now.timestamp() * 1e9)
+    return [MomentumTapeRecord(event_key=f"SYNTH:{code}:DETECTED", logical_id=f"SYNTH:{code}",
+        strategy_code=code, event_type="DETECTED", session_date=date(2026, 10, 21),
+        symbol="SYNTH", observed_at=now, payload={"observed_decision_ns": stamp,
+            "detect": {"price": "2.125", "sip_ts_ms": stamp // 1_000_000},
+            "reference": {"price": "1.50", "sip_ts_ms": stamp // 1_000_000 - 1000}})
+        for code in ("momentum_30s_warn", "momentum_60s_warn")]
+
+
+def test_synth_offer_copy_equality_and_extracted_method_match_bound_method(synth_records):
+    records = synth_records
+    post = (ROOT / APP).read_bytes()
+    # Controlled identical source copies test the proof machinery, not 99fc parity.
+    report = compare(post, post, records)
     assert report["equal"] and report["records"] > 0
     method, metadata = offer_method(post)
     for case in report["cache_cases"]:
@@ -49,25 +60,35 @@ def test_actual_1020_warning_detected_offer_bytes_match_pre_post_and_bound_metho
         assert all(row["day_volume"] == expected_volume for row in report["cache_cases"][case]["post"])
 
 
-def test_actual_amod_1021_0815_offer_bytes_require_exact_retained_payload():
-    path = Path(os.environ.get("MAI_TAI_MOMOLD1_AMOD_EXPORT",
-        str(EXPORT / "amod_warning_detected_1021_0815.json")))
-    assert path.is_file(), f"MUST1 BLOCKED: exact retained AMOD payload not delivered: {path}"
-    records = [record for record in load_records(path) if record.symbol == "AMOD"
-        and datetime.fromtimestamp(record.payload["observed_decision_ns"] / 1e9, UTC)
-        .astimezone(ET).strftime("%Y-%m-%d %H:%M") == "2026-10-21 08:15"]
-    assert records, "MUST1 BLOCKED: delivered file lacks exact AMOD 10-21 08:15 DETECTED"
-    assert compare(*source_pair(ROOT), records)["equal"]
-
-
-def test_synth_offer_mutation_is_detected_without_modifying_source():
-    pre, post = source_pair(ROOT)
+def test_synth_offer_mutation_is_detected_without_modifying_source(synth_records):
+    pre = post = (ROOT / APP).read_bytes()
     needle = b"day_volume=volume, now_ns=now_ns"
     assert needle in post
     changed = post.replace(needle, b"day_volume=None, now_ns=now_ns", 1)
-    report = compare(pre, changed, load_records(EXPORT / "momentum_paper_events_1020.csv"))
+    report = compare(pre, changed, synth_records)
     assert report["equal"] is False
     assert report["cache_cases"]["fresh"]["equal"] is False
+
+
+def test_missing_retained_input_is_refused_without_synthetic_fallback(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        load_records(tmp_path / "missing-retained.json")
+
+
+def test_empty_retained_input_is_refused_without_vacuous_pass(tmp_path):
+    path = tmp_path / "SYNTH-empty.json"
+    path.write_text("[]")
+    with pytest.raises(ValueError, match="no retained warning DETECTED records"):
+        load_records(path)
+
+
+@pytest.mark.parametrize("sealed_ns", [None, "1792591200000000000", -1])
+def test_unusable_sealed_clock_is_refused_without_current_clock_fallback(tmp_path, sealed_ns):
+    path = tmp_path / "SYNTH-invalid-clock.json"
+    path.write_text(json.dumps([{"event_type": "DETECTED", "strategy_code": "momentum_30s_warn",
+        "payload": {"observed_decision_ns": sealed_ns, "detect": {"price": "2"}}}]))
+    with pytest.raises(ValueError, match="retained observed_decision_ns required"):
+        load_records(path)
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,6 @@
 """Authored SYNTH SQLite protocol tests; actual tonight-copy gate is separate."""
 
 import json
-import os
-from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -65,13 +63,15 @@ def test_copy_manifest_refuses_missing_or_unproven_inputs(synth_package, fault):
         run_copy(copy, manifest)
 
 
-def test_actual_tonight_copy_is_required_for_must3_acceptance():
-    copy_value = os.environ.get("MAI_TAI_MOMOLD1_TONIGHT_COPY")
-    manifest_value = os.environ.get("MAI_TAI_MOMOLD1_TONIGHT_MANIFEST")
-    assert copy_value and manifest_value, "MUST3 BLOCKED: actual tonight copy and manifest not delivered"
-    copy, manifest = Path(copy_value), Path(manifest_value)
-    assert copy.is_file() and manifest.is_file(), "MUST3 BLOCKED: actual copied input files missing"
-    assert json.loads(manifest.read_text())["kind"] == "ACTUAL_TONIGHT_COPY"
-    result = run_copy(copy, manifest)
-    assert result["must3"] == "LOCAL_COPY_READERS_COMPLETED"
-    assert result["legacy_rows_before"] == result["legacy_rows_after"]
+def test_missing_copy_manifest_is_refused_without_creating_an_empty_fixture(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        run_copy(tmp_path / "missing.sqlite", tmp_path / "missing-manifest.json")
+
+
+def test_missing_copied_database_is_refused_without_creating_an_empty_fixture(tmp_path):
+    manifest = tmp_path / "SYNTH-manifest.json"
+    manifest.write_text(json.dumps({"kind": "SYNTH_FIXTURE", "sqlite_sha256": "0" * 64}))
+    missing = tmp_path / "missing.sqlite"
+    with pytest.raises(FileNotFoundError):
+        run_copy(missing, manifest)
+    assert not missing.exists()
