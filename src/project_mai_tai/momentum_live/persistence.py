@@ -153,7 +153,7 @@ class LivePersistence:
         order.status = "aborted"
         order.payload = {**order.payload, "momlive_exit_never_dispatched": True}
 
-    def _unsent_entry(self, session, request):
+    def _unsent_entry(self, session, request, *, local_permit=None):
         """Lock and prove the current prewire version, never classify a lost ACK."""
         episode_id = request.metadata["episode_id"]
         parent = session.scalar(select(TradeIntent).where(
@@ -188,7 +188,11 @@ class LivePersistence:
                 or metadata.get("episode_id") != episode_id
                 or metadata.get("momlive_strategy") != STRATEGY_CODE
                 or metadata.get("limit_price") != request.metadata.get("limit_price")
-                or "bot_control_permit" in metadata or "bot_control_permit" in request.metadata
+                or (local_permit is None and ("bot_control_permit" in metadata or "bot_control_permit" in request.metadata)
+                    or local_permit is not None and (
+                        not isinstance(local_permit, str) or not local_permit
+                        or metadata.get("bot_control_permit") != local_permit
+                        or request.metadata.get("bot_control_permit") != local_permit))
                 or "momcancel1_ack_identity" in metadata
                 or "momlive_terminal_broker_event" in metadata):
             raise Refusal("prewire_settlement_dispatch_or_owner_UNKNOWN")
@@ -253,6 +257,30 @@ class LivePersistence:
         parent.status = "cancelled"
         parent.payload = {**payload, "momlive_episode": {**episode, "state": "terminal_no_fill"},
                           "momstuck2_refusal": receipt}
+
+    def refuse_local_entry(self, session, request, reason, context, *, permit, expected_episode):
+        """Only the live runtime's consumed exact no-dispatch receipt calls this.
+
+        Not a boot classifier, not generic exception/report settlement. Preserve
+        permit audit; never permit this path after any native transport attempt.
+        """
+        parent, order, account, payload, episode, metadata = self._unsent_entry(
+            session, request, local_permit=permit)
+        if (parent.quantity != request.quantity
+                or not isinstance(expected_episode, dict) or episode != expected_episode
+                or episode.get("state") != "submitting" or episode.get("route") != account.provider
+                or type(episode.get("first_submit_ns")) is not int or episode["first_submit_ns"] <= 0
+                or {k: v for k, v in metadata.items() if k != "bot_control_prepared_at"} != request.metadata):
+            raise Refusal("mombuffer1_local_no_dispatch_preimage_changed")
+        receipt = {"source": "exact_live_native_boundary_before_first_transport", "reason": reason,
+                   "permit_retained": permit is not None,
+                   "context": {key: str(value) for key, value in context.items()}}
+        order.status = "aborted"
+        order.payload = {**metadata, "momlive_entry_never_dispatched": True,
+                         "mombuffer1_no_dispatch": receipt}
+        parent.status = "cancelled"
+        parent.payload = {**payload, "momlive_episode": {**episode, "state": "terminal_no_fill"},
+                          "mombuffer1_no_dispatch": receipt}
 
     def abandon_unsent_entry(self, session, episode_id: str) -> bool:
         """Client-only proof for a claimed reservation that never reached a wire permit."""

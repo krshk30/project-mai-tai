@@ -13,7 +13,7 @@ from project_mai_tai.momentum_live.admission import EpisodeLedger, Refusal, Rout
 from project_mai_tai.momentum_live.entry_reprice import (
     MAX_PRICE_UPDATES, UnsentEntryConflict, price_changed, validate_entry_reprice,
 )
-from project_mai_tai.momentum_live.entry_wire import entry_wire_check
+from project_mai_tai.momentum_live.entry_wire import LocalEntryNoDispatch, entry_wire_check
 
 logger = logging.getLogger("momentum-live")
 
@@ -35,6 +35,7 @@ class ExecutionPorts:
     entry_metadata: Callable[[Signal], dict[str, str]] | None = None
     refuse_unsent_entry: Callable[[OrderRequest, str, dict], Awaitable[None]] | None = None
     reprice_unsent_entry: Callable[[OrderRequest, OrderRequest, dict | None], Awaitable[None]] | None = None
+    refuse_local_entry: Callable[[OrderRequest, object], Awaitable[None]] | None = None
 
 
 @dataclass
@@ -247,11 +248,31 @@ class LiveEntryExecutor:
                     signal.symbol, episode.episode_id, exc, context["ask"], context["ask_age_ms"],
                     signal.signal_price, context["cap"], context["limit"], route.value,
                 )
-                raise RuntimeError(str(exc)) from exc
+                failure = RuntimeError(str(exc))
+                failure.refusal_context = context
+                raise failure from exc
             return context
 
-        with entry_wire_check(request, validate_wire):
-            reports = await self.ports.submit(request)
+        with entry_wire_check(request, validate_wire, episode=self._snapshot(episode.episode_id)) as attempt:
+            try:
+                reports = await self.ports.submit(request)
+            except LocalEntryNoDispatch:
+                if attempt.proof is None or attempt.dispatched:
+                    raise
+                reports = None
+            # Adapters may map the typed local refusal into a client report.
+            # The in-memory transport receipt, NEVER report text, is authority.
+            if attempt.proof is not None:
+                if self.ports.refuse_local_entry is None:
+                    raise Refusal("mombuffer1_local_no_dispatch_settlement_unavailable")
+                await self.ports.refuse_local_entry(request, attempt.proof)
+                self.book.reconcile(episode.episode_id, cumulative_filled=Decimal(0), cumulative_exited=Decimal(0),
+                    now_ns=int(self.ports.clock().timestamp()*1e9), terminal_entry=True)
+                await self.ports.save_episode(self._snapshot(episode.episode_id))
+                logger.info("[MOMBUFFER1-NO-DISPATCH] symbol=%s episode=%s settlement=terminal_no_fill "
+                            "permit=retained proof=exact_native_boundary reason=%s",
+                            signal.symbol, episode.episode_id, attempt.proof.reason)
+                raise Refusal(attempt.proof.reason)
         result = await self.ports.record(request, reports)
         if route == Route.SCHWAB and any(r.event_type == "rejected" and r.origin == "broker" for r in reports):
             self.schwab_refusals += 1

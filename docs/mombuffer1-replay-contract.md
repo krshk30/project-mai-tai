@@ -1,5 +1,9 @@
 # MOMBUFFER1 author / actual-input replay contract
 
+Sequel notice: `mombuffer1-review-fixes.md` supersedes ea24's global inherited
+ContextVar guard and uncertain retention for an exact proven local no-dispatch
+refusal. Raw replay/census contract remains unchanged. All sequel gates UNRUN.
+
 Author-only 2026-10-21; no test, application import, replay, benchmark or broker execution performed by the author. Base is exact556775899b1014db284afbd022cfe26fd4dec14a. Operator TOP13:11:22 allows tonight ONLY after all gates; Fix A/SPHL/MOMSTUCK2 must not wait for this qualification. Main assessment a8bdba6a and reviewer ACK13:17:43 accepted bounded same-row repricing. Existing authorized exports LANDED TOP13:27:08; read-only local CSV aggregation only, no duplicate collection. Frozen556 and824 are not edited.
 
 ## Prewire update and race review

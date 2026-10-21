@@ -157,6 +157,8 @@ async def test_sphl_shaped_refusal_settles_both_rows_releases_slot_and_admits_ne
     assert (await h.executor.admit(signal))[1] is None
     assert not h.sent  # Same SPHL source cannot be resubmitted after release.
     h.ports.durable_order, h.ports.save_episode = h.runtime._prepare, h.runtime._save
+    # NEXT is a separate valid admission, not another above-cap stimulus.
+    h.quote.update(ask=D("3.00"), received_at=h.now[0])
     _, request, _ = await h.executor.admit(replace(signal, symbol="NEXT", source_id="SYNTHETIC-next"))
     assert request.symbol == "NEXT" and len(h.sent) == 1 and h.runtime.book._active_count == 2
 

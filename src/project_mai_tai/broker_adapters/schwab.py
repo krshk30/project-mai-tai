@@ -644,6 +644,8 @@ class SchwabBrokerAdapter:
             if request.intent_type == "cancel":
                 return await self._cancel_order(account, request)
 
+            from project_mai_tai.momentum_live.entry_wire import entry_wire_guard
+            guard = entry_wire_guard(request)
             status_code, headers, response = await self._authorized_request_json(
                 "POST",
                 f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders",
@@ -654,6 +656,7 @@ class SchwabBrokerAdapter:
                     if self._is_bracket_request(request)
                     else self._build_order_payload(request)
                 ),
+                **({"entry_guard": guard} if guard is not None else {}),
             )
         except RuntimeError as exc:
             return [
@@ -1274,6 +1277,7 @@ class SchwabBrokerAdapter:
         path: str,
         *,
         body: dict[str, object] | None = None,
+        entry_guard=None,
     ) -> tuple[int, dict[str, str], object]:
         token = await self._get_access_token()
         status_code, headers, payload = await self._request_json(
@@ -1281,6 +1285,7 @@ class SchwabBrokerAdapter:
             path,
             access_token=token,
             body=body,
+            **({"entry_guard": entry_guard} if entry_guard is not None else {}),
         )
         if status_code == 401 and self._refresh_token and self.client_id and self.client_secret:
             token = await self._get_access_token(force_refresh=True)
@@ -1289,6 +1294,7 @@ class SchwabBrokerAdapter:
                 path,
                 access_token=token,
                 body=body,
+                **({"entry_guard": entry_guard} if entry_guard is not None else {}),
             )
         if status_code < 400:
             self.last_error = ""
@@ -1389,6 +1395,7 @@ class SchwabBrokerAdapter:
         *,
         access_token: str,
         body: dict[str, object] | None = None,
+        entry_guard=None,
     ) -> tuple[int, dict[str, str], object]:
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -1399,7 +1406,8 @@ class SchwabBrokerAdapter:
             headers["Content-Type"] = "application/json"
             data = json.dumps(body).encode("utf-8")
         url = f"{self.base_url}{path}"
-        return await asyncio.to_thread(self._blocking_request_json, url, method, headers, data)
+        return await asyncio.to_thread(self._blocking_request_json, url, method, headers, data,
+                                      **({"entry_guard": entry_guard} if entry_guard is not None else {}))
 
     async def _token_request_json(
         self,
@@ -1420,16 +1428,20 @@ class SchwabBrokerAdapter:
         method: str,
         headers: dict[str, str],
         data: bytes | None,
+        *, entry_guard=None,
     ) -> tuple[int, dict[str, str], object]:
-        from project_mai_tai.momentum_live.entry_wire import entry_wire_active, validate_entry_wire
-        if entry_wire_active() and method.upper() == "POST" and url.rstrip("/").endswith("/orders") and data:
+        if entry_guard is not None:
+            if method.upper() != "POST" or not url.rstrip("/").endswith("/orders") or not data:
+                raise RuntimeError("mombuffer1_guard_transport_shape_unknown")
             body = json.loads(data)
             legs = body.get("orderLegCollection") or []
-            validate_entry_wire(quantity=legs[0].get("quantity") if len(legs) == 1 else None,
-                                limit=body.get("price"),
-                                symbol=(legs[0].get("instrument") or {}).get("symbol") if len(legs) == 1 else None)
+            entry_guard.check(quantity=legs[0].get("quantity") if len(legs) == 1 else None,
+                              limit=body.get("price"),
+                              symbol=(legs[0].get("instrument") or {}).get("symbol") if len(legs) == 1 else None)
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
+            if entry_guard is not None:
+                entry_guard.before_transport()
             with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:
                 response_headers = dict(response.headers.items())
                 raw = self._decode_http_body(response.read(), response_headers)

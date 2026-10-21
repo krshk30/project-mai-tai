@@ -19,6 +19,7 @@ from tests.unit.test_webull_adapter import fake_sdk  # noqa: F401
 def priced(env):
     h = env
     h.ports.reprice_unsent_entry = h.runtime._reprice_unsent_entry
+    h.ports.refuse_local_entry = h.runtime._refuse_local_entry
     return h
 
 
@@ -284,9 +285,9 @@ async def test_possible_submit_never_reprices_or_settles_after_ack_uncertainty(p
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fault", ["price", "stale", "wire_limit", "wire_quantity"])
-async def test_readonly_last_wire_check_after_permit_never_mutates_or_settles(priced, fault):
+async def test_exact_local_no_dispatch_after_permit_is_terminal_without_global_settlement(priced, fault):
     import asyncio
-    from project_mai_tai.momentum_live.entry_wire import entry_wire_active, validate_entry_wire
+    from project_mai_tai.momentum_live.entry_wire import entry_wire_active, entry_wire_guard
 
     h = priced
     settle = AsyncMock(wraps=h.runtime._refuse_unsent_entry)
@@ -295,23 +296,37 @@ async def test_readonly_last_wire_check_after_permit_never_mutates_or_settles(pr
 
     async def delayed_control_and_transport(request):
         request.metadata["bot_control_permit"] = "SYNTHETIC-MAY_HAVE_SENT"
+        with h.service.session_factory() as session:
+            order = session.scalar(select(BrokerOrder))
+            order.payload = {**order.payload, "bot_control_permit": request.metadata["bot_control_permit"]}
+            session.commit()
         if fault == "price":
             h.quote["ask"] = D("3.01")
         elif fault == "stale":
             h.now[0] += timedelta(seconds=3)
-        # Exercise context propagation to the adapter worker, not a tick callback.
-        await asyncio.to_thread(validate_entry_wire,
+        # The owner explicitly passes its exact capability to the native worker.
+        guard = entry_wire_guard(request)
+        assert guard is not None
+        await asyncio.to_thread(guard.check,
             quantity=request.quantity + (1 if fault == "wire_quantity" else 0),
             limit="3.01" if fault == "wire_limit" else request.metadata["limit_price"], symbol=request.symbol)
         checked.append(request)
         raise AssertionError("a stale or changed wire reached transport")
 
     h.ports.submit = delayed_control_and_transport
-    with pytest.raises(RuntimeError):
+    with pytest.raises(Refusal):
         await h.executor.admit(h.signal)
-    assert not checked and not h.sent and h.runtime.book._active_count == 1
+    assert not checked and not h.sent and h.runtime.book._active_count == 0
     settle.assert_not_awaited()
-    assert durable(h)[1].payload["limit_price"] == "3.00"
+    parent, order = durable(h)
+    assert order.payload["limit_price"] == "3.00" and order.status == "aborted" and parent.status == "cancelled"
+    assert order.payload["bot_control_permit"] == "SYNTHETIC-MAY_HAVE_SENT"
+    assert order.payload["mombuffer1_no_dispatch"]["permit_retained"] is True
+    assert parent.payload["momlive_episode"]["state"] == "terminal_no_fill"
+    restored = await h.service._run_db(lambda session: h.runtime.db.restore_bundle(session,
+        h.now[0].replace(hour=0, minute=0, second=0, microsecond=0)), commit=False)
+    assert restored["episodes"][0]["state"] == "terminal_no_fill"
+    assert (await h.executor.admit(h.signal))[1] is None and not h.sent
     assert not entry_wire_active()
 
 
@@ -325,7 +340,7 @@ def test_unrelated_wire_has_no_momentum_guard_or_decimal_conversion():
 async def test_schwab_actual_blocking_boundary_checks_serialized_body(priced, monkeypatch, changed):
     import json
     from types import SimpleNamespace
-    from unittest.mock import Mock
+    from unittest.mock import MagicMock, Mock
     from project_mai_tai.broker_adapters import schwab
     from project_mai_tai.momentum_live.entry_wire import entry_wire_check
 
@@ -336,18 +351,18 @@ async def test_schwab_actual_blocking_boundary_checks_serialized_body(priced, mo
     if changed:
         body["price"] = "3.01"
     response = SimpleNamespace(headers={}, read=lambda: b"{}", getcode=lambda: 201)
-    transport = Mock()
+    transport = MagicMock()
     transport.return_value.__enter__.return_value = response
     monkeypatch.setattr(schwab.urllib.request, "urlopen", transport)
     check = Mock(return_value={})
-    with entry_wire_check(request, check):
+    with entry_wire_check(request, check) as guard:
         if changed:
             with pytest.raises(RuntimeError, match="serialized_wire_changed"):
                 adapter._blocking_request_json("https://denied.invalid/accounts/A/orders", "POST", {},
-                                               json.dumps(body).encode())
+                                               json.dumps(body).encode(), entry_guard=guard)
         else:
             assert adapter._blocking_request_json("https://denied.invalid/accounts/A/orders", "POST", {},
-                                                   json.dumps(body).encode())[0] == 201
+                                                   json.dumps(body).encode(), entry_guard=guard)[0] == 201
     check.assert_called_once()
     assert transport.call_count == int(not changed)
 
@@ -365,8 +380,9 @@ async def test_webull_actual_sdk_boundary_checks_after_instrument_wait(priced, f
     adapter = _adapter(client)
     check = Mock(return_value={}, side_effect=RuntimeError("SYNTHETIC final quote changed") if changed else None)
     monkeypatch.setattr(adapter, "_resolve_instrument_id", lambda *args: "SYNTHETIC-INSTRUMENT")
-    with entry_wire_check(request, check):
-        reports = adapter._submit_blocking(WebullAccountConfig(account_id="SYNTHETIC-ACCOUNT"), request)
+    with entry_wire_check(request, check) as guard:
+        reports = adapter._submit_blocking(WebullAccountConfig(account_id="SYNTHETIC-ACCOUNT"), request,
+                                          entry_guard=guard)
     check.assert_called_once()
     assert client.calls.get("place", 0) == int(not changed)
     assert reports[0].event_type == ("rejected" if changed else "accepted")
