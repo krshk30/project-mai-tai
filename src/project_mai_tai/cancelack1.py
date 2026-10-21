@@ -7,6 +7,7 @@ The existing full-two-account barrier needs no missing-leg waiver.
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy import or_, select
 
@@ -182,7 +183,7 @@ def load_proven_accounts(session, request, accounts, strategy_id):
                        for row in foreign_owners)
                 or any(_at(row.created_at) > request.requested_at_ms for row in foreign_owners)
                 or any(not any(child.intent_id == row.id for child in children) for row in parents)
-                or any(not _closed_order(session, row, request.requested_at_ms) for row in children)):
+                or any(not _closed_with_replacements(session, row, request.requested_at_ms) for row in children)):
             raise ValueError("cancel_obligations_foreign_closed_UNKNOWN")
         excluded_intents.update(parent_ids)
         excluded_orders.update(row.id for row in children)
@@ -295,27 +296,78 @@ def _closed_order(session, order, observed, *, replacement_linked=False):
                     and (e.event_type != latest.event_type or e.event_source != "broker"
                          or not native_terminal(e)) for e in events)):
             return False
+        if any(latest.payload.get(key) is not None and latest.payload[key] != expected
+               for key, expected in (("client_order_id", order.client_order_id),
+                                     ("broker_order_id", order.broker_order_id))):
+            return False
         status = "cancelled" if order.status == "canceled" else order.status
         event_status = "cancelled" if latest.event_type == "canceled" else latest.event_type
-        if status == "filled":
+        if fills:
+            fully_filled = status == event_status == "filled"
             account = session.get(BrokerAccount, order.broker_account_id)
             strategy = session.get(Strategy, order.strategy_id)
             managed = _bounded(session, select(OmsManagedPosition).where(
                 OmsManagedPosition.entry_order_id == order.id))
-            return bool(event_status == "filled" and fills and account and strategy and managed
-                and all(f.broker_fill_id and f.symbol == order.symbol and f.side == "buy"
+            if not all(f.broker_fill_id and f.symbol == order.symbol and f.side == "buy"
                     and f.strategy_id == order.strategy_id and f.broker_account_id == order.broker_account_id
                     and f.quantity.is_finite() and f.quantity > 0
-                    and _at(f.filled_at) <= observed - 15_000 for f in fills)
-                and sum(f.quantity for f in fills) == order.quantity
+                    and _at(f.filled_at) <= observed - 15_000 for f in fills):
+                return False
+            executed = sum(f.quantity for f in fills)
+            if (latest.payload.get("broker_fill_id") is not None
+                    and latest.payload["broker_fill_id"] not in {f.broker_fill_id for f in fills}):
+                return False
+            if not fully_filled and any(not _at(order.submitted_at) <= _at(f.filled_at) <= _at(latest.event_at)
+                                        for f in fills):
+                return False
+            for value in (latest.payload.get("filled_quantity"),
+                          _metadata(latest).get("rpg_terminal_filled_quantity")):
+                if value is not None and Decimal(str(value)) != executed:
+                    return False
+            remainder_closed = (status == event_status and status in {"cancelled", "rejected", "expired"}
+                or status == "replaced" and replacement_linked
+                    and event_status in {"cancelled", "rejected", "expired"})
+            if status == "cancelled" and event_status == "partially_filled":
+                remainder_closed = _rpg_partial_cancel(session, order, latest, executed, account, strategy)
+            # A cancelled remainder is not a zero-execution order. The executed
+            # quantity must have its own exact, fully closed managed attribution.
+            return bool(account and strategy and managed and 0 < executed <= order.quantity
+                and (remainder_closed or fully_filled and executed == order.quantity)
                 and all(m.status == "closed" and m.current_quantity == 0
                     and m.symbol == order.symbol and m.strategy_code == strategy.code
                     and m.broker_account_name == account.name
-                    and m.entry_client_order_id == order.client_order_id for m in managed))
+                    and m.entry_client_order_id == order.client_order_id
+                    and (fully_filled or m.original_quantity == executed) for m in managed))
         return bool(not fills and status in {"cancelled", "rejected", "expired", "replaced"}
             and event_status in {"cancelled", "rejected", "expired"}
             and (status == event_status or status == "replaced" and replacement_linked))
     except (ValueError, TypeError, ArithmeticError, AttributeError):
+        return False
+
+
+def _rpg_partial_cancel(session, order, event, executed, account, strategy):
+    """The existing RPG writer's terminal readback, not a bare partial-fill label."""
+    md = _metadata(event)
+    if md.get("atr_reprice_terminal_cancel") != "true" or not account or not strategy:
+        return False
+    try:
+        row = session.get(DashboardSnapshot, UUID(md["atr_reprice_readback"]))
+        job = row.payload if row is not None and row.snapshot_type == "atr_reprice_handoff" else {}
+        old = job.get("old", {})
+        old_md = old.get("metadata", {})
+        return bool(job.get("phase") == "filled" and job.get("no_rebuy") is True
+            and not job.get("replacement") and job.get("broker_status") in {"CANCELED", "CANCELLED"}
+            and Decimal(str(job.get("filled_quantity"))) == executed
+            and Decimal(str(job.get("recorded_filled_quantity"))) == executed
+            and old.get("client_order_id") == order.client_order_id
+            and old.get("symbol") == order.symbol and old.get("side") == "buy"
+            and old.get("broker_account_name") == account.name and old.get("strategy_code") == strategy.code
+            and Decimal(str(old.get("quantity"))) == order.quantity
+            and old_md.get("broker_order_id") == order.broker_order_id
+            and (old_md.get("rpg_proof_order_id") is None
+                 or old_md["rpg_proof_order_id"] == str(order.id)
+                 and old_md.get("rpg_proof_broker_id") == order.broker_order_id))
+    except (ValueError, TypeError, KeyError, ArithmeticError, AttributeError):
         return False
 
 
@@ -350,6 +402,22 @@ def _replacement_closed(session, job, symbol, observed):
         return False
 
 
+def _closed_with_replacements(session, order, observed, *, jobs=None):
+    """Share linkage proof with foreign-history and global working-BUY readers."""
+    if jobs is None:
+        jobs = _bounded(session, select(DashboardSnapshot).where(
+            DashboardSnapshot.snapshot_type == "atr_reprice_handoff",
+            or_(DashboardSnapshot.payload["old"]["client_order_id"].as_string() == order.client_order_id,
+                DashboardSnapshot.payload["replacement"]["client_order_id"].as_string() == order.client_order_id)))
+    matched = [row for row in jobs if any(isinstance(request, dict)
+        and request.get("client_order_id") == order.client_order_id
+        for request in (row.payload.get("old"), row.payload.get("replacement")))]
+    if any(not _replacement_closed(session, row.payload, order.symbol, observed) for row in matched):
+        return False
+    linked = any(row.payload.get("replacement") for row in matched)
+    return _closed_order(session, order, observed, replacement_linked=bool(linked))
+
+
 def working_buy_present(session, symbol, *, now=None):
     """All strategies/accounts; only exact persisted no-wire/closed proof exempts history."""
     observed = _at(now or datetime.now(UTC))
@@ -360,16 +428,10 @@ def working_buy_present(session, symbol, *, now=None):
     if any(not _replacement_closed(session, row.payload, symbol, observed) for row in jobs):
         return True
 
-    def closed(order):
-        linked = any(row.payload.get("replacement")
-            and any(request.get("client_order_id") == order.client_order_id
-                for request in (row.payload["old"], row.payload["replacement"])) for row in jobs)
-        return _closed_order(session, order, observed, replacement_linked=linked)
-
     orders = _bounded(session, select(BrokerOrder).where(
         BrokerOrder.symbol == symbol, BrokerOrder.side == "buy",
         or_(BrokerOrder.status.is_(None), BrokerOrder.status.notin_(terminal))))
-    if any(not closed(row) for row in orders):
+    if any(not _closed_with_replacements(session, row, observed, jobs=jobs) for row in orders):
         return True
     intents = _bounded(session, select(TradeIntent).where(
             TradeIntent.symbol == symbol, TradeIntent.side == "buy", TradeIntent.intent_type == "open",
@@ -378,7 +440,7 @@ def working_buy_present(session, symbol, *, now=None):
         if parent.status not in {"aborted", "completed", "replaced"}:
             return True
         siblings = _bounded(session, select(BrokerOrder).where(BrokerOrder.intent_id == parent.id))
-        if not siblings or any(not closed(row) for row in siblings):
+        if not siblings or any(not _closed_with_replacements(session, row, observed, jobs=jobs) for row in siblings):
             return True
     return False
 
