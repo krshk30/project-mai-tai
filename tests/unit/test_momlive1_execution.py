@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from dataclasses import replace
 from decimal import Decimal as D
+import ast
 import inspect
 import textwrap
 from types import MethodType, SimpleNamespace
@@ -155,10 +156,29 @@ async def test_no_resend_control_detects_reintroduced_second_broker_wire_mutant(
     source = textwrap.dedent(inspect.getsource(LiveEntryExecutor.admit))
     wire = "reports = await self.ports.submit(request)"
     assert source.count(wire) == 1
-    mutant = source.replace(wire, wire + "\n    await self.ports.submit(replace(request, "
-        "broker_account_name='live:orb', client_order_id=request.client_order_id+'-fallback'))")
+    anchor = ast.dump(ast.parse(wire).body[0])
+
+    class SecondWire(ast.NodeTransformer):
+        replacements = 0
+
+        def visit_Assign(self, node):
+            if ast.dump(node) != anchor:
+                return self.generic_visit(node)
+            self.replacements += 1
+            extra = ast.parse("await self.ports.submit(replace(request, "
+                "broker_account_name='live:orb', client_order_id=request.client_order_id+'-fallback'))").body[0]
+            # Keep the new call in the same lexical try/with body as the first.
+            return [node, ast.copy_location(extra, node)]
+
+    injector = SecondWire()
+    mutant = ast.fix_missing_locations(injector.visit(ast.parse(source)))
+    assert injector.replacements == 1
     namespace = dict(vars(execution), replace=replace)
     exec(compile(mutant, "<controlled-second-wire-mutant>", "exec"), namespace)
+    baseline = setup({"event_type": "rejected", "origin": "broker", "filled_quantity": D(0),
+                      "reason": "Opening transactions for this security must be placed with a broker."})
+    await baseline.executor.admit(baseline.signal)
+    assert len(baseline.sent) == 1
     env = setup({"event_type": "rejected", "origin": "broker", "filled_quantity": D(0),
                  "reason": "Opening transactions for this security must be placed with a broker."})
     env.executor.admit = MethodType(namespace["admit"], env.executor)
@@ -166,6 +186,11 @@ async def test_no_resend_control_detects_reintroduced_second_broker_wire_mutant(
     with pytest.raises(AssertionError):
         assert len(env.sent) == 1
     assert len(env.sent) == 2
+    first, second = env.sent
+    assert first.broker_account_name == "live:schwab_1m_v2" and second.broker_account_name == "live:orb"
+    assert second.client_order_id == first.client_order_id + "-fallback"
+    assert first.metadata["episode_id"] == second.metadata["episode_id"]
+    assert env.ports.durable_claim.await_count == env.ports.durable_order.await_count == 1
 
 
 @pytest.mark.asyncio
