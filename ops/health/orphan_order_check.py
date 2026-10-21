@@ -214,6 +214,7 @@ async def main() -> int:
                    if str(o.get("status", "")).upper() in WORKING and o.get("orderId")]
     our_rows: dict[str, dict] = {}
     held_by_symbol: dict[str, float] = {}
+    held_complete = False
     lookup_complete = False
     if working_ids:
         try:
@@ -243,6 +244,7 @@ async def main() -> int:
                 WHERE ba.name = :acct
                 """), {"acct": acct_name}).mappings():
                     held_by_symbol[str(r["symbol"]).upper()] = float(r["qty"] or 0)
+                held_complete = True
                 lookup_complete = aliases_known
                 if not aliases_known:
                     phone_reds.append(f"Ownership account-alias coverage UNKNOWN for {acct_name}; no manual-order exclusion")
@@ -273,6 +275,12 @@ async def main() -> int:
                 sell_qty_by_symbol[sym] = sell_qty_by_symbol.get(sym, 0.0) + float(
                     lg.get("quantity") or o.get("quantity") or 0)
     for sym, sq in sorted(sell_qty_by_symbol.items()):
+        if not held_complete:
+            finding("RED", f"Held inventory UNKNOWN account={acct_name} symbol={sym} "
+                    f"working_sell_qty={sq:g} native_ids={sell_ids_by_symbol[sym]}; "
+                    "oversell check UNKNOWN: held quantity unreadable, not confirmed zero or oversell",
+                    sell_ids_by_symbol[sym])
+            continue
         v = classify_oversell(symbol=sym, account=acct_name, working_sell_qty=sq,
                               held_qty=held_by_symbol.get(sym, 0.0))
         if v:
@@ -319,6 +327,14 @@ async def main() -> int:
         mid = None
         if last and last.bid_price and last.ask_price:
             mid = (float(last.bid_price) + float(last.ask_price)) / 2.0
+        if not lookup_complete and mid is None:
+            finding("RED", f"Ownership UNKNOWN account={acct_name} native_id={oid or 'UNKNOWN'} "
+                    f"symbol={symbol} instruction={leg.get('instruction') or 'UNKNOWN'} "
+                    f"order_type={order.get('orderType') or 'UNKNOWN'} trigger={trigger} "
+                    f"status={order.get('status') or 'UNKNOWN'} age_min={age_min:.1f}; "
+                    "POLA shape check UNKNOWN: market quote unavailable, price distance UNKNOWN; "
+                    "no confirmed stale-price, manual-order or oversell conclusion",
+                    [oid])
 
         verdict = classify_order(
             symbol=symbol,
