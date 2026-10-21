@@ -928,6 +928,10 @@ def settle_cached_protection_intent(service, session, intent):
                 or evidence.get("complete") is not True or evidence.get("truncated") is not False
                 or acquired.tzinfo is None or not 0 <= (datetime.now(UTC) - acquired).total_seconds() < 2.):
             return False
+        if filled == 0 and session.scalar(select(Fill.id).join(BrokerOrder, BrokerOrder.id == Fill.order_id).where(
+                BrokerOrder.broker_order_id == child["broker_order_id"],
+                BrokerOrder.broker_account_id == entry.broker_account_id)) is not None:
+            return False  # A zero native receipt must not contradict an existing execution.
     total = sum((Decimal(c["filled_quantity"]) for c in children), Decimal(0))
     if total == 0:
         status = "cancelled"
@@ -955,7 +959,8 @@ def settle_cached_protection_intent(service, session, intent):
                 or fills[0].strategy_id != entry.strategy_id or fills[0].symbol != intent.symbol
                 or fills[0].side != "sell" or fills[0].quantity != quantity
                 or fills[0].price != price.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
-                or fills[0].filled_at.replace(tzinfo=UTC) != filled_at.astimezone(UTC)
+                or (fills[0].filled_at.astimezone(UTC) if fills[0].filled_at.tzinfo is not None
+                    else fills[0].filled_at.replace(tzinfo=UTC)) != filled_at.astimezone(UTC)
                 or not str(fills[0].broker_fill_id or "").startswith(winner["broker_order_id"] + ":")):
             return False
         status = "filled"

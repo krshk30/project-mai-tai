@@ -21,7 +21,7 @@ Results reported: BLOCKED POM settlement callout delivered during authoring;
 source/test handoff completion reported with final immutable receipt. Main must
 update its durable queue; this author has not overwritten queue/status/LATEST.
 
-Authored: 5 production paths; 1 new test file, 12 test functions / 35 manually
+Authored: 5 production paths; 1 new test file, 12 test functions / 36 manually
 enumerated parameter cases, NOT collected or executed. No existing tests edited.
 The cache peek returns UNKNOWN immediately when another scan holds its lock.
 No provider construction, network call, query-budget claim, child fill writer,

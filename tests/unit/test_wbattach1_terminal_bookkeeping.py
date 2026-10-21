@@ -176,7 +176,8 @@ async def test_unknown_pair_never_terminalizes_or_changes_money(make_case, monke
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("damage", ["partial", "missing-ledger", "open-managed", "wrong-price", "wrong-time",
-    "wrong-intent", "wrong-base", "missing-combo", "duplicate-attempt", "wrong-managed", "foreign-account"])
+    "wrong-intent", "wrong-base", "missing-combo", "duplicate-attempt", "wrong-managed", "foreign-account",
+    "zero-conflicting-ledger"])
 async def test_ledger_and_episode_binding_are_required(make_case, monkeypatch, damage):
     case = make_case()
     assert await attach(case)
@@ -194,7 +195,7 @@ async def test_ledger_and_episode_binding_are_required(make_case, monkeypatch, d
                 "exit_base_client_order_id": entry.payload[wb.KEY]["attempts"][-1]["base"],
                 "quantity": Decimal(10), "price": Decimal(11), "filled_at": NOW,
                 "broker_order_id": "native-T"})
-    cached_adapter(case, monkeypatch, filled=2 if damage == "partial" else 10)
+    cached_adapter(case, monkeypatch, filled=2 if damage == "partial" else 0 if damage == "zero-conflicting-ledger" else 10)
     with case[1].begin() as session:
         intent = protection(session)
         metadata = dict(intent.payload["metadata"])
