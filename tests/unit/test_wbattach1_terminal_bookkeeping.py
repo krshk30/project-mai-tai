@@ -286,7 +286,7 @@ async def test_real_sync_hook_runs_after_native_poll_without_extra_broker_reads(
         sequence.append("poll")
     async def positions(**_kwargs):
         with case[1]() as session:
-            assert protection(session).status == "filled"
+            assert protection(session).status == "accepted"
         sequence.append("positions")
         return {"accounts": 1, "positions": 0}
     async def no_refresh(*_args):
@@ -296,10 +296,19 @@ async def test_real_sync_hook_runs_after_native_poll_without_extra_broker_reads(
     service.sync_broker_positions = positions
     service._poll_native_oco_exits = poll
     service._refresh_native_oco_armed_state = no_refresh
+    service.settings.strategy_schwab_1m_v2_false_flip_enabled = True
+    class Signal:
+        def set(self):
+            with case[1]() as session:
+                assert protection(session).status == "accepted"
+            sequence.append("signal")
+    monkeypatch.setattr(service, "_falseflip_signal", lambda: Signal())
     for name in ("_maybe_emit_p0a_census", "_maybe_emit_order_event_census", "_maybe_emit_broker_read_census"):
         monkeypatch.setattr(service, name, lambda: None)
     result = await service._sync_broker_state_pass(account_names=["live:orb"])
-    assert result["orders"] == 0 and sequence == ["poll", "positions"]
+    assert result["orders"] == 0 and sequence == ["poll", "positions", "signal"]
+    with case[1]() as session:
+        assert protection(session).status == "filled"
 
 
 def test_router_uses_existing_webull_cache_and_never_constructs_provider():

@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
 from math import isfinite
+from threading import Lock
 from time import monotonic
 from uuid import UUID, uuid4
 
@@ -930,7 +931,7 @@ def settle_cached_protection_intent(service, session, intent):
             return False
         if filled == 0 and session.scalar(select(Fill.id).join(BrokerOrder, BrokerOrder.id == Fill.order_id).where(
                 BrokerOrder.broker_order_id == child["broker_order_id"],
-                BrokerOrder.broker_account_id == entry.broker_account_id)) is not None:
+                BrokerOrder.broker_account_id == entry.broker_account_id).limit(1)) is not None:
             return False  # A zero native receipt must not contradict an existing execution.
     total = sum((Decimal(c["filled_quantity"]) for c in children), Decimal(0))
     if total == 0:
@@ -951,10 +952,10 @@ def settle_cached_protection_intent(service, session, intent):
             BrokerOrder.broker_order_id == winner["broker_order_id"],
             BrokerOrder.intent_id == entry.intent_id, BrokerOrder.strategy_id == entry.strategy_id,
             BrokerOrder.broker_account_id == entry.broker_account_id,
-            BrokerOrder.symbol == intent.symbol, BrokerOrder.side == "sell")).all()
+            BrokerOrder.symbol == intent.symbol, BrokerOrder.side == "sell").limit(2)).all()
         if len(orders) != 1 or (orders[0].payload or {}).get("source") != "native_oco_child_leg":
             return False
-        fills = session.scalars(select(Fill).where(Fill.order_id == orders[0].id)).all()
+        fills = session.scalars(select(Fill).where(Fill.order_id == orders[0].id).limit(2)).all()
         if (len(fills) != 1 or fills[0].broker_account_id != entry.broker_account_id
                 or fills[0].strategy_id != entry.strategy_id or fills[0].symbol != intent.symbol
                 or fills[0].side != "sell" or fills[0].quantity != quantity
@@ -973,22 +974,65 @@ def settle_cached_protection_intent(service, session, intent):
     return True
 
 
+_PROTECTION_BATCH_SIZE = 8
+_PROTECTION_BATCH_SECONDS = 0.025
+
+
+@dataclass
+class _ProtectionSweep:
+    lock: object
+    cursors: dict
+
+
 async def reconcile_cached_protection_intents(service, account_names):
     if not callable(getattr(service.broker_adapter, "cached_attach_pair_terminal", None)):
         return
-    def write(session):
-        query = select(TradeIntent).join(BrokerAccount, BrokerAccount.id == TradeIntent.broker_account_id).where(
-            TradeIntent.reason == "WBATTACH1_PROTECTION", TradeIntent.status.in_(["accepted", "pending"]),
-            BrokerAccount.provider == "webull")
-        if account_names is not None:
-            query = query.where(BrokerAccount.name.in_(account_names))
-        for intent in session.scalars(query).all():
-            try:
-                settle_cached_protection_intent(service, session, intent)
-            except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
-                # Corrupt/legacy/missing proof stays visible; no symbol/time repair.
-                continue
-    await service._run_db(write)
+    scope = None if account_names is None else tuple(sorted(set(account_names)))
+    if scope == ():
+        return
+    state = service.__dict__.setdefault("_wbattach_bookkeeping_sweep", _ProtectionSweep(Lock(), {}))
+
+    def unit():
+        # The worker owns the lock through commit, even if its awaiting task is cancelled.
+        if not state.lock.acquire(blocking=False):
+            return
+        try:
+            with service.session_factory() as session:
+                query = select(TradeIntent).join(BrokerAccount, BrokerAccount.id == TradeIntent.broker_account_id).where(
+                    TradeIntent.reason == "WBATTACH1_PROTECTION", TradeIntent.status.in_(["accepted", "pending"]),
+                    BrokerAccount.provider == "webull")
+                if scope is not None:
+                    query = query.where(BrokerAccount.name.in_(scope))
+                after, ceiling = state.cursors.get(scope, (None, None))
+                if ceiling is None:
+                    ceiling = session.scalar(query.with_only_columns(TradeIntent.id).order_by(
+                        TradeIntent.id.desc()).limit(1))
+                if ceiling is None:
+                    return
+                page = query.where(TradeIntent.id <= ceiling)
+                if after is not None:
+                    page = page.where(TradeIntent.id > after)
+                intents = session.scalars(page.order_by(TradeIntent.id).limit(_PROTECTION_BATCH_SIZE)).all()
+                deadline = monotonic() + _PROTECTION_BATCH_SECONDS
+                visited = 0
+                for intent in intents:
+                    if visited and monotonic() >= deadline:
+                        break
+                    try:
+                        settle_cached_protection_intent(service, session, intent)
+                    except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+                        pass  # UNKNOWN/legacy stays eligible on the next sweep.
+                    after = intent.id
+                    visited += 1
+                session.commit()
+                # Never publish progress from a rolled-back transaction. A frozen upper
+                # bound lets each sweep finish rather than chasing newly appended IDs.
+                complete = visited == len(intents) and (len(intents) < _PROTECTION_BATCH_SIZE or after == ceiling)
+                state.cursors[scope] = (None, None) if complete else (after, ceiling)
+        finally:
+            state.lock.release()
+
+    await asyncio.to_thread(unit)
 
 
 def _cancel_read_summary(reports):
