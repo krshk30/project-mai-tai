@@ -1,6 +1,7 @@
 """Author-only controls; existing fourteen RED nodes are not edited or reclassified PASS."""
 
 import asyncio
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -82,8 +83,24 @@ def test_existing_accepted_put_unknown_confirmation_keeps_new_identity(monkeypat
     route.test_put_accepted_confirmation_unreadable_persists_new_id_and_reconciles_under_hold(monkeypatch)
 
 
-def test_existing_above_cap_refusal_remains_visible(monkeypatch, caplog):
-    route.test_pastlevel_actual_oms_placement_shapes(monkeypatch, caplog, "1.22", None, 0)
+def test_above_cap_refusal_capture_attached_after_service_init(monkeypatch, caplog):
+    original = route._service
+    attached = []
+
+    def service_with_capture(*args, **kwargs):
+        result = original(*args, **kwargs)
+        root = logging.getLogger()
+        if caplog.handler not in root.handlers:
+            root.addHandler(caplog.handler)
+            attached.append(root)
+        return result
+
+    monkeypatch.setattr(route, "_service", service_with_capture)
+    try:
+        route.test_pastlevel_actual_oms_placement_shapes(monkeypatch, caplog, "1.22", None, 0)
+    finally:
+        for root in attached:
+            root.removeHandler(caplog.handler)
 
 
 @pytest.mark.asyncio

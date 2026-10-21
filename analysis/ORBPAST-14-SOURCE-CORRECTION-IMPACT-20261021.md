@@ -6,7 +6,7 @@ recorded BEFORE edits. Existing tests, RED7ef and original JUnit are untouched.
 Main owns queue/LATEST and sole runtime; no worker test/import/compile/AST/
 application/replay/DB/provider/SQL/SSH/orders/install/restart/push occurred.
 
-## Four Independent Source Corrections
+## Three Independent Source Corrections
 
 1. broker_adapters/schwab.py submit/replace now call
    _authorized_order_request_json(request,method,path,body). It validates the
@@ -31,14 +31,19 @@ application/replay/DB/provider/SQL/SSH/orders/install/restart/push occurred.
    builder for Webull, enabling tick_cap=True only on Schwab. Webull geometry
    mutation remains observable instead of raising unsupported-keyword TypeError.
    New Schwab cap/anchor geometry and all country/control fields are unchanged.
-4. log.configure_logging adds optional preserve_handlers=False; default callers
-   retain existing force-configure behavior. OMS requests preservation when
-   root handlers already exist, preventing each service construction from
-   removing external/capture handlers. Its named logger level is explicit;
-   no-handler startup still configures the original console sink. OMS Webull
-   SDK redaction install remains on both paths. Only initialization/log routing
-   changes, not order authorization. Broader logging/native controls need main
-   execution; no performance claim from source.
+
+The fourth e170 correction (production handler preservation) is REJECTED by
+the latest main review. This descendant restores log.py and oms/service.py
+exactly to7ef. Existing root-handler replacement, levels, stdout format and
+Webull redaction are preserved, not redesigned for pytest capture. An existing
+ERROR-only handler must not displace baseline INFO initialization guarantees.
+The original above-cap log assertion is a separate harness setup issue:
+capture must attach AFTER service initialization. The old test is untouched;
+reviewer permission is required for its fixture amendment. Only the NEW author
+control wraps service creation to attach/remove capture after initialization
+and invokes the original function with every assertion unchanged. It does not
+assert or introduce a production logging policy. Historical classification
+and e170 remain frozen; this review supersedes only that proposed correction.
 
 ## Ten Original Assertions Still Have An Input Conflict
 
@@ -60,8 +65,10 @@ Main/reviewer disposition required: authorize an input-only test fixture
 amendment supplying current quotes while preserving assertions, or explicitly
 revise approved feature rollout scope. Worker has neither altered existing
 fixtures nor weakened new real safety. Until disposition and actual tests,
-overall zeroNEWvs556 remains BLOCKED; only four independent source issues have
-author corrections. No automatic broad suite/reviewer repeat run by worker.
+overall zeroNEWvs556 remains BLOCKED; three independent source issues have
+author corrections and eleven original nodes require reviewer fixture
+disposition (ten quote-input nodes plus one capture node). No automatic broad
+suite/reviewer repeat run by worker.
 
 ## New Regression Controls, All UNRUN
 
@@ -81,12 +88,11 @@ token -> original thread fence -> HTTP. Existing direct non-ORB adapter calls
 remain unmarked; wrappers clear context for their own request. Context lifecycle
 and native uncertainty require actual main controls, not this diagram as proof.
 
-Integration overlap: OMS logger construction and Schwab dispatch/thread path
-overlap MOMBUFFER/LOSTACK/ORB; main must compose reviewed hunks and preserve
+Integration overlap: Schwab dispatch/thread path overlaps MOMBUFFER/LOSTACK/
+ORB; main must compose reviewed hunks and preserve
 durable payload/permit binding and unknown ownership. No source from those
-other lanes was merged, copied over or edited. log.py is shared: optional
-default behavior unchanged for other service names/callers, OMS preservation
-is deliberately opt-in and redaction remains installed.
+other lanes was merged, copied over or edited. There is now ZERO cumulative
+delta in log.py or OMS service vs7ef; no actor retirement or broker hooks added.
 
 ## Saved Scope And Resume
 

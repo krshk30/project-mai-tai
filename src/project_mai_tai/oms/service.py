@@ -898,7 +898,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         # TRIGGERED/CLEARED], exits) — not just default-WARNING. Without this the
         # entrypoint never configured logging, so every INFO line (incl. real-money
         # stop arm/trigger) was silently dropped.
-        self.logger = configure_logging(SERVICE_NAME, self.settings.log_level, preserve_handlers=True)
+        self.logger = configure_logging(SERVICE_NAME, self.settings.log_level)
         # Track-2 intrabar fix: intents and market-data ticks are consumed on SEPARATE
         # loops/tasks so a slow broker-sync REST on the control loop can never starve
         # quote-driven exit evaluation. Each stream tracks its own offset.
