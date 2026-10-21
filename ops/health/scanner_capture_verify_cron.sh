@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Scanner-confirmed capture watch. The root crontab invokes this existing box path every 30 min.
-# It compares the current ET window with the prior five matching weekdays at the same ET cutoff.
+# It compares the current ET window with the prior five trading days at the same ET cutoff.
 # LOW_VOLUME states observations only; it never diagnoses the capture writer as broken.
 set -u
 
-CHECK=/home/trader/project-mai-tai/ops/health/scanner_capture_check.py
-PYTHON=/home/trader/project-mai-tai/.venv/bin/python
-ENV_FILE=/etc/project-mai-tai/project-mai-tai.env
-LOG=/home/trader/scanner_capture/cron.log
+CHECK=${SCANNER_CAPTURE_CHECK:-/home/trader/project-mai-tai/ops/health/scanner_capture_check.py}
+PYTHON=${SCANNER_CAPTURE_PYTHON:-/home/trader/project-mai-tai/.venv/bin/python}
+ENV_FILE=${SCANNER_CAPTURE_ENV_FILE:-/etc/project-mai-tai/project-mai-tai.env}
+LOG=${SCANNER_CAPTURE_LOG:-/home/trader/scanner_capture/cron.log}
+CURL=${SCANNER_CAPTURE_CURL:-curl}
 DEFAULT_NTFY_URL=https://ntfy.sh/mai-tai-preopen-28806a5a97b7
 NTFY_URL=$DEFAULT_NTFY_URL
 
@@ -18,7 +19,7 @@ notify() {
   local title=$1
   local priority=$2
   local body=$3
-  curl --fail-with-body -sS -H "Title: $title" -H "Priority: $priority" \
+  "$CURL" --fail-with-body -sS -H "Title: $title" -H "Priority: $priority" \
     -d "$body" "$NTFY_URL" >/dev/null
 }
 
@@ -44,6 +45,7 @@ NTFY_URL=${MAI_TAI_NTFY_URL:-$DEFAULT_NTFY_URL}
 out=$("$PYTHON" "$CHECK" 2>&1)
 rc=$?
 printf '%s rc=%s %s\n' "$stamp" "$rc" "$out" >>"$LOG"
+printf '%s rc=%s %s\n' "$stamp" "$rc" "$out" >"$(dirname "$LOG")/STATUS.txt"
 
 case "$rc" in
   0) exit 0 ;;
@@ -52,6 +54,10 @@ case "$rc" in
     exit 1
     ;;
   2)
+    # Insufficient comparison history remains UNKNOWN in status, with no phone page.
+    if [[ "$out" == SCANNER_CAPTURE\ COULD_NOT_TELL*reason=baseline_population_insufficient ]]; then
+      exit 2
+    fi
     notify "scanner capture CHECK UNKNOWN" high "$out" || exit 2
     exit 2
     ;;

@@ -232,8 +232,8 @@ def main() -> int:
             print(f"       {key}\n           LIVE_LOCKED={mirror!r}   live env={live!r}")
         print("\n  ⛔ On the VPS the ENV WINS, so on-VPS replays are unaffected. This is about")
         print("     off-VPS / CI runs, which the module docstring promises are 'faithful'.")
-        print("  ⛔ Before 'fixing' these, read test_env_set_values_beat_live_locked — three of")
-        print("     them may be disagreeing DELIBERATELY to keep that regression meaningful.")
+        print("  Review the operator-approved value before correcting either the env or mirror.")
+        print("  The env-wins regression constructs its own deliberate disagreement.")
 
     if drifted or divergent or unknown:
         print(

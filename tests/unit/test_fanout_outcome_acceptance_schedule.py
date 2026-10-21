@@ -556,7 +556,8 @@ def test_pass_writes_success_marker_with_all_denominators_and_deduplicates(tmp_p
     assert notifications == []
     assert "reason=already_reported denominator=one completed ET calendar-day session" in second.lines[0]
     history = (tmp_path / "history.log").read_text(encoding="utf-8")
-    assert "[D6-OUTCOME-ACCEPTANCE-SKIPPED] session=2026-08-28" in history
+    assert history.count("[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-28") == 1
+    assert "[D6-OUTCOME-ACCEPTANCE-SKIPPED]" not in history
 
 
 def test_nonpass_notifies_and_never_emits_the_success_marker(tmp_path) -> None:

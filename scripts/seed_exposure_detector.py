@@ -366,6 +366,77 @@ def check_constants(source_path: str) -> str:
     return "; ".join(problems)
 
 
+def seed_was_untruncated(
+    symbol: str, window_bars: int, lines: list[str], *,
+    newest_bar: datetime | None = None, now: datetime | None = None,
+) -> bool | None:
+    """Use a positive full hydration receipt, never absence of a truncation log.
+
+    Caller supplies only today's current service invocation. A later attempt supersedes
+    earlier receipts. Partial/absent evidence remains UNKNOWN and is status-only.
+    """
+    import re
+
+    result = None
+    pending_truncation = False
+    for line in lines:
+        if re.search(r"\[V2-DB-SEED-GAP\] " + re.escape(symbol) + r" dropped (?:ALL )?\d+", line):
+            result = False
+            # Dropped ALL ends that attempt without a hydration line.
+            pending_truncation = f"{symbol} dropped ALL " not in line
+        match = re.search(r"db-seed: " + re.escape(symbol) + r" hydrated (\d+) bars", line)
+        if match:
+            stamp = re.match(r"receipt_ts=(\d+) ", line)
+            # A full hydration count is only relevant while the observed window predates
+            # that receipt, and while the receipt is fresh. Older receipts cannot prove
+            # anything about a subsequently changed stored window.
+            current = False
+            if stamp and newest_bar is not None and now is not None:
+                at = int(stamp.group(1)) / 1_000_000
+                current = (
+                    newest_bar.timestamp() <= at <= now.timestamp()
+                    and now.timestamp() - at <= DEFAULT_MAX_AGE_SECONDS
+                )
+            if pending_truncation:
+                result = False
+            else:
+                result = True if current and int(match.group(1)) == window_bars else None
+            pending_truncation = False
+        if f"db-seed query failed for {symbol};" in line or f"db-seed replay failed for {symbol};" in line:
+            result = None
+            pending_truncation = False
+    return result
+
+
+def read_seed_receipts(now: datetime) -> list[str]:
+    """Bounded local journal read; no provider or database operation."""
+    import subprocess
+
+    unit = "project-mai-tai-schwab-1m-v2.service"
+    before = subprocess.run(["systemctl", "show", unit, "-p", "InvocationID", "--value"],
+                            capture_output=True, text=True, timeout=5, check=True).stdout.strip()
+    if len(before) != 32 or any(c not in "0123456789abcdef" for c in before):
+        raise DetectorBlind("current seed invocation unavailable")
+    midnight = now.astimezone(ET).replace(hour=0, minute=0, second=0, microsecond=0)
+    result = subprocess.run(
+        ["journalctl", f"_SYSTEMD_INVOCATION_ID={before}", "--since", f"@{int(midnight.timestamp())}",
+         "--no-pager", "-o", "json", "-n", "20000"],
+        capture_output=True, text=True, timeout=10, check=True,
+    )
+    after = subprocess.run(["systemctl", "show", unit, "-p", "InvocationID", "--value"],
+                           capture_output=True, text=True, timeout=5, check=True).stdout.strip()
+    if before != after or len(result.stdout) > 8 * 1024 * 1024:
+        raise DetectorBlind("seed receipt identity changed or output exceeded 8 MiB")
+    lines = []
+    for raw in result.stdout.splitlines():
+        item = json.loads(raw)
+        stamp = str(item.get("__REALTIME_TIMESTAMP", ""))
+        message = item.get("MESSAGE")
+        if stamp.isdecimal() and isinstance(message, str):
+            lines.append(f"receipt_ts={stamp} {message}")
+    return lines
+
+
 def _dsn(arg: str | None) -> str:
     """⛔ Raises DetectorBlind, NOT SystemExit.
 
@@ -534,6 +605,22 @@ def main() -> int:
     )
     for row, _is_exposed, why in classified:
         print(f"    {row.symbol:<7} window={row.window_bars:<4} ever={row.bars_ever:<6} {why}")
+
+    # DB gaps describe stored inputs, not necessarily what the live bot seeded.
+    try:
+        receipts = read_seed_receipts(now) if exposed_rows else []
+    except Exception as exc:  # read failure leaves evidence unknown, never claims truncation
+        receipts = []
+        print(f"  truncation evidence: UNKNOWN ({type(exc).__name__})")
+    pageable = []
+    for row, _why in exposed_rows:
+        untruncated = seed_was_untruncated(row.symbol, row.window_bars, receipts,
+                                         newest_bar=row.newest_bar, now=now)
+        state_label = {True: "UNTRUNCATED", False: "TRUNCATED", None: "UNKNOWN"}[untruncated]
+        print(f"  SEED-STATUS symbol={row.symbol} watched=1 exposed=1 seed={state_label}")
+        if untruncated is True:
+            pageable.append(row.symbol)
+    print(f"  PAGEABLE : {len(pageable)} watched_exposed_untruncated symbols={','.join(pageable) or '-'}")
 
     if ondeck:
         warm = [r for r in ondeck if r.symbol in state.warm]

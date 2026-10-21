@@ -67,7 +67,7 @@ def test_measured_monday_is_observed_against_matching_window_baseline() -> None:
     assert verdict.status == "OBSERVED"
     assert verdict.exit_code == 0
     assert "rows=37" in verdict.line
-    assert "same_weekday_baseline_median=28" in verdict.line
+    assert "trading_day_baseline_median=28" in verdict.line
     assert "baseline_sessions=5" in verdict.line
     assert "current_vs_baseline=132.1%" in verdict.line
     assert 'window="2026-08-31 00:00-09:00:00 ET"' in verdict.line
@@ -104,7 +104,7 @@ def test_real_zero_with_a_nonzero_baseline_is_low_volume_not_unmeasured() -> Non
 
     assert verdict.status == "LOW_VOLUME"
     assert "rows=0" in verdict.line
-    assert "current_vs_baseline=0.0%" in verdict.line
+    assert "reason=empty_capture" in verdict.line
 
 
 def test_unreadable_database_never_becomes_a_measured_zero() -> None:
@@ -151,9 +151,11 @@ def test_stale_independent_feed_does_not_accuse_capture() -> None:
     assert "cause=NOT_DETERMINED" not in verdict.line
 
 
-def test_sql_uses_matching_weekday_same_cutoff_and_real_table() -> None:
+def test_sql_uses_last_trading_days_same_cutoff_and_real_table() -> None:
     assert "EXTRACT(ISODOW FROM events.trade_date)" in scanner_capture.SQL
-    assert "EXTRACT(ISODOW FROM params.today_et)" in scanner_capture.SQL
+    assert "BETWEEN 1 AND 5" in scanner_capture.SQL
+    assert "EXTRACT(ISODOW FROM params.today_et)" not in scanner_capture.SQL
+    assert "ORDER BY events.trade_date DESC" in scanner_capture.SQL
     assert "days.trade_date + params.cutoff_et" in scanner_capture.SQL
     assert "PERCENTILE_CONT(0.5)" in scanner_capture.SQL
     assert scanner_capture.SQL.count("scanner_confirmed_events") == 3

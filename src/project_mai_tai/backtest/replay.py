@@ -238,8 +238,8 @@ LIVE_LOCKED = dict(
     oms_v2_eh_entry_enabled=True,  # P-B1 reactive-EH OMS cross-cap/abandon
     strategy_schwab_1m_v2_entry_window_start_hour_et=7,
     strategy_schwab_1m_v2_entry_window_start_minute_et=0,
-    strategy_schwab_1m_v2_entry_window_end_hour_et=16,
-    strategy_schwab_1m_v2_entry_window_end_minute_et=0,
+    strategy_schwab_1m_v2_entry_window_end_hour_et=15,
+    strategy_schwab_1m_v2_entry_window_end_minute_et=45,
     # ⭐ PER-SYMBOL WATCH-START CAP (#618/#619, 2026-07-30). Live env carries this TRUE. It gates
     # `_cap_reconstructed_segment`, which disqualifies an armed segment whose flip bar predates the
     # symbol's watchlist join. It fired 76 times in the live v2 log on 2026-07-30 alone, so a replay
