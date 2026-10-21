@@ -1243,6 +1243,10 @@ class SchwabV2Strategy:
                 or state.fanout_segment_id
                 or 0
             )
+            if state.flip_owner_opportunity_id <= 0:
+                # Retain unresolved restore provenance: an empty position read
+                # cannot prove that a missing durable owner was never dispatched.
+                restored[symbol] = None
             self._set_flip_owner_unknown(state, reason="restart_state_unreadable", persist=False)
             return
         state.flip_owner_phase = record.phase
@@ -2279,6 +2283,10 @@ class SchwabV2Strategy:
         evaluated = self._flip_owner_counts["unknown_recovery_evaluated"]
         open_positions = state.flip_owner_open_positions
         opportunity_id = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+
+        if opportunity_id <= 0 and state.symbol.upper() in self._restored_flip_owners:
+            self._flip_owner_counts["unknown_recovery_pending"] += 1
+            return False
 
         if (
             opportunity_id <= 0
