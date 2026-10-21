@@ -33,7 +33,7 @@ class FlatObligations:
 
 
 def _metadata(row):
-    payload = row.payload
+    payload = getattr(row, "payload", None)
     md = payload.get("metadata", payload) if isinstance(payload, dict) else None
     if not isinstance(md, dict):
         raise ValueError("cancel_obligations_metadata_UNKNOWN")
@@ -156,11 +156,32 @@ def receipts_cover(request, receipts, required):
 
 
 def cancel_outcome_known(row):
-    payload = row.payload or {}
-    md = _metadata(row)
+    try:
+        md = _metadata(row)
+    except ValueError:
+        return False
+    payload = row.payload
     known = {None, "confirmed", "already_absent", "confirmed_after_accepted_request", "resolved_by_fill"}
-    return (md.get("cancel_outcome") in known and payload.get("cancel_outcome") in known
+    outcomes = (md.get("cancel_outcome"), payload.get("cancel_outcome"))
+    return (all(value is None or isinstance(value, str) and value in known for value in outcomes)
             and payload.get("refusal_origin") != "could_not_tell")
+
+
+def buy_only_cancel(row):
+    """Legacy receipt projections use the explicit BUY-only capability stamp.
+
+    Missing data is never defaulted to BUY. Any supplied side must corroborate
+    the stamp; absent/null capability or contradictory/null side holds.
+    """
+    try:
+        md = _metadata(row)
+    except ValueError:
+        return False
+    if getattr(row, "intent_type", None) != "cancel" or md.get("clearwait_buy_only") != "true":
+        return False
+    if hasattr(row, "side"):
+        return row.side == "buy"
+    return True  # Positive capability above, not a default for a missing stamp.
 
 
 def working_buy_present(session, symbol):

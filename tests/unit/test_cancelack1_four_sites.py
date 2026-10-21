@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.confirmation_exit import ConfirmationEntry, ConfirmationExitTracker
 from project_mai_tai.db.models import (
@@ -23,15 +24,22 @@ from tests.unit.test_v2_fresh_sell_owner_release import commit_and_later_bar, se
 def terminal_buys(bot, request):
     with bot.session_factory() as session:
         for order in session.scalars(select(BrokerOrder)):
+            stamp = order.updated_at
+            flag_modified(order, "updated_at")
             order.broker_order_id = f"SYNTHETIC-native-{order.client_order_id}"
             session.add(BrokerOrderEvent(order_id=order.id, event_type="cancelled",
                 event_source="broker", event_at=instant(request.requested_at_ms + 1),
                 payload={"cancel_outcome": "confirmed"}))
+            session.flush()
+            session.refresh(order)
+            assert order.updated_at.replace(tzinfo=None) == stamp.replace(tzinfo=None)
         session.commit()
 
 
 def fault_history(bot, request, clock, fault):
     with bot.session_factory() as session:
+        for row in session.scalars(select(TradeIntent)):
+            flag_modified(row, "updated_at")
         if fault == "missing_history":
             for row in session.scalars(select(DashboardSnapshot).where(
                     DashboardSnapshot.snapshot_type == DISPATCH_SNAPSHOT_TYPE)):
@@ -185,6 +193,7 @@ def confirmation_case(bot, request, clock, required, fault):
         accounts = {a.name: a for a in session.scalars(select(BrokerAccount))}
         own = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
         order = session.scalar(select(BrokerOrder).where(BrokerOrder.broker_account_id == accounts[required[0]].id))
+        flag_modified(order, "updated_at")
         order.status = "filled"
         order.broker_order_id = "SYNTHETIC-confirmation-native"
         fill_id, native_fill = uuid4(), "SYNTHETIC-confirmation-fill"
@@ -333,3 +342,46 @@ async def test_older_success_cannot_overwrite_newer_unknown_refresh(monkeypatch)
         release.set()
         await first_task
         engine.dispose()
+
+
+@pytest.mark.parametrize("fault", ["missing_stamp", "null_stamp", "false_stamp", "missing_kind",
+                                   "missing_payload", "malformed_payload", "null_side", "sell", "unknown_side"])
+def test_missing_or_contradictory_cancel_capability_is_not_default_buy(fault):
+    from project_mai_tai.cancelack1 import buy_only_cancel, cancel_outcome_known
+
+    row = SimpleNamespace(intent_type="cancel", payload={"metadata": {"clearwait_buy_only": "true"}})
+    assert buy_only_cancel(row)  # The fault, not an unrelated missing field, must cause the HOLD.
+    if fault == "missing_stamp":
+        row.payload["metadata"].clear()
+    elif fault in {"null_stamp", "false_stamp"}:
+        row.payload["metadata"]["clearwait_buy_only"] = None if fault == "null_stamp" else "false"
+    elif fault == "missing_kind":
+        del row.intent_type
+    elif fault == "missing_payload":
+        del row.payload
+    elif fault == "malformed_payload":
+        row.payload = {"metadata": []}
+    else:
+        row.side = {"null_side": None, "sell": "sell", "unknown_side": "unknown"}[fault]
+    assert not buy_only_cancel(row)
+    if fault in {"missing_payload", "malformed_payload"}:
+        assert not cancel_outcome_known(row)
+
+
+@pytest.mark.parametrize("fault", ["missing_stamp", "null_side", "sell", "unknown_outcome"])
+def test_legacy_projection_missing_safety_evidence_keeps_actual_assessor_held(fault):
+    from tests.unit.test_clearwait1_removed_wait import _recorded
+    from project_mai_tai.v2_removed_wait import assess_removed_wait
+
+    request, rows = _recorded("AIXI", include_tickets=False)
+    assert assess_removed_wait(request, **rows).clear
+    cancel = rows["intents"][-1]
+    assert not hasattr(cancel, "side") and cancel.payload["metadata"]["clearwait_buy_only"] == "true"
+    if fault == "missing_stamp":
+        del cancel.payload["metadata"]["clearwait_buy_only"]
+    elif fault == "unknown_outcome":
+        cancel.payload["metadata"]["cancel_outcome"] = "could_not_tell"
+    else:
+        cancel.side = None if fault == "null_side" else "sell"
+    proof = assess_removed_wait(request, **rows)
+    assert not proof.clear

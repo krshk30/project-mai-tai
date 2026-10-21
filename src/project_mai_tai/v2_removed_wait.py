@@ -166,12 +166,12 @@ def assess_clear_rules(
             return result("cancel_unknown_or_refused")
         if metadata(intent).get("clearwait_removal_token") != request.token:
             continue
-        from project_mai_tai.cancelack1 import cancel_outcome_known
+        from project_mai_tai.cancelack1 import buy_only_cancel, cancel_outcome_known
         if not cancel_outcome_known(intent):
             return result("cancel_unknown_or_refused")
         p = intent.payload or {}
         if (request.purpose in {"retry_exhausted", "false_flip_restore"}
-                and (intent.side != "buy" or not own(intent)
+                and (not buy_only_cancel(intent) or not own(intent)
                 or str(metadata(intent).get("clearwait_opportunity_id")) != str(request.opportunity_id)
                 or metadata(intent).get("clearwait_buy_only") != "true"
                 or metadata(intent).get("reason") != ("false_flip_restore" if request.purpose == "false_flip_restore"
@@ -328,10 +328,10 @@ def assess_removed_wait(
                 return result("intent_not_terminal")
             if md.get("clearwait_removal_token") != request.token:
                 continue
-            from project_mai_tai.cancelack1 import cancel_outcome_known
+            from project_mai_tai.cancelack1 import buy_only_cancel, cancel_outcome_known
             if not cancel_outcome_known(intent):
                 return result("cancel_unknown_or_refused")
-            if (intent.intent_type != "cancel" or intent.side != "buy" or not exact(md)
+            if (not buy_only_cancel(intent) or not exact(md)
                     or str(md.get("clearwait_opportunity_id")) != str(request.opportunity_id)
                     or md.get("clearwait_buy_only") != "true"
                     or md.get("reason") != ("false_flip_restore" if request.purpose == "false_flip_restore"
@@ -551,11 +551,11 @@ def assess_removed_wait(
                 return result("opening_identity_unproven")
         if md.get("clearwait_removal_token") != request.token:
             continue
-        from project_mai_tai.cancelack1 import cancel_outcome_known
+        from project_mai_tai.cancelack1 import buy_only_cancel, cancel_outcome_known
         if not cancel_outcome_known(intent):
             return result("cancel_unknown_or_refused")
         if (
-            intent.intent_type != "cancel" or intent.side != "buy"
+            not buy_only_cancel(intent)
             or str(md.get("clearwait_opportunity_id")) != str(request.opportunity_id)
             or md.get("clearwait_buy_only") != "true"
             or _utc(intent.created_at).timestamp() * 1000 < request.requested_at_ms

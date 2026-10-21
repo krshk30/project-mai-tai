@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, TradeIntent, VirtualPosition
 from project_mai_tai.fanout_identity import fanout_slot_id
@@ -45,6 +46,8 @@ def synthetic_case(monkeypatch, *, pm=False, required=(MIRROR,), acknowledged=No
             if name not in acknowledged:
                 session.delete(row)
                 continue
+            # This is a synthetic historical update, not models.utcnow at test run time.
+            flag_modified(row, "updated_at")
             md = {**row.payload["metadata"], "clearwait_opportunity_id": str(opportunity),
                   "fanout_segment_id": str(opportunity), "fanout_slot_id": fanout_slot_id(
                       strategy_code="schwab_1m_v2", symbol=request.symbol, segment_id=opportunity, slot="resting")}
@@ -75,6 +78,8 @@ def synthetic_case(monkeypatch, *, pm=False, required=(MIRROR,), acknowledged=No
                 client_order_id=f"SYNTHETIC-buy-{index}", order_type="limit", time_in_force="day",
                 payload=md, submitted_at=instant(at + 1), updated_at=instant(request.requested_at_ms + 1)))
         session.commit()
+        for row in session.scalars(select(TradeIntent).where(TradeIntent.intent_type == "cancel")):
+            assert row.updated_at.replace(tzinfo=None) < instant(clock[0] - 15_000).replace(tzinfo=None)
     refresh(bot, clock)
     return bot, state, clock, request, writes, engine
 
@@ -94,6 +99,7 @@ async def test_positive_scope_releases_only_after_fresh_sell_and_both_flat(
         if not no_target:
             with bot.session_factory() as session:
                 for row in session.scalars(select(TradeIntent).where(TradeIntent.intent_type == "cancel")):
+                    flag_modified(row, "updated_at")
                     row.status = "cancelled"
                     row.payload = {"metadata": row.payload["metadata"]}
                 session.commit()
@@ -138,6 +144,10 @@ async def test_unknown_or_missing_obligation_and_existing_safety_gates_hold(monk
             primary = session.scalar(select(BrokerAccount).where(BrokerAccount.name == PRIMARY))
             own = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
             foreign = session.scalar(select(Strategy).where(Strategy.code == "orb_schwab"))
+            for row in session.scalars(select(TradeIntent)):
+                flag_modified(row, "updated_at")
+            for row in session.scalars(select(BrokerOrder)):
+                flag_modified(row, "updated_at")
             if fault == "missing_journal":
                 for row in journal:
                     session.delete(row)
