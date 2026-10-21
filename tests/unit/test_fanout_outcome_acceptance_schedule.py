@@ -7,6 +7,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -956,6 +957,14 @@ def _shell_path(path: Path) -> str:
 
 
 def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path, Path]:
+    hasher = shutil.which("sha256sum")
+    if hasher:
+        hash_command = [hasher]
+    else:
+        hasher = shutil.which("shasum")
+        if not hasher:
+            raise RuntimeError("installer fixture requires sha256sum or shasum")
+        hash_command = [hasher, "-a", "256"]
     repo = tmp_path / "repo"
     health = repo / "ops" / "health"
     health.mkdir(parents=True)
@@ -1015,7 +1024,7 @@ def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path
         'count=$((count + 1)); printf \'%s\' "$count" > "$FAKE_SHA256_STATE"\n'
         "if [[ ${FAKE_SHA256_FAIL_AT:-0} == $count ]]; then exit 33; fi\n"
         "if [[ ${FAKE_SHA256_EMPTY_AT:-0} == $count ]]; then exit 0; fi\n"
-        'exec /usr/bin/sha256sum "$@"\n',
+        f'exec {shlex.join(hash_command)} "$@"\n',
     )
     _write_executable(
         fake_bin / "cp",
