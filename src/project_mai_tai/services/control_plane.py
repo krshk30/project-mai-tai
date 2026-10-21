@@ -4569,14 +4569,21 @@ def build_app(
         except Exception:
             logging.getLogger(__name__).warning("[MOMPAGE4] live_fill_ledger=UNKNOWN", exc_info=True)
             live = {"status": "UNKNOWN"}
-        owner = await _read_momentum_page_owner(app.state.repository.redis, active_settings.redis_stream_prefix,
-            now_ns=time.time_ns())
-        metrics = ({"status": "UNKNOWN"} if not active_settings.market_data_momentum_warning_enabled
-                   else await _read_momentum_warning_gateway_metrics(app.state.repository.redis,
-                       active_settings.redis_stream_prefix, now_ns=time.time_ns()))
-        metrics = {**metrics, "consumer": await _read_momentum_page_consumer(
-            app.state.repository.redis, active_settings.redis_stream_prefix,
-            now_ns=time.time_ns(), gateway_metrics=metrics)}
+        owner = data.get("momentum_live_owner")
+        if not isinstance(owner, dict):
+            owner = await _read_momentum_page_owner(app.state.repository.redis, active_settings.redis_stream_prefix,
+                now_ns=time.time_ns())
+        observed = owner.get("observed_ns")
+        if type(observed) is not int or not 0 <= time.time_ns() - observed <= 3_000_000_000:
+            owner = {"status": "UNKNOWN"}
+        metrics = data.get("momentum_live_metrics")
+        if not isinstance(metrics, dict):
+            metrics = ({"status": "UNKNOWN"} if not active_settings.market_data_momentum_warning_enabled
+                       else await _read_momentum_warning_gateway_metrics(app.state.repository.redis,
+                           active_settings.redis_stream_prefix, now_ns=time.time_ns()))
+            metrics = {**metrics, "consumer": await _read_momentum_page_consumer(
+                app.state.repository.redis, active_settings.redis_stream_prefix,
+                now_ns=time.time_ns(), gateway_metrics=metrics)}
         rendered = _render_momentum_page(data, live=live, warnings=warnings, owner=owner, metrics=metrics)
         if active_settings.bot_control_enabled:
             rendered = rendered.replace("</body>", '<iframe title="LIVE bot control: momentum_warn_live" '
