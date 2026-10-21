@@ -64,11 +64,32 @@ def test_service_missing_owner_store_does_not_become_readable_from_fresh_empty_b
 
 def test_active_durable_identity_without_owner_record_is_actual_unknown_not_idle():
     strategy, state, clock, _, _, _ = real_state_at_resume()
+    # Service startup restores the fanout store before the owner store.
+    strategy.configure_fanout_identity_persistence(
+        lambda *args: None, restored={state.symbol: 123})
+    assert strategy._restored_fanout_segment_ids[state.symbol] == 123
     strategy.configure_flip_entry_ownership(
         lambda *args: None, active_segments={state.symbol: 123}, restored={},
         restore_readable=True, retry_budget_persist=lambda *args: None)
     assert state.flip_owner_phase == "unknown"
     assert state.flip_owner_opportunity_id == 123
+    _book(strategy, clock, state.symbol)
+    assert strategy._maybe_resume_gap_hold(state)
+    assert state.cw_resting_taken and state.cw_reclaim_taken
+    assert state.flip_owner_phase == "unknown"
+
+
+def test_missing_identity_cache_remains_unknown_without_inventing_an_owner_id():
+    strategy, state, clock, _, _, _ = real_state_at_resume()
+    assert state.symbol not in strategy._restored_fanout_segment_ids
+    assert state.fanout_segment_id == 0
+    # A partial caller supplies a census, but has not installed a durable cache.
+    # It still cannot become IDLE or gain entry permission.
+    strategy.configure_flip_entry_ownership(
+        lambda *args: None, active_segments={state.symbol: 123}, restored={},
+        restore_readable=True, retry_budget_persist=lambda *args: None)
+    assert state.flip_owner_phase == "unknown"
+    assert state.flip_owner_opportunity_id == 0
     _book(strategy, clock, state.symbol)
     assert strategy._maybe_resume_gap_hold(state)
     assert state.cw_resting_taken and state.cw_reclaim_taken
