@@ -3696,7 +3696,6 @@ class SchwabV2BotService:
         now = datetime.now(UTC)
         observed = int(now.timestamp() * 1000)
         cutoff = now - timedelta(milliseconds=FLIP_OWNER_ROW_SETTLE_MS)
-        terminal = {"cancelled", "canceled", "filled", "rejected", "expired"}
 
         def at_ms(value: datetime | None) -> int:
             if value is None:
@@ -3734,12 +3733,8 @@ class SchwabV2BotService:
             if has_position:
                 return result("position_stays_owned")
             # Deliberately no strategy/account restriction: shared Schwab ORB also owns a BUY.
-            if (session.scalar(select(BrokerOrder.id).where(BrokerOrder.symbol == symbol,
-                    BrokerOrder.side == "buy",
-                    or_(BrokerOrder.status.is_(None), BrokerOrder.status.notin_(terminal))).limit(1))
-                    or session.scalar(select(TradeIntent.id).where(TradeIntent.symbol == symbol,
-                        TradeIntent.side == "buy", TradeIntent.intent_type == "open",
-                        or_(TradeIntent.status.is_(None), TradeIntent.status.notin_(terminal))).limit(1))):
+            from project_mai_tai.cancelack1 import working_buy_present
+            if working_buy_present(session, symbol, now=now):
                 return result("working_buy_or_intent")
             cancels = session.execute(select(TradeIntent, Strategy.code)
                 .join(Strategy, Strategy.id == TradeIntent.strategy_id)
