@@ -103,19 +103,32 @@ def test_page_and_grade_exclude_only_reviewed_ids_not_all_TPC(audit, monkeypatch
     assert history.load_completed_today(factory, 'momentum_60s', DAY) == ([], Decimal('0'))
     completed = store.load_completed_since(DAY)
     assert len(completed) == 1 and grade_strategy(completed, complete_sessions=1).filled_gradable == 1
-    seen = []
-    render = cp._render_bot_detail_page
+    # MOMPAGE4 aliases render LIVE, not this legacy audited paper history.
+    # Exercise the production paper renderer with the actual filtered loader.
+    for code, expected_count, expected_pnl in (
+        ('momentum_30s', 1, Decimal('1.86')),
+        ('momentum_60s', 0, Decimal('0')),
+    ):
+        audited_rows, audited_pnl = history.load_completed_today(factory, code, DAY)
+        assert len(audited_rows) == expected_count and audited_pnl == expected_pnl
+        rendered = cp._render_momentum_ledger(
+            {'strategy_code': code, 'status': 'READABLE', 'closed_today': audited_rows,
+             'daily_pnl': str(audited_pnl), 'positions': []},
+            title='Audited paper history', method='PAPER', other_rows=[], paper=True,
+        )
+        assert rendered.count('<strong>TPC</strong>') == expected_count
+        assert f'{expected_count} completed paper trades' in rendered
+        assert f'${float(expected_pnl):+.2f}' in rendered
+        if expected_count == 0:
+            assert 'No completed positions' in rendered
 
-    def inspect(data, code, **kwargs):
-        seen.append(cp._find_bot_view(data, code))
-        return render(data, code, **kwargs)
-
-    monkeypatch.setattr(cp, '_render_bot_detail_page', inspect)
     with TestClient(app) as client:
-        assert client.get('/bot/momentum-30').status_code == 200
-        assert len(seen[-1]['closed_today']) == 1 and seen[-1]['daily_pnl'] == 1.86
-        assert client.get('/bot/momentum-60').status_code == 200
-        assert seen[-1]['closed_today'] == [] and seen[-1]['daily_pnl'] == 0
+        for alias in ('/bot/momentum-30', '/bot/momentum-60'):
+            redirect = client.get(alias, follow_redirects=False)
+            assert redirect.status_code == 302 and redirect.headers['location'] == '/bot/momentum'
+            canonical = client.get(alias, follow_redirects=True)
+            assert canonical.status_code == 200 and canonical.url.path == '/bot/momentum'
+            assert len(canonical.history) == 1 and canonical.history[0].status_code == 302
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 """L1 shared-account rules and runtime fences; controlled books are labelled."""
 
 from dataclasses import replace
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 import asyncio
 from decimal import Decimal
@@ -11,15 +12,17 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
 
 from project_mai_tai.db.models import (
-    AccountPosition, Base, BrokerAccount, BrokerOrder, BrokerOrderEvent,
+    AccountPosition, Base, BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot,
     Fill, OmsManagedPosition, Strategy, TradeIntent, VirtualPosition,
 )
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
+from project_mai_tai.positions_read_receipt import SNAPSHOT_TYPE as POSITIONS_RECEIPT_TYPE, record_receipts
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.schwab_1m_v2 import SchwabV2Strategy, TradeIntentDraft
 from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitProof, RemovedWaitStore, assess_clear_rules
@@ -28,6 +31,17 @@ PRIMARY, WEBULL = "live:schwab_1m_v2", "live:orb"
 NAMES = {PRIMARY, WEBULL}
 NOW = datetime(2026, 10, 9, 19, 4, tzinfo=UTC)
 MS = int(NOW.timestamp() * 1000)
+
+
+def controlled_empty_position_reads(factory, observed_at):
+    """Complete EMPTY broker reads controlled by this fixture, not vendor history.
+
+    Persist the real producer's typed receipt for both configured accounts.
+    Callers advancing a historical replay clock must offer another controlled
+    read at that clock; an empty FlipPositionBook is not this receipt.
+    """
+    with factory.begin() as session:
+        record_receipts(session, [(name, observed_at, 0) for name in NAMES], recorded_at=observed_at)
 
 
 @pytest.fixture
@@ -44,6 +58,7 @@ def db(tmp_path):
         for name, ident in strategies.items():
             session.add(Strategy(id=ident, code=name, name=name))
         session.commit()
+    controlled_empty_position_reads(factory, NOW)
     yield RemovedWaitStore(factory), factory, accounts, strategies
     engine.dispose()
 
@@ -106,6 +121,58 @@ def test_scanner_empty_settled_snapshot_clears_without_dispatch_journal(db, oppo
     assert strat.line_buy_ready(req.symbol)
 
 
+@pytest.mark.parametrize("fault", ["missing-all", "missing-primary", "missing-webull", "stale", "future",
+                                   "wrong-writer", "boolean-count"])
+def test_scanner_empty_without_complete_fresh_both_account_receipts_stays_unknown(db, fault):
+    store, factory, _, _ = db
+    req = request()
+    store.record_rules(req, True)
+    with factory.begin() as session:
+        receipts = session.scalars(select(DashboardSnapshot).where(
+            DashboardSnapshot.snapshot_type == POSITIONS_RECEIPT_TYPE)).all()
+        assert len(receipts) == 2
+        for row in receipts:
+            payload = dict(row.payload)
+            name = payload["broker_account_name"]
+            if (fault == "missing-all" or fault == "missing-primary" and name == PRIMARY
+                    or fault == "missing-webull" and name == WEBULL):
+                session.delete(row)
+            elif fault == "stale":
+                payload["read_at"] = (NOW-timedelta(milliseconds=15001)).isoformat()
+                row.payload = payload
+            elif fault == "future":
+                payload["read_at"] = (NOW+timedelta(milliseconds=1)).isoformat()
+                row.payload = payload
+            elif fault == "wrong-writer":
+                row.payload = {**payload, "writer": "CONTROLLED non-authoritative cache"}
+            elif fault == "boolean-count":
+                row.payload = {**payload, "position_count": False}
+                # Dict equality treats 0 == False; force the malformed JSON
+                # input to persist rather than silently retaining valid zero.
+                flag_modified(row, "payload")
+    if fault == "boolean-count":
+        with factory() as session:
+            saved = session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == POSITIONS_RECEIPT_TYPE)).all()
+            assert len(saved) == 2
+            assert all(type(row.payload["position_count"]) is bool
+                       and row.payload["position_count"] is False for row in saved)
+    proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
+    assert not proof.clear and proof.reason == "own_position_evidence_UNKNOWN"
+    assert store.restore()[req.symbol] == req
+
+
+@pytest.mark.parametrize("age_ms", [14999, 15000, 15001])
+def test_scanner_receipt_freshness_boundary_does_not_replace_request_settlement(db, age_ms):
+    store, factory, _, _ = db
+    req = request()
+    store.record_rules(req, True)
+    controlled_empty_position_reads(factory, NOW-timedelta(milliseconds=age_ms))
+    proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
+    assert proof.clear is (age_ms <= 15000)
+    assert proof.reason == ("scanner_removal_flat" if age_ms <= 15000 else "own_position_evidence_UNKNOWN")
+
+
 @pytest.mark.parametrize("account", [PRIMARY, WEBULL])
 @pytest.mark.parametrize("own", [False, True])
 @pytest.mark.parametrize("status", ["accepted", "pending", "unknown", "aborted", "partially_filled"])
@@ -148,7 +215,13 @@ def test_position_in_either_account_and_any_strategy_blocks(db, account, kind):
     with factory() as session:
         session.add(row)
         session.commit()
-    assert not store.clear_rule_proofs((req,), NAMES, now=NOW)[0].clear
+    proof, = store.clear_rule_proofs((req,), NAMES, now=NOW)
+    # TOP16:33: only the two manual/raw-AP cases change; the four other-bot
+    # VP/open-managed cases retain their original conservative HELD assertion.
+    if kind == "account":
+        assert proof.clear and proof.reason == "scanner_removal_flat"
+    else:
+        assert not proof.clear
 
 
 @pytest.mark.parametrize("purpose", ["scanner_removal", "retry_exhausted", "false_flip_restore"])
@@ -785,11 +858,16 @@ def test_atomic_retirement_precommit_mismatch_rolls_back_all_rows(db):
     proof = RemovedWaitProof(req, MS, True, "scanner_removal_flat")
     strat.stage_removed_wait_clear(proof, retire_owner=True)
     plan = strat._removed_wait_pending_clears[req]
+    def snapshot_preimages():
+        with factory() as session:
+            return {row.id: (row.snapshot_type, deepcopy(row.payload), row.created_at)
+                    for row in session.scalars(select(DashboardSnapshot))}
+
+    before = snapshot_preimages()
     answers = iter((True, False))
     with pytest.raises(ValueError, match="before commit"):
         store.commit_clear(plan, lambda: next(answers))
-    from sqlalchemy import func, select
-    from project_mai_tai.db.models import DashboardSnapshot
-    with factory() as session:
-        assert session.scalar(select(func.count()).select_from(DashboardSnapshot)) == 1
+    # Preserve EVERY preexisting snapshot field, including both broker-read
+    # receipts; no extra retirement snapshot may survive the failed commit.
+    assert snapshot_preimages() == before
     assert store.restore() == {req.symbol: req}

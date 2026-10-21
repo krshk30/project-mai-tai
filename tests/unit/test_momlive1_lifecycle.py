@@ -12,10 +12,20 @@ def position():
 
 
 @pytest.mark.parametrize("bid,reason", [("3.15", "target_5pct"), ("2.55", "hard_stop_15pct"), ("3", None)])
-def test_exact_geometry_owned_partial_quantity(bid, reason):
+@pytest.mark.parametrize("session", ["NORMAL", "PM"])
+def test_exact_geometry_owned_partial_quantity(bid, reason, session):
     row = position()
+    row.protection_session = session  # Original geometry control is not an unresolved AM target.
     assert row.exit_reason(D(bid), quote_ns=2_000_000_000, now_ns=2_000_000_000) == reason
     assert row.remaining == 2
+
+
+def test_am_unknown_target_does_not_enable_software_target_but_retains_stop():
+    row = position()
+    row.protection_session = "AM"
+    row.broker_target_state = "unknown"
+    assert row.exit_reason(D("3.15"), quote_ns=2_000_000_000, now_ns=2_000_000_000) is None
+    assert row.exit_reason(D("2.55"), quote_ns=2_000_000_000, now_ns=2_000_000_000) == "hard_stop_15pct"
 
 
 def test_native_confirmed_stands_down_price_but_not_time_exit():

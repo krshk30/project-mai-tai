@@ -9,10 +9,13 @@ import json
 import re
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
+from urllib.parse import quote
 
 from sqlalchemy import func, or_, select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
+from project_mai_tai.broker_adapters.momentum_order_read import MomentumOrderRead, MomentumReadUnavailable
+from project_mai_tai.broker_adapters.webull_order_reads import QueryBudgetUnavailable
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, Strategy, SystemIncident, VirtualPosition
 from project_mai_tai.positions_read_receipt import SNAPSHOT_TYPE, load_receipts
 from project_mai_tai.momentum_live.actor import ActorPorts, LiveActor, OwnedObservation
@@ -55,6 +58,7 @@ class OmsLiveRuntime:
         self.bindings = {}
         self.runtime = {}
         self.boot_owned_exposures = {}
+        self._legacy_stop_blocks = {}
         self.state_lock = asyncio.Lock()
         self.actor = None
         self.publisher = None
@@ -67,6 +71,8 @@ class OmsLiveRuntime:
         return int(self.clock().timestamp()*1e9)
 
     def _entry_enabled(self):
+        if self._legacy_stop_blocks:
+            return False
         if not self.settings.momentum_live_enabled:
             return False
         if not getattr(self.settings, "bot_control_enabled", False):
@@ -136,6 +142,7 @@ class OmsLiveRuntime:
                     "cumulative_exited": Decimal(raw["cumulative_exited"]), "child_ids": tuple(raw["child_ids"])})
                 self.native.handles[identity] = handle
                 self.native.generations[identity] = int(values.get("protection_generation", 1))
+        await self._check_restored_native_stops()
         entry_ports = ExecutionPorts(self.clock, self.quote, self.route_for, self._foreign_owner,
             self._claim, self._prepare, self._save, self._submit, self._record, self._route_report,
             self._request_quote_owner, self._wait_quote,
@@ -159,6 +166,144 @@ class OmsLiveRuntime:
             self._control_driver = self._control_cleanup_progress
             control.executor.register(STRATEGY_CODE, self._control_driver)
         return True
+
+    async def _check_restored_native_stops(self):
+        """Admission-only boot fence; existing owned cleanup stays operational."""
+        findings = []
+        for identity, handle in self.native.handles.items():
+            if handle.session != "NORMAL":
+                continue
+            reason = "geometry_unknown"
+            try:
+                from project_mai_tai.momentum_live.exit_policy import stop_loss_level
+
+                snapshot = await self._inspect(identity)
+                roots = [item for item in snapshot["orders"]
+                         if item["request"].client_order_id == handle.base_coid]
+                if len(roots) != 1:
+                    raise Refusal("restored_native_root_unknown")
+                request = roots[0]["request"]
+                price = snapshot["price"]
+                stop = Decimal(request.metadata["bracket_stop_price"])
+                if (request.broker_account_name != handle.account or request.symbol != handle.symbol
+                        or request.strategy_code != STRATEGY_CODE or request.side != "sell"
+                        or request.intent_type != "close" or request.quantity != handle.quantity
+                        or request.metadata.get("episode_id") != identity
+                        or request.metadata.get("session") != "NORMAL"
+                        or price is None or not price.is_finite() or price <= 0
+                        or not stop.is_finite() or stop <= 0):
+                    raise Refusal("restored_native_geometry_unknown")
+                tick = Decimal(".0001") if price < 1 else Decimal(".01")
+                expected = (stop_loss_level(price)/tick).to_integral_value(rounding=ROUND_FLOOR)*tick
+                if stop == expected:
+                    continue
+                legacy = (price*Decimal(".85")/tick).to_integral_value(rounding=ROUND_FLOOR)*tick
+                reason = "legacy_15pct" if stop == legacy else "geometry_unknown"
+            except Exception:
+                # Unknown geometry is an admission refusal, never an OMS crash
+                # or permission to replace/cancel an existing protection tree.
+                snapshot = None
+            self._legacy_stop_blocks[identity] = handle.base_coid
+            findings.append(f"{identity}:{reason}")
+            if snapshot is not None:
+                try:
+                    reconciled = await self._reconcile_closed_native_restore(identity, handle, snapshot)
+                    if reconciled is not None:
+                        snapshot = reconciled
+                except Exception:
+                    pass  # An incomplete local proof retains the admission fence.
+                self._clear_legacy_stop_block(identity, snapshot, handle)
+        if findings:
+            self.service.logger.critical(
+                "[MOMEXIT-B-RESTORE-GUARD] episodes=%s entry_admission=%s owned_cleanup=enabled",
+                ",".join(findings), "blocked" if self._legacy_stop_blocks else "flat_terminal",
+            )
+
+    async def _reconcile_closed_native_restore(self, identity, handle, snapshot):
+        episode = self.book.episodes.get(identity)
+        if (episode is None or episode.state not in {"closed", "terminal_no_fill"}
+                or handle.session != "NORMAL" or not snapshot["entry_terminal"]
+                or snapshot["quantity"] != snapshot["exited"] or snapshot["outstanding_exit"]
+                or len(handle.child_ids) != 2 or len(set(handle.child_ids)) != 2):
+            return None
+        if self.provider(handle.account) == "webull":
+            expected = tuple(self.backend.leaf(handle.account, self).exit_pair_leg_client_order_ids(handle.base_coid))
+            if set(expected) != set(handle.child_ids):
+                return None
+            children = {coid: None for coid in expected}
+        else:
+            children = {f"ml1-{handle.symbol}-n-{sha256(native.encode()).hexdigest()[:16]}": native
+                        for native in handle.child_ids}
+
+        def proof(session):
+            current = self.db.inspect_episode(session, identity)
+            if (not current["entry_terminal"] or current["quantity"] != current["exited"]
+                    or current["outstanding_exit"]):
+                return None
+            rows = session.scalars(select(BrokerOrder).where(
+                BrokerOrder.client_order_id.in_({handle.base_coid, *children}),
+                BrokerOrder.payload["episode_id"].as_string() == identity)).all()
+            by_coid = {row.client_order_id: row for row in rows}
+            if set(by_coid) != {handle.base_coid, *children}:
+                return None  # Missing child is UNKNOWN, never inferred from flat.
+            terminal = {"filled", "cancelled", "rejected", "expired", "aborted"}
+            native_ids = set()
+            child_quantity = Decimal(0)
+            for coid, row in by_coid.items():
+                account = session.get(BrokerAccount, row.broker_account_id)
+                strategy = session.get(Strategy, row.strategy_id)
+                metadata = row.payload or {}
+                if (account is None or account.name != handle.account or strategy is None
+                        or strategy.code != STRATEGY_CODE or row.symbol != handle.symbol or row.side != "sell"
+                        or row.quantity != handle.quantity or row.status not in terminal or not row.broker_order_id
+                        or row.broker_order_id in native_ids):
+                    return None
+                native_ids.add(row.broker_order_id)
+                fills = session.scalars(select(Fill).where(Fill.order_id == row.id)).all()
+                quantity = Decimal(0)
+                for fill in fills:
+                    if (fill.strategy_id != row.strategy_id or fill.broker_account_id != row.broker_account_id
+                            or fill.side != "sell" or not fill.quantity.is_finite() or fill.quantity < 0):
+                        return None
+                    quantity += fill.quantity
+                if not 0 <= quantity <= row.quantity:
+                    return None
+                if coid == handle.base_coid:
+                    if (quantity != 0 or metadata.get("session") != "NORMAL"
+                            or metadata.get("momlive_one_shot") != "true"
+                            or not (metadata.get("webull_exit_only_pair") == "true"
+                                    or metadata.get("exit_only_oco") == "true")
+                            or metadata.get("entry_broker_order_id") != handle.entry_order_id):
+                        return None
+                else:
+                    if (metadata.get("momlive_native_child") != "true"
+                            or metadata.get("momlive_terminal_broker_event") != row.status
+                            or children[coid] is not None and str(row.broker_order_id) != children[coid]
+                            or row.status == "filled" and quantity != row.quantity):
+                        return None
+                    child_quantity += quantity
+            if child_quantity > handle.quantity:
+                return None
+            return current
+
+        current = await self.service._run_db(proof, commit=False)
+        if current is not None:
+            # Reconcile only the stale handle journal, never orders, fills or
+            # broker state. Closed-today episodes have no actor work owner.
+            prior_status, prior_exited = handle.status, handle.cumulative_exited
+            handle.status, handle.cumulative_exited = "terminal", current["exited"]
+            try:
+                await self._save_handle(handle)
+            except BaseException:
+                handle.status, handle.cumulative_exited = prior_status, prior_exited
+                raise
+        return current
+
+    def _clear_legacy_stop_block(self, identity, snapshot, handle):
+        if (self._legacy_stop_blocks.get(identity) == handle.base_coid and handle.status == "terminal"
+                and snapshot["entry_terminal"] and snapshot["quantity"] == snapshot["exited"]
+                and not snapshot["outstanding_exit"]):
+            self._legacy_stop_blocks.pop(identity, None)
 
     async def close(self):
         control = getattr(self.service, "_bot_control_runtime", None)
@@ -502,13 +647,15 @@ class OmsLiveRuntime:
             position = OwnedPosition(identity, entry.broker_account_name, entry.symbol, entry.client_order_id,
                 entry.metadata["broker_order_id"], snapshot["quantity"], snapshot["price"], snapshot["first_fill_ns"],
                 exited=snapshot["exited"], entry_send_ns=self.book.episodes[identity].first_submit_ns,
-                pending_exit_reason=self.runtime.get(identity, {}).get("soft_exit_reason"))
+                pending_exit_reason=self.runtime.get(identity, {}).get("soft_exit_reason"),
+                market_session=self._protection_market_session())
             self.runtime.setdefault(identity, {}).update(time_exit_clock_source=position.exit_clock_source,
                                                         time_exit_clock_ns=position.exit_clock_ns)
             handle = self.native.handles.get(identity)
             if handle:
                 await self.native._observe(position, handle)
                 snapshot = await self._inspect(identity)
+                self._clear_legacy_stop_block(identity, snapshot, handle)
         return OwnedObservation(snapshot["quantity"], snapshot["exited"], snapshot["first_fill_ns"],
             snapshot["entry_terminal"], snapshot["outstanding_exit"], position,
             owner_provider=self._diagnostic_owner_provider(position))
@@ -548,6 +695,33 @@ class OmsLiveRuntime:
         self.service.logger.error("[MOMCANCEL1] episode=%s cancel_entry_broker_identity_UNKNOWN", identity)
         raise Refusal("cancel_entry_broker_identity_UNKNOWN") from None
 
+    async def _fresh_cancel_read(self, request, *, handle=None):
+        report = await self.backend.fetch_entry_update(request, self, fresh=True)
+        if report is not None:
+            # Attribution failures must stop the cancel, not become read UNKNOWN.
+            if handle is None:
+                await self._record(request, [report])
+            else:
+                await self.backend._record_child(handle, self, report, request)
+        return report
+
+    async def _fresh_cancel_outcome(self, request, *, handle=None):
+        outcome = await self.backend.fresh_cancel_read(request, self)
+        report = outcome.report
+        if report is not None and (outcome.kind == "report"
+                or outcome.kind == "status_unknown" and report.filled_quantity > 0):
+            if handle is None:
+                await self._record(request, [report])
+            else:
+                await self.backend._record_child(handle, self, report, request)
+        return outcome
+
+    @staticmethod
+    def _cancel_read_terminal(report, request):
+        return report is not None and (
+            report.filled_quantity == request.quantity
+            or report.event_type in {"filled", "cancelled", "rejected", "expired", "aborted"})
+
     async def _cancel_entry(self, identity):
         snapshot = await self._inspect(identity)
         for row in snapshot["orders"]:
@@ -562,6 +736,12 @@ class OmsLiveRuntime:
                         not request.metadata.get("broker_order_id")
                         or request.metadata.get("momcancel1_ack_identity") == "UNKNOWN"):
                     await self._refuse_entry_identity(identity)
+                report = await self._fresh_cancel_read(request)
+                if self._cancel_read_terminal(report, request):
+                    return
+                sent = self.book.episodes[identity].first_submit_ns
+                if report is None and (sent is None or self.now_ns() - sent < 2_000_000_000):
+                    return
                 # Reports belong to the cancel request; only the subsequent fresh
                 # ORIGINAL order read may mark the entry terminal or add its fills.
                 cancel = replace(request, intent_type="cancel",
@@ -572,7 +752,13 @@ class OmsLiveRuntime:
                         return
                 values["cancel_wire_sent_coid"] = request.client_order_id
                 await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == identity))
-                await self.service.broker_adapter.submit_order(cancel)
+                try:
+                    await self.service.broker_adapter.submit_order(cancel)
+                except Exception as exc:
+                    self.service.logger.warning("[MOMORDER1-CANCEL-UNKNOWN] episode=%s coid=%s failure=%s",
+                        identity, request.client_order_id, type(exc).__name__)
+                finally:
+                    await self._fresh_cancel_read(request)
 
     async def _save_handle(self, handle):
         values = asdict(handle)
@@ -590,7 +776,13 @@ class OmsLiveRuntime:
         await self._record(request, reports)
         return reports
 
+    def _protection_market_session(self):
+        local = self.clock().astimezone(ET)
+        return ("AM" if (local.hour, local.minute) < (9, 30)
+                else "NORMAL" if (local.hour, local.minute) < (16, 0) else "PM")
+
     async def _protect(self, position):
+        position.market_session = self._protection_market_session()
         snapshot = await self._inspect(position.episode_id)
         if any(row["request"].metadata.get("exit_reason")
                and row["status"] not in {"filled", "cancelled", "rejected", "expired", "aborted"}
@@ -601,9 +793,8 @@ class OmsLiveRuntime:
             # The triggered software exit remains watched until flat. Do not
             # attach a new pair while its close/cancel result is unresolved.
             return
-        local = self.clock().astimezone(ET)
-        session = "NORMAL" if (9, 30) <= (local.hour, local.minute) < (16, 0) else "AM" if local.hour < 9 else "PM"
-        await self.native.ensure(position, broker=self.provider(position.account), session=session)
+        await self.native.ensure(position, broker=self.provider(position.account),
+                                 session=position.market_session)
 
     async def _read_protection(self, handle):
         read = await self.backend.read(handle, self)
@@ -623,22 +814,25 @@ class OmsLiveRuntime:
         return read
 
     async def _cancel_protection(self, handle):
-        control = getattr(self.service, "_bot_control_runtime", None)
-        if control is not None and self._stop_requested():
-            if not handle.child_ids:
-                raise Refusal("KILLSW1:native_children_unknown")
-            row, _ = await self.backend.root(handle, self)
-            if not await control.begin_cleanup(
-                row["request"], "CANCEL_PROTECTION", children=handle.child_ids,
-            ):
-                return
-        await self.backend.cancel(handle, self)
+        try:
+            await self.backend.cancel(handle, self)
+        except Exception:
+            # No UNKNOWN read may strand the generic cancel-request latch. Per-leg
+            # durable wire latches in the backend prevent resends after a wire.
+            handle.status = "unknown"
+            await self._save_handle(handle)
+            raise
 
     def _soft_exit_chase_window(self):
         local = self.clock().astimezone(ET).time()
         return daytime(4) <= local < daytime(9, 30) or daytime(16) <= local < daytime(20)
 
-    async def _chase_cancel(self, identity, request, values):
+    @staticmethod
+    def _mandatory_chase(position, reason):
+        return (reason in {"hard_stop_15pct", "time_300s", "KILLSW1_STOP", "EOD"}
+                or reason == "target_5pct" and position.software_target_allowed)
+
+    async def _chase_cancel(self, identity, request, values, *, mandatory=False, reason=None):
         now = self.now_ns()
         if values.get("soft_exit_cancel_coid") == request.client_order_id:
             last = values.get("soft_exit_cancel_completed_ns") or values.get("soft_exit_cancel_verified_ns")
@@ -650,6 +844,15 @@ class OmsLiveRuntime:
                 return False
             if now - int(last) < 2_000_000_000:
                 return False
+        report = await self._fresh_cancel_read(request)
+        if self._cancel_read_terminal(report, request):
+            return False
+        if report is None:
+            if not mandatory or not request.metadata.get("broker_order_id"):
+                return False
+            self.service.logger.warning(
+                "[SAFEX1-R7-CANCEL-READ-UNKNOWN] episode=%s coid=%s reason=%s action=cancel terminal_proof=required",
+                identity, request.client_order_id, reason)
         values["soft_exit_cancel_coid"] = request.client_order_id
         values.pop("soft_exit_cancel_completed_ns", None)
         values.pop("soft_exit_cancel_verified_ns", None)
@@ -662,6 +865,7 @@ class OmsLiveRuntime:
         except Exception as exc:
             result = type(exc).__name__  # Ambiguous/417 must still read the ORIGINAL order.
         finally:
+            await self._fresh_cancel_read(request)
             values["soft_exit_cancel_completed_ns"] = self.now_ns()
             await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == identity))
             self.service.logger.info("[MOMLIVE1-EXIT-CHASE] episode=%s attempt=%s action=cancel coid=%s bid=%s original_qty=%s result=%s",
@@ -724,10 +928,13 @@ class OmsLiveRuntime:
             if (not values.get("soft_exit_sent") and values.get("killsw1_terminal_key") == terminal_key
                     and not await self._control_receipt_ready(position, values)):
                 return
-        if not values.get("soft_exit_reason"):
+        if (not values.get("soft_exit_reason")
+                or values.get("soft_exit_reason") == "target_5pct"
+                and reason in {"hard_stop_15pct", "time_300s", "KILLSW1_STOP"}):
             values["soft_exit_reason"] = reason
             await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
         position.pending_exit_reason = values["soft_exit_reason"]
+        mandatory_chase = self._mandatory_chase(position, position.pending_exit_reason)
         # Completion is conservative relative to dispatch. The pre-save journal
         # timestamp cannot pace actual calls when DB latency differs per attempt.
         last = (values.get("soft_exit_dispatch_completed_ns") or values.get("soft_exit_terminal_verified_ns")
@@ -759,15 +966,20 @@ class OmsLiveRuntime:
                     request = replace(request, metadata={**request.metadata, "momlive_fresh_order_read": "true"})
                 report = await self.backend.fetch_entry_update(request, self)
                 if report is None:
-                    return
-                await self._record(row["request"], [report])
+                    # Mandatory exits may cancel their known original order on
+                    # UNKNOWN; the post-cancel terminal proof still gates SELL.
+                    if not mandatory_chase or not self._soft_exit_chase_window():
+                        return
+                else:
+                    await self._record(row["request"], [report])
                 snapshot = await self._inspect(position.episode_id)
                 row = next(item for item in snapshot["orders"]
                            if item["request"].client_order_id == row["request"].client_order_id)
             if (row["status"] not in terminal
                     or row["request"].metadata.get("momlive_terminal_broker_event") != row["status"]):
-                if (not self._soft_exit_chase_window() or report.origin != "broker"
-                        or report.event_type not in {"accepted", "partially_filled"}):
+                if (not self._soft_exit_chase_window()
+                        or report is not None and (report.origin != "broker"
+                            or report.event_type not in {"accepted", "partially_filled"})):
                     return
                 if last is None:
                     values["soft_exit_working_verified_ns"] = self.now_ns()
@@ -779,7 +991,8 @@ class OmsLiveRuntime:
                         or not 0 <= self.now_ns()-stamp <= 2_000_000_000
                         or stamp <= int(values.get("soft_exit_quote_ns", last))):
                     return
-                if not await self._chase_cancel(position.episode_id, row["request"], values):
+                if not await self._chase_cancel(position.episode_id, row["request"], values,
+                        mandatory=mandatory_chase, reason=position.pending_exit_reason):
                     return
                 request = replace(row["request"], metadata={**row["request"].metadata,
                                                            "momlive_fresh_order_read": "true"})
@@ -1058,7 +1271,7 @@ class OwnedNativeBackend:
             return runtime.db.record(session, request, [report])
         await runtime.service._run_db(unit)
 
-    async def read(self, handle, runtime):
+    async def read(self, handle, runtime, *, fresh=False):
         row, snapshot = await self.root(handle, runtime)
         adapter = runtime.service.broker_adapter
         request = row["request"]
@@ -1066,7 +1279,7 @@ class OwnedNativeBackend:
         child_ids = handle.child_ids
         working = terminal = False
         if handle.session != "NORMAL":
-            report = await self.fetch_entry_update(request, runtime)
+            report = await self.fetch_entry_update(request, runtime, fresh=fresh)
             if report is None or report.origin != "broker":
                 return await self.unknown_read(handle, runtime, child_ids, snapshot)
             await runtime._record(request, [report])
@@ -1083,7 +1296,7 @@ class OwnedNativeBackend:
             for coid in child_ids:
                 durable = next((item for item in snapshot["orders"]
                                 if item["request"].client_order_id == coid), None)
-                if (durable is not None and durable["broker_order_id"]
+                if (not fresh and durable is not None and durable["broker_order_id"]
                         and durable["request"].broker_account_name == handle.account
                         and durable["request"].metadata.get("momlive_native_child") == "true"
                         and durable["status"] in {"filled", "cancelled", "rejected", "expired", "aborted"}
@@ -1092,8 +1305,10 @@ class OwnedNativeBackend:
                     continue
                 child = replace(request, client_order_id=coid,
                     metadata={"episode_id": handle.episode_id, "momlive_strategy": STRATEGY_CODE,
-                              "momlive_native_child": "true"})
-                report = await self.fetch_entry_update(child, runtime)
+                              "momlive_native_child": "true",
+                              **({"broker_order_id": durable["broker_order_id"]}
+                                 if durable and durable["broker_order_id"] else {})})
+                report = await self.fetch_entry_update(child, runtime, fresh=fresh)
                 if report is None or report.origin != "broker" or report.client_order_id != coid:
                     unknown = True
                     continue
@@ -1113,7 +1328,8 @@ class OwnedNativeBackend:
                 raise Refusal("native_schwab_root_receipt_UNKNOWN")
             leaf = self.leaf(handle.account, runtime)
             account = leaf.accounts_by_name.get(handle.account)
-            raw = await leaf._fetch_order(account, root_id) if account else None
+            raw = await self._schwab_fresh_raw(leaf, account, root_id) if fresh else (
+                await leaf._fetch_order(account, root_id) if account else None)
             if raw is None:
                 return await self.unknown_read(handle, runtime, child_ids, snapshot)
             children = self.schwab_children(raw, handle, leaf, root_id=root_id,
@@ -1147,7 +1363,13 @@ class OwnedNativeBackend:
                         or session.get(Strategy, root.strategy_id).code != STRATEGY_CODE
                         or session.get(BrokerAccount, root.broker_account_id).name != handle.account):
                     raise Refusal("native_terminal_root_owner_UNKNOWN")
-                root.status = "cancelled"  # Root reservation released; child fills remain separate actual executions.
+                if handle.session != "NORMAL":
+                    # Outside RTH the root is the actual single sell, not a
+                    # synthetic pair reservation. Keep its broker terminal event.
+                    if root.status not in {"filled", "cancelled", "rejected", "expired", "aborted"}:
+                        raise Refusal("native_single_root_terminal_status_UNKNOWN")
+                    return
+                root.status = "cancelled"  # Synthetic pair reservation; executions belong to children.
             await runtime.service._run_db(close_root)
         return ProtectionRead(handle.episode_id, handle.account, handle.entry_order_id, handle.base_coid,
                               child_ids, working, terminal, snapshot["exited"])
@@ -1163,23 +1385,308 @@ class OwnedNativeBackend:
         return ProtectionRead(handle.episode_id, handle.account, handle.entry_order_id,
                               handle.base_coid, child_ids, False, False, snapshot["exited"])
 
+    async def _schwab_fresh_raw(self, leaf, account, identity, *, typed=False):
+        if account is None:
+            return None
+        async def read():
+            if typed and hasattr(leaf, "_authorized_request_json") and getattr(account, "account_hash", None):
+                status, _, raw = await leaf._authorized_request_json("GET",
+                    f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/{quote(str(identity), safe='')}")
+                if status == 429 or 500 <= status <= 599:
+                    raise MomentumReadUnavailable("http_unavailable")
+                return raw if status == 200 and isinstance(raw, dict) else None
+            # Older/custom adapters can prove a returned tree, but their bare
+            # None cannot prove transport failure and never enables fallback.
+            return await leaf._fetch_order(account, identity)
+        try:
+            return await asyncio.wait_for(read(), timeout=2)
+        except (TimeoutError, ConnectionError, OSError):
+            if typed:
+                raise MomentumReadUnavailable("transport") from None
+            return None
+        except MomentumReadUnavailable:
+            if typed:
+                raise
+            return None
+        except Exception:
+            return None
+
+    async def _schwab_cancel_children(self, handle, runtime):
+        row, snapshot = await self.root(handle, runtime)
+        identity = row["broker_order_id"]
+        if not identity:
+            raise Refusal("native_schwab_root_receipt_UNKNOWN")
+        leaf = self.leaf(handle.account, runtime)
+        raw = await self._schwab_fresh_raw(leaf, leaf.accounts_by_name.get(handle.account), identity, typed=True)
+        if raw is None:
+            raise Refusal("native_cancel_fresh_read_UNKNOWN")
+        children = self.schwab_children(raw, handle, leaf, root_id=identity,
+            first_fill_ns=snapshot["first_fill_ns"] or 0, now_ns=runtime.now_ns(),
+            allow_unknown_status=True)
+        for broker_id, _, quantity, price, stamp, event_type in children:
+            if not quantity:
+                continue
+            # Identity and executions were validated independently of status.
+            # Preserve actual fills even when the venue's status is unknown;
+            # this does not prove the remaining reservation terminal.
+            if event_type == "unknown":
+                event_type = "partially_filled"
+            coid = f"ml1-{handle.symbol}-n-{sha256(broker_id.encode()).hexdigest()[:16]}"
+            child = replace(row["request"], client_order_id=coid,
+                metadata={"episode_id": handle.episode_id, "momlive_strategy": STRATEGY_CODE,
+                          "momlive_native_child": "true", "broker_order_id": broker_id})
+            report = ExecutionReport(event_type, coid, broker_order_id=broker_id,
+                broker_fill_id=f"{broker_id}:{quantity}", symbol=handle.symbol, side="sell", intent_type="close",
+                filled_quantity=quantity, fill_price=price, origin="broker", reported_at=stamp,
+                metadata={"momlive_execution_time_source": "broker_execution_time"})
+            await self._record_child(handle, runtime, report, child)
+        return children
+
+    async def _authorize_native_cancel(self, handle, runtime, request, values):
+        control = getattr(runtime.service, "_bot_control_runtime", None)
+        if control is None or not runtime._stop_requested():
+            return
+        if not handle.child_ids:
+            raise Refusal("KILLSW1:native_children_unknown")
+        # A pair remains ONE cleanup attempt even when strict budget exhaustion
+        # splits its child dispatches across cycles. Revalidate its lease/binding
+        # before every wire; never manufacture a second cleanup journal writer.
+        lease = await control.cleanup_lease(request.strategy_code)
+        binding = control.cleanup_binding(request, children=handle.child_ids)
+        expected = {"command_id": str(lease.command_id), "generation": lease.generation,
+                    "executor_id": lease.executor_id, "fence": lease.fence, "owner_hash": binding}
+        key = f"native_cancel_cleanup:{handle.base_coid}"
+        saved = values.get(key)
+        if saved is not None:
+            if saved != expected:
+                raise Refusal("KILLSW1:native_cancel_cleanup_owner_CHANGED")
+            return
+        if not await control.begin_cleanup(request, "CANCEL_PROTECTION", children=handle.child_ids):
+            raise Refusal("KILLSW1:native_cancel_cleanup_not_authorized")
+        # Recheck after the prepare/dispatch awaits, before persisting any wire.
+        current = await control.cleanup_lease(request.strategy_code)
+        if (current.command_id != lease.command_id or current.generation != lease.generation
+                or current.executor_id != lease.executor_id or current.fence != lease.fence):
+            raise Refusal("KILLSW1:native_cancel_cleanup_owner_CHANGED")
+        values[key] = expected
+
+    @staticmethod
+    def _known_cancel_binding(row, handle, identity):
+        if row is None:
+            return False
+        request = row["request"]
+        return bool(row["broker_order_id"] and request.client_order_id == identity
+            and request.broker_account_name == handle.account and request.strategy_code == STRATEGY_CODE
+            and request.symbol == handle.symbol and request.side == "sell" and request.intent_type == "close"
+            and request.quantity == handle.quantity and request.metadata.get("episode_id") == handle.episode_id
+            and str(request.metadata.get("broker_order_id", "")) == str(row["broker_order_id"])
+            and (request.metadata.get("momlive_native_child") == "true"
+                 or identity == handle.base_coid and request.metadata.get("momlive_one_shot") == "true"
+                 and request.metadata.get("entry_broker_order_id") == handle.entry_order_id))
+
     async def cancel(self, handle, runtime):
-        row, _ = await self.root(handle, runtime)
+        row, snapshot = await self.root(handle, runtime)
         adapter = runtime.service.broker_adapter
+        provider = runtime.provider(handle.account)
+        values = runtime.runtime.setdefault(handle.episode_id, {})
+        mandatory = values.get("soft_exit_reason") in {
+            "hard_stop_15pct", "time_300s", "KILLSW1_STOP"}
+        wire_key = f"native_cancel_wires:{handle.base_coid}"
+        sent = list(values.get(wire_key, []))
+        if len(sent) > 2 or len(set(sent)) != len(sent):
+            raise Refusal("native_cancel_wire_identity_UNKNOWN")
         if handle.session != "NORMAL":
-            await adapter.submit_order(replace(row["request"], intent_type="cancel", quantity=Decimal(0)))
-        elif runtime.provider(handle.account) == "webull":
-            await adapter.cancel_exit_pair(broker_account_name=handle.account, symbol=handle.symbol,
-                                            base_client_order_id=handle.base_coid)
+            if (self._known_cancel_binding(row, handle, handle.base_coid)
+                    and row["status"] in {"filled", "cancelled", "rejected", "expired", "aborted"}
+                    and row["request"].metadata.get("momlive_terminal_broker_event") == row["status"]):
+                # This is a real single order, not a synthetic pair root. Its
+                # exact durable terminal proof needs neither a read nor a cancel;
+                # the caller still owns reconciliation/release of the reservation.
+                return
+            identities = (handle.base_coid,)
+        elif provider == "webull":
+            identities = tuple(self.leaf(handle.account, runtime).exit_pair_leg_client_order_ids(handle.base_coid))
+            if len(identities) != 2 or len(set(identities)) != 2:
+                raise Refusal("native_webull_child_identity_UNKNOWN")
         else:
             if not handle.child_ids:
                 raise Refusal("native_cancel_child_identity_UNKNOWN")
-            await adapter.cancel_exit_leg_ids(handle.account, list(handle.child_ids))
+            identities = handle.child_ids
+        if not set(sent).issubset(identities):
+            raise Refusal("native_cancel_wire_identity_CHANGED")
+        deferred = False
+        for identity in identities:
+            # Each individual child dispatch gets its own fresh proof. Never call
+            # the generic pair canceller, which can cancel a filled sibling.
+            if identity in sent:
+                continue
+            child = row["request"]
+            native_child = handle.session == "NORMAL" and provider == "webull"
+            if native_child:
+                durable = next((item for item in snapshot["orders"]
+                    if item["request"].client_order_id == identity), None)
+                if (durable is not None and durable["broker_order_id"]
+                        and durable["request"].broker_account_name == handle.account
+                        and durable["request"].strategy_code == STRATEGY_CODE
+                        and durable["request"].symbol == handle.symbol
+                        and durable["request"].side == "sell"
+                        and durable["request"].intent_type == "close"
+                        and durable["request"].quantity == handle.quantity
+                        and durable["request"].metadata.get("episode_id") == handle.episode_id
+                        and durable["request"].metadata.get("momlive_native_child") == "true"
+                        and durable["status"] in {"filled", "cancelled", "rejected", "expired", "aborted"}
+                        and durable["request"].metadata.get("momlive_terminal_broker_event") == durable["status"]):
+                    # No cancel is needed for this exact terminal child. Do not
+                    # spend the working sibling's reserved permit or fake a wire.
+                    continue
+                child = replace(child, client_order_id=identity,
+                    metadata={"episode_id": handle.episode_id, "momlive_strategy": STRATEGY_CODE,
+                        "momlive_native_child": "true",
+                        **({"broker_order_id": durable["broker_order_id"]} if durable and durable["broker_order_id"] else {})})
+            if handle.session == "NORMAL" and provider == "schwab":
+                try:
+                    children = await self._schwab_cancel_children(handle, runtime)
+                except MomentumReadUnavailable:
+                    if not mandatory or not self._known_cancel_binding(row, handle, handle.base_coid):
+                        raise Refusal("native_cancel_fresh_read_UNKNOWN") from None
+                    children = None
+                if children is not None:
+                    candidates = [item for item in children if item[0] == identity]
+                    if len(candidates) != 1:
+                        raise Refusal("native_cancel_fresh_read_UNKNOWN")
+                    if candidates[0][1] or candidates[0][2] == handle.quantity:
+                        continue
+                    if candidates[0][5] == "unknown" and not mandatory:
+                        raise Refusal("native_cancel_fresh_read_UNKNOWN")
+                # Mandatory exits may cancel a proven own ID despite unknown
+                # status after the fresh tree read. Missing/mismatched trees
+                # still fail above; cancellation NEVER releases the reservation.
+            else:
+                outcome = await runtime._fresh_cancel_outcome(child, handle=handle if native_child else None)
+                if handle.session != "NORMAL" and row["status"] == "filled":
+                    # Let the fresh read account/reconcile, but never cancel a
+                    # stored filled single root through unavailable fallback or
+                    # a regressive working read lacking canonical terminal proof.
+                    if not runtime._cancel_read_terminal(outcome.report, child):
+                        deferred = True
+                    continue
+                if outcome.kind != "report" and not (mandatory
+                        and outcome.kind in {"unavailable", "status_unknown"}
+                        and self._known_cancel_binding(durable if native_child else row, handle, identity)):
+                    deferred = True
+                    continue
+                if runtime._cancel_read_terminal(outcome.report, child):
+                    continue
+            await self._authorize_native_cancel(handle, runtime, row["request"], values)
+            sent.append(identity)
+            values[wire_key] = list(sent)
+            await runtime._save_handle(handle)
+            try:
+                if handle.session == "NORMAL" and provider == "schwab":
+                    await adapter.cancel_exit_leg_ids(handle.account, [identity])
+                else:
+                    await adapter.submit_order(replace(child, intent_type="cancel", quantity=Decimal(0)))
+            except Exception as exc:
+                runtime.service.logger.warning("[MOMORDER1-CANCEL-UNKNOWN] episode=%s coid=%s failure=%s",
+                    handle.episode_id, identity, type(exc).__name__)
+            finally:
+                if handle.session == "NORMAL" and provider == "schwab":
+                    await self._schwab_cancel_children(handle, runtime)
+                else:
+                    await runtime._fresh_cancel_read(child, handle=handle if native_child else None)
+        if deferred:
+            raise Refusal("native_cancel_fresh_read_UNKNOWN")
     def leaf(self, account, runtime):
         adapter = runtime.service.broker_adapter
         return adapter._adapter_for_account(account) if hasattr(adapter, "_adapter_for_account") else adapter
 
-    async def fetch_entry_update(self, request, runtime):
+    @staticmethod
+    def _validate_fresh_report(report, request):
+        quantity = report.filled_quantity
+        if (report.origin != "broker" or report.client_order_id != request.client_order_id
+                or report.symbol != request.symbol or report.side != request.side
+                or report.intent_type != request.intent_type or not report.broker_order_id
+                or (request.metadata.get("broker_order_id")
+                    and str(report.broker_order_id) != str(request.metadata["broker_order_id"]))
+                or not quantity.is_finite() or not 0 <= quantity <= request.quantity
+                or report.event_type not in {"accepted", "partially_filled", "filled", "cancelled", "rejected", "expired", "aborted"}
+                or report.event_type == "filled" and quantity != request.quantity):
+            raise Refusal("fresh_order_identity_or_quantity_UNKNOWN")
+        return report
+
+    async def fresh_cancel_read(self, request, runtime):
+        """Per-call evidence for cancellation, never an absence/release proof."""
+        request = replace(request, metadata={**request.metadata, "momlive_fresh_order_read": "true"})
+        if request.intent_type == "cancel":
+            return MomentumOrderRead("invalid", reason="original_request_required")
+        leaf = self.leaf(request.broker_account_name, runtime)
+        try:
+            if runtime.provider(request.broker_account_name) == "schwab":
+                identity = request.metadata.get("broker_order_id")
+                if not identity or request.metadata.get("momcancel1_ack_identity") == "UNKNOWN":
+                    return MomentumOrderRead("invalid", reason="native_identity_missing")
+                raw = await self._schwab_fresh_raw(leaf, leaf.accounts_by_name.get(request.broker_account_name),
+                    identity, typed=True)
+                if not isinstance(raw, dict):
+                    return MomentumOrderRead("invalid", reason="body_shape")
+                status = raw.get("status")
+                if not isinstance(status, str) or not status.strip():
+                    return MomentumOrderRead("invalid", reason="status_missing")
+                known = leaf.ACCEPTED_STATUSES | leaf.PARTIAL_FILL_STATUSES | leaf.CANCELLED_STATUSES | leaf.REJECTED_STATUSES | {"FILLED", "PARTIALLY_FILLED"}
+                kind = "report" if status.upper() in known else "status_unknown"
+                if kind == "status_unknown":
+                    declared = Decimal(str(raw.get("filledQuantity", 0)))
+                    if not declared.is_finite() or declared < 0:
+                        return MomentumOrderRead("invalid", reason="execution_quantity")
+                    raw = {**raw, "status": "PARTIALLY_FILLED" if declared else "WORKING"}
+                report = await self._fetch_entry_update(request, runtime, supplied_raw=raw)
+            elif (callable(getattr(leaf, "fetch_momentum_cancel_read", None))
+                    and request.broker_account_name in getattr(leaf, "accounts_by_name", {})
+                    and getattr(leaf, "_query_budget", None) is not None):
+                outcome = await asyncio.wait_for(leaf.fetch_momentum_cancel_read(request), timeout=2)
+                if not isinstance(outcome, MomentumOrderRead):
+                    return MomentumOrderRead("invalid", reason="outcome_shape")
+                if outcome.kind in {"invalid", "unavailable"}:
+                    if outcome.report is not None:
+                        return MomentumOrderRead("invalid", reason="conflicting_outcome")
+                    return outcome
+                if outcome.report is None:
+                    return MomentumOrderRead("invalid", reason="report_missing")
+                kind = outcome.kind
+                report = await self._fetch_entry_update(request, runtime, supplied_report=outcome.report)
+            else:
+                # A legacy adapter's None has no provenance: never infer outage.
+                report = await asyncio.wait_for(self._fetch_entry_update(request, runtime), timeout=2)
+                kind = "report"
+            if report is None:
+                return MomentumOrderRead("invalid", reason="report_unusable")
+            return MomentumOrderRead(kind, self._validate_fresh_report(report, request))
+        except MomentumReadUnavailable as exc:
+            return MomentumOrderRead("unavailable", reason=str(exc))
+        except QueryBudgetUnavailable:
+            return MomentumOrderRead("unavailable", reason="budget")
+        except (TimeoutError, ConnectionError, OSError):
+            return MomentumOrderRead("unavailable", reason="transport")
+        except Exception:
+            return MomentumOrderRead("invalid", reason="identity_or_execution")
+
+    async def fetch_entry_update(self, request, runtime, *, fresh=False):
+        if not fresh:
+            return await self._fetch_entry_update(request, runtime)
+        request = replace(request, metadata={**request.metadata, "momlive_fresh_order_read": "true"})
+        try:
+            if request.intent_type == "cancel":
+                raise Refusal("fresh_read_requires_original_order")
+            report = await asyncio.wait_for(self._fetch_entry_update(request, runtime), timeout=2)
+            if report is None:
+                raise Refusal("fresh_order_unavailable")
+            return self._validate_fresh_report(report, request)
+        except Exception as exc:
+            runtime.service.logger.warning("[MOMORDER1-FRESH-UNKNOWN] account=%s coid=%s failure=%s",
+                request.broker_account_name, request.client_order_id, type(exc).__name__)
+            return None
+
+    async def _fetch_entry_update(self, request, runtime, *, supplied_report=None, supplied_raw=None):
         leaf = self.leaf(request.broker_account_name, runtime)
         if runtime.provider(request.broker_account_name) == "schwab":
             identity = request.metadata.get("broker_order_id")
@@ -1188,7 +1695,7 @@ class OwnedNativeBackend:
             account = leaf.accounts_by_name.get(request.broker_account_name)
             if account is None:
                 raise Refusal("owned_entry_account_UNKNOWN")
-            raw = await leaf._fetch_order(account, identity)
+            raw = supplied_raw if supplied_raw is not None else await leaf._fetch_order(account, identity)
             if raw is None:
                 return None
             legs = raw.get("orderLegCollection") or []
@@ -1233,7 +1740,7 @@ class OwnedNativeBackend:
                 event_type="partially_filled" if raw_status == "PARTIALLY_FILLED" else report.event_type)
             stamp = (min(times) if request.side == "buy" else max(times)) if times else None
         else:
-            report = await runtime.service.broker_adapter.fetch_order_update(request)
+            report = supplied_report if supplied_report is not None else await runtime.service.broker_adapter.fetch_order_update(request)
             if report is None:
                 return None
             stamp = leaf._parse_broker_time(report.metadata.get("webull_broker_filled_time"))

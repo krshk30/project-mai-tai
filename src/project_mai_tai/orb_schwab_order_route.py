@@ -147,6 +147,13 @@ def orb_schwab_intent_refusal(
     if event.payload.metadata.get("orb_country_route") == "true":
         from project_mai_tai.orb_country_route import routed_orb_intent_refusal
         return routed_orb_intent_refusal(event, settings, now)
+    from project_mai_tai.orb_country_route import orb_plan_metadata
+
+    metadata = orb_plan_metadata(event.payload)
+    if metadata is None:
+        return "orb_schwab_invalid_control_stamp"
+    if metadata is not event.payload.metadata:
+        event = event.model_copy(update={"payload": event.payload.model_copy(update={"metadata": metadata})})
     if settings.orb_country_routing_enabled and event.payload.intent_type == "open":
         return "orb_country_route_required"
     if not settings.orb_live_schwab_orders_enabled or not settings.orb_enabled:

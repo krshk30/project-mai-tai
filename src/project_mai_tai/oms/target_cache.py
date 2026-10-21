@@ -1,11 +1,12 @@
 """Committed episode identity for target decisions; never authority to sell."""
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from threading import RLock
 
 from sqlalchemy import event, select
 
 from project_mai_tai.db.models import OmsManagedPosition
+from project_mai_tai.oms.price_binding import stored_price
 
 
 _READ_TICKETS = "mai_tai_bound_target_read_tickets"
@@ -61,10 +62,13 @@ class ManagedTargetCache:
     def _value(self, row):
         if (row.strategy_code != "schwab_1m_v2" or row.broker_account_name not in self._accounts
                 or row.status != "open" or not row.entry_order_id
-                or row.current_quantity <= 0 or row.entry_price <= 0):
+                or row.current_quantity <= 0):
             return None
-        return BoundTargetRow(str(row.id), str(row.entry_order_id),
-            Decimal(str(row.entry_price)), int(row.current_quantity))
+        try:
+            price = stored_price(row.entry_price)
+        except (InvalidOperation, ValueError):
+            return None  # Invalid cache evidence must not abort a fill transaction.
+        return BoundTargetRow(str(row.id), str(row.entry_order_id), price, int(row.current_quantity))
 
     def _publish(self, key, value, generation):
         with self._lock:

@@ -186,7 +186,8 @@ async def test_actual_oms_ports_entry_actual_fill_vwap_native_proof_and_no_resen
         assert len(entry) == len(protect) == 1
         assert entry[0].broker_account_name == "live:orb" and entry[0].metadata["limit_price"] == "3.01"
         assert protect[0].metadata["bracket_target_price"] == "3.15"
-        assert protect[0].metadata["bracket_stop_price"] == "2.54"
+        # Stop-10 wire payload controls: test_momstop10_policy::test_native_stop_wire_geometry_is_ten_percent_only_where_supported.
+        assert protect[0].metadata["bracket_stop_price"] == "2.69"  # 2.9974 * .90 = 2.69766, floored.
         assert runtime.actor.dispatch.by_symbol == {"SCNI": (episode.episode_id,)}
         await runtime.publisher.publish_once()
         proof = json.loads(service.redis.xadd.await_args.args[1]["data"])
@@ -237,7 +238,7 @@ async def test_partial_2s_cancel_targets_original_coid_and_protects_owned_slice(
         assert episode.filled == 10 and episode.exited == 0
         protect = next(row for row in broker.sent if row.metadata.get("webull_exit_only_pair"))
         assert protect.quantity == 10 and protect.metadata["bracket_target_price"] == "3.13"
-        assert protect.metadata["bracket_stop_price"] == "2.53"
+        assert protect.metadata["bracket_stop_price"] == "2.68"  # 2.98 * .90 = 2.682, floored.
         now[0] += timedelta(seconds=1)
         await runtime.actor._service_owned(episode.episode_id)
         assert broker.cancelled.count(entry.client_order_id) == 1 and episode.state == "held"

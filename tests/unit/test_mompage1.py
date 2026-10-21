@@ -87,30 +87,19 @@ def test_mompage1_page_load_receipt(monkeypatch):
     ("momentum_60s", "/bot/momentum-60", 9, "175.9955"),
 ])
 def test_mompage1_recorded_fourteen_trades_survive_stop_and_reload(monkeypatch, running, code, route, count, pnl):
-    app, _ = make_app(monkeypatch, running=running)
-    rendered = []
-    original = cp._render_bot_detail_page
-
-    def capture(data, strategy_code, **kwargs):
-        bot = cp._find_bot_view(data, strategy_code)
-        rendered.append(bot)
-        return original(data, strategy_code, **kwargs)
-
-    monkeypatch.setattr(cp, "_render_bot_detail_page", capture)
+    app, factory = make_app(monkeypatch, running=running)
+    # Snapshot history is retained, but the new live-first page must not show it.
+    retained = []
     with TestClient(app) as client:
         for _ in range(2):
             page = client.get(route)
             assert page.status_code == 200
-            bot = rendered[-1]
-            assert len(bot["closed_today"]) == count
-            assert Decimal(str(bot["daily_pnl"])) == Decimal(pnl)
-            _, completed_count, completed_pnl = cp._build_completed_position_rows(bot, [], [])
-            assert completed_count == count
-            assert completed_pnl == pytest.approx(float(pnl))
-            assert bool(bot["positions"]) is running
-            assert bool(bot["watchlist"]) is running
-            assert f"${float(pnl):+.2f}" in page.text
-        assert rendered[0]["closed_today"] == rendered[1]["closed_today"]
+            rows, total = history.load_completed_today(factory, code, date(2026, 10, 7))
+            assert len(rows) == count and total == Decimal(pnl)
+            retained.append(rows)
+            assert f"${float(pnl):+.2f}" not in page.text
+            assert "Snapshot method" not in page.text and "LIVE (real orders)" in page.text
+        assert retained[0] == retained[1]
         cached = client.get("/api/bots").json()["bots"]
         cached_bot = next(item for item in cached if item["strategy_code"] == code)
         assert cached_bot["closed_today"] == []
@@ -168,12 +157,15 @@ def test_mompage1_filled_and_exited_join_once_without_final(monkeypatch):
 
 
 def test_mompage1_page_date_is_et_not_utc(monkeypatch):
-    app, _ = make_app(monkeypatch)
+    app, factory = make_app(monkeypatch)
     monkeypatch.setattr(cp, "utcnow", lambda: datetime(2026, 10, 8, 2, 30, tzinfo=UTC))
     with TestClient(app) as client:
         response = client.get("/bot/momentum-30")
         assert response.status_code == 200
-        assert "$+31.80" in response.text
+        assert "$+31.80" not in response.text
+    # Removed presentation is not deletion of the ET-scoped history contract.
+    rows, total = history.load_completed_today(factory, "momentum_30s", cp.utcnow().astimezone(cp.EASTERN_TZ).date())
+    assert len(rows) == 5 and total == Decimal("31.8044")
 
 
 def test_mompage1_other_pages_never_read_momentum_history(monkeypatch):

@@ -1,4 +1,12 @@
-"""BBCI regression: real execution fields, synthetic transport and actor clocks."""
+"""BBCI regression: real execution fields, synthetic transport and actor clocks.
+
+8886 interrupted-full receipt: candidate-8886-full-unit.log lines 2493-2772
+records both six-minute cases refusing native_cancel_fresh_read_UNKNOWN. The
+old fake's bare None denotes invalid/unusable evidence under MOMORDER1, not
+transport unavailability. The fixture now raises a real timeout at the fresh
+read boundary; ordinary observations stay UNKNOWN. Classification is not mocked.
+Original once-only cancel/no-SELL/fill-wins/remaining assertions stay intact.
+"""
 from dataclasses import replace
 from decimal import Decimal as D
 
@@ -94,15 +102,28 @@ async def test_unknown_six_minutes_still_evaluates_read_first_time_exit(filled_t
     now, broker, service, runtime, identity = await held()
     handle = runtime.native.handles[identity]
     fetch = broker.fetch_order_update
+    submit = broker.submit_order
     allow_reads = [False]
-    reads = []
+    reads, actions = [], []
     async def read(request):
         if request.client_order_id in handle.child_ids:
             reads.append(request.client_order_id)
             if not allow_reads[0]:
+                if request.metadata.get("momlive_fresh_order_read") == "true":
+                    actions.append(("fresh-unavailable", request.client_order_id))
+                    raise TimeoutError("controlled original-order detail transport unavailable")
                 return None
         return await fetch(request)
+    async def actual_cancel_wire(request):
+        if request.intent_type == "cancel":
+            assert request.client_order_id in handle.child_ids
+            assert request.broker_account_name == handle.account and request.symbol == handle.symbol
+            assert request.side == "sell" and request.quantity == 0
+            assert ("fresh-unavailable", request.client_order_id) in actions
+            actions.append(("cancel-wire", request.client_order_id))
+        return await submit(request)
     broker.fetch_order_update = read
+    broker.submit_order = actual_cancel_wire
     runtime.actor.restored = True
     runtime.actor._observations.clear()
     for _ in range(7):
@@ -110,6 +131,9 @@ async def test_unknown_six_minutes_still_evaluates_read_first_time_exit(filled_t
         await runtime.actor._service_owned(identity)
     assert reads and sells(broker) == []
     assert broker.cancelled == list(handle.child_ids)  # Exact owned pair, once; never a SELL.
+    assert [coid for kind, coid in actions if kind == "cancel-wire"] == list(handle.child_ids)
+    assert all(sum(kind == "cancel-wire" and coid == child for kind, coid in actions) == 1
+        for child in handle.child_ids)
     assert runtime.runtime[identity]["soft_exit_reason"] == "time_300s"
     assert runtime.book.episodes[identity].remaining == 33
     assert handle.status == "cancel_requested"

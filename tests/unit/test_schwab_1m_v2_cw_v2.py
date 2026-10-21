@@ -628,8 +628,9 @@ def test_fresh_sell_resets_suppressed_bar_count_for_the_next_segment(caplog):
     strat._cw_v2_resting_track(state, _sig(state="short", trail=4.1951, age=4))
 
     assert state.cw_resting_suppressed_bars == 1
-    assert "segment_id=200" in caplog.messages[-1]
-    assert "suppressed_bars=1" in caplog.messages[-1]
+    suppressed = [message for message in caplog.messages if "[V2-RESTING-SUPPRESSED-BAR]" in message]
+    assert "segment_id=200" in suppressed[-1]
+    assert "suppressed_bars=1" in suppressed[-1]
 
 
 def test_segment_id_change_without_a_sell_restarts_the_suppressed_bar_count(caplog):
@@ -651,8 +652,10 @@ def test_segment_id_change_without_a_sell_restarts_the_suppressed_bar_count(capl
     strat._now_ms = lambda: 103
     strat._cw_v2_resting_track(state, _sig(state="short", trail=4.1951, age=5))
 
-    assert "segment_id=300" in caplog.messages[-1]
-    assert "suppressed_bars=1" in caplog.messages[-1]
+    assert state.cw_resting_suppressed_bars == 1
+    suppressed = [message for message in caplog.messages if "[V2-RESTING-SUPPRESSED-BAR]" in message]
+    assert "segment_id=300" in suppressed[-1]
+    assert "suppressed_bars=1" in suppressed[-1]
     assert sum("[V2-RESTING-SLOT-CONSUMED]" in message for message in caplog.messages) == 2
 
 

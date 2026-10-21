@@ -28,6 +28,7 @@ import logging
 import math
 import os
 import signal
+import threading
 import time
 from collections import deque
 from copy import deepcopy
@@ -115,6 +116,7 @@ from project_mai_tai.market_data.schwab_v2_streamer import SchwabTick, SchwabV2S
 from project_mai_tai.market_data.schwab_v2_tick_writer import SchwabV2TickWriter
 from project_mai_tai.settings import Settings, get_settings
 from project_mai_tai.positions_read_receipt import load_receipts
+from project_mai_tai.owned_inventory import owned_position_present
 from project_mai_tai.strategy_core.time_utils import (
     US_MARKET_HOLIDAYS,
     session_day_eastern_str,
@@ -147,7 +149,9 @@ from project_mai_tai.strategy_core.schwab_1m_v2 import (
     TradeIntentDraft,
     session_start_ts_ms,
 )
-from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitStore, request_only_retirement
+from project_mai_tai.v2_removed_wait import (
+    RemovedWait, RemovedWaitPublicationChanged, RemovedWaitStore, request_only_retirement,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -3617,16 +3621,13 @@ class SchwabV2BotService:
                     return result("broker_position_evidence_unknown_or_stale")
                 evidence_at = min(evidence_at, read_at)
             symbol = request.symbol
-            if (session.scalar(select(AccountPosition.id).where(
-                    AccountPosition.broker_account_id.in_(account_names), AccountPosition.symbol == symbol,
-                    AccountPosition.quantity != 0).limit(1))
-                    or session.scalar(select(VirtualPosition.id).where(
-                        VirtualPosition.broker_account_id.in_(account_names), VirtualPosition.symbol == symbol,
-                        VirtualPosition.quantity != 0).limit(1))
-                    or session.scalar(select(OmsManagedPosition.id).where(
-                        OmsManagedPosition.broker_account_name.in_(names), OmsManagedPosition.symbol == symbol,
-                        or_(OmsManagedPosition.status == "open", OmsManagedPosition.current_quantity != 0)
-                    ).limit(1))):
+            strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
+            try:
+                has_position = owned_position_present(session, symbol=symbol, accounts=account_names,
+                    strategy_id=strategy_id, now=now, max_age_ms=FLIP_OWNER_EVIDENCE_MAX_AGE_MS)
+            except (ValueError, TypeError, ArithmeticError):
+                return result("own_position_evidence_UNKNOWN")
+            if has_position:
                 return result("position_stays_owned")
             # Deliberately no strategy/account restriction: shared Schwab ORB also owns a BUY.
             if (session.scalar(select(BrokerOrder.id).where(BrokerOrder.symbol == symbol,
@@ -6877,6 +6878,19 @@ class SchwabV2BotService:
                     pending[key] = value
         return result
 
+    def _falseflip_cancel_wait_warning(self, request: RemovedWait, reason: str) -> None:
+        """Diagnostic only: retain the exact cancellation obligation and all gates."""
+        warnings = self.__dict__.setdefault("_falseflip_cancel_wait_warnings", {})
+        now = time.monotonic()
+        prior = warnings.get(request)
+        if prior is not None and now - prior < 300:
+            return
+        warnings[request] = now
+        logger.warning("[V2-FALSEFLIP2] sym=%s opportunity_id=%d request_token=%s "
+                       "reason=cancel_publication_waiting detail=%s pending_retained=1 "
+                       "retirement_proven=0 entry_override=0",
+                       request.symbol, request.opportunity_id, request.token, reason)
+
     async def _falseflip_poll(self) -> None:
         if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is not True:
             return
@@ -6899,7 +6913,12 @@ class SchwabV2BotService:
                 self.strategy.acknowledge_falseflip_budget(before, after)
         if self.__dict__.get("_falseflip_defer_cancel_publication", False):
             return  # Refresh both accounts before deciding whether a cancel is necessary.
-        for request in self.strategy.pending_falseflip_cancel_publications():
+        requests = self.strategy.pending_falseflip_cancel_publications()
+        warnings = self.__dict__.get("_falseflip_cancel_wait_warnings", {})
+        for old in tuple(warnings):
+            if old not in requests:
+                warnings.pop(old)  # Diagnostic bookkeeping only, never retire a publication.
+        for request in requests:
             state = self.strategy._symbol_states.get(request.symbol)
             if (self.strategy._falseflip2_enabled() and state is not None
                     and self.strategy._falseflip2_proven(state, request.opportunity_id)):
@@ -6908,6 +6927,7 @@ class SchwabV2BotService:
                 if self.strategy._falseflip2_enabled():
                     store = getattr(self, "_removed_wait_store", None)
                     if store is None:
+                        self._falseflip_cancel_wait_warning(request, "store_unavailable")
                         continue
                     generation = self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(request.symbol, 0)
 
@@ -6916,14 +6936,23 @@ class SchwabV2BotService:
                                 and not self.__dict__.get("_clearwait_open_emits", {}).get(r.symbol, 0)
                                 and self.__dict__.get("_clearwait_emit_generation_by_symbol", {}).get(r.symbol, 0) == g)
 
+                    if not valid():
+                        self._falseflip_cancel_wait_warning(request, "request_or_emit_fence_invalid")
+                        continue
                     await asyncio.to_thread(store.record_rules, request, True, valid)
                     if not valid():
+                        self._falseflip_cancel_wait_warning(request, "ack_fence_changed")
                         continue
                 else:
                     await asyncio.to_thread(self.strategy._removed_wait_persist, request, True)
+            except RemovedWaitPublicationChanged:
+                # Only the writer's typed fence result is classified as changed.
+                # An unrelated DB error remains visible even if memory also moved.
+                self._falseflip_cancel_wait_warning(request, "writer_fence_changed")
+                continue
             except Exception:  # noqa: BLE001 - no cancel publication before its durable request
                 logger.exception("[V2-FALSE-FLIP] sym=%s reason=cancel_barrier_write_failed", request.symbol)
-                break
+                continue
             self.strategy.acknowledge_falseflip_cancel_publication(request)
 
     async def _falseflip2_poll(self, position_book: FlipPositionBook) -> None:
@@ -6969,17 +6998,60 @@ class SchwabV2BotService:
                 self.strategy._falseflip_restoring_track(state)
         for plan in self.strategy.pending_falseflip2_rearms():
             record, _, previous = plan
+            state = self.strategy._symbol_states.get(record.symbol)
+            if self.strategy.falseflip2_rearm_worker_pending(record.symbol):
+                if state is not None:
+                    self.strategy._resting_return_reason(state, "atomic_rearm_worker_unresolved")
+                continue
             valid = fenced(record.symbol, lambda p=plan: self.strategy.falseflip2_rearm_valid(p))
             if not valid():
+                if state is not None:
+                    self.strategy._resting_return_reason(state, "atomic_rearm_state_or_emit_fence_blocked")
                 continue
+            workers = self.strategy.__dict__.setdefault("_falseflip2_rearm_workers", {})
+            owner = {"plan":plan, "completed":threading.Event(), "waiter_finished":False}
+            workers[record.symbol] = owner
+
+            def write_rearm(r=record, old=previous, check=valid, worker=owner):
+                try:
+                    return persist_owner_transition(self.session_factory, r, accounts, check, previous=old)
+                finally:
+                    worker["completed"].set()
+
+            def worker_done(task, worker=owner, symbol=record.symbol):
+                # Retrieve a late exception even when the poll waiter was cancelled.
+                # Task completion itself is NEVER evidence that the native worker ran.
+                if task.cancelled():
+                    logger.warning("[V2-FALSEFLIP2] %s reason=rearm_worker_task_cancelled pending_retained=1", symbol)
+                else:
+                    failure = task.exception()
+                    if failure is not None and worker["waiter_finished"]:
+                        logger.error("[V2-FALSEFLIP2] %s reason=rearm_worker_failed_after_waiter "
+                                     "error_class=%s pending_retained=1", symbol, type(failure).__name__)
+
             try:
-                await asyncio.to_thread(persist_owner_transition, self.session_factory, record,
-                                        accounts, valid, previous=previous)
+                # Retain and shield the task BEFORE yielding: cancellation while
+                # queued must not prevent the actual worker's finally from running.
+                owner["invocation"] = asyncio.to_thread(write_rearm)
+                owner["task"] = asyncio.create_task(owner["invocation"], name="falseflip2-rearm-"+record.symbol)
+                owner["task"].add_done_callback(worker_done)
+                await asyncio.shield(owner["task"])
             except Exception:  # noqa: BLE001 - keep the old false opportunity fenced
-                logger.exception("[V2-FALSEFLIP2] %s reason=rearm_write_pending", record.symbol)
+                if state is not None and self.strategy._resting_return_reason(state, "atomic_rearm_write_pending"):
+                    logger.exception("[V2-FALSEFLIP2] %s reason=rearm_write_pending", record.symbol)
                 continue
+            finally:
+                owner["waiter_finished"] = True
+                # Submission errors may have enqueued work before raising. Neither
+                # failure nor CancelledError proves no invocation or rollback.
+                self.strategy.falseflip2_rearm_worker_pending(record.symbol)
             if valid():
-                self.strategy.acknowledge_falseflip2_rearm(plan)
+                armed = self.strategy.acknowledge_falseflip2_rearm(plan)
+                if state is not None:
+                    self.strategy._resting_return_reason(state,
+                        "atomic_rearm_committed_armed" if armed else "atomic_rearm_committed_placement_deferred")
+            elif state is not None:
+                self.strategy._resting_return_reason(state, "atomic_rearm_ack_superseded")
         await self._falseflip_poll()
         requests = tuple(request for request in self.strategy._removed_wait_requests.values()
                          if request.purpose == "false_flip_restore")

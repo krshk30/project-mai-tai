@@ -9,11 +9,12 @@ import time
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from project_mai_tai.db.models import Base, BrokerAccount, Strategy
+from project_mai_tai.db.models import AccountPosition, Base, BrokerAccount, Strategy
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
+from project_mai_tai.positions_read_receipt import record_receipts
 from project_mai_tai.settings import Settings
 from project_mai_tai.v2_flip_entry_ownership import FlipPositionBook
 from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitStore
@@ -102,6 +103,30 @@ async def test_sunday_60s_real_bar_and_quote_handlers_stay_under_50ms(monkeypatc
             return value.astimezone(tz) if tz else value.replace(tzinfo=None)
 
     monkeypatch.setattr("project_mai_tai.v2_removed_wait.datetime", Clock)
+
+    def read_complete_fixture_positions():
+        # Controlled offline sync, not historical vendor evidence: read EVERY
+        # position for each named account before publishing its actual count.
+        assert threading.get_ident() != loop_thread
+        with factory() as session:
+            receipts = []
+            for name in accounts:
+                positions = session.scalars(select(AccountPosition).join(
+                    BrokerAccount, BrokerAccount.id == AccountPosition.broker_account_id,
+                ).where(BrokerAccount.name == name)).all()
+                receipts.append((name, Clock.now(UTC), len(positions)))
+            record_receipts(session, receipts, recorded_at=Clock.now(UTC))
+            session.commit()
+
+    first_market_advance = asyncio.Event()
+
+    async def sync_then_poll():
+        # The market clock accelerates: an initial pre-loop receipt would be
+        # stale at the first poll. Stamp only AFTER that advance and DB read.
+        await first_market_advance.wait()
+        await asyncio.to_thread(read_complete_fixture_positions)
+        await case.bot._removed_wait_poll()
+
     case.strategy.configure_removed_wait(store.record_rules, restored={"MI": request},
                                          readable=True, dispatch_persist=store.record_dispatch)
     assert not case.strategy._publish_removed_wait(request)
@@ -123,7 +148,7 @@ async def test_sunday_60s_real_bar_and_quote_handlers_stay_under_50ms(monkeypatc
     events = 0
     with case.clock():
         watcher = asyncio.create_task(heartbeat())
-        clear = asyncio.create_task(case.bot._removed_wait_poll())
+        clear = asyncio.create_task(sync_then_poll())
         while loop.time() < stop:
             # Advance one recorded market minute per wall second; duplicate bars
             # exercise the same-bucket callback without inventing extra flips.
@@ -136,6 +161,7 @@ async def test_sunday_60s_real_bar_and_quote_handlers_stay_under_50ms(monkeypatc
                 bar = ChartBar("MI", *(candle[k] for k in ("open", "high", "low", "close")),
                                candle["volume"], stamp)
             case.now_ms = stamp + 61_000
+            first_market_advance.set()
             case.strategy.apply_flip_position_book(FlipPositionBook(case.now_ms, True, {}))
             quote = Quote("MI", 1.0, 1.01, 1.0, case.now_ms, trade_time_ms=case.now_ms)
             before = loop.time()
