@@ -1,0 +1,33 @@
+{
+  "provenance": {
+    "kind": "current_archive_selected_fields_NOT_complete_native_packet",
+    "archive": "PGCOPY-20261021-1640.dump",
+    "archive_sha256_main_verified": "fe396666bec6bdbf622862f8e2a4667839ac59010405ea8977b63cf38a94d4bb",
+    "method": "Authorized pg_restore --data-only --table=trade_intents --file=-, bounded awk/jq text inventory; no connection/restore/SQL execution",
+    "encoding": "UTF8; PostgreSQL COPY text tab-separated; backslash pairs decoded in one pass before JSON parse; unsupported COPY escapes refused",
+    "copy_columns": ["id", "strategy_id", "broker_account_id", "symbol", "side", "intent_type", "quantity", "reason", "status", "payload", "created_at", "updated_at"],
+    "schema_types": "payload JSON NOT NULL; timestamps timestamptz NOT NULL; IDs UUID; numeric(18,8) quantity",
+    "scope": "All WORX buy/open rows in archive:12 = ATR8 + momentum4. Below projects ATR8 only. Every ATR metadata object and segment string parsed successfully. No native closure/journal completeness attested.",
+    "request_limit": "Cancellation row is literal. Reviewer RemovedWait.requested_at_ms and first failing SQL row/order NOT supplied; do not manufacture them from created_at."
+  },
+  "strategy": {"id": "42c5b77f-2437-40eb-9d57-310372da0efd", "code": "schwab_1m_v2"},
+  "momentum_strategy": {"id": "d1a325d7-254a-4f37-a484-e89ecd40a277", "code": "momentum_warn_live"},
+  "cancel": {
+    "id": "09183e51-4235-4b69-9f3e-8c4211b998f5",
+    "account_id": "eb8606c3-3b60-467b-984a-00a752aaf46a",
+    "status": "rejected", "created_at": "2026-10-19 17:47:54.51611+00", "updated_at": "2026-10-19 17:47:54.526198+00",
+    "token": "06257408-12e5-46ef-9b6e-161d983c807d", "opportunity": "1792428962411",
+    "reason": "retry_budget_exhausted", "buy_only": "true",
+    "refusal_origin": "skipped_before_submit", "refusal_code": "cancel_target_not_found"
+  },
+  "atr_buy_open_rows": [
+    {"id": "6ba371f5-808e-474a-911f-1d5fce91e578", "segment": "1792428962411", "status": "cancelled", "created_at": "2026-10-19 16:56:02.46+00"},
+    {"id": "c8d8b076-58e4-4863-8f8e-ce8a53240811", "segment": "1792428962411", "status": "cancelled", "created_at": "2026-10-19 16:58:02.072889+00"},
+    {"id": "c721edac-b6b9-400d-82e4-e3365ba653fd", "segment": "1792428962411", "status": "filled", "created_at": "2026-10-19 17:01:03.106899+00"},
+    {"id": "a51a05b4-444e-40b4-910b-3a58c4401832", "segment": "1792494122706", "status": "filled", "created_at": "2026-10-20 11:02:44.006547+00"},
+    {"id": "d798587c-8f4e-4e8c-9902-a293e338c08e", "segment": "1792497422678", "status": "filled", "created_at": "2026-10-20 12:20:22.494802+00"},
+    {"id": "1aae92df-db71-4729-aa04-6e0b9222c577", "segment": "1792508583030", "status": "cancelled", "created_at": "2026-10-20 15:03:03.112397+00"},
+    {"id": "831f05b6-2ddf-4b30-a06a-1e6a4e3055ff", "segment": "1792508583030", "status": "cancelled", "created_at": "2026-10-20 15:10:02.723472+00"},
+    {"id": "28a10e1a-1a6b-41a2-a984-6b414916cdff", "segment": "1792508583030", "status": "cancelled", "created_at": "2026-10-20 15:23:00.622653+00"}
+  ]
+}

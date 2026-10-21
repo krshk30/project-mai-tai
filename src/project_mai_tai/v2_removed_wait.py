@@ -784,7 +784,8 @@ class RemovedWaitStore:
                                                     "own_position_evidence_UNKNOWN"))
                     continue
                 from project_mai_tai.cancelack1 import optional_proven_accounts
-                required = (optional_proven_accounts(session, request, accounts, strategy_id)
+                required = (optional_proven_accounts(session, request, accounts, strategy_id,
+                                observed_at_ms=int(observed.timestamp() * 1000))
                             if request.purpose in {"retry_exhausted", "false_flip_restore"} else None)
                 results.append(assess_clear_rules(request, now=observed, accounts=accounts,
                     intents=intents, orders=orders, filled_order_ids=fills, order_events=events,
@@ -977,7 +978,8 @@ class RemovedWaitStore:
                     results.append(RemovedWaitProof(request, int(observed.timestamp() * 1000), False,
                                                     "working_buy_or_intent"))
                     continue
-                required = optional_proven_accounts(session, request, accounts, strategy_id)
+                required = optional_proven_accounts(session, request, accounts, strategy_id,
+                    observed_at_ms=int(observed.timestamp() * 1000))
                 results.append(
                     assess_removed_wait(
                         request,

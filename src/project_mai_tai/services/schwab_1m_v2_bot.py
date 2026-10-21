@@ -3768,7 +3768,8 @@ class SchwabV2BotService:
             if acknowledged != set(names):
                 from project_mai_tai.cancelack1 import load_proven_accounts
                 try:
-                    required = load_proven_accounts(session, request, account_names, strategy_id)
+                    required = load_proven_accounts(session, request, account_names, strategy_id,
+                                                    observed_at_ms=observed)
                 except (ValueError, TypeError, ArithmeticError) as exc:
                     return result(str(exc) if isinstance(exc, ValueError) else "cancel_obligations_UNKNOWN")
                 if not required <= acknowledged:

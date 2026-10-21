@@ -127,7 +127,12 @@ def proven_accounts(request, accounts, strategy_id, journal, owners, intents, or
     return frozenset(required)
 
 
-def load_proven_accounts(session, request, accounts, strategy_id):
+def load_proven_accounts(session, request, accounts, strategy_id, *, observed_at_ms=None):
+    # Own dispatch obligations stop at the ORIGINAL request. Later foreign
+    # episodes may be discharged only at an explicitly supplied evidence read.
+    foreign_cut = request.requested_at_ms if observed_at_ms is None else observed_at_ms
+    if type(foreign_cut) is not int or foreign_cut < request.requested_at_ms:
+        raise ValueError("cancel_obligations_clock_UNKNOWN")
     def bounded(query):
         rows = list(session.scalars(query.limit(ROW_LIMIT + 1)))
         if len(rows) > ROW_LIMIT:
@@ -161,7 +166,7 @@ def load_proven_accounts(session, request, accounts, strategy_id):
                 foreign = int(segment)
             except (ValueError, TypeError) as exc:
                 raise ValueError("cancel_obligations_foreign_identity_UNKNOWN") from exc
-            if foreign <= request.opportunity_id or foreign > request.requested_at_ms:
+            if foreign <= request.opportunity_id or foreign > foreign_cut:
                 raise ValueError("cancel_obligations_foreign_identity_UNKNOWN")
             groups.setdefault(foreign, []).append(row)
     excluded_intents, excluded_orders = set(), set()
@@ -172,7 +177,7 @@ def load_proven_accounts(session, request, accounts, strategy_id):
         parent_ids = {row.id for row in parents}
         children = [row for row in orders if row.intent_id in parent_ids
                     or str(_metadata(row).get("fanout_segment_id")) == str(foreign)]
-        scope = ObligationScope(request.symbol, foreign, request.requested_at_ms, request.account_names)
+        scope = ObligationScope(request.symbol, foreign, foreign_cut, request.account_names)
         foreign_journal = bounded(select(DashboardSnapshot).where(
             DashboardSnapshot.snapshot_type == DISPATCH_SNAPSHOT_TYPE,
             DashboardSnapshot.payload["symbol"].as_string() == request.symbol,
@@ -190,9 +195,9 @@ def load_proven_accounts(session, request, accounts, strategy_id):
                 or not known_owner
                 or any(_at(row.created_at) == _at(latest.created_at) and row.payload != latest.payload
                        for row in foreign_owners)
-                or any(_at(row.created_at) > request.requested_at_ms for row in foreign_owners)
+                or any(_at(row.created_at) > foreign_cut for row in foreign_owners)
                 or any(not any(child.intent_id == row.id for child in children) for row in parents)
-                or any(not _closed_with_replacements(session, row, request.requested_at_ms) for row in children)):
+                or any(not _closed_with_replacements(session, row, foreign_cut) for row in children)):
             raise ValueError("cancel_obligations_foreign_closed_UNKNOWN")
         excluded_intents.update(parent_ids)
         excluded_orders.update(row.id for row in children)
@@ -201,10 +206,10 @@ def load_proven_accounts(session, request, accounts, strategy_id):
     return proven_accounts(request, accounts, strategy_id, journal, owners, intents, orders)
 
 
-def optional_proven_accounts(session, request, accounts, strategy_id):
+def optional_proven_accounts(session, request, accounts, strategy_id, *, observed_at_ms=None):
     """None means UNKNOWN; callers may not waive any missing receipt with it."""
     try:
-        return load_proven_accounts(session, request, accounts, strategy_id)
+        return load_proven_accounts(session, request, accounts, strategy_id, observed_at_ms=observed_at_ms)
     except (ValueError, TypeError, ArithmeticError):
         return None
 
@@ -546,5 +551,5 @@ def load_flat_obligations(session, scope, accounts, strategy_id, now, max_age_ms
             strategy_id=strategy_id, now=now, max_age_ms=max_age_ms)
             or working_buy_present(session, scope.symbol, now=now)):
         raise ValueError("cancel_obligations_position_or_buy_held")
-    required = load_proven_accounts(session, scope, accounts, strategy_id)
+    required = load_proven_accounts(session, scope, accounts, strategy_id, observed_at_ms=observed)
     return FlatObligations(scope, observed, required)
