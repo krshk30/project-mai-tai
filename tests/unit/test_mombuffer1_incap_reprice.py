@@ -67,9 +67,11 @@ async def test_same_row_incap_move_sends_current_price_once(priced, point, ask, 
     parent, order = durable(h)
     assert (parent.id, order.id, order.client_order_id) == ids[0]
     assert len(h.sent) == 1 and h.sent[0] == request
-    assert order.quantity == parent.quantity == request.quantity == int(D(100) / ask)
-    assert order.payload["limit_price"] == parent.payload["metadata"]["limit_price"] == str(ask)
-    assert request.metadata["reference_price"] == str(ask)
+    # Claude16:27:28: falling ask retains the saved marketable limit AND qty.
+    expected_limit = max(D("3.00"), ask)
+    assert order.quantity == parent.quantity == request.quantity == int(D(100) / expected_limit)
+    assert order.payload["limit_price"] == parent.payload["metadata"]["limit_price"] == str(expected_limit)
+    assert request.metadata["reference_price"] == str(expected_limit)
     assert D(request.metadata["limit_price"]) <= D(request.metadata["cap_price"]) == D("3.045")
     assert parent.payload["momlive_episode"]["state"] == "submitting"
     assert order.broker_order_id == "synthetic-native-id"

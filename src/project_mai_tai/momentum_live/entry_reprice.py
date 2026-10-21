@@ -14,7 +14,7 @@ class UnsentEntryConflict(Refusal):
     """The durable owner changed; do not try client-only terminal settlement."""
 
 
-def validate_entry_reprice(previous, current, route: Route) -> None:
+def _validate_entry_shape(previous, current, route: Route) -> None:
     try:
         metadata = {**previous.metadata, **{key: current.metadata[key] for key in PRICE_FIELDS}}
         if replace(previous, quantity=current.quantity, metadata=metadata) != current:
@@ -34,6 +34,22 @@ def validate_entry_reprice(previous, current, route: Route) -> None:
             raise Refusal("mombuffer1_wire_invariants_invalid")
     except (KeyError, ArithmeticError, TypeError) as exc:
         raise Refusal("mombuffer1_wire_invariants_invalid") from exc
+
+
+def validate_entry_reprice(previous, current, route: Route) -> None:
+    _validate_entry_shape(previous, previous, route)
+    _validate_entry_shape(previous, current, route)
+    if Decimal(current.metadata["limit_price"]) < Decimal(previous.metadata["limit_price"]):
+        raise Refusal("mombuffer1_downward_reprice_not_allowed")
+
+
+def marketable_entry(previous, fresh, route: Route):
+    """Fresh quote gates ran first; a lower ask does not invalidate a saved BUY."""
+    _validate_entry_shape(previous, previous, route)
+    _validate_entry_shape(previous, fresh, route)
+    if Decimal(fresh.metadata["limit_price"]) <= Decimal(previous.metadata["limit_price"]):
+        return previous
+    return fresh
 
 
 def price_changed(previous, current) -> bool:

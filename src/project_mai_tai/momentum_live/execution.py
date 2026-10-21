@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.momentum_live.admission import EpisodeLedger, Refusal, Route, STRATEGY_CODE, Signal, price_entry
 from project_mai_tai.momentum_live.entry_reprice import (
-    MAX_PRICE_UPDATES, UnsentEntryConflict, price_changed, validate_entry_reprice,
+    MAX_PRICE_UPDATES, UnsentEntryConflict, marketable_entry, price_changed,
 )
 from project_mai_tai.momentum_live.entry_wire import LocalEntryNoDispatch, entry_wire_check
 
@@ -60,7 +60,7 @@ class LiveEntryExecutor:
         while True:
             checked = self._request(signal, prepared.request.metadata["episode_id"], route,
                                     refusal_context=context)
-            validate_entry_reprice(prepared.request, checked, route)
+            checked = marketable_entry(prepared.request, checked, route)
             changed = price_changed(prepared.request, checked)
             if not changed and episode is None:
                 return
@@ -238,7 +238,7 @@ class LiveEntryExecutor:
                 checked = self._request(signal, episode.episode_id, route, refusal_context=context)
                 sealed = replace(request, metadata={key: value for key, value in request.metadata.items()
                                                     if key != "bot_control_permit"})
-                validate_entry_reprice(sealed, checked, route)
+                checked = marketable_entry(sealed, checked, route)
                 if price_changed(sealed, checked):
                     raise Refusal("mombuffer1_quote_changed_after_permit_no_dispatch")
             except Refusal as exc:
