@@ -6076,8 +6076,10 @@ class SchwabV2Strategy:
                 or not self._slotclear_live_sell_close_after_watch(
                     state, max(watch_ms, state.retry_one_watch_start_ms, boot_ms))
                 or self._entry_window_closed_for_session()
-                or state.restart_rest_evidence_pending or state.restart_owner_unmanaged):
+                or state.restart_rest_evidence_pending):
             return
+        # Restore/book uncertainty is represented by the actual owner readability,
+        # phase and position fields checked in the shared release gate below.
         self._release_slotclear_sell_cap(state, sell_ms)
 
     def _release_slotclear_sell_cap(self, state: SymbolState, sell_ms: int) -> None:

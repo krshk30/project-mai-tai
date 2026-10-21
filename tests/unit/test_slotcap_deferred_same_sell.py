@@ -3,7 +3,7 @@ import pytest
 
 from project_mai_tai.strategy_core.schwab_1m_v2 import OHLCVBar, SymbolState
 from tests.unit.test_slotclear1_fresh_sell import seeded, recorded_probes
-from tests.unit.test_v2_flip_owned_first_entry import _book
+from tests.unit.test_v2_flip_owned_first_entry import _book, _leg, PRIMARY
 
 
 def deferred():
@@ -71,7 +71,14 @@ def test_gap_resume_releases_same_sell_once_without_dispatch_or_new_identity():
 def test_resume_preserves_every_owner_and_inflight_fence(field, value):
     strategy, state, clock, bar, _, _ = deferred()
     advance(strategy, state, clock, bar)
-    setattr(state, field, value)
+    if field == "restart_owner_unmanaged":
+        # Preserve this original case ID, but use the real producer of unowned
+        # exposure instead of dynamically adding a nonexistent state attribute.
+        _book(strategy, clock, state.symbol, _leg(PRIMARY, "unowned", entered_ms=clock[0]))
+        assert state.flip_owner_phase == "unknown"
+        assert state.flip_owner_open_positions
+    else:
+        setattr(state, field, value)
     assert strategy._maybe_resume_gap_hold(state)
     assert state.cw_resting_taken and state.cw_reclaim_taken
     assert state.slotclear_last_fresh_sell_bar_ms == 0
