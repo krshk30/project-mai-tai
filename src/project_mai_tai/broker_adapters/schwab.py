@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -24,6 +25,7 @@ from project_mai_tai.settings import Settings
 
 
 logger = logging.getLogger(__name__)
+_order_prewire_check: ContextVar = ContextVar("schwab_order_prewire_check", default=None)
 
 
 @dataclass(frozen=True)
@@ -606,12 +608,15 @@ class SchwabBrokerAdapter:
         return best
 
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
+        orb_entry_type = str(request.metadata.get("bracket_entry_type", "")).upper()
+        fenced_orb = ("orb_pastlevel_policy" in request.metadata
+                      or request.prewire_check is not None or orb_entry_type == "LIMIT")
         if request.strategy_code == "orb_schwab" and request.intent_type == "open" and (
             not self._is_bracket_request(request)
             or self._is_exit_only_oco_request(request)
-            or str(request.metadata.get("bracket_entry_type", "")).upper() not in {"STOP_LIMIT", "LIMIT"}
-            or request.metadata.get("orb_pastlevel_policy") != "ORBPASTLEVEL1-v1"
-            or request.prewire_check is None
+            or orb_entry_type not in {"STOP_LIMIT", "LIMIT"}
+            or (fenced_orb and (request.metadata.get("orb_pastlevel_policy") != "ORBPASTLEVEL1-v1"
+                                or request.prewire_check is None))
         ):
             return [
                 ExecutionReport(
@@ -646,7 +651,8 @@ class SchwabBrokerAdapter:
             if request.intent_type == "cancel":
                 return await self._cancel_order(account, request)
 
-            status_code, headers, response = await self._authorized_request_json(
+            status_code, headers, response = await self._authorized_order_request_json(
+                request,
                 "POST",
                 f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders",
                 body=(
@@ -656,7 +662,6 @@ class SchwabBrokerAdapter:
                     if self._is_bracket_request(request)
                     else self._build_order_payload(request)
                 ),
-                **({"prewire_check": request.prewire_check} if request.prewire_check is not None else {}),
             )
         except RuntimeError as exc:
             return [
@@ -1271,6 +1276,21 @@ class SchwabBrokerAdapter:
             return None
         return order
 
+    async def _authorized_order_request_json(self, request, method, path, *, body=None):
+        fence = request.prewire_check
+        if fence is not None:
+            try:
+                fence()
+            except ValueError as exc:
+                raise RuntimeError(str(exc)) from exc
+        token = _order_prewire_check.set(fence)
+        try:
+            # Keep the established transport interface; do not retry TypeError
+            # or expose an execution callback as an HTTP keyword or payload.
+            return await self._authorized_request_json(method, path, body=body)
+        finally:
+            _order_prewire_check.reset(token)
+
     async def _authorized_request_json(
         self,
         method: str,
@@ -1279,6 +1299,8 @@ class SchwabBrokerAdapter:
         body: dict[str, object] | None = None,
         prewire_check=None,
     ) -> tuple[int, dict[str, str], object]:
+        if prewire_check is None:
+            prewire_check = _order_prewire_check.get()
         token = await self._get_access_token()
         status_code, headers, payload = await self._request_json(
             method,
@@ -1732,12 +1754,12 @@ class SchwabBrokerAdapter:
         if old_report.filled_quantity != 0:
             return None
         try:
-            status, headers, response = await self._authorized_request_json(
+            status, headers, response = await self._authorized_order_request_json(
+                request,
                 "PUT",
                 f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/"
                 f"{quote(broker_order_id, safe='')}",
                 body=body,
-                **({"prewire_check": request.prewire_check} if request.prewire_check is not None else {}),
             )
         except RuntimeError:
             # A transport error after PUT is not proof that the old order survived.
