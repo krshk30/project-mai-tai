@@ -927,7 +927,6 @@ class ControlPlaneRepository:
                 return self._overview_cache
 
             data = await self._load_dashboard_data_uncached()
-            data = await self._attach_momentum_live_dashboard(data)
             self._overview_cache = data
             self._overview_cache_at = utcnow()
             return data
@@ -1060,7 +1059,6 @@ class ControlPlaneRepository:
                 return self._bot_dashboard_cache
 
             data = await self._load_bot_dashboard_data_uncached()
-            data = await self._attach_momentum_live_dashboard(data)
             self._bot_dashboard_cache = data
             self._bot_dashboard_cache_at = utcnow()
             return data
@@ -3979,6 +3977,7 @@ def build_app(
     @app.get("/api/overview")
     async def overview() -> dict[str, Any]:
         data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository._attach_momentum_live_dashboard(data)
         _attach_schwab_token_refresher_status(app, data)
         return data
 
@@ -3990,6 +3989,7 @@ def build_app(
     @app.get("/api/bots")
     async def bots() -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
+        data = await app.state.repository._attach_momentum_live_dashboard(data)
         return {
             "status": data.get("status", "unknown"),
             "row_conversion_warnings": data.get("row_conversion_warnings", []),
@@ -4555,6 +4555,7 @@ def build_app(
     @app.get("/bot/momentum", response_class=HTMLResponse)
     async def bot_momentum_page() -> str:
         data = await app.state.repository.load_bot_dashboard_data()
+        data = await app.state.repository._attach_momentum_live_dashboard(data)
         day = utcnow().astimezone(EASTERN_TZ).date()
         warnings = []
         for code in ("momentum_60s_warn", "momentum_30s_warn"):
@@ -4669,6 +4670,7 @@ def build_app(
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
         data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository._attach_momentum_live_dashboard(data)
         _attach_schwab_token_refresher_status(app, data)
         return _render_dashboard(
             data,

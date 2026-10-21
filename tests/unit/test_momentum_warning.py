@@ -317,15 +317,18 @@ async def test_flagged_service_restores_separate_warning_boundaries_only():
             f"{code}:FINAL", f"{code}:one", code, "FINAL", now.date(), "TEST", now,
             {"strategy_code": code, "exit": {"sip_ts_ms": START+123}},
         )])
+    before = store.load_session(now.date())
     service = MomentumPaperService(
         Settings().model_copy(update={"market_data_momentum_warning_enabled": True}),
         store=store, redis_client=AsyncMock(), clock=lambda: now,
     )
     await service._prepare_session(now.date())
     assert service._warning is not None
-    assert {key[0] for key in service._engine._reference_after_ms} == set(MOMENTUM_STRATEGIES)
-    assert {key[0] for key in service._warning.engine._reference_after_ms} == set(MOMENTUM_WARNING_STRATEGIES)
-    assert {row["strategy_code"] for row in service._completed_from_store} == set(MOMENTUM_STRATEGIES)
+    assert service._engine.strategy_windows == {} and service._engine._reference_after_ms == {}
+    assert service._warning.engine._reference_after_ms == {
+        (code, "TEST"): START + 123 for code in MOMENTUM_WARNING_STRATEGIES}
+    assert {row["strategy_code"] for row in service._completed_from_store} == set(MOMENTUM_WARNING_STRATEGIES)
+    assert store.load_session(now.date()) == before
 
 
 @pytest.mark.asyncio

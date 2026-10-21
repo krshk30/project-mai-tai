@@ -48,9 +48,10 @@ def detected(code):
     )
 
 
-async def prepared(*, records=()):
-    store = _store()
-    store.append_many([ready(), *records])
+async def prepared(*, records=(), store=None):
+    if store is None:
+        store = _store()
+        store.append_many([ready(), *records])
     service = MomentumPaperService(
         Settings(momentum_paper_enabled=True, market_data_momentum_warning_enabled=True),
         store=store, redis_client=AsyncMock(), clock=lambda: NOW,
@@ -133,13 +134,17 @@ def test_warning_api_health_uses_paper_heartbeat_not_strategy_engine(monkeypatch
 @pytest.mark.asyncio
 async def test_production_preparation_has_no_legacy_evaluator_or_history_mutation():
     old = [detected(code) for code in MOMENTUM_STRATEGIES]
-    service, store = await prepared(records=old)
+    store = _store()
+    store.append_many([ready(), *old])
+    before = [row for row in store.load_session(DAY) if row.strategy_code in MOMENTUM_STRATEGIES]
+    service, store = await prepared(store=store)
     assert service._engine.strategy_windows == {}
     assert service._engine.active_symbols == set()
     assert service._warning.engine.strategy_windows == MOMENTUM_WARNING_STRATEGIES
     assert service._warning.engine.prior_closes == {"ABCD": Decimal("1.25")}
     retained = [row for row in store.load_session(DAY) if row.strategy_code in MOMENTUM_STRATEGIES]
-    assert retained == old
+    assert retained == before
+    assert {row.event_key for row in retained} == {row.event_key for row in old}
     assert not any(row.event_type == "UNANSWERABLE" for row in retained)
 
 
