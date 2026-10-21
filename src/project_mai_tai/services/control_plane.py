@@ -4656,6 +4656,7 @@ def _attach_schwab_token_refresher_status(app_obj: Any, data: dict[str, Any]) ->
 MOMENTUM_PAGE_CODES = frozenset({
     "momentum_30s", "momentum_60s", "momentum_30s_warn", "momentum_60s_warn",
 })
+MOMENTUM_REFERENCE_CODES = frozenset({"momentum_30s_warn", "momentum_60s_warn"})
 CONTROL_PLANE_ACTIVE_BOT_CODES = (
     "schwab_1m_v2",
     "momentum_30s_warn",
@@ -4739,7 +4740,10 @@ def _render_compact_dashboard(data: dict[str, Any]) -> str:
         _safe_int(scanner.get("active_subscription_symbols")),
         _safe_int(scanner.get("heartbeat_active_symbols")),
     )
-    open_positions = sum(_safe_int(bot.get("position_count")) for bot in ordered_bots)
+    open_positions = sum(
+        _safe_int(bot.get("position_count")) for bot in ordered_bots
+        if bot.get("strategy_code") not in MOMENTUM_REFERENCE_CODES
+    )
     latest_reconciliation = data.get("reconciliation", {}).get("latest_run") or {}
     reconciliation_summary = latest_reconciliation.get("summary", {}) if isinstance(latest_reconciliation, dict) else {}
     cutover_confidence = _safe_int(reconciliation_summary.get("cutover_confidence"), 0)
@@ -4970,6 +4974,8 @@ def _compact_bot_route_line(code: str, bot: dict[str, Any]) -> str:
         return "live · schwab streamer · sole session"
     if code == "polygon_30s":
         return "paper exit · mirrored Schwab + Webull fills · Polygon feed"
+    if code in MOMENTUM_REFERENCE_CODES:
+        return "paper reference · Massive warning feed · 30s + 60s"
     if code in MOMENTUM_PAGE_CODES:
         return "live · Webull + Schwab (SEC route) · 30s + 60s"
     if code == "orb_schwab":
@@ -5055,8 +5061,10 @@ def _compact_bot_card(
     route = _compact_bot_route_line(code, bot)
     bot_page_url = _compact_bot_page_url(code)
     # Paper vs live badge — paper-routed accounts (e.g. "paper:orb") must not read as LIVE.
-    is_paper = (str(bot.get("account_name") or "").startswith("paper:")
-                and code not in MOMENTUM_PAGE_CODES)
+    is_paper = (code in MOMENTUM_REFERENCE_CODES or (
+        str(bot.get("account_name") or "").startswith("paper:")
+        and code not in MOMENTUM_PAGE_CODES
+    ))
     mode_tone = "warn" if is_paper else "good"
     mode_label = "PAPER" if is_paper else "LIVE"
     return f"""
@@ -5070,7 +5078,7 @@ def _compact_bot_card(
       </div>
       <div class="bot-metrics">
         <div class="metric"><div class="m-label">Data flow</div><div class="m-val {flow_tone}">{escape(_friendly_data_flow(data_flow))}</div></div>
-        <div class="metric"><div class="m-label">Live symbols</div><div class="m-val">{escape(live_symbols)}</div></div>
+        <div class="metric"><div class="m-label">{"Reference symbols" if code in MOMENTUM_REFERENCE_CODES else "Live symbols"}</div><div class="m-val">{escape(live_symbols)}</div></div>
         <div class="metric"><div class="m-label">Bar age</div><div class="m-val {lag_tone}">{escape(lag_label)}</div></div>
       </div>
       {data_date_note}
@@ -7129,7 +7137,7 @@ def _render_bot_detail_page(
             live_trade_coach_advisories
         )
     order_rows, order_count = _build_order_history_rows(recent_orders, recent_fills)
-    order_history_body = paper_broker_notice if strategy_code in {"momentum_30s", "momentum_60s"} else f"""<table>
+    order_history_body = paper_broker_notice if strategy_code in MOMENTUM_PAGE_CODES else f"""<table>
         <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Side</th><th style="text-align:right">Qty</th><th style="text-align:right">Price</th><th>Status</th><th>Reason</th></tr></thead>
         <tbody>{order_rows}</tbody></table>"""
     tos_parity = bot.get("tos_parity", {})
