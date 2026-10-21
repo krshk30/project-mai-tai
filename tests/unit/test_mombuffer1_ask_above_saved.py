@@ -128,7 +128,7 @@ async def test_sub1_retains_saved_notional_quantity_not_larger_fresh_ask_quantit
     move_at(h, "after_durable", D(".50"))
     _, request, _ = await h.executor.admit(signal)
     parent, order = durable(h)
-    assert request.metadata["limit_price"] == "0.99"
+    assert D(request.metadata["limit_price"]) == D(".99")
     assert order.quantity == parent.quantity == request.quantity == D(101)
     assert request.quantity * D(request.metadata["limit_price"]) <= D(100)
     assert request.quantity >= 100 and len(h.sent) == 1
