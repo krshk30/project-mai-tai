@@ -60,7 +60,10 @@ def synthetic_case(monkeypatch, *, pm=False, required=(MIRROR,), acknowledged=No
             session.add(DashboardSnapshot(snapshot_type=DISPATCH_SNAPSHOT_TYPE,
                 payload={**begin, "kind": "attempt", "attempt_token": token, "account_name": name},
                 created_at=instant(at)))
-            md = {"fanout_segment_id": str(opportunity), "clearwait_dispatch_token": token}
+            md = {"fanout_segment_id": str(opportunity), "clearwait_dispatch_token": token,
+                  "fanout_slot": "resting", "fanout_slot_id": fanout_slot_id(
+                      strategy_code="schwab_1m_v2", symbol=request.symbol,
+                      segment_id=opportunity, slot="resting")}
             parent = TradeIntent(id=uuid4(), strategy_id=own.id, broker_account_id=accounts[name].id,
                 symbol=request.symbol, side="buy", intent_type="open", quantity=1,
                 reason="SYNTHETIC prior BUY obligation", status="cancelled", payload={"metadata": md},

@@ -4,12 +4,32 @@ Never use current country routing, a cancel set, or absent broker rows as scope.
 The existing full-two-account barrier needs no missing-leg waiver.
 """
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import or_, select
 
 from project_mai_tai.db.models import BrokerOrder, DashboardSnapshot, TradeIntent
+from project_mai_tai.owned_inventory import owned_position_present
+from project_mai_tai.positions_read_receipt import load_receipts
 from project_mai_tai.v2_removed_wait import DISPATCH_SNAPSHOT_TYPE, ROW_LIMIT
+
+
+@dataclass(frozen=True)
+class ObligationScope:
+    """Read cutpoint, not a synthesized cancellation request or receipt."""
+
+    symbol: str
+    opportunity_id: int
+    requested_at_ms: int
+    account_names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FlatObligations:
+    scope: ObligationScope
+    observed_at_ms: int
+    required_accounts: frozenset[str]
 
 
 def _metadata(row):
@@ -118,3 +138,53 @@ def load_proven_accounts(session, request, accounts, strategy_id):
         or_(BrokerOrder.intent_id.in_([row.id for row in intents]), BrokerOrder.submitted_at >= anchor,
             BrokerOrder.payload["fanout_segment_id"].as_string() == str(request.opportunity_id))))
     return proven_accounts(request, accounts, strategy_id, journal, owners, intents, orders)
+
+
+def optional_proven_accounts(session, request, accounts, strategy_id):
+    """None means UNKNOWN; callers may not waive any missing receipt with it."""
+    try:
+        return load_proven_accounts(session, request, accounts, strategy_id)
+    except (ValueError, TypeError, ArithmeticError):
+        return None
+
+
+def receipts_cover(request, receipts, required):
+    universe = set(request.account_names)
+    if receipts == universe:
+        return True  # Existing full-coverage path excludes no possible account.
+    return bool(required and set(required) <= universe and set(required) <= receipts)
+
+
+def cancel_outcome_known(row):
+    payload = row.payload or {}
+    md = _metadata(row)
+    known = {None, "confirmed", "already_absent", "confirmed_after_accepted_request", "resolved_by_fill"}
+    return (md.get("cancel_outcome") in known and payload.get("cancel_outcome") in known
+            and payload.get("refusal_origin") != "could_not_tell")
+
+
+def working_buy_present(session, symbol):
+    terminal = {"cancelled", "canceled", "filled", "rejected", "expired"}
+    return bool(session.scalar(select(BrokerOrder.id).where(
+        BrokerOrder.symbol == symbol, BrokerOrder.side == "buy",
+        or_(BrokerOrder.status.is_(None), BrokerOrder.status.notin_(terminal))).limit(1))
+        or session.scalar(select(TradeIntent.id).where(
+            TradeIntent.symbol == symbol, TradeIntent.side == "buy", TradeIntent.intent_type == "open",
+            or_(TradeIntent.status.is_(None), TradeIntent.status.notin_(terminal))).limit(1)))
+
+
+def load_flat_obligations(session, scope, accounts, strategy_id, now, max_age_ms):
+    """Missing-row/leftover-request waiver only; never a native finality receipt."""
+    observed = _at(now)
+    receipts = load_receipts(session)
+    for name in scope.account_names:
+        receipt = receipts.get(name, {})
+        if (receipt.get("writer") != "oms.sync_broker_positions"
+                or not 0 <= observed - _at(receipt.get("read_at")) <= max_age_ms):
+            raise ValueError("cancel_obligations_positions_UNKNOWN")
+    if (owned_position_present(session, symbol=scope.symbol, accounts=accounts,
+            strategy_id=strategy_id, now=now, max_age_ms=max_age_ms)
+            or working_buy_present(session, scope.symbol)):
+        raise ValueError("cancel_obligations_position_or_buy_held")
+    required = load_proven_accounts(session, scope, accounts, strategy_id)
+    return FlatObligations(scope, observed, required)

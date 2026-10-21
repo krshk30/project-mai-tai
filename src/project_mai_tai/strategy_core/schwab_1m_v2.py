@@ -797,6 +797,8 @@ class SchwabV2Strategy:
         self._removed_wait_dispatch_persist: Callable[[dict], None] | None = None
         self._removed_wait_block_reason: dict[str, tuple[str, str]] = {}
         self._fresh_sell_release_evidence: dict[str, FreshSellReleaseEvidence] = {}
+        self._cancelack_obligations: dict = {}
+        self._cancelack_dispatch_generation = 0
         self._retry_one_max_retries = max(
             0,
             int(
@@ -1457,6 +1459,10 @@ class SchwabV2Strategy:
         })
 
     def track_removed_wait_dispatch(self, draft: TradeIntentDraft, account: str) -> bool:
+        self._cancelack_dispatch_generation += 1
+        for key in tuple(self._cancelack_obligations):
+            if key[0] == draft.symbol.upper():
+                self._cancelack_obligations.pop(key, None)
         # Eligibility awaits can outlive removal and a fresh scanner re-add.
         state = self._symbol_states.get(draft.symbol.upper())
         try:
@@ -1621,6 +1627,12 @@ class SchwabV2Strategy:
                                 (request.symbol, request.opportunity_id))
                         logger.info("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=confirmed owner_kept=1",
                                     request.symbol)
+                elif not proof.clear and self._removed_wait_requests.get(request.symbol) == request:
+                    disposition = (request.token, proof.reason)
+                    if self._removed_wait_block_reason.get(request.symbol) != disposition:
+                        self._removed_wait_block_reason[request.symbol] = disposition
+                        logger.warning("[V2-RETRY-LEFTOVER-CANCEL] %s opportunity_id=%d receipt=UNKNOWN reason=%s",
+                                       request.symbol, request.opportunity_id, proof.reason)
                 continue
             if (self._removed_wait_enabled and proof.reason == "own_fill_stays_owned"
                     and not proof.clear and self._removed_wait_requests.get(request.symbol) == request
@@ -2198,6 +2210,20 @@ class SchwabV2Strategy:
         accounts = self._removed_wait_accounts()
         if set(accounts) <= state.flip_owner_fill_accounts:
             return
+        proof = self._cancelack_obligations.get(key)
+        queued = any(d.symbol == state.symbol and getattr(d, "side", "") == "buy"
+                     and getattr(d, "intent_type", "") == "open"
+                     for name in ("_pending_intents", "_pending_webull_direct_intents", "_pending_webull_fanout_intents")
+                     for d in getattr(self, name, ()))
+        if (proof is not None and proof.scope.symbol == state.symbol
+                and proof.scope.opportunity_id == opportunity
+                and set(proof.scope.account_names) == set(accounts)
+                and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS
+                and proof.required_accounts and proof.required_accounts <= state.flip_owner_fill_accounts
+                and not (queued or state.resting_active or state.webull_resting_active)):
+            logger.info("[V2-RETRY-LEFTOVER-CANCEL] %s opportunity_id=%d action=not_needed historical_accounts=%s",
+                        state.symbol, opportunity, ",".join(sorted(proof.required_accounts)))
+            return  # No request was opened; owner/budget/slot state is not reset.
         request = RemovedWait(state.symbol, opportunity, str(uuid4()), self._now_ms(),
                               accounts, "retry_exhausted")
         self._removed_wait_requests[state.symbol] = request
