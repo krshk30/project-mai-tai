@@ -3657,6 +3657,12 @@ class SchwabV2BotService:
                 no_target = (intent.status == "rejected"
                              and payload.get("refusal_origin") == "skipped_before_submit"
                              and payload.get("refusal_code") == "cancel_target_not_found")
+                confirmed_outcomes = {None, "confirmed", "already_absent",
+                                      "confirmed_after_accepted_request", "resolved_by_fill"}
+                if (md.get("cancel_outcome") not in confirmed_outcomes
+                        or payload.get("cancel_outcome") not in confirmed_outcomes
+                        or payload.get("refusal_origin") == "could_not_tell"):
+                    return result("own_cancel_not_terminal")
                 if intent.status not in {"cancelled", "canceled"} and not no_target:
                     return result("own_cancel_not_terminal")
                 updated = at_ms(intent.updated_at)
@@ -3664,13 +3670,23 @@ class SchwabV2BotService:
                     return result("own_cancel_settling")
                 acknowledged.add(account_names[intent.broker_account_id])
             if acknowledged != set(names):
-                return result("own_cancel_missing")
+                from project_mai_tai.cancelack1 import load_proven_accounts
+                try:
+                    required = load_proven_accounts(session, request, account_names, strategy_id)
+                except (ValueError, TypeError, ArithmeticError) as exc:
+                    return result(str(exc) if isinstance(exc, ValueError) else "cancel_obligations_UNKNOWN")
+                if not required <= acknowledged:
+                    return result("own_cancel_missing")
+                return result("flat_both_required_own_cancels_settled", True)
             return result("flat_both_own_cancels_settled", True)
 
         try:
             if self.session_factory is None:
                 raise ValueError("position database unavailable")
             with self.session_factory() as session:
+                if session.get_bind().dialect.name == "postgresql":
+                    session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                    session.execute(text("SET TRANSACTION READ ONLY"))
                 receipts = load_receipts(session)
                 return tuple(assess(session, request, receipts) for request in requests)
         except Exception:  # noqa: BLE001 - unknown evidence never releases an owner
