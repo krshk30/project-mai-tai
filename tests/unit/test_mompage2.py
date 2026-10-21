@@ -118,7 +118,8 @@ def test_reference_ledgers_restored_but_never_enter_live_total(monkeypatch, rout
     assert "Paper bot &mdash; no broker orders." not in html
     assert "Broker Qty<br>Current Price" in html  # ONE shared ATR-style open table.
     assert html.count('<h3>Open Positions') == 1 and 'No open positions' in html
-    assert len(client.metric_calls) == 1
+    assert len(client.metric_calls) == 2
+    assert all(kwargs == {"count": 64} for _, kwargs in client.metric_calls)
 
 
 @pytest.mark.parametrize("delta,expected", [(49, "earlier"), (-49, "later")])
@@ -188,7 +189,9 @@ def test_unreadable_ledger_total_unknown_other_total_unchanged(monkeypatch, rout
     kwargs = {ledger: OSError("CONTROLLED unreadable")}
     html, _ = page(monkeypatch, route, **kwargs)
     assert "Warning history UNKNOWN" in html
-    assert "Signal reference ledger unreadable: UNKNOWN" in html
+    method = "WARN 60s" if ledger == "snapshot" else "WARN 30s"
+    assert f"{method} ledger unreadable: UNKNOWN" in html
+    assert "UNKNOWN. No total calculated." in html
     assert "Day total: $+0.00 &middot; 0 completed broker trades" in html
     assert html.count('Day total:') == 1
     assert ("$+49.40" if ledger == "snapshot" else "$+28.80") in html
