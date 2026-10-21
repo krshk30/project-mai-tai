@@ -319,7 +319,7 @@ async def _attempt_owned(
     context = stop_context if stopping else attach_context
     protected = context is not None
     legacy_eod_receipt = {} if reason == "ORB_END_OF_DAY_CLOSE" and not protected else None
-    allow_broker_below_own = reason != "ORB_END_OF_DAY_CLOSE"
+    allow_broker_below_own = True
     now = clock()
     if protected:
         context.execution_metadata(target, now)  # Validate session/bid BEFORE releasing protection.

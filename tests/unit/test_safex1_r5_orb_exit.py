@@ -53,7 +53,7 @@ def close_case(monkeypatch, route_setup, provider):
                            clock=[filled_at])
 
 
-def run_close(case):
+def run_close(case, *, reason=BODY_REASON):
     # Enter at the shared coordinator boundary after the existing signal claim.
     # The native protection state stays untouched; Webull's empty state means
     # no pair was posted, not fabricated terminal cancellation evidence.
@@ -65,7 +65,8 @@ def run_close(case):
         target = owner._Target(entry.id, entry.strategy_id, entry.broker_account_id, account.name,
             entry.symbol, entry.broker_order_id, entry.client_order_id, Decimal(10), Decimal(10), True)
     return asyncio.run(owner._attempt(case.service, target, uuid4(), lambda: case.clock[0],
-                                      reason=BODY_REASON, start=owner.time(9, 30)))
+                                      reason=reason, start=owner.time(15, 55) if reason == "ORB_END_OF_DAY_CLOSE"
+                                      else owner.time(9, 30)))
 
 
 @pytest.mark.parametrize("provider", ["schwab", "webull"])
@@ -83,6 +84,32 @@ def test_non_eod_underbacking_sells_only_broker_quantity_and_pages(monkeypatch, 
             incident, = session.scalars(select(SystemIncident)).all()
             assert incident.severity == "critical" and incident.status == "open"
             assert incident.payload["reason"] == "orb_close_broker_below_own"
+            fill, = session.scalars(select(Fill).where(Fill.side == "sell")).all()
+            assert fill.quantity == 9
+    finally:
+        if provider == "schwab":
+            case.factory.kw["bind"].dispose()
+
+
+@pytest.mark.parametrize("provider", ["schwab", "webull"])
+def test_eod_underbacking_sells_only_broker_quantity_and_pages(monkeypatch, route_setup, provider):
+    case = close_case(monkeypatch, route_setup, provider)
+    case.clock[0] = case.clock[0].replace(hour=19, minute=55)
+    try:
+        assert run_close(case, reason="ORB_END_OF_DAY_CLOSE") is True
+        requests = case.broker.submitted if provider == "schwab" else case.broker.sent
+        closes = [request for request in requests if request.intent_type == "close"]
+        assert len(closes) == 1 and closes[0].quantity == 9
+        assert closes[0].reason == "ORB_END_OF_DAY_CLOSE"
+        assert closes[0].metadata["entry_order_id"] == str(case.entry_id)
+        with case.factory() as session:
+            assert session.scalar(select(VirtualPosition.quantity)) == 1
+            incident, = session.scalars(select(SystemIncident)).all()
+            assert incident.severity == "critical" and incident.status == "open"
+            assert incident.payload["entry_order_id"] == str(case.entry_id)
+            expected_reason = ("orb_close_ownership_UNKNOWN_legacy_eod:broker_below_owned"
+                               if provider == "schwab" else "orb_close_broker_below_own")
+            assert incident.payload["reason"] == expected_reason
             fill, = session.scalars(select(Fill).where(Fill.side == "sell")).all()
             assert fill.quantity == 9
     finally:
