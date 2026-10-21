@@ -230,7 +230,8 @@ async def test_repository_attachment_reads_owned_ledger_bounded_and_removes_all_
 
     monkeypatch.setattr(cp.asyncio, "wait_for", bounded)
     repository = cp.ControlPlaneRepository.__new__(cp.ControlPlaneRepository)
-    repository.settings = Settings(_env_file=None, momentum_paper_enabled=True, redis_stream_prefix="test")
+    repository.settings = Settings(_env_file=None, momentum_paper_enabled=True,
+                                   market_data_momentum_warning_enabled=True, redis_stream_prefix="test")
     repository.session_factory, repository.redis = object(), object()
     result = await repository._attach_momentum_live_dashboard(data)
     assert data == retained
