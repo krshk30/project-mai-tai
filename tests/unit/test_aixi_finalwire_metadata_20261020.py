@@ -28,7 +28,15 @@ from project_mai_tai.db.models import (
 from project_mai_tai.db.base import Base
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms import managed_sell_prewire, webull_attach_riskoff as wb
+from project_mai_tai.oms import service as oms
 from tests.unit.test_wbattach1_riskoff import closes, make_case as make_case
+
+
+@pytest.fixture(autouse=True)
+def controlled_clock(make_case, monkeypatch):
+    # Delegate to the shared fixture's mutable clock, including per-case advances.
+    fixture_now = oms.utcnow
+    monkeypatch.setattr(oms, "utcnow", lambda: fixture_now())
 
 
 COID = "schwab_1m_v2-AIXI-open-1b6725ce9e74"

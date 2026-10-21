@@ -4,7 +4,8 @@ import logging
 import pytest
 from sqlalchemy import select
 
-from project_mai_tai.db.models import DashboardSnapshot, Fill, SystemIncident
+from project_mai_tai.db.models import AccountPosition, BrokerAccount, DashboardSnapshot, Fill, SystemIncident
+from project_mai_tai.positions_read_receipt import record_receipts
 from project_mai_tai.services.schwab_1m_v2_bot import SchwabV2BotService
 from project_mai_tai.v2_removed_wait import RemovedWaitProof
 from tests.unit.test_v2_removed_wait_clear_rules import (
@@ -85,19 +86,35 @@ async def test_commit_failure_retries_with_backoff_five_attempts_one_warning_one
 
     store.commit_clear = unavailable
     caplog.set_level(logging.WARNING)
-    for _ in range(14):
+
+    async def controlled_poll():
+        # Simulate a new COMPLETE position reply before each actual poll, at
+        # that poll's controlled clock, rather than rejuvenating a cached read.
+        observed = datetime.fromtimestamp(clock[0]/1000, UTC)
+        with factory.begin() as session:
+            accounts = session.scalars(select(BrokerAccount).where(
+                BrokerAccount.name.in_((PRIMARY, WEBULL)))).all()
+            assert {row.name for row in accounts} == {PRIMARY, WEBULL}
+            positions = session.scalars(select(AccountPosition).where(
+                AccountPosition.broker_account_id.in_([row.id for row in accounts]))).all()
+            record_receipts(session, [(row.name, observed, sum(
+                p.broker_account_id == row.id for p in positions)) for row in accounts],
+                recorded_at=observed)
         await bot._removed_wait_poll()
+
+    for _ in range(14):
+        await controlled_poll()
         clock[0] += 1000
     assert len(calls) == 1
     clock[0] = MS + 15000
-    await bot._removed_wait_poll()
+    await controlled_poll()
     assert len(calls) == 2
     clock[0] = MS + 44000
-    await bot._removed_wait_poll()
+    await controlled_poll()
     assert len(calls) == 2
     for delta in (45000, 105000, 225000, 600000, 1000000):
         clock[0] = MS + delta
-        await bot._removed_wait_poll()
+        await controlled_poll()
     assert len(calls) == 5
     assert len([r for r in caplog.records if "[RWLOOP1]" in r.message]) == 1
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

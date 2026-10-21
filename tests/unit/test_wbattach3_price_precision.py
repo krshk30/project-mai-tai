@@ -16,8 +16,16 @@ from project_mai_tai.oms.price_binding import stored_price
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.oms.target_cache import ManagedTargetCache
 from project_mai_tai.oms import webull_attach_riskoff as wb
+from project_mai_tai.oms import service as oms
 from tests.unit.test_falseflip1_runtime import database
 from tests.unit.test_wbattach1_riskoff import make_case, closes
+
+
+@pytest.fixture(autouse=True)
+def controlled_clock(make_case, monkeypatch):
+    # Delegate to the shared fixture's mutable clock, including per-case advances.
+    fixture_now = oms.utcnow
+    monkeypatch.setattr(oms, "utcnow", lambda: fixture_now())
 
 
 RAW = Decimal("5.0898305085")
