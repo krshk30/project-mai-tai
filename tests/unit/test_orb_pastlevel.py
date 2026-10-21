@@ -41,19 +41,30 @@ def test_above_rounded_cap_or_bad_ask_is_never_a_market_order(ask):
         choose(ask=ask)
 
 
-@pytest.mark.parametrize("delta,allowed", [(0, True), (-2000, True), (-2001, False), (1, False)])
-def test_quote_age_inclusive_and_future_clock_rejected(delta, allowed):
-    if allowed:
-        choose(at=NOW + timedelta(milliseconds=delta))
-    else:
+@pytest.mark.parametrize("delta", [0, -2000, -2001, 1])
+def test_quote_age_inclusive_stale_legacy_and_future_clock_rejected(delta):
+    if delta > 0:
         with pytest.raises(ValueError, match="stale"):
             choose(at=NOW + timedelta(milliseconds=delta))
+    else:
+        md = choose(at=NOW + timedelta(milliseconds=delta))
+        assert md["order_type"] == ("STOP_LIMIT" if delta < -2000 else "LIMIT")
+        assert md["limit_price"] == "1.21"
+        assert md["orb_quote_selection"] == ("legacy_no_fresh_ask" if delta < -2000 else "fresh_ask")
 
 
-@pytest.mark.parametrize("quote", [None, {}, {"ask": "1.2"}, {"ask": "1.2", "received_at": NOW.replace(tzinfo=None)}])
-def test_no_missing_quote_authority(quote):
-    with pytest.raises(ValueError):
-        select_entry(Decimal("1.2"), quote, NOW, max_age_ms=2000)
+@pytest.mark.parametrize("quote", [None, {}, {"ask": "1.2"}])
+def test_missing_quote_retains_legacy_stop_limit_with_tick_cap(quote):
+    md = select_entry(Decimal("1.2"), quote, NOW, max_age_ms=2000)
+    assert md["order_type"] == md["bracket_entry_type"] == "STOP_LIMIT"
+    assert md["stop_price"] == "1.20" and md["limit_price"] == "1.21"
+    assert md["bracket_target_price"] == "1.26" and md["bracket_stop_price"] == "1.10"
+    assert md["orb_quote_selection"] == "legacy_no_fresh_ask"
+
+
+def test_naive_quote_clock_still_rejected():
+    with pytest.raises(ValueError, match="quote_clock"):
+        choose(at=NOW.replace(tzinfo=None))
 
 
 @pytest.mark.parametrize("level,trigger,cap", [

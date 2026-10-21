@@ -1,7 +1,6 @@
-"""Author-only controls; existing fourteen RED nodes are not edited or reclassified PASS."""
+"""Author-only controls; original fourteen RED results are not reclassified PASS."""
 
 import asyncio
-import logging
 from types import SimpleNamespace
 
 import pytest
@@ -9,7 +8,6 @@ import pytest
 from project_mai_tai.broker_adapters import schwab as schwab_module
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.broker_adapters.protocols import OrderRequest
-from project_mai_tai.oms import service as oms_module
 from project_mai_tai.settings import Settings
 from tests.unit.test_orbroute1_oms_chain import setup as chain_setup
 from tests.unit import test_orbroute1_oms_chain as chain
@@ -21,56 +19,32 @@ from tests.unit import test_orb_schwab_order_route as route
 from tests.unit import test_momcancel1_ack as cancel_ack
 
 
-class ExplicitFreshStream(dict):
-    """New synthetic quote input, never a production fallback or historical claim."""
-    def get(self, symbol, default=None):
-        ask = {"ABC": "4.99", "MI": "6.50", "JAGX": "6.50"}.get(symbol)
-        if ask is None:
-            return default
-        return {"ask": ask, "bid": ask, "received_at": oms_module.utcnow()}
-
-
-def test_existing_native_control_assertions_with_explicit_quote(chain_setup, monkeypatch):
-    chain_setup[0]._latest_quotes_by_symbol = ExplicitFreshStream()
+def test_existing_native_control_assertions_without_fixture_amendment(chain_setup, monkeypatch):
     envelope.test_real_oms_with_native_run_control_submits_one_selected_parent(chain_setup, monkeypatch, True)
 
 
-def test_existing_manual_net_assertions_with_explicit_quote(chain_setup, caplog):
-    chain_setup[0]._latest_quotes_by_symbol = ExplicitFreshStream()
+def test_existing_manual_net_assertions_without_fixture_amendment(chain_setup, caplog):
     manual.test_manual_thousand_shares_allows_routed_ten_and_logs_without_receipt(
         chain_setup, chain.SCHWAB, True, caplog)
 
 
-def test_existing_country_chain_assertions_with_explicit_quote(chain_setup):
-    chain_setup[0]._latest_quotes_by_symbol = ExplicitFreshStream()
+def test_existing_country_chain_assertions_without_fixture_amendment(chain_setup):
     chain.test_real_oms_one_selected_parent_ten_shares_no_mirror(chain_setup, True, chain.SCHWAB)
 
 
 @pytest.mark.parametrize("kind", ["order", "unknown"])
 @pytest.mark.parametrize("second", [0, 14])
-def test_existing_prior_session_assertions_with_explicit_quote(chain_setup, monkeypatch, caplog, kind, second):
-    chain_setup[0]._latest_quotes_by_symbol = ExplicitFreshStream()
+def test_existing_prior_session_assertions_without_fixture_amendment(chain_setup, monkeypatch, caplog, kind, second):
     sessions.test_actual_oms_entry_uses_session_aware_wrapper(
         chain_setup, monkeypatch, chain.SCHWAB, True, 13, 28, second, "previous", kind, caplog)
 
 
-def install_explicit_purple_quote(monkeypatch):
-    original = purple._service
-    def supplied(*args, **kwargs):
-        service, factory, broker = original(*args, **kwargs)
-        service._latest_quotes_by_symbol = ExplicitFreshStream()
-        return service, factory, broker
-    monkeypatch.setattr(purple, "_service", supplied)
-
-
-def test_existing_post_preview_atr_assertion_with_explicit_quote(monkeypatch):
-    install_explicit_purple_quote(monkeypatch)
+def test_existing_post_preview_atr_assertion_without_fixture_amendment(monkeypatch):
     purple.test_oms_rechecks_atr_after_preview_and_records_local_refusal(monkeypatch)
 
 
 @pytest.mark.parametrize("symbol,day", [("MI", "2026-10-05"), ("JAGX", "2026-10-06")])
-def test_existing_atr_history_assertions_with_explicit_quote(monkeypatch, tmp_path, symbol, day):
-    install_explicit_purple_quote(monkeypatch)
+def test_existing_atr_history_assertions_without_fixture_amendment(monkeypatch, tmp_path, symbol, day):
     purple.test_oms_real_schwab_history_passes_both_fills_and_blocks_purple(
         monkeypatch, tmp_path, symbol, day, True)
 
@@ -84,23 +58,7 @@ def test_existing_accepted_put_unknown_confirmation_keeps_new_identity(monkeypat
 
 
 def test_above_cap_refusal_capture_attached_after_service_init(monkeypatch, caplog):
-    original = route._service
-    attached = []
-
-    def service_with_capture(*args, **kwargs):
-        result = original(*args, **kwargs)
-        root = logging.getLogger()
-        if caplog.handler not in root.handlers:
-            root.addHandler(caplog.handler)
-            attached.append(root)
-        return result
-
-    monkeypatch.setattr(route, "_service", service_with_capture)
-    try:
-        route.test_pastlevel_actual_oms_placement_shapes(monkeypatch, caplog, "1.22", None, 0)
-    finally:
-        for root in attached:
-            root.removeHandler(caplog.handler)
+    route.test_pastlevel_actual_oms_placement_shapes(monkeypatch, caplog, "1.22", None, 0)
 
 
 @pytest.mark.asyncio
@@ -184,10 +142,15 @@ async def test_context_fenced_401_never_retries(monkeypatch):
     assert schwab_module._order_prewire_check.get() is None
 
 
-def test_missing_quote_still_refuses_without_changing_existing_tests(monkeypatch):
+def test_missing_quote_uses_legacy_without_changing_existing_tests(monkeypatch):
     service, _factory, broker = route._service(monkeypatch)
     service._latest_quotes_by_symbol = {}
     event = route.build_orb_schwab_open_intent(service.settings, "MI", route.Decimal("6.67"))
     result = asyncio.run(service.process_trade_intent(event))
-    assert broker.previewed == broker.submitted == []
-    assert result[0].payload.reason == "orb_pastlevel_quote_missing"
+    assert result[0].payload.status == "accepted"
+    assert len(broker.previewed) == len(broker.submitted) == 1
+    request = broker.submitted[0]
+    assert request.order_type == request.metadata["bracket_entry_type"] == "STOP_LIMIT"
+    assert request.metadata["stop_price"] == "6.67" and request.metadata["limit_price"] == "6.71"
+    assert request.metadata["orb_quote_selection"] == "legacy_no_fresh_ask"
+    request.prewire_check()

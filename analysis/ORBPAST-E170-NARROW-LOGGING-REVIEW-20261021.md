@@ -1,5 +1,11 @@
 # ORBPASTLEVEL1-20261021: Narrow Logging Correction And Fixture Proposal
 
+HISTORICAL a11 CHECKPOINT. Ten quote-input amendment proposals below are
+SUPERSEDED/NOT AUTHORIZED by17:47:30: revise applicability in source instead;
+original ten tests stay byte-identical. New feature test capture-after-init IS
+authorized. See ORBPAST-FRESH-ASK-APPLICABILITY-IMPACT-20261021.md. Historical
+cause evidence retained, no retroactive14 GREEN or replay acceptance claim.
+
 Intake source: direct main changes-requested message after full e170 review.
 Priority: urgent regression source correction; owner: Gibbs sole ORB author.
 Parent e170dc96cb21220323a62a29cd44f466a4b3c41f is FROZEN, not amended.

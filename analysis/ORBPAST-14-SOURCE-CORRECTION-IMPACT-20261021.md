@@ -1,5 +1,13 @@
 # ORBPAST14 Source Correction And Unresolved Quote Contract
 
+HISTORICAL a11 CHECKPOINT BELOW. SUPERSEDED ONLY as to quote applicability and
+fixture proposals by operator17:47:30/17:49:50. See
+ORBPAST-FRESH-ASK-APPLICABILITY-IMPACT-20261021.md for CURRENT behavior: initial
+missing/stale ask uses legacy STOP_LIMIT with tick cap; the ten baseline tests
+stay byte-identical, no quote fixture amendment. Late fresh-selection quote
+loss still refuses. Production logging stays baseline; capture attaches after
+initialization in NEW feature test only. Other safety/acceptance gates persist.
+
 SOURCE AUTHORING ONLY / ALL CONTROLS UNRUN / NOT14-GREEN OR INSTALL READY.
 See14-REGRESSION-CLASSIFICATION for all14 exact JUnit nodes and source causes
 recorded BEFORE edits. Existing tests, RED7ef and original JUnit are untouched.
