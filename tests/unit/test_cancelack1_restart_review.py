@@ -121,9 +121,17 @@ def later_closed_episode(bot, request, clock, name, *, fault="none"):
         session.add(Fill(order_id=order.id, strategy_id=strategy.id, broker_account_id=account.id,
             symbol=request.symbol, side="buy", quantity=1, price=1,
             broker_fill_id=f"SYNTHETIC-fill-{parent.id}", filled_at=instant(at + 3)))
-        session.add(OmsManagedPosition(strategy_code="schwab_1m_v2", broker_account_name=name,
-            symbol=request.symbol, entry_order_id=order.id, entry_client_order_id=order.client_order_id,
-            entry_price=1, original_quantity=1, current_quantity=0, status="closed"))
+        # The managed table is a current account/symbol slot in this fixture;
+        # prior episode identity remains in its orders and native fills.
+        managed = session.scalar(select(OmsManagedPosition).where(
+            OmsManagedPosition.broker_account_name == name, OmsManagedPosition.symbol == request.symbol))
+        if managed is None:
+            managed = OmsManagedPosition(strategy_code="schwab_1m_v2", broker_account_name=name,
+                symbol=request.symbol, entry_price=1, original_quantity=1)
+            session.add(managed)
+        managed.entry_order_id, managed.entry_client_order_id = order.id, order.client_order_id
+        managed.current_quantity, managed.status = 0, "closed"
+        managed.updated_at = instant(at + 30_000)
         if fault == "missing_segment":
             parent.payload = {"metadata": {"clearwait_dispatch_token": token}}
         elif fault == "same_episode":
@@ -135,8 +143,7 @@ def later_closed_episode(bot, request, clock, name, *, fault="none"):
         elif fault == "possibly_sent":
             order.status = "unknown"
         elif fault == "still_managed":
-            row = next(row for row in session.new if isinstance(row, OmsManagedPosition))
-            row.status, row.current_quantity = "open", 1
+            managed.status, managed.current_quantity = "open", 1
         flag_modified(order, "updated_at")
         flag_modified(parent, "updated_at")
         session.commit()
@@ -151,7 +158,8 @@ def test_real_query_later_closed_episode_does_not_poison_old_confirmation(monkey
     bot, state, clock, request, writes, engine = synthetic_case(monkeypatch, required=required)
     try:
         entry = confirmation_case(bot, request, clock, required, "none")
-        later_closed_episode(bot, request, clock, required[0], fault=fault)
+        later_account = MIRROR if required == (PRIMARY,) else PRIMARY
+        later_closed_episode(bot, request, clock, later_account, fault=fault)
         clock[0] += 24 * 60 * 60_000
         refresh(bot, clock)
         expected = fault in {"none", "closed_bound"}
@@ -165,6 +173,35 @@ def test_real_query_later_closed_episode_does_not_poison_old_confirmation(monkey
             else:
                 with pytest.raises(ValueError):
                     load_proven_accounts(session, scope, accounts, strategy_id)
+        assert state.flip_owner_phase == "bound" and writes == []
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("required", [(PRIMARY,), (MIRROR,)])
+@pytest.mark.parametrize("fault", ["none", "closed_bound", "unknown_owner", "missing_segment", "same_episode", "same_token",
+                                   "wrong_order_token", "orphan_order", "possibly_sent", "still_managed"])
+def test_same_account_history_uses_one_current_managed_slot_not_two(monkeypatch, required, fault):
+    bot, state, clock, request, writes, engine = synthetic_case(monkeypatch, required=required)
+    try:
+        entry = confirmation_case(bot, request, clock, required, "none")
+        later_closed_episode(bot, request, clock, required[0], fault=fault)
+        with bot.session_factory() as session:
+            managed, = session.scalars(select(OmsManagedPosition)).all()
+            assert managed.entry_order_id != entry.order_id
+            assert session.get(BrokerOrder, entry.order_id) is not None
+            assert session.get(Fill, entry.fill_id) is not None
+            accounts = {a.id: a.name for a in session.scalars(select(BrokerAccount))}
+            strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == "schwab_1m_v2"))
+            scope = ObligationScope(request.symbol, request.opportunity_id, clock[0], request.account_names)
+            if fault in {"none", "closed_bound"}:
+                assert load_proven_accounts(session, scope, accounts, strategy_id) == frozenset(required)
+            else:
+                with pytest.raises(ValueError):
+                    load_proven_accounts(session, scope, accounts, strategy_id)
+        # Missing historical managed-entry identity is NOT reconstructed from
+        # today's zero slot: this separate confirmation proof must still HOLD.
+        assert entry.order_id not in bot._closed_confirmation_entry_ids([entry])
         assert state.flip_owner_phase == "bound" and writes == []
     finally:
         engine.dispose()
