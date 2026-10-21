@@ -87,28 +87,27 @@ class LedgerTables(HTMLParser):
 
 
 @pytest.mark.parametrize("route", ["/bot/momentum-30", "/bot/momentum-60"])
-def test_two_reference_ledgers_same_columns_never_enter_live_total(monkeypatch, route):
+def test_reference_ledgers_removed_and_never_enter_live_total(monkeypatch, route):
     html, client = page(monkeypatch, route)
     assert "LIVE (real orders)" in html
-    assert "Warning method 60 s completed" in html and "Warning method 30 s completed" in html
+    assert "Warning method" not in html and "REFERENCE" not in html
     assert "Snapshot method" not in html
     assert "Day total: $+49.40" not in html and "Day total: $+28.80" not in html
     assert "Day total: $+78.20" not in html
-    assert html.count("<td><strong>SCNI</strong>") == 2  # Same two rows, ATR ticker styling.
-    assert html.count('<td style="white-space:nowrap;">Signal reference</td>') == 2
-    assert html.count('Signal reference &mdash; not real orders') == 2
-    assert html.count('<td style="text-align:right">50</td>') == 2
+    assert '<td><strong>SCNI</strong>' not in html
+    assert 'Signal reference' not in html
+    assert '<td style="text-align:right">50</td>' not in html
     assert "caught 49s" not in html
     assert "caught 53s" not in html
     parser = LedgerTables()
     parser.feed(html)
     columns = ["Ticker", "Path", "Qty", "Entry Time", "Entry", "Exit Time", "Exit", "P&L", "Exit Summary"]
-    assert parser.tables == [columns, columns, columns]
-    assert '<td style="white-space:nowrap;">08:00:34 AM ET</td>' in html
-    assert '<td style="white-space:nowrap;">08:01:23 AM ET</td>' in html
-    assert html.count('<td style="white-space:nowrap;">08:02:00 AM ET</td>') == 2
+    assert parser.tables == [columns]
+    assert '<td style="white-space:nowrap;">08:00:34 AM ET</td>' not in html
+    assert '<td style="white-space:nowrap;">08:01:23 AM ET</td>' not in html
+    assert '<td style="white-space:nowrap;">08:02:00 AM ET</td>' not in html
     assert '2026-10-14 08:00:34 AM ET' not in html
-    assert '$+49.40 (+5.0%)' in html and '$+28.80 (+5.0%)' in html
+    assert '$+49.40' not in html and '$+28.80' not in html
     assert "Warning feed: ON since 08:07 ET" in html
     assert "bars in/out 1811/1806" in html and "delay max 134.5 ms" in html
     assert '<details class="panel-copy warning-feed-details"><summary>Feed details</summary>' in html
@@ -185,19 +184,19 @@ def test_carded_ambiguity_note_does_not_choose_or_merge_comparison_rows():
 def test_unreadable_ledger_total_unknown_other_total_unchanged(monkeypatch, route, ledger):
     kwargs = {ledger: OSError("CONTROLLED unreadable")}
     html, _ = page(monkeypatch, route, **kwargs)
-    assert "Signal reference ledger unreadable: UNKNOWN" in html
-    assert "UNKNOWN. No total calculated." in html
+    assert "Warning history UNKNOWN" in html
+    assert "Signal reference" not in html
     assert "Day total: $+0.00 &middot; 0 completed broker trades" in html
     assert html.count('Day total:') == 1
-    assert ("$+49.40" if ledger == "snapshot" else "$+28.80") in html
+    assert "$+49.40" not in html and "$+28.80" not in html
     assert "Warning feed: ON since 08:07 ET" in html
 
 
 def test_readable_empty_ledger_can_zero_without_suppressing_other_method(monkeypatch):
     html, _ = page(monkeypatch, "/bot/momentum-30", snapshot=[], warning=[])
     assert html.count("Day total: $+0.00") == 1
-    assert html.count("No completed positions") == 3
-    assert html.count('0 completed references') == 2
+    assert html.count("No completed positions") == 1
+    assert 'completed references' not in html
 
 
 @pytest.mark.parametrize("observed", [NOW - 20_000_000_001, NOW + 1])
@@ -225,8 +224,8 @@ def test_missing_request_timestamp_unknown_not_hardcoded_since(monkeypatch):
     assert "Warning feed: ON since UNKNOWN ET" in html and "since 07:52" not in html
 
 
-def test_historical_ledgers_still_visible_when_metrics_disabled(monkeypatch):
+def test_live_ledger_only_when_metrics_disabled(monkeypatch):
     html, client = page(monkeypatch, "/bot/momentum-30", enabled=False)
     assert not client.metric_calls and "Warning feed: UNKNOWN" in html
-    assert "$+49.40" in html and "$+28.80" in html
+    assert "$+49.40" not in html and "$+28.80" not in html
     assert html.count('Day total:') == 1

@@ -73,9 +73,9 @@ def test_sidebar_uses_owner_admission_not_local_flag_and_live_accounts(monkeypat
         app.state.repository.redis = redis
         response = client.get("/bot/momentum")
     assert response.status_code == 200
-    sidebar = response.text.split('<aside id="momentum-sidebar">', 1)[1].split('</aside>', 1)[0]
-    assert f'<dt>Status</dt><dd>{label}</dd>' in sidebar
-    assert '<dt>Mode</dt><dd>LIVE</dd>' in sidebar
+    sidebar = response.text.split('<aside id="momentum-sidebar" class="sidebar">', 1)[1].split('</aside>', 1)[0]
+    assert f'<strong>Status:</strong> {label}</div>' in sidebar
+    assert '<strong>Mode:</strong> LIVE</div>' in sidebar
     assert 'live:orb (Webull)' in sidebar and 'live:schwab_1m_v2 (Schwab)' in sidebar
     assert 'Webull + Schwab (SEC route)' in sidebar and '30s + 60s' in sidebar
     assert 'paper' not in sidebar.lower()
@@ -127,8 +127,9 @@ def test_one_live_pnl_warning_references_never_aggregate_and_html_capture(monkey
     assert 'Day total: $+4.96' in html and '1 completed broker trades' in html
     assert '<strong>$+4.96</strong>' in html and html.count('Day total:') == 1
     assert 'Day total: $+9999' not in html and 'Day total: $+19998' not in html
-    assert html.count('Signal reference &mdash; not real orders') == 2
-    titles = ['LIVE (real orders)', 'Warning method 60 s completed', 'Warning method 30 s completed',
+    assert 'Signal reference' not in html and 'REFERENCE' not in html
+    assert 'Warning method' not in html and 'REFERENCE60' not in html and 'REFERENCE30' not in html
+    titles = ['LIVE (real orders)',
               'Open Positions (LIVE)', 'Order History (LIVE)', 'Decision Tape', 'Failed Actions', 'Listening Status']
     assert [html.index(title) for title in titles] == sorted(html.index(title) for title in titles)
     for removed in ('Snapshot method', 'Snapshot day P&L', 'Snapshot trades', 'TOS Parity', 'Two paper simulations'):
@@ -161,7 +162,7 @@ def test_render_unknowns_o17_warning_and_live_only_orders_do_not_invent_flat_or_
     html = cp._render_momentum_page(data, live={"status": "UNKNOWN"},
         warnings=[{"strategy_code": 'momentum_30s_warn', "status": "UNKNOWN"}],
         owner={"status": "UNKNOWN"}, metrics={"status": "UNKNOWN"})
-    assert '<dt>Status</dt><dd>UNKNOWN</dd>' in html
+    assert '<strong>Status:</strong> UNKNOWN</div>' in html
     assert 'Live positions UNKNOWN' in html and 'No open positions' not in html
     assert '$+0.00' not in html and 'NOT_MOMENTUM' not in html
     assert 'bad-order' in html and 'Data is incomplete' in html
@@ -233,7 +234,7 @@ def test_off_admission_keeps_each_live_account_leg_once_and_unknown_market_pnl()
     before = deepcopy((live, data))
     html = cp._render_momentum_page(data, live=live, warnings=[],
         owner={'status': 'READABLE', 'entry_admission_enabled': False, 'episodes': []}, metrics={'status': 'UNKNOWN'})
-    assert '<dt>Status</dt><dd>OFF</dd>' in html
+    assert '<strong>Status:</strong> OFF</div>' in html
     panel = html.split('<h3>Open Positions (LIVE)</h3>', 1)[1].split('</section>', 1)[0]
     assert panel.count('<strong>OWNED</strong>') == 2
     assert '<td>LIVE Webull</td>' in panel and '<td>LIVE Schwab</td>' in panel

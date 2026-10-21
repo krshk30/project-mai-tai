@@ -6668,11 +6668,8 @@ def _render_momentum_page(data: dict[str, Any], *, live: dict[str, Any], warning
         row.get("side"), row.get("quantity"), row.get("status"), _display_order_reason(row))) + '</tr>'
         for row in sorted(live_orders, key=lambda item: _momentum_page_sort_time(item.get("updated_at")), reverse=True))
     order_rows = order_rows or '<tr><td colspan="7">No live orders in the available order history</td></tr>'
-    references = ''.join(_render_momentum_ledger(warning,
-        title=f'Warning method {60 if warning.get("strategy_code") == "momentum_60s_warn" else 30} s completed',
-        method="Signal reference", other_rows=[], reference_only=True) for warning in warnings)
     failed_rows = _momentum_page_tape_rows(warnings, failures=True, live_orders=live_orders)
-    nav = _build_bot_nav_html([str(bot["strategy_code"]) for bot in data.get("bots", [])])
+    nav = _render_page_nav("momentum_30s", [str(bot["strategy_code"]) for bot in data.get("bots", [])])
     live_table = _render_momentum_ledger(live, title="LIVE (real orders)", method="LIVE", other_rows=[], paper=False)
     unknown_warning = '<p role="alert">Warning history UNKNOWN; decision and failure coverage is incomplete.</p>' if any(
         row.get("status") != "READABLE" or row["page_recent_decisions_incomplete"]
@@ -6683,34 +6680,50 @@ def _render_momentum_page(data: dict[str, Any], *, live: dict[str, Any], warning
         live_warning += '<p role="alert">Partial LIVE ledger: UNKNOWN episodes are shown separately; P&amp;L excludes them. Open and completed counts are UNKNOWN.</p>'
     return f'''<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <meta http-equiv="refresh" content="30"><title>Momentum</title><style>
-    :root{{--bg:#101723;--panel:#192334;--ink:#edf3fb;--muted:#afbed1;--line:#334359;--accent:#ffc857}}
-    *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font-family:Verdana,sans-serif;font-size:14px}}
-    a{{color:var(--accent)}}nav{{display:flex;gap:18px;flex-wrap:wrap;padding:18px;border-bottom:1px solid var(--line)}}
-    .layout{{display:grid;grid-template-columns:250px minmax(0,1fr);gap:24px;max-width:1600px;margin:auto;padding:24px}}
-    aside,.panel{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:20px}}
-    main{{min-width:0}}h1{{margin-top:0}}h3{{margin:0 0 12px}}dt,.sub,.panel-copy{{color:var(--muted);line-height:1.6}}
-    dd{{margin:4px 0 20px;overflow-wrap:anywhere}}.overview{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}}
-    .overview strong{{display:block;font-size:24px;margin-top:8px}}.table-wrap{{overflow-x:auto}}table{{width:100%;border-collapse:collapse}}
-    th,td{{text-align:left;padding:12px;border-bottom:1px solid var(--line);white-space:nowrap}}th{{color:var(--muted)}}
-    .panel-header{{display:flex;justify-content:space-between;gap:12px}}.count{{color:var(--accent)}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}
-    @media(max-width:800px){{.layout{{grid-template-columns:1fr;padding:12px}}.overview{{grid-template-columns:repeat(2,1fr)}}}}
-    </style></head><body><nav><a href="/">Control Plane</a>{nav}</nav><div class="layout">
-    <aside id="momentum-sidebar"><h2>Momentum</h2><dl><dt>Status</dt><dd>{status}</dd>
-    <dt>Account</dt><dd>live:orb (Webull) · live:schwab_1m_v2 (Schwab)</dd><dt>Mode</dt><dd>LIVE</dd>
-    <dt>Provider</dt><dd>Webull + Schwab (SEC route)</dd><dt>Interval</dt><dd>30s + 60s</dd></dl>
-    <p class="sub">Status is entry admission from the current OMS owner proof. OFF does not disable owned exits. Missing or stale proof is UNKNOWN.</p></aside>
-    <main><h1>Momentum</h1>{_render_database_row_warnings(data)}<div class="overview">
-    <section class="panel"><span>Day P&amp;L (LIVE)</span><strong>{total}</strong></section>
-    <section class="panel"><span>Open</span><strong>{open_count}</strong></section>
-    <section class="panel"><span>Completed trades</span><strong>{closed}</strong></section>
-    <section class="panel"><span>Pending entries</span><strong>{pending}</strong></section></div>
-    <p class="panel-copy">P&amp;L uses actual LIVE broker fills only. Warning methods are signal references, not real orders, and never enter live totals.</p>
-    {live_warning}{live_table}{references}
-    <section class="panel"><h3>Open Positions (LIVE)</h3><div class="table-wrap">{_render_open_position_table(open_body, with_path=True)}</div></section>
-    <section class="panel"><h3>Order History (LIVE)</h3><div class="table-wrap"><table><thead><tr><th>Time</th><th>Account</th><th>Ticker</th><th>Side</th><th>Qty</th><th>Status</th><th>Reason</th></tr></thead><tbody>{order_rows}</tbody></table></div></section>
-    <section class="panel"><h3>Decision Tape</h3>{unknown_warning}<div class="table-wrap"><table><thead><tr><th>Time (ET)</th><th>Interval</th><th>Ticker</th><th>Status</th><th>Reason</th></tr></thead><tbody>{_momentum_page_tape_rows(warnings)}</tbody></table></div></section>
-    <section class="panel"><h3>Failed Actions</h3>{unknown_warning}<div class="table-wrap"><table><thead><tr><th>Time (ET)</th><th>Interval</th><th>Ticker</th><th>Status</th><th>Reason</th></tr></thead><tbody>{failed_rows}</tbody></table></div></section>
-    <section class="panel"><h3>Listening Status</h3>{_render_momentum_warning_gateway_metrics(metrics)}</section>
+    :root{{--bg:#131a2b;--panel:#202b46;--panel-alt:#1c2540;--line:rgba(121,146,193,0.28);--ink:#f0f4ff;--muted:#98a6c8;--cyan:#59d7ff;--green:#5fff8d;--amber:#ffcc5b;--red:#ff6b6b;--accent:#59d7ff}}
+    *{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at top left,rgba(89,215,255,0.08),transparent 28%),linear-gradient(180deg,#0f1525,var(--bg));color:var(--ink);font-family:'Consolas','Monaco',monospace}}
+    .shell{{display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px;min-height:100vh;padding:16px}}
+    .sidebar{{position:sticky;top:16px;align-self:start;background:rgba(17,24,41,0.96);border:1px solid var(--line);border-radius:22px;padding:18px;box-shadow:0 24px 60px rgba(0,0,0,0.28)}}
+    .brand{{display:flex;align-items:center;gap:12px;margin-bottom:20px}}.brand h1{{margin:0;font-size:24px;color:white}}.brand p{{margin:4px 0 0;color:var(--muted);font-size:13px}}
+    .brand-badge{{width:68px;height:68px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),#59d7ff);color:white;font-weight:700;text-align:center;font-size:24px;line-height:1}}
+    .side-section{{margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}}.side-label{{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:10px}}
+    .stack{{display:grid;gap:8px}}.line-item{{background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;color:var(--muted);line-height:1.45;overflow-wrap:anywhere}}.line-item strong{{color:var(--ink)}}
+    .metric-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}}.metric-card{{background:var(--panel-alt);border:1px solid var(--line);border-radius:14px;padding:10px;overflow-wrap:anywhere}}
+    .metric-card strong{{display:block;font-size:22px;color:var(--cyan)}}.metric-card span{{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}}
+    .workspace{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-content:start;min-width:0}}
+    .panel{{background:rgba(24,32,54,0.96);border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 18px 42px rgba(0,0,0,0.24);min-width:0}}.panel.full{{grid-column:1/-1}}
+    .accent-panel{{border-color:color-mix(in srgb,var(--accent) 52%,rgba(121,146,193,0.28));box-shadow:0 18px 42px rgba(0,0,0,0.24),0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent)}}
+    .panel-header{{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 16px;background:linear-gradient(180deg,rgba(89,215,255,0.08),rgba(0,0,0,0));border-bottom:1px solid var(--line)}}
+    .panel-header h2,.panel-header h3{{margin:0;font-size:16px;color:var(--ink)}}.sub,.panel-copy{{color:var(--muted);font-size:12px;line-height:1.5}}.panel-header .sub{{margin-top:3px}}.panel-copy{{padding:12px 16px}}.panel>h4{{padding:0 16px}}
+    .count{{padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:rgba(89,215,255,0.12);color:var(--cyan)}}.count.accent{{background:color-mix(in srgb,var(--accent) 18%,transparent);color:color-mix(in srgb,var(--accent) 75%,white 25%)}}
+    .nav-strip{{display:flex;flex-wrap:wrap;gap:8px}}.nav-strip a{{text-decoration:none;color:var(--ink);background:linear-gradient(180deg,rgba(89,215,255,0.08),rgba(255,255,255,0.02));border:1px solid var(--line);border-radius:999px;padding:6px 10px;font-size:12px;line-height:1}}
+    .nav-strip a.active{{border-color:var(--accent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 80%,white 20%);background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 18%,transparent),rgba(255,255,255,0.02))}}
+    .table-wrap{{max-height:420px;overflow:auto}}table{{border-collapse:collapse;width:100%;font-size:13px}}th{{position:sticky;top:0;z-index:1;background:#253556;color:#b9c6e4;padding:8px 10px;text-align:left;border-bottom:1px solid var(--line)}}
+    td{{padding:8px 10px;border-bottom:1px solid rgba(121,146,193,0.16);color:#edf3ff;vertical-align:top}}tbody tr:nth-child(odd){{background:rgba(255,255,255,0.015)}}tbody tr:hover{{background:rgba(89,215,255,0.06)}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}
+    @media(max-width:1200px){{.shell{{grid-template-columns:1fr}}.sidebar{{position:static}}}}
+    @media(max-width:900px){{.workspace{{grid-template-columns:1fr}}.panel.full{{grid-column:auto}}}}
+    </style></head><body><div class="shell">
+    <aside id="momentum-sidebar" class="sidebar"><div class="brand"><div class="brand-badge">MOM</div><div><h1>Momentum</h1><p>Execution Workspace for this bot.</p></div></div>
+    <div class="side-section"><div class="stack">
+    <div class="line-item"><strong>Status:</strong> {status}</div>
+    <div class="line-item"><strong>Account:</strong> live:orb (Webull) · live:schwab_1m_v2 (Schwab)</div>
+    <div class="line-item"><strong>Mode:</strong> LIVE</div>
+    <div class="line-item"><strong>Provider:</strong> Webull + Schwab (SEC route)</div>
+    <div class="line-item"><strong>Interval:</strong> 30s + 60s</div></div>
+    <p class="sub">Status is entry admission from the current OMS owner proof. OFF does not disable owned exits. Missing or stale proof is UNKNOWN.</p></div>
+    <div class="side-section"><div class="side-label">Overview</div><div class="metric-grid">
+    <div class="metric-card"><span>Day P&amp;L (LIVE)</span><strong>{total}</strong></div>
+    <div class="metric-card"><span>Open</span><strong>{open_count}</strong></div>
+    <div class="metric-card"><span>Completed trades</span><strong>{closed}</strong></div>
+    <div class="metric-card"><span>Pending entries</span><strong>{pending}</strong></div></div></div></aside>
+    <main class="workspace">{_render_database_row_warnings(data)}
+    <section class="panel full accent-panel"><div class="panel-header"><div><h2>Bot Navigation</h2><div class="sub">Quick switch between scanner, control plane, and bot pages.</div></div><span class="count accent">Momentum</span></div><div class="panel-copy">{nav}</div></section>
+    <section class="panel full"><div class="panel-copy">P&amp;L uses actual LIVE broker fills only.</div>{live_warning}</section>{live_table}
+    <section class="panel full"><div class="panel-header"><h3>Open Positions (LIVE)</h3></div><div class="table-wrap">{_render_open_position_table(open_body, with_path=True)}</div></section>
+    <section class="panel full"><div class="panel-header"><h3>Order History (LIVE)</h3></div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Account</th><th>Ticker</th><th>Side</th><th>Qty</th><th>Status</th><th>Reason</th></tr></thead><tbody>{order_rows}</tbody></table></div></section>
+    <section class="panel full"><div class="panel-header"><h3>Decision Tape</h3></div>{unknown_warning}<div class="table-wrap"><table><thead><tr><th>Time (ET)</th><th>Interval</th><th>Ticker</th><th>Status</th><th>Reason</th></tr></thead><tbody>{_momentum_page_tape_rows(warnings)}</tbody></table></div></section>
+    <section class="panel full"><div class="panel-header"><h3>Failed Actions</h3></div>{unknown_warning}<div class="table-wrap"><table><thead><tr><th>Time (ET)</th><th>Interval</th><th>Ticker</th><th>Status</th><th>Reason</th></tr></thead><tbody>{failed_rows}</tbody></table></div></section>
+    <section class="panel full"><div class="panel-header"><h3>Listening Status</h3></div>{_render_momentum_warning_gateway_metrics(metrics)}</section>
     </main></div></body></html>'''
 
 
