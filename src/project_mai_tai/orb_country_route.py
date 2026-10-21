@@ -114,9 +114,40 @@ def routed_orb_metadata(selection: OrbCountrySelection, level: Decimal) -> dict[
     return metadata
 
 
+def orb_plan_metadata(payload) -> dict[str, str] | None:
+    """View the strategy plan without removing decision authority from its envelope."""
+    metadata = payload.metadata
+    if not (payload.side == "buy" and (payload.intent_type in {"open", "scale"}
+            or metadata.get("orb_schwab_reprice") == "true")):
+        return metadata
+    stamps = {"bot_control_generation", "bot_control_decided_at"}
+    present = stamps.intersection(metadata)
+    if not present:
+        return metadata
+    if present != stamps:
+        return None
+    generation, stamp = (metadata[key] for key in
+                         ("bot_control_generation", "bot_control_decided_at"))
+    if (not isinstance(generation, str) or not generation.isascii()
+            or not generation.isdecimal() or not isinstance(stamp, str)):
+        return None
+    try:
+        decided_at = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if decided_at.tzinfo is None or decided_at.utcoffset() is None:
+        return None
+    # This is not an authorization check: the original stamps still reach the
+    # native KILLSW1 generation/time/permit fence, including on replacement.
+    return {key: value for key, value in metadata.items() if key not in stamps}
+
+
 def routed_orb_intent_refusal(event, settings, now: datetime) -> str | None:
     """Strict routed contract; cleanup stays reachable when new admission is OFF."""
-    payload, metadata = event.payload, event.payload.metadata
+    payload = event.payload
+    metadata = orb_plan_metadata(payload)
+    if metadata is None:
+        return "orb_country_invalid_plan"
     if event.source_service != "orb-schwab" or payload.strategy_code != "orb_schwab":
         return "orb_country_wrong_source"
     if not payload.symbol or payload.symbol != payload.symbol.strip().upper():

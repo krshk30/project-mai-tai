@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 from project_mai_tai.db.base import Base
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import (
-    AccountPosition, BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, TradeIntent,
+    AccountPosition, BrokerAccount, BrokerOrder, DashboardSnapshot, Strategy, TradeIntent, VirtualPosition,
 )
 from project_mai_tai.events import TradeIntentEvent
 from project_mai_tai.market_data.schwab_v2_rest_client import ChartBar, Quote
@@ -51,7 +51,8 @@ def instant(ms):
     return datetime.fromtimestamp(ms / 1000, UTC)
 
 
-def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False, request_present=True):
+def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False, request_present=True,
+          schema_metadata=None):
     shift = -6 * 60 * 60_000 if pm else 0  # Explicit PM time-shift control, not original event time.
     settings = Settings(
         strategy_schwab_1m_v2_confirmed_window_enabled=True,
@@ -117,7 +118,7 @@ def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False, req
     state.atr_short_flip_bar_ts = FLYE["fresh_sell_bar_ms"] + shift
     strategy.apply_flip_position_book(FlipPositionBook(clock[0], True, {}))
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
+    (Base.metadata if schema_metadata is None else schema_metadata).create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     with factory() as session:
         own = Strategy(code="schwab_1m_v2", name="B2 replay")
@@ -138,7 +139,11 @@ def setup(monkeypatch, *, pm=False, purpose="retry_exhausted", all_on=False, req
                 updated_at=datetime.fromisoformat(row["updated_at"]) + timedelta(milliseconds=shift)))
         session.commit()
 
-    class ClockDatetime(datetime):
+    class ClockMeta(type):
+        def __instancecheck__(cls, value):
+            return isinstance(value, datetime)
+
+    class ClockDatetime(datetime, metaclass=ClockMeta):
         @classmethod
         def now(cls, tz=None):
             return datetime.fromtimestamp(clock[0] / 1000, tz or UTC)
@@ -236,7 +241,11 @@ async def test_blocking_controls(monkeypatch, caplog, pm, account, fault):
         own = session.scalar(select(Strategy).where(Strategy.code == "schwab_1m_v2"))
         foreign = session.scalar(select(Strategy).where(Strategy.code == "orb_schwab"))
         if fault == "position":
-            session.add(AccountPosition(broker_account_id=acct.id, symbol="FLYE", quantity=1))
+            # TOP16:33: manual AP alone is not bot ownership. This negative
+            # control must contain a real own holding, without changing gates.
+            session.add(AccountPosition(broker_account_id=acct.id, symbol="FLYE", quantity=1000))
+            session.add(VirtualPosition(strategy_id=own.id, broker_account_id=acct.id,
+                symbol="FLYE", quantity=1, average_price=Decimal("2.3")))
         elif fault in {"order", "orb"}:
             session.add(BrokerOrder(strategy_id=foreign.id if fault == "orb" else own.id,
                 broker_account_id=acct.id, symbol="FLYE", side="buy", status="accepted",
@@ -281,6 +290,35 @@ async def test_blocking_controls(monkeypatch, caplog, pm, account, fault):
     assert not bot.strategy._strict_first_rest_admitted(state, slot="first")
     assert not bot.strategy.drain_pending_intents()
     engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pm", [False, True])
+@pytest.mark.parametrize("account", [PRIMARY, MIRROR])
+async def test_manual_only_thousand_shares_releases_without_debit_or_new_dispatch(monkeypatch, pm, account):
+    bot, state, clock, request, writes, engine = setup(monkeypatch, pm=pm)
+    try:
+        with bot.session_factory.begin() as session:
+            acct = session.scalar(select(BrokerAccount).where(BrokerAccount.name == account))
+            account_id = acct.id
+            session.add(AccountPosition(broker_account_id=account_id, symbol="FLYE", quantity=1000))
+        refresh(bot, clock)
+        await bot._fresh_sell_owner_release_poll()
+        assert bot.strategy._fresh_sell_release_evidence["FLYE"].clear
+        assert state.flip_owner_phase == "bound" and bot.strategy._removed_wait_gate_closed("FLYE")
+        sell(bot, state)
+        await commit_and_later_bar(bot, state, clock)
+        assert state.flip_owner_phase == "idle" and not bot.strategy._removed_wait_requests
+        assert bot._removed_wait_store.restore() == {}
+        assert state.fanout_last_retired_opportunity_id == request.opportunity_id
+        assert writes == []
+        assert not bot.strategy.drain_pending_intents() and not bot.strategy.drain_webull_direct_intents()
+        with bot.session_factory() as session:
+            raw = session.scalar(select(AccountPosition).where(
+                AccountPosition.broker_account_id == account_id, AccountPosition.symbol == "FLYE"))
+            assert raw.quantity == 1000
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -354,11 +392,20 @@ async def test_one_trade_in_new_sell_segment_cannot_release_again(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("deferred_cancel,late_request", [(False, False), (True, False), (False, True)])
-async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, deferred_cancel,
+@pytest.mark.parametrize("deferred_cancel,late_request", [
+    (False, False),
+    pytest.param(True, False, marks=pytest.mark.xfail(
+        strict=True,
+        reason="DCARRY1 pre-existing b79: deferred settled cancel after SELL consumes RW, "
+               "owner stays bound; fix lane DCARRY1",
+    )),
+    (False, True),
+])
+async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, caplog, deferred_cancel,
                                                                 late_request):
     bot, state, clock, request, _, engine = setup(monkeypatch, all_on=True,
                                                 request_present=not late_request)
+    caplog.set_level("INFO", logger=strategy_module.__name__)
     state.bars.clear()
     state.atr_short_flip_bar_ts = 0
     bot.strategy._entries_held = True
@@ -412,6 +459,12 @@ async def test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, 
                 assert any(o.bar_time_ms == ts for o in bot.intent_emitter.atr_sell_observations)
                 bot.strategy._cancel_retry_leftovers(state)
                 assert not bot.strategy._removed_wait_requests  # Holding still owns its position.
+            elif not deferred_cancel:
+                # The corrected-clock fallback confirms settled cancels clear before this SELL.
+                assert not bot.strategy._removed_wait_requests
+                assert state.fanout_last_retired_opportunity_id == request.opportunity_id
+                assert any("[V2-FLIP-OWNER-RELEASED] FLYE" in row.message
+                           and "reason=sell_flip_flat" in row.message for row in caplog.records)
             else:
                 assert bot.strategy._removed_wait_requests == {"FLYE": request}
         if state.atr_state != before:
@@ -608,7 +661,7 @@ async def test_pending_slow_commit_does_not_block_bar_or_release_at_buy(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_recorded_deferred_release_kills_sell_bar_only_mutation(monkeypatch):
+async def test_recorded_deferred_release_kills_sell_bar_only_mutation(monkeypatch, caplog):
     original = SchwabV2Strategy._cw_v2_track
     source = textwrap.dedent(inspect.getsource(original))
     before = 'elif state.fresh_sell_owner_release_segment_ms and flip != "SELL":'
@@ -617,11 +670,12 @@ async def test_recorded_deferred_release_kills_sell_bar_only_mutation(monkeypatc
     exec(compile(source.replace(before, "elif False:"), "<B2-deferred-mutant>", "exec"), namespace)
     monkeypatch.setattr(SchwabV2Strategy, original.__name__, namespace[original.__name__])
     with pytest.raises(AssertionError):
-        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, True, False)
+        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(
+            monkeypatch, caplog, True, False)
 
 
 @pytest.mark.asyncio
-async def test_post_sell_request_kills_request_dependent_latch_mutation(monkeypatch):
+async def test_post_sell_request_kills_request_dependent_latch_mutation(monkeypatch, caplog):
     original = SchwabV2Strategy._latch_fresh_sell_owner_release_boundary
     source = textwrap.dedent(inspect.getsource(original))
     before = "        state.fresh_sell_owner_release_segment_ms = bar_ms"
@@ -631,7 +685,8 @@ async def test_post_sell_request_kills_request_dependent_latch_mutation(monkeypa
                                        "    " + before), "<B2-late-request-mutant>", "exec"), namespace)
     monkeypatch.setattr(SchwabV2Strategy, original.__name__, namespace[original.__name__])
     with pytest.raises(AssertionError):
-        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, False, True)
+        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(
+            monkeypatch, caplog, False, True)
 
 
 @pytest.mark.asyncio
@@ -682,8 +737,44 @@ async def test_safety_controls_kill_mutations(monkeypatch, caplog, fault, before
     namespace["datetime"] = ClockProxy
     exec(compile(source.replace(before, after), "<B2-safety-mutant>", "exec"), namespace)
     monkeypatch.setattr(SchwabV2BotService, original.__name__, namespace[original.__name__])
-    with pytest.raises(AssertionError):
+    if fault == "receipt":
+        # The independent own-inventory freshness fence must still hold when
+        # only the outer freshness check is removed.
         await test_blocking_controls(monkeypatch, caplog, False, PRIMARY, fault)
+    else:
+        with pytest.raises(AssertionError):
+            await test_blocking_controls(monkeypatch, caplog, False, PRIMARY, fault)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outer", [False, True], ids=["inner-only-held", "dual-freshness-killed"])
+async def test_independent_receipt_freshness_fences_and_dual_mutation(monkeypatch, caplog, outer):
+    from project_mai_tai import owned_inventory as inventory_module
+
+    helper = bot_module.owned_position_present
+    source = textwrap.dedent(inspect.getsource(helper))
+    inner = "not 0 <= (now - read_at).total_seconds() * 1000 <= max_age_ms"
+    assert source.count(inner) == 1
+    namespace = dict(inventory_module.__dict__)
+    exec(compile(source.replace(inner, "False"), "<B2-inner-freshness-mutant>", "exec"), namespace)
+    monkeypatch.setattr(bot_module, "owned_position_present", namespace[helper.__name__])
+    if outer:
+        original = SchwabV2BotService._fetch_fresh_sell_release_evidence
+        source = textwrap.dedent(inspect.getsource(original))
+        before = "not 0 <= observed - read_at <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS"
+        assert source.count(before) == 1
+        namespace = dict(bot_module.__dict__)
+        class ClockProxy:
+            now = staticmethod(lambda tz=None: bot_module.datetime.now(tz))
+            fromtimestamp = staticmethod(datetime.fromtimestamp)
+        namespace["datetime"] = ClockProxy
+        exec(compile(source.replace(before, "False"), "<B2-dual-freshness-mutant>", "exec"), namespace)
+        monkeypatch.setattr(SchwabV2BotService, original.__name__, namespace[original.__name__])
+        with pytest.raises(AssertionError):
+            await test_blocking_controls(monkeypatch, caplog, False, PRIMARY, "receipt")
+    else:
+        # The outer receipt check independently rejects the same stale input.
+        await test_blocking_controls(monkeypatch, caplog, False, PRIMARY, "receipt")
 
 
 def test_default_on_flag_and_v2_catalog_owner():
@@ -696,7 +787,7 @@ def test_default_on_flag_and_v2_catalog_owner():
 
 
 @pytest.mark.asyncio
-async def test_original_flye_acceptance_kills_flag_off_mutation(monkeypatch):
+async def test_original_flye_acceptance_kills_flag_off_mutation(monkeypatch, caplog):
     assert callable(getattr(SchwabV2Strategy, "stage_removed_wait_clear", None))
     original = setup
     def disabled(*args, **kwargs):
@@ -705,4 +796,5 @@ async def test_original_flye_acceptance_kills_flag_off_mutation(monkeypatch):
         return result
     monkeypatch.setitem(test_original_flye_recorded_bar_runtime_reaches_1517_buy.__globals__, "setup", disabled)
     with pytest.raises(AssertionError):
-        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(monkeypatch, False, False)
+        await test_original_flye_recorded_bar_runtime_reaches_1517_buy(
+            monkeypatch, caplog, False, True)

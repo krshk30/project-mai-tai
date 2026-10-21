@@ -68,6 +68,7 @@ from project_mai_tai.events import (
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
 from project_mai_tai.oms.store import OmsStore
+from project_mai_tai.oms.price_binding import stored_price
 from project_mai_tai.oms.webull_attach_riskoff import atr_handoff_call
 from project_mai_tai.oms.target_cache import BoundTargetRow, ManagedTargetCache
 from project_mai_tai.oms.target_exit_receipt import target_exit_receipt
@@ -5979,10 +5980,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
     def _cw_target_binding_matches(row, context):
         if not context or "cw_target_bound_row_id" not in context:
             return True
+        if (str(getattr(row, "managed_row_id", getattr(row, "id", ""))) != context["cw_target_bound_row_id"]
+                or str(row.entry_order_id or "") != context["cw_target_entry_order_id"]):
+            return False
+        try:
+            price_matches = stored_price(row.entry_price) == stored_price(context["cw_target_entry_price"])
+        except (InvalidOperation, ValueError):
+            return False
         return (
-            str(getattr(row, "managed_row_id", getattr(row, "id", ""))) == context["cw_target_bound_row_id"]
-            and str(row.entry_order_id or "") == context["cw_target_entry_order_id"]
-            and Decimal(str(row.entry_price)) == Decimal(context["cw_target_entry_price"])
+            price_matches
             and int(row.current_quantity) == int(context["cw_target_quantity"])
             and getattr(row, "status", "open") == "open"
         )
@@ -6702,13 +6708,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         reason: str,
         missing_legs: str,
         inline_started_at: float | None = None,
+        allow_reprotect: bool = True,
     ) -> str:
         inline_started_at = (
             time.monotonic() if inline_started_at is None else inline_started_at
         )
-        spec = await self._confirmation_reprotect_spec(
+        spec = (await self._confirmation_reprotect_spec(
             acct, symbol, expected_row_id=expected_row_id
-        )
+        )) if allow_reprotect else None
         task = (
             self._reprotect_after_failed_release(acct, symbol, spec)
             if spec is not None and _is_regular_market_session()
@@ -6803,13 +6810,45 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     decision, acct, outcome="flat", released=released
                 )
                 return
+            from project_mai_tai.oms.webull_attach_riskoff import retry_atr_proven_unsent_exit
+            retry_exhausted = False
+            for attempt in range(3):
+                if attempt:
+                    await asyncio.sleep(0.25 * attempt)
+                try:
+                    retry = await retry_atr_proven_unsent_exit(self, acct, symbol, expected_row_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.logger.exception(
+                        "[OMS-WEBULL-UNSENT-RECOVERY] acct=%s sym=%s row=%s proof=UNKNOWN",
+                        acct, symbol, expected_row_id,
+                    )
+                    break
+                if retry is None:
+                    break  # No exact never-sent receipt: never retry an uncertain order.
+                if retry in {"closed", "close_submitted"}:
+                    self._end_confirmation_unprotected_interval(
+                        decision, acct, symbol, resolution=retry,
+                    )
+                    self._finish_confirmation_fanout_leg(
+                        decision, acct, outcome=retry, released=released,
+                    )
+                    return
+            else:
+                retry_exhausted = True
+            # A native reattach with an unsent receipt re-enters request_atr_exit.
+            # After the bounded retries, page as uncovered instead of silently
+            # starting a fourth retry or replacing the original trigger reason.
             result = await self._reprotect_confirmation_webull_leg(
                 decision,
                 acct,
                 symbol,
                 expected_row_id=expected_row_id,
-                reason=f"close_{(confirmation or {}).get('confirmation_close_outcome', 'refused')}",
+                reason=("proven_unsent_retry_exhausted" if retry_exhausted else
+                        f"close_{(confirmation or {}).get('confirmation_close_outcome', 'refused')}"),
                 missing_legs="target,stop",
+                allow_reprotect=not retry_exhausted,
             )
             self._finish_confirmation_fanout_leg(
                 decision,
@@ -6861,6 +6900,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         confirmation: dict[str, object] | None = None,
         protection: str = "released",
     ) -> None:
+        if self._webull_recovery_in_progress(acct, symbol):
+            return
         task = asyncio.create_task(
             self._recover_released_confirmation_webull_leg(
                 decision,
@@ -11068,13 +11109,6 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             row.broker_account_name, row.symbol, request.client_order_id,
             metadata["session"], _extended_hours_session() or "NORMAL",
         )
-        if metadata.get("cw_decided_at") and not is_target:
-            request.metadata["cw_submitted_at"] = utcnow().isoformat(timespec="microseconds")
-            self.logger.info(
-                "[OMS-V2-CW-SUBMISSION] acct=%s sym=%s decided_at=%s submitted_at=%s",
-                row.broker_account_name, row.symbol,
-                metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
-            )
         if reason == "WEBULL_ATTACH_RISK_OFF" or strict_handoff:
             from project_mai_tai.oms.webull_attach_riskoff import (
                 critical, release_atr_proven_unsent, resolve_atr_broker_flat, validate_atr_before_wire,
@@ -11089,8 +11123,10 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     self, request=request, intent_id=intent_id, now=utcnow(),
                 )
                 broker_flat = False
+                unsent_released = False
                 try:
                     await release_atr_proven_unsent(self, request, str(row.id), abort_event_id=abort_id)
+                    unsent_released = True
                     broker_flat = await resolve_atr_broker_flat(self, str(row.id))
                 except Exception as cleanup_exc:
                     await critical(self, row.broker_account_name, row.symbol,
@@ -11099,7 +11135,25 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     f"final_wire_proof_refused:{type(exc).__name__}:{exc}", entry_id=row.entry_order_id)
                 if broker_flat:
                     return _ManagedSellEvents(broker_flat_row_id=str(row.id))
+                if unsent_released and reason == "WEBULL_ATTACH_RISK_OFF":
+                    self._spawn_confirmation_webull_recovery(
+                        _ConfirmationFanoutDecision(
+                            symbol=row.symbol, source_fill_id=f"WBATTACH1_UNSENT:{abort_id}",
+                            accounts=(row.broker_account_name,), exit_tag="WBATTACH1_UNSENT",
+                        ),
+                        row.broker_account_name, row.symbol, expected_row_id=str(row.id),
+                        protection="released",
+                    )
                 return _ManagedSellEvents(reservation=reservation, ownership_refused=True)
+        # Keep the prepared binding immutable through the final proof and its
+        # proven-unsent cleanup. This observation belongs to the wire boundary.
+        if metadata.get("cw_decided_at") and not is_target:
+            request.metadata["cw_submitted_at"] = utcnow().isoformat(timespec="microseconds")
+            self.logger.info(
+                "[OMS-V2-CW-SUBMISSION] acct=%s sym=%s decided_at=%s submitted_at=%s",
+                row.broker_account_name, row.symbol,
+                metadata["cw_decided_at"], request.metadata["cw_submitted_at"],
+            )
         reports = (await self._submit_cw_target_order(request, target_guards) if is_target
                    else await self.broker_adapter.submit_order(request))
         intent = session.get(TradeIntent, intent_id)
@@ -19321,6 +19375,59 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     original_event.payload.symbol, broker_account.name,
                     original_request.client_order_id,
                 )
+        elif broker_account.provider == "schwab":
+            from project_mai_tai.oms.schwab_owned_positions import fallback_sell_quantity
+
+            broker_quantity = available_quantity
+            try:
+                available_quantity = fallback_sell_quantity(
+                    session, strategy_id=strategy.id, account_id=broker_account.id,
+                    symbol=original_event.payload.symbol,
+                    requested=min(original_event.payload.quantity, original_request.quantity),
+                    broker_available=available_quantity,
+                )
+            except Exception as exc:  # An ownership read failure must never fall back to raw shares.
+                source = "schwab_stop_reject_fallback_ownership"
+                self.logger.critical("[SCHWAB-FALLBACK-OWNERSHIP-UNKNOWN] account=%s symbol=%s coid=%s "
+                    "sell_submitted=0 reason=%s", broker_account.name, original_event.payload.symbol,
+                    original_request.client_order_id, exc)
+                try:
+                    if session.scalar(select(SystemIncident.id).where(
+                            SystemIncident.service_name == SERVICE_NAME, SystemIncident.status == "open",
+                            SystemIncident.payload["source"].as_string() == source,
+                            SystemIncident.payload["client_order_id"].as_string() == original_request.client_order_id,
+                        ).limit(1)) is None:
+                        session.add(SystemIncident(service_name=SERVICE_NAME, severity="critical", status="open",
+                            title=f"Schwab fallback ownership UNKNOWN: {original_event.payload.symbol}",
+                            opened_at=utcnow(), payload={"source": source,
+                                "client_order_id": original_request.client_order_id,
+                                "broker_account_name": broker_account.name, "symbol": original_event.payload.symbol,
+                                "reason": str(exc), "sell_submitted": False}))
+                except Exception:
+                    self.logger.exception("[SCHWAB-FALLBACK-OWNERSHIP-PAGE-UNKNOWN] coid=%s sell_submitted=0",
+                                          original_request.client_order_id)
+                return []
+            if available_quantity == 0 and Decimal(str(broker_quantity)) > 0:
+                source = "schwab_fallback_own_zero_broker_nonzero"
+                self.logger.critical("[SCHWAB-FALLBACK-OWN-ZERO-BROKER-NONZERO] account=%s symbol=%s "
+                    "coid=%s broker_quantity=%s sell_submitted=0", broker_account.name,
+                    original_event.payload.symbol, original_request.client_order_id, broker_quantity)
+                try:
+                    if session.scalar(select(SystemIncident.id).where(
+                            SystemIncident.service_name == SERVICE_NAME, SystemIncident.status == "open",
+                            SystemIncident.payload["source"].as_string() == source,
+                            SystemIncident.payload["client_order_id"].as_string() == original_request.client_order_id,
+                        ).limit(1)) is None:
+                        session.add(SystemIncident(service_name=SERVICE_NAME, severity="critical", status="open",
+                            title=f"Schwab fallback own zero, broker nonzero: {original_event.payload.symbol}",
+                            opened_at=utcnow(), payload={"source": source,
+                                "client_order_id": original_request.client_order_id,
+                                "broker_account_name": broker_account.name, "symbol": original_event.payload.symbol,
+                                "broker_quantity": str(broker_quantity), "own_quantity": "0",
+                                "sell_submitted": False}))
+                except Exception:
+                    self.logger.exception("[SCHWAB-FALLBACK-OWN-ZERO-PAGE-UNKNOWN] coid=%s sell_submitted=0",
+                                          original_request.client_order_id)
         if available_quantity <= 0:
             return []
 

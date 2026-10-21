@@ -11,21 +11,19 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.db.models import (
-    AccountPosition,
     BrokerAccount,
     BrokerOrder,
     BrokerOrderEvent,
     DashboardSnapshot,
     Fill,
-    OmsManagedPosition,
     Strategy,
     SystemIncident,
     TradeIntent,
-    VirtualPosition,
 )
 from project_mai_tai.fanout_identity import fanout_slot_id
 from project_mai_tai.fanout_segment_store import current_session_anchor
 from project_mai_tai.oms.atr_reprice_handoff import old_buy_proven_clear
+from project_mai_tai.owned_inventory import owned_position_present
 
 SNAPSHOT_TYPE = "v2_removed_wait"
 DISPATCH_SNAPSHOT_TYPE = "v2_wait_dispatch"
@@ -34,6 +32,10 @@ ROW_LIMIT = 2048
 TERMINAL = frozenset({"cancelled", "canceled", "rejected", "expired"})
 ORDER_TERMINAL = TERMINAL | {"filled", "replaced"}
 INTENT_TERMINAL = TERMINAL | {"filled", "aborted"}
+
+
+class RemovedWaitPublicationChanged(ValueError):
+    """The publication's supplied memory fence failed, not a storage failure."""
 
 
 def previous_session_request(request: RemovedWait, now: datetime) -> bool:
@@ -647,7 +649,7 @@ class RemovedWaitStore:
                 session.execute(select(func.pg_advisory_xact_lock(
                     func.hashtext("v2_removed_wait:" + request.symbol))))
             if valid is not None and not valid():
-                raise ValueError("removal publication changed")
+                raise RemovedWaitPublicationChanged("removal publication changed")
             if not active:
                 latest = session.scalar(select(DashboardSnapshot).where(
                     DashboardSnapshot.snapshot_type == SNAPSHOT_TYPE,
@@ -659,7 +661,7 @@ class RemovedWaitStore:
             session.add(DashboardSnapshot(snapshot_type=SNAPSHOT_TYPE, payload=request.payload(active=active)))
             session.flush()
             if valid is not None and not valid():
-                raise ValueError("removal publication changed before commit")
+                raise RemovedWaitPublicationChanged("removal publication changed before commit")
             session.commit()
 
     def commit_clear(self, plan: RemovedWaitClear, valid: Callable[[], bool]) -> None:
@@ -750,18 +752,16 @@ class RemovedWaitStore:
                     DashboardSnapshot.created_at >= anchor))
                 if latest_request is not None:
                     snapshots.append(latest_request)
-                position_queries = [
-                    select(AccountPosition.id).where(AccountPosition.symbol == request.symbol,
-                        AccountPosition.broker_account_id.in_(accounts), AccountPosition.quantity != 0),
-                    select(VirtualPosition.id).where(VirtualPosition.symbol == request.symbol,
-                        VirtualPosition.broker_account_id.in_(accounts), VirtualPosition.quantity != 0),
-                    select(OmsManagedPosition.id).where(OmsManagedPosition.symbol == request.symbol,
-                        OmsManagedPosition.broker_account_name.in_(account_names), OmsManagedPosition.status == "open"),
-                ]
+                try:
+                    has_position = owned_position_present(session, symbol=request.symbol, accounts=accounts,
+                        strategy_id=strategy_id, now=observed)
+                except (ValueError, TypeError, ArithmeticError):
+                    results.append(RemovedWaitProof(request, int(observed.timestamp() * 1000), False,
+                                                    "own_position_evidence_UNKNOWN"))
+                    continue
                 results.append(assess_clear_rules(request, now=observed, accounts=accounts,
                     intents=intents, orders=orders, filled_order_ids=fills, order_events=events,
-                    snapshots=snapshots, has_position=any(session.scalar(q.limit(1)) is not None
-                                                        for q in position_queries), strategy_id=strategy_id))
+                    snapshots=snapshots, has_position=has_position, strategy_id=strategy_id))
         return tuple(results)
 
     def restore(self) -> dict[str, RemovedWait]:
@@ -934,24 +934,13 @@ class RemovedWaitStore:
                     )
                     .order_by(DashboardSnapshot.created_at, DashboardSnapshot.id)
                 )
-                position_queries = [
-                    select(AccountPosition.id).where(
-                        AccountPosition.symbol == request.symbol,
-                        AccountPosition.broker_account_id.in_(accounts),
-                        AccountPosition.quantity != 0,
-                    ),
-                    select(VirtualPosition.id).where(
-                        VirtualPosition.symbol == request.symbol,
-                        VirtualPosition.strategy_id == strategy_id,
-                        VirtualPosition.quantity != 0,
-                    ),
-                    select(OmsManagedPosition.id).where(
-                        OmsManagedPosition.symbol == request.symbol,
-                        OmsManagedPosition.strategy_code == "schwab_1m_v2",
-                        OmsManagedPosition.status == "open",
-                    ),
-                ]
-                has_position = any(session.scalar(q.limit(1)) is not None for q in position_queries)
+                try:
+                    has_position = owned_position_present(session, symbol=request.symbol, accounts=accounts,
+                        strategy_id=strategy_id, now=observed)
+                except (ValueError, TypeError, ArithmeticError):
+                    results.append(RemovedWaitProof(request, int(observed.timestamp() * 1000), False,
+                                                    "own_position_evidence_UNKNOWN"))
+                    continue
                 results.append(
                     assess_removed_wait(
                         request,

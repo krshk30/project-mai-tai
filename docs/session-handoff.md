@@ -4,7 +4,33 @@
 > [`handoff-log.md`](handoff-log.md). Numbers without an as-of time are not current-state evidence.
 > The 10-16 state (Group D install) is in git history of this file (main 54549912).
 
-## PRODUCTION NOW — as of Mon 2026-10-19 20:4x ET (claude-1 close-out read of the box)
+## PRODUCTION NOW — as of Tue 2026-10-20 23:00 ET (claude-1, install verified; operator asleep from ~20:30, authorized "complete all the tasks")
+
+| Item | State now | Evidence (as-of) |
+|---|---|---|
+| Box checkout | **`a8239959`** (detached; src byte-equal to reviewed fef624dd) = b79ef160 + F minus Fix A: WORX L7, WBATTACH3/AIXI final wire, PAGE1020 ATR partial ledger, momentum Fix B, MOMORDER1 L1–L8, L6 phase-1 continue, Q05/O13, **OWNMIX2** (only own books count; manual shares never block), **SAFEX1** (R5 ORB close = min(broker, own) on every path + incident; R7 mandatory momentum exits never stall on UNKNOWN read; R4 own=0/broker>0 incident) | `git log -1` 22:57 |
+| Held | **Fix A** (momentum exit-time read-back) — swallowed exception on the entry path (BBCI); FIXA-2 lane released 23:00 | LATEST 18:36 / 23:00 |
+| Installed tonight | 22:57:51 ET; env file unchanged since 10-17 (F adds no flags); 8/8 services active, NRestarts 0 | `systemctl` 22:59 |
+| Boot proof | `MOMEXIT-B-RESTORE-GUARD … entry_admission=flat_terminal`; 0 ERROR/CRITICAL since boot (all services); 0 Webull ServerException | logs 22:59 |
+| Records | SQL repairs committed (dry-run then COMMIT, stopped window 22:47–22:57): AIXI external 95 @ 2.9701 (managed 8c09507e closed, 6 incidents closed, −16.14); SAIQ external 60 @ 4.88 (intent 04b27ec5 filled, −8.40); CRMT exit time | /var/tmp/c1sw receipts |
+| Pages | ATR **+$16.97** CLEAN (6 closed, 12 fills); momentum READABLE **+$15.68** (4); ORB 0 | fullscan 22:58 |
+| Positions / orders | flat both brokers; 0 working orders (native read) | 22:47 |
+| Backups | `/var/backups/project-mai-tai/install-20261020-F/` b79 tree tgz 13d6f6fb… + full DB dump ce8e2fc3… | 22:57 |
+| Rollback | stop services → `git checkout --detach b79ef160` → start | — |
+
+## TOMORROW (Wed 10-21) — first checks
+
+| Time ET | Check | Pass looks like |
+|---|---|---|
+| 03:40–04:00 | momentum guard + paper start; restore guard still `flat_terminal` | both active |
+| 06:20 | preopen | **RED expected** (stale pins/identities for a8239959, O-1019-2) unless re-baselined tonight |
+| 07:00+ | scanner, `#ERROR SIGNATURES`, fix ledger; watch `own_position_evidence_UNKNOWN`, `query budget unavailable`, `OMS-ORB-CLOSE-BROKER-BELOW-OWN`, `SCHWAB-FALLBACK-OWN-ZERO-BROKER-NONZERO`, `SAFEX1-R7-CANCEL-READ-UNKNOWN`, `cancel_publication_waiting` >15 min, v2 callback lateness | 0 / explained |
+
+Open cards 10-21: FIXA-2, DCARRY1 (pre-existing owner-bound after deferred cancel), V2FF-LOOP cause, SAIQ cancel-receipt, inspect_episode single snapshot, PERF-HANDLER1 (+8–10 ms ATR callback tail), G2 receipt limit vs 15–17 s sync cadence, R8 Webull re-arm after exhausted retries, native (a)/(b) coverage gaps, EXTCLOSE1, L7b.
+
+---
+
+## (previous) PRODUCTION NOW — as of Mon 2026-10-19 20:4x ET (claude-1 close-out read of the box)
 
 | Item | State now | Evidence (as-of) |
 |---|---|---|

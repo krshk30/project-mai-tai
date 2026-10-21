@@ -76,6 +76,93 @@ def _called_name(node: ast.Call) -> str:
     return ""
 
 
+def _validated_retry_reason_calls(tree: ast.Module) -> dict[int, set[str]]:
+    """Follow only the guarded DB return and its exact tuple transport to emit."""
+    def shape(source: str) -> str:
+        return ast.dump(ast.parse(source).body[0], include_attributes=False)
+
+    def matches(node: ast.AST, source: str) -> bool:
+        return ast.dump(node, include_attributes=False) == shape(source)
+
+    constants = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        if not isinstance(node.targets[0], ast.Name):
+            continue
+        value = node.value
+        if (isinstance(value, ast.Call) and _called_name(value) == "frozenset"
+                and len(value.args) == 1 and not value.keywords):
+            value = value.args[0]
+        try:
+            literal = ast.literal_eval(value)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(literal, str):
+            constants[node.targets[0].id] = {literal}
+        elif isinstance(literal, set) and all(isinstance(item, str) for item in literal):
+            constants[node.targets[0].id] = literal
+    if not {"SOFTWARE_EXIT_REASONS", "REASON"} <= constants.keys():
+        return {}
+    result = {}
+    for outer in tree.body:
+        if not isinstance(outer, ast.AsyncFunctionDef) or outer.name != "retry_atr_proven_unsent_exit":
+            continue
+        readers = [node for node in outer.body if isinstance(node, ast.FunctionDef) and node.name == "read"]
+        if len(readers) != 1:
+            continue
+        reader = readers[0]
+        if any(isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+               and node.id in {"SOFTWARE_EXIT_REASONS", "REASON"}
+               for node in ast.walk(reader)):
+            continue
+        if not matches(reader.body[-1],
+                       "return service._hydrate_v2_position(row), float(row.entry_price), intent.reason"):
+            continue
+        guards = [node for node in reader.body[:-1] if isinstance(node, ast.If)
+                  and isinstance(node.test, ast.BoolOp) and isinstance(node.test.op, ast.Or)
+                  and not node.orelse and len(node.body) == 1 and matches(node.body[0], "return None")
+                  and any(matches(ast.Expr(value=part),
+                      "intent.reason not in SOFTWARE_EXIT_REASONS | {REASON}")
+                      for part in node.test.values)]
+        # The final guard must immediately dominate the value return; no intervening mutation.
+        if not guards or reader.body[-2] is not guards[-1]:
+            continue
+        if any(node.value is not None and not (isinstance(node.value, ast.Constant) and node.value.value is None)
+               for node in ast.walk(reader) if isinstance(node, ast.Return) and node is not reader.body[-1]):
+            continue
+        transport = [shape("bound = await service._run_db(read, commit=False)"),
+                     shape("if bound is None:\n    return None"),
+                     shape("position, entry_price, reason = bound")]
+        body = outer.body
+        starts = [index for index in range(len(body) - 2)
+                  if [ast.dump(node, include_attributes=False) for node in body[index:index + 3]] == transport]
+        if len(starts) != 1:
+            continue
+        prefix = body[:starts[0]]
+        if any(isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+               and node.id in {"read", "SOFTWARE_EXIT_REASONS", "REASON"}
+               for statement in prefix if statement is not reader for node in ast.walk(statement)):
+            continue
+        tail = body[starts[0] + 3:]
+        if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
+               for statement in tail for node in ast.walk(statement)):
+            continue
+        # Any subsequent rebinding invalidates this narrow proof instead of hiding the emit.
+        if any(isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+               and node.id in {"reason", "bound", "intent", "SOFTWARE_EXIT_REASONS", "REASON"}
+               for statement in tail for node in ast.walk(statement)):
+            continue
+        values = constants["SOFTWARE_EXIT_REASONS"] | constants["REASON"]
+        for statement in tail:
+            for call in ast.walk(statement):
+                if (isinstance(call, ast.Call) and _called_name(call) == "_emit_v2_exit_on_loop"
+                        and any(kw.arg == "reason" and isinstance(kw.value, ast.Name)
+                                and kw.value.id == "reason" for kw in call.keywords)):
+                    result[id(call)] = values
+    return result
+
+
 def _emitted_managed_exit_reasons(source_root: Path | None = None) -> set[str]:
     """Discover the reason contract from emit call sites, not from the classifier itself."""
     if source_root is None:
@@ -83,6 +170,7 @@ def _emitted_managed_exit_reasons(source_root: Path | None = None) -> set[str]:
     emitted: set[str] = set()
     for path in source_root.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        validated_retry_calls = _validated_retry_reason_calls(tree)
         bindings: dict[str, set[str]] = defaultdict(set)
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
@@ -116,7 +204,10 @@ def _emitted_managed_exit_reasons(source_root: Path | None = None) -> set[str]:
             if called in _REASON_FORWARDING_ROUTINES and reason is None:
                 emitted.add(f"unresolved:{called} called without reason=")
                 continue
-            if isinstance(reason, ast.Constant) and isinstance(reason.value, str):
+            if id(node) in validated_retry_calls:
+                emitted.update(value for value in validated_retry_calls[id(node)]
+                               if value.startswith(_MANAGED_EXIT_PREFIX))
+            elif isinstance(reason, ast.Constant) and isinstance(reason.value, str):
                 if reason.value.startswith(_MANAGED_EXIT_PREFIX):
                     emitted.add(reason.value)
             elif isinstance(reason, ast.Name) and reason.id in bindings:
@@ -154,6 +245,47 @@ def test_unbound_reason_name_remains_unresolved_not_silently_ignored(tmp_path):
     (tmp_path / "caller.py").write_text(
         "service._emit_v2_exit_on_loop(reason=UNKNOWN)\n", encoding="utf-8")
     assert _emitted_managed_exit_reasons(tmp_path) == {"unresolved:Name(id='UNKNOWN', ctx=Load())"}
+
+
+@pytest.mark.parametrize("mutation", ["none", "unguarded", "rebound", "wrong_return", "wrong_transport",
+                                     "reader_rebound", "constant_shadow", "outer_shadow", "nested_reason"])
+def test_retry_reason_requires_guarded_return_and_unchanged_transport(tmp_path, mutation):
+    source = '''
+REASON = "WEBULL_ATTACH_RISK_OFF"
+SOFTWARE_EXIT_REASONS = frozenset({"oms_v2_managed_exit:CW_FLIP"})
+async def retry_atr_proven_unsent_exit(service, account, symbol, managed_id):
+    def read(session):
+        intent = session.intent
+        if intent is None or intent.reason not in SOFTWARE_EXIT_REASONS | {REASON}:
+            return None
+        return service._hydrate_v2_position(row), float(row.entry_price), intent.reason
+    bound = await service._run_db(read, commit=False)
+    if bound is None:
+        return None
+    position, entry_price, reason = bound
+    return await service._emit_v2_exit_on_loop(reason=reason)
+'''
+    if mutation == "unguarded":
+        source = source.replace("intent.reason not in SOFTWARE_EXIT_REASONS | {REASON}", "False")
+    elif mutation == "rebound":
+        source = source.replace("    return await", "    reason = UNKNOWN\n    return await")
+    elif mutation == "wrong_return":
+        source = source.replace("float(row.entry_price), intent.reason", "float(row.entry_price), intent.other")
+    elif mutation == "wrong_transport":
+        source = source.replace("service._run_db(read,", "service._run_db(other,")
+    elif mutation == "reader_rebound":
+        source = source.replace("    bound =", "    read = other\n    bound =")
+    elif mutation == "constant_shadow":
+        source = source.replace("        intent =", "        SOFTWARE_EXIT_REASONS = other\n        intent =")
+    elif mutation == "outer_shadow":
+        source = source.replace("    bound =", "    REASON = other\n    bound =")
+    elif mutation == "nested_reason":
+        source = source.replace("    return await service._emit_v2_exit_on_loop(reason=reason)",
+                                "    async def nested(reason):\n        return await service._emit_v2_exit_on_loop(reason=reason)")
+    (tmp_path / "caller.py").write_text(source, encoding="utf-8")
+    expected = ({"oms_v2_managed_exit:CW_FLIP"} if mutation == "none"
+                else {"unresolved:Name(id='reason', ctx=Load())"})
+    assert _emitted_managed_exit_reasons(tmp_path) == expected
 
 
 # --------------------------------------------------------------- the adapter can address the legs

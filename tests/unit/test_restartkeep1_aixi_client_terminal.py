@@ -1,18 +1,19 @@
 """Native AIXI client-abort preimage; mutations below are explicit controls."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import json
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import DateTime, Numeric, Uuid, create_engine
+from sqlalchemy import DateTime, Numeric, Uuid, create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from project_mai_tai.db.models import (
-    Base, BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Strategy, TradeIntent,
+    AccountPosition, Base, BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Strategy, TradeIntent,
 )
+from project_mai_tai.positions_read_receipt import SNAPSHOT_TYPE as RECEIPT_TYPE, record_receipts
 from project_mai_tai.v2_removed_wait import RemovedWait, RemovedWaitStore
 from tests.unit.test_v2_removed_wait_clear_rules import apply_committed, strategy
 
@@ -39,6 +40,19 @@ def native_row(model, raw):
     return model(**values)
 
 
+def controlled_position_read(factory, observed_at):
+    # Complete controlled DB-backed broker replies, NOT an additional native
+    # AIXI receipt: the retained vendor packet does not prove today's flatness.
+    with factory.begin() as session:
+        accounts = session.scalars(select(BrokerAccount).where(BrokerAccount.name.in_(NAMES))).all()
+        assert {row.name for row in accounts} == NAMES
+        positions = session.scalars(select(AccountPosition).where(
+            AccountPosition.broker_account_id.in_([row.id for row in accounts]))).all()
+        record_receipts(session, [(row.name, observed_at, sum(
+            p.broker_account_id == row.id for p in positions)) for row in accounts],
+            recorded_at=observed_at)
+
+
 @pytest.fixture
 def native_book(tmp_path):
     engine = create_engine("sqlite:///" + str(tmp_path / "aixi.sqlite"))
@@ -52,6 +66,7 @@ def native_book(tmp_path):
         session.add_all(native_row(BrokerOrderEvent, row) for row in NATIVE["events"])
         session.add(native_row(DashboardSnapshot, NATIVE["request"]))
         session.commit()
+    controlled_position_read(factory, WED)
     yield RemovedWaitStore(factory), factory
     engine.dispose()
 
@@ -109,3 +124,21 @@ def test_client_terminal_predicate_does_not_bypass_settle_window(native_book, st
         session.commit()
     proof, = store.clear_rule_proofs(tuple(store.restore().values()), NAMES, now=WED)
     assert not proof.clear and proof.reason == "terminal_row_settling"
+
+
+@pytest.mark.parametrize("fault", ["missing-primary", "missing-webull", "stale"])
+def test_native_terminal_still_requires_fresh_complete_account_receipts(native_book, fault):
+    store, factory = native_book
+    with factory.begin() as session:
+        for row in session.scalars(select(DashboardSnapshot).where(
+                DashboardSnapshot.snapshot_type == RECEIPT_TYPE)).all():
+            name = row.payload["broker_account_name"]
+            if (fault == "missing-primary" and name == "live:schwab_1m_v2"
+                    or fault == "missing-webull" and name == "live:orb"):
+                session.delete(row)
+            elif fault == "stale":
+                row.payload = {**row.payload, "read_at": (WED-timedelta(milliseconds=15001)).isoformat()}
+    req = store.restore()["AIXI"]
+    proof, = store.clear_rule_proofs((req,), NAMES, now=WED)
+    assert not proof.clear and proof.reason == "own_position_evidence_UNKNOWN"
+    assert store.restore() == {"AIXI": req}

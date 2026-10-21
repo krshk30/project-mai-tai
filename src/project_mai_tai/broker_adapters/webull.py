@@ -42,6 +42,7 @@ from project_mai_tai.broker_adapters.webull_order_reads import (
     QueryBudgetUnavailable, shared_budget, shared_reader, terminal_version,
 )
 from project_mai_tai.broker_adapters.target_price import target_limit_price
+from project_mai_tai.broker_adapters.momentum_order_read import MomentumOrderRead
 
 
 logger = logging.getLogger(__name__)
@@ -546,6 +547,93 @@ class WebullBrokerAdapter:
         except Exception:  # noqa: BLE001
             logger.exception("Webull order-status fetch failed for %s", request.client_order_id)
             return None
+
+    async def fetch_momentum_cancel_read(self, request: OrderRequest) -> MomentumOrderRead:
+        account = self.accounts_by_name.get(request.broker_account_name)
+        if (account is None or request.strategy_code != "momentum_warn_live"
+                or not request.metadata.get("episode_id") or request.intent_type == "cancel"
+                or not request.quantity.is_finite() or request.quantity <= 0):
+            return MomentumOrderRead("invalid", reason="request_identity")
+        try:
+            return await asyncio.to_thread(self._momentum_cancel_read_blocking, account, request)
+        except (TimeoutError, ConnectionError, OSError):
+            return MomentumOrderRead("unavailable", reason="transport")
+        except Exception:
+            return MomentumOrderRead("invalid", reason="unclassified_failure")
+
+    def _momentum_cancel_read_blocking(self, account, request):
+        try:
+            self._query_budget.claim("detail", f"{account.account_id}:{request.client_order_id}", strict=True)
+        except QueryBudgetUnavailable:
+            return MomentumOrderRead("unavailable", reason="budget")
+        try:
+            from webull.trade.request.get_order_detail_request import OrderDetailRequest
+        except ImportError:
+            from webull.trade.request.v2.get_order_detail_request import OrderDetailRequest
+        detail = OrderDetailRequest()
+        detail.set_account_id(account.account_id)
+        detail.set_client_order_id(request.client_order_id)
+        try:
+            response = self._get_client().get_response(detail)
+        except Exception as exc:
+            status = getattr(exc, "http_status", None)
+            if isinstance(exc, (TimeoutError, ConnectionError, OSError)) or status == 429 or (
+                    isinstance(status, int) and 500 <= status <= 599):
+                return MomentumOrderRead("unavailable", reason="transport_or_throttle")
+            return MomentumOrderRead("invalid", reason="provider_refusal")
+        status = self._response_status(response)
+        if status == 429 or 500 <= status <= 599:
+            return MomentumOrderRead("unavailable", reason="http_unavailable")
+        if status != 200:
+            return MomentumOrderRead("invalid", reason="http_refusal")
+        body = self._body(response)
+        execution = self._validated_list_execution(body, account, request.client_order_id,
+            symbol=request.symbol, side=request.side)
+        kind = "report"
+        if execution is None:
+            # A status outside the vocabulary is separate from malformed or
+            # conflicting evidence. Validate a PRIVATE copy's identity/fills;
+            # never rewrite the provider payload or ordinary adapter result.
+            if not isinstance(body, dict) or not isinstance(body.get("items"), list) or len(body["items"]) != 1:
+                return MomentumOrderRead("invalid", reason="body_shape")
+            item = body["items"][0]
+            if not isinstance(item, dict):
+                return MomentumOrderRead("invalid", reason="item_shape")
+            aliases = [str(item[key]).upper() for key in ("status", "order_status", "orderStatus") if item.get(key)]
+            known = _FILLED_STATUSES | _PARTIAL_STATUSES | _CANCELLED_STATUSES | _REJECTED_STATUSES | _ACCEPTED_STATUSES
+            if not aliases or len(set(aliases)) != 1 or any(value in known for value in aliases):
+                return MomentumOrderRead("invalid", reason="status_or_execution")
+            private = {key: value for key, value in item.items() if key not in {"status", "order_status", "orderStatus"}}
+            private["order_status"] = "WORKING"
+            execution = self._validated_list_execution({**body, "items": [private]}, account,
+                request.client_order_id, symbol=request.symbol, side=request.side)
+            kind = "status_unknown"
+        if execution is None:
+            return MomentumOrderRead("invalid", reason="identity_or_execution")
+        event, broker_id, quantity, price, stamp = execution
+        quantity = Decimal(quantity)
+        item = body["items"][0]
+        expected = request.metadata.get("broker_order_id")
+        if (not broker_id or expected and str(expected) != broker_id
+                or not quantity.is_finite() or not 0 <= quantity <= request.quantity
+                or kind == "report" and event == "filled" and quantity != request.quantity
+                or any(item.get(key) is not None and self._decimal_or_none(item, key) != request.quantity
+                       for key in ("quantity", "qty", "total_qty"))):
+            return MomentumOrderRead("invalid", reason="native_identity_or_quantity")
+        metadata = dict(request.metadata)
+        if stamp is not None:
+            metadata["webull_broker_filled_time"] = stamp
+        if kind == "status_unknown":
+            event = "partially_filled" if quantity else "accepted"
+        elif event in {"cancelled", "rejected"} and quantity:
+            metadata["webull_terminal_with_partial_fill"] = event
+        report = ExecutionReport(event, request.client_order_id, broker_order_id=broker_id,
+            broker_fill_id=self._fill_id(broker_id, quantity, "partially_filled" if quantity else event),
+            symbol=request.symbol, side=request.side, intent_type=request.intent_type,
+            quantity=request.quantity, filled_quantity=quantity,
+            fill_price=Decimal(price) if price is not None else None, origin="broker",
+            reported_at=self._parse_broker_time(stamp) if stamp else datetime.now(UTC), metadata=metadata)
+        return MomentumOrderRead(kind, report=report)
 
     async def fetch_oco_exit_fill(
         self,
@@ -1269,7 +1357,8 @@ class WebullBrokerAdapter:
         if getattr(self, "_list_primary_enabled", False) and item.get("symbol") and str(item["symbol"]).upper() != request.symbol.upper():
             return None
         broker_order_id = self._first_str(body, "order_id", "orderId")
-        if orb_owned and (
+        momentum_fresh = momentum_owned and request.metadata.get("momlive_fresh_order_read") == "true"
+        if (orb_owned or momentum_fresh) and (
             self._validated_list_execution(body, account, request.client_order_id,
                 symbol=request.symbol, side=request.side) is None
             or (request.metadata.get("broker_order_id")
@@ -1283,7 +1372,13 @@ class WebullBrokerAdapter:
             self._decimal_or_none(item, "filled_qty", "filledQty", "filled_quantity", "filledQuantity")
             or Decimal("0")
         )
-        terminal_partial = ((getattr(self, "_list_primary_enabled", False) or orb_owned)
+        if momentum_fresh and (
+            not filled_quantity.is_finite() or not request.quantity.is_finite()
+            or request.quantity <= 0 or not 0 <= filled_quantity <= request.quantity
+            or event_type == "filled" and filled_quantity != request.quantity
+        ):
+            return None
+        terminal_partial = ((getattr(self, "_list_primary_enabled", False) or orb_owned or momentum_fresh)
                             and event_type in {"cancelled", "rejected"} and filled_quantity > 0)
         # filled_price = the CONFIRMED real fill-price field (was the naked-position bug:
         # a wrong field -> fill_price None -> OMS arms NO trailing stop).
@@ -1327,8 +1422,8 @@ class WebullBrokerAdapter:
         for key in ("_webull_list_evidence", "_webull_terminal_proof"):
             if key in body:
                 metadata[key] = json.dumps(body[key], sort_keys=True)
-        if item.get("last_filled_time"):
-            metadata["webull_broker_filled_time"] = str(item.get("last_filled_time"))
+        if item.get("last_filled_time") or (momentum_fresh and item.get("lastFilledTime")):
+            metadata["webull_broker_filled_time"] = str(item.get("last_filled_time") or item.get("lastFilledTime"))
         if item.get("place_time"):
             metadata["webull_broker_place_time"] = str(item.get("place_time"))
         # ⛔⭐⭐ §196 — DO NOT SUBSTITUTE OUR INTENT TEXT FOR A REASON THE BROKER DID NOT GIVE.
@@ -1366,9 +1461,11 @@ class WebullBrokerAdapter:
 
     def _momentum_detail_body(self, account, detail_request, request):
         # Missing list children are UNKNOWN, not permission to probe guessed IDs.
-        # Use the existing ordinary permit, leaving strict cancel/RPG capacity.
+        # Pre-cancel reads reserve capacity within the SAME host/app-key budget;
+        # ordinary polling keeps its existing lower ceiling and list-first path.
         try:
-            self._query_budget.claim("detail", f"{account.account_id}:{request.client_order_id}")
+            self._query_budget.claim("detail", f"{account.account_id}:{request.client_order_id}",
+                strict=request.metadata.get("momlive_fresh_order_read") == "true")
         except QueryBudgetUnavailable:
             return None
         response = self._get_client().get_response(detail_request)

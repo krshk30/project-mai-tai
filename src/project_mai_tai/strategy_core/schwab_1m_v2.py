@@ -1022,6 +1022,16 @@ class SchwabV2Strategy:
     def _country_entry_selection(self, state: SymbolState):
         from project_mai_tai.atr_country_route import CountryRouteRefusal
 
+        # All callers (including sizing) must leave the released owner's durable
+        # identity untouched until the FALSEFLIP2 worker commits its replacement.
+        if self._falseflip2_enabled() and state.symbol in self.__dict__.get("_falseflip2_rearm", {}):
+            prebound = self.__dict__.get("_falseflip2_prebound", {}).get(state.symbol)
+            if (state.flip_owner_phase != "resting" or prebound is None
+                    or state.fanout_segment_id != prebound.opportunity_id
+                    or state.flip_owner_opportunity_id != prebound.opportunity_id
+                    or self._flip_owner_record(state) != prebound):
+                self._resting_return_reason(state, "country_waiting_atomic_rearm")
+                raise CountryRouteRefusal("country_waiting_atomic_rearm")
         if not self._country_single_entry(state):
             return None
         book = getattr(self, "_country_route_book", None)
@@ -2501,6 +2511,22 @@ class SchwabV2Strategy:
     def pending_falseflip2_rearms(self):
         return tuple(self.__dict__.get("_falseflip2_rearm_plans", {}).values())
 
+    def falseflip2_rearm_worker_pending(self, symbol):
+        workers = self.__dict__.get("_falseflip2_rearm_workers", {})
+        owner = workers.get(symbol)
+        if owner is None:
+            return False
+        # The event belongs to the actual synchronous worker, not its asyncio
+        # future: cancelling the waiter cannot prove that the DB invocation ended.
+        completed = owner.get("completed")
+        task = owner.get("task")
+        if (completed is None or not completed.is_set() or not owner.get("waiter_finished")
+                or task is None or not task.done()):
+            return True
+        if workers.get(symbol) is owner:
+            workers.pop(symbol)
+        return False
+
     def falseflip2_rearm_valid(self, plan):
         record, line, previous = plan
         state = self._symbol_states.get(record.symbol)
@@ -2737,13 +2763,16 @@ class SchwabV2Strategy:
             previous = self.__dict__.get("_falseflip2_rearm", {}).get(state.symbol)
             if previous is None:
                 self._falseflip_rearm.discard(state.symbol)
+                self._resting_return_reason(state, "rearm_no_pending_episode")
                 return
             if (state.atr_state != "short" or state.retry_one_segment_id != previous[0]
                     or state.atr_short_flip_bar_ts != previous[0]):
                 self._falseflip2_rearm.pop(state.symbol, None)
                 self.__dict__.get("_falseflip2_rearm_plans", {}).pop(state.symbol, None)
+                self._resting_return_reason(state, "rearm_short_segment_changed")
                 return
             if not self._falseflip2_proven(state, previous[1]):
+                self._resting_return_reason(state, "rearm_old_episode_proof_unknown")
                 return
             self._cw_v2_resting_track(state, None)
             return
@@ -6381,7 +6410,8 @@ class SchwabV2Strategy:
                             or getattr(self, "_country_restore_unknown", False))
                         else None)
         except CountryRouteRefusal as exc:
-            logger.warning("[ATR-COUNTRY-REFUSED] symbol=%s reason=%s", symbol, exc)
+            if self._resting_return_reason(self.watchlist_state(symbol), "sizing_country_refused"):
+                logger.warning("[ATR-COUNTRY-REFUSED] symbol=%s reason=%s", symbol, exc)
             return None
         if selected is not None:
             if leg == "webull" and selected.broker != "webull":
@@ -6505,20 +6535,72 @@ class SchwabV2Strategy:
         minutes = et.hour * 60 + et.minute
         return not (9 * 60 + 30 <= minutes < 16 * 60)
 
+    def _resting_return_reason(self, state: SymbolState, reason: str, *, slot: str = "first") -> bool:
+        """Bound diagnostics to one line per reason/episode/bar, without queries."""
+        previous = self.__dict__.get("_falseflip2_rearm", {}).get(state.symbol)
+        episode = int(state.flip_owner_opportunity_id or state.fanout_segment_id
+                      or (previous[1] if previous is not None else 0))
+        bar = state.bars[-1].timestamp_ms if state.bars else self._now_ms() // 60000 * 60000
+        key = (episode, bar)
+        saved = state.__dict__.get("_resting_return_diagnostics")
+        if saved is None or saved[0] != key:
+            saved = (key, set())
+            state.__dict__["_resting_return_diagnostics"] = saved
+        marker = (slot, reason)
+        if marker in saved[1]:
+            return False
+        saved[1].add(marker)
+        logger.info("[V2-RESTING-RETURN] symbol=%s opportunity_id=%d bar_ms=%d slot=%s reason=%s",
+                    state.symbol, episode, bar, slot, reason)
+        return True
+
     def _queue_resting_place(
         self, state: SymbolState, line: float, *, slot: str = "first",
         recover_accounts: set[str] | None = None,
     ) -> None:
         if state.restart_rest_evidence_pending:
+            self._resting_return_reason(state, "restart_evidence_pending", slot=slot)
             return
         if not self.line_buy_ready(state.symbol):
+            self._resting_return_reason(state, "line_not_ready", slot=slot)
+            return
+        previous = self.__dict__.get("_falseflip2_rearm", {}).get(state.symbol)
+        if self._falseflip2_enabled() and previous is not None and state.flip_owner_phase == "idle":
+            if self.falseflip2_rearm_worker_pending(state.symbol):
+                self._resting_return_reason(state, "atomic_rearm_worker_unresolved", slot=slot)
+                return
+            if state.fanout_segment_id or state.flip_owner_opportunity_id:
+                self._resting_return_reason(state, "rearm_identity_already_bound", slot=slot)
+                return  # Existing stranded identities need separately reviewed recovery.
+            if not self._strict_first_rest_admitted(state, slot=slot):
+                self._resting_return_reason(state, "rearm_admission_blocked", slot=slot)
+                return
+            plans = self.__dict__.setdefault("_falseflip2_rearm_plans", {})
+            plan = plans.get(state.symbol)
+            if plan is None:
+                candidate = max(self._now_ms(), state.fanout_last_retired_opportunity_id + 1)
+                record = FlipEntryOwnershipRecord(state.symbol, candidate, "resting", 0, 0,
+                    (), {}, {}, state.retry_one_segment_id, state.retry_one_closes_in_segment)
+                plans[state.symbol] = (record, line, previous)
+            elif (plan[2] != previous or plan[0].retry_segment_id != state.retry_one_segment_id
+                  or plan[0].retry_closes_at_place != state.retry_one_closes_in_segment):
+                self._resting_return_reason(state, "atomic_rearm_record_changed", slot=slot)
+                return
+            elif plan[1] != line:
+                # A failed/uncertain invocation may already have committed. Keep
+                # its exact candidate/record/old binding and retry native CAS;
+                # only the current price snapshot changes after worker completion.
+                plans[state.symbol] = (plan[0], line, plan[2])
+                self._resting_return_reason(state, "atomic_rearm_price_refreshed", slot=slot)
+            self._resting_return_reason(state, "atomic_rearm_plan_queued", slot=slot)
             return
         from project_mai_tai.atr_country_route import CountryRouteRefusal
 
         try:
             country = self._country_entry_selection(state)
         except CountryRouteRefusal as exc:
-            logger.warning("[ATR-COUNTRY-REFUSED] symbol=%s reason=%s", state.symbol, exc)
+            if self._resting_return_reason(state, "country_refused", slot=slot):
+                logger.warning("[ATR-COUNTRY-REFUSED] symbol=%s reason=%s", state.symbol, exc)
             return
         settings = getattr(self, "settings", None)
         primary_account = str(getattr(settings, "strategy_schwab_1m_v2_account_name", ""))
@@ -6561,22 +6643,18 @@ class SchwabV2Strategy:
                         for job in jobs.values()
                         if job["old"]["symbol"] == state.symbol and job["old"].get("broker_account_name") == account
                         and rpg_buy_owned(job, slot=slot, segment_id=state.fanout_segment_id)), None)
-                logger.info("[V2-RESTING-LEG-SKIP] symbol=%s account=%s slot=%s reason=%s generation=%s",
-                            state.symbol, account, slot, reason, generation or "unprojected")
+                if self._resting_return_reason(state, "leg_skipped_" + reason, slot=slot + ":" + account):
+                    logger.info("[V2-RESTING-LEG-SKIP] symbol=%s account=%s slot=%s reason=%s generation=%s",
+                                state.symbol, account, slot, reason, generation or "unprojected")
         if primary_blocked and (webull_blocked or not (country is not None or (
                 self._webull_resting_mirror_enabled and self._dual_broker_fanout_enabled))):
+            self._resting_return_reason(state, "all_selected_legs_owned_or_unavailable", slot=slot)
             return
         if not self._strict_first_rest_admitted(state, slot=slot):
-            return
-        previous = self.__dict__.get("_falseflip2_rearm", {}).get(state.symbol)
-        if self._falseflip2_enabled() and previous is not None and state.flip_owner_phase == "idle":
-            candidate = max(self._now_ms(), state.fanout_last_retired_opportunity_id + 1)
-            record = FlipEntryOwnershipRecord(state.symbol, candidate, "resting", 0, 0,
-                (), {}, {}, state.retry_one_segment_id, state.retry_one_closes_in_segment)
-            self.__dict__.setdefault("_falseflip2_rearm_plans", {}).setdefault(
-                state.symbol, (record, line, previous))
+            self._resting_return_reason(state, "first_rest_admission_blocked", slot=slot)
             return
         if self._flip_owned_first_entry_enabled and self._ensure_flip_owner_opportunity(state) <= 0:
+            self._resting_return_reason(state, "opportunity_identity_unproven", slot=slot)
             return
         trigger = self._resting_trigger_for_line(line)
         band_pct = self._resting_band_pct_value()
@@ -6602,8 +6680,9 @@ class SchwabV2Strategy:
             state.symbol, leg="schwab", price=schwab_wire_limit, basis="stop_limit_wire_limit"
         )
         if not soft_rest and not primary_blocked and schwab_sized is None:
-            logger.info("[V2-RESTING-LEG-SKIP] symbol=%s account=%s slot=%s reason=entry_size_unavailable generation=%s",
-                        state.symbol, primary_account, slot, state.resting_schwab_generation or "unprojected")
+            if self._resting_return_reason(state, "schwab_size_unavailable", slot=slot):
+                logger.info("[V2-RESTING-LEG-SKIP] symbol=%s account=%s slot=%s reason=entry_size_unavailable generation=%s",
+                            state.symbol, primary_account, slot, state.resting_schwab_generation or "unprojected")
             return
         if self._flip_owned_first_entry_enabled:
             if state.flip_owner_phase == "idle":
@@ -6617,6 +6696,7 @@ class SchwabV2Strategy:
                 active=True,
                 reason="first_rest_working",
             ):
+                self._resting_return_reason(state, "owner_persist_failed", slot=slot)
                 return
         state.resting_active = True
         state.cw_seed_cap_watch_start_ms = 0
@@ -6736,8 +6816,9 @@ class SchwabV2Strategy:
                 basis="stop_limit_wire_limit",
             )
             if webull_sized is None:
-                logger.info("[V2-RESTING-LEG-SKIP] symbol=%s account=%s slot=%s reason=entry_size_unavailable generation=%s",
-                            state.symbol, webull_account, slot, state.resting_webull_generation or "unprojected")
+                if self._resting_return_reason(state, "webull_size_unavailable", slot=slot):
+                    logger.info("[V2-RESTING-LEG-SKIP] symbol=%s account=%s slot=%s reason=entry_size_unavailable generation=%s",
+                                state.symbol, webull_account, slot, state.resting_webull_generation or "unprojected")
                 return
             claimed = self._claim_fanout_webull(
                 state,
@@ -6806,6 +6887,8 @@ class SchwabV2Strategy:
                         },
                     )
                 )
+            else:
+                self._resting_return_reason(state, "webull_claim_unavailable", slot=slot)
 
     def _reprice_resting(self, state: SymbolState, line: float) -> None:
         if not self.line_buy_ready(state.symbol):
@@ -7546,14 +7629,18 @@ class SchwabV2Strategy:
         not "every short bar"."""
         self._first_rest_quote_wait_valid(state, atr_signal)
         if not self.line_buy_ready(state.symbol):
+            self._resting_return_reason(state, "track_line_not_ready")
             return
         if not (self._resting_entry_enabled and self._cw_v2_enabled):
+            self._resting_return_reason(state, "track_disabled")
             return
         if self.gap_hold_active(state.symbol):
             if self._gap_hold_has_resting_order(state):
                 self._queue_resting_cancel(state, reason="bar_gap")
+            self._resting_return_reason(state, "track_gap_hold")
             return
         if self._entries_held:   # boot-hold suppresses all entries
+            self._resting_return_reason(state, "track_entries_held")
             return
         # ⛔⭐⭐ SLOT SEPARATION — THE #580 / EGG-POLA SURFACE.
         # This method manages the FIRST-entry order and reprices it against the ATR SHORT trail.
@@ -7564,6 +7651,7 @@ class SchwabV2Strategy:
         # is precisely the cross-slot orphan this design must not reopen. The reclaim manager owns
         # it and cancels it through the SAME `_queue_resting_cancel`, so it is never unmanaged.
         if state.resting_active and state.resting_slot != "first":
+            self._resting_return_reason(state, "track_other_slot_owned")
             return
         if state.position_qty_held != 0:
             # In a position -> the OTOCO exit owns it. Drop the flag + any pending-fill grace.
@@ -7587,6 +7675,7 @@ class SchwabV2Strategy:
             # stop-limit rests, i.e. a double position.
             if state.resting_active or state.resting_flip_ms or state.resting_buy_frozen:
                 self._clear_resting_fill_latch(state)
+            self._resting_return_reason(state, "track_position_held")
             return
         if not self._resting_in_window():   # wall-clock; never rest on stale/replayed bars
             if state.resting_active:
@@ -7595,6 +7684,7 @@ class SchwabV2Strategy:
             state.pm_resting_flip_seen_ms = 0
             state.resting_buy_frozen = False
             state.resting_frozen_floor_bar_ms = 0
+            self._resting_return_reason(state, "track_window_closed")
             return
         self._disarm_eh_rest_for_rth(state)
         st = str(atr_signal.get("state")) if atr_signal else str(state.atr_state or "")
@@ -7623,6 +7713,7 @@ class SchwabV2Strategy:
                         state.resting_below_floor_bars += 1
                         if state.resting_below_floor_bars >= _RESTING_LIQUIDITY_CANCEL_BARS:
                             self._queue_resting_cancel(state, reason="liquidity_floor")
+                self._resting_return_reason(state, "track_keep_existing_buy_rest")
                 return
         # SILENCE-ON-FILL: a flip fired while resting -> hold until the position confirms (handled
         # above) or the grace expires. Never re-emit into the fill-settle lag.
@@ -7631,13 +7722,16 @@ class SchwabV2Strategy:
                 if state.resting_active:
                     self._queue_resting_cancel(state, reason="flip_no_fill")
                 state.pm_resting_flip_seen_ms = 0
+                self._resting_return_reason(state, "track_pm_flip_grace_expired")
                 return
         if state.resting_flip_ms:
             if self._now_ms() - state.resting_flip_ms < self._resting_flip_grace_ms:
+                self._resting_return_reason(state, "track_fill_settling")
                 return
             if state.resting_active:   # grace expired, still flat -> the flip did not fill us
                 self._queue_resting_cancel(state, reason="flip_no_fill")
             state.resting_flip_ms = 0
+            self._resting_return_reason(state, "track_flip_grace_expired")
             return
         try:
             raw = atr_signal.get("trail") if atr_signal else None
@@ -7648,9 +7742,11 @@ class SchwabV2Strategy:
         if pending_quote is not None:
             trail = pending_quote[0]
             if state.last_quote is None:
+                self._resting_return_reason(state, "track_quote_missing")
                 return  # A prior stale-price wait never becomes the legacy no-quote exception.
             ask, _, evidence = self._resting_ask_evidence(state.last_quote)
             if evidence != "fresh_quote" or ask is None or not math.isfinite(ask) or ask <= 0:
+                self._resting_return_reason(state, "track_quote_unusable")
                 return
         if st == "short" and trail > 0.0:
             recover_accounts = self._rpg_refused_legs(state, slot="first") if state.resting_active else None
@@ -7665,6 +7761,7 @@ class SchwabV2Strategy:
                 # or we recreate the #580 orphan (a live buy-stop nobody reprices). Live CNET was
                 # armed off a bar with vol=4011 against a 5000 floor and lost -4.9%.
                 if not self._liquidity_floor_ok(state):
+                    self._resting_return_reason(state, "track_liquidity_floor")
                     return
                 # ESTABLISHED-SHORT gate (2026-07-23, the SKYQ lesson): only rest once the purple line
                 # is a REAL, SETTLED downtrend -- the ATR must have been SHORT for >= min_short_bars
@@ -7676,6 +7773,7 @@ class SchwabV2Strategy:
                 except (TypeError, ValueError):
                     state_age = int(state.atr_state_age or 0)
                 if state_age < self._resting_min_short_bars:
+                    self._resting_return_reason(state, "track_short_not_established")
                     return
                 # LIVE-BAR gate: only rest on the CURRENT purple line -- never on a warmup-replayed /
                 # stale bar. On a mid-session CONFIRM the bot replays hours of old bars; without this
@@ -7683,6 +7781,7 @@ class SchwabV2Strategy:
                 # driving bar to be within `_resting_max_bar_age_ms` of wall-clock (live).
                 bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
                 if bar_ms and (self._now_ms() - bar_ms) > self._resting_max_bar_age_ms:
+                    self._resting_return_reason(state, "track_bar_stale")
                     return
                 # STOP<=ASK guard (RTH broker stop only): a buy-stop must sit ABOVE the ask. On a fast
                 # up-tick the live ask can already be at/above the trail (the flip is happening) -> placing
@@ -7694,6 +7793,7 @@ class SchwabV2Strategy:
                 # cross-check prices/abandons the marketable EH-LIMIT instead.
                 if not (self._eh_resting_enabled and self._resting_session_is_eh()):
                     if not self._resting_stop_ask_allows(state, trail, slot="first"):
+                        self._resting_return_reason(state, "track_stop_ask_refused")
                         return
                 if state.cw_resting_taken:
                     segment_id = int(state.fanout_segment_id or state.cw_arm_bar_ts or 0)
@@ -7720,6 +7820,7 @@ class SchwabV2Strategy:
                         state_age,
                         state.cw_resting_suppressed_bars,
                     )
+                    self._resting_return_reason(state, "track_first_slot_consumed")
                     return
                 if recover_accounts:
                     self._queue_resting_place(state, trail, recover_accounts=recover_accounts)
@@ -7733,6 +7834,8 @@ class SchwabV2Strategy:
                     self._finish_first_rest_quote_wait(
                         state, action="queued", reason="price_revalidated"
                     )
+                else:
+                    self._resting_return_reason(state, "track_placement_not_armed")
                 return
             # ⛔⭐ LIQUIDITY RE-CHECK WHILE RESTING (2026-07-30). The arm-time floor above is a STALE
             # check: it judges the last completed bar at PLACEMENT, and a resting buy-stop can then
@@ -7755,11 +7858,13 @@ class SchwabV2Strategy:
                 state.resting_below_floor_bars += 1
                 if state.resting_below_floor_bars >= _RESTING_LIQUIDITY_CANCEL_BARS:
                     self._queue_resting_cancel(state, reason="liquidity_floor")
+                    self._resting_return_reason(state, "track_liquidity_cancel")
                     return
             # STABLE-REST: re-place only on a meaningful trail move; else leave it out there.
             if (state.resting_level > 0.0
                     and abs(trail - state.resting_level) / state.resting_level >= self._resting_reprice_frac):
                 self._reprice_resting(state, trail)
+            self._resting_return_reason(state, "track_existing_rest_managed")
             return
         if st == "long":
             # HOLD-THROUGH-FLIP: the up-flip is the fill. Do NOT cancel; start the settle grace.
@@ -7771,8 +7876,10 @@ class SchwabV2Strategy:
                         logger.info("[V2-PM-FLIP-WAIT] %s flip_seen=1 cross_taken=0", state.symbol)
                 else:
                     state.resting_flip_ms = self._now_ms()
+            self._resting_return_reason(state, "track_long_no_new_rest")
             return
         # No / unknown signal while flat: HOLD the resting order out there (do nothing).
+        self._resting_return_reason(state, "track_signal_unknown")
         return
 
     def _cw_v2_reclaim_resting_track(self, state: SymbolState) -> None:

@@ -74,31 +74,48 @@ def test_panel_rejects_missing_or_foreign_ledger(value):
 def test_warning_page_row_never_changes_legacy_pnl(monkeypatch):
     monkeypatch.setattr(Settings, "market_data_momentum_warning_enabled", property(lambda self: True), raising=False)
     app, factory = make_app(monkeypatch)
+    before = history.load_completed_today(factory, "momentum_30s", date(2026, 10, 7))
     add_warning(factory)
     rendered = []
-    original = cp._render_bot_detail_page
-    def capture(data, strategy_code, **kwargs):
-        rendered.append(deepcopy(cp._find_bot_view(data, strategy_code)))
-        return original(data, strategy_code, **kwargs)
-    monkeypatch.setattr(cp, "_render_bot_detail_page", capture)
+    original = cp._render_momentum_page
+    def capture(data, **kwargs):
+        rendered.append(deepcopy(kwargs["live"]))
+        return original(data, **kwargs)
+    monkeypatch.setattr(cp, "_render_momentum_page", capture)
     with TestClient(app) as client:
-        page = client.get("/bot/momentum-30")
+        redirect = client.get("/bot/momentum-30", follow_redirects=False)
+        assert redirect.status_code == 302
+        assert redirect.headers["location"] == "/bot/momentum"
+        page = client.get(redirect.headers["location"])
     assert page.status_code == 200
-    assert "$+31.80" in page.text and "$+25.00" in page.text
-    assert "Warning method (new, 1-second bars)" in page.text and "WARN" in page.text
-    assert "Snapshot method (old, 5-second snapshots)" in page.text
-    assert "Frozen rule:</strong> +20%" in page.text
-    assert rendered[0]["daily_pnl"] == float(Decimal("31.8044"))
-    assert len(rendered[0]["closed_today"]) == 5
+    live_panel = page.text.split('<section class="panel full momentum-ledger">', 1)[1].split('</section>', 1)[0]
+    assert "LIVE (real orders)" in live_panel and "Day total: $+0.00" in live_panel
+    assert "$+31.80" not in page.text and "$+25.00" not in live_panel
+    assert "$+25.00" in page.text and "WARN" in page.text
+    assert "Signal reference" in page.text and "No P&amp;L total." in page.text
+    assert "Snapshot method" not in page.text and "Frozen rule:</strong> +20%" not in page.text
+    assert Decimal(str(rendered[0]["daily_pnl"])) == 0
+    assert rendered[0]["closed_today"] == []
+    assert history.load_completed_today(factory, "momentum_30s", date(2026, 10, 7)) == before
+    assert before[1] == Decimal("31.8044") and len(before[0]) == 5
 
 
 def test_warning_read_failure_preserves_snapshot_page(monkeypatch):
     monkeypatch.setattr(Settings, "market_data_momentum_warning_enabled", property(lambda self: True), raising=False)
-    app, _ = make_app(monkeypatch)
+    app, factory = make_app(monkeypatch)
+    before = history.load_completed_today(factory, "momentum_30s", date(2026, 10, 7))
     def unavailable(*args):
         raise RuntimeError("controlled missing warning read")
     monkeypatch.setattr(cp, "load_warning_completed_today", unavailable)
     with TestClient(app) as client:
-        page = client.get("/bot/momentum-30")
+        redirect = client.get("/bot/momentum-30", follow_redirects=False)
+        assert redirect.status_code == 302
+        assert redirect.headers["location"] == "/bot/momentum"
+        page = client.get(redirect.headers["location"])
     assert page.status_code == 200
-    assert "$+31.80" in page.text and "Warning ledger unreadable: UNKNOWN" in page.text
+    live_panel = page.text.split('<section class="panel full momentum-ledger">', 1)[1].split('</section>', 1)[0]
+    assert "LIVE (real orders)" in live_panel and "Day total: $+0.00" in live_panel
+    assert "$+31.80" not in page.text and "Signal reference ledger unreadable: UNKNOWN" in page.text
+    assert "Warning history UNKNOWN" in page.text
+    assert history.load_completed_today(factory, "momentum_30s", date(2026, 10, 7)) == before
+    assert before[1] == Decimal("31.8044") and len(before[0]) == 5

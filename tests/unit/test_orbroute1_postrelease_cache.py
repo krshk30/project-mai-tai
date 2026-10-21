@@ -88,8 +88,10 @@ def test_exit_requires_post_release_wire_receipt_not_cached_total(setup, monkeyp
 
 
 def test_pre_release_cache_mutation_is_caught(setup, monkeypatch):
-    async def stale_allowed(service, target, _released_at, _clock):
-        return await eod._broker_quantity(service, target)
+    async def stale_allowed(service, target, _released_at, _clock, *, quantity_receipt=None,
+                            allow_broker_below_own=False):
+        return await eod._broker_quantity(service, target, quantity_receipt=quantity_receipt,
+                                          allow_broker_below_own=allow_broker_below_own)
     monkeypatch.setattr(eod, "_post_release_quantity", stale_allowed)
     with pytest.raises(AssertionError):
         test_exit_requires_post_release_wire_receipt_not_cached_total(setup, monkeypatch, "cached_only", 0)
