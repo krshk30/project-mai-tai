@@ -7,12 +7,13 @@ The existing full-two-account barrier needs no missing-leg waiver.
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+import re
 from uuid import UUID
 
 from sqlalchemy import or_, select
 
 from project_mai_tai.db.models import (
-    BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill,
+    BotControlAttempt, BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill,
     OmsManagedPosition, Strategy, TradeIntent,
 )
 from project_mai_tai.owned_inventory import owned_position_present
@@ -112,8 +113,16 @@ def proven_accounts(request, accounts, strategy_id, journal, owners, intents, or
         parent = by_id.get(row.intent_id)
         if (parent is None or row.strategy_id != strategy_id or row.symbol != request.symbol
                 or row.side != "buy" or row.broker_account_id != parent.broker_account_id
-                or md.get("clearwait_dispatch_token") != _metadata(parent).get("clearwait_dispatch_token")
                 or str(md.get("fanout_segment_id")) != str(request.opportunity_id)):
+            raise ValueError("cancel_obligations_order_history_UNKNOWN")
+        parent_token = _metadata(parent).get("clearwait_dispatch_token")
+        order_token = md.get("clearwait_dispatch_token")
+        # Reprice-cancelled historical rows retain the exact parent and segment
+        # but not its dispatch token. This links identity, NOT native finality.
+        if order_token is None and getattr(row, "status", None) in {
+                "filled", "cancelled", "canceled", "rejected", "expired", "aborted", "replaced"}:
+            order_token = parent_token
+        if order_token != parent_token:
             raise ValueError("cancel_obligations_order_history_UNKNOWN")
     return frozenset(required)
 
@@ -243,6 +252,83 @@ def _bounded(session, query):
     return rows
 
 
+def _reviewed_momentum_abort(session, order, parent, observed):
+    """Two reviewed repair writers only; a bare aborted label is not no-wire proof."""
+    payload, md = parent.payload or {}, _metadata(order)
+    episode = payload.get("momlive_episode", {})
+    strategy = session.get(Strategy, order.strategy_id)
+    account = session.get(BrokerAccount, order.broker_account_id)
+    if (not strategy or strategy.code != "momentum_warn_live" or not account or not account.is_active
+            or payload.get("momlive_parent") is not True or parent.status != "cancelled"
+            or episode.get("episode_id") != str(parent.id) or md.get("episode_id") != str(parent.id)
+            or episode.get("symbol") != order.symbol or episode.get("state") != "terminal_no_fill"
+            or any(key not in episode or episode[key] is not None
+                   for key in ("first_submit_ns", "first_fill_ns", "closed_ns"))
+            or str(episode.get("filled")) != "0" or str(episode.get("exited")) != "0"
+            or order.submitted_at is not None or order.quantity != parent.quantity or order.quantity <= 0
+            or any("bot_control_permit" in value for value in (payload, _metadata(parent), order.payload or {}))):
+        return False
+    legacy = payload.get("repair_O_1019_26")
+    settlement = payload.get("repair_MOMSTUCK2_20261021")
+    if legacy is not None and settlement is not None:
+        return False
+    if isinstance(legacy, dict):
+        if (str(parent.id) != "f723bbd2-5477-5a0b-b3ca-bc9ab023c5a7"
+                or str(order.id) != "6c0c5a75-f01b-4e8f-98c9-8d5364edaf00"
+                or order.client_order_id != "ml1-WORX-e-f723bbd254775a0bb3ca"
+                or order.symbol != "WORX" or order.quantity != 32
+                or account.name != "live:schwab_1m_v2" or account.provider != "schwab"
+                or md.get("bot_control_generation") != "0"
+                or legacy.get("repair_id") != "O-1019-26:momlive-f723-unsent-release"
+                or legacy.get("actor") != "claude-1" or legacy.get("prior_state") != "claimed"
+                or legacy.get("reason") != "proven-unsent claimed episode (order aborted, never wired, no permit/events/fills) blocked momentum-live boot"
+                or re.fullmatch(r"[0-9a-f]{64}", str(legacy.get("backup_sha256", ""))) is None
+                or not str(legacy.get("maintenance_receipt", "")).startswith("oms=inactive at ")):
+            return False
+        receipt = legacy
+    elif isinstance(settlement, dict):
+        if (str(parent.id) != "9ba4a2c0-aacc-5dba-a444-55a5e290ed2f"
+                or str(order.id) != "75e3889e-fad2-44c5-8641-1b642cc68831"
+                or order.client_order_id != "ml1-SPHL-e-9ba4a2c0aacc5dbaa444"
+                or order.symbol != "SPHL" or account.name != "live:orb" or account.provider != "webull"
+                or md.get("momlive_entry_never_dispatched") is not True
+                or md.get("reject_reason") != "refused_before_wire"
+                or md.get("repair_MOMSTUCK2_20261021") != settlement
+                or settlement.get("repair_id") != "MOMSTUCK2:SPHL:20261021:refused-before-wire"
+                or settlement.get("actor") != "claude-1" or settlement.get("scope") != "LIVE_STOPPED"
+                or settlement.get("reason") != "refused_before_wire"
+                or settlement.get("prior_episode_state") != "claimed"
+                or settlement.get("prior_intent_status") != "pending"
+                or settlement.get("prior_order_status") != "pending"
+                or not settlement.get("snapshot_id") or not isinstance(settlement.get("evidence"), dict)):
+            return False
+        for name in ("backup", "export", "schema", "preimage_review", "journal",
+                     "native_webull", "native_schwab", "maintenance", "installed_permit_proof", "refusal_log"):
+            ref = settlement["evidence"].get(name, {})
+            if (not isinstance(ref, dict) or not ref.get("ref") or ref.get("verified_by") != "claude-1"
+                    or re.fullmatch(r"[0-9a-f]{64}", str(ref.get("sha256", ""))) is None):
+                return False
+        receipt = settlement
+    else:
+        return False
+    stamp = datetime.fromisoformat(str(receipt.get("at", "")))
+    if (stamp.tzinfo is None or not 0 <= _at(stamp) <= observed - 15_000
+            or _at(parent.updated_at) < _at(stamp)):
+        return False
+    # Re-check the repair's single-entry/no-dispatch census. New contradictory
+    # children or control attempts cannot be hidden behind a historical receipt.
+    siblings = _bounded(session, select(BrokerOrder).where(or_(
+        BrokerOrder.intent_id == parent.id,
+        BrokerOrder.payload["episode_id"].as_string() == str(parent.id),
+        BrokerOrder.client_order_id.like("%" + parent.id.hex[:20] + "%"))))
+    attempts = _bounded(session, select(BotControlAttempt).where(or_(
+        BotControlAttempt.parent_intent_id == parent.id, BotControlAttempt.existing_intent_id == parent.id,
+        BotControlAttempt.entry_order_id == order.id,
+        BotControlAttempt.existing_order_id == order.id, BotControlAttempt.target_order_id == order.id,
+        BotControlAttempt.client_order_id == order.client_order_id)))
+    return len(siblings) == 1 and siblings[0].id == order.id and not attempts
+
+
 def _closed_order(session, order, observed, *, replacement_linked=False):
     """Positive durable closure, not a general terminal-status expansion."""
     try:
@@ -263,6 +349,8 @@ def _closed_order(session, order, observed, *, replacement_linked=False):
             if (order.broker_order_id or fills or "bot_control_permit" in md
                     or "momlive_terminal_broker_event" in md):
                 return False
+            if not events and _reviewed_momentum_abort(session, order, parent, observed):
+                return True
             if md.get("rpg_local_abort_no_wire") == "true":
                 from project_mai_tai.oms.atr_reprice_handoff import local_rpg_abort_proof
                 proof = local_rpg_abort_proof(session, order)

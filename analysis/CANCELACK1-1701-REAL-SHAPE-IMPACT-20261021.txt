@@ -1,0 +1,97 @@
+CANCELACK08-CLOSURE-P2-20261021 / 17:01 source correction
+AUTHOR ONLY. All new tests/imports/replay UNRUN; no PG/provider/SQL execution.
+
+Assessment before patch recorded centrally in
+CANCELACK1-1701-PREEMPTION-ASSESSMENT-20261021.txt. PG adapter authoring is STOPPED;
+its9edffbf6 branch/bundle/contract and resume point are preserved, not merged here.
+This branch starts directly from frozen810dbc567a0b552a4bf011e808365274d6cd20b1.
+
+Source changes and exact authority:
+1. proven_accounts: terminal order missing clearwait_dispatch_token can use the
+   token of its exact validated intent_id parent. Parent was already checked
+   strategy/BUY/open/symbol/account/segment/attempt/time; order still must match
+   strategy/BUY/symbol/account/segment. Only known terminal statuses may inherit;
+   null/missing/working/unknown status, empty/conflicting explicit token, wrong
+   parent/account/segment cannot borrow. No payload is mutated or token persisted.
+   This establishes required-account identity, NOT native closure/flatness.
+2. NEW _reviewed_momentum_abort, called ONLY inside _closed_order's aborted
+   branch after settled parent/order, exact parent binding, no fills/native ID/
+   permit/momcancel identity/terminal broker marker, and no order events.
+   Supports exactly the reviewed WORX O-1019-26 and SPHL MOMSTUCK2 live settlement
+   identities/writer receipts, NOT a general aborted exemption. Requires terminal
+   zero episode, explicit null submit/fill/closed clocks, matched positive qty,
+   active expected account/provider, exact incident parent/order UUID/coid,
+   typed repair actor/reason/time/provenance and settled parent timestamp.
+   WORX requires exact original repair receipt contract, not claude1_repair text.
+   SPHL requires equal parent/order receipt, LIVE_STOPPED actorclaude-1, all ten
+   evidence references and never-dispatched/refused-before-wire writer markers.
+   COPY_ONLY receipt is NOT production authority. Neither a legacy narrative nor
+   absence of a broker ID alone grants clearance. Existing runtime/RPG/C6 proof
+   branches remain unchanged.
+3. Re-check single-entry episode census (parent binding, episode payload and
+   exact COID fragment) and absence of matching BotControlAttempt identities.
+   Any extra child or any control attempt keeps UNKNOWN/working held; no status
+   filter may erase MAY_HAVE_SENT/UNKNOWN or potentially executing replacement.
+   Native/unknown event or a fill on the aborted order also holds, even if a
+   stored repair says no-wire. Existing global replacement jobs remain checked.
+
+Caller/impact map (all inherited callers unchanged):
+proven_accounts <- load_proven_accounts and its foreign-episode partition.
+load_proven_accounts <- load_flat_obligations/optional_proven_accounts,
+RemovedWaitStore proofs/legacy+clear-rule paths, bot freshSELL evidence reader.
+_reviewed_momentum_abort <- _closed_order <- _closed_with_replacements /
+_replacement_closed <- working_buy_present and foreign-history partition.
+working_buy_present <- bot _fetch_fresh_sell_release_evidence3737,
+_closed_confirmation_entry_ids2217, load_flat_obligations and removed-wait store.
+Bot own ~3634 terminal query cited by reviewer is NOT present on exact810;
+freshSELL already delegates to shared helper3737. No duplicate bot status set
+added and no bot edit required. The helper deliberately STILL queries aborted
+orders and proves each safe, instead of blindly putting aborted in a skip set.
+
+Four sites retained: freshSELL/own cancels; leftover request+entry block;
+removed-wait clear/legacy flag-off; next-day confirmation-entry retirement.
+All both-account source-read freshness15s/local books, global working BUY/intent
+including sharedORB, native closure, token/owner/opportunity/buy-only/reason,
+settling15s, staged atomic clear and later acknowledgment gates remain intact.
+No current country route/cancelset shortcut, no no-target-as-global-finality,
+no second order/filled-budget reset. No change to Webull wire/OMS dispatch/source
+writers/repair SQL/installation controls. No LOSTACK/MOMBUFFER/WBATTACH edits.
+
+Tables READ added by this delta: bot_control_attempts; extra bounded
+broker_orders episode census (2049 overflow => fail closed). Existing closure
+reads trade_intents,strategies,broker_accounts,broker_order_events,fills and
+managed/snapshot proof tables unchanged. Reads at off-loop DB evidence stage,
+not new synchronous/tick SQL. No DB/RAM owner/slot/flag/status/payload writes.
+No table/schema migration. No flag added/read/written by the new helper;
+existing caller feature/session/control gates unchanged. Added query cost is
+unmeasured; no runtime/deadline/native-rate/full-suite claim.
+
+Fixtures/controls and provenance:
+NEW test_cancelack1_real_shapes.py:60 intended controls by source enumeration,
+not collected. 4 reported POM/SAIQ/account shapes +7 terminal identity statuses
++7 nonterminal missing-token refusals +8 binding/conflict refusals +34 typed
+repair/global real-service reader controls (17 cases x2 writers). All original
+tests including the17 existing clearwait/retryleft tests remain byte-unchanged.
+POM's three reported coids are copied from Claude17:01; tokens/UUIDs/times and
+journals are explicitly SYNTHETIC. SAIQ seven-order distribution is a controlled
+example only, NOT seven literal raw rows. Main must obtain actual full rows.
+WORX selected-field fixture uses actual parent/order IDs/payload proof/timestamps
+from extclose1-inputs-20261020 compressed CSVs, with source hashes recorded in
+fixture. Signal context omitted explicitly, no native completeness inferred.
+Source inspected actual guarded writer o1019-26-receipts/c1-o26-v2-commit.sql
+SHA72e4699d21c3953922486906167017f189a4a427721098c26c3ff4bc3ff2bad2
+and its retained commit output (read-only existing receipt, not author execution).
+SPHL positive is a MODELED postimage of the reviewed live SQL DRAFT, not an
+executed settlement/native receipt. Test both-account fresh-flat receipts and
+empty native history are synthetic controls, never actual original-case proof.
+
+Main exact missing evidence request:
+Please obtain scratchpad pom_proof.py +SHA/exact command/clock/request/source
+bindings/raw outputs; full POM three and SAIQ seven order+parent payloads and
+their linked native events/fills/journals, and current-copy WORX repair rows /
+contradictory-exposure census. Latest-receipt20:37:50Z read is current-copy gate
+evidence, not historical firstSELL chronology/commit/laterbar. Claude reruns SAME
+actual proof on new reviewed head; no worker duplicate runtime. If any actual
+case stays held, diagnose/fix/newhead/re-review, not caveat acceptance.
+Original WORX/SAIQ/POM both misses, strict firstSELL/restart04/native/full/ALLON
+and impact/Claude GO remain owed. No synthetic proof or gate waiver.
