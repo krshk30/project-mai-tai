@@ -251,6 +251,26 @@ async def test_repository_attachment_reads_owned_ledger_bounded_and_removes_all_
         assert cp._build_bot_listening_status(data, live, [])["state"] == "UNKNOWN"
 
 
+@pytest.mark.parametrize("route", ["/", "/api/bots", "/api/overview"])
+def test_explicit_mainboard_routes_attach_the_actual_live_ledger_not_warning_rows(monkeypatch, route):
+    from tests.unit.test_mompage4_live_first import app_fixture
+
+    app, _, redis = app_fixture(monkeypatch)
+    with TestClient(app) as client:
+        app.state.repository.redis = redis
+        response = client.get(route)
+    assert response.status_code == 200
+    if route == "/":
+        assert 'data-strategy="momentum_warn_live"' in response.text
+        assert "+4.96" in text(response.text) and ">LIVE</span>" in response.text
+        assert "paper reference" not in response.text
+    else:
+        bots = response.json()["bots"]
+        live = [row for row in bots if row["strategy_code"] == "momentum_warn_live"]
+        assert len(live) == 1 and Decimal(live[0]["daily_pnl"]) == Decimal("4.96")
+        assert not any(row["strategy_code"] in cp.MOMENTUM_PAGE_CODES for row in bots)
+
+
 def test_canonical_page_keeps_actual_live_pnl_and_two_separate_paper_warning_sections(monkeypatch):
     from tests.unit.test_mompage4_live_first import app_fixture
 
