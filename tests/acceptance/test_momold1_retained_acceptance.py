@@ -12,7 +12,8 @@ from pathlib import Path
 
 from scripts.momold1_copy_boot_proof import run_copy
 from scripts.momold1_live_offer_proof import (
-    ET, EXPORT, compare, load_records, offer_method, record_calls, sha, source_pair,
+    AMOD_EXPORT, ET, EXPORT, compare, compare_amod, handoff_source_proof,
+    load_records, offer_method, record_calls, sha, source_pair, verified_amod_packet,
 )
 from project_mai_tai.services.momentum_paper_app import MomentumPaperService
 
@@ -43,13 +44,30 @@ def test_actual_1020_warning_detected_offer_bytes_match_pre_post_and_bound_metho
 
 def test_actual_amod_1021_0815_offer_bytes_require_exact_retained_payload():
     path = Path(os.environ.get("MAI_TAI_MOMOLD1_AMOD_EXPORT",
-        str(EXPORT / "amod_warning_detected_1021_0815.json")))
+        str(AMOD_EXPORT / "events_amod_1021.csv")))
     assert path.is_file(), f"MUST1 BLOCKED: exact retained AMOD payload not delivered: {path}"
     records = [record for record in load_records(path) if record.symbol == "AMOD"
         and datetime.fromtimestamp(record.payload["observed_decision_ns"] / 1e9, UTC)
         .astimezone(ET).strftime("%Y-%m-%d %H:%M") == "2026-10-21 08:15"]
     assert records, "MUST1 BLOCKED: delivered file lacks exact AMOD 10-21 08:15 DETECTED"
     assert compare(*source_pair(ROOT), records)["equal"]
+    verified_records, context, packet = verified_amod_packet(path)
+    assert [record.logical_id for record in verified_records] == [record.logical_id for record in records]
+    assert packet["retained_event_rows"] == 9 and packet["selected_detected_rows"] == 2
+    assert packet["log_is_in_three_file_manifest"] is False
+    assert context["day_volume"] == 15361 and context["broker"] == "schwab" and context["reason"] == "SEC_US"
+    assert len(context["recorded_refusals"]) == 2
+    assert handoff_source_proof(ROOT)["equal"]
+    report = compare_amod(*source_pair(ROOT), records, context)
+    assert report["equal"]
+    for name, case in report["cache_cases"].items():
+        expected = "day_volume_below_50000" if name in {"fresh", "at_boundary"} else "day_volume_unknown"
+        assert case["equal"] and case["refusal_matches"] and case["no_claim_or_emission"]
+        for side in ("pre", "post"):
+            assert len(case[side]) == len(records)
+            assert all(row["handoff_result"] == expected for row in case[side])
+            assert all(row["day_volume"] == (15361 if name in {"fresh", "at_boundary"} else None)
+                       for row in case[side])
 
 
 def test_actual_tonight_copy_is_required_for_must3_acceptance():

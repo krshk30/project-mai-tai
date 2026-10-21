@@ -15,7 +15,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from scripts.momold1_live_offer_proof import (
-    APP, CSV_MAX_FIELD_BYTES, compare, load_records, offer_method, record_calls,
+    APP, CSV_MAX_FIELD_BYTES, amod_log_context, compare, compare_amod,
+    load_records, offer_method, real_handoff, record_calls, verified_amod_packet,
 )
 from project_mai_tai.events import MarketDataSubscriptionEvent
 from project_mai_tai.momentum_live.admission import EpisodeLedger, Route, Signal
@@ -69,6 +70,83 @@ def test_synth_offer_mutation_is_detected_without_modifying_source(synth_records
     report = compare(pre, changed, synth_records)
     assert report["equal"] is False
     assert report["cache_cases"]["fresh"]["equal"] is False
+
+
+def synth_route_log():
+    return (
+        "SYNTH [MOMLIVE1-WARN-ROUTE] symbol=AMOD route=schwab reason=SEC_US status=READY "
+        "country=NC/DE as_of=2026-10-17T05:02:06.330030+00:00 day_volume=15361 informational_only=true\n"
+        "SYNTH [MOMLIVE1-REFUSED] symbol=AMOD reason=day_volume_below_50000\n"
+        "SYNTH [MOMLIVE1-REFUSED] symbol=AMOD reason=day_volume_below_50000\n"
+    )
+
+
+def test_synth_log_context_requires_explicit_route_volume_and_refusal_evidence():
+    context = amod_log_context(synth_route_log())
+    assert (context["day_volume"], context["broker"], context["reason"]) == (15361, "schwab", "SEC_US")
+    assert len(context["recorded_refusals"]) == 2
+
+
+@pytest.mark.parametrize("fault", ["wrong_volume", "wrong_route", "missing_refusal", "duplicate_route"])
+def test_synth_log_context_refuses_inconsistent_evidence(fault):
+    value = synth_route_log()
+    if fault == "wrong_volume":
+        value = value.replace("day_volume=15361", "day_volume=50001")
+    elif fault == "wrong_route":
+        value = value.replace("route=schwab", "route=webull")
+    elif fault == "missing_refusal":
+        value = "\n".join(value.splitlines()[:-1])
+    else:
+        value += value.splitlines()[0]
+    with pytest.raises(ValueError):
+        amod_log_context(value)
+
+
+def test_synth_real_handoff_and_episode_ledger_generate_low_volume_refusal(synth_records):
+    from project_mai_tai.momentum_live.handoff import LiveHandoff
+
+    target = real_handoff(amod_log_context(synth_route_log()))
+    assert type(target) is LiveHandoff and type(target.ledger) is EpisodeLedger
+    for record in synth_records:
+        assert target.offer(record, day_volume=15361,
+                            now_ns=record.payload["observed_decision_ns"]) == "day_volume_below_50000"
+    assert target.queue.empty() and target.ledger.episodes == {}
+    assert target.counts["day_volume_below_50000"] == len(synth_records)
+
+
+def test_synth_real_refusal_matches_across_all_controlled_cache_contexts(synth_records):
+    source = (ROOT / APP).read_bytes()
+    result = compare_amod(source, source, synth_records, amod_log_context(synth_route_log()))
+    assert result["equal"] and result["cache_volume"] == 15361
+    for name, case in result["cache_cases"].items():
+        expected = "day_volume_below_50000" if name in {"fresh", "at_boundary"} else "day_volume_unknown"
+        assert case["equal"] and case["refusal_matches"] and case["no_claim_or_emission"]
+        assert all(row["handoff_result"] == expected for side in ("pre", "post") for row in case[side])
+
+
+def test_synth_real_refusal_proof_detects_volume_forwarding_mutation(synth_records):
+    source = (ROOT / APP).read_bytes()
+    changed = source.replace(b"day_volume=volume, now_ns=now_ns", b"day_volume=None, now_ns=now_ns", 1)
+    assert changed != source
+    result = compare_amod(source, changed, synth_records, amod_log_context(synth_route_log()))
+    assert result["equal"] is False
+    assert result["cache_cases"]["fresh"]["refusal_matches"] is False
+
+
+def test_synth_fifty_thousand_positive_control_proves_real_admission_is_not_mocked(synth_records):
+    context = {**amod_log_context(synth_route_log()), "day_volume": 50000}
+    source = (ROOT / APP).read_bytes()
+    result = compare_amod(source, source, synth_records, context)
+    assert result["equal"] is False
+    assert result["cache_cases"]["fresh"]["refusal_matches"] is False
+    assert result["cache_cases"]["fresh"]["no_claim_or_emission"] is False
+    assert result["cache_cases"]["fresh"]["post"][0]["handoff_result"] == "offered"
+
+
+def test_synth_amod_packet_checksum_mismatch_refuses_before_any_replay(tmp_path):
+    (tmp_path / "SHA256SUMS").write_text("SYNTH invalid manifest\n")
+    with pytest.raises(ValueError, match="AMOD manifest checksum mismatch"):
+        verified_amod_packet(tmp_path / "events_amod_1021.csv")
 
 
 def test_missing_retained_input_is_refused_without_synthetic_fallback(tmp_path):

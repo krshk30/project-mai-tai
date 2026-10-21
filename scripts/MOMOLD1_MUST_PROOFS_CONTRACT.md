@@ -4,8 +4,10 @@ Ruling: Claude 09:50 heading, read locally 09:40:54, accepts the narrow 52-name
 reconstruction + RUMBW event-only + SYNTH coupling contract. Original full-universe
 ordering is no longer a hard gate. This supersedes the earlier conditional
 full-universe blocker in MOMOLD1_REVIEW_CONTRACT.md, not the remaining must-tests.
-The main dashboard blocker is owned by main: only actual momentum_warn_live
-state/positions/P&L there; warning reference tables only on /bot/momentum.
+Claude 10:28:19 (read 10:29:25) cleared the UI blocker and accepted main's rendered
+LIVE board/canonical section ordering. Main also reports the bounded 52-name
+reconstruction MATCH (20 records / 5 DETECTED each; report fbf7b0db). These receipts
+do not establish original full-feed parity or this newly authored MUST1 result.
 
 Lane C changed no source or existing retirement tests for this follow-up. Every
 new test/harness here is UNRUN: no imports, tests, replay, render, provider, network,
@@ -19,31 +21,53 @@ the following _start_country_router signature is identical in 99fc and b403:
 SHA256 b2c6d4ffa99cdbf69bb06a61c92e0444a4527c88cc36eb034bb342b56804b7e1.
 This is a static text receipt, not an executed AST or trading acceptance result.
 
-momold1_live_offer_proof.py compiles only the extracted method AST from git's
+momold1_live_offer_proof.py compiles the extracted service method AST from git's
 99fc bytes and the current source file, without importing either service module.
 It records exact method and AST hashes, literal cache-staleness constants and
 byte-equal JSON offer calls: symbol, strategy, trigger, ns, logical ID, retained
 payload hash and forwarded volume. Inputs are all retained warning DETECTED rows
-from the hashed October 20 CSV, plus the exact AMOD October 21 08:15 row when
-delivered. tests/acceptance/test_momold1_retained_acceptance.py preserves every
+from the hashed October 20 CSV, plus both delivered AMOD October 21 08:15 rows.
+tests/acceptance/test_momold1_retained_acceptance.py preserves every
 actual assertion, including comparison to the current bound service method.
 Portable unit controls use explicitly SYNTH records and controlled source copies;
 they do not require an untracked export or the pinned historical git object.
 
 Observation time is the retained sealed observed_decision_ns; no current-clock
 fallback exists. Cache absent/fresh/exact-boundary/stale/future cases are explicitly
-controlled. Volume 123456 is a SYNTH cache control, not observed market volume.
-The recording handoff does not run routing, admission, native acceptance or orders.
-Missing sealed inputs or AMOD cannot produce a whole MUST1 pass.
+controlled. October 20 volume 123456 remains a SYNTH cache control, not an observed
+market volume. AMOD uses actual log value 15361 with the same five controlled
+cache contexts; the original cache observation timestamp is UNKNOWN.
 
-**Export request to main/Claude:** deliver the complete actual AMOD warning
-DETECTED row(s) at 2026-10-21 08:15 ET (12:15 UTC), not an October 12 tape or a
-reconstructed trigger. Required: event_key, logical_id, strategy_code, event_type,
-session_date, symbol, observed_at, full unmodified JSON payload (especially detect,
-reference, observed_decision_ns), created_at, source/export provenance and SHA256.
-CSV with the October 20 schema or JSON {"rows": [full original rows]} is accepted.
-If 08:15 labels another clock, retain all clock fields and identify that clock;
-do not rewrite observed_decision_ns to fit the requested minute.
+**Delivered packet:** analysis/MOMOLD1-EXPORT-AMOD-1021/events_amod_1021.csv has
+nine rows, including two sealed 30/60 warning DETECTED records at observed ns
+1792584906753471330. Their qualifying signal price is 1.57; the earlier warning
+ADD aggregate-high trigger 1.42 is a different field and is not substituted.
+SHA256SUMS (80146ce21aab333ed9088efe34348278cea20407895675b822d207ab25d4111f)
+pins exactly three files: events 1ca01bf7c6987cc634f04e37553df3b97da8e8f87453edbad32d55ea5c320490,
+quotes 2238484af91944f74f6cf532ddae0925ac8857722667f55ab37bd6f98612bd8c,
+trades 664f28607dc8a456e10545ac58c60a027f3383c2e79795e0757a61a85809756f.
+amod_live_log_lines.txt is OUTSIDE that three-file manifest; its separately pinned
+SHA is e34955bd5f28f28a04b402e98da8400d98505ded5fc17a4fc1d39f32cf49d46b.
+The harness verifies every digest and the nine-row census before comparison.
+
+AMOD uses the actual LiveHandoff class (source class name, not a stub) and real
+EpisodeLedger. Both complete source files handoff.py/admission.py must be byte
+equal in 99fc and current source; hashes/equality enter the report and pass gate.
+The route callback supplies recorded schwab / SEC_US / READY / as_of context;
+it does not recompute SEC policy or contact a provider. is_us boolean and CIK
+were not retained in this log, so they are not invented. A controlled empty,
+restored-ready ledger is used; historical owner-book state is UNKNOWN.
+
+The recording wrapper delegates to real offer()/Signal.validate()/claim(). It
+does not manufacture a refusal return. Actual 15361 fresh/exact-boundary cases
+must return day_volume_below_50000 for both records, matching the two retained
+refusal lines; absent/stale/future cache cases must return day_volume_unknown.
+Every PRE/POST offer/result byte string must match, with zero queued emissions
+and zero claimed episodes. No handoff worker, Redis IO or native order runs.
+Native acceptance, original cache clock/freshness and exact handoff callback
+clock remain UNKNOWN. This is a pure offer/refusal result, not transport/native
+parity. A SYNTH 50000 positive control and volume-forwarding mutation control
+ensure the real refusal logic is tested rather than a mocked return.
 
 ## MUST2: independent LIVE subscription call graph
 
@@ -146,12 +170,17 @@ not assertions that those files exist. Choose fresh receipt filenames.
 ```sh
 env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS -u MAI_TAI_DATABASE_URL -u DATABASE_URL -u PGDSN -u PGPASSWORD PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -vv --tb=long tests/unit/test_momold1_live_proofs.py tests/unit/test_momold1_copy_boot_proofs.py tests/unit/test_momold1_live_dashboard.py tests/unit/test_momold1_retirement.py tests/unit/test_momentum_paper_service.py
 env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS -u MAI_TAI_DATABASE_URL -u DATABASE_URL -u PGDSN -u PGPASSWORD PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python -m pytest -vv --tb=long tests/acceptance/test_momold1_retained_acceptance.py
-/Users/velkris/Projects/project-mai-tai/.venv/bin/python scripts/momold1_live_offer_proof.py --amod /Users/velkris/.codex/task-queues/analysis/MOMOLD1-EXPORT-1020/amod_warning_detected_1021_0815.json --output /Users/velkris/.codex/task-queues/analysis/MOMOLD1-MUST1-OFFER-PROOF-20261021.json
+PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python scripts/momold1_live_offer_proof.py --amod /Users/velkris/.codex/task-queues/analysis/MOMOLD1-EXPORT-AMOD-1021/events_amod_1021.csv --output /Users/velkris/.codex/task-queues/analysis/MOMOLD1-MUST1-1020-AMOD-OFFERS-REFUSAL-20261021.json
 env -u MAI_TAI_DATABASE_URL -u DATABASE_URL -u PGDSN -u PGPASSWORD PYTHONPATH=src /Users/velkris/Projects/project-mai-tai/.venv/bin/python scripts/momold1_copy_boot_proof.py --copy /Users/velkris/.codex/task-queues/analysis/MOMOLD1-TONIGHT-COPY/retained.sqlite --manifest /Users/velkris/.codex/task-queues/analysis/MOMOLD1-TONIGHT-COPY/manifest.json --output /Users/velkris/.codex/task-queues/analysis/MOMOLD1-MUST3-COPY-BOOT-20261021.json
 ```
 
-Run the portable unit command after the full slot is released. Run the whole
-mandatory acceptance module only after actual AMOD and tonight-copy delivery;
+The standalone MUST1 command produces the actual October 20 + AMOD comparison
+and real low-volume-refusal report WITHOUT requiring tonight's table copy. It
+does not run or satisfy MUST3. Output must use a fresh file. Nonzero is returned
+for any method/component/call/refusal mismatch; missing or corrupt inputs fail.
+
+Run the portable unit command in main's serial slot. Run the whole
+mandatory acceptance module after tonight-copy delivery (AMOD is now delivered);
 no filters, skips or unit-focused pass can stand in for its three actual gates.
 This relocation changes resource placement, not mandatory MUST1/MUST3 scope.
 Repository testpaths=["tests"] still discovers acceptance in an unqualified full
@@ -159,7 +188,7 @@ run; it intentionally fails closed without inputs. Do not claim tests/unit is
 the entire repository's acceptance or add a new exclusion to an approved full run.
 
 Set MAI_TAI_MOMOLD1_1020_EXPORT (optional full CSV path override),
-MAI_TAI_MOMOLD1_AMOD_EXPORT, MAI_TAI_MOMOLD1_TONIGHT_COPY and
+MAI_TAI_MOMOLD1_AMOD_EXPORT (optional delivered AMOD CSV override), MAI_TAI_MOMOLD1_TONIGHT_COPY and
 MAI_TAI_MOMOLD1_TONIGHT_MANIFEST to the delivered files for the actual-input tests.
 Missing required inputs intentionally fail their must-gates; no skips or SYNTH
 substitution clear them. Main reviews differences/results and final composition.
