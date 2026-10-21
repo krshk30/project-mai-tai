@@ -2076,7 +2076,7 @@ class ControlPlaneRepository:
             ]
             runtime_provider = (
                 self.settings.market_data_provider_for_strategy(code)
-                if registration and code in {"momentum_30s", "momentum_60s"}
+                if registration and code in MOMENTUM_PAGE_CODES
                 else self.settings.provider_for_strategy(code)
                 if registration
                 else str(runtime_bot.get("provider", "") or "")
@@ -4653,10 +4653,13 @@ def _attach_schwab_token_refresher_status(app_obj: Any, data: dict[str, Any]) ->
         data["schwab_token_refresher"] = {"health": "unknown", "last_error": "status unavailable"}
 
 
+MOMENTUM_PAGE_CODES = frozenset({
+    "momentum_30s", "momentum_60s", "momentum_30s_warn", "momentum_60s_warn",
+})
 CONTROL_PLANE_ACTIVE_BOT_CODES = (
     "schwab_1m_v2",
-    "momentum_30s",
-    "momentum_60s",
+    "momentum_30s_warn",
+    "momentum_60s_warn",
     "polygon_30s",
     "orb_schwab",
 )
@@ -4712,7 +4715,7 @@ def _render_compact_dashboard(data: dict[str, Any]) -> str:
         bot_by_code[code]
         for code in CONTROL_PLANE_ACTIVE_BOT_CODES
         if code in bot_by_code
-        and not (code == "momentum_60s" and "momentum_30s" in bot_by_code)
+        and not (code == "momentum_60s_warn" and "momentum_30s_warn" in bot_by_code)
     ]
 
     service_statuses = [
@@ -4955,6 +4958,8 @@ def _compact_bot_page_url(code: str) -> str:
         "schwab_1m_v2": "/bot/1m-schwab-v2",
         "momentum_30s": "/bot/momentum",
         "momentum_60s": "/bot/momentum",
+        "momentum_30s_warn": "/bot/momentum",
+        "momentum_60s_warn": "/bot/momentum",
         "polygon_30s": "/bot/30s-polygon",
         "orb_schwab": "/bot/orb",
     }.get(code, "/")
@@ -4965,7 +4970,7 @@ def _compact_bot_route_line(code: str, bot: dict[str, Any]) -> str:
         return "live · schwab streamer · sole session"
     if code == "polygon_30s":
         return "paper exit · mirrored Schwab + Webull fills · Polygon feed"
-    if code in {"momentum_30s", "momentum_60s"}:
+    if code in MOMENTUM_PAGE_CODES:
         return "live · Webull + Schwab (SEC route) · 30s + 60s"
     if code == "orb_schwab":
         return f'live · Schwab · {bot.get("account_name", "-")}'
@@ -4981,7 +4986,7 @@ def _compact_bot_card(
     code = str(bot.get("strategy_code") or "")
     if code == "schwab_1m_v2":
         service = service_by_name.get("schwab-1m-v2")
-    elif code in {"momentum_30s", "momentum_60s"}:
+    elif code in MOMENTUM_PAGE_CODES:
         service = service_by_name.get("momentum-paper")
     else:
         service = None
@@ -5012,7 +5017,7 @@ def _compact_bot_card(
     if code == "polygon_30s":
         stream_tone = lag_tone if lag_tone != "good" else "good"
         stream_label = "bars stale" if lag_tone != "good" else "feed: polygon"
-    elif code in {"momentum_30s", "momentum_60s"}:
+    elif code in MOMENTUM_PAGE_CODES:
         stream_tone = _tone_for_status(streamer)
         stream_label = (
             "feed: Massive T.*"
@@ -5045,13 +5050,13 @@ def _compact_bot_card(
     name = str(bot.get("display_name") or code.replace("_", " ").title())
     if code == "orb_schwab":
         name = "ORB Live"
-    elif code in {"momentum_30s", "momentum_60s"}:
+    elif code in MOMENTUM_PAGE_CODES:
         name = "Momentum"
     route = _compact_bot_route_line(code, bot)
     bot_page_url = _compact_bot_page_url(code)
     # Paper vs live badge — paper-routed accounts (e.g. "paper:orb") must not read as LIVE.
     is_paper = (str(bot.get("account_name") or "").startswith("paper:")
-                and code not in {"momentum_30s", "momentum_60s"})
+                and code not in MOMENTUM_PAGE_CODES)
     mode_tone = "warn" if is_paper else "good"
     mode_label = "PAPER" if is_paper else "LIVE"
     return f"""
@@ -5316,6 +5321,20 @@ BOT_PAGE_META = {
         "badge": "PG",
         "color": "#ff8f00",
         "path": "/bot/30s-polygon",
+    },
+    "momentum_30s_warn": {
+        "title": "Momentum",
+        "nav_title": "Momentum",
+        "badge": "M30",
+        "color": "#ff8a3d",
+        "path": "/bot/momentum",
+    },
+    "momentum_60s_warn": {
+        "title": "Momentum",
+        "nav_title": "Momentum",
+        "badge": "M60",
+        "color": "#ffc857",
+        "path": "/bot/momentum",
     },
     "momentum_30s": {
         "title": "Momentum",
@@ -6847,7 +6866,7 @@ def _render_momentum_page(data: dict[str, Any], *, live: dict[str, Any], warning
         for row in sorted(live_orders, key=lambda item: _momentum_page_sort_time(item.get("updated_at")), reverse=True))
     order_rows = order_rows or '<tr><td colspan="7">No live orders in the available order history</td></tr>'
     failed_rows = _momentum_page_tape_rows(warnings, failures=True, live_orders=live_orders)
-    nav = _render_page_nav("momentum_30s", [str(bot["strategy_code"]) for bot in data.get("bots", [])])
+    nav = _render_page_nav("momentum_30s_warn", [str(bot["strategy_code"]) for bot in data.get("bots", [])])
     live_table = _render_momentum_ledger(live, title="LIVE (real orders)", method="LIVE", other_rows=[], paper=False)
     reference_tables = ''.join(_render_momentum_ledger(
         next((row for row in warnings if row.get("strategy_code") == code), {"status": "UNKNOWN"}),

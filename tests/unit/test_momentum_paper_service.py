@@ -428,9 +428,9 @@ async def test_restart_marks_an_interrupted_forward_path_unanswerable() -> None:
         condition_snapshot=_condition_snapshot().payload(),
     )
     detected = MomentumTapeRecord(
-        event_key="momentum_30s:ABCD:1:00000001:DETECTED",
-        logical_id="momentum_30s:ABCD:1",
-        strategy_code="momentum_30s",
+        event_key="momentum_30s_warn:ABCD:1:00000001:DETECTED",
+        logical_id="momentum_30s_warn:ABCD:1",
+        strategy_code="momentum_30s_warn",
         event_type="DETECTED",
         session_date=date(2026, 9, 16),
         symbol="ABCD",
@@ -439,14 +439,14 @@ async def test_restart_marks_an_interrupted_forward_path_unanswerable() -> None:
     )
     store.append_many([ready, detected])
     service = MomentumPaperService(
-        Settings(momentum_paper_enabled=True),
+        Settings(momentum_paper_enabled=True, market_data_momentum_warning_enabled=True),
         store=store,
         clock=lambda: datetime(2026, 9, 16, 8, 12, tzinfo=UTC),
     )
 
     await service._prepare_session(date(2026, 9, 16))
 
-    rows = store.load_session(date(2026, 9, 16))
+    rows = store.load_session(date(2026, 9, 16), strategy_codes=("momentum_30s_warn",))
     recovered = [row for row in rows if row.event_type == "UNANSWERABLE"]
     assert len(recovered) == 1
     assert recovered[0].payload["reason"] == "service_restart_interrupted_forward_path"
@@ -553,23 +553,25 @@ def test_detector_rate_is_uncalibrated_after_the_twenty_percent_rule_change() ->
     assert detector_health_status(10_000) == "UNCALIBRATED"
 
 
-def test_momentum_registration_is_two_paper_cards_and_retires_polygon_only_when_enabled() -> None:
+def test_momentum_registration_is_warning_only_and_retires_polygon_only_when_enabled() -> None:
     active = configured_strategy_registrations(
         Settings(
             strategy_polygon_30s_enabled=True,
             momentum_paper_enabled=True,
+            market_data_momentum_warning_enabled=True,
             orb_enabled=True,
         )
     )
     by_code = {row.code: row for row in active}
 
     assert "polygon_30s" not in by_code
-    assert {"momentum_30s", "momentum_60s"} <= set(by_code)
+    assert {"momentum_30s_warn", "momentum_60s_warn"} <= set(by_code)
+    assert not {"momentum_30s", "momentum_60s"} & set(by_code)
     assert "orb" not in by_code  # ORBLIVE1: the paper ORB registration is retired
-    assert by_code["momentum_30s"].display_name == "Momentum 30"
-    assert by_code["momentum_60s"].display_name == "Momentum 60"
-    assert by_code["momentum_30s"].execution_mode == "paper"
-    assert by_code["momentum_60s"].metadata["isolated_service"] is True
+    assert by_code["momentum_30s_warn"].display_name == "Momentum Warning 30"
+    assert by_code["momentum_60s_warn"].display_name == "Momentum Warning 60"
+    assert by_code["momentum_30s_warn"].execution_mode == "paper"
+    assert by_code["momentum_60s_warn"].metadata["isolated_service"] is True
     assert Settings().provider_for_strategy("momentum_30s") == "none"
     assert Settings().market_data_provider_for_strategy("momentum_60s") == "massive"
     assert not {
@@ -600,13 +602,15 @@ def test_momentum_enablement_retires_the_polygon_runtime_not_only_its_card() -> 
     assert "if polygon_paper_enabled:" in source
 
 
-def test_dashboard_routes_merge_momentum_presentation_without_changing_registrations() -> None:
+def test_dashboard_routes_keep_history_and_list_only_active_warning_methods() -> None:
     assert BOT_PAGE_META["momentum_30s"]["title"] == "Momentum"
     assert BOT_PAGE_META["momentum_60s"]["title"] == "Momentum"
     assert _compact_bot_page_url("momentum_30s") == "/bot/momentum"
     assert _compact_bot_page_url("momentum_60s") == "/bot/momentum"
-    assert "momentum_30s" in CONTROL_PLANE_ACTIVE_BOT_CODES
-    assert "momentum_60s" in CONTROL_PLANE_ACTIVE_BOT_CODES
+    assert "momentum_30s_warn" in CONTROL_PLANE_ACTIVE_BOT_CODES
+    assert "momentum_60s_warn" in CONTROL_PLANE_ACTIVE_BOT_CODES
+    assert "momentum_30s" not in CONTROL_PLANE_ACTIVE_BOT_CODES
+    assert "momentum_60s" not in CONTROL_PLANE_ACTIVE_BOT_CODES
 
 
 def test_service_import_graph_has_no_live_order_or_broker_route() -> None:
