@@ -5,6 +5,7 @@ These unit controls cannot satisfy retained-input or installed-box acceptance.
 """
 
 import asyncio
+import csv
 from datetime import UTC, date, datetime
 from decimal import Decimal
 import json
@@ -14,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from scripts.momold1_live_offer_proof import (
-    APP, compare, load_records, offer_method, record_calls,
+    APP, CSV_MAX_FIELD_BYTES, compare, load_records, offer_method, record_calls,
 )
 from project_mai_tai.events import MarketDataSubscriptionEvent
 from project_mai_tai.momentum_live.admission import EpisodeLedger, Route, Signal
@@ -88,6 +89,55 @@ def test_unusable_sealed_clock_is_refused_without_current_clock_fallback(tmp_pat
     path.write_text(json.dumps([{"event_type": "DETECTED", "strategy_code": "momentum_30s_warn",
         "payload": {"observed_decision_ns": sealed_ns, "detect": {"price": "2"}}}]))
     with pytest.raises(ValueError, match="retained observed_decision_ns required"):
+        load_records(path)
+
+
+def write_synth_csv(path, records, session_payload):
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        fields = ["event_key", "logical_id", "strategy_code", "event_type", "session_date",
+                  "symbol", "observed_at", "payload"]
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerow({"event_key": "SYNTH:SESSION_READY", "logical_id": "SYNTH:session",
+            "strategy_code": "momentum_paper", "event_type": "SESSION_READY", "session_date": "2026-10-21",
+            "symbol": "*", "observed_at": "2026-10-21T14:00:00+00:00", "payload": session_payload})
+        for record in records:
+            writer.writerow({**{field: str(getattr(record, field)) for field in fields if field != "payload"},
+                             "payload": json.dumps(record.payload)})
+
+
+def test_synth_large_session_field_does_not_prevent_detected_records_loading(tmp_path, synth_records):
+    path = tmp_path / "SYNTH-large-session.csv"
+    write_synth_csv(path, synth_records, json.dumps({"SYNTH_SESSION_READY": "x" * 200_000}))
+    original = csv.field_size_limit(131072)
+    try:
+        records = load_records(path)
+        assert [record.logical_id for record in records] == [record.logical_id for record in synth_records]
+        assert [record.payload for record in records] == [record.payload for record in synth_records]
+        assert csv.field_size_limit() == 131072
+    finally:
+        csv.field_size_limit(original)
+
+
+@pytest.mark.parametrize("character", ["x", "\u00e9"])
+def test_synth_oversized_session_field_is_refused_even_though_not_a_detected_row(tmp_path, synth_records, character):
+    assert CSV_MAX_FIELD_BYTES == 8 * 1024 * 1024
+    repetitions = CSV_MAX_FIELD_BYTES // len(character.encode("utf-8")) + 1
+    path = tmp_path / "SYNTH-over-limit.csv"
+    write_synth_csv(path, synth_records, character * repetitions)
+    original = csv.field_size_limit(131072)
+    try:
+        with pytest.raises(csv.Error):
+            load_records(path)
+        assert csv.field_size_limit() == 131072
+    finally:
+        csv.field_size_limit(original)
+
+
+def test_synth_malformed_csv_is_not_skipped(tmp_path):
+    path = tmp_path / "SYNTH-malformed.csv"
+    path.write_text('event_type,strategy_code,payload\nDETECTED,momentum_30s_warn,"unterminated', encoding="utf-8")
+    with pytest.raises(csv.Error):
         load_records(path)
 
 

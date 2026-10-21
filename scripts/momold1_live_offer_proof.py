@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 import csv
@@ -24,6 +25,31 @@ APP = "src/project_mai_tai/services/momentum_paper_app.py"
 EXPORT = Path("/Users/velkris/.codex/task-queues/analysis/MOMOLD1-EXPORT-1020")
 ET = ZoneInfo("America/New_York")
 WARNING_CODES = {"momentum_30s_warn", "momentum_60s_warn"}
+CSV_MAX_FIELD_BYTES = 8 * 1024 * 1024
+
+
+class _BoundedCsvReader(csv.DictReader):
+    def __next__(self):
+        row = super().__next__()
+        if None in row or any(value is None for value in row.values()):
+            raise csv.Error("CSV row does not match header")
+        for value in row.values():
+            if len(value.encode("utf-8")) > CSV_MAX_FIELD_BYTES:
+                raise csv.Error("CSV field exceeds explicit 8 MiB UTF-8 byte limit")
+        return row
+
+
+@contextmanager
+def bounded_csv_reader(source):
+    # Parser character count and decoded UTF-8 byte count are separately bounded.
+    previous = csv.field_size_limit(CSV_MAX_FIELD_BYTES)
+    try:
+        reader = _BoundedCsvReader(source, strict=True)
+        if any(len(value.encode("utf-8")) > CSV_MAX_FIELD_BYTES for value in reader.fieldnames or []):
+            raise csv.Error("CSV header field exceeds explicit 8 MiB UTF-8 byte limit")
+        yield reader
+    finally:
+        csv.field_size_limit(previous)
 
 
 def sha(value):
@@ -60,8 +86,8 @@ def offer_method(source):
 
 def load_records(path):
     if path.suffix == ".csv":
-        with path.open(newline="") as handle:
-            rows = list(csv.DictReader(handle))
+        with path.open(encoding="utf-8", newline="") as handle, bounded_csv_reader(handle) as reader:
+            rows = list(reader)
     else:
         rows = json.loads(path.read_text())
         if isinstance(rows, dict):

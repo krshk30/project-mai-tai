@@ -2,11 +2,15 @@
 
 import csv
 import gzip
+import io
+import json
 from pathlib import Path
 
 import pytest
 
-from scripts.momold1_bounded_replay import START_NS, read_events, spool
+from scripts.momold1_bounded_replay import (
+    CSV_MAX_FIELD_BYTES, START_NS, bounded_csv_reader, read_events, spool,
+)
 from tests.unit.test_momentum_paper_service import _condition_snapshot
 
 
@@ -49,3 +53,51 @@ def test_synth_spool_refuses_unreviewed_input_shape(tmp_path, rows, reason):
     write_trades(tmp_path, rows)
     with pytest.raises(ValueError, match=reason):
         spool(tmp_path, tmp_path, _condition_snapshot(), {"TEST"})
+
+
+def csv_payload(value):
+    handle = io.StringIO(newline="")
+    writer = csv.writer(handle)
+    writer.writerow(["payload"])
+    writer.writerow([value])
+    handle.seek(0)
+    return handle
+
+
+def test_synth_large_session_json_parses_above_default_limit_and_restores_setting():
+    payload = json.dumps({"SYNTH_SESSION_READY": "x" * 200_000})
+    original = csv.field_size_limit(131072)
+    try:
+        with bounded_csv_reader(csv_payload(payload)) as reader:
+            rows = list(reader)
+        assert json.loads(rows[0]["payload"])["SYNTH_SESSION_READY"] == "x" * 200_000
+        assert csv.field_size_limit() == 131072
+    finally:
+        csv.field_size_limit(original)
+
+
+def test_synth_exact_eight_mib_field_is_accepted():
+    assert CSV_MAX_FIELD_BYTES == 8 * 1024 * 1024
+    with bounded_csv_reader(csv_payload("x" * CSV_MAX_FIELD_BYTES)) as reader:
+        rows = list(reader)
+    assert len(rows[0]["payload"].encode("utf-8")) == CSV_MAX_FIELD_BYTES
+
+
+@pytest.mark.parametrize("value", ["x", "\u00e9"])
+def test_synth_over_limit_field_is_refused_without_skipping_and_limit_is_restored(value):
+    repetitions = CSV_MAX_FIELD_BYTES // len(value.encode("utf-8")) + 1
+    original = csv.field_size_limit(131072)
+    try:
+        with pytest.raises(csv.Error):
+            with bounded_csv_reader(csv_payload(value * repetitions)) as reader:
+                list(reader)
+        assert csv.field_size_limit() == 131072
+    finally:
+        csv.field_size_limit(original)
+
+
+@pytest.mark.parametrize("contents", ['payload\n"unterminated', "a,b\nvalue\n", "a\nvalue,extra\n"])
+def test_malformed_csv_is_refused_without_row_skipping(contents):
+    with pytest.raises(csv.Error):
+        with bounded_csv_reader(io.StringIO(contents)) as reader:
+            list(reader)

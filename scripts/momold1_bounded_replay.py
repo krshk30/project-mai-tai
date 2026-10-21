@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections import Counter
+from contextlib import contextmanager
 import csv
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -38,6 +39,32 @@ from project_mai_tai.settings import Settings
 START_NS = 1792483200 * 1_000_000_000  # 2026-10-20 08:00Z
 END_NS = START_NS + 16 * 3600 * 1_000_000_000
 EPOCH = ("SYNTH_RECONSTRUCTED_NOT_ORIGINAL", 1)
+CSV_MAX_FIELD_BYTES = 8 * 1024 * 1024
+
+
+class _BoundedCsvReader(csv.DictReader):
+    def __next__(self):
+        row = super().__next__()
+        if None in row or any(value is None for value in row.values()):
+            raise csv.Error("CSV row does not match header")
+        for value in row.values():
+            if len(value.encode("utf-8")) > CSV_MAX_FIELD_BYTES:
+                raise csv.Error("CSV field exceeds explicit 8 MiB UTF-8 byte limit")
+        return row
+
+
+@contextmanager
+def bounded_csv_reader(source):
+    # csv's parser bound is in characters; also enforce UTF-8 bytes per field.
+    # Restore its process-global setting after success or any parse failure.
+    previous = csv.field_size_limit(CSV_MAX_FIELD_BYTES)
+    try:
+        reader = _BoundedCsvReader(source, strict=True)
+        if any(len(value.encode("utf-8")) > CSV_MAX_FIELD_BYTES for value in reader.fieldnames or []):
+            raise csv.Error("CSV header field exceeds explicit 8 MiB UTF-8 byte limit")
+        yield reader
+    finally:
+        csv.field_size_limit(previous)
 
 
 def ns(value):
@@ -78,8 +105,8 @@ def spool(root, target, conditions, symbols):
                                      previous_symbol, "aggregate", bucket]) + "\n")
 
     try:
-        with gzip.open(root / "trades_1020_massive.csv.gz", "rt", newline="") as source:
-            reader = csv.DictReader(source)
+        with gzip.open(root / "trades_1020_massive.csv.gz", "rt", encoding="utf-8", newline="") as source, \
+                bounded_csv_reader(source) as reader:
             fields = list(reader.fieldnames or [])
             for row in reader:
                 symbol, stamp = row["symbol"], ns(row["event_ts"])
@@ -264,12 +291,13 @@ def main():
     symbols = set((root / "captured_symbols_superset_1020.txt").read_text().splitlines())
     if len(symbols) != 52 or len(ready["prior_closes"]) != 12197:
         raise ValueError("unexpected export universe")
-    with (root / "momentum_paper_events_1020.csv").open(newline="") as handle:
-        actual = list(csv.DictReader(handle))
+    with (root / "momentum_paper_events_1020.csv").open(encoding="utf-8", newline="") as handle, \
+            bounded_csv_reader(handle) as reader:
+        actual = list(reader)
     if len(actual) != 98:
         raise ValueError("unexpected retained event count")
-    with gzip.open(root / "quotes_1020_massive.csv.gz", "rt", newline="") as handle:
-        quotes = csv.DictReader(handle)
+    with gzip.open(root / "quotes_1020_massive.csv.gz", "rt", encoding="utf-8", newline="") as handle, \
+            bounded_csv_reader(handle) as quotes:
         quote_fields = quotes.fieldnames
         quote_count = sum(1 for _ in quotes)
     with tempfile.TemporaryDirectory(prefix="momold1-reconstructed-") as temporary:
