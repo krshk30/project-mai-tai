@@ -10,7 +10,7 @@ from sqlalchemy import or_, select, text
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
-from project_mai_tai.db.models import AccountPosition, BotControlState, BrokerAccount, BrokerOrder, Fill, OmsManagedPosition, Strategy, TradeIntent, VirtualPosition
+from project_mai_tai.db.models import AccountPosition, BotControlState, BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, Strategy, TradeIntent, VirtualPosition
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.momentum_live.admission import ACTIVE_STATES, Refusal, STRATEGY_CODE
 
@@ -151,6 +151,70 @@ class LivePersistence:
             raise Refusal("unsent_exit_identity_or_execution_UNKNOWN")
         order.status = "aborted"
         order.payload = {**order.payload, "momlive_exit_never_dispatched": True}
+
+    def refuse_unsent_entry(self, session, request, reason: str, context: dict) -> None:
+        """Live pre-submit call-stack proof only; never a legacy/boot classifier."""
+        episode_id = request.metadata["episode_id"]
+        parent = session.scalar(select(TradeIntent).where(
+            TradeIntent.id == UUID(episode_id)).with_for_update())
+        order = session.scalar(select(BrokerOrder).where(
+            BrokerOrder.client_order_id == request.client_order_id).with_for_update())
+        if parent is None or order is None:
+            raise Refusal("prewire_settlement_identity_UNKNOWN")
+        payload = dict(parent.payload or {})
+        episode = payload.get("momlive_episode") or {}
+        metadata = dict(order.payload or {})
+        account = session.get(BrokerAccount, parent.broker_account_id)
+        if (session.get(Strategy, parent.strategy_id).code != STRATEGY_CODE
+                or payload.get("momlive_parent") is not True
+                or episode.get("episode_id") != episode_id or episode.get("symbol") != request.symbol
+                or episode.get("state") not in {"claimed", "submitting"}
+                or "first_submit_ns" not in episode
+                or episode.get("state") == "claimed" and episode["first_submit_ns"] is not None
+                or episode.get("first_fill_ns") is not None or episode.get("closed_ns") is not None
+                or Decimal(str(episode.get("filled", "NaN"))) != 0
+                or Decimal(str(episode.get("exited", "NaN"))) != 0
+                or parent.status != "pending" or parent.side != "buy" or parent.intent_type != "open"
+                or parent.symbol != request.symbol or request.strategy_code != STRATEGY_CODE
+                or request.side != "buy" or request.intent_type != "open"
+                or account is None or account.name != request.broker_account_name
+                or account.provider not in {"schwab", "webull"} or not account.name.startswith("live:")
+                or order.intent_id != parent.id or order.strategy_id != parent.strategy_id
+                or order.broker_account_id != parent.broker_account_id
+                or order.symbol != parent.symbol or order.side != "buy" or order.quantity != request.quantity
+                or order.order_type != request.order_type or order.time_in_force != request.time_in_force
+                or order.status != "pending" or order.broker_order_id or order.submitted_at is not None
+                or metadata.get("episode_id") != episode_id
+                or metadata.get("momlive_strategy") != STRATEGY_CODE
+                or metadata.get("limit_price") != request.metadata.get("limit_price")
+                or "bot_control_permit" in metadata or "bot_control_permit" in request.metadata
+                or "momcancel1_ack_identity" in metadata
+                or "momlive_terminal_broker_event" in metadata):
+            raise Refusal("prewire_settlement_dispatch_or_owner_UNKNOWN")
+        snapshot = self.inspect_episode(session, episode_id)
+        if (snapshot["order_count"] != 1 or snapshot["quantity"] or snapshot["exited"]
+                or snapshot["outstanding_exit"]
+                or session.scalar(select(BrokerOrderEvent.id).where(
+                    BrokerOrderEvent.order_id == order.id).limit(1)) is not None
+                or session.scalar(select(VirtualPosition.id).where(
+                    VirtualPosition.strategy_id == parent.strategy_id,
+                    VirtualPosition.broker_account_id == parent.broker_account_id,
+                    VirtualPosition.symbol == parent.symbol, VirtualPosition.quantity != 0).limit(1)) is not None
+                or session.scalar(select(OmsManagedPosition.id).where(
+                    OmsManagedPosition.strategy_code == STRATEGY_CODE,
+                    OmsManagedPosition.broker_account_name == account.name,
+                    OmsManagedPosition.symbol == parent.symbol,
+                    OmsManagedPosition.current_quantity != 0).limit(1)) is not None):
+            raise Refusal("prewire_settlement_execution_or_report_UNKNOWN")
+        # Commit all durable terminals together before the executor frees RAM.
+        receipt = {"reason": "refused_before_wire", "refusal": reason,
+                   "context": {key: str(value) for key, value in context.items()}}
+        order.status = "aborted"
+        order.payload = {**metadata, "momlive_entry_never_dispatched": True,
+                         "reject_reason": "refused_before_wire", "momstuck2_refusal": receipt}
+        parent.status = "cancelled"
+        parent.payload = {**payload, "momlive_episode": {**episode, "state": "terminal_no_fill"},
+                          "momstuck2_refusal": receipt}
 
     def abandon_unsent_entry(self, session, episode_id: str) -> bool:
         """Client-only proof for a claimed reservation that never reached a wire permit."""
@@ -367,7 +431,8 @@ class LivePersistence:
             side=request.side, quantity=request.quantity,
             metadata={**request.metadata, "episode_id": episode_id, "momlive_strategy": STRATEGY_CODE},
             status="pending", order_type=request.order_type, time_in_force=request.time_in_force)
-        if ("bot_control_generation" in request.metadata
+        if (request.side == "buy" and request.intent_type == "open"
+                or "bot_control_generation" in request.metadata
                 or request.metadata.get("exit_reason") == "KILLSW1_STOP"):
             # This branch creates a NEW prewire row (prepare_order refuses an
             # existing coid). The generic factory's creation timestamp is not a

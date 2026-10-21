@@ -37,7 +37,8 @@ def setup(first_report=None, *, result_quantity=0, is_us=True):
     sent = []
     ports = ExecutionPorts(lambda: now[0], lambda symbol: quote, route_for,
         AsyncMock(return_value=False), AsyncMock(return_value=True), AsyncMock(), AsyncMock(),
-        submit, AsyncMock(return_value={"quantity": D(result_quantity)}), AsyncMock())
+        submit, AsyncMock(return_value={"quantity": D(result_quantity)}), AsyncMock(),
+        refuse_unsent_entry=AsyncMock())
     book = EpisodeLedger.restore([])
     executor = LiveEntryExecutor(book, ports, schwab_account="live:schwab_1m_v2", webull_account="live:orb")
     signal = Signal("2026-10-14", "SCNI", "actual-source-id", 100, 200, D(3), int(now[0].timestamp()*1e9), 50000)

@@ -29,6 +29,7 @@ class ExecutionPorts:
     request_quote_owner: Callable[[], Awaitable[None]] | None = None
     wait_quote: Callable[[str], Awaitable[None]] | None = None
     entry_metadata: Callable[[Signal], dict[str, str]] | None = None
+    refuse_unsent_entry: Callable[[OrderRequest, str, dict], Awaitable[None]] | None = None
 
 
 class LiveEntryExecutor:
@@ -145,14 +146,36 @@ class LiveEntryExecutor:
         request = self._request(signal, episode.episode_id, route)
         await self.ports.durable_order(episode.episode_id, request, route.value)
         # DB/ownership work may have waited; recheck cached quote and wire invariants.
-        checked = self._request(signal, episode.episode_id, route)
-        if checked.quantity != request.quantity or checked.metadata["limit_price"] != request.metadata["limit_price"]:
-            raise Refusal("quote_changed_after_durable_order_no_resubmit")
-        self.book.begin_submit(episode.episode_id, route, now_ns=int(self.ports.clock().timestamp()*1e9))
-        await self.ports.save_episode(self._snapshot(episode.episode_id))
-        checked = self._request(signal, episode.episode_id, route)
-        if checked.quantity != request.quantity or checked.metadata["limit_price"] != request.metadata["limit_price"]:
-            raise Refusal("quote_changed_before_wire_no_dispatch")
+        refusal_context = {"ask": "UNKNOWN", "ask_age_ms": "UNKNOWN", "limit": "UNKNOWN",
+                           "cap": request.metadata["cap_price"]}
+        try:
+            checked = self._request(signal, episode.episode_id, route, refusal_context=refusal_context)
+            if checked.quantity != request.quantity or checked.metadata["limit_price"] != request.metadata["limit_price"]:
+                raise Refusal("quote_changed_after_durable_order_no_resubmit")
+            self.book.begin_submit(episode.episode_id, route, now_ns=int(self.ports.clock().timestamp()*1e9))
+            await self.ports.save_episode(self._snapshot(episode.episode_id))
+            checked = self._request(signal, episode.episode_id, route, refusal_context=refusal_context)
+            if checked.quantity != request.quantity or checked.metadata["limit_price"] != request.metadata["limit_price"]:
+                raise Refusal("quote_changed_before_wire_no_dispatch")
+        except Refusal as exc:
+            # This lexical boundary ends BEFORE submit. A timeout/unknown ACK or
+            # any report after submit must never reach client-only settlement.
+            if self.ports.refuse_unsent_entry is None:
+                raise Refusal("prewire_refusal_settlement_unavailable") from exc
+            await self.ports.refuse_unsent_entry(request, str(exc), refusal_context)
+            self.book.reconcile(episode.episode_id, cumulative_filled=Decimal(0), cumulative_exited=Decimal(0),
+                now_ns=int(self.ports.clock().timestamp()*1e9), terminal_entry=True)
+            await self.ports.save_episode(self._snapshot(episode.episode_id))
+            logger.info(
+                "[MOMLIVE1-REFUSED] symbol=%s episode=%s reason=%s ask=%s ask_age_ms=%s "
+                "signal=%s cap=%s limit=%s route=%s no_wire=true settlement=refused_before_wire",
+                signal.symbol, episode.episode_id, str(exc), refusal_context["ask"],
+                refusal_context["ask_age_ms"], signal.signal_price, refusal_context["cap"],
+                refusal_context["limit"], route.value,
+            )
+            if self.ports.request_quote_owner is not None:
+                await self.ports.request_quote_owner()
+            raise
         reports = await self.ports.submit(request)
         result = await self.ports.record(request, reports)
         if route == Route.SCHWAB and any(r.event_type == "rejected" and r.origin == "broker" for r in reports):
