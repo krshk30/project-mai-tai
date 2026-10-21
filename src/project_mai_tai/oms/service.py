@@ -16229,8 +16229,16 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         from project_mai_tai.strategy_core.orb_pastlevel import assert_same_selection, select_entry
         level = Decimal(admission_event.payload.metadata["orb_intended_break_level"])
         max_age = int(self.settings.orb_oms_quote_priced_max_age_ms)
-        selected = select_entry(level, self._latest_quotes_by_symbol.get(request.symbol),
-                                utcnow(), max_age_ms=max_age)
+        quote = self._latest_quotes_by_symbol.get(request.symbol)
+        try:
+            selected = select_entry(level, quote, utcnow(), max_age_ms=max_age)
+        except ValueError as exc:
+            self.logger.info("[ORBPASTLEVEL1] symbol=%s decision=NO_SEND reason=%s "
+                             "trigger=%s ask=%s cap=%s quote_at=%s",
+                             request.symbol, str(exc), request.metadata.get("stop_price"),
+                             (quote or {}).get("ask"), request.metadata.get("limit_price"),
+                             (quote or {}).get("received_at"))
+            raise
         metadata = {**request.metadata, **selected}
 
         def fence():
@@ -16240,7 +16248,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             assert_same_selection(level, self._latest_quotes_by_symbol.get(request.symbol),
                                   utcnow(), selected, max_age_ms=max_age)
 
-        self.logger.info("[ORBPASTLEVEL1] symbol=%s type=%s trigger=%s ask=%s "
+        self.logger.info("[ORBPASTLEVEL1] symbol=%s decision=SELECTED type=%s trigger=%s ask=%s "
                          "nominal_cap_pct=%s effective_cap=%s effective_cap_pct=%s anchor=%s",
                          request.symbol, selected["order_type"], selected["stop_price"],
                          selected["orb_quote_ask"], selected["orb_buy_cap_nominal_pct"],

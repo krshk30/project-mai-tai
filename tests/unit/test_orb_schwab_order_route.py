@@ -276,7 +276,8 @@ def test_oms_previews_then_submits_only_valid_intent(monkeypatch) -> None:
 
 @pytest.mark.parametrize("ask,kind,sends", [("1.19", "STOP_LIMIT", 1), ("1.20", "LIMIT", 1),
                                           ("1.21", "LIMIT", 1), ("1.22", None, 0)])
-def test_pastlevel_actual_oms_placement_shapes(monkeypatch, ask, kind, sends):
+def test_pastlevel_actual_oms_placement_shapes(monkeypatch, caplog, ask, kind, sends):
+    caplog.set_level("INFO")
     service, factory, broker = _service(monkeypatch)
     service._latest_quotes_by_symbol = {"OLOX": {"ask": ask, "received_at": OPEN}}
     event = build_orb_schwab_open_intent(service.settings, "OLOX", Decimal("1.20"))
@@ -289,6 +290,8 @@ def test_pastlevel_actual_oms_placement_shapes(monkeypatch, ask, kind, sends):
         assert request.metadata["bracket_stop_price"] == "1.10"
         request.prewire_check()
     else:
+        assert "decision=NO_SEND reason=orb_pastlevel_ask_above_cap" in caplog.text
+        assert "trigger=1.20 ask=1.22 cap=1.21" in caplog.text
         with factory() as session:
             row = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "OLOX"))
             assert row.payload["orb_pastlevel"]["phase"] == "local_zero"
