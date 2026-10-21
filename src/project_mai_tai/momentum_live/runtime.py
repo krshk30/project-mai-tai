@@ -827,7 +827,12 @@ class OmsLiveRuntime:
         local = self.clock().astimezone(ET).time()
         return daytime(4) <= local < daytime(9, 30) or daytime(16) <= local < daytime(20)
 
-    async def _chase_cancel(self, identity, request, values):
+    @staticmethod
+    def _mandatory_chase(position, reason):
+        return (reason in {"hard_stop_15pct", "time_300s", "KILLSW1_STOP", "EOD"}
+                or reason == "target_5pct" and position.software_target_allowed)
+
+    async def _chase_cancel(self, identity, request, values, *, mandatory=False, reason=None):
         now = self.now_ns()
         if values.get("soft_exit_cancel_coid") == request.client_order_id:
             last = values.get("soft_exit_cancel_completed_ns") or values.get("soft_exit_cancel_verified_ns")
@@ -840,8 +845,14 @@ class OmsLiveRuntime:
             if now - int(last) < 2_000_000_000:
                 return False
         report = await self._fresh_cancel_read(request)
-        if report is None or self._cancel_read_terminal(report, request):
+        if self._cancel_read_terminal(report, request):
             return False
+        if report is None:
+            if not mandatory or not request.metadata.get("broker_order_id"):
+                return False
+            self.service.logger.warning(
+                "[SAFEX1-R7-CANCEL-READ-UNKNOWN] episode=%s coid=%s reason=%s action=cancel terminal_proof=required",
+                identity, request.client_order_id, reason)
         values["soft_exit_cancel_coid"] = request.client_order_id
         values.pop("soft_exit_cancel_completed_ns", None)
         values.pop("soft_exit_cancel_verified_ns", None)
@@ -923,6 +934,7 @@ class OmsLiveRuntime:
             values["soft_exit_reason"] = reason
             await self._save(next(row for row in self.book.snapshot() if row["episode_id"] == position.episode_id))
         position.pending_exit_reason = values["soft_exit_reason"]
+        mandatory_chase = self._mandatory_chase(position, position.pending_exit_reason)
         # Completion is conservative relative to dispatch. The pre-save journal
         # timestamp cannot pace actual calls when DB latency differs per attempt.
         last = (values.get("soft_exit_dispatch_completed_ns") or values.get("soft_exit_terminal_verified_ns")
@@ -954,15 +966,20 @@ class OmsLiveRuntime:
                     request = replace(request, metadata={**request.metadata, "momlive_fresh_order_read": "true"})
                 report = await self.backend.fetch_entry_update(request, self)
                 if report is None:
-                    return
-                await self._record(row["request"], [report])
+                    # Mandatory exits may cancel their known original order on
+                    # UNKNOWN; the post-cancel terminal proof still gates SELL.
+                    if not mandatory_chase or not self._soft_exit_chase_window():
+                        return
+                else:
+                    await self._record(row["request"], [report])
                 snapshot = await self._inspect(position.episode_id)
                 row = next(item for item in snapshot["orders"]
                            if item["request"].client_order_id == row["request"].client_order_id)
             if (row["status"] not in terminal
                     or row["request"].metadata.get("momlive_terminal_broker_event") != row["status"]):
-                if (not self._soft_exit_chase_window() or report.origin != "broker"
-                        or report.event_type not in {"accepted", "partially_filled"}):
+                if (not self._soft_exit_chase_window()
+                        or report is not None and (report.origin != "broker"
+                            or report.event_type not in {"accepted", "partially_filled"})):
                     return
                 if last is None:
                     values["soft_exit_working_verified_ns"] = self.now_ns()
@@ -974,7 +991,8 @@ class OmsLiveRuntime:
                         or not 0 <= self.now_ns()-stamp <= 2_000_000_000
                         or stamp <= int(values.get("soft_exit_quote_ns", last))):
                     return
-                if not await self._chase_cancel(position.episode_id, row["request"], values):
+                if not await self._chase_cancel(position.episode_id, row["request"], values,
+                        mandatory=mandatory_chase, reason=position.pending_exit_reason):
                     return
                 request = replace(row["request"], metadata={**row["request"].metadata,
                                                            "momlive_fresh_order_read": "true"})
