@@ -12,7 +12,8 @@ from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.db.models import AccountPosition, BotControlState, BrokerAccount, BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, Strategy, TradeIntent, VirtualPosition
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
-from project_mai_tai.momentum_live.admission import ACTIVE_STATES, Refusal, STRATEGY_CODE
+from project_mai_tai.momentum_live.admission import ACTIVE_STATES, Refusal, Route, STRATEGY_CODE
+from project_mai_tai.momentum_live.entry_reprice import UnsentEntryConflict, validate_entry_reprice
 
 
 class LivePersistence:
@@ -152,8 +153,8 @@ class LivePersistence:
         order.status = "aborted"
         order.payload = {**order.payload, "momlive_exit_never_dispatched": True}
 
-    def refuse_unsent_entry(self, session, request, reason: str, context: dict) -> None:
-        """Live pre-submit call-stack proof only; never a legacy/boot classifier."""
+    def _unsent_entry(self, session, request):
+        """Lock and prove the current prewire version, never classify a lost ACK."""
         episode_id = request.metadata["episode_id"]
         parent = session.scalar(select(TradeIntent).where(
             TradeIntent.id == UUID(episode_id)).with_for_update())
@@ -206,6 +207,43 @@ class LivePersistence:
                     OmsManagedPosition.symbol == parent.symbol,
                     OmsManagedPosition.current_quantity != 0).limit(1)) is not None):
             raise Refusal("prewire_settlement_execution_or_report_UNKNOWN")
+        return parent, order, account, payload, episode, metadata
+
+    def reprice_unsent_entry(self, session, request, replacement, episode=None) -> None:
+        try:
+            self._reprice_unsent_entry(session, request, replacement, episode)
+        except Refusal as exc:
+            raise UnsentEntryConflict(str(exc)) from exc
+
+    def _reprice_unsent_entry(self, session, request, replacement, episode=None) -> None:
+        parent, order, account, payload, previous_episode, metadata = self._unsent_entry(session, request)
+        validate_entry_reprice(request, replacement, Route(account.provider))
+        if (parent.quantity != request.quantity
+                or previous_episode.get("state") == "submitting" and (
+                    type(previous_episode.get("first_submit_ns")) is not int
+                    or previous_episode["first_submit_ns"] <= 0 or previous_episode.get("route") != account.provider)
+                or {key: value for key, value in metadata.items() if key != "bot_control_prepared_at"}
+                != request.metadata):
+            raise Refusal("mombuffer1_unsent_preimage_changed")
+        if self.foreign_owner(session, parent.strategy_id, parent.broker_account_id, parent.symbol):
+            raise Refusal("foreign_account_symbol_owner")
+        if episode is not None:
+            first_submit = episode.get("first_submit_ns")
+            expected = {**previous_episode, "state": "submitting", "route": account.provider,
+                        "first_submit_ns": first_submit}
+            if (previous_episode.get("state") != "claimed"
+                    or previous_episode.get("first_submit_ns") is not None
+                    or type(first_submit) is not int or first_submit <= 0 or episode != expected):
+                raise Refusal("mombuffer1_submission_owner_changed")
+        order.quantity = parent.quantity = replacement.quantity
+        order.payload = {**metadata, **replacement.metadata}
+        parent.payload = {**payload, "metadata": dict(replacement.metadata),
+                          "momlive_episode": dict(episode if episode is not None else previous_episode)}
+        session.flush()
+
+    def refuse_unsent_entry(self, session, request, reason: str, context: dict) -> None:
+        """Live pre-submit call-stack proof only; never a legacy/boot classifier."""
+        parent, order, _, payload, episode, metadata = self._unsent_entry(session, request)
         # Commit all durable terminals together before the executor frees RAM.
         receipt = {"reason": "refused_before_wire", "refusal": reason,
                    "context": {key: str(value) for key, value in context.items()}}

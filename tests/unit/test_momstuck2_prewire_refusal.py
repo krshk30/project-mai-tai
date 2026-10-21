@@ -97,7 +97,7 @@ def change_at(h, point):
 
         async def prepare(*args):
             await original(*args)
-            h.quote["ask"] = D("3.01")
+            h.quote["ask"] = D("4.00")
 
         h.ports.durable_order = prepare
     else:
@@ -106,7 +106,7 @@ def change_at(h, point):
         async def save(row):
             await original(row)
             if row["state"] == "submitting":
-                h.quote["ask"] = D("3.01")
+                h.quote["ask"] = D("4.00")
 
         h.ports.save_episode = save
 
@@ -140,7 +140,7 @@ async def test_sphl_shaped_refusal_settles_both_rows_releases_slot_and_admits_ne
     other = replace(signal, symbol="HOLD", source_id="SYNTHETIC-held-slot")
     h.runtime.book.claim(other, now_ns=h.runtime.now_ns())
     change_at(h, point)
-    with pytest.raises(Refusal, match=f"quote_changed_{point}"):
+    with pytest.raises(Refusal, match="rounded_ask_above_cap"):
         await h.executor.admit(signal)
     parent, order = durable(h)
     assert parent.status == "cancelled" and order.status == "aborted"
@@ -149,11 +149,11 @@ async def test_sphl_shaped_refusal_settles_both_rows_releases_slot_and_admits_ne
     assert order.broker_order_id is None and order.submitted_at is None
     assert order.payload["reject_reason"] == "refused_before_wire"
     assert order.payload["momlive_entry_never_dispatched"] is True
-    assert order.payload["momstuck2_refusal"]["context"]["ask"] == "3.01"
+    assert order.payload["momstuck2_refusal"]["context"]["ask"] == "4.00"
     assert h.runtime.book._active_count == 1 and "SPHL" not in h.runtime.book._active_by_symbol
     assert not h.sent
     assert "no_wire=true settlement=refused_before_wire" in caplog.text
-    assert "ask=3.01 ask_age_ms=0.0" in caplog.text and "cap=3.045" in caplog.text
+    assert "ask=4.00 ask_age_ms=0.0" in caplog.text and "cap=3.045" in caplog.text
     assert (await h.executor.admit(signal))[1] is None
     assert not h.sent  # Same SPHL source cannot be resubmitted after release.
     h.ports.durable_order, h.ports.save_episode = h.runtime._prepare, h.runtime._save
@@ -273,7 +273,7 @@ async def test_settlement_database_failure_keeps_ram_reserved(env):
 async def test_next_day_boot_from_copy_of_synthetic_settled_tables(env, point, tmp_path):
     h = env
     change_at(h, point)
-    with pytest.raises(Refusal, match="quote_changed"):
+    with pytest.raises(Refusal, match="rounded_ask_above_cap"):
         await h.executor.admit(h.signal)
     # Reopen the settled row on the SAME day first: source idempotence survives restore.
     rows = await h.service._run_db(lambda session: h.runtime.db.restore_bundle(

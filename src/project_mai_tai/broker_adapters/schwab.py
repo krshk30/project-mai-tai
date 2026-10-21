@@ -1421,6 +1421,13 @@ class SchwabBrokerAdapter:
         headers: dict[str, str],
         data: bytes | None,
     ) -> tuple[int, dict[str, str], object]:
+        from project_mai_tai.momentum_live.entry_wire import entry_wire_active, validate_entry_wire
+        if entry_wire_active() and method.upper() == "POST" and url.rstrip("/").endswith("/orders") and data:
+            body = json.loads(data)
+            legs = body.get("orderLegCollection") or []
+            validate_entry_wire(quantity=legs[0].get("quantity") if len(legs) == 1 else None,
+                                limit=body.get("price"),
+                                symbol=(legs[0].get("instrument") or {}).get("symbol") if len(legs) == 1 else None)
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(request, timeout=self.request_timeout_seconds) as response:

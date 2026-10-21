@@ -147,7 +147,8 @@ class OmsLiveRuntime:
             self._claim, self._prepare, self._save, self._submit, self._record, self._route_report,
             self._request_quote_owner, self._wait_quote,
             entry_metadata=self._entry_control_metadata if getattr(self.settings, "bot_control_enabled", False) else None,
-            refuse_unsent_entry=self._refuse_unsent_entry)
+            refuse_unsent_entry=self._refuse_unsent_entry,
+            reprice_unsent_entry=self._reprice_unsent_entry)
         executor = LiveEntryExecutor(self.book, entry_ports, schwab_account=self.accounts[0], webull_account=self.accounts[1])
         ports = ActorPorts(self._entry_enabled, self.now_ns, self._observe,
             self._save, self._cancel_entry, self._protect, self._exit, self._exit_quote,
@@ -544,6 +545,10 @@ class OmsLiveRuntime:
 
     async def _refuse_unsent_entry(self, request, reason, context):
         await self.service._run_db(lambda session: self.db.refuse_unsent_entry(session, request, reason, context))
+
+    async def _reprice_unsent_entry(self, previous, current, episode=None):
+        await self.service._run_db(lambda session: self.db.reprice_unsent_entry(
+            session, previous, current, episode))
 
     async def _submit(self, request):
         self.provider(request.broker_account_name)

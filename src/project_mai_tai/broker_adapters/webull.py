@@ -961,6 +961,8 @@ class WebullBrokerAdapter:
                 if key.startswith("cw_target_api_"):
                     report_metadata.pop(key)
         try:
+            from project_mai_tai.momentum_live.entry_wire import validate_entry_wire
+            validate_entry_wire(quantity=wire_qty, limit=wire_limit, symbol=request.symbol)
             response = client.get_response(po)
             if is_target:
                 try:
