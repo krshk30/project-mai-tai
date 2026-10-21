@@ -46,8 +46,12 @@ def test_same_atr_workspace_components_keep_live_values_and_inputs_unchanged(mon
     monkeypatch.setattr(cp, "_render_momentum_ledger", capture)
     html = render(values)
     assert values == before
-    assert len(calls) == 1 and calls[0][0] == cp._momentum_page_ledger_copy(values[1])
-    assert calls[0][1] == {"title": "LIVE (real orders)", "method": "LIVE", "other_rows": [], "paper": False}
+    assert len(calls) == 3
+    live_calls = [call for call in calls if call[1].get("paper") is False]
+    assert len(live_calls) == 1
+    assert live_calls[0][0] == cp._momentum_page_ledger_copy(values[1])
+    assert live_calls[0][1] == {"title": "LIVE (real orders)", "method": "LIVE", "other_rows": [], "paper": False}
+    assert len([call for call in calls if call[1].get("reference_only") is True]) == 2
     for component in ('class="shell"', 'class="sidebar"', 'class="brand"', 'class="brand-badge"',
                       'class="side-section"', 'class="stack"', 'class="line-item"',
                       'class="metric-grid"', 'class="metric-card"', 'class="workspace"',
@@ -67,11 +71,16 @@ def test_same_atr_workspace_components_keep_live_values_and_inputs_unchanged(mon
     assert '@media(max-width:1200px)' in html and '@media(max-width:900px)' in html
 
 
-def test_no_reference_rows_or_paper_pnl_but_both_signal_intervals_and_health_remain():
+def test_reference_rows_return_but_never_enter_live_totals_or_counts():
     html = render(inputs())
-    assert 'Warning method' not in html and 'REFERENCE' not in html
-    assert 'PAPER_ONLY_SENTINEL' not in html and '9876.54' not in html
-    assert 'completed paper trades' not in html and 'completed references' not in html
+    assert 'Warning method 60 s' in html and 'Warning method 30 s' in html
+    assert html.count('>REFERENCE</span>') == 2
+    assert 'PAPER_ONLY_SENTINEL' in html and '9876.54' in html
+    assert 'completed paper trades' not in html and 'completed references' in html
+    assert 'Day total: $+9876.54' not in html and html.count('Day total:') == 1
+    assert '<span>Day P&amp;L (LIVE)</span><strong>$+4.96</strong>' in html
+    assert '<span>Completed trades</span><strong>1</strong>' in html
+    assert 'not in live P&amp;L' in html
     assert 'SIGNAL_ONLY' in html and '<td>30s</td>' in html and '<td>60s</td>' in html
     assert 'Decision Tape' in html and 'Failed Actions' in html and 'Listening Status' in html
     assert 'Warning feed: UNKNOWN' in html
@@ -133,6 +142,7 @@ def test_actual_atr_and_momentum_pages_share_workspace_shell_and_nav(monkeypatch
     for html in (atr.text, momentum.text):
         assert "'Consolas','Monaco',monospace" in html
         assert '/scanner/dashboard' in html and 'Mai Tai Control Plane' in html
-    assert 'Warning method' not in momentum.text and 'REFERENCE' not in momentum.text
+    assert 'Warning method 60 s' in momentum.text and 'Warning method 30 s' in momentum.text
+    assert momentum.text.count('>REFERENCE</span>') == 2
     if destination := os.environ.get('MOMFORMAT_HTML_CAPTURE'):
         Path(destination).write_text(momentum.text, encoding='utf-8')

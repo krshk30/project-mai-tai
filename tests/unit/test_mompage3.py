@@ -54,15 +54,15 @@ def test_shared_atr_columns_badges_separate_totals_and_short_times(monkeypatch, 
     tables.feed(html)
     completed = [row for row in tables.tables if row[:3] == ["Ticker", "Path", "Qty"]]
     columns = ["Ticker", "Path", "Qty", "Entry Time", "Entry", "Exit Time", "Exit", "P&L", "Exit Summary"]
-    assert completed == [columns]
-    assert '<span class="count accent">REFERENCE</span>' not in html
+    assert completed == [columns, columns, columns]
+    assert html.count('<span class="count accent">REFERENCE</span>') == 2
     assert '<span class="count accent">LIVE</span>' in html
-    assert "$+49.40" not in html and "$+28.80" not in html
+    assert "$+49.40" in html and "$+28.80" in html
     assert html.count('Day total:') == 1
     assert "Day total: $+78.20" not in html
     assert 'caught 49s' not in html
     assert 'color:#98a6c8;font-size:10px;' not in html  # Retired snapshot-comparison note.
-    assert "08:00:34 AM ET" not in html and "2026-10-14 08:00:34 AM ET" not in html
+    assert "08:00:34 AM ET" in html and "2026-10-14 08:00:34 AM ET" not in html
     assert "Broker Qty<br>Current Price" in html
     assert html.count('<h3>Open Positions') == 1
     assert 'Open positions UNKNOWN' not in html
@@ -88,7 +88,7 @@ def test_live_note_plain_words_actual_flag_and_no_vwap(monkeypatch, route, enabl
     assert f'<strong>Status:</strong> {state}</div>' in html
     assert "P&L uses actual LIVE broker fills only." in unescape(html)
     assert "VWAP" not in html
-    assert "$+49.40" not in html and "$+28.80" not in html and html.count('Day total:') == 1
+    assert "$+49.40" in html and "$+28.80" in html and html.count('Day total:') == 1
 
 
 def test_atr_and_momentum_call_same_actual_row_component(monkeypatch):

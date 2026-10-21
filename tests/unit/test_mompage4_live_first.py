@@ -127,14 +127,14 @@ def test_one_live_pnl_warning_references_never_aggregate_and_html_capture(monkey
     assert 'Day total: $+4.96' in html and '1 completed broker trades' in html
     assert '<strong>$+4.96</strong>' in html and html.count('Day total:') == 1
     assert 'Day total: $+9999' not in html and 'Day total: $+19998' not in html
-    assert 'Signal reference' not in html and 'REFERENCE' not in html
-    assert 'Warning method' not in html and 'REFERENCE60' not in html and 'REFERENCE30' not in html
-    titles = ['LIVE (real orders)',
-              'Open Positions (LIVE)', 'Order History (LIVE)', 'Decision Tape', 'Failed Actions', 'Listening Status']
+    assert html.count('>REFERENCE</span>') == 2
+    assert 'REFERENCE60' in html and 'REFERENCE30' in html
+    titles = ['Bot Navigation', 'Listening Status', 'Warning method 60 s', 'Warning method 30 s',
+              'LIVE (real orders)', 'Open Positions (LIVE)', 'Order History (LIVE)', 'Decision Tape', 'Failed Actions']
     assert [html.index(title) for title in titles] == sorted(html.index(title) for title in titles)
     for removed in ('Snapshot method', 'Snapshot day P&L', 'Snapshot trades', 'TOS Parity', 'Two paper simulations'):
         assert removed not in html
-    assert html.count('<h3>Listening Status</h3>') == 1
+    assert html.count('<h2>Listening Status</h2>') == 1
     assert html.count('<summary>Feed details</summary>') == 1
     assert before['bots'] == after['bots']
     assert len(warnings) == 2
@@ -200,11 +200,11 @@ def test_malformed_row_is_isolated_without_known_partial_total_or_lost_good_row(
     original = deepcopy((warning, live))
     html = cp._render_momentum_page({'bots': [], 'recent_orders': []}, live=live, warnings=[warning],
                                    owner={'status': 'UNKNOWN'}, metrics={'status': 'UNKNOWN'})
-    # 06:28 removes reference trades, not readable LIVE siblings or the signal tape.
-    assert '<strong>READABLE</strong>' not in html
+    # 06:50 restores readable reference siblings, never their totals into LIVE.
+    assert '<strong>READABLE</strong>' in html
     assert '<strong>LIVEGOOD</strong>' in html
     assert '<td>TAPEGOOD</td>' in html
-    assert 'Warning method' not in html and 'REFERENCE' not in html
+    assert 'Warning method' in html and 'REFERENCE' in html
     assert 'Live row data is incomplete' in html and 'Warning history UNKNOWN' in html
     assert '<span>Open</span><strong>UNKNOWN</strong>' in html
     assert '<span>Completed trades</span><strong>UNKNOWN</strong>' in html
