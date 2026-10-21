@@ -100,9 +100,14 @@ def replay(path):
                     phone, rule = False, "manual_only_complete_known_no_bot_row"
         if title == "Option A paper STOP":
             key = None
-            if context.get("binding") == "EXACT_RETAINED" and context.get("latch_present_at_notification") is True:
+            repo_sender = (context.get("sender_binding") == "EXACT_RETAINED"
+                           and context.get("sender_path") ==
+                           "/home/trader/project-mai-tai/ops/health/option_a_treatment_guard.py")
+            if (repo_sender and context.get("binding") == "EXACT_RETAINED"
+                    and context.get("latch_present_at_notification") is True):
                 key = policy.stop_event_key(title, body, context.get("safety_stop_latch", {}))
-            grade = "EXACT_STOP_EVENT" if key else "UNKNOWN_STOP_ID_KEEP_PHONE"
+            grade = ("UNKNOWN_OR_UNTOUCHED_SENDER_KEEP_PHONE" if not repo_sender
+                     else "EXACT_STOP_EVENT" if key else "UNKNOWN_STOP_ID_KEEP_PHONE")
             if key:
                 if key in seen_stops:
                     phone, rule = False, "same_stop_event_already_delivered"

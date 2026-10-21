@@ -8,10 +8,12 @@ import os
 from pathlib import Path
 import re
 import stat
+import time
 
 
 SAFETY_STOP = Path("/var/lib/project-mai-tai/option-a/safety-stop.json")
-STOP_PAGES = Path("/var/lib/project-mai-tai/option-a/phone-stop-pages.jsonl")
+STOP_PAGES = Path("/var/lib/project-mai-tai/phone-alerts/option-a-stop-pages.jsonl")
+STOP_LOCK_WAIT_SECONDS = 0.25
 KEEP = (True, "keep_unclassified_or_risk")
 
 
@@ -102,11 +104,26 @@ def read_stop_latch(path):
         return json.loads(raw)
 
 
+def _lock_stop_journal(stream):
+    """Bound only dedupe lock contention; uncertainty must still reach phone."""
+    deadline = time.monotonic() + STOP_LOCK_WAIT_SECONDS
+    while True:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("stop page journal lock timeout; keep phone") from None
+            time.sleep(min(0.01, remaining))
+
+
 def send_stop_once(title, body, send, *, latch_path=SAFETY_STOP, journal=STOP_PAGES):
     """Do not delay STOP itself. Runs only at its existing notification boundary.
 
     Failed/unknown evidence and failed delivery never consume the event. The
-    existing guard retry/timeout/audit contracts remain in their callers.
+    existing retry/transport timeout/audit contracts remain in their callers.
+    Lock wait is bounded; this is not a hard deadline on filesystem or send I/O.
     """
     if title != "Option A paper STOP":
         return send()
@@ -123,7 +140,7 @@ def send_stop_once(title, body, send, *, latch_path=SAFETY_STOP, journal=STOP_PA
             info = os.fstat(stream.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022 or info.st_uid not in {0, os.geteuid()}:
                 raise ValueError("stop page journal untrusted")
-            fcntl.flock(stream, fcntl.LOCK_EX)
+            _lock_stop_journal(stream)
             raw = stream.read(8 * 1024 * 1024 + 1)
             if len(raw) > 8 * 1024 * 1024:
                 raise ValueError("stop page journal oversized; keep phone")

@@ -539,17 +539,6 @@ def _release_confirmed(
 
 
 def _page(title: str, body: str, *, priority: str = "low", timeout=15) -> bool:
-    if title == "Option A paper STOP":
-        try:
-            from project_mai_tai.phone_alert_policy import send_stop_once
-            return send_stop_once(title, body,
-                lambda: _page_transport(title, body, priority=priority, timeout=timeout))
-        except Exception:
-            pass  # Preserve the original failure-page retry/timeout policy.
-    return _page_transport(title, body, priority=priority, timeout=timeout)
-
-
-def _page_transport(title: str, body: str, *, priority: str = "low", timeout=15) -> bool:
     payload = request.Request(
         LOW_PAGE_URL, data=body.encode(),
         headers={"Title": title, "Priority": priority}, method="POST",

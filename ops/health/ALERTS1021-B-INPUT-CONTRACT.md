@@ -64,6 +64,13 @@ Evidence fields consumed: `binding=EXACT_RETAINED`,
 `latch_present_at_notification=true`, `safety_stop_latch` object, original source
 references and hashes. The offline deterministic tie-break for equal-second
 message times is topic/id, not a claim of subsecond broker/phone ordering.
+Also require `sender_binding=EXACT_RETAINED` and original `sender_path` with
+retained source/audit association (not inferred from title/time). Tonight only
+`/home/trader/project-mai-tai/ops/health/option_a_treatment_guard.py` participates
+in dedupe. Deployed `/home/trader/option-a-daily-guard/guard_rules.py` remains
+UNTOUCHED and keeps every page; unknown sender also keeps every page. The replay
+must not count such pages as suppressed even if their latch/event identity agrees.
+No full cross-producer duplicate suppression is claimed by this chosen option.
 
 ## Execution Contract
 

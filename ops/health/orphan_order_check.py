@@ -341,13 +341,16 @@ async def main() -> int:
         push(f"Orphan order AMBER - {stamp}", "\n".join(phone_ambers), "high", "warning")
     if reds:
         print("RED:", " | ".join(reds))
-        return 2
     if ambers:
         print("AMBER:", " | ".join(ambers))
-        return 1
-    if phone_reds:
-        print("UNKNOWN: orphan ownership/check evidence could not be read")
+    if phone_reds and not reds:
+        print("UNKNOWN RED: orphan ownership/check evidence could not be read")
+    # An incomplete ownership read outranks a raw AMBER heuristic, just as its
+    # risk phone does. Keep both raw finding lists visible before returning.
+    if reds or phone_reds:
         return 2
+    if ambers:
+        return 1
     print("GREEN: no orphaned working orders")
     return 0
 
