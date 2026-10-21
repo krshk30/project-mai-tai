@@ -287,6 +287,15 @@ def main():
         "result": result, "original_full_universe_parity": "UNKNOWN",
         "original_transport_parity": "UNKNOWN", "reviewer_acceptance": "REQUIRED_NOT_GRANTED_BY_SCRIPT",
         "input_sha256": hashes, "census": census, "captured_manifest": sorted(symbols),
+        "harness_sha256": digest(Path(__file__)),
+        "model_parameters": {
+            "validation_window": asdict(services[0]._validation_window),
+            "condition_version": conditions.version, "shared_owner_cap": 16,
+            "window_symbol_bound": services[0]._warning.max_window_symbols,
+            "live_subscription_mirroring": True, "live_handoff": "ABSENT",
+            "legacy_strategy_windows": services[0]._engine.strategy_windows,
+            "dormant_strategy_windows": services[1]._engine.strategy_windows,
+        },
         "symbols_with_trades": sorted(paths), "session_universe": len(ready["prior_closes"]),
         "captured_symbols_without_trades": sorted(symbols - set(paths)),
         "session_symbols_without_captured_market_data": sorted(set(ready["prior_closes"]) - set(paths)),
@@ -316,7 +325,8 @@ def main():
                            "trade.conditions", "quote_schema_and_row_count"],
         "retained_actual_events": dict(Counter(row["event_type"] for row in actual)),
         "retained_warning_events": [
-            {key: row[key] for key in ("event_key", "logical_id", "strategy_code", "event_type", "symbol", "observed_at")}
+            {**{key: row[key] for key in ("event_key", "logical_id", "strategy_code", "event_type", "symbol", "observed_at")},
+             "payload": json.loads(row["payload"])}
             for row in actual if row["strategy_code"] in MOMENTUM_WARNING_STRATEGIES
         ],
         "RUMBW": {"scope": "EVENT_ONLY_NO_CAPTURE_NO_MARKET_DATA_PARITY", "captured": "RUMBW" in symbols,
