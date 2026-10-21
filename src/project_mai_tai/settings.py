@@ -1434,7 +1434,7 @@ class Settings(BaseSettings):
             return "schwab" if self.momentum_live_enabled else "none"
         if normalized_code == "orb_schwab":
             return "schwab" if self.orb_live_schwab_orders_enabled else "none"
-        if normalized_code in {"orb", "momentum_30s", "momentum_60s"}:
+        if normalized_code in {"orb", "momentum_30s", "momentum_60s", "momentum_30s_warn", "momentum_60s_warn"}:
             return "none"
         if normalized_code == "macd_30s":
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
@@ -1539,7 +1539,7 @@ class Settings(BaseSettings):
             return "schwab"
         if normalized_code in {"polygon_30s", "webull_30s"}:
             return "polygon"
-        if normalized_code in {"momentum_30s", "momentum_60s"}:
+        if normalized_code in {"momentum_30s", "momentum_60s", "momentum_30s_warn", "momentum_60s_warn"}:
             return "massive"
         if normalized_code == "tos" and self.provider_for_strategy("tos") == "schwab":
             return "schwab"
