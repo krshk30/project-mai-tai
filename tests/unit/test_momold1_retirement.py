@@ -20,7 +20,7 @@ from project_mai_tai.momentum_paper.warning_window import WarningEvaluation
 from project_mai_tai.runtime_registry import configured_broker_account_registrations, configured_strategy_registrations
 from project_mai_tai.services.control_plane import (
     CONTROL_PLANE_ACTIVE_BOT_CODES, _build_bot_listening_status, _compact_bot_card, _render_compact_dashboard,
-    _visible_bot_page_meta,
+    MOMENTUM_LIVE_CODE, _visible_bot_page_meta,
 )
 from project_mai_tai.services.momentum_paper_app import MomentumPaperService
 from project_mai_tai.settings import Settings
@@ -72,6 +72,8 @@ def test_active_registry_never_advertises_legacy_or_a_paper_broker(warning_enabl
         assert settings.provider_for_strategy(code) == "none"
         assert settings.market_data_provider_for_strategy(code) == "massive"
     assert not set(MOMENTUM_STRATEGIES) & set(CONTROL_PLANE_ACTIVE_BOT_CODES)
+    assert not set(MOMENTUM_WARNING_STRATEGIES) & set(CONTROL_PLANE_ACTIVE_BOT_CODES)
+    assert MOMENTUM_LIVE_CODE in CONTROL_PLANE_ACTIVE_BOT_CODES
     assert [meta["path"] for _, meta in _visible_bot_page_meta(list(MOMENTUM_WARNING_STRATEGIES))] == ["/bot/momentum"]
 
 
@@ -94,7 +96,7 @@ def test_warning_compact_card_is_paper_reference_and_exposes_no_pnl(code):
     assert "Webull + Schwab" not in html
 
 
-def test_dashboard_deduplicates_reference_link_and_excludes_reference_positions():
+def test_dashboard_excludes_all_reference_cards_positions_and_pnl():
     html = _render_compact_dashboard({"bots": [
         {"strategy_code": "schwab_1m_v2", "position_count": 2},
         {"strategy_code": "momentum_30s_warn", "account_name": "paper:momentum",
@@ -103,10 +105,10 @@ def test_dashboard_deduplicates_reference_link_and_excludes_reference_positions(
          "position_count": 9, "daily_pnl": 876543.21},
         {"strategy_code": "momentum_30s", "position_count": 99},
     ]})
-    assert html.count('href="/bot/momentum"') == 1
+    assert 'href="/bot/momentum"' not in html
     assert '<div class="label">Open positions</div><div class="val">2</div>' in html
     assert "987654" not in html and "876543" not in html
-    assert "paper reference" in html
+    assert "paper reference" not in html
 
 
 @pytest.mark.parametrize("kind", ["healthy", "missing", "stale", "future", "conditions_unknown"])

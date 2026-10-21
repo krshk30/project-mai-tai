@@ -26,6 +26,7 @@ from project_mai_tai.runtime_registry import (
 from project_mai_tai.services.control_plane import (
     BOT_PAGE_META,
     CONTROL_PLANE_ACTIVE_BOT_CODES,
+    MOMENTUM_LIVE_CODE,
     _compact_bot_page_url,
 )
 from project_mai_tai.services.momentum_paper_app import (
@@ -602,13 +603,16 @@ def test_momentum_enablement_retires_the_polygon_runtime_not_only_its_card() -> 
     assert "if polygon_paper_enabled:" in source
 
 
-def test_dashboard_routes_keep_history_and_list_only_active_warning_methods() -> None:
+def test_dashboard_routes_keep_history_and_list_only_actual_live_momentum() -> None:
     assert BOT_PAGE_META["momentum_30s"]["title"] == "Momentum"
     assert BOT_PAGE_META["momentum_60s"]["title"] == "Momentum"
     assert _compact_bot_page_url("momentum_30s") == "/bot/momentum"
     assert _compact_bot_page_url("momentum_60s") == "/bot/momentum"
-    assert "momentum_30s_warn" in CONTROL_PLANE_ACTIVE_BOT_CODES
-    assert "momentum_60s_warn" in CONTROL_PLANE_ACTIVE_BOT_CODES
+    assert MOMENTUM_LIVE_CODE == "momentum_warn_live"
+    assert MOMENTUM_LIVE_CODE in CONTROL_PLANE_ACTIVE_BOT_CODES
+    assert _compact_bot_page_url(MOMENTUM_LIVE_CODE) == "/bot/momentum"
+    assert "momentum_30s_warn" not in CONTROL_PLANE_ACTIVE_BOT_CODES
+    assert "momentum_60s_warn" not in CONTROL_PLANE_ACTIVE_BOT_CODES
     assert "momentum_30s" not in CONTROL_PLANE_ACTIVE_BOT_CODES
     assert "momentum_60s" not in CONTROL_PLANE_ACTIVE_BOT_CODES
 
