@@ -150,11 +150,15 @@ class LiveActor:
             except Exception as exc:
                 if not isinstance(exc, Refusal):
                     if identity is None and signal is not None:
-                        episode = self.book._sources.get(
-                            (signal.session_date, signal.symbol, signal.source_id))
-                        identity = episode.episode_id if episode is not None else None
+                        try:
+                            episode = self.book._sources.get(
+                                (signal.session_date, signal.symbol, signal.source_id))
+                            identity = episode.episode_id if episode is not None else None
+                        except Exception:
+                            identity = None  # Diagnostic metadata must not end the entry loop.
                     logger.exception("[MOMLIVE1-ENTRY-EXCEPTION] symbol=%s episode=%s exception_type=%s",
-                                     event.payload.symbol, identity or "UNKNOWN", type(exc).__name__)
+                                     event.payload.symbol, identity or "UNKNOWN", type(exc).__name__,
+                                     exc_info=(type(exc), exc, exc.__traceback__))
                 logger.warning("[MOMLIVE1-REFUSED] symbol=%s reason=%s", event.payload.symbol,
                                str(exc) if isinstance(exc, Refusal) else "entry_observation_UNKNOWN")
                 self._refresh_owners()

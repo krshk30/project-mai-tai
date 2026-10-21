@@ -234,6 +234,59 @@ async def test_entry_exception_logging_preserves_refusal_and_cancellation(failur
 
 
 @pytest.mark.asyncio
+async def test_entry_diagnostic_lookup_failure_keeps_original_error_and_next_inbox_event(caplog):
+    book = EpisodeLedger.restore([])
+    calls, lookups, before = [], [], []
+    original_error = RuntimeError("controlled original admission failure")
+
+    class DiagnosticSources(dict):
+        def get(self, key, *args):
+            lookups.append(key)
+            raise LookupError("controlled diagnostic lookup failure")
+
+    async def admit(signal):
+        calls.append(signal.source_id)
+        if len(calls) == 1:
+            episode, fresh_claim = book.claim(signal, now_ns=signal.observed_ns)
+            assert fresh_claim
+            before.extend(book.snapshot())
+            # The claim is normal; only the subsequent diagnostic lookup fails.
+            book._sources = DiagnosticSources(book._sources)
+            raise original_error
+        assert len(calls) == 2
+        return before[0]["episode_id"], None, None
+
+    ports = ActorPorts(lambda: True, lambda: 0, AsyncMock(), AsyncMock(),
+        AsyncMock(), AsyncMock(), AsyncMock(), lambda _symbol: {})
+    actor = LiveActor(book, SimpleNamespace(admit=admit), ports, state_lock=asyncio.Lock())
+    actor.restored = True
+    caplog.set_level(logging.WARNING, logger="momentum-live")
+    for _ in range(2):
+        assert actor.offer_intent(event(datetime(2026, 10, 14, 14, tzinfo=UTC)))
+    task = asyncio.create_task(actor._entries())
+    try:
+        await asyncio.wait_for(actor.inbox.join(), 3)
+        assert len(calls) == 2 and actor.inbox.empty() and not task.done()
+        assert lookups == [("2026-10-14", "SCNI", "sealed30")]
+        records = [record for record in caplog.records if record.name == "momentum-live"]
+        error, = [record for record in records if record.levelno >= logging.ERROR]
+        assert error.exc_info[0] is RuntimeError and error.exc_info[1] is original_error
+        assert error.exc_info[2] is not None
+        assert "[MOMLIVE1-ENTRY-EXCEPTION]" in error.getMessage()
+        assert "symbol=SCNI episode=UNKNOWN exception_type=RuntimeError" in error.getMessage()
+        warning, = [record for record in records if record.levelno == logging.WARNING]
+        assert "[MOMLIVE1-REFUSED]" in warning.getMessage()
+        assert "reason=entry_observation_UNKNOWN" in warning.getMessage()
+        assert book.snapshot() == before
+        assert actor.work.owners == actor.work.pending == {before[0]["episode_id"]}
+        for port in (ports.observe, ports.save, ports.cancel_entry_once, ports.protect_owned, ports.exit_owned):
+            port.assert_not_awaited()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_actual_oms_ports_entry_actual_fill_vwap_native_proof_and_no_resend():
     now, broker, service, runtime = setup()
     await runtime.start()
