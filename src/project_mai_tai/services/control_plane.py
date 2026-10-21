@@ -927,6 +927,7 @@ class ControlPlaneRepository:
                 return self._overview_cache
 
             data = await self._load_dashboard_data_uncached()
+            data = await self._attach_momentum_live_dashboard(data)
             self._overview_cache = data
             self._overview_cache_at = utcnow()
             return data
@@ -1059,6 +1060,7 @@ class ControlPlaneRepository:
                 return self._bot_dashboard_cache
 
             data = await self._load_bot_dashboard_data_uncached()
+            data = await self._attach_momentum_live_dashboard(data)
             self._bot_dashboard_cache = data
             self._bot_dashboard_cache_at = utcnow()
             return data
@@ -1067,6 +1069,31 @@ class ControlPlaneRepository:
         async with self._bot_dashboard_cache_lock:
             self._bot_dashboard_cache = None
             self._bot_dashboard_cache_at = None
+
+    async def _attach_momentum_live_dashboard(self, data: dict[str, Any]) -> dict[str, Any]:
+        bots = [bot for bot in data.get("bots", [])
+                if bot.get("strategy_code") not in MOMENTUM_PAGE_CODES | {MOMENTUM_LIVE_CODE}]
+        if not (self.settings.momentum_paper_enabled or self.settings.momentum_live_enabled):
+            return {**data, "bots": bots}
+        from project_mai_tai.momentum_live.ledger import load_live_ledger
+
+        day = utcnow().astimezone(EASTERN_TZ).date()
+        now_ns = time.time_ns()
+        live, owner, metrics = await asyncio.gather(
+            asyncio.wait_for(asyncio.to_thread(load_live_ledger, self.session_factory, day), timeout=3),
+            _read_momentum_page_owner(self.redis, self.settings.redis_stream_prefix, now_ns=now_ns),
+            _read_momentum_warning_gateway_metrics(self.redis, self.settings.redis_stream_prefix, now_ns=now_ns),
+            return_exceptions=True,
+        )
+        live = live if isinstance(live, dict) else {"status": "UNKNOWN"}
+        owner = owner if isinstance(owner, dict) else {"status": "UNKNOWN"}
+        metrics = metrics if isinstance(metrics, dict) else {"status": "UNKNOWN"}
+        metrics = {**metrics, "consumer": await _read_momentum_page_consumer(
+            self.redis, self.settings.redis_stream_prefix, now_ns=time.time_ns(), gateway_metrics=metrics)}
+        live_bot = _momentum_live_dashboard_view(data, live, owner, metrics)
+        return {**data, "bots": [*bots, live_bot], "momentum_live_ledger": live,
+                "momentum_live_day": day.isoformat(), "momentum_live_owner": owner,
+                "momentum_live_metrics": metrics}
 
     async def _load_bot_dashboard_data_uncached(self) -> dict[str, Any]:
         # Run the heavy synchronous DB aggregation in a worker thread so the
@@ -1889,7 +1916,8 @@ class ControlPlaneRepository:
         virtual_positions: list[dict[str, Any]] | None = None,
         fills_read_status: str | None = None,
     ) -> list[dict[str, Any]]:
-        registrations = configured_strategy_registrations(self.settings)
+        registrations = tuple(registration for registration in configured_strategy_registrations(self.settings)
+                              if registration.code not in MOMENTUM_REFERENCE_CODES)
         ordered_codes = [registration.code for registration in registrations]
         registration_map = {registration.code: registration for registration in registrations}
         runtime_bots = strategy_runtime.get("bots", {})
@@ -4536,7 +4564,8 @@ def build_app(
             warnings.append(warning)
         from project_mai_tai.momentum_live.ledger import load_live_ledger
         try:
-            live = await asyncio.wait_for(asyncio.to_thread(load_live_ledger, active_session_factory, day), timeout=3)
+            live = (data["momentum_live_ledger"] if data.get("momentum_live_day") == day.isoformat()
+                    else await asyncio.wait_for(asyncio.to_thread(load_live_ledger, active_session_factory, day), timeout=3))
         except Exception:
             logging.getLogger(__name__).warning("[MOMPAGE4] live_fill_ledger=UNKNOWN", exc_info=True)
             live = {"status": "UNKNOWN"}
@@ -4657,10 +4686,10 @@ MOMENTUM_PAGE_CODES = frozenset({
     "momentum_30s", "momentum_60s", "momentum_30s_warn", "momentum_60s_warn",
 })
 MOMENTUM_REFERENCE_CODES = frozenset({"momentum_30s_warn", "momentum_60s_warn"})
+MOMENTUM_LIVE_CODE = "momentum_warn_live"
 CONTROL_PLANE_ACTIVE_BOT_CODES = (
     "schwab_1m_v2",
-    "momentum_30s_warn",
-    "momentum_60s_warn",
+    MOMENTUM_LIVE_CODE,
     "polygon_30s",
     "orb_schwab",
 )
@@ -4716,7 +4745,6 @@ def _render_compact_dashboard(data: dict[str, Any]) -> str:
         bot_by_code[code]
         for code in CONTROL_PLANE_ACTIVE_BOT_CODES
         if code in bot_by_code
-        and not (code == "momentum_60s_warn" and "momentum_30s_warn" in bot_by_code)
     ]
 
     service_statuses = [
@@ -4740,10 +4768,13 @@ def _render_compact_dashboard(data: dict[str, Any]) -> str:
         _safe_int(scanner.get("active_subscription_symbols")),
         _safe_int(scanner.get("heartbeat_active_symbols")),
     )
-    open_positions = sum(
+    open_positions: int | str = sum(
         _safe_int(bot.get("position_count")) for bot in ordered_bots
         if bot.get("strategy_code") not in MOMENTUM_REFERENCE_CODES
     )
+    if any(bot.get("strategy_code") == MOMENTUM_LIVE_CODE
+           and type(bot.get("position_count")) is not int for bot in ordered_bots):
+        open_positions = "UNKNOWN"
     latest_reconciliation = data.get("reconciliation", {}).get("latest_run") or {}
     reconciliation_summary = latest_reconciliation.get("summary", {}) if isinstance(latest_reconciliation, dict) else {}
     cutover_confidence = _safe_int(reconciliation_summary.get("cutover_confidence"), 0)
@@ -4964,6 +4995,7 @@ def _compact_bot_page_url(code: str) -> str:
         "momentum_60s": "/bot/momentum",
         "momentum_30s_warn": "/bot/momentum",
         "momentum_60s_warn": "/bot/momentum",
+        MOMENTUM_LIVE_CODE: "/bot/momentum",
         "polygon_30s": "/bot/30s-polygon",
         "orb_schwab": "/bot/orb",
     }.get(code, "/")
@@ -4990,6 +5022,8 @@ def _compact_bot_card(
     latest_strategy_bars: dict[str, dict[str, Any]],
 ) -> str:
     code = str(bot.get("strategy_code") or "")
+    if code == MOMENTUM_LIVE_CODE:
+        return _compact_momentum_live_card(bot)
     if code == "schwab_1m_v2":
         service = service_by_name.get("schwab-1m-v2")
     elif code in MOMENTUM_PAGE_CODES:
@@ -5089,6 +5123,73 @@ def _compact_bot_card(
       </div>
     </div>
     """
+
+
+def _momentum_live_dashboard_view(data: dict[str, Any], live: dict[str, Any],
+                                  owner: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    ledger = _momentum_page_ledger_copy({**live, "strategy_code": MOMENTUM_LIVE_CODE})
+    known = (live.get("strategy_code") == MOMENTUM_LIVE_CODE
+             and live.get("source") == "strategy_owned_broker_fills"
+             and ledger.get("status") == "READABLE" and not ledger.get("daily_pnl_partial")
+             and not ledger.get("page_positions_incomplete") and not ledger.get("page_closed_today_incomplete"))
+    pnl = None
+    if known:
+        try:
+            value = Decimal(str(ledger.get("daily_pnl")))
+            pnl = str(value) if value.is_finite() else None
+        except (ValueError, ArithmeticError):
+            pass
+    provenance_known = (live.get("strategy_code") == MOMENTUM_LIVE_CODE
+                        and live.get("source") == "strategy_owned_broker_fills")
+    positions = [{**row, "quantity": row.get("remaining_quantity", "UNKNOWN"),
+                  "strategy_code": MOMENTUM_LIVE_CODE} for row in ledger["positions"]] if provenance_known else []
+    if not provenance_known:
+        ledger = {"strategy_code": MOMENTUM_LIVE_CODE, "status": "UNKNOWN", "positions": [],
+                  "closed_today": [], "recent_decisions": []}
+    status = _momentum_listening_status(data, ledger, [], owner, metrics)
+    accounts = sorted({str(row["account_name"]) for row in [*positions, *ledger["closed_today"]]
+                       if row.get("account_name")})
+    def owned_rows(field: str) -> list[dict[str, Any]]:
+        return [row for row in data.get(field, []) if isinstance(row, dict)
+                and row.get("strategy_code") == MOMENTUM_LIVE_CODE]
+    return {"strategy_code": MOMENTUM_LIVE_CODE, "display_name": "Momentum LIVE",
+            "execution_mode": "live", "provider": "massive", "runtime_kind": "momentum_live",
+            "account_name": "", "account_display_name": ", ".join(accounts) or "No retained account fills",
+            "broker_account_names": accounts, "positions": positions,
+            "position_count": len(positions) if known else "UNKNOWN", "daily_pnl": pnl,
+            "daily_pnl_partial": not known, "closed_today": ledger["closed_today"],
+            "closed_today_source": "strategy_owned_broker_fills" if known else "UNKNOWN_FILL_EPISODE_COVERAGE",
+            "watchlist": [], "watchlist_count": "UNKNOWN", "pending_open_symbols": [],
+            "pending_close_symbols": [], "pending_scale_levels": {},
+            "recent_decisions": ledger["recent_decisions"], "recent_intents": owned_rows("recent_intents"),
+            "recent_orders": owned_rows("recent_orders"), "recent_fills": owned_rows("recent_fills"),
+            "indicator_snapshots": [], "bar_counts": {}, "last_tick_at": {}, "tos_parity": {},
+            "wiring_status": status["state"], "data_health": {"status": status["state"]},
+            "momentum_live_evidence": {"ledger": ledger, "owner": owner, "metrics": metrics},
+            "momentum_live_context": {"services": data.get("services", []), "market_data": data.get("market_data", {})},
+            "ledger_read_at": utcnow().isoformat()}
+
+
+def _compact_momentum_live_card(bot: dict[str, Any]) -> str:
+    status = _build_bot_listening_status(bot.get("momentum_live_context", {}), bot, [])
+    pnl = bot.get("daily_pnl")
+    pnl_label = f"{Decimal(str(pnl)):+.2f}" if pnl is not None else "UNKNOWN"
+    known = type(bot.get("position_count")) is int
+    position_detail = "; ".join(
+        f"{row.get('symbol', 'UNKNOWN')} {row.get('quantity', 'UNKNOWN')} @ {row.get('entry_price', 'UNKNOWN')} ({row.get('account_name', 'UNKNOWN')})"
+        for row in bot.get("positions", [])) if known else "UNKNOWN (incomplete LIVE ledger)"
+    position_detail = position_detail or "No open LIVE positions"
+    return f'''<div class="bot" data-strategy="momentum_warn_live">
+      <div class="bot-top"><div><div class="bot-name"><a href="/bot/momentum">Momentum LIVE</a></div>
+      <div class="bot-route">strategy-owned broker fills · Massive warning feed</div></div>
+      <span class="pill good"><span class="dot good"></span>LIVE</span></div>
+      <div class="bot-metrics">
+      <div class="metric"><div class="m-label">State</div><div class="m-val">{escape(status['state'])}</div></div>
+      <div class="metric"><div class="m-label">LIVE positions</div><div class="m-val">{escape(str(bot.get('position_count', 'UNKNOWN')))}</div></div>
+      <div class="metric"><div class="m-label">Today LIVE P&amp;L</div><div class="m-val">{escape(pnl_label)}</div></div></div>
+      <div class="bot-health-row">{escape(position_detail)}</div>
+      <div class="bot-route">{escape(status['detail'])}</div>
+      <div class="bot-route">Ledger read: {escape(str(bot.get('ledger_read_at', 'UNKNOWN')))}</div></div>'''
 
 
 def _compact_service_row(service: dict[str, Any], *, token_status: dict[str, Any]) -> str:
@@ -5316,6 +5417,10 @@ def _render_dashboard(
     return _render_compact_dashboard(data)
 
 BOT_PAGE_META = {
+    "momentum_warn_live": {
+        "title": "Momentum LIVE", "nav_title": "Momentum", "badge": "M",
+        "color": "#ff8a3d", "path": "/bot/momentum",
+    },
     "macd_30s": {
         "title": "Schwab 30 Sec Bot",
         "nav_title": "Schwab 30s",
@@ -5697,6 +5802,9 @@ def _build_bot_listening_status(
     recent_decisions: list[dict[str, Any]],
     *, strategy_service_name: str = "strategy-engine",
 ) -> dict[str, Any]:
+    if bot.get("strategy_code") == MOMENTUM_LIVE_CODE and "momentum_live_evidence" in bot:
+        evidence = bot["momentum_live_evidence"]
+        return _momentum_listening_status(data, evidence["ledger"], [], evidence["owner"], evidence["metrics"])
     if bot.get("strategy_code") in MOMENTUM_REFERENCE_CODES:
         service = _service_by_name(data, "momentum-paper") or {}
         details = dict(service.get("details") or {})
@@ -6896,7 +7004,7 @@ def _render_momentum_page(data: dict[str, Any], *, live: dict[str, Any], warning
         for row in sorted(live_orders, key=lambda item: _momentum_page_sort_time(item.get("updated_at")), reverse=True))
     order_rows = order_rows or '<tr><td colspan="7">No live orders in the available order history</td></tr>'
     failed_rows = _momentum_page_tape_rows(warnings, failures=True, live_orders=live_orders)
-    nav = _render_page_nav("momentum_30s_warn", [str(bot["strategy_code"]) for bot in data.get("bots", [])])
+    nav = _render_page_nav(MOMENTUM_LIVE_CODE, [str(bot["strategy_code"]) for bot in data.get("bots", [])])
     live_table = _render_momentum_ledger(live, title="LIVE (real orders)", method="LIVE", other_rows=[], paper=False)
     reference_tables = ''.join(_render_momentum_ledger(
         next((row for row in warnings if row.get("strategy_code") == code), {"status": "UNKNOWN"}),
@@ -11178,6 +11286,12 @@ def _render_tos_tolerance_hint(delta: float, *, label: str, tight: float, watch:
 
 
 def _build_bot_account_summary(data: dict[str, Any], bot: dict[str, Any]) -> dict[str, Any]:
+    if bot.get("strategy_code") == MOMENTUM_LIVE_CODE:
+        return {"source": "strategy_owned_broker_fills", "account_names": bot.get("broker_account_names", []),
+                "account_position_count": bot.get("position_count", "UNKNOWN"),
+                "strategy_symbol_count": len({row.get("symbol") for row in bot.get("positions", [])}),
+                "gross_market_value": None, "non_strategy_symbol_count": None,
+                "non_strategy_symbols": [], "latest_updated_at": bot.get("ledger_read_at", "UNKNOWN")}
     account_rows = [
         item for item in data["account_positions"] if item.get("broker_account_name") == bot["account_name"]
     ]
