@@ -295,6 +295,7 @@ class SymbolState:
     slotclear_fresh_buy_segment_id: int = 0
     slotclear_reconstructed_watch_start_ms: int = 0
     slotclear_last_fresh_sell_bar_ms: int = 0
+    slotclear_deferred_sell: tuple[int, int, int] | None = None
     cw_resting_suppressed_segment_id: int = 0   # SLOT2 marker dedupe; policy remains cw_resting_taken
     cw_resting_suppressed_bars: int = 0         # eligible bars suppressed by the consumed slot
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
@@ -3181,6 +3182,7 @@ class SchwabV2Strategy:
         state.slotclear_fresh_buy_bar_ms = 0
         state.slotclear_fresh_buy_segment_id = 0
         state.slotclear_reconstructed_watch_start_ms = 0
+        state.slotclear_deferred_sell = None
         state.cw_resting_suppressed_segment_id = 0
         state.cw_resting_suppressed_bars = 0
 
@@ -4852,6 +4854,7 @@ class SchwabV2Strategy:
         state.atr_state_age = 0
         state.atr_short_flip_bar_ts = 0
         state.restart_last_live_sell_ms = 0
+        state.slotclear_deferred_sell = None
 
     @staticmethod
     def _drop_queued_open_intents_for_symbol(
@@ -4981,6 +4984,7 @@ class SchwabV2Strategy:
         if not state.gap_hold_active or state.gap_hold_contiguous_bars < required:
             return False
         state.gap_hold_active = False
+        self._retry_slotclear_deferred_sell(state)
         logger.info(
             "[V2-GAP-RESUME] %s contiguous_bars=%d required_bars=%d trail=%s entry_allowed=1",
             state.symbol,
@@ -5375,6 +5379,7 @@ class SchwabV2Strategy:
                     state.atr_state, state.atr_trail = "long", close - loss
                     flip, state.atr_state_age = "BUY", 0
                     state.atr_short_flip_bar_ts = 0
+                    state.slotclear_deferred_sell = None
 
         # Roll prev trail/state to THIS bar's values for the next bar's touch test.
         state.atr_prev_trail = state.atr_trail
@@ -5675,6 +5680,7 @@ class SchwabV2Strategy:
             decision_id=decision_id,
         )
         self._atr_sell_observed_bar_by_symbol[state.symbol] = cur.timestamp_ms
+        self._remember_slotclear_gap_sell(state, atr_signal)
         if self._bar_observation_phase == "live":
             state.restart_last_live_sell_ms = cur.timestamp_ms
         self._pending_atr_sell_observations[decision_id] = observation
@@ -5723,9 +5729,12 @@ class SchwabV2Strategy:
             return
         flip = (atr_signal or {}).get("flip")
         if flip == "BUY":
+            state.slotclear_deferred_sell = None
             state.fresh_sell_owner_release_segment_ms = 0
         elif state.fresh_sell_owner_release_segment_ms and flip != "SELL":
             self._fresh_sell_release_owner(state, atr_signal)
+        if flip != "SELL":
+            self._retry_slotclear_deferred_sell(state)
         # New bar: reset the forming-bar low; release a stale emit claim that never filled.
         state.cw_bar_low_so_far = 0.0
         state.cw_v2_bars_since_exit += 1  # reclaim gap: count NEW bars since the prior exit
@@ -6024,8 +6033,56 @@ class SchwabV2Strategy:
                 or not self._flip_owned_first_entry_enabled
                 or not self._slotclear_live_sell_close_after_watch(state, watch_ms)
                 or signal.get("observation_phase", "live") != "live"
-                or state.atr_short_flip_bar_ts != state.bars[-1].timestamp_ms
-                or not self.line_buy_ready(state.symbol) or self._entries_held
+                or state.atr_short_flip_bar_ts != state.bars[-1].timestamp_ms):
+            return
+        self._remember_slotclear_gap_sell(state, signal)
+        self._release_slotclear_sell_cap(state, int(state.bars[-1].timestamp_ms))
+
+    def _remember_slotclear_gap_sell(self, state: SymbolState, signal: dict) -> None:
+        watch_ms = state.slotclear_reconstructed_watch_start_ms
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        if (getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled", False)
+                and self._flip_owned_first_entry_enabled
+                and signal.get("flip") == "SELL"
+                and signal.get("observation_phase", "live") == "live"
+                and self.gap_hold_active(state.symbol)
+                and self._slotclear_live_sell_close_after_watch(
+                    state, max(watch_ms, state.retry_one_watch_start_ms, self._boot_ms))
+                and watch_ms > 0 and state.atr_short_flip_bar_ts == bar_ms
+                and bar_ms > state.slotclear_last_fresh_sell_bar_ms
+                and state.cw_resting_taken and state.cw_reclaim_taken):
+            # Process-local proof only: restore/replay cannot mint a deferred boundary.
+            state.slotclear_deferred_sell = (bar_ms, watch_ms, self._boot_ms)
+            # The gap return also skips normal SELL budget initialization. Use its
+            # durable, monotonic once-per-segment path while THIS bar is still live.
+            self._retry_one_start_segment_on_sell(state, live=True)
+
+    def _retry_slotclear_deferred_sell(self, state: SymbolState) -> None:
+        proof = state.slotclear_deferred_sell
+        if proof is None:
+            return
+        sell_ms, watch_ms, boot_ms = proof
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        if (watch_ms != state.slotclear_reconstructed_watch_start_ms
+                or boot_ms != self._boot_ms or state.atr_state != "short"
+                or state.atr_short_flip_bar_ts != sell_ms
+                or sell_ms <= state.slotclear_last_fresh_sell_bar_ms
+                or bar_ms < sell_ms
+                or session_start_ts_ms(bar_ms) != session_start_ts_ms(sell_ms)):
+            state.slotclear_deferred_sell = None
+            return
+        if (not getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled", False)
+                or not self._flip_owned_first_entry_enabled
+                or not self._slotclear_live_sell_close_after_watch(
+                    state, max(watch_ms, state.retry_one_watch_start_ms, boot_ms))
+                or self._entry_window_closed_for_session()
+                or state.restart_rest_evidence_pending or state.restart_owner_unmanaged):
+            return
+        self._release_slotclear_sell_cap(state, sell_ms)
+
+    def _release_slotclear_sell_cap(self, state: SymbolState, sell_ms: int) -> None:
+        watch_ms = state.slotclear_reconstructed_watch_start_ms
+        if (not self.line_buy_ready(state.symbol) or self._entries_held
                 or self.gap_hold_active(state.symbol) or self._removed_wait_gate_closed(state.symbol)
                 or not self._flip_owner_restore_readable or not self._flip_owner_evidence_fresh(state)
                 or state.flip_owner_phase != "idle" or state.flip_owner_opportunity_id
@@ -6039,9 +6096,9 @@ class SchwabV2Strategy:
                 or not (state.cw_resting_taken and state.cw_reclaim_taken)):
             return
         self._clear_cw_slot_claims(state)
-        state.slotclear_last_fresh_sell_bar_ms = int(state.bars[-1].timestamp_ms)
+        state.slotclear_last_fresh_sell_bar_ms = sell_ms
         logger.info("[V2-SLOTCLEAR1-SELL] %s watch_start=%d flip_close=%d action=release_reconstructed_slots",
-                    state.symbol, watch_ms, state.bars[-1].timestamp_ms + 60000)
+                    state.symbol, watch_ms, sell_ms + 60000)
 
     def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         if not self.line_buy_ready(state.symbol):
