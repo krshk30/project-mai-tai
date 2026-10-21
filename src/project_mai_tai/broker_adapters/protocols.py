@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal, Protocol
+from typing import Callable, Literal, Protocol
 
 
 def utcnow() -> datetime:
@@ -23,6 +23,8 @@ class OrderRequest:
     metadata: dict[str, str] = field(default_factory=dict)
     order_type: str = "market"
     time_in_force: str = "day"
+    # In-process fence only; never serialized into provider or durable metadata.
+    prewire_check: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)

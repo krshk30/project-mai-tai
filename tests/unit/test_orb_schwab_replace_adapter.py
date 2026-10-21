@@ -7,6 +7,7 @@ from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.broker_adapters.schwab import SchwabBrokerAdapter
 from project_mai_tai.orb_schwab_order_route import build_orb_schwab_reprice_intent
 from project_mai_tai.settings import Settings
+from project_mai_tai.strategy_core.orb_pastlevel import select_entry
 
 
 def _setup():
@@ -30,23 +31,32 @@ def _setup():
         intent_type="open",
         quantity=Decimal("2"),
         reason="reprice",
-        metadata=event.payload.metadata,
+        metadata={**event.payload.metadata, **select_entry(Decimal("5.60"),
+            {"ask": "5.40", "received_at": datetime(2026, 10, 21, 13, 29, tzinfo=UTC)},
+            datetime(2026, 10, 21, 13, 29, tzinfo=UTC), max_age_ms=2000)},
+        prewire_check=lambda: None,  # Adapter-shape fixture; freshness has separate cases.
     )
     return adapter, request
 
 
 @pytest.mark.asyncio
-async def test_replace_uses_one_put_and_confirms_entire_bracket(monkeypatch) -> None:
+@pytest.mark.parametrize("ask", ["5.40", "5.61"])
+async def test_replace_uses_one_put_and_confirms_entire_bracket(monkeypatch, ask) -> None:
+    from dataclasses import replace
     adapter, request = _setup()
+    request = replace(request, metadata={**request.metadata, **select_entry(Decimal("5.60"),
+        {"ask": ask, "received_at": datetime(2026, 10, 21, 13, 29, tzinfo=UTC)},
+        datetime(2026, 10, 21, 13, 29, tzinfo=UTC), max_age_ms=2000)})
     desired = adapter._build_bracket_payload(request)
-    old = {**desired, "stopPrice": 5.50, "price": 5.52, "status": "WORKING", "quantity": 2}
+    old = {**desired, "orderType": "STOP_LIMIT", "stopPrice": 5.50, "price": 5.52,
+           "status": "WORKING", "quantity": 2}
     new = {**desired, "status": "WORKING", "quantity": 2, "filledQuantity": 0}
     calls = []
 
     async def fetch(_account, order_id):
         return old if order_id == "old" else new
 
-    async def request_json(method, path, body=None):
+    async def request_json(method, path, body=None, **_kwargs):
         calls.append((method, path, body))
         return 201, {"Location": "/trader/v1/accounts/test-hash/orders/new"}, {}
 
@@ -72,7 +82,7 @@ async def test_unknown_replace_never_claims_success(monkeypatch) -> None:
     async def fetch(_account, order_id):
         return old if order_id == "old" else None
 
-    async def request_json(_method, _path, body=None):
+    async def request_json(_method, _path, body=None, **_kwargs):
         return 201, {"Location": "/trader/v1/accounts/test-hash/orders/new"}, {}
 
     monkeypatch.setattr(adapter, "_fetch_order", fetch)

@@ -1931,6 +1931,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if self._rpg_external_retry(event):
             return []
         strategy_code = str(event.payload.strategy_code).strip().lower()
+        orb_admission_event = event
         reserve1_dispatch = self.__dict__.get("_reserve1_hard_stop_dispatch", {}).pop(
             event.event_id, None,
         ) == event.model_dump_json()
@@ -2212,34 +2213,36 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                             return [order_event]
                     if event.payload.metadata.get("orb_schwab_reprice") == "true":
                         if target is None:
-                            reason = "orb_schwab_reprice_no_working_parent"
-                            self.store.mark_intent_refused(
-                                intent, origin="skipped_before_submit", code=reason
-                            )
-                            order_event = self._build_rejected_event(
-                                event, intent.id, reason=reason
+                            try:
+                                event = await self._orb_pastlevel_continue(
+                                    session, intent, event, broker_account)
+                            except ValueError as exc:
+                                reason = str(exc)
+                                self.store.mark_intent_refused(intent, origin="client_abort", code=reason)
+                                order_event = self._build_rejected_event(event, intent.id, reason=reason)
+                                session.commit()
+                                await self._publish_order_event(order_event)
+                                return [order_event]
+                        else:
+                            published_events = await self._process_orb_schwab_reprice(
+                                session=session, intent=intent, event=event, target=target
                             )
                             session.commit()
-                            await self._publish_order_event(order_event)
-                            return [order_event]
-                        published_events = await self._process_orb_schwab_reprice(
-                            session=session, intent=intent, event=event, target=target
-                        )
-                        session.commit()
-                        for order_event in published_events:
-                            await self._publish_order_event(order_event)
-                        return published_events
-                published_events = await self._process_cancel_intent(
-                    session=session,
-                    strategy_id=strategy.id,
-                    broker_account_id=broker_account.id,
-                    intent=intent,
-                    event=event,
-                )
-                session.commit()
-                for order_event in published_events:
-                    await self._publish_order_event(order_event)
-                return published_events
+                            for order_event in published_events:
+                                await self._publish_order_event(order_event)
+                            return published_events
+                if event.payload.intent_type == "cancel":
+                    published_events = await self._process_cancel_intent(
+                        session=session,
+                        strategy_id=strategy.id,
+                        broker_account_id=broker_account.id,
+                        intent=intent,
+                        event=event,
+                    )
+                    session.commit()
+                    for order_event in published_events:
+                        await self._publish_order_event(order_event)
+                    return published_events
 
             if (
                 broker_account.provider == "schwab"
@@ -2762,6 +2765,23 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             if (strategy_code == "orb_schwab" and event.payload.intent_type == "open"
                     and broker_account.provider == "schwab"):
+                from project_mai_tai.oms.orb_pastlevel import day_intents, receipt
+                proof = (intent.payload or {}).get("orb_pastlevel")
+                if proof is None:
+                    if day_intents(session, intent, utcnow()):
+                        self.store.mark_intent_refused(intent, origin="client_abort",
+                                                       code="orb_pastlevel_original_plan_already_exists")
+                        session.commit()
+                        return [self._build_rejected_event(event, intent.id,
+                            reason="orb_pastlevel_original_plan_already_exists")]
+                    receipt(intent, str(intent.id), "reserved")
+                try:
+                    request = self._orb_pastlevel_request(request, orb_admission_event)
+                except ValueError as exc:
+                    receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "local_zero")
+                    self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+                    session.commit()
+                    return [self._build_rejected_event(event, intent.id, reason=str(exc))]
                 preview_error = None
                 try:
                     preview_status, preview_body = await self.broker_adapter.preview_bracket_order(
@@ -2777,6 +2797,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     preview_status, preview_body
                 )
                 if not accepted:
+                    receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "local_zero")
                     self.store.mark_intent_refused(
                         intent, origin="client_abort", code="orb_schwab_preview_not_accepted"
                     )
@@ -2804,7 +2825,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         request.symbol, warns,
                     )
                 post_preview_refusal = orb_schwab_intent_refusal(
-                    event, self.settings, utcnow()
+                    orb_admission_event, self.settings, utcnow()
                 )
                 if post_preview_refusal is None and self.settings.orb_schwab_atr_entry_gate_enabled:
                     atr = schwab_atr_entry_gate(self.session_factory, event.payload.symbol, utcnow())
@@ -2813,6 +2834,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     if atr.verdict != "allowed":
                         post_preview_refusal = f"orb_schwab_atr_{atr.reason}"
                 if post_preview_refusal is not None:
+                    receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "local_zero")
                     self.store.mark_intent_refused(
                         intent, origin="client_abort", code=post_preview_refusal
                     )
@@ -2856,6 +2878,20 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if (deferred is not None and deferred.event.payload.broker_account_name == request.broker_account_name
                     and deferred.symbol == request.symbol):
                 deferred.local_no_wire = False
+            if (strategy_code == "orb_schwab" and broker_account.provider == "schwab"
+                    and request.prewire_check is not None):
+                try:
+                    request.prewire_check()
+                except (ValueError, RuntimeError) as exc:
+                    from project_mai_tai.oms.orb_pastlevel import receipt
+                    receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "local_zero")
+                    self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+                    session.commit()
+                    return [self._build_rejected_event(event, intent.id, reason=str(exc))]
+                from project_mai_tai.oms.orb_pastlevel import receipt
+                # Release of the transaction lock cannot release the plan budget.
+                receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "MAY_HAVE_SENT")
+                session.commit()
             await self._prepare_bot_control_entry(session, intent, request, event.produced_at)
             pending_sell_id = None
             pending_sell_required = False
@@ -16189,6 +16225,77 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             await self.process_trade_intent(event)
 
+    def _orb_pastlevel_request(self, request, admission_event):
+        from project_mai_tai.strategy_core.orb_pastlevel import assert_same_selection, select_entry
+        level = Decimal(admission_event.payload.metadata["orb_intended_break_level"])
+        max_age = int(self.settings.orb_oms_quote_priced_max_age_ms)
+        selected = select_entry(level, self._latest_quotes_by_symbol.get(request.symbol),
+                                utcnow(), max_age_ms=max_age)
+        metadata = {**request.metadata, **selected}
+
+        def fence():
+            refusal = orb_schwab_intent_refusal(admission_event, self.settings, utcnow())
+            if refusal:
+                raise ValueError(refusal)
+            assert_same_selection(level, self._latest_quotes_by_symbol.get(request.symbol),
+                                  utcnow(), selected, max_age_ms=max_age)
+
+        self.logger.info("[ORBPASTLEVEL1] symbol=%s type=%s trigger=%s ask=%s "
+                         "nominal_cap_pct=%s effective_cap=%s effective_cap_pct=%s anchor=%s",
+                         request.symbol, selected["order_type"], selected["stop_price"],
+                         selected["orb_quote_ask"], selected["orb_buy_cap_nominal_pct"],
+                         selected["orb_buy_cap_effective_price"], selected["orb_buy_cap_effective_pct"],
+                         selected["orb_exit_anchor"])
+        return replace(request, metadata=metadata, order_type=selected["order_type"], prewire_check=fence)
+
+    async def _orb_pastlevel_continue(self, session, intent, event, account):
+        from project_mai_tai.oms.orb_pastlevel import day_intents, receipt, unsent_plan
+        if account.provider != "schwab":
+            raise ValueError("orb_schwab_reprice_no_working_parent")
+        root = unsent_plan(session, intent, utcnow())
+        prior = (root.payload or {}).get("metadata", {})
+        # Route/control authority belongs to the new event; the root binds the plan/account/day.
+        for key in ("orb_country_route", "orb_country_broker", "orb_country_reason",
+                    "orb_country_status", "orb_country_as_of"):
+            if prior.get(key) != event.payload.metadata.get(key):
+                raise ValueError("orb_pastlevel_plan_route_changed")
+        for row in day_intents(session, intent, utcnow()):
+            if (row.payload or {}).get("event_id") == str(event.event_id):
+                raise ValueError("orb_pastlevel_redelivery_no_retry")
+            if Decimal(event.payload.metadata["stop_price"]) <= Decimal(row.payload["metadata"]["stop_price"]):
+                raise ValueError("orb_schwab_reprice_not_higher")
+        metadata = dict(event.payload.metadata)
+        metadata.pop("orb_schwab_reprice")
+        opened = event.model_copy(update={"payload": event.payload.model_copy(update={
+            "intent_type": "open", "quantity": root.quantity, "metadata": metadata})})
+        passed, reason = self._evaluate_risk(opened)
+        if not passed:
+            raise ValueError(reason or "orb_pastlevel_risk_refused")
+        from project_mai_tai.oms.orb_country import orb_route_owner_conflict, verify_country_admission
+        if metadata.get("orb_country_route") == "true":
+            if not await verify_country_admission(self, event, utcnow()):
+                raise ValueError("orb_country_route_changed_before_admission")
+            if orb_route_owner_conflict(session, account.id, account.name, event.payload.symbol,
+                                        intent.strategy_id, admission=True):
+                raise ValueError("orb_pastlevel_owner_conflict")
+        collision = self._orb_schwab_collision_reason(session=session, account_id=account.id,
+            symbol=event.payload.symbol, incoming_strategy="orb_schwab",
+            country_routed=metadata.get("orb_country_route") == "true")
+        if collision:
+            raise ValueError(collision)
+        verdict, reason, _ = schwab_completed_bar_macd_gate(self.session_factory, event.payload.symbol, utcnow())
+        if verdict != MacdVerdict.ALLOWED:
+            raise ValueError(f"orb_schwab_macd_{reason}")
+        if self.settings.orb_schwab_atr_entry_gate_enabled:
+            atr = schwab_atr_entry_gate(self.session_factory, event.payload.symbol, utcnow())
+            if atr.verdict != "allowed":
+                raise ValueError(f"orb_schwab_atr_{atr.reason}")
+        # This intent continues the root's unused budget, not a new daily plan.
+        intent.intent_type, intent.quantity = "open", root.quantity
+        intent.payload = {**dict(intent.payload or {}), "metadata": metadata}
+        receipt(intent, str(root.id), "reserved")
+        return opened
+
     async def _process_orb_schwab_reprice(
         self,
         *,
@@ -16257,6 +16364,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             order_type="stop_limit",
             time_in_force="day",
         )
+        try:
+            request = self._orb_pastlevel_request(request, event)
+            metadata = dict(request.metadata)
+        except ValueError as exc:
+            self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+            return [self._build_rejected_event(event, intent.id, reason=str(exc))]
         preview_error = None
         try:
             preview_status, preview_body = await self.broker_adapter.preview_bracket_order(request)
@@ -16306,6 +16419,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             request.metadata["bot_control_replace_intent_id"] = str(intent.id)
             session.commit()
         try:
+            request.prewire_check()
+        except ValueError as exc:
+            self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+            return [self._build_rejected_event(event, intent.id, reason=str(exc))]
+        try:
             report = await self.broker_adapter.replace_bracket_order(request, old_id)
         except Exception:
             self.logger.exception(
@@ -16353,6 +16471,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             return [self._build_rejected_event(event, intent.id, reason=reason)]
         target.broker_order_id = report.broker_order_id
+        target.order_type = request.order_type
         target.payload = {**old_metadata, **metadata}
         self.store.append_order_event(
             session,
