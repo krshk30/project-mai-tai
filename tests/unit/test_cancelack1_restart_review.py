@@ -101,7 +101,9 @@ def later_closed_episode(bot, request, clock, name, *, fault="none"):
         session.add(DashboardSnapshot(snapshot_type="v2_flip_entry_ownership",
             payload={"schema_version": 1, "strategy_code": "schwab_1m_v2", "symbol": request.symbol,
                 "opportunity_id": str(segment), "fill_accounts": [name], "position_ids": {},
-                "active": False, "phase": "idle"}, created_at=instant(at + 30_000)))
+                "active": fault in {"closed_bound", "unknown_owner"},
+                "phase": {"closed_bound": "bound", "unknown_owner": "unknown"}.get(fault, "idle")},
+            created_at=instant(at + 30_000)))
         md = {"fanout_segment_id": str(segment), "clearwait_dispatch_token": token}
         parent = TradeIntent(strategy_id=strategy.id, broker_account_id=account.id, symbol=request.symbol,
             side="buy", intent_type="open", quantity=1, reason="synthetic later closed episode",
@@ -143,7 +145,7 @@ def later_closed_episode(bot, request, clock, name, *, fault="none"):
 
 
 @pytest.mark.parametrize("required", [(PRIMARY,), (MIRROR,)])
-@pytest.mark.parametrize("fault", ["none", "missing_segment", "same_episode", "same_token",
+@pytest.mark.parametrize("fault", ["none", "closed_bound", "unknown_owner", "missing_segment", "same_episode", "same_token",
                                    "wrong_order_token", "orphan_order", "possibly_sent", "still_managed"])
 def test_real_query_later_closed_episode_does_not_poison_old_confirmation(monkeypatch, required, fault):
     bot, state, clock, request, writes, engine = synthetic_case(monkeypatch, required=required)
@@ -152,12 +154,13 @@ def test_real_query_later_closed_episode_does_not_poison_old_confirmation(monkey
         later_closed_episode(bot, request, clock, required[0], fault=fault)
         clock[0] += 24 * 60 * 60_000
         refresh(bot, clock)
-        assert (entry.order_id in bot._closed_confirmation_entry_ids([entry])) is (fault == "none")
+        expected = fault in {"none", "closed_bound"}
+        assert (entry.order_id in bot._closed_confirmation_entry_ids([entry])) is expected
         with bot.session_factory() as session:
             accounts = {a.id: a.name for a in session.scalars(select(BrokerAccount))}
             strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == "schwab_1m_v2"))
             scope = ObligationScope(request.symbol, request.opportunity_id, clock[0], request.account_names)
-            if fault == "none":
+            if expected:
                 assert load_proven_accounts(session, scope, accounts, strategy_id) == frozenset(required)
             else:
                 with pytest.raises(ValueError):

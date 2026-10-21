@@ -173,8 +173,13 @@ def load_proven_accounts(session, request, accounts, strategy_id):
             DashboardSnapshot.payload["opportunity_id"].as_string() == str(foreign)))
         proven_accounts(scope, accounts, strategy_id, foreign_journal, foreign_owners, parents, children)
         latest = max(foreign_owners, key=lambda row: (_at(row.created_at), str(row.id)))
+        known_owner = ((latest.payload.get("phase") == "idle" and latest.payload.get("active") is False)
+            or (latest.payload.get("phase") in {"bound", "consumed", "awaiting_close"}
+                and latest.payload.get("active") is True))
         if (any(_metadata(row).get("clearwait_dispatch_token") in own_tokens for row in parents)
-                or latest.payload.get("active") is not False or latest.payload.get("phase") != "idle"
+                or not known_owner
+                or any(_at(row.created_at) == _at(latest.created_at) and row.payload != latest.payload
+                       for row in foreign_owners)
                 or any(_at(row.created_at) > request.requested_at_ms for row in foreign_owners)
                 or any(not any(child.intent_id == row.id for child in children) for row in parents)
                 or any(not _closed_order(session, row, request.requested_at_ms) for row in children)):
