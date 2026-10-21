@@ -185,6 +185,15 @@ class RoutingBrokerAdapter:
         return await fn(broker_account_name=broker_account_name, symbol=symbol,
             base_client_order_id=base_client_order_id, quantity=quantity, after=after, original_attempts=original_attempts)
 
+    def cached_attach_pair_terminal(self, account_name, symbol, base, quantity):
+        provider = self.provider_by_account.get(account_name, self.default_provider)
+        if provider != "webull":
+            return None
+        # Cache inspection must not instantiate a provider or start any I/O.
+        adapter = self._adapters_by_provider.get(provider)
+        reader = getattr(adapter, "cached_attach_pair_terminal", None)
+        return reader(account_name, symbol, base, quantity) if reader else None
+
     async def fetch_quotes(self, symbols: list[str]) -> dict[str, dict[str, float | None]]:
         """Quotes for ``symbols``, from ANY configured provider that can serve them.
 

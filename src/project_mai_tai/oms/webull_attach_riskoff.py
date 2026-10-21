@@ -8,7 +8,7 @@ from copy import deepcopy
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
 from math import isfinite
 from time import monotonic
@@ -590,7 +590,10 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
                 event = TradeIntentEvent(source_service="oms-risk", payload=TradeIntentPayload(
                     strategy_code=strategy.code, broker_account_name=acct.name, symbol=symbol,
                     side="sell", intent_type="close", quantity=owned, reason="WBATTACH1_PROTECTION",
-                    metadata={"entry_order_id": str(entry.id), "managed_row_id": str(row.id)}))
+                    metadata={"entry_order_id": str(entry.id), "managed_row_id": str(row.id),
+                              "webull_protect_base_client_order_id": base,
+                              "webull_protect_target_client_order_id": WebullBrokerAdapter._combo_leg_coid(base, "T"),
+                              "webull_protect_stop_client_order_id": WebullBrokerAdapter._combo_leg_coid(base, "S")}))
                 intent = service.store.create_trade_intent(session, strategy=strategy, broker_account=acct, event=event)
                 journal["attempts"] = [*journal["attempts"], {"base": base, "quantity": str(owned),
                     "intent_id": str(intent.id), "phase": "submitting", "cancel_requested": False}]
@@ -633,6 +636,11 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
                 intent = session.get(TradeIntent, UUID(last["intent_id"]))
                 if intent is not None:
                     intent.status = "accepted" if accepted else "pending"
+                    if accepted:
+                        last["combo_id"] = reports[0].broker_order_id
+                        intent.payload = {**intent.payload, "metadata": {
+                            **intent.payload.get("metadata", {}),
+                            "webull_protect_combo_id": reports[0].broker_order_id}}
                 journal["attempts"] = [*journal["attempts"][:-1], last]
             await _atr_state(service, account, symbol, coid, result)
             if accepted:
@@ -863,6 +871,119 @@ async def _atr_resolved_by_child(service, state, account, symbol, coid, base, re
             intent.status = "filled"
         return True
     return await service._run_db(write)
+
+
+def settle_cached_protection_intent(service, session, intent):
+    """Change only lifecycle bookkeeping after exact native and ledger proof."""
+    if (intent.reason != "WBATTACH1_PROTECTION" or intent.status not in {"accepted", "pending"}
+            or intent.side != "sell" or intent.intent_type != "close"):
+        return False
+    metadata = (intent.payload or {}).get("metadata", {})
+    entry = session.get(BrokerOrder, UUID(metadata["entry_order_id"]))
+    row = session.get(OmsManagedPosition, UUID(metadata["managed_row_id"]))
+    account = session.get(BrokerAccount, intent.broker_account_id)
+    strategy = session.get(Strategy, intent.strategy_id)
+    if (entry is None or row is None or account is None or account.provider != "webull"
+            or strategy is None or strategy.code != "schwab_1m_v2"
+            or entry.strategy_id != intent.strategy_id or entry.broker_account_id != intent.broker_account_id
+            or entry.symbol != intent.symbol or entry.side != "buy" or not entry.broker_order_id
+            or row.entry_order_id != entry.id or row.entry_client_order_id != entry.client_order_id
+            or row.broker_account_name != account.name or row.strategy_code != strategy.code
+            or row.symbol != intent.symbol):
+        return False
+    journal = (entry.payload or {}).get(KEY, {})
+    if journal.get("entry_id") != str(entry.id) or journal.get("managed_id") != str(row.id):
+        return False
+    attempts = [a for a in journal.get("attempts", []) if a.get("intent_id") == str(intent.id)]
+    if len(attempts) != 1:
+        return False
+    attempt = attempts[0]
+    base = metadata.get("webull_protect_base_client_order_id")
+    coids = [WebullBrokerAdapter._combo_leg_coid(base, suffix) for suffix in ("T", "S")] if base else []
+    quantity = Decimal(attempt["quantity"])
+    if (not base or attempt.get("base") != base or not quantity.is_finite() or quantity <= 0
+            or intent.quantity != quantity or [metadata.get("webull_protect_target_client_order_id"),
+                metadata.get("webull_protect_stop_client_order_id")] != coids
+            or not attempt.get("combo_id") or attempt["combo_id"] != metadata.get("webull_protect_combo_id")
+            or len([a for a in journal["attempts"] if a.get("base") == base]) != 1):
+        return False
+    reader = getattr(service.broker_adapter, "cached_attach_pair_terminal", None)
+    proof = reader(account.name, intent.symbol, base, quantity) if reader else None
+    if (not isinstance(proof, dict) or proof.get("source") != "complete_cached_today_list"
+            or (proof.get("account"), proof.get("symbol"), proof.get("base")) != (account.name, intent.symbol, base)):
+        return False
+    children = proof.get("children", [])
+    if len(children) != 2 or {c.get("coid") for c in children} != set(coids):
+        return False
+    if len({c.get("broker_order_id") for c in children}) != 2:
+        return False
+    for child in children:
+        evidence = child.get("evidence", {})
+        acquired = datetime.fromisoformat(evidence["acquired_at"])
+        filled = Decimal(child["filled_quantity"])
+        if (child.get("status") not in {"filled", "cancelled", "rejected"} or not child.get("broker_order_id")
+                or not filled.is_finite() or not 0 <= filled <= quantity
+                or child["status"] == "filled" and filled != quantity
+                or evidence.get("client_order_id") != child["coid"]
+                or evidence.get("complete") is not True or evidence.get("truncated") is not False
+                or acquired.tzinfo is None or not 0 <= (datetime.now(UTC) - acquired).total_seconds() < 2.):
+            return False
+    total = sum((Decimal(c["filled_quantity"]) for c in children), Decimal(0))
+    if total == 0:
+        status = "cancelled"
+    elif total == quantity:
+        winners = [c for c in children if Decimal(c["filled_quantity"]) > 0]
+        if (len(winners) != 1 or winners[0]["status"] != "filled"
+                or row.status != "closed" or row.current_quantity != 0):
+            return False
+        winner = winners[0]
+        price = Decimal(winner["price"])
+        filled_at = datetime.fromisoformat(winner["filled_at"])
+        if (not price.is_finite() or price <= 0 or filled_at.tzinfo is None
+                or filled_at > datetime.now(UTC)):
+            return False
+        # Inspect the existing economic writer's rows; never record/reparent a fill here.
+        orders = session.scalars(select(BrokerOrder).where(
+            BrokerOrder.broker_order_id == winner["broker_order_id"],
+            BrokerOrder.intent_id == entry.intent_id, BrokerOrder.strategy_id == entry.strategy_id,
+            BrokerOrder.broker_account_id == entry.broker_account_id,
+            BrokerOrder.symbol == intent.symbol, BrokerOrder.side == "sell")).all()
+        if len(orders) != 1 or (orders[0].payload or {}).get("source") != "native_oco_child_leg":
+            return False
+        fills = session.scalars(select(Fill).where(Fill.order_id == orders[0].id)).all()
+        if (len(fills) != 1 or fills[0].broker_account_id != entry.broker_account_id
+                or fills[0].strategy_id != entry.strategy_id or fills[0].symbol != intent.symbol
+                or fills[0].side != "sell" or fills[0].quantity != quantity
+                or fills[0].price != price.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+                or fills[0].filled_at.replace(tzinfo=UTC) != filled_at.astimezone(UTC)
+                or not str(fills[0].broker_fill_id or "").startswith(winner["broker_order_id"] + ":")):
+            return False
+        status = "filled"
+    else:
+        return False  # Partial execution or overfill cannot clear the lifecycle alarm.
+    intent.status = status
+    intent.payload = {**intent.payload, "metadata": {**metadata,
+        "wbattach1_terminal_bookkeeping": json.dumps({"status": status, "combo_id": attempt["combo_id"],
+            "proof": proof, "recorded_at": datetime.now(UTC).isoformat()}, sort_keys=True)}}
+    return True
+
+
+async def reconcile_cached_protection_intents(service, account_names):
+    if not callable(getattr(service.broker_adapter, "cached_attach_pair_terminal", None)):
+        return
+    def write(session):
+        query = select(TradeIntent).join(BrokerAccount, BrokerAccount.id == TradeIntent.broker_account_id).where(
+            TradeIntent.reason == "WBATTACH1_PROTECTION", TradeIntent.status.in_(["accepted", "pending"]),
+            BrokerAccount.provider == "webull")
+        if account_names is not None:
+            query = query.where(BrokerAccount.name.in_(account_names))
+        for intent in session.scalars(query).all():
+            try:
+                settle_cached_protection_intent(service, session, intent)
+            except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+                # Corrupt/legacy/missing proof stays visible; no symbol/time repair.
+                continue
+    await service._run_db(write)
 
 
 def _cancel_read_summary(reports):

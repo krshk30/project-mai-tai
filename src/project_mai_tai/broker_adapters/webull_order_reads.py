@@ -11,6 +11,7 @@ import json
 import threading
 import time
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid5
@@ -98,6 +99,24 @@ class TodayOrderReader:
         self.clock = clock
         self.lock = threading.Lock()
         self.scans: dict[str, ListScan] = {}
+
+    def peek_complete(self, account_id, client_ids, *, fresh_seconds=2.0):
+        """Copy existing complete evidence without a fetch or query-budget claim."""
+        if not self.lock.acquire(blocking=False):
+            return None
+        try:
+            scan = self.scans.get(account_id)
+            session = datetime.now(UTC).astimezone(ZoneInfo("America/New_York")).date().isoformat()
+            if scan is None or scan.session != session or not scan.complete or scan.failed:
+                return None
+            now = self.clock()
+            rows = [scan.rows.get(coid) for coid in client_ids]
+            if any(row is None or not 0 <= now - row[0] < fresh_seconds for row in rows):
+                return None
+            return [deepcopy(self._evidence(account_id, coid, scan, row))
+                    for coid, row in zip(client_ids, rows)]
+        finally:
+            self.lock.release()
 
     def read(self, account_id: str, client_id: str, fetch_page, *, fresh_seconds=2.0):
         with self.lock:
