@@ -118,6 +118,7 @@ class LiveActor:
     async def _entries(self) -> None:
         while True:
             event = await self.inbox.get()
+            identity = signal = None
             try:
                 if event.payload.intent_type == "open":
                     if not self.ports.enabled():
@@ -147,6 +148,13 @@ class LiveActor:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                if not isinstance(exc, Refusal):
+                    if identity is None and signal is not None:
+                        episode = self.book._sources.get(
+                            (signal.session_date, signal.symbol, signal.source_id))
+                        identity = episode.episode_id if episode is not None else None
+                    logger.exception("[MOMLIVE1-ENTRY-EXCEPTION] symbol=%s episode=%s exception_type=%s",
+                                     event.payload.symbol, identity or "UNKNOWN", type(exc).__name__)
                 logger.warning("[MOMLIVE1-REFUSED] symbol=%s reason=%s", event.payload.symbol,
                                str(exc) if isinstance(exc, Refusal) else "entry_observation_UNKNOWN")
                 self._refresh_owners()
