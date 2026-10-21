@@ -19378,6 +19378,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         elif broker_account.provider == "schwab":
             from project_mai_tai.oms.schwab_owned_positions import fallback_sell_quantity
 
+            broker_quantity = available_quantity
             try:
                 available_quantity = fallback_sell_quantity(
                     session, strategy_id=strategy.id, account_id=broker_account.id,
@@ -19406,6 +19407,27 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     self.logger.exception("[SCHWAB-FALLBACK-OWNERSHIP-PAGE-UNKNOWN] coid=%s sell_submitted=0",
                                           original_request.client_order_id)
                 return []
+            if available_quantity == 0 and Decimal(str(broker_quantity)) > 0:
+                source = "schwab_fallback_own_zero_broker_nonzero"
+                self.logger.critical("[SCHWAB-FALLBACK-OWN-ZERO-BROKER-NONZERO] account=%s symbol=%s "
+                    "coid=%s broker_quantity=%s sell_submitted=0", broker_account.name,
+                    original_event.payload.symbol, original_request.client_order_id, broker_quantity)
+                try:
+                    if session.scalar(select(SystemIncident.id).where(
+                            SystemIncident.service_name == SERVICE_NAME, SystemIncident.status == "open",
+                            SystemIncident.payload["source"].as_string() == source,
+                            SystemIncident.payload["client_order_id"].as_string() == original_request.client_order_id,
+                        ).limit(1)) is None:
+                        session.add(SystemIncident(service_name=SERVICE_NAME, severity="critical", status="open",
+                            title=f"Schwab fallback own zero, broker nonzero: {original_event.payload.symbol}",
+                            opened_at=utcnow(), payload={"source": source,
+                                "client_order_id": original_request.client_order_id,
+                                "broker_account_name": broker_account.name, "symbol": original_event.payload.symbol,
+                                "broker_quantity": str(broker_quantity), "own_quantity": "0",
+                                "sell_submitted": False}))
+                except Exception:
+                    self.logger.exception("[SCHWAB-FALLBACK-OWN-ZERO-PAGE-UNKNOWN] coid=%s sell_submitted=0",
+                                          original_request.client_order_id)
         if available_quantity <= 0:
             return []
 
