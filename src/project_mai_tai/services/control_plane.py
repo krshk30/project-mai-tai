@@ -1082,7 +1082,9 @@ class ControlPlaneRepository:
         live, owner, metrics = await asyncio.gather(
             asyncio.wait_for(asyncio.to_thread(load_live_ledger, self.session_factory, day), timeout=3),
             _read_momentum_page_owner(self.redis, self.settings.redis_stream_prefix, now_ns=now_ns),
-            _read_momentum_warning_gateway_metrics(self.redis, self.settings.redis_stream_prefix, now_ns=now_ns),
+            (_read_momentum_warning_gateway_metrics(self.redis, self.settings.redis_stream_prefix, now_ns=now_ns)
+             if self.settings.market_data_momentum_warning_enabled
+             else asyncio.sleep(0, result={"status": "UNKNOWN"})),
             return_exceptions=True,
         )
         live = live if isinstance(live, dict) else {"status": "UNKNOWN"}
