@@ -39,6 +39,7 @@ from sqlalchemy import text
 
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.settings import get_settings
+from project_mai_tai.phone_alert_policy import manual_only
 
 ET = ZoneInfo("America/New_York")
 TOPIC = "mai-tai-preopen-28806a5a97b7"
@@ -185,6 +186,9 @@ async def main() -> int:
     if account is None:
         print(f"no schwab account {acct_name}")
         return 0
+    # Include every configured name for the SAME physical Schwab account.
+    lookup_accounts = sorted(name for name, config in sch.accounts_by_name.items()
+                             if config.account_hash == account.account_hash)
     from datetime import timedelta
     now = datetime.now(UTC)
     path = (f"/trader/v1/accounts/{_q(account.account_hash, safe='')}/orders"
@@ -202,35 +206,62 @@ async def main() -> int:
 
     reds: list[str] = []
     ambers: list[str] = []
+    phone_reds: list[str] = []
+    phone_ambers: list[str] = []
 
     # --- OWNERSHIP + OVERSELL inputs: one batched read, not a query per order -----------------
     working_ids = [str(o.get("orderId") or "") for o in body
                    if str(o.get("status", "")).upper() in WORKING and o.get("orderId")]
     our_rows: dict[str, dict] = {}
     held_by_symbol: dict[str, float] = {}
+    lookup_complete = False
     if working_ids:
-        with sf() as sess:
-            for r in sess.execute(text("""
+        try:
+            with sf() as sess:
+                names = {str(r["name"]) for r in sess.execute(text(
+                    "SELECT name FROM broker_accounts WHERE provider = 'schwab'"
+                )).mappings()}
+                aliases_known = names <= set(sch.accounts_by_name)
+                bot_rows = list(sess.execute(text("""
                 SELECT bo.broker_order_id AS bid, bo.status AS status,
                        MAX(CASE WHEN boe.event_type = 'rejected'
                                  AND boe.payload::text ILIKE '%resting_entry_cancel%'
                                 THEN boe.event_at END) AS failed_cancel_at
                 FROM broker_orders bo
+                JOIN broker_accounts ba ON ba.id = bo.broker_account_id
                 LEFT JOIN broker_order_events boe ON boe.order_id = bo.id
-                WHERE bo.broker_order_id = ANY(:ids)
+                WHERE ba.name = ANY(:accounts) AND ba.provider = 'schwab'
+                  AND bo.broker_order_id = ANY(:ids)
                 GROUP BY bo.broker_order_id, bo.status
-            """), {"ids": working_ids}).mappings():
-                our_rows[str(r["bid"])] = dict(r)
-            for r in sess.execute(text("""
+                """), {"ids": working_ids, "accounts": lookup_accounts}).mappings())
+                for r in bot_rows:
+                    our_rows[str(r["bid"])] = dict(r)
+                for r in sess.execute(text("""
                 SELECT ap.symbol AS symbol, ap.quantity AS qty
                 FROM account_positions ap
                 JOIN broker_accounts ba ON ba.id = ap.broker_account_id
                 WHERE ba.name = :acct
-            """), {"acct": acct_name}).mappings():
-                held_by_symbol[str(r["symbol"]).upper()] = float(r["qty"] or 0)
+                """), {"acct": acct_name}).mappings():
+                    held_by_symbol[str(r["symbol"]).upper()] = float(r["qty"] or 0)
+                lookup_complete = aliases_known
+                if not aliases_known:
+                    phone_reds.append(f"Ownership account-alias coverage UNKNOWN for {acct_name}; no manual-order exclusion")
+        except Exception as exc:
+            # A failed/partial lookup is not proof of an operator's manual order.
+            print(f"ORPHAN ownership lookup UNKNOWN account={acct_name} error={type(exc).__name__}")
+            phone_reds.append(f"Ownership lookup UNKNOWN for {acct_name}; native IDs={working_ids}; no manual-order exclusion")
+
+    def finding(severity, message, native_ids):
+        (reds if severity == "RED" else ambers).append(message)
+        if manual_only(account=acct_name, native_ids=native_ids, requested_ids=working_ids,
+                       bot_ids=our_rows, complete=lookup_complete):
+            print(f"PHONE-ONLY EXCLUDED manual order account={acct_name} native_ids={native_ids}: {message}")
+        else:
+            (phone_reds if severity == "RED" else phone_ambers).append(message)
 
     # --- OVERSELL: protective sells must never exceed the shares they protect -----------------
     sell_qty_by_symbol: dict[str, float] = {}
+    sell_ids_by_symbol: dict[str, list[str]] = {}
     for o in body:
         if str(o.get("status", "")).upper() not in WORKING:
             continue
@@ -238,13 +269,14 @@ async def main() -> int:
         if str(lg.get("instruction") or "").upper().startswith("SELL"):
             sym = str((lg.get("instrument") or {}).get("symbol") or "").upper()
             if sym:
+                sell_ids_by_symbol.setdefault(sym, []).append(str(o.get("orderId") or ""))
                 sell_qty_by_symbol[sym] = sell_qty_by_symbol.get(sym, 0.0) + float(
                     lg.get("quantity") or o.get("quantity") or 0)
     for sym, sq in sorted(sell_qty_by_symbol.items()):
         v = classify_oversell(symbol=sym, account=acct_name, working_sell_qty=sq,
                               held_qty=held_by_symbol.get(sym, 0.0))
         if v:
-            reds.append(v[1])
+            finding("RED", v[1], sell_ids_by_symbol[sym])
 
     for order in body:
         if str(order.get("status", "")).upper() not in WORKING:
@@ -270,16 +302,20 @@ async def main() -> int:
             cancel_failed=fc_at is not None,
         )
         if v:
-            reds.append(v[1])
+            finding("RED", v[1], [oid])
 
         if trigger is None or age_min < MIN_AGE_MIN:
             continue
 
-        with sf() as sess:
-            last = sess.execute(text("""
+        try:
+            with sf() as sess:
+                last = sess.execute(text("""
                 SELECT bid_price, ask_price FROM market_capture_quotes
                 WHERE symbol = :sym ORDER BY event_ts DESC LIMIT 1
-            """), {"sym": symbol}).first()
+                """), {"sym": symbol}).first()
+        except Exception:
+            last = None
+            phone_reds.append(f"Quote lookup UNKNOWN for {acct_name} {symbol} native_id={oid}; orphan risk retained")
         mid = None
         if last and last.bid_price and last.ask_price:
             mid = (float(last.bid_price) + float(last.ask_price)) / 2.0
@@ -296,17 +332,22 @@ async def main() -> int:
         )
         if verdict is None:
             continue
-        (reds if verdict[0] == "RED" else ambers).append(verdict[1])
+        finding(verdict[0], verdict[1], [oid])
 
     stamp = datetime.now(ET).strftime("%H:%M ET")
+    if phone_reds:
+        push(f"ORPHAN ORDER RED - {stamp}", "\n".join(phone_reds), "urgent", "rotating_light")
+    elif phone_ambers:
+        push(f"Orphan order AMBER - {stamp}", "\n".join(phone_ambers), "high", "warning")
     if reds:
-        push(f"ORPHAN ORDER RED - {stamp}", "\n".join(reds), "urgent", "rotating_light")
         print("RED:", " | ".join(reds))
         return 2
     if ambers:
-        push(f"Orphan order AMBER - {stamp}", "\n".join(ambers), "high", "warning")
         print("AMBER:", " | ".join(ambers))
         return 1
+    if phone_reds:
+        print("UNKNOWN: orphan ownership/check evidence could not be read")
+        return 2
     print("GREEN: no orphaned working orders")
     return 0
 

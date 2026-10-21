@@ -9,6 +9,7 @@ PYTHON=${SCANNER_CAPTURE_PYTHON:-/home/trader/project-mai-tai/.venv/bin/python}
 ENV_FILE=${SCANNER_CAPTURE_ENV_FILE:-/etc/project-mai-tai/project-mai-tai.env}
 LOG=${SCANNER_CAPTURE_LOG:-/home/trader/scanner_capture/cron.log}
 CURL=${SCANNER_CAPTURE_CURL:-curl}
+PHONE_GATE=${SCANNER_CAPTURE_PHONE_GATE:-$(dirname "$CHECK")/phone_alert_gate.py}
 DEFAULT_NTFY_URL=https://ntfy.sh/mai-tai-preopen-28806a5a97b7
 NTFY_URL=$DEFAULT_NTFY_URL
 
@@ -19,6 +20,10 @@ notify() {
   local title=$1
   local priority=$2
   local body=$3
+  # Raw checker output was already logged; only the exact phone class changes.
+  printf '%s' "$body" | "$PYTHON" "$PHONE_GATE" --title "$title"
+  gate_rc=$?
+  [[ "$gate_rc" -eq 10 ]] && return 0
   "$CURL" --fail-with-body -sS -H "Title: $title" -H "Priority: $priority" \
     -d "$body" "$NTFY_URL" >/dev/null
 }
