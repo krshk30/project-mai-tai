@@ -2764,6 +2764,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 time_in_force=str(event.payload.metadata.get("time_in_force", "day")),
             )
             if (strategy_code == "orb_schwab" and event.payload.intent_type == "open"
+                    and broker_account.provider == "webull"):
+                try:
+                    request = self._orb_pastlevel_request(request, orb_admission_event, provider="webull")
+                except ValueError as exc:
+                    self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+                    session.commit()
+                    return [self._build_rejected_event(event, intent.id, reason=str(exc))]
+            if (strategy_code == "orb_schwab" and event.payload.intent_type == "open"
                     and broker_account.provider == "schwab"):
                 from project_mai_tai.oms.orb_pastlevel import day_intents, receipt
                 proof = (intent.payload or {}).get("orb_pastlevel")
@@ -2945,6 +2953,14 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 for item in [*pre_submit_events, refused]:
                     await self._publish_order_event(item)
                 return [*pre_submit_events, refused]
+            if (strategy_code == "orb_schwab" and event.payload.intent_type == "open"
+                    and broker_account.provider == "webull" and request.prewire_check is not None):
+                try:
+                    request.prewire_check()
+                except (ValueError, RuntimeError) as exc:
+                    self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+                    session.commit()
+                    return [self._build_rejected_event(event, intent.id, reason=str(exc))]
             reports = await self.broker_adapter.submit_order(request)
             self._emit_fanout_mirror_lag(event=event, reports=reports)
             published_events = [*pre_submit_events]
@@ -16232,13 +16248,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             await self.process_trade_intent(event)
 
-    def _orb_pastlevel_request(self, request, admission_event):
+    def _orb_pastlevel_request(self, request, admission_event, *, provider="schwab"):
         from project_mai_tai.strategy_core.orb_pastlevel import assert_same_selection, select_entry
         level = Decimal(admission_event.payload.metadata["orb_intended_break_level"])
         max_age = int(self.settings.orb_oms_quote_priced_max_age_ms)
         quote = self._latest_quotes_by_symbol.get(request.symbol)
         try:
-            selected = select_entry(level, quote, utcnow(), max_age_ms=max_age)
+            selected = select_entry(level, quote, utcnow(), max_age_ms=max_age, provider=provider)
         except ValueError as exc:
             self.logger.info("[ORBPASTLEVEL1] symbol=%s decision=NO_SEND reason=%s "
                              "trigger=%s ask=%s cap=%s quote_at=%s",
@@ -16253,7 +16269,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if refusal:
                 raise ValueError(refusal)
             assert_same_selection(level, self._latest_quotes_by_symbol.get(request.symbol),
-                                  utcnow(), selected, max_age_ms=max_age)
+                                  utcnow(), selected, max_age_ms=max_age, provider=provider)
 
         self.logger.info("[ORBPASTLEVEL1] symbol=%s decision=SELECTED type=%s trigger=%s ask=%s "
                          "nominal_cap_pct=%s effective_cap=%s effective_cap_pct=%s anchor=%s",
