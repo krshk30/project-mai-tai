@@ -1172,7 +1172,8 @@ class MarketDataGatewayService:
         # Missing/failed worker health cannot stop the sole websocket process.
         # Scanner staleness still derives from snapshot-batches, not these counters.
         try:
-            values = await self.redis.hgetall(stream_name(self.settings.redis_stream_prefix, "snapshot-worker-health"))
+            values = await asyncio.wait_for(self.redis.hgetall(
+                stream_name(self.settings.redis_stream_prefix, "snapshot-worker-health")), timeout=1.)
             fields = ("reference_tickers", "snapshots_without_reference", "last_snapshot_symbols")
             if all(isinstance(values.get(key), str) and re.fullmatch(r"[0-9]{1,10}", values[key]) for key in fields):
                 self._snapshot_reference_tickers = int(values["reference_tickers"])

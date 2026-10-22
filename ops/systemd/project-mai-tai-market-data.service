@@ -1,7 +1,7 @@
 [Unit]
 Description=Project Mai Tai market-data gateway
 After=network-online.target redis-server.service
-Wants=network-online.target project-mai-tai-snapshot-worker.service
+Wants=network-online.target
 PartOf=project-mai-tai.target
 
 [Service]

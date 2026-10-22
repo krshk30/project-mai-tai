@@ -62,11 +62,17 @@ class SnapshotWorkerService:
 
     async def _publish_snapshot_health(self):
         # Small counters only. Never send whole-market records through the gateway.
-        await self.redis.hset(stream_name(self.settings.redis_stream_prefix, SNAPSHOT_HEALTH_TOPIC), mapping={
-            "reference_tickers": str(self.reference_cache.ticker_count()),
-            "snapshots_without_reference": str(self._snapshots_without_reference),
-            "last_snapshot_symbols": str(self._last_snapshot_symbol_count),
-        })
+        try:
+            await asyncio.wait_for(self.redis.hset(
+                stream_name(self.settings.redis_stream_prefix, SNAPSHOT_HEALTH_TOPIC), mapping={
+                    "reference_tickers": str(self.reference_cache.ticker_count()),
+                    "snapshots_without_reference": str(self._snapshots_without_reference),
+                    "last_snapshot_symbols": str(self._last_snapshot_symbol_count),
+                }), timeout=1.)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.warning("snapshot worker counters unavailable; batch stream remains authoritative")
 
     async def _ensure_reference_data(self):
         await MarketDataGatewayService._ensure_reference_data(self)

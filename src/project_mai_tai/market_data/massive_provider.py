@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 import math
+import threading
 import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime, timedelta
@@ -92,6 +93,7 @@ class MassiveSnapshotProvider:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self._client = None
+        self._client_lock = threading.Lock()
         self._historical_failures: dict[tuple[str, int], float] = {}
 
     def fetch_all_snapshots(self) -> list[SnapshotRecord]:
@@ -263,6 +265,14 @@ class MassiveSnapshotProvider:
         return [bar for bar in bars if float(bar.timestamp) <= latest_completed_start]
 
     def _get_rest_client(self):
+        if self._client is not None:
+            return self._client
+        # Warmup and reference/snapshot work can enter through different threads.
+        # Exactly one SDK REST client is constructed per provider/process.
+        with self._client_lock:
+            return self._get_rest_client_locked()
+
+    def _get_rest_client_locked(self):
         if self._client is None:
             try:
                 from massive import RESTClient

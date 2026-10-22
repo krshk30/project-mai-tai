@@ -369,7 +369,11 @@ case "$SERVICE_TARGET" in
     ;;
   market-data)
     stop_unit "project-mai-tai-strategy.service"
+    sudo install -m 0644 "$REPO_DIR/ops/systemd/project-mai-tai-snapshot-worker.service" \
+      /etc/systemd/system/project-mai-tai-snapshot-worker.service
+    sudo systemctl daemon-reload
     restart_unit "$PRIMARY_UNIT"
+    restart_unit "project-mai-tai-snapshot-worker.service"
     if [[ "$HOLD_STRATEGY" == "1" ]]; then
       echo "Strategy remains stopped because MAI_TAI_HOLD_STRATEGY=1"
     else
@@ -379,6 +383,9 @@ case "$SERVICE_TARGET" in
 esac
 
 sudo systemctl status "$PRIMARY_UNIT" --no-pager || true
+if [[ "$SERVICE_TARGET" == "market-data" ]]; then
+  sudo systemctl status "project-mai-tai-snapshot-worker.service" --no-pager || true
+fi
 if [[ "$SERVICE_TARGET" == "oms" || "$SERVICE_TARGET" == "market-data" || "$SERVICE_TARGET" == "strategy" ]]; then
   sudo systemctl status "project-mai-tai-strategy.service" --no-pager || true
 fi
