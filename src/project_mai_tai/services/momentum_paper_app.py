@@ -1034,7 +1034,7 @@ class MomentumPaperService:
                     int(dict(row["detect"])["sip_ts_ms"]) / 1000, tz=UTC
                 ).isoformat()
                 for row in recent
-                # Aggregate detections have no SIP trade timestamp.
+                # HOTFIX 10-22 claude-1 (operator-approved): observed_aggregate detects carry no sip_ts_ms.
                 if "sip_ts_ms" in dict(row["detect"])
             },
             data_health={

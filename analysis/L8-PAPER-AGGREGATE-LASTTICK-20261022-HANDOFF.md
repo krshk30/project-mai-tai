@@ -8,31 +8,40 @@ Only momentum_paper_app.py, this L8 test module and this handoff are authored.
 No OMS/L7, actor/runtime/L1, queue/status/LATEST or other lane writes.
 MOMMISS is deferred/NOTTONIGHT, not cancelled and not folded into this hotfix.
 
-## Intake and exact deployed bytes: still BLOCKED
+## Intake and exact deployed bytes: receipt-bound
 
 Full Claude09:38:29 card read after queue FIRST. External reviewer reports RUMBW
 observed_aggregate UNANSWERABLE907186da/7d5a9cf1 without sip_ts_ms crashed PAPER
 _build_bot_state09:31:42..09:32:18, systemd gave up. Operator-approved09:36 hotfix
-was reportedly installed/restarted09:37:02, with stability/readiness afterward.
+was initially reported installed/restarted09:37:02, with stability/readiness afterward.
+The later exact systemd receipt gives13:37:00UTC=09:37:00ET, not09:37:02; retain
+the earlier report as historical, not the actual measured start timestamp.
 This is external reported evidence, NOT author/current production inspection.
 Reported backup:
 /var/backups/project-mai-tai/install-20261022-690f/momentum_paper_app.py.before-hotfix-0937.
 
-Card gives exact predicate `if "sip_ts_ms" in dict(row["detect"])` but DOES NOT
-provide deployed comment bytes/full diff/file SHA. Main has requested those from
-Claude. Functional source can proceed; byte-identical-live certification CANNOT.
-Authored comment is explicitly provisional, not represented as Claude's bytes:
+Initial71d99c2a had the exact predicate and an explicitly provisional author
+comment. Its16tests were never launched (main claim HELD); independent Gibbs
+source review CLEAR is not runtime PASS. This successor changes ONLY the source
+comment, with tests byte-unchanged, using the full exact external receipt:
+/Users/velkris/.codex/task-queues/analysis/L8-PAPER-HOTFIX-BOX-20261022.txt
+SHA256ee524e81656f414b66cb4ec3a0c8dd0befd3a3b01a524a2ff787ae6524be3c7a,
+recorded by Claude09:57:41ET on installed690. Exact deployed comment:
 
-    # Aggregate detections have no SIP trade timestamp.
+    # HOTFIX 10-22 claude-1 (operator-approved): observed_aggregate detects carry no sip_ts_ms.
 
-Need actual deployed two-line diff including whitespace/comment, full deployed
-momentum_paper_app.py SHA256, base/preimage or backup receipt and source identity.
-Then compare actual bytes; if needed a separately reviewed narrow comment-only
-successor, never guessed hash matching or rewritten qualification receipts.
-Static base comparison690..5520 for this service file is EMPTY, so no other service
-delta must be silently composed to match the reported hotfix. This does not prove
-the deployed file has no other dirty changes. Preserve box's dirty hotfix: no clean
-checkout/rollback, provider/SSH/restart/install or permissions action by author.
+Full source SHA256 now matches the receipt:
+60afea924b6c1d8f2a333fae2fd73bd0c1bb28278517a7aa085acb70177fe6d1.
+Static690 and5520 base-file SHA both match the receipt's HEAD original AND its
+sudo backup hash:5944609ddbc49319ca800378391bb2951c0bbc087416c0d66fc933a83b53746d.
+Source delta from5520 is the same supplied two lines, with no other source change.
+This certifies local byte equality to the supplied captured file hash, NOT current
+box state independently observed. The receipt lists MainPID1163710,NRestarts0,
+ActiveStateactive, producer_instance_id1072284:39375615, restore_readytrue and
+entry_admission_enabledtrue. PAPER PID and OMS producer identity are separate
+reported identities, not equated or synthesized into a current-health claim.
+Preserve box's dirty hotfix: no clean checkout/rollback, provider/SSH/restart/install
+or permissions action by author. Later changed box contents would need a new receipt.
 
 ## Source assessment and impact
 
@@ -100,7 +109,8 @@ remain main/reviewer-owned: PAPER service, warning pipeline and canonical live-f
 page/API controls, then final composed ALLON/fullvsactual690. Existing AST-based
 preservation tests were only read as source; author did not execute them.
 
-Completion gates still pending: actual deployed diff/comment/SHA parity, independent
-source review, actual16results/receipts, composed-head preservation/full/native gates
-and reviewer final installation authority. Committed source alone is NOT identical
-live certification, completed incident replay, production readiness or deploy GO.
+Receipt-bound local source/diff/comment/SHA parity is statically established; tests
+remain UNRUN/unchanged and all previous receipts immutable. Remaining gates: exact
+successor review/main claim, actual16results/receipts, composed-head preservation/
+full/native and reviewer final installation authority. No current box inspection,
+completed incident replay, production readiness or deploy GO is claimed.
