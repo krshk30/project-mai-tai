@@ -722,21 +722,39 @@ async def test_original_flye_unclear_at_1517_buy_stays_owned(monkeypatch, accoun
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fault,before,after", [
     ("orb", 'BrokerOrder.side == "buy",',
-     'BrokerOrder.side == "buy", BrokerOrder.strategy_id == session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE)),'),
+     'BrokerOrder.side == "buy", BrokerOrder.strategy_id == session.scalar(select(Strategy.id).where(Strategy.code == "schwab_1m_v2")),'),
     ("settle", 'updated > int(cutoff.timestamp() * 1000)', 'False'),
     ("receipt", 'not 0 <= observed - read_at <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS', 'False'),
 ])
 async def test_safety_controls_kill_mutations(monkeypatch, caplog, fault, before, after):
-    original = SchwabV2BotService._fetch_fresh_sell_release_evidence
+    from project_mai_tai import cancelack1
+
+    if fault == "orb":
+        # Kill the actual shared query, not its former location in the caller.
+        # First prove the unchanged blocking scenario works before mutation.
+        await test_blocking_controls(monkeypatch, caplog, False, PRIMARY, fault)
+        original = cancelack1.working_buy_present
+        namespace = dict(cancelack1.__dict__)
+    else:
+        original = SchwabV2BotService._fetch_fresh_sell_release_evidence
+        namespace = dict(bot_module.__dict__)
     source = textwrap.dedent(inspect.getsource(original))
     assert before in source
-    namespace = dict(bot_module.__dict__)
     class ClockProxy:
         now = staticmethod(lambda tz=None: bot_module.datetime.now(tz))
         fromtimestamp = staticmethod(datetime.fromtimestamp)
     namespace["datetime"] = ClockProxy
     exec(compile(source.replace(before, after), "<B2-safety-mutant>", "exec"), namespace)
-    monkeypatch.setattr(SchwabV2BotService, original.__name__, namespace[original.__name__])
+    calls = []
+    if fault == "orb":
+        mutated = namespace[original.__name__]
+        def observed_mutant(*args, **kwargs):
+            result = mutated(*args, **kwargs)
+            calls.append(result)
+            return result
+        monkeypatch.setattr(cancelack1, original.__name__, observed_mutant)
+    else:
+        monkeypatch.setattr(SchwabV2BotService, original.__name__, namespace[original.__name__])
     if fault == "receipt":
         # The independent own-inventory freshness fence must still hold when
         # only the outer freshness check is removed.
@@ -744,6 +762,8 @@ async def test_safety_controls_kill_mutations(monkeypatch, caplog, fault, before
     else:
         with pytest.raises(AssertionError):
             await test_blocking_controls(monkeypatch, caplog, False, PRIMARY, fault)
+        if fault == "orb":
+            assert calls and calls[-1] is False  # The real shared guard was reached and lost its HOLD.
 
 
 @pytest.mark.asyncio

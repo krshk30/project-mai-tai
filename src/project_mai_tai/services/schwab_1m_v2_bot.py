@@ -2191,6 +2191,9 @@ class SchwabV2BotService:
         names.discard("")
         symbols = {entry.symbol for entry in entries}
         with self.session_factory() as session:
+            if session.get_bind().dialect.name == "postgresql":
+                session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                session.execute(text("SET TRANSACTION READ ONLY"))
             candidates = session.execute(select(Fill, BrokerOrder, BrokerAccount, OmsManagedPosition)
                 .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
                 .join(BrokerAccount, BrokerAccount.id == Fill.broker_account_id)
@@ -2209,11 +2212,42 @@ class SchwabV2BotService:
                 OmsManagedPosition.broker_account_name.in_(names), OmsManagedPosition.symbol.in_(symbols),
                 or_(OmsManagedPosition.status != "closed", OmsManagedPosition.status.is_(None),
                     OmsManagedPosition.current_quantity != 0, OmsManagedPosition.current_quantity.is_(None)))))
+            obligations = {}
+            from project_mai_tai.cancelack1 import ObligationScope, load_flat_obligations, working_buy_present
+            held.update(symbol for symbol in symbols if working_buy_present(session, symbol))
+            for fill, order, account, row in candidates:
+                entry = next(e for e in entries if e.fill_id == fill.id)
+                if not entry.fanout_slot_id:
+                    continue
+                own_names = {name for vp, name in books if vp.symbol == entry.symbol}
+                if own_names == names:
+                    continue  # Existing complete two-row path needs no missing-row waiver.
+                payload = order.payload or {}
+                md = payload.get("metadata", payload)
+                try:
+                    opportunity = int(md.get("fanout_segment_id", "0"))
+                    if (opportunity <= 0 or md.get("fanout_slot_id") != entry.fanout_slot_id
+                            or entry.fanout_slot_id != fanout_slot_id(strategy_code=STRATEGY_CODE,
+                                symbol=entry.symbol, segment_id=opportunity, slot="resting")):
+                        raise ValueError("confirmation_opportunity_UNKNOWN")
+                    now = datetime.now(UTC)
+                    scope = ObligationScope(entry.symbol, opportunity, int(now.timestamp() * 1000), tuple(names))
+                    accounts = {a.id: a.name for a in session.scalars(select(BrokerAccount).where(
+                        BrokerAccount.name.in_(names)))}
+                    proof = load_flat_obligations(session, scope, accounts, fill.strategy_id, now,
+                                                  FLIP_OWNER_EVIDENCE_MAX_AGE_MS)
+                    if account.name not in proof.required_accounts:
+                        raise ValueError("confirmation_owner_UNKNOWN")
+                    obligations[entry.fill_id] = proof.required_accounts
+                except (ValueError, TypeError, ArithmeticError):
+                    continue  # Missing actual-owner row/history remains UNKNOWN, not zero.
         wanted = {entry.fill_id: entry for entry in entries}
         flat = set()
         for fill, order, account, row in candidates:
             entry = wanted[fill.id]
             expected_names = names if entry.fanout_slot_id else {entry.broker_account_name}
+            if entry.fill_id in obligations:
+                expected_names = obligations[entry.fill_id]
             own = [(vp, name) for vp, name in books if vp.symbol == entry.symbol and name in expected_names]
             if (entry.symbol not in held and order.id == entry.order_id
                     and account.name == entry.broker_account_name and account.provider in {"schwab", "webull"}
@@ -2694,14 +2728,13 @@ class SchwabV2BotService:
                 self._fetch_flip_position_book,
                 unknown_opportunities,
             )
+            await self._cancelack_obligations_poll()
+            await self._fresh_sell_owner_release_poll()
             self.strategy.apply_flip_position_book(position_book)
             if (getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True
                     and getattr(self.settings, "strategy_schwab_1m_v2_false_flip2_enabled", False) is True
                     and callable(getattr(self, "_falseflip2_poll", None))):
                 await self._falseflip2_poll(position_book)
-        fresh_sell_poll = getattr(self, "_fresh_sell_owner_release_poll", None)
-        if callable(fresh_sell_poll):
-            await fresh_sell_poll()
         removed_wait_poll = getattr(self, "_removed_wait_poll", None)
         if callable(removed_wait_poll):
             await removed_wait_poll()
@@ -3573,17 +3606,88 @@ class SchwabV2BotService:
                 proof.update(never_dispatched=True, flat_accounts=list(accounts), reason="positive_begin_no_attempt")
         return proofs
 
-    async def _fresh_sell_owner_release_poll(self) -> None:
+    async def _cancelack_obligations_poll(self) -> None:
+        from project_mai_tai.cancelack1 import ObligationScope
+
+        strategy = self.strategy
+        now_ms = strategy._now_ms()
+        names = tuple(strategy._removed_wait_accounts())
+        scopes = tuple(ObligationScope(state.symbol,
+            int(state.flip_owner_opportunity_id or state.fanout_segment_id), now_ms, names)
+            for state in tuple(strategy._symbol_states.values())
+            if (state.flip_owner_opportunity_id or state.fanout_segment_id)
+            and state.symbol not in strategy._removed_wait_requests
+            and state.flip_owner_phase in {"bound", "consumed"}
+            and state.flip_owner_fill_accounts
+            and not set(names) <= state.flip_owner_fill_accounts)
+        generations = dict(getattr(self, "_clearwait_emit_generation_by_symbol", {}))
+        dispatch_generation = strategy._cancelack_dispatch_generation
+        proofs = await asyncio.to_thread(self._fetch_cancelack_obligations, scopes) if scopes else {}
+        if strategy._cancelack_dispatch_generation != dispatch_generation:
+            proofs = {}  # A publication during the read invalidates the entire old cutpoint.
+        strategy._cancelack_obligations = {key: proof for key, proof in proofs.items()
+            if not self._removed_wait_emits_inflight(key[0])
+            and getattr(self, "_clearwait_emit_generation_by_symbol", {}).get(key[0], 0)
+                == generations.get(key[0], 0)}
+
+    def _fetch_cancelack_obligations(self, scopes):
+        from project_mai_tai.cancelack1 import load_flat_obligations
+
+        proofs = {}
+        try:
+            with self.session_factory() as session:
+                if session.get_bind().dialect.name == "postgresql":
+                    session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                    session.execute(text("SET TRANSACTION READ ONLY"))
+                    session.execute(text("SET LOCAL statement_timeout = '2s'"))
+                    session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
+                for scope in scopes:
+                    accounts = {a.id: a.name for a in session.scalars(select(BrokerAccount).where(
+                        BrokerAccount.name.in_(scope.account_names)))}
+                    try:
+                        proofs[(scope.symbol, scope.opportunity_id)] = load_flat_obligations(
+                            session, scope, accounts, strategy_id, datetime.now(UTC),
+                            FLIP_OWNER_EVIDENCE_MAX_AGE_MS)
+                    except (ValueError, TypeError, ArithmeticError):
+                        continue  # No proof means the old conservative barrier remains.
+        except Exception:  # noqa: BLE001 - unknown history never skips a barrier
+            logger.exception("[CANCELACK1-HISTORY] verdict=UNKNOWN reason=read_failed")
+            return {}
+        return proofs
+
+    async def _refresh_fresh_sell_before_live_bar(self, symbol, *, observation_phase):
+        if observation_phase != "live":
+            return
+        request = getattr(self.strategy, "_removed_wait_requests", {}).get(symbol.upper())
+        if request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"}:
+            await self._fresh_sell_owner_release_poll(symbol=symbol.upper())
+
+    async def _fresh_sell_owner_release_poll(self, *, symbol: str | None = None) -> None:
         strategy = self.strategy
         if (not getattr(strategy, "_flip_owned_first_entry_enabled", False)
                 or not self.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled):
             return
         requests = tuple(r for r in strategy._removed_wait_requests.values()
-                         if r.purpose in {"retry_exhausted", "false_flip_restore"})
+                         if r.purpose in {"retry_exhausted", "false_flip_restore"}
+                         and (symbol is None or r.symbol == symbol))
         if not requests:
             return
+        generations = self.__dict__.setdefault("_fresh_sell_read_generation", {})
+        expected = {}
+        for request in requests:
+            generations[request.symbol] = generations.get(request.symbol, 0) + 1
+            expected[request.symbol] = generations[request.symbol]
+            strategy._fresh_sell_release_evidence.pop(request.symbol, None)
         proofs = await asyncio.to_thread(self._fetch_fresh_sell_release_evidence, requests)
-        strategy._fresh_sell_release_evidence = {p.request.symbol: p for p in proofs}
+        current = {name: proof for name, proof in strategy._fresh_sell_release_evidence.items()
+                   if strategy._removed_wait_requests.get(name) == proof.request}
+        for proof in proofs:
+            name = proof.request.symbol
+            if (strategy._removed_wait_requests.get(name) == proof.request
+                    and generations.get(name) == expected.get(name)):
+                current[name] = proof
+        strategy._fresh_sell_release_evidence = current
 
     def _fetch_fresh_sell_release_evidence(
         self, requests: tuple[RemovedWait, ...],
@@ -3592,7 +3696,6 @@ class SchwabV2BotService:
         now = datetime.now(UTC)
         observed = int(now.timestamp() * 1000)
         cutoff = now - timedelta(milliseconds=FLIP_OWNER_ROW_SETTLE_MS)
-        terminal = {"cancelled", "canceled", "filled", "rejected", "expired"}
 
         def at_ms(value: datetime | None) -> int:
             if value is None:
@@ -3630,12 +3733,8 @@ class SchwabV2BotService:
             if has_position:
                 return result("position_stays_owned")
             # Deliberately no strategy/account restriction: shared Schwab ORB also owns a BUY.
-            if (session.scalar(select(BrokerOrder.id).where(BrokerOrder.symbol == symbol,
-                    BrokerOrder.side == "buy",
-                    or_(BrokerOrder.status.is_(None), BrokerOrder.status.notin_(terminal))).limit(1))
-                    or session.scalar(select(TradeIntent.id).where(TradeIntent.symbol == symbol,
-                        TradeIntent.side == "buy", TradeIntent.intent_type == "open",
-                        or_(TradeIntent.status.is_(None), TradeIntent.status.notin_(terminal))).limit(1))):
+            from project_mai_tai.cancelack1 import working_buy_present
+            if working_buy_present(session, symbol, now=now):
                 return result("working_buy_or_intent")
             cancels = session.execute(select(TradeIntent, Strategy.code)
                 .join(Strategy, Strategy.id == TradeIntent.strategy_id)
@@ -3657,6 +3756,9 @@ class SchwabV2BotService:
                 no_target = (intent.status == "rejected"
                              and payload.get("refusal_origin") == "skipped_before_submit"
                              and payload.get("refusal_code") == "cancel_target_not_found")
+                from project_mai_tai.cancelack1 import cancel_outcome_known
+                if not cancel_outcome_known(intent):
+                    return result("own_cancel_not_terminal")
                 if intent.status not in {"cancelled", "canceled"} and not no_target:
                     return result("own_cancel_not_terminal")
                 updated = at_ms(intent.updated_at)
@@ -3664,13 +3766,24 @@ class SchwabV2BotService:
                     return result("own_cancel_settling")
                 acknowledged.add(account_names[intent.broker_account_id])
             if acknowledged != set(names):
-                return result("own_cancel_missing")
+                from project_mai_tai.cancelack1 import load_proven_accounts
+                try:
+                    required = load_proven_accounts(session, request, account_names, strategy_id,
+                                                    observed_at_ms=observed)
+                except (ValueError, TypeError, ArithmeticError) as exc:
+                    return result(str(exc) if isinstance(exc, ValueError) else "cancel_obligations_UNKNOWN")
+                if not required <= acknowledged:
+                    return result("own_cancel_missing")
+                return result("flat_both_required_own_cancels_settled", True)
             return result("flat_both_own_cancels_settled", True)
 
         try:
             if self.session_factory is None:
                 raise ValueError("position database unavailable")
             with self.session_factory() as session:
+                if session.get_bind().dialect.name == "postgresql":
+                    session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                    session.execute(text("SET TRANSACTION READ ONLY"))
                 receipts = load_receipts(session)
                 return tuple(assess(session, request, receipts) for request in requests)
         except Exception:  # noqa: BLE001 - unknown evidence never releases an owner
@@ -5911,6 +6024,7 @@ class SchwabV2BotService:
         if bar_age_secs <= PERSIST_BAR_AGE_LIMIT_SECONDS:
             await asyncio.to_thread(self._persist_bar, symbol, bar)
 
+        await self._refresh_fresh_sell_before_live_bar(symbol, observation_phase=observation_phase)
         try:
             draft = self._strategy_on_bar(
                 symbol,
@@ -6622,7 +6736,11 @@ class SchwabV2BotService:
                 or state.line_restore_reset_after_ms != reset_fence):
             return False
         seed_segment = await self._persist_line_retry_seed(state, dict(result.snapshot.indicator))
+        if result.request.current_bar_ms in self._line_live_bars.get(symbol, set()):
+            await self._refresh_fresh_sell_before_live_bar(symbol, observation_phase="live")
         if (self._line_sessions.get(symbol) is not ledger
+                or ledger._coverage is not source_proof
+                or self._line_source_identity.get(symbol) != source_identity
                 or self.strategy._symbol_states.get(symbol) is not state
                 or session_start_ts_ms(self.strategy._now_ms()) != ledger.anchor_ms
                 or state.bars[-1].timestamp_ms != result.request.current_bar_ms
