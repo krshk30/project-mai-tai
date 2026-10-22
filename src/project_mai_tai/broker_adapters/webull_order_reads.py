@@ -14,7 +14,7 @@ from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.exc import IntegrityError
@@ -33,6 +33,7 @@ class QueryBudget:
         self.attempts: dict[str, deque[float]] = {}
         self.waiting: dict[str, deque[str]] = {}
         self.last_wait: dict[tuple[str, str], float] = {}
+        self.blocked_until: dict[str, float] = {}
         self.terminal_lock = threading.Lock()
         self.terminal_inflight: set[tuple[str, str, str]] = set()
 
@@ -53,11 +54,17 @@ class QueryBudget:
             self.last_wait[endpoint, owner] = now
             # Reserve the second detail permit for fresh RPG/EOD/cancel proof.
             ceiling = 1 if endpoint == "detail" and not strict else 2
-            if len(attempts) >= ceiling or (not strict and queue[0] != owner):
+            if (now < self.blocked_until.get(endpoint, -float("inf"))
+                    or len(attempts) >= ceiling or (not strict and queue[0] != owner)):
                 raise QueryBudgetUnavailable(f"{endpoint} query budget unavailable")
             queue.remove(owner)
             self.last_wait.pop((endpoint, owner), None)
             attempts.append(now)
+
+    def defer(self, endpoint: str, seconds: float) -> None:
+        """Share a conservative application backoff, never an inferred vendor quota."""
+        with self.lock:
+            self.blocked_until[endpoint] = max(self.blocked_until.get(endpoint, 0.), self.clock() + seconds)
 
 
 _BUDGETS: dict[tuple[str, str], QueryBudget] = {}
@@ -82,6 +89,7 @@ def shared_reader(host: str, app_key: str, cycle_seconds: float):
 @dataclass
 class ListScan:
     session: str
+    generation: str = field(default_factory=lambda: uuid4().hex)
     cursor: str = ""
     pages: int = 0
     complete: bool = False
@@ -118,7 +126,20 @@ class TodayOrderReader:
         finally:
             self.lock.release()
 
-    def read(self, account_id: str, client_id: str, fetch_page, *, fresh_seconds=2.0):
+    def refresh_one_page(self, account_id: str, fetch_page) -> None:
+        """At most ONE budgeted HTTP attempt, retaining incomplete cursor progress.
+
+        This does not grant terminal proof or refresh older page timestamps.
+        The sweep caller must separately own the per-account/per-sweep claim.
+        """
+        def fetch(cursor):
+            status, body = fetch_page(cursor)
+            if status == 429:
+                self.budget.defer("list-today", 30.)
+            return status, body
+        self.read(account_id, "", fetch, _page_limit=1)
+
+    def read(self, account_id: str, client_id: str, fetch_page, *, fresh_seconds=2.0, _page_limit=2):
         with self.lock:
             now = self.clock()
             session = datetime.now(UTC).astimezone(ZoneInfo("America/New_York")).date().isoformat()
@@ -132,7 +153,8 @@ class TodayOrderReader:
                 scan.cycle_at, scan.cycle_pages = now, 0
                 if scan.complete or scan.failed:
                     scan = self.scans[account_id] = ListScan(session, cycle_at=now)
-            while scan.cycle_pages < 2 and not (scan.complete or scan.failed):
+            ceiling = min(2, scan.cycle_pages + _page_limit)
+            while scan.cycle_pages < ceiling and not (scan.complete or scan.failed):
                 try:
                     self.budget.claim("list-today", account_id)
                 except QueryBudgetUnavailable:
@@ -176,7 +198,7 @@ class TodayOrderReader:
                         raise ValueError("today-orders cursor did not progress")
                     scan.pages += 1
                     scan.rows.update(
-                        {coid: (acquired, acquired_at, raw) for coid, raw in page.items()}
+                        {coid: (acquired, acquired_at, deepcopy(raw)) for coid, raw in page.items()}
                     )
                     scan.complete = not has_next
                     if has_next:
@@ -200,9 +222,11 @@ class TodayOrderReader:
             "account_id": account_id,
             "client_order_id": client_id,
             "session": scan.session,
+            "scan_generation": scan.generation,
             "acquired_at": row[1].isoformat(),
             "pages": scan.pages,
             "complete": scan.complete,
+            "failed": scan.failed,
             "cursor": scan.cursor,
             "truncated": scan.failed,
         }
