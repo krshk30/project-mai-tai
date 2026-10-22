@@ -1888,7 +1888,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         or existing.symbol != request.symbol or existing.side != request.side
                         or existing.quantity != request.quantity):
                     raise RuntimeError("KILLSW1:existing_entry_identity_changed")
-                return existing.id
+                return None  # Existing rows are never this call's unsent cleanup authority.
             order = self.store.get_or_create_order(
                 unit, intent=parent, strategy_id=parent.strategy_id,
                 broker_account_id=parent.broker_account_id,
@@ -1900,7 +1900,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             order.submitted_at = None
             return order.id
 
-        await self._run_db(prepare)
+        return await self._run_db(prepare)
 
     @_refresh_working_cache_after_intent
     @_finalize_retained_mirror_after_intent
@@ -2900,7 +2900,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 # Release of the transaction lock cannot release the plan budget.
                 receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "MAY_HAVE_SENT")
                 session.commit()
-            await self._prepare_bot_control_entry(session, intent, request, event.produced_at)
+            prepared_entry_id = await self._prepare_bot_control_entry(session, intent, request, event.produced_at)
             pending_sell_id = None
             pending_sell_required = False
             sell_prepare_session = None
@@ -2958,6 +2958,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 try:
                     request.prewire_check()
                 except (ValueError, RuntimeError) as exc:
+                    from project_mai_tai.oms.orb_pastlevel import settle_prepared_webull_refusal
+                    control = self.__dict__.get("_bot_control_runtime")
+                    settle_prepared_webull_refusal(
+                        session, intent=intent, request=request, prepared_order_id=prepared_entry_id,
+                        control_store=(control.store if control is not None and control.controls(
+                            request.strategy_code, request.broker_account_name) else None), reason=str(exc),
+                    )
                     self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
                     session.commit()
                     return [self._build_rejected_event(event, intent.id, reason=str(exc))]
