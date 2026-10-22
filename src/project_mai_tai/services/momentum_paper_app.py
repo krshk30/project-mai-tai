@@ -1034,6 +1034,8 @@ class MomentumPaperService:
                     int(dict(row["detect"])["sip_ts_ms"]) / 1000, tz=UTC
                 ).isoformat()
                 for row in recent
+                # Aggregate detections have no SIP trade timestamp.
+                if "sip_ts_ms" in dict(row["detect"])
             },
             data_health={
                 "status": "healthy" if self._connected and self._condition_feed_verified else "waiting",
