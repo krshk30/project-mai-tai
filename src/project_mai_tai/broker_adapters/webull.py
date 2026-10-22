@@ -230,7 +230,10 @@ class WebullBrokerAdapter:
             except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
                 return [self._reject_from_exception(request, exc)]
         try:
-            return await asyncio.to_thread(self._submit_blocking, account, request)
+            from project_mai_tai.momentum_live.entry_wire import entry_wire_guard
+            guard = entry_wire_guard(request)
+            return await asyncio.to_thread(self._submit_blocking, account, request,
+                                          **({"entry_guard": guard} if guard is not None else {}))
         except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
             return [self._reject_from_exception(request, exc)]
 
@@ -846,7 +849,7 @@ class WebullBrokerAdapter:
 
     # ------------------------------------------------------------------ blocking impls
     def _submit_blocking(
-        self, account: WebullAccountConfig, request: OrderRequest
+        self, account: WebullAccountConfig, request: OrderRequest, *, entry_guard=None
     ) -> list[ExecutionReport]:
         order_type = self._order_type(request)
         limit_price = self._meta_price(request, "limit_price", "reference_price")
@@ -961,6 +964,9 @@ class WebullBrokerAdapter:
                 if key.startswith("cw_target_api_"):
                     report_metadata.pop(key)
         try:
+            if entry_guard is not None:
+                entry_guard.check(quantity=wire_qty, limit=wire_limit, symbol=request.symbol)
+                entry_guard.before_transport()
             response = client.get_response(po)
             if is_target:
                 try:
