@@ -13,7 +13,7 @@ from project_mai_tai.orb_schwab_order_route import build_orb_schwab_open_intent
 from project_mai_tai.strategy_core.orb_pastlevel import assert_same_selection, round_buy, select_entry
 from project_mai_tai.strategy_core.orb_schwab_bracket import build_orb_schwab_bracket_metadata
 from tests.unit.test_orbroute1_oms_chain import setup as setup, WEBULL, SCHWAB
-from tests.unit.test_webull_adapter import _FakeClient, _adapter, fake_sdk as fake_sdk
+from tests.unit.test_webull_adapter import _FakeClient, _adapter, _instrument_stub, fake_sdk as fake_sdk
 
 
 INCIDENT = datetime(2026, 10, 22, 13, 28, 3, 452000, tzinfo=UTC)
@@ -115,6 +115,8 @@ def test_real_oms_rechecks_after_last_preparation_await(setup, monkeypatch, muta
 @pytest.mark.parametrize("ask,kind", [(None, "STOP_LOSS_LIMIT"), ("1.64", "STOP_LOSS_LIMIT"),
                                       ("1.65", "STOP_LOSS_LIMIT"), ("1.6501", "LIMIT")])
 def test_selected_stak_prices_reach_actual_webull_fake_sdk(fake_sdk, session, ask, kind):
+    # Synthetic listing, not STAK native evidence; exercise the real symbol mapper.
+    _instrument_stub(None, [{"symbol": "STAK", "instrument_id": "synthetic-STAK-instrument", "status": "OC"}])
     selected = selection(ask=ask)
     metadata = {**selected, "session": session, "extended_hours": str(session != "NORMAL").lower()}
     request = OrderRequest("synthetic-l7-STAK", WEBULL, "orb_schwab", "STAK", "buy", "open",
@@ -125,6 +127,7 @@ def test_selected_stak_prices_reach_actual_webull_fake_sdk(fake_sdk, session, as
     reports = asyncio.run(adapter.submit_order(request))
     assert reports[0].event_type == "accepted"
     placed = client.last["place"].values
+    assert placed["instrument_id"] == "synthetic-STAK-instrument"
     assert placed["order_type"] == kind
     assert placed["limit_price"] == "1.66"
     assert placed["extended_hours_trading"] is (session != "NORMAL")
