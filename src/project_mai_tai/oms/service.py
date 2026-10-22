@@ -11741,6 +11741,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         position_summary = await self.sync_broker_positions(account_names=account_names)
         if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True:
             self._falseflip_signal().set()
+        try:
+            from project_mai_tai.oms.webull_attach_riskoff import reconcile_cached_protection_intents
+            await reconcile_cached_protection_intents(self, account_names)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception("[WBATTACH1-BOOKKEEPING] cached terminal proof unavailable")
         return {
             "accounts": position_summary["accounts"],
             "positions": position_summary["positions"],

@@ -743,6 +743,37 @@ class WebullBrokerAdapter:
             raise ValueError("Webull OCO child read is UNKNOWN")
         return None
 
+    def cached_attach_pair_terminal(self, account_name, symbol, base, quantity):
+        """Bookkeeping evidence only: no HTTP, DETAIL fallback, or absence inference."""
+        account = self.accounts_by_name.get(account_name)
+        if account is None or not getattr(self, "_list_primary_enabled", False):
+            return None
+        coids = self.exit_pair_leg_client_order_ids(base)
+        bodies = self._today_reader.peek_complete(account.account_id, coids)
+        if bodies is None or len(bodies) != 2 or len(set(coids)) != 2:
+            return None
+        children = []
+        for coid, body in zip(coids, bodies):
+            execution = self._validated_list_execution(body, account, coid, symbol=symbol, side="sell")
+            if execution is None or execution[0] not in {"filled", "cancelled", "rejected"}:
+                return None
+            item = body["items"][0]
+            if str(item.get("symbol", "")).upper() != symbol.upper() or str(item.get("side", "")).lower() != "sell":
+                return None
+            requested = [self._decimal_or_none({k: part[k]}, k) for part in (body, item)
+                         for k in ("qty", "quantity", "order_qty", "orderQty") if part.get(k) is not None]
+            if (not requested or any(value != quantity for value in requested)
+                    or any(self._map_status({"status": body[k]}) != execution[0] for k in
+                           ("status", "order_status", "orderStatus") if body.get(k) is not None)
+                    or any(self._decimal_or_none({k: body[k]}, k) != Decimal(execution[2]) for k in
+                           ("filled_qty", "filledQty", "filled_quantity", "filledQuantity") if body.get(k) is not None)):
+                return None
+            children.append({"coid": coid, "status": execution[0], "broker_order_id": execution[1],
+                             "filled_quantity": execution[2], "price": execution[3],
+                             "filled_at": execution[4], "evidence": body["_webull_list_evidence"]})
+        return {"source": "complete_cached_today_list", "account": account_name,
+                "symbol": symbol, "base": base, "children": children}
+
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         """Live positions for one broker account, THROTTLED + 429-BACKED-OFF per account.
 
