@@ -6,7 +6,7 @@ import asyncio
 import json
 from copy import deepcopy
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
@@ -911,6 +911,8 @@ def settle_cached_protection_intent(service, session, intent):
     reader = getattr(service.broker_adapter, "cached_attach_pair_terminal", None)
     proof = reader(account.name, intent.symbol, base, quantity) if reader else None
     if (not isinstance(proof, dict) or proof.get("source") != "complete_cached_today_list"
+            or proof.get("terminal_observation_contract") != "WBATTACH-L9-own-row-after-winner-v1"
+            or not proof.get("scan_generation") or not proof.get("account_id")
             or (proof.get("account"), proof.get("symbol"), proof.get("base")) != (account.name, intent.symbol, base)):
         return False
     children = proof.get("children", [])
@@ -926,8 +928,12 @@ def settle_cached_protection_intent(service, session, intent):
                 or not filled.is_finite() or not 0 <= filled <= quantity
                 or child["status"] == "filled" and filled != quantity
                 or evidence.get("client_order_id") != child["coid"]
+                or evidence.get("account_id") != proof["account_id"]
+                or evidence.get("scan_generation") != proof["scan_generation"]
+                or evidence.get("failed") is not False
                 or evidence.get("complete") is not True or evidence.get("truncated") is not False
-                or acquired.tzinfo is None or not 0 <= (datetime.now(UTC) - acquired).total_seconds() < 2.):
+                or child.get("terminal_observed_at") != evidence["acquired_at"]
+                or acquired.tzinfo is None or acquired > datetime.now(UTC)):
             return False
         if filled == 0 and session.scalar(select(Fill.id).join(BrokerOrder, BrokerOrder.id == Fill.order_id).where(
                 BrokerOrder.broker_order_id == child["broker_order_id"],
@@ -945,7 +951,8 @@ def settle_cached_protection_intent(service, session, intent):
         price = Decimal(winner["price"])
         filled_at = datetime.fromisoformat(winner["filled_at"])
         if (not price.is_finite() or price <= 0 or filled_at.tzinfo is None
-                or filled_at > datetime.now(UTC)):
+                or filled_at > datetime.now(UTC)
+                or any(datetime.fromisoformat(c["evidence"]["acquired_at"]) <= filled_at for c in children)):
             return False
         # Inspect the existing economic writer's rows; never record/reparent a fill here.
         orders = session.scalars(select(BrokerOrder).where(
@@ -982,6 +989,52 @@ _PROTECTION_BATCH_SECONDS = 0.025
 class _ProtectionSweep:
     lock: object
     cursors: dict
+    refreshes: dict = field(default_factory=dict)
+
+
+def _refresh_protection_scan_page(service, session, intents, state, scope, deadline):
+    """One attempt per physical account across the entire frozen-ceiling sweep.
+
+    Claims survive commit failure/cancel and are spent before I/O, not per row.
+    Copy bounded request identities then release the read transaction before HTTP.
+    """
+    get_scope = getattr(service.broker_adapter, "attach_terminal_scan_scope", None)
+    refresh = getattr(service.broker_adapter, "refresh_attach_terminal_scan", None)
+    if not callable(get_scope) or not callable(refresh):
+        return
+    requests = []
+    for intent in intents:
+        try:
+            metadata = (intent.payload or {}).get("metadata", {})
+            base = metadata.get("webull_protect_base_client_order_id")
+            if not isinstance(base, str) or not base or not intent.quantity.is_finite() or intent.quantity <= 0:
+                continue
+            account = session.get(BrokerAccount, intent.broker_account_id)
+            if account is not None and account.provider == "webull":
+                requests.append((account.name, intent.symbol, base, intent.quantity))
+        except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+            continue
+    claimed = state.refreshes[scope][1]
+    attempted = False
+    for account, symbol, base, quantity in requests:
+        if attempted and monotonic() >= deadline:
+            break
+        try:
+            physical = get_scope(account)
+            if physical is None or physical in claimed:
+                continue
+            if service.broker_adapter.cached_attach_pair_terminal(account, symbol, base, quantity) is not None:
+                continue
+        except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+            continue  # Malformed scope/evidence is UNKNOWN, not refresh authority.
+        claimed.add(physical)
+        if not attempted:
+            session.rollback()  # No mutations yet; do not hold a DB transaction across HTTP.
+        attempted = True
+        try:
+            refresh(account)
+        except Exception:
+            pass  # Budget denial,429,error/incomplete is UNKNOWN; never retry this sweep.
 
 
 async def reconcile_cached_protection_intents(service, account_names):
@@ -1004,16 +1057,21 @@ async def reconcile_cached_protection_intents(service, account_names):
                 if scope is not None:
                     query = query.where(BrokerAccount.name.in_(scope))
                 after, ceiling = state.cursors.get(scope, (None, None))
+                if ceiling is None and scope in state.refreshes:
+                    ceiling = state.refreshes[scope][0]  # Failed commit retains its sweep/claims.
                 if ceiling is None:
                     ceiling = session.scalar(query.with_only_columns(TradeIntent.id).order_by(
                         TradeIntent.id.desc()).limit(1))
                 if ceiling is None:
+                    state.refreshes.pop(scope, None)
                     return
+                state.refreshes.setdefault(scope, (ceiling, set()))
                 page = query.where(TradeIntent.id <= ceiling)
                 if after is not None:
                     page = page.where(TradeIntent.id > after)
                 intents = session.scalars(page.order_by(TradeIntent.id).limit(_PROTECTION_BATCH_SIZE)).all()
                 deadline = monotonic() + _PROTECTION_BATCH_SECONDS
+                _refresh_protection_scan_page(service, session, intents, state, scope, deadline)
                 visited = 0
                 for intent in intents:
                     if visited and monotonic() >= deadline:
@@ -1029,6 +1087,8 @@ async def reconcile_cached_protection_intents(service, account_names):
                 # bound lets each sweep finish rather than chasing newly appended IDs.
                 complete = visited == len(intents) and (len(intents) < _PROTECTION_BATCH_SIZE or after == ceiling)
                 state.cursors[scope] = (None, None) if complete else (after, ceiling)
+                if complete:
+                    state.refreshes.pop(scope, None)
         finally:
             state.lock.release()
 

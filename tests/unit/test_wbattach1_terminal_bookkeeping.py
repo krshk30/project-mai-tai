@@ -40,6 +40,9 @@ def cached_adapter(case, monkeypatch, *, winner="T", filled=10, damage=None):
     service, factory, broker, entry_id, _ = case
     monkeypatch.setattr(adapter_module, "datetime", wb.datetime)
     monkeypatch.setattr(reads_module, "datetime", wb.datetime)
+    # Observation is strictly later than the fixed execution clock, not the
+    # native cancellation event time (which this API fixture does not provide).
+    case[4][0] = NOW + timedelta(milliseconds=1)
     with factory() as session:
         entry = session.get(BrokerOrder, entry_id)
         base = entry.payload[wb.KEY]["attempts"][-1]["base"]
@@ -82,12 +85,16 @@ def cached_adapter(case, monkeypatch, *, winner="T", filled=10, damage=None):
         scan.failed = True
     elif damage == "stale":
         clock[0] = 2.
+        # Age alone is now valid for terminal proof. Keep this negative as an
+        # old-page acquisition at/before the winning fill, without re-dating it.
+        scan.rows = {coid: (at, NOW, body) for coid, (at, _acquired, body) in scan.rows.items()}
     elif damage == "prior-session":
         scan.session = "2000-01-01"
     adapter = WebullBrokerAdapter.__new__(WebullBrokerAdapter)
     adapter.accounts_by_name = {broker.account: WebullAccountConfig(account_id="ACC1")}
     adapter._list_primary_enabled = True
     adapter._today_reader = reader
+    adapter._today_page = lambda *_: (503, {})  # Never construct a real SDK/provider in these controls.
     service.broker_adapter = adapter
     return adapter, base
 

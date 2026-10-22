@@ -749,7 +749,7 @@ class WebullBrokerAdapter:
         if account is None or not getattr(self, "_list_primary_enabled", False):
             return None
         coids = self.exit_pair_leg_client_order_ids(base)
-        bodies = self._today_reader.peek_complete(account.account_id, coids)
+        bodies = self._today_reader.peek_terminal_complete(account.account_id, coids)
         if bodies is None or len(bodies) != 2 or len(set(coids)) != 2:
             return None
         children = []
@@ -770,9 +770,46 @@ class WebullBrokerAdapter:
                 return None
             children.append({"coid": coid, "status": execution[0], "broker_order_id": execution[1],
                              "filled_quantity": execution[2], "price": execution[3],
-                             "filled_at": execution[4], "evidence": body["_webull_list_evidence"]})
+                             "filled_at": execution[4], "evidence": body["_webull_list_evidence"],
+                             "native_terminal_at": execution[4],
+                             "native_terminal_time_state": "execution_time" if execution[4] else "UNKNOWN",
+                             "terminal_observed_time_basis": "acquisition_upper_bound_not_native_event",
+                             "terminal_observed_at": body["_webull_list_evidence"]["acquired_at"]})
+        generations = {child["evidence"].get("scan_generation") for child in children}
+        acquired = [self._parse_broker_time(child["terminal_observed_at"]) for child in children]
+        if (len(generations) != 1 or not next(iter(generations))
+                or any(at is None or at.tzinfo is None or at > datetime.now(UTC) for at in acquired)):
+            return None
+        total = sum((Decimal(child["filled_quantity"]) for child in children), Decimal(0))
+        if total:
+            winners = [child for child in children if Decimal(child["filled_quantity"]) > 0]
+            if total != quantity or len(winners) != 1 or winners[0]["status"] != "filled":
+                return None
+            filled_at = self._parse_broker_time(winners[0]["filled_at"])
+            if filled_at is None or any(at <= filled_at for at in acquired):
+                return None
         return {"source": "complete_cached_today_list", "account": account_name,
+                "account_id": account.account_id, "scan_generation": next(iter(generations)),
+                "terminal_observation_contract": "WBATTACH-L9-own-row-after-winner-v1",
                 "symbol": symbol, "base": base, "children": children}
+
+    def attach_terminal_scan_scope(self, account_name):
+        account = self.accounts_by_name.get(account_name)
+        if account is None or not getattr(self, "_list_primary_enabled", False):
+            return None
+        return (str(getattr(self, "host", "")), account.account_id)
+
+    def refresh_attach_terminal_scan(self, account_name):
+        """Blocking worker-only: one shared-budget HTTP page, never DETAIL."""
+        if self.attach_terminal_scan_scope(account_name) is None:
+            return
+        account = self.accounts_by_name[account_name]
+        try:
+            self._today_reader.refresh_one_page(account.account_id, lambda cursor: self._today_page(account, cursor))
+        except Exception as exc:
+            if self._is_rate_limited(exc):
+                self._today_reader.budget.defer("list-today", 30.)
+            raise
 
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         """Live positions for one broker account, THROTTLED + 429-BACKED-OFF per account.

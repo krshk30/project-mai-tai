@@ -110,16 +110,27 @@ class TodayOrderReader:
 
     def peek_complete(self, account_id, client_ids, *, fresh_seconds=2.0):
         """Copy existing complete evidence without a fetch or query-budget claim."""
+        return self._peek_complete(account_id, client_ids, fresh_seconds=fresh_seconds)
+
+    def peek_terminal_complete(self, account_id, client_ids):
+        """Age-independent scan copy; caller must validate terminal/causal proof."""
+        return self._peek_complete(account_id, client_ids, fresh_seconds=None)
+
+    def _peek_complete(self, account_id, client_ids, *, fresh_seconds):
         if not self.lock.acquire(blocking=False):
             return None
         try:
             scan = self.scans.get(account_id)
             session = datetime.now(UTC).astimezone(ZoneInfo("America/New_York")).date().isoformat()
-            if scan is None or scan.session != session or not scan.complete or scan.failed:
+            if (scan is None or not scan.complete or scan.failed
+                    or fresh_seconds is not None and scan.session != session):
                 return None
             now = self.clock()
             rows = [scan.rows.get(coid) for coid in client_ids]
-            if any(row is None or not 0 <= now - row[0] < fresh_seconds for row in rows):
+            if any(row is None or now < row[0]
+                   or fresh_seconds is not None and now - row[0] >= fresh_seconds
+                   or row[1].tzinfo is None or row[1].astimezone(ZoneInfo("America/New_York")).date().isoformat() != scan.session
+                   for row in rows):
                 return None
             return [deepcopy(self._evidence(account_id, coid, scan, row))
                     for coid, row in zip(client_ids, rows)]

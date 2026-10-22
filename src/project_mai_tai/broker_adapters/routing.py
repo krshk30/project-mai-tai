@@ -194,6 +194,18 @@ class RoutingBrokerAdapter:
         reader = getattr(adapter, "cached_attach_pair_terminal", None)
         return reader(account_name, symbol, base, quantity) if reader else None
 
+    def attach_terminal_scan_scope(self, account_name):
+        provider = self.provider_by_account.get(account_name, self.default_provider)
+        adapter = self._adapters_by_provider.get(provider) if provider == "webull" else None
+        scope = getattr(adapter, "attach_terminal_scan_scope", None)
+        return scope(account_name) if scope else None
+
+    def refresh_attach_terminal_scan(self, account_name):
+        provider = self.provider_by_account.get(account_name, self.default_provider)
+        adapter = self._adapters_by_provider.get(provider) if provider == "webull" else None
+        refresh = getattr(adapter, "refresh_attach_terminal_scan", None)
+        return refresh(account_name) if refresh else None
+
     async def fetch_quotes(self, symbols: list[str]) -> dict[str, dict[str, float | None]]:
         """Quotes for ``symbols``, from ANY configured provider that can serve them.
 
