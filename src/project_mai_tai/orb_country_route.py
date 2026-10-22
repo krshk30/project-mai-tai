@@ -102,7 +102,9 @@ def load_working_routes(factory) -> dict[str, OrbCountrySelection | None]:
 def routed_orb_metadata(selection: OrbCountrySelection, level: Decimal) -> dict[str, str]:
     from project_mai_tai.strategy_core.orb_schwab_bracket import build_orb_schwab_bracket_metadata
 
-    metadata = build_orb_schwab_bracket_metadata(level)
+    metadata = (build_orb_schwab_bracket_metadata(level, tick_cap=True)
+                if selection.country.broker == "schwab"
+                else build_orb_schwab_bracket_metadata(level))
     if selection.country.broker == "webull":
         metadata["orb_target_price"] = metadata["bracket_target_price"]
         metadata["orb_protect_price"] = metadata["bracket_stop_price"]

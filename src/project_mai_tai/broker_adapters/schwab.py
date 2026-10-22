@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -24,6 +25,7 @@ from project_mai_tai.settings import Settings
 
 
 logger = logging.getLogger(__name__)
+_order_prewire_check: ContextVar = ContextVar("schwab_order_prewire_check", default=None)
 
 
 @dataclass(frozen=True)
@@ -606,10 +608,15 @@ class SchwabBrokerAdapter:
         return best
 
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
+        orb_entry_type = str(request.metadata.get("bracket_entry_type", "")).upper()
+        fenced_orb = ("orb_pastlevel_policy" in request.metadata
+                      or request.prewire_check is not None or orb_entry_type == "LIMIT")
         if request.strategy_code == "orb_schwab" and request.intent_type == "open" and (
             not self._is_bracket_request(request)
             or self._is_exit_only_oco_request(request)
-            or str(request.metadata.get("bracket_entry_type", "")).upper() != "STOP_LIMIT"
+            or orb_entry_type not in {"STOP_LIMIT", "LIMIT"}
+            or (fenced_orb and (request.metadata.get("orb_pastlevel_policy") != "ORBPASTLEVEL1-v1"
+                                or request.prewire_check is None))
         ):
             return [
                 ExecutionReport(
@@ -620,7 +627,7 @@ class SchwabBrokerAdapter:
                     side=request.side,
                     intent_type=request.intent_type,
                     quantity=request.quantity,
-                    reason="ORB Schwab open requires the enabled native STOP_LIMIT bracket",
+                    reason="ORB Schwab open requires the enabled native STOP_LIMIT bracket or fenced LIMIT bracket",
                     metadata=dict(request.metadata),
                 )
             ]
@@ -644,7 +651,8 @@ class SchwabBrokerAdapter:
             if request.intent_type == "cancel":
                 return await self._cancel_order(account, request)
 
-            status_code, headers, response = await self._authorized_request_json(
+            status_code, headers, response = await self._authorized_order_request_json(
+                request,
                 "POST",
                 f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders",
                 body=(
@@ -1268,21 +1276,41 @@ class SchwabBrokerAdapter:
             return None
         return order
 
+    async def _authorized_order_request_json(self, request, method, path, *, body=None):
+        fence = request.prewire_check
+        if fence is not None:
+            try:
+                fence()
+            except ValueError as exc:
+                raise RuntimeError(str(exc)) from exc
+        token = _order_prewire_check.set(fence)
+        try:
+            # Keep the established transport interface; do not retry TypeError
+            # or expose an execution callback as an HTTP keyword or payload.
+            return await self._authorized_request_json(method, path, body=body)
+        finally:
+            _order_prewire_check.reset(token)
+
     async def _authorized_request_json(
         self,
         method: str,
         path: str,
         *,
         body: dict[str, object] | None = None,
+        prewire_check=None,
     ) -> tuple[int, dict[str, str], object]:
+        if prewire_check is None:
+            prewire_check = _order_prewire_check.get()
         token = await self._get_access_token()
         status_code, headers, payload = await self._request_json(
             method,
             path,
             access_token=token,
             body=body,
+            **({"prewire_check": prewire_check} if prewire_check is not None else {}),
         )
-        if status_code == 401 and self._refresh_token and self.client_id and self.client_secret:
+        if (prewire_check is None and status_code == 401
+                and self._refresh_token and self.client_id and self.client_secret):
             token = await self._get_access_token(force_refresh=True)
             status_code, headers, payload = await self._request_json(
                 method,
@@ -1389,6 +1417,7 @@ class SchwabBrokerAdapter:
         *,
         access_token: str,
         body: dict[str, object] | None = None,
+        prewire_check=None,
     ) -> tuple[int, dict[str, str], object]:
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -1399,7 +1428,15 @@ class SchwabBrokerAdapter:
             headers["Content-Type"] = "application/json"
             data = json.dumps(body).encode("utf-8")
         url = f"{self.base_url}{path}"
-        return await asyncio.to_thread(self._blocking_request_json, url, method, headers, data)
+        def send():
+            # Check after token refresh AND thread scheduling, immediately before transport.
+            if prewire_check is not None:
+                try:
+                    prewire_check()
+                except ValueError as exc:
+                    raise RuntimeError(str(exc)) from exc
+            return self._blocking_request_json(url, method, headers, data)
+        return await asyncio.to_thread(send)
 
     async def _token_request_json(
         self,
@@ -1695,6 +1732,8 @@ class SchwabBrokerAdapter:
         """
         if request.strategy_code != "orb_schwab" or not broker_order_id:
             raise RuntimeError("ORB replace requires its known Schwab parent")
+        if request.prewire_check is None or request.metadata.get("orb_pastlevel_policy") != "ORBPASTLEVEL1-v1":
+            raise RuntimeError("ORB replace requires a fresh-quote wire fence")
         account = self.accounts_by_name.get(request.broker_account_name)
         if account is None:
             raise RuntimeError("ORB replace account is unavailable")
@@ -1703,7 +1742,7 @@ class SchwabBrokerAdapter:
         if (
             old is None
             or str(old.get("status", "")).upper() not in self.ACCEPTED_STATUSES
-            or str(old.get("orderType", "")).upper() != "STOP_LIMIT"
+            or str(old.get("orderType", "")).upper() not in {"STOP_LIMIT", "LIMIT"}
         ):
             return None
         old_report = self._execution_report_from_order(
@@ -1715,7 +1754,8 @@ class SchwabBrokerAdapter:
         if old_report.filled_quantity != 0:
             return None
         try:
-            status, headers, response = await self._authorized_request_json(
+            status, headers, response = await self._authorized_order_request_json(
+                request,
                 "PUT",
                 f"/trader/v1/accounts/{quote(account.account_hash, safe='')}/orders/"
                 f"{quote(broker_order_id, safe='')}",
@@ -1776,9 +1816,10 @@ class SchwabBrokerAdapter:
             children = confirmed["childOrderStrategies"][0]["childOrderStrategies"]
             target, protective = children
             price_matches = (
-                Decimal(str(confirmed["stopPrice"])) == Decimal(str(body["stopPrice"]))
+                (body["orderType"] == "LIMIT" or
+                 Decimal(str(confirmed["stopPrice"])) == Decimal(str(body["stopPrice"])))
                 and Decimal(str(confirmed["price"])) == Decimal(str(body["price"]))
-                and str(confirmed["orderType"]).upper() == "STOP_LIMIT"
+                and str(confirmed["orderType"]).upper() == body["orderType"]
                 and str(confirmed["orderStrategyType"]).upper() == "TRIGGER"
                 and str(confirmed["session"]).upper() == "NORMAL"
                 and str(confirmed["duration"]).upper() == "DAY"

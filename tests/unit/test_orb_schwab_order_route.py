@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -173,6 +174,14 @@ def _service(monkeypatch, *, enabled=True, broker=None):
         broker_adapter=broker,  # type: ignore[arg-type]
     )
     service._get_session_symbol_block_reason = lambda **_kwargs: asyncio.sleep(0, result=None)
+    # Existing route tests model a continuously fresh below-trigger quote stream.
+    # Quote-failure tests replace this fixture with explicit timestamped dictionaries.
+    class FreshQuotes(dict):
+        def get(self, key, default=None):
+            from project_mai_tai.oms import service as oms_module
+            return super().get(key, {"ask": 1, "bid": .99, "received_at": oms_module.utcnow()}
+                               if key == "CLRO" else default)
+    service._latest_quotes_by_symbol = FreshQuotes()
     return service, factory, broker
 
 
@@ -264,6 +273,130 @@ def test_oms_previews_then_submits_only_valid_intent(monkeypatch) -> None:
     assert broker.submitted[0].metadata["stop_price"] == "5.53"
     with factory() as session:
         assert session.scalar(select(TradeIntent).where(TradeIntent.symbol == "CLRO")) is not None
+
+
+@pytest.mark.parametrize("ask,kind,sends", [("1.19", "STOP_LIMIT", 1), ("1.20", "LIMIT", 1),
+                                          ("1.21", "LIMIT", 1), ("1.22", None, 0)])
+def test_pastlevel_actual_oms_placement_shapes(monkeypatch, caplog, ask, kind, sends):
+    service, factory, broker = _service(monkeypatch)
+    caplog.set_level("INFO")
+    root = logging.getLogger()
+    added = caplog.handler not in root.handlers
+    if added:
+        root.addHandler(caplog.handler)
+    try:
+        service._latest_quotes_by_symbol = {"OLOX": {"ask": ask, "received_at": OPEN}}
+        event = build_orb_schwab_open_intent(service.settings, "OLOX", Decimal("1.20"))
+        asyncio.run(service.process_trade_intent(event))
+        assert len(broker.submitted) == sends
+        if sends:
+            request = broker.submitted[0]
+            assert request.order_type == request.metadata["bracket_entry_type"] == kind
+            assert request.metadata["bracket_target_price"] == "1.26"
+            assert request.metadata["bracket_stop_price"] == "1.10"
+            request.prewire_check()
+        else:
+            assert "decision=NO_SEND reason=orb_pastlevel_ask_above_cap" in caplog.text
+            assert "trigger=1.20 ask=1.22 cap=1.21" in caplog.text
+            with factory() as session:
+                row = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "OLOX"))
+                assert row.payload["orb_pastlevel"]["phase"] == "local_zero"
+    finally:
+        if added:
+            root.removeHandler(caplog.handler)
+
+
+@pytest.mark.parametrize("problem", ["missing", "stale", "changed_during_preview"])
+def test_pastlevel_legacy_if_no_fresh_ask_but_changed_preview_still_refuses(monkeypatch, problem):
+    service, _factory, broker = _service(monkeypatch)
+    service._latest_quotes_by_symbol = {"OLOX": {"ask": "1.21", "received_at": OPEN}}
+    if problem == "missing":
+        service._latest_quotes_by_symbol.clear()
+    elif problem == "stale":
+        service._latest_quotes_by_symbol["OLOX"]["received_at"] = OPEN - timedelta(seconds=3)
+    else:
+        preview = broker.preview_bracket_order
+        async def change(request):
+            result = await preview(request)
+            service._latest_quotes_by_symbol["OLOX"] = {"ask": "1.22", "received_at": OPEN}
+            return result
+        broker.preview_bracket_order = change
+    asyncio.run(service.process_trade_intent(
+        build_orb_schwab_open_intent(service.settings, "OLOX", Decimal("1.20"))))
+    if problem == "changed_during_preview":
+        assert broker.submitted == []
+    else:
+        assert len(broker.previewed) == len(broker.submitted) == 1
+        request = broker.submitted[0]
+        assert request.order_type == request.metadata["bracket_entry_type"] == "STOP_LIMIT"
+        assert request.metadata["stop_price"] == "1.20" and request.metadata["limit_price"] == "1.21"
+        assert request.metadata["bracket_target_price"] == "1.26"
+        assert request.metadata["bracket_stop_price"] == "1.10"
+        assert request.metadata["orb_quote_selection"] == "legacy_no_fresh_ask"
+        request.prewire_check()
+
+
+@pytest.mark.parametrize("initial", ["preview_reject", "above_cap"])
+def test_pastlevel_unsent_higher_plan_can_send_once_not_redeliver(monkeypatch, initial):
+    service, factory, broker = _service(monkeypatch, broker=_Broker(preview_accepted=initial != "preview_reject"))
+    service._latest_quotes_by_symbol = {"OLOX": {"ask": "1.22" if initial == "above_cap" else "1.21",
+                                                "received_at": OPEN}}
+    asyncio.run(service.process_trade_intent(
+        build_orb_schwab_open_intent(service.settings, "OLOX", Decimal("1.20"))))
+    assert broker.submitted == []
+    broker.preview_accepted = True
+    with factory() as session:
+        root = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "OLOX"))
+        root.created_at = OPEN
+        session.commit()
+    later = OPEN + timedelta(minutes=1)
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: later)
+    service._latest_quotes_by_symbol["OLOX"] = {"ask": "1.22", "received_at": later}
+    reprice = build_orb_schwab_reprice_intent(service.settings, "OLOX", Decimal("1.22"))
+    asyncio.run(service.process_trade_intent(reprice))
+    assert len(broker.submitted) == 1
+    assert broker.submitted[0].order_type == "LIMIT"
+    asyncio.run(service.process_trade_intent(reprice))
+    assert len(broker.submitted) == 1
+    with factory() as session:
+        assert len(session.scalars(select(BrokerOrder).where(BrokerOrder.symbol == "OLOX")).all()) == 1
+
+
+@pytest.mark.parametrize("corruption", ["missing_receipt", "may_have_sent", "nonzero", "pending", "broker_order"])
+def test_pastlevel_absent_parent_is_not_permission(monkeypatch, corruption):
+    service, factory, broker = _service(monkeypatch, broker=_Broker(preview_accepted=False))
+    service._latest_quotes_by_symbol = {"OLOX": {"ask": "1.21", "received_at": OPEN}}
+    asyncio.run(service.process_trade_intent(
+        build_orb_schwab_open_intent(service.settings, "OLOX", Decimal("1.20"))))
+    with factory() as session:
+        root = session.scalar(select(TradeIntent).where(TradeIntent.symbol == "OLOX"))
+        root.created_at = OPEN
+        data = dict(root.payload)
+        proof = dict(data["orb_pastlevel"])
+        if corruption == "missing_receipt":
+            data.pop("orb_pastlevel")
+        elif corruption == "may_have_sent":
+            proof["phase"] = "MAY_HAVE_SENT"
+            data["orb_pastlevel"] = proof
+        elif corruption == "nonzero":
+            proof["filled_quantity"] = "1"
+            data["orb_pastlevel"] = proof
+        elif corruption == "pending":
+            root.status = "pending"
+        else:
+            session.add(BrokerOrder(intent_id=root.id, strategy_id=root.strategy_id,
+                broker_account_id=root.broker_account_id, client_order_id="consumed-budget",
+                broker_order_id="terminal-zero-native", symbol="OLOX", side="buy",
+                order_type="STOP_LIMIT", time_in_force="day", quantity=2, status="cancelled", payload={}))
+        root.payload = data
+        session.commit()
+    broker.preview_accepted = True
+    later = OPEN + timedelta(minutes=1)
+    monkeypatch.setattr("project_mai_tai.oms.service.utcnow", lambda: later)
+    service._latest_quotes_by_symbol["OLOX"] = {"ask": "1.22", "received_at": later}
+    asyncio.run(service.process_trade_intent(
+        build_orb_schwab_reprice_intent(service.settings, "OLOX", Decimal("1.22"))))
+    assert broker.submitted == broker.replaced == []
 
 
 @pytest.mark.parametrize("body,status", [
