@@ -22,7 +22,7 @@ from sqlalchemy import desc, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
-from project_mai_tai.buy_price_floor import buy_order_allowed
+from project_mai_tai.buy_price_floor import buy_intent_allowed
 from project_mai_tai.oms.bot_control_scope import is_controlled_strategy
 from project_mai_tai.broker_adapters.target_price import target_limit_price
 from project_mai_tai.broker_adapters.protocols import (
@@ -616,7 +616,7 @@ def _control_managed_exit_owner(method):
 def _refresh_working_cache_after_intent(method):
     @wraps(method)
     async def refreshed(self, event):
-        if not buy_order_allowed(event.payload):
+        if not buy_intent_allowed(event):
             return []  # Retain waiting state: no mirror finalization or cache/DB refresh.
         if str(getattr(event.payload, "strategy_code", "")).strip().lower() == "momentum_warn_live":
             return await method(self, event)

@@ -1,11 +1,70 @@
 """PRICE1: no-I/O floor on the in-memory price of a new BUY, never a SELL."""
 
 from decimal import Decimal, InvalidOperation
+from datetime import UTC, date, datetime
+import json
 import logging
+from uuid import UUID
 
 
 logger = logging.getLogger("price1")
 MINIMUM_BUY_PRICE = Decimal("1.00")
+
+
+def _unique_signal_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate_signal_key")
+        value[key] = item
+    return value
+
+
+def _handoff_signal(metadata):
+    raw = metadata["momlive_signal"]
+    if not isinstance(raw, str) or len(raw) > 65_536:
+        raise ValueError("signal_envelope_invalid")
+    value = json.loads(raw, object_pairs_hook=_unique_signal_object)
+    if (not isinstance(value, dict) or not isinstance(value.get("signal_price"), str)
+            or not isinstance(metadata.get("signal_price"), str)):
+        raise ValueError("signal_envelope_invalid")
+    nested, top = Decimal(value["signal_price"]), Decimal(metadata["signal_price"])
+    if not nested.is_finite() or not top.is_finite() or nested != top:
+        raise ValueError("signal_price_conflict")
+    return value
+
+
+def buy_intent_allowed(event):
+    """Bind a real MOM handoff envelope before the canonical OMS actor offer.
+
+    This is not a price fallback: the producer must supply the same raw price
+    in both locations. Adapters keep their own existing raw-order floor check.
+    """
+    order = event.payload
+    metadata = order.metadata
+    handoff = (order.strategy_code == "momentum_warn_live" and order.side == "buy"
+        and order.intent_type in {"open", "scale"} and (
+            "momlive_signal" in metadata or metadata.get("one_shot") == "true"
+            or order.reason == "MOMLIVE1_DETECTED"))
+    if handoff:
+        try:
+            value = _handoff_signal(metadata)
+            start, end, observed = (value[key] for key in (
+                "interval_start_ms", "interval_end_ms", "observed_ns"))
+            if (event.source_service != "momentum-paper" or metadata.get("one_shot") != "true"
+                    or UUID(metadata["episode_id"]) != event.event_id
+                    or value["symbol"] != order.symbol or order.symbol != order.symbol.upper()
+                    or not isinstance(value["source_id"], str) or not value["source_id"]
+                    or any(type(stamp) is not int for stamp in (start, end, observed))
+                    or not 0 <= start <= end <= observed//1_000_000 or observed <= 0
+                    or event.produced_at != datetime.fromtimestamp(observed/1e9, UTC)):
+                raise ValueError("signal_identity_or_time_conflict")
+            date.fromisoformat(value["session_date"])
+        except (ValueError, KeyError, TypeError, ArithmeticError, OverflowError):
+            logger.info("[PRICE1-REFUSED] bot=%s symbol=%s reason=handoff_signal_envelope_UNKNOWN",
+                        order.strategy_code, order.symbol)
+            return False
+    return buy_order_allowed(order)
 
 
 def buy_price_allowed(price, *, bot, symbol, side="buy"):
@@ -36,6 +95,13 @@ def buy_order_allowed(order):
         order.strategy_code == "orb_schwab" and metadata.get("orb_schwab_reprice") == "true"
     ):
         return True
+    if order.strategy_code == "momentum_warn_live" and "momlive_signal" in metadata:
+        try:
+            _handoff_signal(metadata)
+        except (ValueError, KeyError, TypeError, ArithmeticError):
+            logger.info("[PRICE1-REFUSED] bot=%s symbol=%s reason=signal_price_conflict_or_missing",
+                        order.strategy_code, order.symbol)
+            return False
     keys = {
         "schwab_1m_v2": ("entry_price", "stop_price", "reference_price"),
         "momentum_warn_live": ("signal_price",),

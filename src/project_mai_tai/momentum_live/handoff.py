@@ -173,6 +173,7 @@ class LiveHandoff:
                         broker_account_name=self.settings.strategy_schwab_1m_v2_account_name,
                         symbol=signal.symbol, side="buy", quantity=Decimal(1), intent_type="open",
                         reason="MOMLIVE1_DETECTED", metadata={
+                            "signal_price": str(signal.signal_price),
                             "momlive_signal": json.dumps({"session_date": signal.session_date,
                                 "symbol": signal.symbol, "source_id": signal.source_id,
                                 "interval_start_ms": signal.interval_start_ms,
