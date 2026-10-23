@@ -104,3 +104,39 @@ Three eligible >=1 scenarios separately preserve the original purpose: saved
 Webull reprice retains same parent/order quantity99 and one submission.
 All nine changed/new cases are UNRUN; no shared execution ports, production
 guards, permission returns or Galileo/Cicero source files changed.
+
+## 21:51 recorded GIXI delivery: FIRST five source controls
+
+The earlier missing-packet blocker is superseded by the delivered
+`analysis/PRICE1-GIXI-HANDOFF-20261022` packet, not by a recovered log. The log
+was empty/removed per 21:51:53. Exact source pins are in the new independent
+`tests/unit/test_price1_recorded_gixi_db_contract.py` module. Its FIRST selection
+is that whole module ONLY (five intended cases), not the already-main-PASS
+22 controlled real-handoff tests. No author test/import/runtime execution.
+
+Source SQL ac927ab1e09332d2bc5aa4ace0872be1a80d56380117ab1eb73ec1f58c265998
+proves default one-column COPY TEXT of row_to_json. Raw intent file
+cb39f477bab18c3c68991243645abab1b14d94909462f1cb3ba8ed12911bd877 remains
+untouched. The strict source decoder consumes exactly ONE layer of paired
+backslashes, rejects unsupported/single escapes and literal control separators,
+then performs duplicate-free strict JSON parsing with Decimal quantities. It
+does not attempt JSON repair, repeated decoding, permissive unescaping or a
+different parser fallback. Derived decoded stream SHA is emitted separately
+as a test property at main execution, not claimed measured here.
+
+Record dca929bb-b131-5c84-b1cc-16ee4db1142d is a persisted filled DB postimage,
+NOT original pre-OMS Redis wire: root momlive_signal is a dictionary outside
+metadata. `project_floor_payload` explicitly copies DB row symbol/side/intent/
+quantity/reason, persisted metadata strategy and protection postimage account;
+it serializes the UNCHANGED root signal into the canonical metadata field.
+Original metadata (including top5.25, limit5.26, cap5.32875) remains unchanged.
+The complete original row/packet is retained and checked unchanged. No fabricated
+outer event, event clock, one_shot marker, prior close or reconstructed native
+history is supplied. This projection exercises buy_order_allowed ONLY; the
+already-main-PASS22 separately cover real producer -> canonical event -> inbox.
+
+The original projection must floor-ALLOW nested5.25. Four explicitly DERIVED
+variants cover nested-only positive, nested.99 despite padded5.26 limit, absent
+nested price and conflicting top5.26. No derived variant is an original outcome.
+This is not MOMNEG approval, a new fill/native execution or original-wire replay.
+All five remain UNRUN until main reviews/claims; 22:00 fix-or-pull unchanged.
