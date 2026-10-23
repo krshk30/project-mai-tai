@@ -40,7 +40,8 @@ async def test_actual_paper_router_binding_sealed_us_and_overnight_reload_withou
         assert router.route_for("SCNI", next_day).broker == "schwab"
         service._live_handoff.ledger.ready = True
         observed = int(next_day.timestamp() * 1e9)
-        detected = row(payload={"observed_decision_ns": observed,
+        # CONTROLLED up-day input isolates country sealing, not historical SCNI proof.
+        detected = row(payload={"prior_close": "2.50", "observed_decision_ns": observed,
             "reference": {"end_ms": 1}, "detect": {"end_ms": 3, "price": "3"}})
         assert service._live_handoff.offer(detected, day_volume=50000, now_ns=observed) == "offered"
         signal = service._live_handoff.queue._queue[0][1]

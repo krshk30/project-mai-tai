@@ -12,12 +12,15 @@ import ast
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+import difflib
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -36,6 +39,45 @@ AMOD_LOG_SHA256 = "e34955bd5f28f28a04b402e98da8400d98505ded5fc17a4fc1d39f32cf49d
 ET = ZoneInfo("America/New_York")
 WARNING_CODES = {"momentum_30s_warn", "momentum_60s_warn"}
 CSV_MAX_FIELD_BYTES = 8 * 1024 * 1024
+HANDOFF = "src/project_mai_tai/momentum_live/handoff.py"
+ADMISSION = "src/project_mai_tai/momentum_live/admission.py"
+PRE_HANDOFF_SHA256 = "06e1a17b50b8dd4b3a70508ba7f1c828801c61e6e78dddb0c101e2b1effb008d"
+PRE_ADMISSION_SHA256 = "0d04022ac0dbced6571f7fdc5005b3f7b3aaa81dfb4eac15c9490d6f5bfb1cac"
+# C1 2026-10-22 21:33:24: exact insertion, not a new whole-file digest waiver.
+APPROVED_MOMNEG_INSERTION = b'''            signal_price = Decimal(str(detect["price"]))
+            # The paper engine seals its in-memory prior close into this record.
+            # Never fetch a replacement or let this live-only rule alter paper.
+            raw_prior_close = record.payload.get("prior_close")
+            try:
+                prior_close = Decimal(str(raw_prior_close))
+            except (ValueError, TypeError, ArithmeticError):
+                prior_close = None
+            if (prior_close is None or not prior_close.is_finite() or prior_close <= 0
+                    or (signal_price.is_finite() and signal_price < prior_close)):
+                reason = "momneg1_prior_close_unknown" if (
+                    prior_close is None or not prior_close.is_finite() or prior_close <= 0
+                ) else "momneg1_down_day"
+                self.counts[reason] += 1
+                logger.info("[MOMNEG1-REFUSED] symbol=%s price=%s prior_close=%s reason=%s",
+                            record.symbol, signal_price, raw_prior_close, reason)
+                return reason
+'''
+
+
+def exact_momneg_allowlist(before, after, admission_before, admission_after):
+    anchor = b'            detect = record.payload["detect"]\n'
+    old_price = b'                            start, end, Decimal(str(detect["price"])), observed, day_volume,\n'
+    pinned = sha(before) == PRE_HANDOFF_SHA256 and sha(admission_before) == PRE_ADMISSION_SHA256
+    expected = None
+    if pinned and before.count(anchor) == before.count(old_price) == 1:
+        expected = before.replace(anchor, anchor + APPROVED_MOMNEG_INSERTION, 1).replace(
+            old_price, b'                            start, end, signal_price, observed, day_volume,\n', 1)
+    return {"approved": expected is not None and after == expected and admission_after == admission_before,
+        "pre_pins_match": pinned, "admission_unchanged": admission_after == admission_before,
+        "producer_serialization_unchanged": expected is not None and after == expected,
+        "raw_allowlisted_diff": "".join(difflib.unified_diff(
+            before.decode().splitlines(keepends=True), after.decode().splitlines(keepends=True),
+            fromfile=f"{PRE_REF}/{HANDOFF}", tofile=f"POST/{HANDOFF}"))}
 
 
 class _BoundedCsvReader(csv.DictReader):
@@ -74,12 +116,15 @@ def source_pair(root):
 
 def handoff_source_proof(root):
     result = {}
+    sources = {}
     for path in ("src/project_mai_tai/momentum_live/handoff.py", "src/project_mai_tai/momentum_live/admission.py"):
         before = subprocess.run(["git", "show", f"{PRE_REF}:{path}"], cwd=root,
                                 check=True, capture_output=True).stdout
         after = (root / path).read_bytes()
+        sources[path] = (before, after)
         result[path] = {"pre_sha256": sha(before), "post_sha256": sha(after), "equal": before == after}
-    return {"equal": all(row["equal"] for row in result.values()), "files": result}
+    return {"equal": all(row["equal"] for row in result.values()), "files": result,
+            **exact_momneg_allowlist(*sources[HANDOFF], *sources[ADMISSION])}
 
 
 def amod_log_context(value):
@@ -285,7 +330,111 @@ def compare_amod(pre, post, records, context):
     return result
 
 
-def run_must1(root, events, amod_events):
+def amod_root_worker(root, events):
+    """Called only in a fresh -I process; import each class from its actual root."""
+    from dataclasses import asdict
+    import inspect
+
+    root = root.resolve(strict=True)
+    sys.path[:0] = [str(root / "src"), str(root)]
+    from project_mai_tai.momentum_live.handoff import LiveHandoff
+    from project_mai_tai.momentum_live.admission import EpisodeLedger
+
+    paths = {"handoff": Path(inspect.getfile(LiveHandoff)).resolve(),
+             "admission": Path(inspect.getfile(EpisodeLedger)).resolve()}
+    if paths != {"handoff": (root / HANDOFF).resolve(), "admission": (root / ADMISSION).resolve()}:
+        raise ValueError("actual root class provenance mismatch")
+    records, context, packet = verified_amod_packet(events)
+    selected_keys = {record.event_key for record in records}
+    with events.open(encoding="utf-8", newline="") as handle, bounded_csv_reader(handle) as reader:
+        raw_rows = [row for row in reader if row["event_key"] in selected_keys]
+    if len(raw_rows) != 2:
+        raise ValueError("exact two original raw AMOD rows required")
+    payload_before = [json.dumps(record.payload, sort_keys=True) for record in records]
+    method, metadata = offer_method((root / APP).read_bytes())
+    cases = {}
+    for name in ("absent", "fresh", "at_boundary", "stale", "future"):
+        decisions, signals = [], []
+
+        def route(symbol, now):
+            value = SimpleNamespace(broker=context["broker"], reason=context["reason"],
+                status=context["status"], as_of=datetime.fromisoformat(context["as_of"]))
+            decisions.append({"symbol": symbol, "clock": now.isoformat(),
+                "broker": value.broker, "reason": value.reason, "status": value.status,
+                "as_of": value.as_of.isoformat()})
+            return value
+
+        target = LiveHandoff(NoRedisIO(), SimpleNamespace(momentum_live_enabled=True), route_for=route)
+        target.ledger = EpisodeLedger.restore([])
+        actual_claim = target.ledger.claim
+
+        def claim(signal, **kwargs):
+            signals.append(json.dumps(asdict(signal), sort_keys=True, default=str))
+            return actual_claim(signal, **kwargs)
+
+        target.ledger.claim = claim
+        recorder = RecordingHandoff(target)
+        call_bytes = record_calls(method, records, cache_case=name,
+            stale_seconds=metadata["snapshot_stale_seconds"], day_volume=context["day_volume"],
+            recorder=recorder)
+        cases[name] = {"calls": json.loads(call_bytes), "serialized_calls": call_bytes.decode(),
+            "route_decisions": decisions, "serialized_signals": signals,
+            "queue_size": target.queue.qsize(), "ledger": target.ledger.snapshot(),
+            "counts": dict(target.counts)}
+    if [json.dumps(record.payload, sort_keys=True) for record in records] != payload_before:
+        raise ValueError("retained AMOD payload mutated")
+    return {"root": str(root), "pid": os.getpid(),
+        "head": subprocess.run(["git", "rev-parse", "HEAD"], cwd=root,
+                               check=True, capture_output=True, text=True).stdout.strip(),
+        "class_files": {key: str(value) for key, value in paths.items()},
+        "class_source_sha256": {key: sha(value.read_bytes()) for key, value in paths.items()},
+        "method": metadata, "packet": packet, "raw_selected_rows": raw_rows,
+        "payload_serializations": payload_before,
+        "cache_cases": cases, "context": context}
+
+
+def compare_amod_roots(pre_root, post_root, events):
+    pre_root, post_root = pre_root.resolve(strict=True), post_root.resolve(strict=True)
+    if pre_root == post_root:
+        raise ValueError("distinct actual PRE/POST roots required")
+    proof = handoff_source_proof(post_root)
+    if not proof["approved"]:
+        raise ValueError("handoff/admission outside exact approved MOMNEG allowlist")
+    for path in (HANDOFF, ADMISSION, APP):
+        pinned = subprocess.run(["git", "show", f"{PRE_REF}:{path}"], cwd=post_root,
+                                check=True, capture_output=True).stdout
+        if (pre_root / path).read_bytes() != pinned:
+            raise ValueError(f"PRE root differs from original source: {path}")
+    results = []
+    for root in (pre_root, post_root):
+        completed = subprocess.run([sys.executable, "-I", "-B", str(Path(__file__).resolve()),
+            "--amod-worker", "--root", str(root), "--amod", str(events.resolve(strict=True))],
+            check=True, capture_output=True, text=True, timeout=60)
+        results.append(json.loads(completed.stdout))
+    pre, post = results
+    for result, root in zip(results, (pre_root, post_root), strict=True):
+        if result["root"] != str(root):
+            raise ValueError("worker source root mismatch")
+        for key, path in (("handoff", HANDOFF), ("admission", ADMISSION)):
+            if result["class_source_sha256"][key] != sha((root / path).read_bytes()):
+                raise ValueError("worker source bytes mismatch")
+    equal = all(pre[key] == post[key] for key in
+                ("packet", "raw_selected_rows", "payload_serializations", "context", "cache_cases"))
+    equal = equal and len(pre["payload_serializations"]) == 2
+    equal = equal and all(pre["method"][key] == post["method"][key] for key in
+                         ("method_sha256", "ast_sha256", "snapshot_stale_seconds"))
+    for name, case in post["cache_cases"].items():
+        expected = "day_volume_below_50000" if name in {"fresh", "at_boundary"} else "day_volume_unknown"
+        equal = equal and len(case["calls"]) == len(case["route_decisions"]) == len(case["serialized_signals"]) == 2
+        equal = equal and all(row["handoff_result"] == expected for row in case["calls"])
+        equal = equal and case["queue_size"] == 0 and case["ledger"] == []
+        equal = equal and case["counts"] == {expected: 2}
+    return {"equal": bool(equal), "source_proof": proof, "pre": pre, "post": post,
+        "scope": "ACTUAL_AMOD_DISTINCT_PROCESS_ROOTS_PURE_OFFER_NO_WORKER_NO_NATIVE",
+        "limits": "Cache ages and empty ready owner ledger CONTROLLED, not historical native state; no emitted order/fill claim"}
+
+
+def run_must1(root, events, amod_events, *, pre_root):
     pre, post = source_pair(root)
     components = handoff_source_proof(root)
     if sha(events.read_bytes()) != "30ab970778f89bcd1dcaff783f04a30a1c61735081658c3bce3db7d8d572cb1c":
@@ -293,11 +442,10 @@ def run_must1(root, events, amod_events):
     records = load_records(events)
     if any(record.session_date != date(2026, 10, 20) for record in records):
         raise ValueError("wrong retained 10-20 session")
-    amod, context, packet = verified_amod_packet(amod_events)
     report = {"pre_ref": PRE_REF, "handoff_and_admission_source_proof": components,
               "10_20": compare(pre, post, records), "10_20_input_sha256": sha(events.read_bytes()),
-              "AMOD": {**compare_amod(pre, post, amod, context), "packet": packet}}
-    complete = components["equal"] and report["10_20"]["equal"] and report["AMOD"]["equal"]
+              "AMOD": compare_amod_roots(pre_root, root, amod_events)}
+    complete = components["approved"] and report["10_20"]["equal"] and report["AMOD"]["equal"]
     report["must1"] = "PASS_RETAINED_CALLS_AND_AMOD_LOW_VOLUME_PURE_HANDOFF" if complete else "BLOCKED_OR_DIFFERENT"
     report["must3"] = "SEPARATE_MANDATORY_TONIGHT_COPY_GATE_NOT_RUN_BY_THIS_COMMAND"
     return report
@@ -308,13 +456,25 @@ def main():
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--events", type=Path, default=EXPORT / "momentum_paper_events_1020.csv")
     parser.add_argument("--amod", type=Path, default=AMOD_EXPORT / "events_amod_1021.csv")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--pre-root", type=Path)
+    parser.add_argument("--amod-only", action="store_true")
+    parser.add_argument("--amod-worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    report = run_must1(args.root, args.events, args.amod)
+    if args.amod_worker:
+        print(json.dumps(amod_root_worker(args.root, args.amod), sort_keys=True))
+        return 0
+    if args.output is None:
+        parser.error("--output is required outside the isolated worker")
+    if args.pre_root is None:
+        parser.error("--pre-root is required for actual separate-root AMOD acceptance")
+    report = (compare_amod_roots(args.pre_root, args.root, args.amod) if args.amod_only
+              else run_must1(args.root, args.events, args.amod, pre_root=args.pre_root))
     with args.output.open("x") as handle:
         json.dump(report, handle, indent=2)
         handle.write("\n")
-    return 0 if report["must1"] == "PASS_RETAINED_CALLS_AND_AMOD_LOW_VOLUME_PURE_HANDOFF" else 1
+    return 0 if (report.get("equal") is True or
+                 report.get("must1") == "PASS_RETAINED_CALLS_AND_AMOD_LOW_VOLUME_PURE_HANDOFF") else 1
 
 
 if __name__ == "__main__":

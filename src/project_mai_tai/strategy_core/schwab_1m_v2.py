@@ -4618,7 +4618,8 @@ class SchwabV2Strategy:
         quote = Quote(
             symbol=state.symbol,
             bid_price=float(bid_price or 0.0) if self._pm_rest_feature(state, "pm_print_ask_confirm") else 0.0,
-            ask_price=ask if self._pm_rest_feature(state, "pm_print_ask_confirm") else 0.0,
+            # Preserve the validated real ask for PRICE1 and downstream sizing, even flag-OFF.
+            ask_price=ask,
             last_price=px,
             quote_time_ms=print_ms,
             trade_time_ms=print_ms,

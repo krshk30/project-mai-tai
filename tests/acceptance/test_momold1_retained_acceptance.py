@@ -12,7 +12,7 @@ from pathlib import Path
 
 from scripts.momold1_copy_boot_proof import run_copy
 from scripts.momold1_live_offer_proof import (
-    AMOD_EXPORT, ET, EXPORT, compare, compare_amod, handoff_source_proof,
+    AMOD_EXPORT, ET, EXPORT, compare, compare_amod_roots, handoff_source_proof,
     load_records, offer_method, record_calls, sha, source_pair, verified_amod_packet,
 )
 from project_mai_tai.services.momentum_paper_app import MomentumPaperService
@@ -57,17 +57,25 @@ def test_actual_amod_1021_0815_offer_bytes_require_exact_retained_payload():
     assert packet["log_is_in_three_file_manifest"] is False
     assert context["day_volume"] == 15361 and context["broker"] == "schwab" and context["reason"] == "SEC_US"
     assert len(context["recorded_refusals"]) == 2
-    assert handoff_source_proof(ROOT)["equal"]
-    report = compare_amod(*source_pair(ROOT), records, context)
+    components = handoff_source_proof(ROOT)
+    assert components["approved"], components
+    assert components["admission_unchanged"] and components["producer_serialization_unchanged"]
+    assert components["raw_allowlisted_diff"]
+    pre_value = os.environ.get("MAI_TAI_MOMOLD1_PRE_ROOT")
+    assert pre_value, "MUST1 BLOCKED: distinct pinned original PRE root required"
+    report = compare_amod_roots(Path(pre_value), ROOT, path)
+    print(json.dumps(report, sort_keys=True))  # Retain raw allowlist/rows/decisions with pytest -s.
     assert report["equal"]
-    for name, case in report["cache_cases"].items():
+    for name, case in report["post"]["cache_cases"].items():
         expected = "day_volume_below_50000" if name in {"fresh", "at_boundary"} else "day_volume_unknown"
-        assert case["equal"] and case["refusal_matches"] and case["no_claim_or_emission"]
+        assert case == report["pre"]["cache_cases"][name]
+        assert case["queue_size"] == 0 and case["ledger"] == []
         for side in ("pre", "post"):
-            assert len(case[side]) == len(records)
-            assert all(row["handoff_result"] == expected for row in case[side])
+            calls = report[side]["cache_cases"][name]["calls"]
+            assert len(calls) == len(records)
+            assert all(row["handoff_result"] == expected for row in calls)
             assert all(row["day_volume"] == (15361 if name in {"fresh", "at_boundary"} else None)
-                       for row in case[side])
+                       for row in calls)
 
 
 def test_actual_tonight_copy_is_required_for_must3_acceptance():

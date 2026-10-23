@@ -38,7 +38,8 @@ def synth_records():
     stamp = int(now.timestamp() * 1e9)
     return [MomentumTapeRecord(event_key=f"SYNTH:{code}:DETECTED", logical_id=f"SYNTH:{code}",
         strategy_code=code, event_type="DETECTED", session_date=date(2026, 10, 21),
-        symbol="SYNTH", observed_at=now, payload={"observed_decision_ns": stamp,
+        # CONTROLLED prior close belongs only to SYNTH, never a retained AMOD row.
+        symbol="SYNTH", observed_at=now, payload={"prior_close": "2", "observed_decision_ns": stamp,
             "detect": {"price": "2.125", "sip_ts_ms": stamp // 1_000_000},
             "reference": {"price": "1.50", "sip_ts_ms": stamp // 1_000_000 - 1000}})
         for code in ("momentum_30s_warn", "momentum_60s_warn")]
