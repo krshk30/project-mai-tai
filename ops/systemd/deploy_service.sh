@@ -187,6 +187,7 @@ heartbeat_service_for_unit() {
     project-mai-tai-strategy.service) echo "strategy-engine" ;;
     project-mai-tai-oms.service) echo "oms-risk" ;;
     project-mai-tai-market-data.service) echo "market-data-gateway" ;;
+    project-mai-tai-snapshot-worker.service) echo "market-data-snapshot-worker" ;;
     project-mai-tai-schwab-1m-v2.service) echo "schwab-1m-v2" ;;
     project-mai-tai-orb-schwab.service) echo "orb-schwab" ;;
     *)

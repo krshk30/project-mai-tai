@@ -7,6 +7,7 @@ it is not a claim that a production systemd kill/restart has been performed.
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import json
 import multiprocessing
 import os
 from pathlib import Path
@@ -32,6 +33,10 @@ class ChildRedis:
         self.pipe = pipe
 
     async def xadd(self, stream, fields, **kwargs):
+        if stream == "l13-process:heartbeats":
+            event = json.loads(fields["data"])
+            assert event["source_service"] == event["payload"]["service_name"] == "market-data-snapshot-worker"
+            return "1-0"
         assert stream == "l13-process:snapshot-batches"
         self.pipe.send(("snapshot", os.getpid(), time.monotonic()))
         return "1-0"
@@ -226,9 +231,10 @@ async def test_rest_error_retries_then_publishes_without_exiting_worker():
     task = asyncio.create_task(worker.run(stop))
     try:
         deadline = time.monotonic() + 5.
-        while not redis.entries and time.monotonic() < deadline:
+        while not any(stream.endswith(":snapshot-batches") for stream, _, _ in redis.entries) and time.monotonic() < deadline:
             await asyncio.sleep(.01)
-        assert provider.calls >= 2 and len(redis.entries) >= 1 and not task.done()
+        batches = [row for row in redis.entries if row[0].endswith(":snapshot-batches")]
+        assert provider.calls >= 2 and len(batches) >= 1 and not task.done()
     finally:
         stop.set()
         await asyncio.wait_for(task, 2.)

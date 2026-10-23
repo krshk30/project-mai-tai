@@ -9,6 +9,7 @@ from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
+from project_mai_tai.buy_price_floor import buy_price_allowed
 from project_mai_tai.momentum_live.admission import EpisodeLedger, Refusal, Route, STRATEGY_CODE, Signal, price_entry
 from project_mai_tai.momentum_live.entry_reprice import (
     MAX_PRICE_UPDATES, UnsentEntryConflict, marketable_entry, price_changed,
@@ -88,6 +89,8 @@ class LiveEntryExecutor:
             # No await between the last fresh check and returning to submit.
 
     def _request(self, signal: Signal, episode_id: str, route: Route, *, refusal_context=None) -> OrderRequest:
+        if not buy_price_allowed(signal.signal_price, bot=STRATEGY_CODE, symbol=signal.symbol):
+            raise Refusal("PRICE1-REFUSED")
         if refusal_context is not None:
             refusal_context.update(ask="UNKNOWN", ask_age_ms="UNKNOWN", limit="UNKNOWN")
         now = self.ports.clock()
@@ -114,7 +117,11 @@ class LiveEntryExecutor:
                 )
             except Exception:
                 pass  # Diagnostics must not change pricing/refusal behavior.
+        if ask is not None and not buy_price_allowed(ask, bot=STRATEGY_CODE, symbol=signal.symbol):
+            raise Refusal("PRICE1-REFUSED")
         priced = price_entry(signal.signal_price, ask, quote_ns=quote_ns, now_ns=now_ns, route=route, tick=tick)
+        if not buy_price_allowed(priced.limit, bot=STRATEGY_CODE, symbol=signal.symbol):
+            raise Refusal("PRICE1-REFUSED")
         session = "NORMAL" if (local.hour, local.minute) >= (9, 30) and local.hour < 16 else "AM"
         account = self.accounts[route]
         if not account or not account.startswith("live:"):
@@ -132,6 +139,11 @@ class LiveEntryExecutor:
 
     async def admit(self, signal: Signal) -> tuple[str, OrderRequest | None, dict | None]:
         signal.validate()
+        if not buy_price_allowed(signal.signal_price, bot=STRATEGY_CODE, symbol=signal.symbol):
+            raise Refusal("PRICE1-REFUSED")
+        cached_ask = (self.ports.quote(signal.symbol) or {}).get("ask")
+        if cached_ask is not None and not buy_price_allowed(cached_ask, bot=STRATEGY_CODE, symbol=signal.symbol):
+            raise Refusal("PRICE1-REFUSED")
         now = self.ports.clock()
         if signal.session_date != str(now.astimezone(ZoneInfo("America/New_York")).date()):
             raise Refusal("signal_session_date_mismatch")

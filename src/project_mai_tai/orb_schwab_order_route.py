@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from redis.asyncio import Redis
 
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload, stream_name
+from project_mai_tai.buy_price_floor import buy_price_allowed
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.orb_schwab_bracket import build_orb_schwab_bracket_metadata
 
@@ -47,6 +48,8 @@ def build_orb_schwab_open_intent(
 ) -> TradeIntentEvent:
     """Build an intent only; OMS and the broker remain the execution authorities."""
     ticker = symbol.strip().upper()
+    if not buy_price_allowed(breakout_level, bot=STRATEGY_CODE, symbol=ticker):
+        raise ValueError("PRICE1-REFUSED")
     if selection is not None:
         from project_mai_tai.orb_country_route import ORB_ROUTE_QUANTITY, routed_orb_metadata
 
@@ -117,6 +120,8 @@ def build_orb_schwab_reprice_intent(
     ticker = symbol.strip().upper()
     if not ticker:
         raise ValueError("ORB reprice requires a symbol")
+    if not buy_price_allowed(breakout_level, bot=STRATEGY_CODE, symbol=ticker):
+        raise ValueError("PRICE1-REFUSED")
     if selection is not None:
         from project_mai_tai.orb_country_route import routed_orb_metadata
         metadata = routed_orb_metadata(selection, breakout_level)

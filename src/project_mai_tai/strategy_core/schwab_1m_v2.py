@@ -25,6 +25,7 @@ NO imports from: `schwab_native_30s.py`, `bar_builder.py`, `indicators.py`,
 from __future__ import annotations
 
 from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+from project_mai_tai.buy_price_floor import buy_price_allowed
 
 import json
 import logging
@@ -4735,6 +4736,10 @@ class SchwabV2Strategy:
             and state.position_qty == 0
             and px >= state.atr_prev_trail
         ):
+            if (not buy_price_allowed(state.atr_prev_trail, bot=STRATEGY_CODE, symbol=state.symbol)
+                    or not buy_price_allowed(px, bot=STRATEGY_CODE, symbol=state.symbol)
+                    or not buy_price_allowed(quote.ask_price, bot=STRATEGY_CODE, symbol=state.symbol)):
+                return None
             if not self._atr_rearm_enabled:
                 state.atr_fired_in_short_seg = True  # legacy claim (flag-off; suppresses bar-close emit)
             state.atr_hold_pending = PendingHold(
@@ -4751,8 +4756,16 @@ class SchwabV2Strategy:
         self, state: SymbolState, ph: PendingHold, now_ms: int
     ) -> TradeIntentDraft | None:
         """Window elapsed: apply the net_delta verdict. Coverage guard (<min_ticks)
-        falls back to ENTER (matches the backtest BAR_CLOSE_FALLBACK). Always clears
-        the pending hold; always logs for live slippage/decision telemetry."""
+        falls back to ENTER (matches the backtest BAR_CLOSE_FALLBACK). A PRICE1
+        refusal retains the pending hold; ordinary verdicts clear it."""
+        if state.position_qty <= 0:
+            prices = [ph.touch_price, ph.last_px]
+            ask = getattr(state.last_quote, "ask_price", None)
+            if ask is not None:
+                prices.append(ask)
+            for price in prices:
+                if not buy_price_allowed(price, bot=STRATEGY_CODE, symbol=state.symbol):
+                    return None
         state.atr_hold_pending = None
         net_bps = (
             (ph.last_px - ph.touch_price) / ph.touch_price * 1e4 if ph.touch_price else 0.0
@@ -4802,6 +4815,8 @@ class SchwabV2Strategy:
             self._log_hold(state, ph, mode + "_age_skip", net_bps)
             return None
         entry = ph.touch_price
+        if not buy_price_allowed(entry, bot=STRATEGY_CODE, symbol=state.symbol):
+            return None
         quote = state.last_quote
         sized = self._sized_open(
             state.symbol, leg="schwab", price=getattr(quote, "ask_price", None), basis="trigger_quote_ask"
@@ -5382,7 +5397,11 @@ class SchwabV2Strategy:
         ):
             touch = True
             touch_price = state.atr_prev_trail
-            if not self._atr_rearm_enabled:
+            if (not self._atr_rearm_enabled
+                    and buy_price_allowed(touch_price, bot=STRATEGY_CODE, symbol=state.symbol)
+                    and buy_price_allowed(cur.close, bot=STRATEGY_CODE, symbol=state.symbol)
+                    and (state.last_quote is None or buy_price_allowed(
+                        state.last_quote.ask_price, bot=STRATEGY_CODE, symbol=state.symbol))):
                 state.atr_fired_in_short_seg = True
 
         # --- flip state machine (close vs PRIOR trail) ---
@@ -5548,6 +5567,9 @@ class SchwabV2Strategy:
             else:
                 return None
 
+        if (not buy_price_allowed(entry, bot=STRATEGY_CODE, symbol=state.symbol)
+                or not buy_price_allowed(cur.close, bot=STRATEGY_CODE, symbol=state.symbol)):
+            return None
         quote = state.last_quote
         sized = self._sized_open(
             state.symbol, leg="schwab", price=getattr(quote, "ask_price", None), basis="trigger_quote_ask"
@@ -5635,6 +5657,9 @@ class SchwabV2Strategy:
             return None  # broke on a sub-floor bar; wait for a liquid break
 
         entry = float(state.cw_three_bar_high)  # idealized stop-buy fill at the trigger
+        if (not buy_price_allowed(entry, bot=STRATEGY_CODE, symbol=state.symbol)
+                or not buy_price_allowed(cur.close, bot=STRATEGY_CODE, symbol=state.symbol)):
+            return None
         quote = state.last_quote
         sized = self._sized_open(
             state.symbol, leg="schwab", price=getattr(quote, "ask_price", None), basis="trigger_quote_ask"
@@ -6241,6 +6266,8 @@ class SchwabV2Strategy:
         # slot" means mechanically: on a cross whose resting never filled, reactive can still fire
         # once, but only over the harder reclaim bar -- it can never stand in as the first entry.
         trig = self._resting_trigger_for_line(state.cw_flip_level) if fresh_first else state.cw_segment_high
+        if not buy_price_allowed(trig, bot=STRATEGY_CODE, symbol=state.symbol):
+            return None
         fl = state.cw_flip_level
         if trig <= 0.0 or (px < trig if fresh_first else px <= trig):
             return None  # rule 6: intrabar break of the entry-appropriate trigger
@@ -6495,6 +6522,8 @@ class SchwabV2Strategy:
     ) -> tuple[Decimal, dict[str, str]] | None:
         from project_mai_tai.atr_country_route import CountryRouteRefusal
 
+        if price is not None and not buy_price_allowed(price, bot=STRATEGY_CODE, symbol=symbol):
+            return None
         version = {}
         try:
             selected = (self._country_entry_selection(self.watchlist_state(symbol))
@@ -6555,6 +6584,11 @@ class SchwabV2Strategy:
         if self._resting_round_up_enabled():
             return float(resting_buy_stop(Decimal(f"{raw:.4f}")))
         return raw
+
+    def _resting_price_allowed(self, symbol: str, line: float) -> bool:
+        # Check before provider tick rounding or the stop-limit cap can lift it.
+        raw = float(line) * (1.0 + self._resting_offset_pct_value() / 100.0)
+        return buy_price_allowed(raw, bot=STRATEGY_CODE, symbol=symbol)
 
     def _resting_round_up_enabled(self) -> bool:
         return bool(getattr(getattr(self, "settings", None),
@@ -6651,6 +6685,8 @@ class SchwabV2Strategy:
         self, state: SymbolState, line: float, *, slot: str = "first",
         recover_accounts: set[str] | None = None,
     ) -> None:
+        if not self._resting_price_allowed(state.symbol, line):
+            return
         if state.restart_rest_evidence_pending:
             self._resting_return_reason(state, "restart_evidence_pending", slot=slot)
             return
@@ -6984,6 +7020,8 @@ class SchwabV2Strategy:
                 self._resting_return_reason(state, "webull_claim_unavailable", slot=slot)
 
     def _reprice_resting(self, state: SymbolState, line: float) -> None:
+        if not self._resting_price_allowed(state.symbol, line):
+            return
         if not self.line_buy_ready(state.symbol):
             return
         if self._resting_round_up_enabled() and state.resting_active and state.resting_is_broker_order:
@@ -7450,6 +7488,8 @@ class SchwabV2Strategy:
             return {**result, "reason": "line_unavailable"}
         ask = self._fresh_resting_ask(state.last_quote) if state.last_quote else None
         trigger = self._resting_trigger_for_line(line)
+        if not self._resting_price_allowed(state.symbol, line):
+            return {**result, "verdict": "wait", "reason": "PRICE1-REFUSED"}
         if ask is None or not math.isfinite(ask) or not 0 < ask < trigger:
             return {**result, "verdict": "wait" if slot == "first" else "expired",
                     "reason": "current_price_not_placeable"}
@@ -8304,6 +8344,10 @@ class SchwabV2Strategy:
         trigger = self._active_resting_trigger(state)
         if not (state.resting_active and line > 0.0 and trigger > 0.0):
             return None
+        if (not self._resting_price_allowed(state.symbol, line)
+                or not buy_price_allowed(trigger, bot=STRATEGY_CODE, symbol=state.symbol)
+                or not buy_price_allowed(quote.ask_price, bot=STRATEGY_CODE, symbol=state.symbol)):
+            return None
         if state.position_qty != 0 or state.resting_flip_ms:   # already filling / in the settle grace
             return None
         confirm_ask = self._pm_rest_feature(state, "pm_print_ask_confirm")
@@ -8611,6 +8655,8 @@ class SchwabV2Strategy:
         band-capped EH-LIMIT off the OMS's own fresh ask (a MARKET/OCO 417s in EH on Webull)."""
         if self._country_single_entry(state):
             return None
+        if not buy_price_allowed(entry_px, bot=STRATEGY_CODE, symbol=state.symbol):
+            return None
         quote = sizing_quote or state.last_quote
         sized = self._sized_open(
             state.symbol, leg="webull", price=getattr(quote, "ask_price", None),
@@ -8714,6 +8760,10 @@ class SchwabV2Strategy:
         line = float(state.resting_level or 0.0)
         trigger = self._active_resting_trigger(state, leg="webull")
         if not (state.resting_active and line > 0.0 and trigger > 0.0):
+            return
+        if (not self._resting_price_allowed(state.symbol, line)
+                or not buy_price_allowed(trigger, bot=STRATEGY_CODE, symbol=state.symbol)
+                or not buy_price_allowed(quote.ask_price, bot=STRATEGY_CODE, symbol=state.symbol)):
             return
         # ⭐⭐ RELEASE A CLAIM THAT NEVER BECAME A POSITION (2026-08-13).
         # The claim below is taken at QUEUE time. If the leg is then blocked -- by our own band cap,
@@ -9249,6 +9299,11 @@ class SchwabV2Strategy:
         if not bar_is_fresh:
             return None
 
+        # SELL observation already ran above. Preserve a pending entry cross
+        # while PRICE1 refuses; its ordinary age/reversal gates still apply later.
+        if state.position_qty == 0 and not buy_price_allowed(cur.close, bot=STRATEGY_CODE, symbol=state.symbol):
+            return None
+
         # Bar IS fresh. Resolve effective paths = native ∪ valid-pending.
         # C2: a pending cross can be consumed by THIS fresh bar if the
         # gap from the original cross-bar is within the configured cap
@@ -9330,6 +9385,8 @@ class SchwabV2Strategy:
             return self._maybe_atr_emit(state, cur, atr_signal, bar_is_fresh)
 
         path_name = "MACD Cross" if path_macd else "VWAP Breakout"
+        if not buy_price_allowed(cur.close, bot=STRATEGY_CODE, symbol=state.symbol):
+            return None
         quantity = max(
             1, int(self.settings.strategy_schwab_1m_v2_default_quantity)
         )

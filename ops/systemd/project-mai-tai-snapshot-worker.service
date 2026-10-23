@@ -1,7 +1,9 @@
 [Unit]
 Description=Project Mai Tai independent market snapshot worker
+# Order startup after the gateway; do not couple either daemon's restart lifetime.
 After=network-online.target redis-server.service project-mai-tai-market-data.service
 Wants=network-online.target
+# Shared application stop/restart only; deliberately not PartOf the gateway unit.
 PartOf=project-mai-tai.target
 StartLimitIntervalSec=0
 
@@ -11,6 +13,8 @@ User=trader
 Group=trader
 WorkingDirectory=/home/trader/project-mai-tai
 EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
+# Momentum STOP/prestart guards remain on the momentum consumer and its guard unit.
+# Do not run their session/manifest/Redis preflight on this shared data producer.
 ExecStart=/home/trader/project-mai-tai/.venv/bin/python -m project_mai_tai.services.market_data_snapshot_worker
 Restart=always
 RestartSec=5

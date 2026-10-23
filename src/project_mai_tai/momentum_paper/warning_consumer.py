@@ -227,7 +227,7 @@ class MomentumWarningConsumer:
             return CandidateOutcome(bar.symbol, "REFUSED", age_reason), records
         if (
             not symbol_is_eligible(bar.symbol)
-            or self.engine.prior_closes.get(bar.symbol, Decimal("0")) < 1
+            or bar.close < Decimal("1")
             or clock.weekday() >= 5
             or not time(4) <= clock.time() < self.engine.validation_window.gateway_end_for(clock.date())
         ):

@@ -43,7 +43,7 @@ from zoneinfo import ZoneInfo
 from redis.asyncio import Redis
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session, aliased, sessionmaker
+from sqlalchemy.orm import Bundle, Session, aliased, sessionmaker
 
 from project_mai_tai.db.models import (
     AccountPosition,
@@ -2194,7 +2194,18 @@ class SchwabV2BotService:
             if session.get_bind().dialect.name == "postgresql":
                 session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
                 session.execute(text("SET TRANSACTION READ ONLY"))
-            candidates = session.execute(select(Fill, BrokerOrder, BrokerAccount, OmsManagedPosition)
+            # This read runs on every live-bar retirement check; scalar bundles
+            # retain the proof shape without hydrating full ORM entities.
+            candidates = session.execute(select(
+                Bundle("confirmation_fill", Fill.id, Fill.strategy_id, Fill.broker_account_id,
+                    Fill.symbol, Fill.side, Fill.quantity, Fill.broker_fill_id, Fill.filled_at),
+                Bundle("confirmation_order", BrokerOrder.id, BrokerOrder.strategy_id, BrokerOrder.broker_account_id,
+                    BrokerOrder.symbol, BrokerOrder.side, BrokerOrder.broker_order_id,
+                    BrokerOrder.payload, BrokerOrder.client_order_id),
+                Bundle("confirmation_account", BrokerAccount.name, BrokerAccount.provider),
+                Bundle("confirmation_managed", OmsManagedPosition.symbol,
+                    OmsManagedPosition.broker_account_name, OmsManagedPosition.entry_client_order_id))
+                .select_from(Fill)
                 .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
                 .join(BrokerAccount, BrokerAccount.id == Fill.broker_account_id)
                 .join(Strategy, Strategy.id == Fill.strategy_id)
@@ -2202,7 +2213,9 @@ class SchwabV2BotService:
                 .where(Fill.id.in_([entry.fill_id for entry in entries]), Strategy.code == STRATEGY_CODE,
                     OmsManagedPosition.strategy_code == STRATEGY_CODE,
                     OmsManagedPosition.status == "closed", OmsManagedPosition.current_quantity == 0)).all()
-            books = session.execute(select(VirtualPosition, BrokerAccount.name)
+            books = session.execute(select(
+                Bundle("confirmation_book", VirtualPosition.symbol, VirtualPosition.quantity), BrokerAccount.name)
+                .select_from(VirtualPosition)
                 .join(BrokerAccount, BrokerAccount.id == VirtualPosition.broker_account_id)
                 .join(Strategy, Strategy.id == VirtualPosition.strategy_id)
                 .where(Strategy.code == STRATEGY_CODE, BrokerAccount.name.in_(names),
@@ -2214,7 +2227,6 @@ class SchwabV2BotService:
                     OmsManagedPosition.current_quantity != 0, OmsManagedPosition.current_quantity.is_(None)))))
             obligations = {}
             from project_mai_tai.cancelack1 import ObligationScope, load_flat_obligations, working_buy_present
-            held.update(symbol for symbol in symbols if working_buy_present(session, symbol))
             for fill, order, account, row in candidates:
                 entry = next(e for e in entries if e.fill_id == fill.id)
                 if not entry.fanout_slot_id:
@@ -2241,6 +2253,19 @@ class SchwabV2BotService:
                     obligations[entry.fill_id] = proof.required_accounts
                 except (ValueError, TypeError, ArithmeticError):
                     continue  # Missing actual-owner row/history remains UNKNOWN, not zero.
+            # A working BUY can only veto retirement; do not read it for books
+            # already HELD or unable to satisfy the unchanged flat-book fence.
+            possibly_flat = set()
+            for entry in entries:
+                if entry.symbol in held:
+                    continue
+                expected_names = obligations.get(entry.fill_id,
+                    names if entry.fanout_slot_id else {entry.broker_account_name})
+                own = [(vp, name) for vp, name in books if vp.symbol == entry.symbol and name in expected_names]
+                if (len(own) == len(expected_names) and {name for _, name in own} == expected_names
+                        and all(vp.quantity.is_finite() and vp.quantity == 0 for vp, _ in own)):
+                    possibly_flat.add(entry.symbol)
+            held.update(symbol for symbol in possibly_flat if working_buy_present(session, symbol))
         wanted = {entry.fill_id: entry for entry in entries}
         flat = set()
         for fill, order, account, row in candidates:

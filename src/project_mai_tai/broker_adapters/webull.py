@@ -208,6 +208,9 @@ class WebullBrokerAdapter:
 
     # ------------------------------------------------------------------ public API
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
+        from project_mai_tai.buy_price_floor import buy_order_allowed
+        if not buy_order_allowed(request):
+            return [self._reject(request, "PRICE1-REFUSED", origin="client")]
         account = self.accounts_by_name.get(request.broker_account_name)
         if account is None:
             return [self._reject(request, self._missing_config_reason(request.broker_account_name), origin="client")]

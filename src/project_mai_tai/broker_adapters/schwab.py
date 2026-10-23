@@ -608,6 +608,11 @@ class SchwabBrokerAdapter:
         return best
 
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
+        from project_mai_tai.buy_price_floor import buy_order_allowed
+        if not buy_order_allowed(request):
+            return [ExecutionReport(event_type="rejected", client_order_id=request.client_order_id,
+                symbol=request.symbol, side=request.side, intent_type=request.intent_type,
+                quantity=request.quantity, reason="PRICE1-REFUSED", origin="client")]
         orb_entry_type = str(request.metadata.get("bracket_entry_type", "")).upper()
         fenced_orb = ("orb_pastlevel_policy" in request.metadata
                       or request.prewire_check is not None or orb_entry_type == "LIMIT")
@@ -1754,6 +1759,9 @@ class SchwabBrokerAdapter:
         An accepted receipt with orb_replace_confirmation=unknown is a HOLD,
         not confirmation that the requested prices are working or any fill.
         """
+        from project_mai_tai.buy_price_floor import buy_order_allowed
+        if not buy_order_allowed(request):
+            raise ValueError("PRICE1-REFUSED")
         if request.strategy_code != "orb_schwab" or not broker_order_id:
             raise RuntimeError("ORB replace requires its known Schwab parent")
         if request.prewire_check is None or request.metadata.get("orb_pastlevel_policy") != "ORBPASTLEVEL1-v1":

@@ -16,7 +16,7 @@ from tools.l13_g2_controls import (
     DECODE_CPU_NS, EVENTS, SNAPSHOTS, CpuSnapshotProvider, SnapshotReceiptRedis,
     ControlledReferences, ProductionWorkerAdapter, TradeSink, assert_p1,
     consume_recorded_batches, load_adapter, load_p3_evidence, load_recorded_packet, offline_settings,
-    percentile_nearest_rank, write_fresh_result,
+    datetime_epoch_ns, percentile_nearest_rank, write_fresh_result,
 )
 
 
@@ -29,13 +29,17 @@ def complete_metrics():
             {"kind": "publish", "pid": 2, "count": SNAPSHOTS,
              "start_ns": index + 1, "end_ns": index + 2},
         ])
+    heartbeats = [dict(kind="heartbeat", pid=2, runtime_pid=2, runtime_instance_id="controlled",
+                       observed_ns=when, status=status)
+                  for when, status in ((0, "starting"), (15, "healthy"), (30, "healthy"),
+                                       (45, "healthy"), (101, "stopping"))]
     return dict(elapsed_seconds=60.01, received=EVENTS, sent=EVENTS,
                 unique_sip_count=EVENTS, negative_lags=0, lag_p99_ms=120,
                 cycle_lag_p99_ms=120, cycle_trade_count=1000, snapshot_cycles=[{}] * 8,
                 loop_stall_max_ms=10, producer_alive_after_cleanup=False,
                 pending_gateway_trades=0, pending_frames=0, task_errors=[],
                 worker_receipts=receipts, gateway_pid=1, window_start_ns=0,
-                window_end_ns=100)
+                window_end_ns=100, worker_heartbeats=heartbeats)
 
 
 def test_p1_contract_accepts_only_complete_witness():
@@ -51,6 +55,7 @@ def test_p1_contract_accepts_only_complete_witness():
     ("producer_alive_after_cleanup", True), ("pending_gateway_trades", 1),
     ("pending_frames", 1), ("task_errors", ["failure"]),
     ("worker_receipts", []),
+    ("worker_heartbeats", []),
 ])
 def test_p1_contract_does_not_waive_any_gate(field, value):
     metrics = complete_metrics()
@@ -102,6 +107,42 @@ async def test_trade_sink_uses_produced_timestamp_not_receipt_clock():
     await sink.xadd("l13-controlled:market-data", {"data": json.dumps({
         "event_type": "trade_tick", "produced_at": "2026-10-22T14:00:00.250000Z",
         "payload": {"timestamp_ns": sip},
+    })})
+    assert sink.lags_ms == [250.0]
+
+
+@pytest.mark.parametrize("stamp,expected_ns", [
+    ("1970-01-01T00:00:00.000001+00:00", 1_000),
+    ("1969-12-31T23:59:59.999999+00:00", -1_000),
+    ("2038-01-19T03:14:08.123456+00:00", 2_147_483_648_123_456_000),
+    ("2100-01-01T00:00:00.123456+00:00", 4_102_444_800_123_456_000),
+    ("2100-01-01T05:30:00.123456+05:30", 4_102_444_800_123_456_000),
+])
+def test_produced_epoch_uses_exact_integer_utc_delta(stamp, expected_ns):
+    assert datetime_epoch_ns(datetime.fromisoformat(stamp)) == expected_ns
+
+
+def test_produced_epoch_never_defaults_naive_timestamp_to_local_timezone():
+    with pytest.raises(ValueError, match="timezone required"):
+        datetime_epoch_ns(datetime(2026, 10, 22, 14))
+
+
+@pytest.mark.asyncio
+async def test_trade_sink_retains_one_nanosecond_difference_at_large_epoch():
+    sink = TradeSink()
+    await sink.xadd("l13-controlled:market-data", {"data": json.dumps({
+        "event_type": "trade_tick", "produced_at": "2100-01-01T00:00:00.123456Z",
+        "payload": {"timestamp_ns": 4_102_444_800_123_455_999},
+    })})
+    assert sink.lags_ms == [0.000001]
+
+
+@pytest.mark.asyncio
+async def test_trade_sink_non_utc_offset_keeps_exact_quarter_second():
+    sink = TradeSink()
+    await sink.xadd("l13-controlled:market-data", {"data": json.dumps({
+        "event_type": "trade_tick", "produced_at": "2100-01-01T05:30:00.250000+05:30",
+        "payload": {"timestamp_ns": 4_102_444_800_000_000_000},
     })})
     assert sink.lags_ms == [250.0]
 
@@ -218,10 +259,19 @@ async def test_real_worker_run_binding_receipt_and_owned_cleanup():
                     await asyncio.sleep(0.01)
                 if any(row["kind"] == "publish" for row in observed):
                     break
-            assert {row["kind"] for row in observed} == {"fetch", "publish"}
-            assert all(row["pid"] == pid and row["count"] == 3 for row in observed)
+            assert {row["kind"] for row in observed} == {"fetch", "publish", "heartbeat"}
+            assert all(row["pid"] == pid for row in observed)
+            assert all(row["count"] == 3 for row in observed if row["kind"] != "heartbeat")
         assert worker._closed is True
         assert pid not in [child.pid for child in multiprocessing.active_children()]
+        while True:
+            try:
+                observed.append(receipts.get_nowait())
+            except queue.Empty:
+                break
+        heartbeats = [row for row in observed if row["kind"] == "heartbeat"]
+        assert {"starting", "stopping"} <= {row["status"] for row in heartbeats}
+        assert len({row["runtime_instance_id"] for row in heartbeats}) == 1
     finally:
         receipts.close()
         receipts.join_thread()

@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Literal
 
 from project_mai_tai.strategy_core.orb_intrabar import OrbBar
+from project_mai_tai.buy_price_floor import buy_price_allowed
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class OrbSchwabOpeningOrder:
     placed: bool = False
     cancelled: bool = False
     last_requested_level: Decimal | None = None
+    symbol: str = "UNKNOWN"
+    price1_waiting: bool = False
 
     def on_closed_bar(
         self,
@@ -68,10 +71,15 @@ class OrbSchwabOpeningOrder:
         if not qualified:
             return None
         level = max(qualified)
+        if not buy_price_allowed(level, bot="orb_schwab", symbol=self.symbol):
+            if not self.placed and index == 2:
+                self.price1_waiting = True
+            return None
         if not self.placed:
-            if index != 2:
+            if index != 2 and not self.price1_waiting:
                 return None
             self.placed = True
+            self.price1_waiting = False
             self.last_requested_level = level
             return OrbSchwabAction("place", level, "third_bar_complete")
         if self.last_requested_level is not None and level > self.last_requested_level:

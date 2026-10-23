@@ -22,6 +22,7 @@ from sqlalchemy import desc, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
+from project_mai_tai.buy_price_floor import buy_order_allowed
 from project_mai_tai.oms.bot_control_scope import is_controlled_strategy
 from project_mai_tai.broker_adapters.target_price import target_limit_price
 from project_mai_tai.broker_adapters.protocols import (
@@ -615,6 +616,8 @@ def _control_managed_exit_owner(method):
 def _refresh_working_cache_after_intent(method):
     @wraps(method)
     async def refreshed(self, event):
+        if not buy_order_allowed(event.payload):
+            return []  # Retain waiting state: no mirror finalization or cache/DB refresh.
         if str(getattr(event.payload, "strategy_code", "")).strip().lower() == "momentum_warn_live":
             return await method(self, event)
         try:
@@ -16261,7 +16264,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         max_age = int(self.settings.orb_oms_quote_priced_max_age_ms)
         quote = self._latest_quotes_by_symbol.get(request.symbol)
         try:
-            selected = select_entry(level, quote, utcnow(), max_age_ms=max_age, provider=provider)
+            selected = select_entry(level, quote, utcnow(), max_age_ms=max_age, provider=provider,
+                                    symbol=request.symbol)
         except ValueError as exc:
             self.logger.info("[ORBPASTLEVEL1] symbol=%s decision=NO_SEND reason=%s "
                              "trigger=%s ask=%s cap=%s quote_at=%s",
@@ -16276,7 +16280,8 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if refusal:
                 raise ValueError(refusal)
             assert_same_selection(level, self._latest_quotes_by_symbol.get(request.symbol),
-                                  utcnow(), selected, max_age_ms=max_age, provider=provider)
+                                  utcnow(), selected, max_age_ms=max_age, provider=provider,
+                                  symbol=request.symbol)
 
         self.logger.info("[ORBPASTLEVEL1] symbol=%s decision=SELECTED type=%s trigger=%s ask=%s "
                          "nominal_cap_pct=%s effective_cap=%s effective_cap_pct=%s anchor=%s",

@@ -1,0 +1,31 @@
+diff --git a/ops/systemd/project-mai-tai-snapshot-worker.service b/ops/systemd/project-mai-tai-snapshot-worker.service
+new file mode 100644
+--- /dev/null
++++ b/ops/systemd/project-mai-tai-snapshot-worker.service
+@@ -0,0 +1,26 @@
++[Unit]
++Description=Project Mai Tai independent market snapshot worker
++After=network-online.target redis-server.service project-mai-tai-market-data.service
++Wants=network-online.target
++PartOf=project-mai-tai.target
++StartLimitIntervalSec=0
++
++[Service]
++Type=simple
++User=trader
++Group=trader
++WorkingDirectory=/home/trader/project-mai-tai
++EnvironmentFile=/etc/project-mai-tai/project-mai-tai.env
++ExecStart=/home/trader/project-mai-tai/.venv/bin/python -m project_mai_tai.services.market_data_snapshot_worker
++Restart=always
++RestartSec=5
++TimeoutStopSec=30
++NoNewPrivileges=true
++PrivateTmp=true
++UMask=0027
++StandardOutput=append:/var/log/project-mai-tai/market-data.log
++StandardError=append:/var/log/project-mai-tai/market-data.log
++SyslogIdentifier=project-mai-tai-snapshot-worker
++
++[Install]
++WantedBy=project-mai-tai.target

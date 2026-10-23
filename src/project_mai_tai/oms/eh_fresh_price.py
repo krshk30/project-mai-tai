@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, or_, select, update
 
 from project_mai_tai.broker_adapters.atr_buy_readback import AtrBuyReadback
+from project_mai_tai.buy_price_floor import buy_order_allowed, buy_price_allowed
 from project_mai_tai.broker_adapters.protocols import OrderRequest
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, BrokerOrderEvent, DashboardSnapshot, Fill, Strategy, TradeIntent
 from project_mai_tai.events import TradeIntentEvent, stream_name
@@ -307,7 +308,9 @@ class EhFreshPriceMixin:
             return True
         reading = self._nfq2_reading(event.payload.symbol)
         hold = self._nfq2_holds.get(self._nfq2_key(event))
-        if reading.fresh:
+        price1_allowed = (buy_order_allowed(event.payload) and buy_price_allowed(
+            reading.price, bot=event.payload.strategy_code, symbol=event.payload.symbol))
+        if reading.fresh and price1_allowed:
             return False
         key = self._nfq2_key(event)
         if hold is None:
@@ -323,7 +326,7 @@ class EhFreshPriceMixin:
             hold.dispatch = None
         intent.status = "held"
         self._nfq2_save(session, hold)
-        self._nfq2_feedback(session, event, "held_no_fresh_quote", "held")
+        self._nfq2_feedback(session, event, "held_no_fresh_quote", "held" if price1_allowed else "PRICE1-REFUSED")
         return True
 
     def _restore_nfq2_holds(self):
@@ -365,9 +368,13 @@ class EhFreshPriceMixin:
         reading = self._nfq2_reading(symbol)
         if not reading.fresh:
             return
+        if not buy_price_allowed(reading.price, bot="schwab_1m_v2", symbol=symbol):
+            return  # Keep the exact hold/token/dispatch state, before any CAS.
         busy = self.__dict__.setdefault("_eh_price_hold_inflight", set())
         for key, hold in matches:
             if key in busy or self._nfq2_holds.get(key) is not hold or hold.phase != "held":
+                continue
+            if not buy_order_allowed(hold.event.payload):
                 continue
             reason = None
             try:

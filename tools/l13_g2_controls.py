@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from dataclasses import fields
-from datetime import datetime
+from datetime import UTC, datetime
 import hashlib
 import importlib
 import json
@@ -19,13 +19,15 @@ import multiprocessing
 import os
 from pathlib import Path
 import queue
+import socket
 import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from project_mai_tai.events import ReferenceDataPayload, SnapshotBatchEvent
+from project_mai_tai.events import HeartbeatEvent, ReferenceDataPayload, SnapshotBatchEvent
 from project_mai_tai.market_data.gateway import MarketDataGatewayService
 from project_mai_tai.market_data.massive_provider import MassiveSnapshotProvider, MassiveTradeStream
 from project_mai_tai.market_data.models import SnapshotRecord
@@ -72,6 +74,14 @@ def assert_p1(metrics):
     assert all(row["count"] == SNAPSHOTS for row in receipts)
     assert all(row["cpu_ns"] >= DECODE_CPU_NS for row in fetches)
     assert all(row["overlap_trades"] > 0 for row in fetches)
+    heartbeats = metrics["worker_heartbeats"]
+    assert {"starting", "stopping"} <= {row["status"] for row in heartbeats}
+    assert len({row["runtime_instance_id"] for row in heartbeats}) == 1
+    assert all(row["pid"] == row["runtime_pid"] != metrics["gateway_pid"] for row in heartbeats)
+    assert {row["pid"] for row in heartbeats} == {row["pid"] for row in fetches}
+    healthy = [row for row in heartbeats if row["status"] == "healthy"
+               and metrics["window_start_ns"] <= row["observed_ns"] <= metrics["window_end_ns"]]
+    assert len(healthy) >= 3, "actual15s worker heartbeat load must remain present during60s P1"
 
 
 def load_adapter(spec):
@@ -149,6 +159,45 @@ class ControlledReferences:
                                      avg_daily_volume=100_000) for symbol in symbols]
 
 
+def validate_worker_heartbeat(encoded, kwargs):
+    """Validate and retain a DISTINCT worker identity; never count as a batch."""
+    event = HeartbeatEvent.model_validate_json(encoded)
+    payload = event.payload
+    details = payload.details
+    assert event.source_service == payload.service_name == "market-data-snapshot-worker"
+    assert details["role"] == "independent_snapshot_worker"
+    assert details["runtime_pid"] == str(os.getpid())
+    instance = UUID(details["runtime_instance_id"])
+    assert str(instance) == details["runtime_instance_id"]
+    assert payload.instance_name == f"{socket.gethostname()}:{os.getpid()}:{instance}"
+    started = datetime.fromisoformat(details["process_started_at"].replace("Z", "+00:00"))
+    assert started.tzinfo is not None and started <= event.produced_at
+    assert details["reference_ready"] in {"true", "false"}
+    assert int(details["last_snapshot_symbols"]) >= 0
+    assert float(details["snapshot_progress_bound_seconds"]) > 0
+    if payload.status == "healthy":
+        assert details["reference_ready"] == "true"
+        completed = datetime.fromisoformat(details["last_snapshot_completed_at"].replace("Z", "+00:00"))
+        assert completed.tzinfo is not None and started <= completed <= event.produced_at
+        assert 0 <= float(details["last_snapshot_age_seconds"]) <= float(details["snapshot_progress_bound_seconds"])
+    assert kwargs["maxlen"] >= 10 and kwargs["approximate"] is True
+    return {"kind": "heartbeat", "pid": os.getpid(), "thread_id": threading.get_ident(),
+            "runtime_pid": int(details["runtime_pid"]), "runtime_instance_id": str(instance),
+            "source_service": event.source_service, "service_name": payload.service_name,
+            "status": payload.status, "observed_ns": time.monotonic_ns(),
+            "produced_at": event.produced_at.isoformat(), "details": dict(details),
+            "sha256": hashlib.sha256(encoded.encode()).hexdigest()}
+
+
+def retain_worker_receipt(metrics, receipt):
+    if receipt["kind"] == "heartbeat":
+        metrics["worker_heartbeats"].append(receipt)
+    elif receipt["kind"] in {"fetch", "publish"}:
+        metrics["worker_receipts"].append(receipt)
+    else:
+        raise AssertionError("unexpected worker receipt is not silently ignored")
+
+
 class SnapshotReceiptRedis:
     """Injected only in the snapshot child. Never decodes batches on trade loop."""
 
@@ -156,9 +205,13 @@ class SnapshotReceiptRedis:
         self.receipts = receipts
 
     async def xadd(self, stream, values, **kwargs):
+        if stream == "l13-controlled:heartbeats":
+            self.receipts.put_nowait(validate_worker_heartbeat(values["data"], kwargs))
+            return "1-0"
         assert stream == "l13-controlled:snapshot-batches"
         encoded = values["data"]
         event = SnapshotBatchEvent.model_validate_json(encoded)
+        assert event.source_service == "market-data-gateway"
         self.receipts.put_nowait({
             "kind": "publish", "pid": os.getpid(), "thread_id": threading.get_ident(),
             "start_ns": time.monotonic_ns(), "end_ns": time.monotonic_ns(),
@@ -180,11 +233,20 @@ class SnapshotReceiptRedis:
 class CaptureSnapshotRedis:
     def __init__(self):
         self.encoded = None
+        self.heartbeats = []
+        self.snapshot_publications = 0
 
     async def xadd(self, stream, values, **kwargs):
+        if stream == "l13-controlled:heartbeats":
+            assert len(self.heartbeats) < 16, "one-batch capture heartbeat bound"
+            self.heartbeats.append(validate_worker_heartbeat(values["data"], kwargs))
+            return "1-0"
         assert stream == "l13-controlled:snapshot-batches"
         assert self.encoded is None, "one recorded input must publish exactly once"
+        event = SnapshotBatchEvent.model_validate_json(values["data"])
+        assert event.source_service == "market-data-gateway"
         self.encoded = values["data"]
+        self.snapshot_publications += 1
         return "1-0"
 
     async def hset(self, name, *, mapping):
@@ -195,7 +257,29 @@ class CaptureSnapshotRedis:
         return None
 
 
-def _production_worker_child(settings, provider, references, redis, stop, sender, recorded):
+@contextmanager
+def recorded_snapshot_completion(completed_at):
+    """Opt-in replay constructor input, never rewrite already-encoded payloads."""
+    if completed_at is None:
+        yield
+        return
+    if completed_at.utcoffset() is None:
+        raise ValueError("recorded completion must be timezone-aware")
+    from project_mai_tai.market_data import publisher
+
+    original = publisher.SnapshotBatchPayload
+
+    def construct(*args, **kwargs):
+        if "completed_at" in kwargs:
+            raise AssertionError("publisher completion contract changed; review replay binding")
+        return original(*args, completed_at=completed_at, **kwargs)
+
+    with patch.object(publisher, "SnapshotBatchPayload", construct):
+        yield
+
+
+def _production_worker_child(settings, provider, references, redis, stop, sender, recorded,
+                             recorded_completed_at=None):
     """Spawn target: actual G1 service; no test replica of its scheduling loop."""
     from project_mai_tai.market_data.snapshot_worker import SnapshotWorkerService
     from project_mai_tai.log import configure_logging
@@ -207,9 +291,11 @@ def _production_worker_child(settings, provider, references, redis, stop, sender
                                        reference_cache=references)
         if recorded is not None:
             try:
-                count = await worker.publish_snapshot_batch_once(recorded)
+                with recorded_snapshot_completion(recorded_completed_at):
+                    count = await worker.publish_snapshot_batch_once(recorded)
                 sender.send({"kind": "batch", "pid": os.getpid(), "count": count,
-                             "encoded": redis.encoded})
+                             "encoded": redis.encoded, "worker_heartbeats": redis.heartbeats,
+                             "snapshot_publications": redis.snapshot_publications})
             finally:
                 await redis.aclose()
             return
@@ -300,13 +386,13 @@ class ProductionWorkerAdapter:
                 if not process.is_alive():
                     process.close()
 
-    async def publish_recorded_batch(self, *, snapshots, reference_data):
+    async def publish_recorded_batch(self, *, snapshots, reference_data, completed_at=None):
         context = multiprocessing.get_context("spawn")
         stop = context.Event()
         receiver, sender = context.Pipe(duplex=False)
         process = context.Process(target=_production_worker_child,
                                   args=(offline_settings(), object(), RecordedReferences(reference_data),
-                                        CaptureSnapshotRedis(), stop, sender, snapshots),
+                                        CaptureSnapshotRedis(), stop, sender, snapshots, completed_at),
                                   name="l13-recorded-production-worker")
         process.start()
         sender.close()
@@ -314,6 +400,8 @@ class ProductionWorkerAdapter:
             result = await self._receive(receiver, process)
             assert result["kind"] == "batch" and result["pid"] == process.pid != os.getpid()
             assert result["count"] == len(snapshots)
+            assert result["snapshot_publications"] == 1
+            self.last_recorded_heartbeats = result["worker_heartbeats"]
             return result["encoded"]
         finally:
             try:
@@ -322,6 +410,14 @@ class ProductionWorkerAdapter:
                 receiver.close()
                 if not process.is_alive():
                     process.close()
+
+
+def datetime_epoch_ns(value):
+    if value.utcoffset() is None:
+        raise ValueError("produced_at timezone required; never assume local time")
+    delta = value.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    return ((delta.days * 86_400 + delta.seconds) * 1_000_000_000
+            + delta.microseconds * 1_000)
 
 
 class TradeSink:
@@ -337,7 +433,7 @@ class TradeSink:
         sip_ns = event["payload"]["timestamp_ns"]
         produced = datetime.fromisoformat(event["produced_at"].replace("Z", "+00:00"))
         self.sips.append(sip_ns)
-        self.lags_ms.append((int(produced.timestamp() * 1e9) - sip_ns) / 1e6)
+        self.lags_ms.append((datetime_epoch_ns(produced) - sip_ns) / 1e6)
         self.ack_times.append(time.monotonic_ns())
         return f"{len(self.sips)}-0"
 
@@ -358,7 +454,7 @@ async def exercise_p1(adapter, context, metrics):
     stop = asyncio.Event()
     producer_stop = threading.Event()
     inbound = asyncio.Queue(maxsize=EVENTS)
-    metrics.update(gateway_pid=os.getpid(), worker_receipts=[], task_errors=[], sent=0)
+    metrics.update(gateway_pid=os.getpid(), worker_receipts=[], worker_heartbeats=[], task_errors=[], sent=0)
     metrics["source_sha256"] = {
         name: hashlib.sha256(Path(importlib.import_module(
             "project_mai_tai.market_data." + name).__file__).read_bytes()).hexdigest()
@@ -397,7 +493,7 @@ async def exercise_p1(adapter, context, metrics):
         while not stop.is_set():
             while True:
                 try:
-                    metrics["worker_receipts"].append(receipts.get_nowait())
+                    retain_worker_receipt(metrics, receipts.get_nowait())
                 except queue.Empty:
                     break
             await asyncio.sleep(0.02)
@@ -440,7 +536,7 @@ async def exercise_p1(adapter, context, metrics):
                 receipt = receipts.get_nowait()
             except queue.Empty:
                 break
-            metrics["worker_receipts"].append(receipt)
+            retain_worker_receipt(metrics, receipt)
         for receipt in metrics["worker_receipts"]:
             receipt["overlap_trades"] = sum(
                 receipt["start_ns"] <= ack <= receipt["end_ns"] for ack in sink.ack_times)
