@@ -439,12 +439,14 @@ async def test_webull_fufu_shape_cancels_original_coid_without_native_id(monkeyp
 async def test_other_schwab_callers_keep_existing_fast_return_or_terminal_poll(monkeypatch, caller):
     h = harness(monkeypatch)
     request = h.executor._request(h.signal, "controlled-episode", Route.SCHWAB)
-    metadata = {"limit_price": "3.57"}
+    # Keep the raw anchor actually sealed by LiveEntryExecutor._request.
+    metadata = {"limit_price": "3.57", "signal_price": request.metadata["signal_price"]}
     fast = caller in {"atr_primary", "atr_stop"}
     if caller == "atr_primary":
         h.leaf.settings.strategy_schwab_1m_v2_webull_resting_mirror_enabled = True
         request = replace(request, strategy_code="schwab_1m_v2", reason="ATR",
-            metadata={**metadata, "atr_variant": "CW-v2-resting", "resting_entry": "true", "fanout_slot_id": "slot"})
+            metadata={**metadata, "entry_price": "3.56", "atr_variant": "CW-v2-resting",
+                      "resting_entry": "true", "fanout_slot_id": "slot"})
     elif caller == "atr_stop":
         request = replace(request, strategy_code="schwab_1m_v2", side="sell", intent_type="close",
                           reason="HARD_STOP", metadata={**metadata, "stop_guard": "true"})
@@ -452,14 +454,15 @@ async def test_other_schwab_callers_keep_existing_fast_return_or_terminal_poll(m
         h.leaf.settings.orb_live_schwab_orders_enabled = True
         request = replace(request, strategy_code="orb_schwab", reason="ORB", order_type="stop_limit",
             metadata={**metadata, "bracket": "true", "bracket_entry_type": "STOP_LIMIT",
-                "stop_price": "3.56", "bracket_target_price": "3.75", "bracket_stop_price": "3.03"})
+                "orb_intended_break_level": "3.56", "stop_price": "3.56",
+                "bracket_target_price": "3.75", "bracket_stop_price": "3.03"})
     elif caller == "mom_sell":
         request = replace(request, side="sell", intent_type="close", reason="MOMLIVE1_EXIT", metadata=metadata)
     elif caller == "unmarked":
         request = replace(request, metadata=metadata)
     else:
         request = replace(request, strategy_code="schwab_1m_v2" if caller == "atr_regular" else "other",
-                          reason="ENTRY", metadata=metadata)
+                          reason="ENTRY", metadata={**metadata, "entry_price": "3.56"})
     terminal = AsyncMock(return_value=None)
     monkeypatch.setattr(h.leaf, "_wait_for_terminal_order", terminal)
     reports = await h.leaf.submit_order(request)

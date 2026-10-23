@@ -8,11 +8,11 @@ from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.oms.service import OmsRiskService
 
 
-def intent(kind="open"):
+def intent(kind="open", *, signal_price="3.00"):
     return TradeIntentEvent(source_service="momentum-paper", payload=TradeIntentPayload(
         strategy_code="momentum_warn_live", broker_account_name="live:schwab_1m_v2",
         symbol="SCNI", side="buy" if kind == "open" else "sell", quantity=1,
-        intent_type=kind, reason="controlled MOMLIVE1"))
+        intent_type=kind, reason="controlled MOMLIVE1", metadata={"signal_price": signal_price}))
 
 
 def service(*, enabled, actor):
@@ -62,3 +62,16 @@ async def test_enabled_entry_only_offers_to_own_bounded_actor():
     result._rpg_external_retry.assert_not_called()
     result._run_db.assert_not_awaited()
     result._refresh_drift_working_cache.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("price", [".9975", ".99"])
+async def test_under_one_is_refused_before_actor_and_generic_paths(price, caplog):
+    actor = Mock()
+    result = service(enabled=True, actor=actor)
+    with caplog.at_level(logging.INFO, logger="price1"):
+        assert await result.process_trade_intent(intent(signal_price=price)) == []
+    assert "PRICE1-REFUSED" in caplog.text
+    actor.offer_intent.assert_not_called()
+    result._rpg_external_retry.assert_not_called()
+    result._run_db.assert_not_awaited()

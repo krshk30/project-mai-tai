@@ -118,7 +118,9 @@ def test_selected_stak_prices_reach_actual_webull_fake_sdk(fake_sdk, session, as
     # Synthetic listing, not STAK native evidence; exercise the real symbol mapper.
     _instrument_stub(None, [{"symbol": "STAK", "instrument_id": "synthetic-STAK-instrument", "status": "OC"}])
     selected = selection(ask=ask)
-    metadata = {**selected, "session": session, "extended_hours": str(session != "NORMAL").lower()}
+    # The actual ORB producer retains the RAW breakout, not the rounded cap.
+    metadata = {**selected, "orb_intended_break_level": "1.65", "session": session,
+                "extended_hours": str(session != "NORMAL").lower()}
     request = OrderRequest("synthetic-l7-STAK", WEBULL, "orb_schwab", "STAK", "buy", "open",
                            Decimal(10), "SYNTHETIC_INCIDENT_CONTROL", metadata,
                            order_type=selected["order_type"])
@@ -147,6 +149,14 @@ def test_selected_stak_prices_reach_actual_webull_fake_sdk(fake_sdk, session, as
     ("10.01", "10.01", "10.06"), ("25.3456", "25.35", "25.47"),
 ])
 def test_provider_legal_stop_and_cap_boundaries(level, trigger, cap):
+    if Decimal(level) < 1:
+        with pytest.raises(ValueError, match="^PRICE1-REFUSED$"):
+            selection(level)
+        # Preserve the independent low-price grid check, not BUY admission.
+        assert round_buy(Decimal(level), provider="webull") == Decimal(trigger)
+        legacy = build_orb_schwab_bracket_metadata(Decimal(level))
+        assert Decimal(legacy["limit_price"]) == Decimal(cap)
+        return
     result = selection(level)
     assert Decimal(result["stop_price"]) == Decimal(trigger)
     assert Decimal(result["limit_price"]) == Decimal(cap)
@@ -169,6 +179,11 @@ def test_higher_price_legacy_geometry_and_exit_pair_anchors_unchanged(level):
                                                (".99999", "1.00001", "1.01"),
                                                ("10.01", "10.01001", "10.02")])
 def test_past_trigger_ceiling_ask_uses_provider_tick(level, ask, expected):
+    if Decimal(level) < 1:
+        with pytest.raises(ValueError, match="^PRICE1-REFUSED$"):
+            selection(level, ask)
+        assert round_buy(Decimal(ask), provider="webull") == Decimal(expected)
+        return
     selected = selection(level, ask)
     assert selected["order_type"] == "LIMIT"
     assert Decimal(selected["limit_price"]) == Decimal(expected)
