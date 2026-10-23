@@ -82,3 +82,13 @@ if that actual gate is not fixed and PASS by 22:00, PRICE1 BOTH MOM and ATR is
 PULLED tonight. This source checkpoint is not acceptance or installation authority.
 Remaining retained test compatibility stays queued at this exact first-increment
 checkpoint, not dropped. PG12 stays preempted/unlaunched, 9045 three PASS retained.
+
+## Separate retained reactive marker fixture
+
+The eight remaining63 zero-ask marker failures are independent of Galileo's
+actual PM stream provenance correction. The marker fixture now declares a
+controlled current bid/ask equal to its already supplied last price (default
+5.50), rather than zero placeholders. All existing marker, draft, latch, age,
+pending-fanout and duplicate assertions remain unchanged. This test-only change
+does not fabricate an original live quote or qualify the production PM fix.
+The whole marker module is UNRUN by this author; main owns any new claim.
