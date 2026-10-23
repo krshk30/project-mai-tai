@@ -68,6 +68,7 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
+from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.price_binding import stored_price
 from project_mai_tai.oms.webull_attach_riskoff import atr_handoff_call
@@ -1071,6 +1072,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self._oco_exit_poll_at: dict[tuple[str, str], float] = {}
         self._manual_stop_symbols: set[str] = set()
         self._manual_stop_loaded_at: float = -1e9
+        self._manual_stop_session_start: datetime | None = None
         # Bug A follow-up: native stop-guard (re)arms that reverse-rejected because the
         # just-cancelled prior guard / entry fill had not settled at the broker. Keyed by
         # hard-stop key -> (strategy_id, broker_account_id) so the periodic sync can re-arm
@@ -15137,10 +15139,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         plane writes (`global_manual_stop_symbols`, payload {"symbols": [...]}).
 
         Cached for `_MANUAL_STOP_CACHE_SECS` so this costs one query per window, not one per intent.
-        Any failure returns the LAST GOOD set (never an empty one) — a DB blip must not silently
-        un-stop a symbol the operator deliberately halted.
+        A failure keeps the last good set only within its scanner session. The 04:00 roll
+        retires yesterday's stop even when the DB is unavailable.
         """
         now = time.monotonic()
+        session_start = current_scanner_session_start_utc(utcnow())
+        if self._manual_stop_session_start != session_start:
+            self._manual_stop_symbols = set()
+            self._manual_stop_loaded_at = -1e9
+            self._manual_stop_session_start = session_start
         if now - self._manual_stop_loaded_at < self._MANUAL_STOP_CACHE_SECS:
             return self._manual_stop_symbols
         if self.session_factory is None:
@@ -15153,7 +15160,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     .order_by(desc(DashboardSnapshot.created_at))
                 )
             payload = getattr(snapshot, "payload", None)
-            syms = payload.get("symbols", []) if isinstance(payload, dict) else []
+            marker = payload.get("scanner_session_start_utc") if isinstance(payload, dict) else None
+            try:
+                marker_dt = datetime.fromisoformat(marker) if isinstance(marker, str) else None
+            except ValueError:
+                marker_dt = None
+            if marker_dt is not None and marker_dt.tzinfo is None:
+                marker_dt = marker_dt.replace(tzinfo=UTC)
+            matches = marker_dt is not None and marker_dt.astimezone(UTC) == session_start
+            syms = payload.get("symbols", []) if matches else []
             self._manual_stop_symbols = {
                 str(x).strip().upper() for x in syms if str(x).strip()
             } if isinstance(syms, list) else set()
