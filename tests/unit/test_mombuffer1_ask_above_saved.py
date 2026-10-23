@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport
 from project_mai_tai.db.models import BrokerOrder
-from project_mai_tai.momentum_live.admission import Refusal, Route
+from project_mai_tai.momentum_live.admission import Refusal, Route, price_entry
 from project_mai_tai.momentum_live.entry_reprice import UnsentEntryConflict, marketable_entry, validate_entry_reprice
 from project_mai_tai.momentum_live.entry_wire import entry_wire_guard
 from tests.unit.test_mombuffer1_incap_reprice import durable, env, move_at, priced  # noqa: F401
@@ -122,16 +122,38 @@ async def test_saved_marketable_limit_never_bypasses_fresh_gates(priced, fault):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["schwab", "webull"])
 async def test_sub1_retains_saved_notional_quantity_not_larger_fresh_ask_quantity(priced, provider):
+    """PRICE1 supersedes sub-dollar submission, not the saved-price rule."""
     h = priced
     h.quote["ask"] = D(".99")
     signal = replace(h.signal, signal_price=D(".99"), country_route=provider)
     move_at(h, "after_durable", D(".50"))
+    with pytest.raises(Refusal, match="^PRICE1-REFUSED$"):
+        await h.executor.admit(signal)
+    assert durable(h) == (None, None)
+    assert not h.sent and h.runtime.book._active_count == 0
+
+
+@pytest.mark.parametrize("route", [Route.SCHWAB, Route.WEBULL])
+def test_sub1_saved_quantity_geometry_is_not_buy_permission(route):
+    saved = price_entry(D(".99"), D(".99"), quote_ns=1, now_ns=1,
+                        route=route, tick=D(".0001"))
+    assert saved.limit == D(".99") and saved.quantity == 101
+    assert saved.limit * saved.quantity <= D(100)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["schwab", "webull"])
+async def test_eligible_saved_notional_quantity_is_not_larger_fresh_ask_quantity(priced, provider):
+    h = priced
+    h.quote["ask"] = D("1.01")
+    signal = replace(h.signal, signal_price=D("1.01"), country_route=provider)
+    move_at(h, "after_durable", D("1.00"))
     _, request, _ = await h.executor.admit(signal)
     parent, order = durable(h)
-    assert D(request.metadata["limit_price"]) == D(".99")
-    assert order.quantity == parent.quantity == request.quantity == D(101)
+    assert D(request.metadata["limit_price"]) == D("1.01")
+    assert order.quantity == parent.quantity == request.quantity == D(99)
     assert request.quantity * D(request.metadata["limit_price"]) <= D(100)
-    assert request.quantity >= 100 and len(h.sent) == 1
+    assert request.quantity < int(D(100) / D("1.00")) and len(h.sent) == 1
 
 
 @pytest.mark.asyncio

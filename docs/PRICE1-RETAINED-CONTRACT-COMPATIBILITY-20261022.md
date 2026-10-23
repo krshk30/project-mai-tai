@@ -92,3 +92,15 @@ controlled current bid/ask equal to its already supplied last price (default
 pending-fanout and duplicate assertions remain unchanged. This test-only change
 does not fabricate an original live quote or qualify the production PM fix.
 The whole marker module is UNRUN by this author; main owns any new claim.
+
+## Retained sub-dollar MOM reprice contracts
+
+The three old executable sub-dollar scenarios now explicitly demand PRICE1
+refusal before durable order/intent creation, native submit or slot consumption.
+Three separate pure-price cases retain the exact old .99/101 and .80/.81/123
+quantity/cap arithmetic without treating that math as BUY authorization.
+Three eligible >=1 scenarios separately preserve the original purpose: saved
+1.01/99 must not become fresh 1.00/100 on a falling ask, and a 1.00 -> 1.01
+Webull reprice retains same parent/order quantity99 and one submission.
+All nine changed/new cases are UNRUN; no shared execution ports, production
+guards, permission returns or Galileo/Cicero source files changed.

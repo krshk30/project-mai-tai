@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from project_mai_tai.db.models import BrokerOrder, BrokerOrderEvent, Fill, OmsManagedPosition, TradeIntent, VirtualPosition
-from project_mai_tai.momentum_live.admission import Refusal
+from project_mai_tai.momentum_live.admission import Refusal, Route, price_entry
 from project_mai_tai.momentum_live.entry_reprice import MAX_PRICE_UPDATES
 from tests.unit.test_momstuck2_prewire_refusal import durable, env  # noqa: F401
 from tests.unit.test_webull_adapter import fake_sdk  # noqa: F401
@@ -251,13 +251,35 @@ async def test_two_slots_and_overlap_idempotence_survive_reprice(priced):
 
 @pytest.mark.asyncio
 async def test_subdollar_webull_quantity_and_cap_preserved(priced):
+    """The old sub-dollar executable entry is now an explicit floor refusal."""
     h = priced
     h.quote["ask"] = D(".80")
     signal = replace(h.signal, signal_price=D(".80"))
     move_at(h, "before_wire", D(".81"))
+    with pytest.raises(Refusal, match="^PRICE1-REFUSED$"):
+        await h.executor.admit(signal)
+    assert durable(h) == (None, None)
+    assert not h.sent and h.runtime.book._active_count == 0
+
+
+def test_subdollar_quantity_cap_geometry_does_not_authorize_dispatch():
+    priced = price_entry(D(".80"), D(".81"), quote_ns=1, now_ns=1,
+                         route=Route.WEBULL, tick=D(".0001"))
+    assert priced.quantity == 123 and priced.quantity >= 100
+    assert priced.limit == D(".81") <= priced.cap == D(".81200")
+
+
+@pytest.mark.asyncio
+async def test_eligible_webull_quantity_and_cap_preserved(priced):
+    h = priced
+    h.quote["ask"] = D("1.00")
+    signal = replace(h.signal, signal_price=D("1.00"))
+    move_at(h, "before_wire", D("1.01"))
     _, request, _ = await h.executor.admit(signal)
-    assert request.quantity == 123 and request.quantity >= 100
-    assert D(request.metadata["limit_price"]) == D(".81") <= D(request.metadata["cap_price"])
+    parent, order = durable(h)
+    assert request.quantity == parent.quantity == order.quantity == 99
+    assert D(request.metadata["limit_price"]) == D("1.01") <= D(request.metadata["cap_price"]) == D("1.01500")
+    assert len(h.sent) == 1 and h.sent[0] == request
 
 
 @pytest.mark.asyncio
