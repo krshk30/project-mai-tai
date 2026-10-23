@@ -35,14 +35,16 @@ LiveHandoff._emit serialized raw signal_price only in momlive_signal; canonical
 OMS `_refresh_working_cache_after_intent` required a top-level signal_price and
 returned before actual actor admission. Old P5 four zero-ledger failures retained.
 
-Approved source scope now supersedes the test-only priority, not the PRICE floor:
+The 21:33:24 ruling supersedes the top-level producer proposal preserved at
+7709991e26806daffdf52f32f60ee1d10562d94b. Do NOT compose that producer line.
+The current successor restores handoff.py byte-for-byte to the cac base;
+AMOD's only handoff change remains the separately approved prior-close guard.
 
-- `LiveHandoff._emit` adds the SAME raw signal_price at top level. Nested payload,
-  event UUID/episode, source service, observed clock and prior-close offer logic
-  remain unchanged. No limit/ask/reference fallback or inferred raw anchor.
-- `buy_order_allowed` additionally rejects conflicting/missing nested/top prices
-  when a MOM nested signal exists. JSON duplicate keys and malformed/non-string
-  producer prices refuse; both prices must agree and pass the unchanged >=1 floor.
+- `buy_order_allowed` reads the existing raw momlive_signal.signal_price. A
+  top-level duplicate is OPTIONAL, but must agree when present. JSON duplicate
+  keys and malformed/non-string producer prices refuse. No padded cap, quote,
+  reference or inferred-price fallback. Missing price logs PRICE1-NO-PRICE with
+  key names only, never the serialized signal or metadata values.
 - New `buy_intent_allowed(event)` binds actual MOM handoff source service,
   event UUID/episode, one-shot marker, symbol, nonempty original source ID, typed
   interval/observation clocks and produced_at to the actual nested envelope.
@@ -55,19 +57,28 @@ No state/table/settings/flag writes added. Read-only per-event JSON/Decimal and
 envelope checks; cost UNMEASURED, not a timing PASS. Scope is only the three named
 production functions/module entry helpers. No edits in Cicero's prior-close
 offer clause, engine, admission or retained source-proof/digest expectations.
-The one added handoff metadata line is an actual producer fix, not test injection.
+There is NO producer/envelope change in the current cumulative candidate.
 
-New `test_price1_real_handoff_contract.py`: **19 intended controls UNRUN**.
+New `test_price1_real_handoff_contract.py`: **22 intended controls UNRUN**.
 Actual paper detect/seal -> actual handoff.offer/_emit -> immutable wire event ->
 canonical OMS method -> actual restored-empty LiveActor inbox. Prices 1.00/1.20/
 5.25 admit exactly once into the inbox. Fourteen invalid/conflicting/source/time/
 sub1 mutations hold before actor/generic I/O; two SELL/cancel controls bypass the
-entry-price envelope. All execution/persistence ports raise if reached rather
+entry-price envelope. Original nested-only 5.25 and agreeing optional top-level
+5.25 cases reach the actual inbox without rewriting the event; the missing raw
+price logging control proves key-only diagnostics. These are CONTROLLED source
+contracts, NOT the required recorded GIXI payload.
+All execution/persistence ports raise if reached rather
 than returning permission. No broker, ledger execution, native ownership/fill,
 original incident or P5 whole acceptance is claimed from an inbox witness.
 
 Main must compose this actual production successor before new G2 MOM actors;
 old APP2d actor outcomes are not borrowed. First source-only future selection:
-`tests/unit/test_price1_real_handoff_contract.py` (new19 only). No author run.
+`tests/unit/test_price1_real_handoff_contract.py` (new22 only). No author run.
+Recorded GIXI 10-22 08:19 payload path/SHA remains missing, main locating it.
+Real-payload floor allowance 5.25 must be tested separately from MOMNEG prior-close
+admission. No synthetic replacement or claim of recorded-case PASS. Per 21:33:24,
+if that actual gate is not fixed and PASS by 22:00, PRICE1 BOTH MOM and ATR is
+PULLED tonight. This source checkpoint is not acceptance or installation authority.
 Remaining retained test compatibility stays queued at this exact first-increment
 checkpoint, not dropped. PG12 stays preempted/unlaunched, 9045 three PASS retained.

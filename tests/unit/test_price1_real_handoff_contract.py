@@ -91,7 +91,8 @@ async def ingress(settings, router):
 async def test_real_producer_reaches_canonical_guard_and_actual_actor_offer_once(price):
     settings, router, event = await real_handoff_event(price)
     raw = json.loads(event.payload.metadata["momlive_signal"])
-    assert event.payload.metadata["signal_price"] == raw["signal_price"] == price
+    assert "signal_price" not in event.payload.metadata
+    assert raw["signal_price"] == price
     assert event.source_service == "momentum-paper"
     assert str(event.event_id) == event.payload.metadata["episode_id"]
     assert raw["source_id"].startswith("momentum_30s_warn:SCNI:")
@@ -105,7 +106,7 @@ async def test_real_producer_reaches_canonical_guard_and_actual_actor_offer_once
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fault", ["missing_top", "missing_nested", "conflict_top", "conflict_nested",
+@pytest.mark.parametrize("fault", ["missing_price", "missing_nested", "conflict_top", "conflict_nested",
     "sub1_both", "padded_cap_not_anchor", "symbol", "episode", "source_service",
     "source_id", "observed_time", "future_interval", "duplicate_price", "bool_price"])
 async def test_real_envelope_mutations_refuse_before_actor_or_generic_io(fault):
@@ -113,18 +114,20 @@ async def test_real_envelope_mutations_refuse_before_actor_or_generic_io(fault):
     event = original.model_copy(deep=True)
     md = event.payload.metadata
     raw = json.loads(md["momlive_signal"])
-    if fault == "missing_top":
-        md.pop("signal_price")
+    if fault == "missing_price":
+        md.pop("signal_price", None)
+        raw.pop("signal_price")
     elif fault == "missing_nested":
         md.pop("momlive_signal")
     elif fault == "conflict_top":
         md["signal_price"] = "1.21"
     elif fault == "conflict_nested":
+        md["signal_price"] = "1.20"
         raw["signal_price"] = ".9975"
     elif fault == "sub1_both":
         md["signal_price"] = raw["signal_price"] = ".9975"
     elif fault == "padded_cap_not_anchor":
-        md.pop("signal_price")
+        md.pop("signal_price", None)
         md.update(limit_price="1.20", reference_price="1.20", ask="1.20")
         raw["signal_price"] = ".9975"
     elif fault == "symbol":
@@ -150,6 +153,36 @@ async def test_real_envelope_mutations_refuse_before_actor_or_generic_io(fault):
     service, actor = await ingress(settings, router)
     assert await service.process_trade_intent(event) == []
     assert actor.inbox.empty() and not actor.book.episodes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("duplicate_top", [False, True])
+async def test_original_nested_only_handoff_reaches_actual_actor_without_rewriting_event(duplicate_top):
+    settings, router, original = await real_handoff_event("5.25")
+    event = original.model_copy(deep=True)
+    assert "signal_price" not in event.payload.metadata
+    if duplicate_top:
+        event.payload.metadata["signal_price"] = "5.25"
+    before = event.model_dump_json()
+    assert buy_order_allowed(event.payload) and buy_intent_allowed(event)
+    service, actor = await ingress(settings, router)
+    assert await service.process_trade_intent(event) == []
+    assert actor.inbox.qsize() == 1 and actor.inbox.get_nowait() is event
+    assert event.model_dump_json() == before and not actor.book.episodes
+
+
+@pytest.mark.asyncio
+async def test_missing_raw_price_logs_only_key_names_and_refuses(caplog):
+    _, _, event = await real_handoff_event()
+    event.payload.metadata.pop("signal_price", None)
+    raw = json.loads(event.payload.metadata["momlive_signal"])
+    raw.pop("signal_price")
+    event.payload.metadata["momlive_signal"] = json.dumps(raw)
+    with caplog.at_level(logging.INFO, logger="price1"):
+        assert not buy_intent_allowed(event)
+    assert "[PRICE1-NO-PRICE]" in caplog.text
+    assert "payload_keys=" in caplog.text and "metadata_keys=" in caplog.text
+    assert event.payload.metadata["momlive_signal"] not in caplog.text
 
 
 @pytest.mark.asyncio

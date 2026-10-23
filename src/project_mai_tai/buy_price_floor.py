@@ -25,20 +25,25 @@ def _handoff_signal(metadata):
     if not isinstance(raw, str) or len(raw) > 65_536:
         raise ValueError("signal_envelope_invalid")
     value = json.loads(raw, object_pairs_hook=_unique_signal_object)
-    if (not isinstance(value, dict) or not isinstance(value.get("signal_price"), str)
-            or not isinstance(metadata.get("signal_price"), str)):
+    if not isinstance(value, dict) or not isinstance(value.get("signal_price"), str):
         raise ValueError("signal_envelope_invalid")
-    nested, top = Decimal(value["signal_price"]), Decimal(metadata["signal_price"])
-    if not nested.is_finite() or not top.is_finite() or nested != top:
+    nested = Decimal(value["signal_price"])
+    if not nested.is_finite():
         raise ValueError("signal_price_conflict")
+    if "signal_price" in metadata:
+        if not isinstance(metadata["signal_price"], str):
+            raise ValueError("signal_price_conflict")
+        top = Decimal(metadata["signal_price"])
+        if not top.is_finite() or nested != top:
+            raise ValueError("signal_price_conflict")
     return value
 
 
 def buy_intent_allowed(event):
     """Bind a real MOM handoff envelope before the canonical OMS actor offer.
 
-    This is not a price fallback: the producer must supply the same raw price
-    in both locations. Adapters keep their own existing raw-order floor check.
+    The original producer carries its raw price in momlive_signal. A duplicated
+    top-level price, if present, must agree. Never substitute a cap or quote.
     """
     order = event.payload
     metadata = order.metadata
@@ -61,6 +66,9 @@ def buy_intent_allowed(event):
                 raise ValueError("signal_identity_or_time_conflict")
             date.fromisoformat(value["session_date"])
         except (ValueError, KeyError, TypeError, ArithmeticError, OverflowError):
+            logger.info("[PRICE1-NO-PRICE] bot=%s symbol=%s payload_keys=%s metadata_keys=%s",
+                        order.strategy_code, order.symbol,
+                        sorted(order.model_dump()), sorted(metadata))
             logger.info("[PRICE1-REFUSED] bot=%s symbol=%s reason=handoff_signal_envelope_UNKNOWN",
                         order.strategy_code, order.symbol)
             return False
@@ -95,10 +103,13 @@ def buy_order_allowed(order):
         order.strategy_code == "orb_schwab" and metadata.get("orb_schwab_reprice") == "true"
     ):
         return True
+    signal = None
     if order.strategy_code == "momentum_warn_live" and "momlive_signal" in metadata:
         try:
-            _handoff_signal(metadata)
+            signal = _handoff_signal(metadata)
         except (ValueError, KeyError, TypeError, ArithmeticError):
+            logger.info("[PRICE1-NO-PRICE] bot=%s symbol=%s metadata_keys=%s",
+                        order.strategy_code, order.symbol, sorted(metadata))
             logger.info("[PRICE1-REFUSED] bot=%s symbol=%s reason=signal_price_conflict_or_missing",
                         order.strategy_code, order.symbol)
             return False
@@ -107,8 +118,11 @@ def buy_order_allowed(order):
         "momentum_warn_live": ("signal_price",),
         "orb_schwab": ("orb_intended_break_level",),
     }[order.strategy_code]
-    prices = [metadata[key] for key in keys if key in metadata]
+    prices = ([signal["signal_price"]] if signal is not None else
+              [metadata[key] for key in keys if key in metadata])
     if not prices:
+        logger.info("[PRICE1-NO-PRICE] bot=%s symbol=%s metadata_keys=%s",
+                    order.strategy_code, order.symbol, sorted(metadata))
         prices = [None]
     kind = str(metadata.get("order_type", getattr(order, "order_type", "market"))).lower()
     if kind in {"limit", "stop_limit", "stop-limit"} and "limit_price" in metadata:
