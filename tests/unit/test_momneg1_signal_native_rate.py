@@ -177,6 +177,12 @@ def percentile(values, fraction):
 @pytest.mark.asyncio
 async def test_real_signal_callback_240_per_second_60_seconds(record_property):
     """Explicit P2 synthetic mode needs no historical packet; actual mode is strict."""
+    required = ["MOMNEG1_NATIVE_RESULT", "MOMNEG1_RATE_MODE"]
+    if os.environ.get("MOMNEG1_RATE_MODE") == "ACTUAL_PACKET_RATE":
+        required.extend(("MOMNEG1_NATIVE_PACKET", "MOMNEG1_NATIVE_PACKET_SHA256"))
+    for name in required:
+        if name not in os.environ:
+            pytest.skip(f"requires local rig artifact environment {name}")
     output_path = Path(os.environ["MOMNEG1_NATIVE_RESULT"])
     if output_path.exists():
         raise FileExistsError(output_path)

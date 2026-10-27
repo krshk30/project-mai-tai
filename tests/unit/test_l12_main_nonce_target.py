@@ -105,6 +105,8 @@ def test_every_connected_operand_mismatch_refuses_before_private_files(capabilit
 def owned_files(capability):
     value = capability.values
     root = Path(value["root"])
+    if not root.parent.exists():
+        pytest.skip(f"requires local rig artifact {root.parent} (nonce fixture parent)")
     root.mkdir(mode=0o700)  # Fresh random fixture only, never an adopted cluster.
     try:
         (root / "data").mkdir(mode=0o700)

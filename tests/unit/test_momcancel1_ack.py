@@ -949,7 +949,10 @@ async def test_c11145_actual_ipst_preimages_no_schwab_lookup_retains_unknown(mon
     from pathlib import Path
     from uuid import UUID
 
-    raw = Path("/private/tmp/OCT27-C11145-IPST-OPERANDS-ONE/preimages.json").read_bytes()
+    path = Path("/private/tmp/OCT27-C11145-IPST-OPERANDS-ONE/preimages.json")
+    if not path.exists():
+        pytest.skip(f"requires local rig artifact {path}")
+    raw = path.read_bytes()
     assert sha256(raw).hexdigest() == "6369dc5f25c4b51ded65c6c1f958222df654e52ca0c9733028f8b6aff5df4cc9"
     rows = json.loads(raw)
     parent_raw, order_raw = rows["parent"], rows["order"]

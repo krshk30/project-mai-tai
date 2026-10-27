@@ -50,6 +50,8 @@ def subject(*, restored=True, held=True, dangerous=False, enabled=True,
 
 
 def baseline_check():
+    if not BASELINE.exists():
+        pytest.skip(f"requires local rig artifact {BASELINE}")
     raw = BASELINE.read_bytes()
     assert hashlib.sha256(raw).hexdigest() == BASELINE_SHA
     tree = ast.parse(raw, filename=str(BASELINE))

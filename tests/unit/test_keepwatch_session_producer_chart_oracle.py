@@ -45,6 +45,8 @@ CASES = (
 
 
 def checked(path, expected):
+    if not path.exists():
+        pytest.skip(f"requires local rig artifact {path}")
     raw = path.read_bytes()
     assert hashlib.sha256(raw).hexdigest() == expected, str(path)
     return raw

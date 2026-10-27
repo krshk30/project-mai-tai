@@ -619,12 +619,15 @@ def test_g3_and_core_atr_setters_unchanged_from_frozen_base():
     import ast
     import hashlib
 
-    # AST digests captured from afd5fee; portable to a shallow CI checkout.
+    # C1 LATEST C11821 2026-10-27 18:21: reviewed L12 strict-first branch is
+    # expected. Pin its exact 20dc AST (CI40579469080); retry-one stays frozen.
     original = {
-        "_strict_first_rest_admitted": "9390506b14b2338daf1fb43b309f1973e4a4da955d59db1d4bcf1fa0002f5df5",
+        "_strict_first_rest_admitted": "11063d9514a8cf920c060eb0c3501091e9c6127ed20677f693d72c06bffff922",
         # SLOTCAP-20261021: BUY flip clears slotclear_deferred_sell; ATR math unchanged
         # (claude-1 review 21:10:48 ET).
-        "_update_atr_state": "5aa89b29cd456af144a87dc526045106131da332528012c9dba9e810a1c947c7",
+        # C11835 / operator 10-22 ~11:58 HALTGAP, reviewed L11 KEEPWATCH:
+        # only attested jointly-empty gaps span; otherwise the clamp is unchanged.
+        "_update_atr_state": "c88c21fa6c418ab0878884331da19f659410ddae1b7f2540cfc7e3d419259e17",
         "_retry_one_start_segment_on_sell": "88c1377d5552662ba2bd7597603dca7e403ba03bde67690bc0325d0f2006afe2",
     }
     after = ast.parse(inspect.getsource(__import__("project_mai_tai.strategy_core.schwab_1m_v2", fromlist=["_"])))

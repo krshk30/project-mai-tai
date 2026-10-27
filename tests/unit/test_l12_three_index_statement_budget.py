@@ -25,6 +25,18 @@ EXPECTED_DDL = (
     "CREATE INDEX ix_l12_control_uncertainty ON bot_control_attempts (account_id, symbol) "
     "WHERE status IS NULL OR status NOT IN ('TERMINAL', 'PROVEN_NOT_SENT');",
 )
+# C1 LATEST 2026-10-27 13:24 reviewed both budgets at 180s, transactional;
+# C11821 18:21 authorizes test-only alignment, preserving exact DDL and cleanup.
+STATEMENT_BUDGET_SQL = "SET LOCAL statement_timeout = '180000ms'"
+LOCK_BUDGET_SQL = "SET LOCAL lock_timeout = '180000ms'"
+OFFLINE_SAVE_SQL = (
+    "SELECT set_config('l12.previous_index_statement_timeout', current_setting('statement_timeout'), true), "
+    "set_config('l12.previous_index_lock_timeout', current_setting('lock_timeout'), true)"
+)
+OFFLINE_RESTORE_SQL = (
+    "SELECT set_config('statement_timeout', current_setting('l12.previous_index_statement_timeout'), true), "
+    "set_config('lock_timeout', current_setting('l12.previous_index_lock_timeout'), true)"
+)
 
 
 @pytest.fixture
@@ -37,8 +49,9 @@ def migration():
 
 
 class Connection:
-    def __init__(self, *, previous="750ms", cleanup_error=None, set_error=None):
+    def __init__(self, *, previous="750ms", previous_lock="125ms", cleanup_error=None, set_error=None):
         self.previous = self.current = previous
+        self.previous_lock = self.current_lock = previous_lock
         self.cleanup_error, self.set_error = cleanup_error, set_error
         self.events = []
 
@@ -46,31 +59,39 @@ class Connection:
         self.events.append(("sql", sql))
         if sql == "SHOW statement_timeout":
             return SimpleNamespace(scalar_one=lambda: self.current)
-        assert sql == "SET LOCAL statement_timeout = '60000ms'"
+        if sql == "SHOW lock_timeout":
+            return SimpleNamespace(scalar_one=lambda: self.current_lock)
+        assert sql in (STATEMENT_BUDGET_SQL, LOCK_BUDGET_SQL)
         if self.set_error is not None:
             raise self.set_error
-        self.current = "1min"
+        if sql == STATEMENT_BUDGET_SQL:
+            self.current = "3min"
+        else:
+            self.current_lock = "3min"
 
     @contextmanager
     def begin_nested(self):
-        before = self.current
+        before = (self.current, self.current_lock)
         self.events.append(("savepoint", before))
         try:
             yield
         except BaseException:
-            self.current = before
+            self.current, self.current_lock = before
             self.events.append(("rollback_savepoint", before))
             raise
         else:
-            self.events.append(("release_savepoint", self.current))
+            self.events.append(("release_savepoint", (self.current, self.current_lock)))
 
     def execute(self, statement, values):
-        assert str(statement) == "SELECT set_config('statement_timeout', :previous, true)"
-        assert values == {"previous": self.previous}
-        self.events.append(("restore", values["previous"]))
+        assert str(statement) == (
+            "SELECT set_config('statement_timeout', :previous, true), "
+            "set_config('lock_timeout', :previous_lock, true)")
+        assert values == {"previous": self.previous, "previous_lock": self.previous_lock}
+        self.events.append(("restore", (values["previous"], values["previous_lock"])))
         if self.cleanup_error is not None:
             raise self.cleanup_error
         self.current = values["previous"]
+        self.current_lock = values["previous_lock"]
 
 
 class Ops:
@@ -89,7 +110,7 @@ class Ops:
         return self.connection
 
     def create_index(self, *args, **kwargs):
-        self.calls.append(("index", args, kwargs, self.connection.current))
+        self.calls.append(("index", args, kwargs, self.connection.current, self.connection.current_lock))
         if self.ddl_error is not None:
             raise self.ddl_error
 
@@ -105,12 +126,13 @@ def test_online_exact_index_only_and_actual_previous_budget_restored(migration, 
     connection = Connection(previous=previous)
     migration.op = Ops(connection)
     migration._create_shared_index(name, table, ["CONTROLLED_COLUMN"])
-    assert migration.op.calls == [("index", (name, table, ["CONTROLLED_COLUMN"]), {}, "1min")]
-    assert connection.current == previous
+    assert migration.op.calls == [("index", (name, table, ["CONTROLLED_COLUMN"]), {}, "3min", "3min")]
+    assert (connection.current, connection.current_lock) == (previous, "125ms")
     assert connection.events == [
-        ("sql", "SHOW statement_timeout"), ("savepoint", previous),
-        ("sql", "SET LOCAL statement_timeout = '60000ms'"),
-        ("release_savepoint", "1min"), ("restore", previous)]
+        ("sql", "SHOW statement_timeout"), ("sql", "SHOW lock_timeout"),
+        ("savepoint", (previous, "125ms")),
+        ("sql", STATEMENT_BUDGET_SQL), ("sql", LOCK_BUDGET_SQL),
+        ("release_savepoint", ("3min", "3min")), ("restore", (previous, "125ms"))]
 
 
 @pytest.mark.parametrize("name,table", CASES)
@@ -122,8 +144,9 @@ def test_failed_index_rolls_back_savepoint_resets_and_preserves_primary(migratio
     with pytest.raises(error_type) as caught:
         migration._create_shared_index(name, table, ["CONTROLLED_COLUMN"])
     assert caught.value is primary
-    assert connection.current == "750ms"
-    assert connection.events[-2:] == [("rollback_savepoint", "750ms"), ("restore", "750ms")]
+    assert (connection.current, connection.current_lock) == ("750ms", "125ms")
+    assert connection.events[-2:] == [
+        ("rollback_savepoint", ("750ms", "125ms")), ("restore", ("750ms", "125ms"))]
 
 
 def test_budget_set_failure_still_restores_without_invoking_index(migration):
@@ -133,7 +156,8 @@ def test_budget_set_failure_still_restores_without_invoking_index(migration):
     with pytest.raises(RuntimeError) as caught:
         migration._create_shared_index(*CASES[0], ["CONTROLLED_COLUMN"])
     assert caught.value is primary and not migration.op.calls
-    assert connection.current == "750ms" and connection.events[-1] == ("restore", "750ms")
+    assert (connection.current, connection.current_lock) == ("750ms", "125ms")
+    assert connection.events[-1] == ("restore", ("750ms", "125ms"))
 
 
 def test_cleanup_failure_without_primary_cannot_return_success(migration):
@@ -150,7 +174,8 @@ def test_cleanup_failure_preserves_original_error_with_type_only_unknown(migrati
     migration.op = Ops(connection, ddl_error=primary)
     with pytest.raises(RuntimeError) as caught:
         migration._create_shared_index(*CASES[0], ["CONTROLLED_COLUMN"])
-    assert caught.value is primary and connection.current == "750ms"
+    assert caught.value is primary
+    assert (connection.current, connection.current_lock) == ("750ms", "125ms")
     assert primary.__notes__ == ["L12 index budget cleanup UNKNOWN: ValueError"]
 
 
@@ -180,8 +205,7 @@ def test_offline_index_error_still_emits_reset_and_propagates(migration):
     with pytest.raises(RuntimeError) as caught:
         migration._create_shared_index(*CASES[0], ["CONTROLLED_COLUMN"])
     assert caught.value is primary
-    assert migration.op.calls[-1] == ("execute",
-        "SELECT set_config('statement_timeout', current_setting('l12.previous_index_statement_timeout'), true)")
+    assert migration.op.calls[-1] == ("execute", OFFLINE_RESTORE_SQL)
 
 
 def test_offline_cleanup_error_cannot_mask_primary(migration):
@@ -205,13 +229,14 @@ def test_actual_offline_upgrade_preserves_three_literal_definitions_and_other_dd
     assert create_indexes == list(EXPECTED_DDL)
     for index in EXPECTED_DDL:
         offset = statements.index(index)
-        assert statements[offset - 2:offset] == [
-            "SELECT set_config('l12.previous_index_statement_timeout', current_setting('statement_timeout'), true);",
-            "SET LOCAL statement_timeout = '60000ms';"]
-        assert statements[offset + 1] == (
-            "SELECT set_config('statement_timeout', current_setting('l12.previous_index_statement_timeout'), true);")
-    assert sum(part == "SET LOCAL statement_timeout = '60000ms';" for part in statements) == 3
-    assert not any("lock_timeout" in part or "CONCURRENTLY" in part for part in statements)
+        assert statements[offset - 3:offset] == [
+            OFFLINE_SAVE_SQL + ";", STATEMENT_BUDGET_SQL + ";", LOCK_BUDGET_SQL + ";"]
+        assert statements[offset + 1] == OFFLINE_RESTORE_SQL + ";"
+    assert sum(part == STATEMENT_BUDGET_SQL + ";" for part in statements) == 3
+    assert sum(part == LOCK_BUDGET_SQL + ";" for part in statements) == 3
+    assert sum(part == OFFLINE_SAVE_SQL + ";" for part in statements) == 3
+    assert sum(part == OFFLINE_RESTORE_SQL + ";" for part in statements) == 3
+    assert not any("CONCURRENTLY" in part for part in statements)
     assert next(i for i, part in enumerate(statements) if part.startswith("SET LOCAL")) > next(
         i for i, part in enumerate(statements) if part.startswith("CREATE TABLE brokerdecides_dispatch_evidence"))
     assert migration.revision == "20261022_l12_retirement"

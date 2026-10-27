@@ -31,6 +31,11 @@ PYPROJECT = pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
 
 # Reached another way. Each entry names HOW, so a wrong one is visible on reading.
 LAUNCHED_NOT_IMPORTED: dict[str, str] = {
+    # C1 LATEST C11821 2026-10-27 18:21: reviewed stopped-writer install helper.
+    "project_mai_tai.brokerdecides1_install_chunks": (
+        "stopped-writer install API imported by tools/l12_private_full23_lifecycle.py:231; "
+        "not an ordinary runtime or admission entrypoint"
+    ),
     "project_mai_tai.backtest.__main__": "python -m project_mai_tai.backtest",
     "project_mai_tai.backtest.confirmed_selection_census": (
         "read-only after-close selection study; launched with python -m and referenced from docs/"

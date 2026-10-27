@@ -14,6 +14,7 @@ from pathlib import Path
 import subprocess
 
 import httpx
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
@@ -72,7 +73,15 @@ def git_read(*args, input_bytes=None):
 @lru_cache(maxsize=2)
 def tree_paths(revision):
     assert revision in REVIEWED_TREES
-    actual_tree = git_read("rev-parse", revision + "^{tree}").decode("ascii").strip()
+    try:
+        raw_tree = git_read("rev-parse", revision + "^{tree}")
+    except subprocess.CalledProcessError as exc:
+        missing = (f"fatal: ambiguous argument '{revision}^{{tree}}': unknown revision "
+                   "or path not in the working tree.").encode("ascii")
+        if exc.returncode == 128 and missing in exc.stderr:
+            pytest.skip(f"requires local rig artifact Git object {revision}^{{tree}}")
+        raise
+    actual_tree = raw_tree.decode("ascii").strip()
     assert actual_tree == REVIEWED_TREES[revision], "explicit_reviewed_tree_required"
     raw = git_read("ls-tree", "-r", "--name-only", "-z", revision, "--", "src", "sql", "ops")
     assert raw.endswith(b"\0"), "missing_or_empty_reviewed_runtime_tree"

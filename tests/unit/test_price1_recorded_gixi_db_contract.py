@@ -53,6 +53,9 @@ def decode_copy_field(raw):
 
 
 def load_recorded_buy(record_property):
+    for name in PINS:
+        if not (ROOT / name).exists():
+            pytest.skip(f"requires local rig artifact {ROOT / name}")
     originals = {name: (ROOT / name).read_bytes() for name in PINS}
     for name, expected in PINS.items():
         assert hashlib.sha256(originals[name]).hexdigest() == expected, name

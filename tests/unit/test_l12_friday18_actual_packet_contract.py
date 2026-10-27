@@ -18,6 +18,9 @@ PACKET = Path("/Users/velkris/.codex/task-queues/analysis/L12-BOOT-FRIDAY-1023-W
 
 @pytest.fixture(scope="module")
 def operands():
+    for name in FLEET_FILES:
+        if not (PACKET / name).exists():
+            pytest.skip(f"requires local rig artifact {PACKET / name}")
     raw = {name: (PACKET / name).read_bytes() for name in FLEET_FILES}
     mapping = RecordedSessionMap(target_day="2026-10-26", ruling_sha256="a" * 64,
         chronology_review_sha256="b" * 64)

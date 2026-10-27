@@ -167,6 +167,8 @@ def nonce(tmp_path):
     raw = json.dumps(value).encode()
     target = MainNonceTarget(raw, sha256(raw).hexdigest(), "b" * 64)
     root = Path(value["root"])
+    if not root.parent.exists():
+        pytest.skip(f"requires local rig artifact {root.parent} (nonce fixture parent)")
     root.mkdir(mode=0o700)
     try:
         yield target
