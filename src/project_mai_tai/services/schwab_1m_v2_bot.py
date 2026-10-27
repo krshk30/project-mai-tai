@@ -8190,7 +8190,7 @@ class SchwabV2BotService:
             return
         counts["next_log_at"] = now + 60.0
         counts["emitted"] += 1
-        logger.warning("[V2-LINE-RESTORE] [V2-LINE-PG-FALLBACK] sym=%s "
+        logger.warning("[V2-LINE-PG-FALLBACK] sym=%s "
                        "outcome=tape_unreadable fallback=%s failures=%d fallbacks=%d "
                        "emitted=%d suppressed=%d db_evidence=UNKNOWN native_permission=UNKNOWN",
                        symbol, "OLD_LIVE_POLL" if fallback else "REFUSED_CURRENT_FENCE",
