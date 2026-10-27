@@ -41,7 +41,7 @@ async def test_webull_failure_one_sanitized_log_from_thread_preserves_public_err
     expected = "UNKNOWN" if foreground is None else str(foreground).lower()
     assert f"foreground_sync_active={expected}" in text
     assert "account=live:orb" in text and "stage=positions page=2 http_status=429" in text
-    assert "type=RuntimeError msg=REDACTED" in text
+    assert "exc=RuntimeError msg=REDACTED" in text
     assert all(secret not in text for secret in (private, "TOKEN_SECRET", "123456", "https://"))
 
 
@@ -216,5 +216,5 @@ async def test_unknown_account_and_exception_type_never_leak_identifiers(monkeyp
             await collector.read_webull(SimpleNamespace(), "PRIVATE_ACCOUNT_9876")
     record, = failure_records(caplog)
     text = record.getMessage()
-    assert "account=UNKNOWN" in text and "type=Exception msg=REDACTED" in text
+    assert "account=UNKNOWN" in text and "exc=Exception msg=REDACTED" in text
     assert all(value not in text for value in ("PRIVATE", "9876", "SECRET", "xxxx"))

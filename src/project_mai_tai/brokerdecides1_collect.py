@@ -87,7 +87,7 @@ def _log_native_failure(exc):
     except Exception:
         pass
     try:
-        LOGGER.warning("[BROKERDECIDES1-NATIVE-FAIL] account=%s broker=%s type=%s msg=%s "
+        LOGGER.warning("[BROKERDECIDES1-NATIVE-FAIL] account=%s broker=%s exc=%s msg=%s "
             "stage=%s page=%s http_status=%s foreground_sync_active=%s",
             state["account"], state["broker"], kind, safe_message[:200], state["stage"],
             state["page"], state["status"], foreground)

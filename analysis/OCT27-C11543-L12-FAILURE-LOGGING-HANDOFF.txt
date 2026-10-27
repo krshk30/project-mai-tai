@@ -31,7 +31,7 @@ LOG CONTRACT
 Exactly one [BROKERDECIDES1-NATIVE-FAIL] warning, no traceback/exception repr.
 account: fixed logical live:orb/live:schwab_1m_v2 plus existing controlled aliases;
 unrecognized account input => UNKNOWN, never a possible native account ID.
-broker fixed schwab/webull; type fixed known builtin or QueryBudgetUnavailable
+broker fixed schwab/webull; exc fixed known builtin or QueryBudgetUnavailable
 on exact allowlisted message, all other exception classes => Exception.
 msg <=200: exact allowlisted internal ValueError codes, or four exact querybudget
 endpoint messages (positions/list-open, background/query budget unavailable).
@@ -41,6 +41,9 @@ stage initialization/account_mapping/positions/orders/normalization;
 page actual one-based attempted page/request, normalization/initialization zero.
 http_status only actual int100..599, otherwise UNKNOWN; reset for next attempt.
 foreground_sync_active true/false from explicit getter, UNKNOWN if unavailable.
+This is the foreground counter sampled at LOG TIME; it is not guaranteed to
+equal the counter at the origin thread's exception instant. Unclassified SDK
+messages are intentionally REDACTED, not a generic raw-str fallback.
 
 ACTUAL CURRENT CAUSE REMAINS UNKNOWN
 48722 Main108PASS and actual gen1/gen3 TRUE2, gen2 FALSE1 preserved.
@@ -50,11 +53,11 @@ New logs provide operands prospectively; no extra diagnostic call in this lane.
 
 EXACT SOURCE PINS SHA256
 src/project_mai_tai/brokerdecides1_collect.py
-b98ab0cc95bf46bcfa7058f8a8d9403869b513e55805be43223e4faa7a67a201
+5daa9fc982032f9724e4540f7b4423413d66cb931853775f870a849a14e3fe05
 src/project_mai_tai/brokerdecides1_sync.py
 bc337110edb725bf883edc808eb38a484a3c0b2a639b55ae3b481ef1f6218efa
 tests/unit/test_brokerdecides1_native_failure_logging.py
-35fe0c535bab9be00dba1e6c4a28d301c88c38a9fabc504d13751b2d52c846ef
+8f9aa2034127440c4abfdb2c59d534e529c5134c18662ad63be411e2ebe9e88a
 No native decoder/adapter/OMS/service/settings changes.
 
 NEW RELATED CONTROL MEMBERSHIP
