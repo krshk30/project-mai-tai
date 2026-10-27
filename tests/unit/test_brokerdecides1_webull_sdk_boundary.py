@@ -184,3 +184,62 @@ async def test_async_collector_error_has_no_raw_private_diagnostic(monkeypatch):
     with pytest.raises(ValueError, match="^Webull_native_collection_UNKNOWN$") as caught:
         await collector.read_webull(SimpleNamespace(), "live:webull")
     assert "SYNTHETIC_PRIVATE_DIAGNOSTIC" not in str(caught.value)
+
+
+@pytest.mark.parametrize("shape", ["flat", "nonempty_pages", "null_echo", "foreign_echo",
+    "conflicting_echo", "true_empty", "missing_flag", "nonbool_flag", "conflicting_flags",
+    "missing_holdings", "null_holdings", "error_envelope", "http_error"])
+def test_positions_omitted_echo_uses_own_request_without_body_injection(monkeypatch, shape):
+    # False/true below are CONTROLLED variants: diagnostic retained only flag TYPE.
+    adapter, requests, permits, positions = adapter_fixture(monkeypatch, pagination=True)
+    client = adapter._get_client()
+    original = client.get_response
+    bodies = []
+
+    def response(request):
+        result = original(request)
+        if not isinstance(request, positions.AccountPositionsRequest):
+            return result
+        body = result.body
+        body.pop("account_id")
+        if shape != "nonempty_pages":
+            body.update(holdings=[], has_next=False)
+        if shape == "null_echo":
+            body["account_id"] = None
+        elif shape == "foreign_echo":
+            body["account_id"] = "foreign"
+        elif shape == "conflicting_echo":
+            body.update(account_id="private-wb", accountId="foreign")
+        elif shape == "true_empty":
+            body["has_next"] = True
+        elif shape == "missing_flag":
+            body.pop("has_next")
+        elif shape == "nonbool_flag":
+            body["has_next"] = 0
+        elif shape == "conflicting_flags":
+            body["hasNext"] = True
+        elif shape == "missing_holdings":
+            body.pop("holdings")
+        elif shape == "null_holdings":
+            body["holdings"] = None
+        elif shape == "error_envelope":
+            body["error"] = "CONTROLLED error"
+        elif shape == "http_error":
+            result.status_code = 503
+        bodies.append((body, deepcopy(body)))
+        return result
+
+    client.get_response = response
+    if shape not in ("flat", "nonempty_pages"):
+        with pytest.raises(ValueError):
+            collector._webull_blocking(adapter, "live:webull")
+        assert len(requests) == 2
+    else:
+        book = collector._webull_blocking(adapter, "live:webull")
+        assert book.complete and book.working == frozenset()
+        assert book.positions == (frozenset({"HOLD", "SHORT"})
+            if shape == "nonempty_pages" else frozenset())
+        assert len(requests) == (3 if shape == "nonempty_pages" else 2)
+        assert all(request.query["account_id"] == "private-wb" for request in requests)
+        assert book.wire_started_ms == 1000 and book.wire_completed_ms == 1100
+    assert all(body == before for body, before in bodies)

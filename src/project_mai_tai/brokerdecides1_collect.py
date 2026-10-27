@@ -57,20 +57,25 @@ async def owned_read(adapter, account, operation):
     return await asyncio.shield(task)
 
 
-def _continuation(body, field, expected, page_size):
+def _continuation(body, field, expected, page_size, *, request_account=None):
     if (not isinstance(body, dict) or body.get("error_code")
+            or "error" in body or "errors" in body
             or not isinstance(body.get(field), list) or len(body[field]) > page_size):
         raise ValueError("Webull_native_envelope_UNKNOWN")
     account_ids = [body[k] for k in ("account_id", "accountId") if k in body]
     flags = [body[k] for k in ("has_next", "hasNext") if k in body]
-    if (not account_ids or any(str(v) != expected for v in account_ids)
+    request_bound = (field == "holdings" and isinstance(expected, str) and bool(expected)
+        and request_account == expected)
+    if ((not account_ids and not request_bound) or any(str(v) != expected for v in account_ids)
             or not flags or any(type(v) is not bool or v != flags[0] for v in flags)):
         raise ValueError("Webull_native_identity_or_continuation_UNKNOWN")
     return body[field], flags[0]
 
 
 def webull_pages(fetch, *, account_id, field, page_size, cursor_keys,
-                 clock=time.monotonic, order_request_account=None):
+                 clock=time.monotonic, order_request_account=None, positions_request_account=None):
+    if positions_request_account is not None and positions_request_account != account_id:
+        raise ValueError("Webull_positions_request_binding_UNKNOWN")
     started, pages, cursors, cursor, total = clock(), [], set(), "", 0
     for _ in range(MAX_PAGES):
         if clock() - started > READ_BUDGET_SECONDS:
@@ -81,7 +86,8 @@ def webull_pages(fetch, *, account_id, field, page_size, cursor_keys,
         if field == "orders" and order_request_account is not None:
             terminal_empty_open_orders(body, native_account=account_id, request_account=order_request_account)
             return [body]  # Nonempty/continuation remain UNKNOWN pending actual model proof.
-        rows, more = _continuation(body, field, account_id, page_size)
+        rows, more = _continuation(body, field, account_id, page_size,
+                                  request_account=positions_request_account)
         total += len(rows)
         if total >= MAX_ROWS:
             raise ValueError("Webull_native_row_cap_UNKNOWN")
@@ -129,11 +135,11 @@ def _webull_blocking(adapter, account):
         cursor_keys=("client_order_id", "clientOrderId"), order_request_account=configured.account_id)
     positions = webull_pages(fetch(AccountPositionsRequest, "set_last_instrument_id", 50, "positions"),
         account_id=configured.account_id, field="holdings", page_size=50,
-        cursor_keys=("instrument_id", "instrumentId"))
+        cursor_keys=("instrument_id", "instrumentId"), positions_request_account=configured.account_id)
     return webull_book(account=account, native_account=configured.account_id,
         position_pages=positions, order_pages=orders, wire_started_ms=started,
         wire_completed_ms=stamp(), scope="all_native_working_including_previous_sessions", complete=True,
-        order_request_account=configured.account_id)
+        order_request_account=configured.account_id, positions_request_account=configured.account_id)
 
 
 async def read_webull(adapter, account):
@@ -233,6 +239,7 @@ async def read_schwab(adapter, account):
         status, _, body = await adapter._authorized_request_json("GET", base + "?fields=positions")
         if status != 200:
             raise ValueError("Schwab_native_positions_UNKNOWN")
+        positions_status = status
 
         requests, query_started = 0, time.monotonic()
 
@@ -267,5 +274,6 @@ async def read_schwab(adapter, account):
         logged[account] = days
         return schwab_book(account=account, native_account=matches[0], account_body=body, orders=orders,
             wire_started_ms=started, wire_completed_ms=stamp(),
-            scope="schwab_reviewed_window_20261022_145124", complete=True, window_days=days)
+            scope="schwab_reviewed_window_20261022_145124", complete=True, window_days=days,
+            positions_request_account=matches[0], positions_http_status=positions_status)
     return await owned_read(adapter, account, invoke)

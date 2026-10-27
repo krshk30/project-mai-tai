@@ -47,7 +47,8 @@ def _scope(scope, complete):
 
 
 def schwab_book(*, account, native_account, account_body, orders,
-                wire_started_ms, wire_completed_ms, scope, complete, window_days=None):
+                wire_started_ms, wire_completed_ms, scope, complete, window_days=None,
+                positions_request_account=None, positions_http_status=None):
     window_only = scope == "schwab_entered_60d_query_only" and complete is False
     reviewed = scope == "schwab_reviewed_window_20261022_145124" and complete is True
     if reviewed and (type(window_days) is not int or not 1 <= window_days <= 181):
@@ -59,11 +60,26 @@ def schwab_book(*, account, native_account, account_body, orders,
     body = account_body.get("securitiesAccount")
     if not isinstance(body, dict):
         raise ValueError("Schwab_account_UNKNOWN")
+    if any(key in value for value in (account_body, body)
+           for key in ("error", "errors", "error_code", "errorCode")):
+        raise ValueError("Schwab_account_error_UNKNOWN")
     _identity(body, native_account, ("accountNumber",), required=True)
-    if "positions" not in body or not isinstance(body["positions"], list) or len(body["positions"]) >= MAX_ROWS:
+    if "positions" not in body:
+        # C1 2026-10-27 15:27: only this fresh, successful account request may
+        # interpret Schwab's omitted flat positions field; NULL is not absence.
+        if (type(positions_http_status) is not int or positions_http_status != 200
+                or not isinstance(native_account, str) or not native_account
+                or positions_request_account != native_account
+                or body.get("accountNumber") != native_account
+                or complete is not True):
+            raise ValueError("Schwab_positions_completeness_UNKNOWN")
+        positions = []
+    else:
+        positions = body["positions"]
+    if not isinstance(positions, list) or len(positions) >= MAX_ROWS:
         raise ValueError("Schwab_positions_completeness_UNKNOWN")
     held, seen = set(), set()
-    for row in body["positions"]:
+    for row in positions:
         if not isinstance(row, dict) or not isinstance(row.get("instrument"), dict):
             raise ValueError("Schwab_holding_UNKNOWN")
         symbol = _symbol(row["instrument"].get("symbol"))
@@ -140,11 +156,16 @@ def _pages(pages, *, native_account, field, page_size, request_account=None):
         if len(pages) != 1:
             raise ValueError("Webull_open_empty_page_count_UNKNOWN")
         return terminal_empty_open_orders(pages[0], native_account=native_account, request_account=request_account)
+    if request_account is not None and (
+            not isinstance(native_account, str) or not native_account
+            or request_account != native_account):
+        raise ValueError("Webull_positions_request_binding_UNKNOWN")
     result = []
     for index, body in enumerate(pages):
-        if not isinstance(body, dict) or body.get("error_code"):
+        if (not isinstance(body, dict) or body.get("error_code")
+                or "error" in body or "errors" in body):
             raise ValueError("Webull_envelope_UNKNOWN")
-        _identity(body, native_account, ("account_id", "accountId"), required=True)
+        _identity(body, native_account, ("account_id", "accountId"), required=request_account is None)
         rows = body.get(field)
         flags = [body[k] for k in ("has_next", "hasNext") if k in body]
         if (not isinstance(rows, list) or len(rows) > page_size or not flags
@@ -158,12 +179,14 @@ def _pages(pages, *, native_account, field, page_size, request_account=None):
 
 
 def webull_book(*, account, native_account, position_pages, order_pages,
-                wire_started_ms, wire_completed_ms, scope, complete, order_request_account=None):
+                wire_started_ms, wire_completed_ms, scope, complete, order_request_account=None,
+                positions_request_account=None):
     query_only = scope == "webull_list_open_query_only" and complete is False
     if not query_only:
         _scope(scope, complete)
     held, seen = set(), set()
-    for row in _pages(position_pages, native_account=native_account, field="holdings", page_size=50):
+    for row in _pages(position_pages, native_account=native_account, field="holdings", page_size=50,
+                      request_account=positions_request_account):
         if not isinstance(row, dict):
             raise ValueError("Webull_holding_UNKNOWN")
         _identity(row, native_account, ("account_id", "accountId"))

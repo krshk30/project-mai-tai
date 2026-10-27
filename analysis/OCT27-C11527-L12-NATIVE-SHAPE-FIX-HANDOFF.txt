@@ -1,0 +1,85 @@
+C11527 (heading corrected from 15:28) / C11520 L12 ONLY
+SOURCE completion, author controls UNRUN. Main alone executes/reviews/installs.
+
+BASE
+Literal installed parent 31f108ee665e0c7bf4ca4fed9d0a6ffaab476b76.
+Owned root /private/tmp/oct27-gibbs-l12-native-shape-fix-20261027
+Branch codex/oct27-l12-native-shape-fix. Commit identity supplied externally;
+this document does not self-approve a producer or install.
+
+ACTUAL CAUSE / AUTHORITY
+Main diagnostic stdout SHA256
+760344c339e40ffb598d1d2ec2933fe449c55e972734e923de140d7a450a2adf.
+Schwab matched account response omits positions. Webull HTTP200 holdings=[]
+omits account echo. Actual Webull continuation VALUE remains UNKNOWN; bool
+type alone never proves terminal. C11527 approved omission semantics only.
+Pascal review 7c78edd6 and Arendt 2b1b1177 read; both validation junctions fixed.
+
+EXACT CHANGE
+collect.read_schwab carries successful positions HTTP status and its uniquely
+mapped request account to native.schwab_book. Only HTTP200, matching nonempty
+string accountNumber, explicit complete scope, absent positions may normalize
+to []. Present NULL/nonlist/missing or foreign identity/error envelope refuses.
+Existing nonempty gross holdings and all order/window logic preserved.
+
+collect._webull_blocking carries configured positions request account through
+webull_pages/_continuation AND webull_book/_pages. No body mutation or injected
+echo. Missing echo accepted only under matching nonempty own request account;
+present NULL/foreign/conflicting echoes refuse. Holdings list and exact boolean
+continuation remain mandatory. True follows existing cursor; empty True has no
+cursor and refuses. Every page retains raw identity/continuation validation.
+Existing empty-only request-bound ORDERS contract is NOT broadened.
+Error/error-list envelopes refuse even when other keys resemble success.
+
+UNCHANGED IMPACT BOUNDARY
+No adapter/OMS/sync/bot/settings/source modification; no request added, removed
+or reordered, endpoint/window/cursor/page limits/budget/priority/timeout/stamp
+policy changed. Native book timestamps still start/end actual collection.
+No local census/negative permission shortcut, scope/window or age expansion.
+No rate request from author: OMS sync-pass scheduling path is untouched.
+No provider/SDK connection, token-file read, PG, import, compile or tests run.
+
+CHANGED SOURCE SHA256
+src/project_mai_tai/brokerdecides1_collect.py
+e37434af0c180bee36e80e2b33a6123e1920d9cd6e7a9d58ee08ca5ccc7056b5
+src/project_mai_tai/brokerdecides1_native.py
+a00cdeb080f8a5be6d94a685950845010649ace902ba1e24e24997160c7c51f1
+tests/unit/test_brokerdecides1_collector.py
+a12b462f47cb7998238d6da56634f020df3f1239156df84256f9e39a5afa4840
+tests/unit/test_brokerdecides1_native.py
+adbacc9d27712f1365f10310b38b41f9de2401994b257ed8d75dcdebafcae731
+tests/unit/test_brokerdecides1_webull_sdk_boundary.py
+baa878cbafd6a080566032e56e4b59ce5ef416b75e4138d38b03c7bf72f5ca8d
+
+NEW CONTROLS (43 manual source-expanded, NOT collected/PASS)
+tests/unit/test_brokerdecides1_collector.py::test_schwab_request_bound_positions_omission_contract
+9 cases: omitted/nonempty positive, NULL/nonlist/missing-NULL-foreign identity,
+HTTP failure, error envelope negative. Actual collector/mapped request invoked.
+tests/unit/test_brokerdecides1_webull_sdk_boundary.py::test_positions_omitted_echo_uses_own_request_without_body_injection
+13 cases: flat false and nonempty true->false positive; NULL/foreign/conflicting
+echo, true empty/no cursor, missing/nonbool/conflicting flags, missing/NULL
+holdings, error envelope and HTTP failure negative. Both collector/native layers
+are actual code; SDK I/O is the existing PRIVATE protocol fixture. Bodies checked
+unchanged, actual request account/count/start/end timestamps checked.
+tests/unit/test_brokerdecides1_native.py::test_schwab_omission_requires_exact_successful_request
+9 exact HTTP-status/request combinations (only matching account + 200 positive).
+tests/unit/test_brokerdecides1_native.py::test_webull_native_second_layer_requires_own_positions_request
+3 missing/foreign/exact request context variants.
+tests/unit/test_brokerdecides1_native.py::test_webull_native_request_binding_never_overrides_present_bad_evidence
+9 downstream-only malformed/conflicting echo/flag/list/error adversaries.
+
+MAIN RELATED MEMBERSHIP PROPOSAL (one run, no duplicate selectors)
+tests/unit/test_brokerdecides1_collector.py
+tests/unit/test_brokerdecides1_webull_sdk_boundary.py
+tests/unit/test_brokerdecides1_sync.py
+tests/unit/test_brokerdecides1_native.py
+The first three include Cicero's original36 and22 new controls. Fourth includes
+21 new controls AND original strict missingpositions/nonempty/manual/short/
+foreign/continuation/order-scope controls. All previously existing assertions
+unchanged. Publisher errorUNKNOWN case remains in sync module, not rerun as a
+second overlapping selector claim. No full suite/PG/migration/rate requested.
+
+REMAINING ACCEPTANCE
+Main exact diff review, actual related test receipt and C1 review, fresh native
+flat/working pre-gate, approved OMS-only install and actual complete=True,
+accounts=2 publication. Source completion alone does NOT establish any of those.

@@ -32,6 +32,43 @@ def webull(**changes):
     return webull_book(**args)
 
 
+@pytest.mark.parametrize("binding", [None, "foreign", "123"])
+@pytest.mark.parametrize("status", [None, 503, 200])
+def test_schwab_omission_requires_exact_successful_request(binding, status):
+    args = dict(account_body={"securitiesAccount": {"accountNumber": "123"}},
+        positions_request_account=binding, positions_http_status=status)
+    if binding == "123" and status == 200:
+        book = schwab(**args)
+        assert book.complete and book.positions == frozenset()
+    else:
+        with pytest.raises(ValueError):
+            schwab(**args)
+
+
+@pytest.mark.parametrize("binding", [None, "foreign", "wb123"])
+def test_webull_native_second_layer_requires_own_positions_request(binding):
+    pages = [{"holdings": [], "has_next": False}]
+    if binding == "wb123":
+        book = webull(position_pages=pages, positions_request_account=binding)
+        assert book.complete and book.positions == frozenset()
+    else:
+        with pytest.raises(ValueError):
+            webull(position_pages=pages, positions_request_account=binding)
+
+
+@pytest.mark.parametrize("change", [
+    {"account_id": None}, {"account_id": "foreign"},
+    {"account_id": "wb123", "accountId": "foreign"},
+    {"has_next": True}, {"has_next": None}, {"has_next": "false"},
+    {"hasNext": True}, {"holdings": None}, {"error": "CONTROLLED error"},
+])
+def test_webull_native_request_binding_never_overrides_present_bad_evidence(change):
+    body = {"holdings": [], "has_next": False}
+    body.update(change)
+    with pytest.raises(ValueError):
+        webull(position_pages=[body], positions_request_account="wb123")
+
+
 @pytest.mark.parametrize("reader", [schwab, webull])
 @pytest.mark.parametrize("scope", ["today_orders", "local_oms_orders", "", None])
 def test_today_or_local_rows_never_prove_all_working(reader, scope):

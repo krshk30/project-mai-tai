@@ -119,3 +119,46 @@ async def test_outer_timeout_retains_one_native_invocation_no_copy():
     assert calls == [1]
     release.set()
     await adapter._brokerdecides_native_tasks["live:wb"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["omitted", "nonempty", "null", "nonlist", "missing_identity",
+    "null_identity", "foreign_identity", "http_error", "error_envelope"])
+async def test_schwab_request_bound_positions_omission_contract(shape):
+    calls = []
+    body = {"securitiesAccount": {"accountNumber": "123"}}
+    account = body["securitiesAccount"]
+    if shape == "nonempty":
+        account["positions"] = [{"instrument": {"symbol": "WORX"},
+            "longQuantity": 2, "shortQuantity": 0}]
+    elif shape in ("null", "nonlist"):
+        account["positions"] = None if shape == "null" else {}
+    elif shape == "missing_identity":
+        account.pop("accountNumber")
+    elif shape in ("null_identity", "foreign_identity"):
+        account["accountNumber"] = None if shape == "null_identity" else "foreign"
+    elif shape == "error_envelope":
+        body["error"] = "CONTROLLED error"
+
+    async def request(method, path):
+        calls.append((method, path))
+        if path.endswith("accountNumbers"):
+            return 200, {}, [{"accountNumber": "123", "hashValue": "fixture-hash"}]
+        if "fields=positions" in path:
+            return (503 if shape == "http_error" else 200), {}, body
+        return 200, {}, []
+
+    adapter = SimpleNamespace(accounts_by_name={"live:schwab":
+        SimpleNamespace(account_hash="fixture-hash")}, _authorized_request_json=request)
+    if shape not in ("omitted", "nonempty"):
+        with pytest.raises(ValueError):
+            await read_schwab(adapter, "live:schwab")
+        return
+    book = await read_schwab(adapter, "live:schwab")
+    assert book.complete and book.working == frozenset()
+    assert book.positions == (frozenset({"WORX"}) if shape == "nonempty" else frozenset())
+    assert book.window_days == 181 and len(calls) == 3
+    if shape == "omitted":
+        assert "positions" not in account
+    else:
+        assert len(account["positions"]) == 1
