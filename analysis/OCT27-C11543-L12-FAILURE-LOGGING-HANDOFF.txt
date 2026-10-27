@@ -1,0 +1,79 @@
+C11543 bounded sanitized failure logging SOURCE proposal / controls AUTHOR UNRUN
+
+Root /private/tmp/oct27-gibbs-l12-failure-logging-20261027
+Branch codex/oct27-l12-failure-logging
+Literal installed parent 48722bc78e977e9b4ad6202e41895f706b525fb6.
+No installation/runtime/restart authorized by this source packet. Main report
+16:05 precedes any C1-approved OMS-only install. No source/history retagging.
+
+DIFF-FIRST OBSERVABILITY SCOPE
+collector adds a bounded per-read ContextVar dict copied by asyncio.to_thread;
+thread and owning coroutine share stage/page/status/logged state for THIS read.
+Existing blocking API/signatures, task names, shield retention and public
+Webull private-message suppression remain. No request, permit, budget, priority,
+page limit, retry, timestamp source/policy or scheduling change.
+owned_read wraps its existing operation in one coroutine, NOT another task or
+worker. This catches a delegate failure even after an outer cancelled waiter.
+Exactly one log attempt per failed read; wrapper and delegate share logged bit.
+Original exceptions are re-raised, Webull retains original generic public error,
+CancelledError remains cancellation (not a fabricated native failure).
+No logging on successful reads. Context tokens reset in finally on every exit.
+
+sync.py has ONLY explicit diagnostic ContextVar getter set/reset beside existing
+contexts. Getter reads actual _brokerdecides1_foreground_syncs counter, NOT the
+allowed closure. Closing-only refusal therefore reports foreground=false when
+actual count is zero. Standalone reads without getter report UNKNOWN, not false.
+No closure inspection, no new ownership state or permission/readiness condition.
+This sync observability hunk is submitted explicitly for Main/C1 scope review;
+it does NOT change sync-pass control flow/cadence, allowed(), or native requests.
+
+LOG CONTRACT
+Exactly one [BROKERDECIDES1-NATIVE-FAIL] warning, no traceback/exception repr.
+account: fixed logical live:orb/live:schwab_1m_v2 plus existing controlled aliases;
+unrecognized account input => UNKNOWN, never a possible native account ID.
+broker fixed schwab/webull; type fixed known builtin or QueryBudgetUnavailable
+on exact allowlisted message, all other exception classes => Exception.
+msg <=200: exact allowlisted internal ValueError codes, or four exact querybudget
+endpoint messages (positions/list-open, background/query budget unavailable).
+Everything else REDACTED. Never str(SDK exception), URL/token/account scrubbing,
+raw body, native ID, query, order, cursor, account hash, credentials or traceback.
+stage initialization/account_mapping/positions/orders/normalization;
+page actual one-based attempted page/request, normalization/initialization zero.
+http_status only actual int100..599, otherwise UNKNOWN; reset for next attempt.
+foreground_sync_active true/false from explicit getter, UNKNOWN if unavailable.
+
+ACTUAL CURRENT CAUSE REMAINS UNKNOWN
+48722 Main108PASS and actual gen1/gen3 TRUE2, gen2 FALSE1 preserved.
+Standalone read success does not explain intermittent background failure.
+No assertion of foreground collision, query-budget collision, or request error.
+New logs provide operands prospectively; no extra diagnostic call in this lane.
+
+EXACT SOURCE PINS SHA256
+src/project_mai_tai/brokerdecides1_collect.py
+b98ab0cc95bf46bcfa7058f8a8d9403869b513e55805be43223e4faa7a67a201
+src/project_mai_tai/brokerdecides1_sync.py
+bc337110edb725bf883edc808eb38a484a3c0b2a639b55ae3b481ef1f6218efa
+tests/unit/test_brokerdecides1_native_failure_logging.py
+35fe0c535bab9be00dba1e6c4a28d301c88c38a9fabc504d13751b2d52c846ef
+No native decoder/adapter/OMS/service/settings changes.
+
+NEW RELATED CONTROL MEMBERSHIP
+tests/unit/test_brokerdecides1_native_failure_logging.py
+15 source-expanded cases, UNRUN/not collected by author:
+test_webull_failure_one_sanitized_log_from_thread_preserves_public_error (3)
+test_query_budget_only_exact_allowlisted_messages (3)
+test_schwab_one_log_original_exception_stage_and_no_private_data (3)
+test_inflight_rejection_one_log_no_second_invocation
+test_closing_refusal_does_not_claim_foreground_sync
+test_success_has_no_failure_log_and_resets_context
+test_logger_failure_cannot_replace_original_schwab_error
+test_cancelled_waiter_retains_delegate_then_logs_its_failure_once
+test_unknown_account_and_exception_type_never_leak_identifiers
+Existing collector/publisher/SDK/native units remain unmodified. Main alone
+chooses related changed selection and actual receipts; no author test/import,
+compile/AST/PG/provider/capture/SSH/runtime or shared queue/LATEST writes.
+
+REMAINING
+Main/C1 diff-first privacy/truth review (especially explicit sync getter), Main
+related tests, 16:05 report, C1 installation disposition, actual future failure
+log/publication evidence. No claim intermittent failure fixed or explained.

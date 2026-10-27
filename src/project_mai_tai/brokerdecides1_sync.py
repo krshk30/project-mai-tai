@@ -67,10 +67,14 @@ def schedule_refresh(service):
 
 
 async def _background_refresh(service):
-    from project_mai_tai.brokerdecides1_collect import BACKGROUND_ALLOWED, BACKGROUND_TASKS
+    from project_mai_tai.brokerdecides1_collect import (
+        BACKGROUND_ALLOWED, BACKGROUND_FOREGROUND_ACTIVE, BACKGROUND_TASKS,
+    )
 
     allowed = lambda: not service.__dict__.get("_brokerdecides1_foreground_syncs", 0) and not service.__dict__.get("_brokerdecides1_closing", False)
     priority_token = BACKGROUND_ALLOWED.set(allowed)
+    foreground_token = BACKGROUND_FOREGROUND_ACTIVE.set(
+        lambda: bool(service.__dict__.get("_brokerdecides1_foreground_syncs", 0)))
     tasks_token = BACKGROUND_TASKS.set(service.__dict__.setdefault("_brokerdecides1_native_tasks", set()))
     try:
         if not allowed():
@@ -83,6 +87,7 @@ async def _background_refresh(service):
         service.logger.exception("[BROKERDECIDES1-PUBLISH] background UNKNOWN entry_allowed=0")
     finally:
         BACKGROUND_TASKS.reset(tasks_token)
+        BACKGROUND_FOREGROUND_ACTIVE.reset(foreground_token)
         BACKGROUND_ALLOWED.reset(priority_token)
 
 

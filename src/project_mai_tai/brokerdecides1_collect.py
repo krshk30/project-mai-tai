@@ -11,6 +11,7 @@ import time
 import json
 import logging
 from contextvars import ContextVar
+from functools import wraps
 from urllib.parse import quote, urlencode
 
 from project_mai_tai.brokerdecides1_native import (
@@ -23,6 +24,96 @@ READ_BUDGET_SECONDS = 4.0
 LOGGER = logging.getLogger(__name__)
 BACKGROUND_ALLOWED = ContextVar("l12_background_allowed", default=None)
 BACKGROUND_TASKS = ContextVar("l12_background_tasks", default=None)
+BACKGROUND_FOREGROUND_ACTIVE = ContextVar("l12_foreground_active", default=None)
+NATIVE_DIAGNOSTIC = ContextVar("l12_native_diagnostic", default=None)
+SAFE_FAILURE_CODES = frozenset({
+    "native_foreground_sync_has_priority_UNKNOWN", "native_read_inflight_UNKNOWN",
+    "native_quantity_UNKNOWN", "native_account_identity_UNKNOWN",
+    "all_native_working_coverage_UNKNOWN", "Schwab_reviewed_window_UNKNOWN",
+    "Schwab_collection_UNKNOWN_or_at_cap", "Schwab_account_UNKNOWN",
+    "Schwab_account_error_UNKNOWN", "Schwab_positions_completeness_UNKNOWN",
+    "Schwab_holding_UNKNOWN", "Schwab_holding_duplicate_or_quantity_UNKNOWN",
+    "Schwab_negative_gross_quantity", "Schwab_order_tree_UNKNOWN_or_overflow",
+    "Schwab_order_identity_UNKNOWN", "Schwab_duplicate_order", "Schwab_children_UNKNOWN",
+    "Schwab_order_symbols_UNKNOWN", "Schwab_order_status_UNKNOWN", "Schwab_order_leg_UNKNOWN",
+    "Schwab_native_query_budget_UNKNOWN", "Schwab_native_query_UNKNOWN",
+    "Schwab_native_time_cap_UNKNOWN", "Schwab_native_order_identity_UNKNOWN",
+    "Schwab_native_order_changed_during_query", "Schwab_native_row_cap_UNKNOWN",
+    "Schwab_native_query_refused_not_range_UNKNOWN", "Schwab_native_fallback_nonrange_failure_UNKNOWN",
+    "Schwab_native_no_accepted_window_UNKNOWN", "Schwab_native_account_unconfigured",
+    "Schwab_native_account_map_UNKNOWN", "Schwab_native_account_map_ambiguous",
+    "Schwab_native_positions_UNKNOWN", "Schwab_native_total_query_budget_UNKNOWN",
+    "Webull_native_account_unconfigured", "Webull_native_collection_UNKNOWN",
+    "Webull_native_envelope_UNKNOWN", "Webull_native_identity_or_continuation_UNKNOWN",
+    "Webull_positions_request_binding_UNKNOWN", "Webull_native_acquisition_budget_UNKNOWN",
+    "Webull_native_http_UNKNOWN", "Webull_native_row_cap_UNKNOWN", "Webull_native_cursor_UNKNOWN",
+    "Webull_native_page_cap_UNKNOWN", "Webull_open_envelope_or_request_binding_UNKNOWN",
+    "Webull_open_terminal_empty_shape_UNKNOWN", "Webull_nonempty_item_model_UNKNOWN",
+    "Webull_pages_UNKNOWN", "Webull_open_empty_page_count_UNKNOWN", "Webull_envelope_UNKNOWN",
+    "Webull_continuation_UNKNOWN", "Webull_native_rows_at_cap", "Webull_holding_UNKNOWN",
+    "Webull_duplicate_holding", "Webull_order_UNKNOWN", "Webull_native_order_identity_UNKNOWN",
+    "Webull_order_status_or_items_UNKNOWN", "Webull_order_item_UNKNOWN", "Webull_symbol_overflow",
+})
+
+
+def _diagnostic_stage(stage, page=0, status=None):
+    state = NATIVE_DIAGNOSTIC.get()
+    if state is not None:
+        state.update(stage=stage, page=page,
+            status=status if type(status) is int and 100 <= status <= 599 else "UNKNOWN")
+
+
+def _log_native_failure(exc):
+    state = NATIVE_DIAGNOSTIC.get()
+    if state is None or state["logged"]:
+        return
+    state["logged"] = True
+    # Never stringify SDK exceptions: exact known codes only, not secret scrubbing.
+    message = exc.args[0] if len(exc.args) == 1 and type(exc.args[0]) is str else None
+    kind = type(exc).__name__
+    if kind == "QueryBudgetUnavailable" and message in {
+            "list-open background budget unavailable", "positions background budget unavailable",
+            "list-open query budget unavailable", "positions query budget unavailable"}:
+        safe_message = message
+    else:
+        safe_message = message if type(exc) is ValueError and message in SAFE_FAILURE_CODES else "REDACTED"
+        kind = kind if type(exc) in (ValueError, RuntimeError, TypeError, TimeoutError) else "Exception"
+    foreground = "UNKNOWN"
+    try:
+        getter = state["foreground"]
+        value = getter() if getter is not None else None
+        if type(value) is bool:
+            foreground = str(value).lower()
+    except Exception:
+        pass
+    try:
+        LOGGER.warning("[BROKERDECIDES1-NATIVE-FAIL] account=%s broker=%s type=%s msg=%s "
+            "stage=%s page=%s http_status=%s foreground_sync_active=%s",
+            state["account"], state["broker"], kind, safe_message[:200], state["stage"],
+            state["page"], state["status"], foreground)
+    except Exception:
+        pass  # Observability must not replace the original native exception.
+
+
+def _observe_native(broker):
+    def decorate(read):
+        @wraps(read)
+        async def observed(adapter, account):
+            logical = account if type(account) is str and account in {
+                "live:orb", "live:schwab_1m_v2", "live:webull", "live:schwab"} else "UNKNOWN"
+            # to_thread copies context, but shares this bounded per-invocation state.
+            state = dict(account=logical, broker=broker, stage="initialization", page=0,
+                status="UNKNOWN", logged=False, foreground=BACKGROUND_FOREGROUND_ACTIVE.get())
+            token = NATIVE_DIAGNOSTIC.set(state)
+            try:
+                return await read(adapter, account)
+            except Exception as exc:
+                _log_native_failure(exc)
+                raise
+            finally:
+                NATIVE_DIAGNOSTIC.reset(token)
+        return observed
+    return decorate
 
 
 def require_background_priority():
@@ -48,7 +139,14 @@ async def owned_read(adapter, account, operation):
         raise ValueError("native_read_inflight_UNKNOWN")
     if old is not None and not old.cancelled():
         old.exception()
-    task = tasks[account] = asyncio.create_task(operation(), name="l12-native-inventory")
+    async def observed_operation():
+        try:
+            return await operation()
+        except Exception as exc:
+            _log_native_failure(exc)
+            raise
+
+    task = tasks[account] = asyncio.create_task(observed_operation(), name="l12-native-inventory")
     retained = BACKGROUND_TASKS.get()
     if retained is not None:
         retained.add(task)
@@ -114,7 +212,12 @@ def _webull_blocking(adapter, account):
     client, started = adapter._get_client(), stamp()
 
     def fetch(request_type, cursor_key, page_size, endpoint):
+        page_number = 0
         def page(cursor):
+            nonlocal page_number
+            page_number += 1
+            stage = "orders" if endpoint == "list-open" else "positions"
+            _diagnostic_stage(stage, page_number)
             require_background_priority()
             adapter._query_budget.claim_background(endpoint, configured.account_id)
             request = request_type()
@@ -127,6 +230,7 @@ def _webull_blocking(adapter, account):
             response = client.get_response(request)
             # Do NOT use the legacy adapter helper's default-200 fallback.
             status = getattr(response, "status_code", None)
+            _diagnostic_stage(stage, page_number, status)
             return status, adapter._body(response)
         return page
 
@@ -136,18 +240,21 @@ def _webull_blocking(adapter, account):
     positions = webull_pages(fetch(AccountPositionsRequest, "set_last_instrument_id", 50, "positions"),
         account_id=configured.account_id, field="holdings", page_size=50,
         cursor_keys=("instrument_id", "instrumentId"), positions_request_account=configured.account_id)
+    _diagnostic_stage("normalization")
     return webull_book(account=account, native_account=configured.account_id,
         position_pages=positions, order_pages=orders, wire_started_ms=started,
         wire_completed_ms=stamp(), scope="all_native_working_including_previous_sessions", complete=True,
         order_request_account=configured.account_id, positions_request_account=configured.account_id)
 
 
+@_observe_native("webull")
 async def read_webull(adapter, account):
     async def invoke():
         require_background_priority()
         try:
             return await asyncio.to_thread(_webull_blocking, adapter, account)
-        except Exception:
+        except Exception as exc:
+            _log_native_failure(exc)
             raise ValueError("Webull_native_collection_UNKNOWN") from None
     return await owned_read(adapter, account, invoke)
 
@@ -220,14 +327,17 @@ async def accepted_schwab_window(fetch, now):
     return best, best_body
 
 
+@_observe_native("schwab")
 async def read_schwab(adapter, account):
     async def invoke():
         configured = adapter.accounts_by_name.get(account)
         if configured is None:
             raise ValueError("Schwab_native_account_unconfigured")
         started, now = stamp(), datetime.now(UTC)
+        _diagnostic_stage("account_mapping", 1)
         require_background_priority()
         status, _, mapping = await adapter._authorized_request_json("GET", "/trader/v1/accounts/accountNumbers")
+        _diagnostic_stage("account_mapping", 1, status)
         if status != 200 or not isinstance(mapping, list) or len(mapping) > 64:
             raise ValueError("Schwab_native_account_map_UNKNOWN")
         matches = [row.get("accountNumber") for row in mapping if isinstance(row, dict)
@@ -235,8 +345,10 @@ async def read_schwab(adapter, account):
         if len(matches) != 1 or not isinstance(matches[0], str) or not matches[0]:
             raise ValueError("Schwab_native_account_map_ambiguous")
         base = f"/trader/v1/accounts/{quote(configured.account_hash, safe='')}"
+        _diagnostic_stage("positions", 1)
         require_background_priority()
         status, _, body = await adapter._authorized_request_json("GET", base + "?fields=positions")
+        _diagnostic_stage("positions", 1, status)
         if status != 200:
             raise ValueError("Schwab_native_positions_UNKNOWN")
         positions_status = status
@@ -245,6 +357,7 @@ async def read_schwab(adapter, account):
 
         async def fetch(lower, upper, cap):
             nonlocal requests
+            _diagnostic_stage("orders", requests + 1)
             require_background_priority()
             if requests >= MAX_REQUESTS or time.monotonic() - query_started > READ_BUDGET_SECONDS:
                 raise ValueError("Schwab_native_total_query_budget_UNKNOWN")
@@ -252,6 +365,7 @@ async def read_schwab(adapter, account):
             query = urlencode({"fromEnteredTime": lower.isoformat(timespec="milliseconds"),
                 "toEnteredTime": upper.isoformat(timespec="milliseconds"), "maxResults": cap})
             code, _, rows = await adapter._authorized_request_json("GET", base + "/orders?" + query)
+            _diagnostic_stage("orders", requests, code)
             return code, rows  # Unfiltered: every status, including all nonterminal AWAITING_*.
 
         days, first_body = await accepted_schwab_window(fetch, now)
@@ -272,6 +386,7 @@ async def read_schwab(adapter, account):
         elif logged[account] != days:
             LOGGER.warning("[L12-SCOPE-CHANGED] schwab_window_days=%d account=%s", days, account)
         logged[account] = days
+        _diagnostic_stage("normalization")
         return schwab_book(account=account, native_account=matches[0], account_body=body, orders=orders,
             wire_started_ms=started, wire_completed_ms=stamp(),
             scope="schwab_reviewed_window_20261022_145124", complete=True, window_days=days,
