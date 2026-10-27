@@ -27,6 +27,20 @@ class SessionCoverage:
     complete: bool
     bars_sha256: str
     prefix_complete: bool = False
+    empty_minutes: tuple[int, ...] = ()
+    raw_source: str | None = None
+    raw_bars_sha256: str | None = None
+    raw_closed_ids: tuple[int, ...] = ()
+    raw_provider_values: tuple[tuple[str, str, tuple[int, ...]], ...] = ()
+
+
+PRODUCER_PROJECTION_SOURCE = "keepwatch_canonical_projection"
+
+
+def is_keepwatch_coverage(proof) -> bool:
+    return proof is not None and (proof.source == "keepwatch_massive_schwab_session"
+        or (proof.source == PRODUCER_PROJECTION_SOURCE
+            and proof.raw_source == "keepwatch_massive_schwab_session"))
 
 
 @dataclass(frozen=True)
@@ -45,6 +59,19 @@ def history_fingerprint(bars) -> str:
     rows = [(bar.symbol.upper(), bar.timestamp_ms, bar.open, bar.high, bar.low,
              bar.close, bar.volume) for bar in bars]
     return hashlib.sha256(json.dumps(rows, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
+def same_line_price_history(left, right) -> bool:
+    """Compare ATR inputs, not the separate full-OHLCV coverage attestation.
+
+    Modified TR, its SMA/Wilders and the trail use HLC and ordered candle IDs;
+    neither open nor volume is read by build_session_line's indicator engine.
+    """
+    return len(left) == len(right) and all(
+        (a.symbol, a.timestamp_ms, a.high, a.low, a.close)
+        == (b.symbol, b.timestamp_ms, b.high, b.low, b.close)
+        for a, b in zip(left, right)
+    )
 
 
 @dataclass(frozen=True)
@@ -135,10 +162,13 @@ def build_session_line(
 class SessionLineRestoration:
     """Only the event-loop owner may update/admit; workers receive frozen input."""
 
-    def __init__(self, symbol: str, anchor_ms: int, epoch: int):
+    def __init__(self, symbol: str, anchor_ms: int, epoch: int, *, producer_pins=None, clock=None):
         self.symbol = symbol.upper()
         self.anchor_ms = anchor_ms
         self.epoch = epoch
+        self.producer_pins = producer_pins
+        self._producer_clock = clock
+        self.raw_producer_coverage = None
         self.revision = 0
         self.current_bar_ms = 0
         self._bars: dict[int, HistoryBar] = {}
@@ -155,6 +185,11 @@ class SessionLineRestoration:
             raise ValueError("foreign symbol in session rebuild")
         if bar.timestamp_ms < self.anchor_ms:
             return
+        if self.producer_pins is not None:
+            now_ms = self._producer_clock()
+            bar = (self.producer_pins.accept(bar, now_ms=now_ms)
+                   if getattr(bar, "producer", None) in {"massive", "schwab"}
+                   else self.producer_pins.stored_bar(bar, now_ms=now_ms))
         if (bar.timestamp_ms >= self.anchor_ms + 86_400_000 or bar.timestamp_ms % 60_000
                 or not all(math.isfinite(v) and v > 0 for v in (bar.open, bar.high, bar.low, bar.close))
                 or not bar.low <= min(bar.open, bar.close) <= max(bar.open, bar.close) <= bar.high
@@ -225,41 +260,86 @@ class SessionLineRestoration:
         return tuple((left, right) for left, right in zip(ids, ids[1:])
                      if right - left > 90_000)
 
-    def prepare(self) -> RebuildInput | None:
+    def prepare(self, *, through_ms: int | None = None) -> RebuildInput | None:
+        current_bar_ms = self.current_bar_ms if through_ms is None else through_ms
+        if through_ms is not None and (
+                type(current_bar_ms) is not int or current_bar_ms % 60_000
+                or not self.anchor_ms <= current_bar_ms <= self.current_bar_ms):
+            self.incomplete_reason = "rebuild_window_unproven"
+            return None
+        # A bounded view never removes newer observations; CAS uses whole revision.
+        visible = (self._bars if through_ms is None else
+                   {stamp: bar for stamp, bar in self._bars.items() if stamp <= current_bar_ms})
         proof = self._coverage
         if (proof is None or not proof.complete
-                or proof.source not in {"schwab_rest_full_session", "massive_preopen_schwab_session"}
+                or proof.source not in {"schwab_rest_full_session", "massive_preopen_schwab_session",
+                                        "keepwatch_massive_schwab_session", PRODUCER_PROJECTION_SOURCE}
                 or proof.start_ms != self.anchor_ms
                 or not proof.closed_ids or proof.end_ms < proof.closed_ids[-1] + 60_000):
             self.incomplete_reason = "coverage_unproven"
             return None
+        if proof.source == PRODUCER_PROJECTION_SOURCE:
+            if (self.producer_pins is None
+                    or proof.raw_source not in {"schwab_rest_full_session",
+                        "massive_preopen_schwab_session", "keepwatch_massive_schwab_session"}
+                    or not isinstance(proof.raw_bars_sha256, str) or len(proof.raw_bars_sha256) != 64
+                    or any(char not in "0123456789abcdef" for char in proof.raw_bars_sha256)
+                    or any(type(stamp) is not int or stamp % 60_000
+                           or not self.anchor_ms <= stamp < proof.end_ms for stamp in proof.raw_closed_ids)
+                    or proof.raw_closed_ids != tuple(sorted(set(proof.raw_closed_ids)))
+                    or any(not self.producer_pins.matches(bar) for bar in visible.values())):
+                self.incomplete_reason = "canonical_provenance_unproven"
+                return None
+            if proof.raw_source == "keepwatch_massive_schwab_session" and (
+                    len(proof.raw_provider_values) != 3
+                    or {label for label, _, _ in proof.raw_provider_values} != {
+                        "massive_response_bytes", "massive_parsed_values", "schwab_parsed_values"}
+                    or any(not isinstance(digest, str) or len(digest) != 64
+                           or any(char not in "0123456789abcdef" for char in digest)
+                           or any(type(stamp) is not int or stamp % 60_000
+                                  or not self.anchor_ms <= stamp < proof.end_ms for stamp in ids)
+                           or ids != tuple(sorted(set(ids)))
+                           for _, digest, ids in proof.raw_provider_values)):
+                self.incomplete_reason = "canonical_producer_receipts_unproven"
+                return None
         ids = proof.closed_ids
         if (not ids or ids != tuple(sorted(set(ids)))
-                or ids[0] < self.anchor_ms or ids[-1] > self.current_bar_ms):
+                or ids[0] < self.anchor_ms or ids[-1] > current_bar_ms):
             self.incomplete_reason = "coverage_ids_unproven"
             return None
         if ids[0] != self.anchor_ms and not proof.prefix_complete:
             self.incomplete_reason = "session_prefix_unproven"
             return None
         endpoint = ids[-1]
-        if set(ids) != {ts for ts in self._bars if ts <= endpoint}:
+        if set(ids) != {ts for ts in visible if ts <= endpoint}:
             self.incomplete_reason = "history_missing_or_conflicting"
             return None
-        prefix = tuple(self._bars[ts] for ts in ids)
+        prefix = tuple(visible[ts] for ts in ids)
         if proof.bars_sha256 != history_fingerprint(prefix):
             self.incomplete_reason = "source_values_unproven"
             return None
         if self._seed_invalidated:
             self.incomplete_reason = "seed_invalidated"
             return None
-        tail_ids = tuple(range(endpoint + 60_000, self.current_bar_ms + 1, 60_000))
-        if ({ts for ts in self._bars if ts > endpoint} != set(tail_ids)
-                or any(self._closed_live.get(ts) != self._bars.get(ts) for ts in tail_ids)):
+        empty = set(proof.empty_minutes) if is_keepwatch_coverage(proof) else set()
+        if (any(stamp % 60_000 or not self.anchor_ms <= stamp < proof.end_ms for stamp in empty)
+                or empty.intersection(visible)):
+            self.incomplete_reason = "empty_minute_proof_conflicting"
+            return None
+        tail_ids = tuple(stamp for stamp in range(endpoint + 60_000, current_bar_ms + 1, 60_000)
+                         if stamp not in empty)
+        if ({ts for ts in visible if ts > endpoint} != set(tail_ids)
+                or any(self._closed_live.get(ts) != visible.get(ts) for ts in tail_ids)):
             self.incomplete_reason = "live_tail_unproven"
             return None
-        bars = prefix + tuple(self._bars[ts] for ts in tail_ids)
+        bars = prefix + tuple(visible[ts] for ts in tail_ids)
         # R6 spanning is restricted to gaps inside the provider-covered prefix.
         pairs = tuple((left, right) for left, right in zip(ids, ids[1:]) if right - left > 90_000)
+        if (is_keepwatch_coverage(proof)
+                and any(stamp not in empty for left, right in pairs
+                        for stamp in range(left + 60_000, right, 60_000))):
+            self.incomplete_reason = "sparse_minute_not_verified_empty"
+            return None
         # R6 is a complete-provider sparse series, not permission to span a
         # known outage. Positive tape evidence requires the missing bars.
         if self.has_unrecovered_traded_gap(pairs):
@@ -267,11 +347,12 @@ class SessionLineRestoration:
             return None
         return RebuildInput(
             self.symbol, self.epoch, self.revision, self.anchor_ms,
-            self.current_bar_ms, bars, pairs,
+            current_bar_ms, bars, pairs,
         )
 
-    async def rebuild(self, builder: Callable[[RebuildInput], Snapshot]) -> RebuildResult[Snapshot] | None:
-        request = self.prepare()
+    async def rebuild(self, builder: Callable[[RebuildInput], Snapshot], *,
+                      through_ms: int | None = None) -> RebuildResult[Snapshot] | None:
+        request = self.prepare() if through_ms is None else self.prepare(through_ms=through_ms)
         if request is None:
             return None
         try:
@@ -281,10 +362,12 @@ class SessionLineRestoration:
             return None
         return RebuildResult(request, snapshot)
 
-    def admit(self, result: RebuildResult[Snapshot]) -> Snapshot | None:
+    def admit(self, result: RebuildResult[Snapshot], *,
+              through_ms: int | None = None) -> Snapshot | None:
         # Re-read every identity/coverage fence after the worker returns. No
         # trading state, consumed slot or historical flip is replayed here.
-        if result.request != self.prepare():
+        current = self.prepare() if through_ms is None else self.prepare(through_ms=through_ms)
+        if result.request != current:
             self.incomplete_reason = "stale_rebuild"
             return None
         self.incomplete_reason = ""

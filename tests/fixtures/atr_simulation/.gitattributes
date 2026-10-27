@@ -1,0 +1,2 @@
+# Preserve the reviewed reference artifact byte hash, including CRLF.
+firstbar_reference_173_20261023.csv -text !eol

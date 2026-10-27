@@ -1,0 +1,53 @@
+Task OCT27-C11320-L12-MIGRATION-AND-THREE-SELECTORS
+Source directhuman13:22 + C11320. Main sole executor; SOURCE only.
+APP remains exact3d149867 on821. Additive migration and unchanged testfile now
+physically included. No tests/import/collection/query/DDL/runtime performed.
+
+EXACT CARRIES
+sql/migrations/versions/20261022_l12_dispatch_retirement.py from b440 literal;
+SHA256 f3472c5556b6e3d284ced7d06b7ce795a1e536d3c83af265ba60c9ec297c88da.
+revision20261022_l12_retirement / down_revision20261023_atr_aggregate unchanged.
+Two additive tables/fourindexes/no oldcolumnchanges. Downgrade deliberately
+refuses; C11320 accepted rollbackAPP9c with additiveDB evidence left in place.
+Do not change parent/stamp/create_all to overcome boxversion mismatch.
+
+tests/integration/test_l12_worx_olox_broker_truth.py unchanged56e0c4cc5216741a142f66da2de0bb9ac5bdef52;
+SHA256 1b76d0bd0a458f0d557b2044f19cafd6d793f55338939e44731bf2e5b7c41c65.
+ONLY this testfile carried; no tests/helper changes or dependency resurrection.
+
+THREE MAIN-ONLY ONCE SELECTORS / ACCEPTED LABELS
+1. tests/integration/test_l12_worx_olox_broker_truth.py::test_actual_publisher_consumer_card_on_each_case[flat-WORX-20261020-1027]
+   WORX incident, CONTROLLED current nativecard; cardallowed/draftcount0 is the
+   literal unchanged assertion. Not historicalflat or actualBUY reproduction.
+2. tests/integration/test_l12_worx_olox_broker_truth.py::test_e_olox_real_market_callbacks_preserve_partial_scope_under_native_branches[flat]
+   OLOX13:29 partial originalbar callbacks/CONTROLLED native branch. CausalSHORT
+   must actually occur; line/prefix remains incomplete, nointents expected.
+3. tests/unit/test_brokerdecides1_closed_child_owner.py::test_later_clean_short_retires_normal_identity_then_owner_no_retry_reset
+   YMAT representative Oct23/195share ownerfixture, NOT originalOct12 /18.
+No testresults/counts asserted; parameterIDs source-derived, not collected.
+No helper repair/newrig allowed if this source fails to collect or execute.
+
+SOURCE DEPENDENCY BLOCKER DISCLOSED BEFORE MAIN EXECUTION
+The imported testfile imports tools/l12_worx_olox_replay.py and reads
+tests/fixtures/l12_worx_olox_case_contract_20261022.json at import; both absent
+in literal821/proposalcheckout. Epacket fixture
+tests/fixtures/l12_worx_olox_e_packet_20261022.json is also absent.
+tests/line_restore_acceptance_factory.py exists, but no compatibility/runtime
+claim follows. Main must decide existing dependency placement/authorized carry;
+no worker silently restores these or fixes contracts. Originaltestfile preserved.
+Case2 needs env L12_OLOX_RETAINED_BARS=/Users/velkris/.codex/task-queues/analysis/SLOTCAP-OLOX-BARS-20261021.jsonl.
+Controlled constructor may still refuse actualcurrent guard operands; preserve
+failure rather than injectingSHORT/readiness/accountbook/permission.
+
+MAIN BOX READ-ONLY SOURCE
+analysis/OCT27-C11320-L12-BOX-RO-VERSION-COUNTS-SIZES.sql; RRRO/120s/ROLLBACK,
+version + three sharedtables exactCOUNT/table/index/total bytes only.
+Explicit parent mismatch raises STOP before counts; Main caller ON_ERROR_STOP
+and cleanup transaction on error/timeout. Not executed by author.
+No buildtime estimate can honestly be supplied before actualsizes and measured
+or operationally supported throughput. After Mainread, estimate each3 shared
+index separately; unknown upperbound is not a promise <=60s. If >60s, propose
+CONCURRENTLY outside transaction for C1 review, not run currentmigration or
+silently rewrite it. Current donor uses normal CREATE INDEX with60s per-index
+statementbudget and nested savepoint; it is NOT CONCURRENTLY-compatible as-is.
+No actualboxversion, existingtable presence, indexduration, orcasePASS claim.

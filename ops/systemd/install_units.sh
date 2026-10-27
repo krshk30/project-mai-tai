@@ -8,6 +8,7 @@ SOURCE_DIR="$REPO_DIR/ops/systemd"
 for unit in \
   project-mai-tai-control.service \
   project-mai-tai-market-data.service \
+  project-mai-tai-snapshot-worker.service \
   project-mai-tai-strategy.service \
   project-mai-tai-oms.service \
   project-mai-tai-reconciler.service \

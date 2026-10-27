@@ -15,8 +15,9 @@ from project_mai_tai.momentum_live_sec import CountryRoute
 
 
 def row(**fields):
+    # CONTROLLED prior close, not historical SCNI evidence. Payload overrides stay exact.
     return replace(MomentumTapeRecord("event", "logical30", "momentum_30s_warn", "DETECTED",
-        date(2026, 10, 14), "SCNI", None, {"observed_decision_ns": 100,
+        date(2026, 10, 14), "SCNI", None, {"prior_close": "2.50", "observed_decision_ns": 100,
             "reference": {"end_ms": 1}, "detect": {"end_ms": 3, "price": "3"}}), **fields)
 
 
@@ -100,7 +101,7 @@ def test_actual_country_route_reason_and_evidence_sealed_before_any_worker_await
     observed = int(stamp.timestamp()*1e9)
     target.route_for = lambda symbol, now: CountryRoute("schwab", "sec_us", "READY", True,
                                                         "0000012345", stamp)
-    record = row(payload={"observed_decision_ns": observed, "reference": {"end_ms": 1},
+    record = row(payload={"prior_close": "2.50", "observed_decision_ns": observed, "reference": {"end_ms": 1},
                           "detect": {"end_ms": 3, "price": "3"}})
     assert target.offer(record, day_volume=50000, now_ns=observed) == "offered"
     _, signal = target.queue._queue[0]
@@ -109,6 +110,43 @@ def test_actual_country_route_reason_and_evidence_sealed_before_any_worker_await
     target.route_for = lambda symbol, now: CountryRoute("webull", "sec_unknown", "UNKNOWN", None, None, None)
     assert signal.country_route == "schwab"
     assert target.redis.xadd.await_count == 0
+
+
+@pytest.mark.parametrize("prior,expected", [
+    (None, "momneg1_prior_close_unknown"),
+    ("3.01", "momneg1_down_day"),
+    ("3", "offered"),
+    ("2.50", "offered"),
+], ids=["missing", "down", "equal", "up"])
+def test_controlled_fixture_prior_close_keeps_real_live_guard(prior, expected, caplog):
+    target = handoff()
+    record = row()
+    if prior is None:
+        del record.payload["prior_close"]
+    else:
+        record.payload["prior_close"] = prior
+    before = json.dumps(record.payload, sort_keys=True)
+    routing = []
+    original_route = target.route_for
+
+    def route(symbol, now):
+        routing.append(symbol)
+        return original_route(symbol, now)
+
+    target.route_for = route
+    with caplog.at_level("INFO", logger="momentum-live"):
+        assert target.offer(record, day_volume=50000, now_ns=100) == expected
+    assert json.dumps(record.payload, sort_keys=True) == before
+    assert target.counts[expected] == 1
+    if expected == "offered":
+        assert routing == [record.symbol]
+        assert target.queue.qsize() == 1 and len(target.ledger.episodes) == 1
+        assert "[MOMNEG1-REFUSED]" not in caplog.text
+    else:
+        assert routing == [] and target.queue.empty() and not target.ledger.episodes
+        assert "[MOMNEG1-REFUSED]" in caplog.text
+        assert f"reason={expected}" in caplog.text
+    target.redis.xadd.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,58 @@
+{
+  "provenance": {
+    "kind": "selected_actual_fields_not_complete_incident_packet",
+    "parent_source": "extclose1-inputs-20261020/trade_intents.csv.gz",
+    "parent_source_sha256": "f3cd6b9875712fb40d7ae766160b1bdf8bc438ee389ee6445b54de38be90edc4",
+    "order_source": "extclose1-inputs-20261020/broker_orders.csv.gz",
+    "order_source_sha256": "e8e2234812330d0ca21eb199ef4f30284d414cd78a948ba36e828fb8274560f7",
+    "writer_source": "o1019-26-receipts/c1-o26-v2-commit.sql",
+    "writer_source_sha256": "72e4699d21c3953922486906167017f189a4a427721098c26c3ff4bc3ff2bad2",
+    "projection": "Only fields consumed by cancellation closure retained; signal/quote context omitted. No events/fills/completeness or current PG snapshot is attested by this fixture. Empty-history tests are controlled inputs, not native receipts."
+  },
+  "parent": {
+    "id": "f723bbd2-5477-5a0b-b3ca-bc9ab023c5a7",
+    "strategy_id": "d1a325d7-254a-4f37-a484-e89ecd40a277",
+    "broker_account_id": "eb8606c3-3b60-467b-984a-00a752aaf46a",
+    "symbol": "WORX", "side": "buy", "intent_type": "open", "quantity": "32.00000000",
+    "reason": "MOMLIVE1_DETECTED", "status": "cancelled",
+    "created_at": "2026-10-19T14:47:46.502648+00:00",
+    "updated_at": "2026-10-20T00:34:15.883171+00:00",
+    "payload": {
+      "event_id": "f723bbd2-5477-5a0b-b3ca-bc9ab023c5a7", "source_service": "momentum-paper",
+      "momlive_parent": true, "metadata": {"episode_id": "f723bbd2-5477-5a0b-b3ca-bc9ab023c5a7"},
+      "momlive_episode": {
+        "route": null, "state": "terminal_no_fill", "end_ms": 1792421265838,
+        "exited": "0", "filled": "0", "symbol": "WORX", "start_ms": 1792421220000,
+        "closed_ns": null, "episode_id": "f723bbd2-5477-5a0b-b3ca-bc9ab023c5a7",
+        "source_ids": ["momentum_60s_warn:WORX:observed_raw_bucket_reference:1792421266394963389"],
+        "session_date": "2026-10-19", "fallback_used": false, "first_fill_ns": null,
+        "first_submit_ns": null, "cancel_requested": false
+      },
+      "repair_O_1019_26": {
+        "at": "2026-10-20 00:34:15.883119+00", "actor": "claude-1",
+        "reason": "proven-unsent claimed episode (order aborted, never wired, no permit/events/fills) blocked momentum-live boot",
+        "repair_id": "O-1019-26:momlive-f723-unsent-release", "prior_state": "claimed",
+        "backup_sha256": "b33233bb9fd14aba2e6a61a520cefccda17e1ced050236916b7cbe4a1d966366",
+        "maintenance_receipt": "oms=inactive at 2026-10-20T00:34:15.681762303Z host=ubuntu-s-2vcpu-4gb-120gb-intel-nyc3-01 boot=189fb67f-9103-4aa5-b9be-4706c56b134c working_orders=0 continuous_since=Tue 2026-10-20 00:17:43 UTC"
+      }
+    }
+  },
+  "order": {
+    "id": "6c0c5a75-f01b-4e8f-98c9-8d5364edaf00",
+    "intent_id": "f723bbd2-5477-5a0b-b3ca-bc9ab023c5a7",
+    "strategy_id": "d1a325d7-254a-4f37-a484-e89ecd40a277",
+    "broker_account_id": "eb8606c3-3b60-467b-984a-00a752aaf46a",
+    "client_order_id": "ml1-WORX-e-f723bbd254775a0bb3ca", "broker_order_id": null,
+    "symbol": "WORX", "side": "buy", "order_type": "limit", "time_in_force": "day",
+    "quantity": "32.00000000", "status": "aborted", "submitted_at": null,
+    "updated_at": "2026-10-19T16:13:23.331356+00:00",
+    "payload": {
+      "session": "NORMAL", "cap_price": "3.21755", "episode_id": "f723bbd2-5477-5a0b-b3ca-bc9ab023c5a7",
+      "order_type": "limit", "limit_price": "3.08", "signal_price": "3.17", "time_in_force": "day",
+      "claude1_repair": "10-19 12:2x unsent entry settled (O-1019-4 class, quote refused before wire, no broker id)",
+      "extended_hours": "false", "reference_price": "3.08", "momlive_one_shot": "true",
+      "momlive_strategy": "momentum_warn_live", "bot_control_decided_at": "2026-10-19T14:47:46.395434+00:00",
+      "bot_control_generation": "0", "bot_control_prepared_at": "2026-10-19T14:47:46.560214+00:00"
+    }
+  }
+}

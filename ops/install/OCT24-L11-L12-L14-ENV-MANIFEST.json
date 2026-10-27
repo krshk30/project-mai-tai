@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "scope": "REVIEW_ONLY_NOT_DEPLOYMENT_OR_PROCESS_ATTESTATION",
+  "source_proposal": {
+    "kind": "C11330_L12_EXCLUDED_SOURCE_PROPOSAL_NOT_OPERATOR_DECISION",
+    "base": "b4403c7fd8a243ea725f4ae8d149a1defd1c477f",
+    "excluded_component": "L12",
+    "historical_filename_retained": true,
+    "activation_authority": false
+  },
+  "ruling": "claude-1 2026-10-24 14:45 / 16:00 / 16:29; all final gates then separate GO",
+  "boolean_install_values": [
+    {
+      "component": "L11",
+      "setting": "strategy_schwab_1m_v2_keepwatch1_enabled",
+      "env": "MAI_TAI_STRATEGY_SCHWAB_1M_V2_KEEPWATCH1_ENABLED",
+      "value": "true",
+      "code_default": false,
+      "services": ["schwab-1m-v2"]
+    }
+  ],
+  "l14_activation": {
+    "boolean_switch": null,
+    "policy": "NO_L14_BOOLEAN_SWITCH_EXISTS_IN_06936_SETTINGS; explicit accepted artifact binding enables page",
+    "service": "control",
+    "aggregate": {
+      "setting": "atr_simulation_aggregate_receipt_path",
+      "env": "MAI_TAI_ATR_SIMULATION_AGGREGATE_RECEIPT_PATH",
+      "value": null,
+      "value_status": "MAIN_MUST_SEAL_ACTUAL_ROOT_OWNED_READ_ONLY_BOX_PATH_BEFORE_INSTALL",
+      "code_default": null,
+      "required": true,
+      "bytes": 34886838,
+      "sha256": "265b847b615df1efbb85cbf3b053bd9d597198309bdebd89d270ca458b0698e8",
+      "publication_sha256": "856a2601bd43a92dc2f92a1a2589d44814f25f775872474fc0d10c8c1ff2b9a3"
+    },
+    "realized": {
+      "path_env": "MAI_TAI_ATR_SIMULATION_REALIZED_RECEIPT_PATH",
+      "sha256_env": "MAI_TAI_ATR_SIMULATION_REALIZED_RECEIPT_SHA256",
+      "path_value": null,
+      "sha256_value": null,
+      "value_status": "MAIN_REVIEWED_ACTUAL_COPY_ALLOCATOR_RECEIPT_AND_EXTERNAL_SHA_STILL_OPEN",
+      "code_defaults": [null, null],
+      "policy": "EXACT_REVIEWED_PAIR_OR_EXPLICIT_UNKNOWN_DISPLAY; NEVER_FABRICATE_RECONCILIATION"
+    }
+  },
+  "install_ready": false,
+  "blockers": [
+    "MAIN_MUST_SEAL_L14_ACTUAL_PHYSICAL_ARTIFACT_PATH_AND_REALIZED_GATE",
+    "CF1_REAL_RESTORED_ALL_ON_SEED_N_OF_N_AND_ALL_FINAL_GATES",
+    "CORRECTED_ALL_ON_73_OF_73_AND_FULL104_BASELINE_ZERO_NEW",
+    "SEPARATE_C1_GO_AND_FRESH_PRODUCTION_SAFETY_CHECKS"
+  ]
+}

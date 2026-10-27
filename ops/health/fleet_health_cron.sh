@@ -99,6 +99,18 @@ case "$CODE" in
     ;;
 esac
 
+MAINTENANCE_HELPER="${FLEET_MAINTENANCE_HELPER:-$(dirname "$CHECK")/planned_maintenance.py}"
+if [ -f "$MAINTENANCE_HELPER" ]; then
+  if "${FLEET_MAINTENANCE_PYTHON:-python3}" "$MAINTENANCE_HELPER" filter \
+    --marker "${FLEET_MAINTENANCE_MARKER:-/run/project-mai-tai/planned-maintenance.json}" \
+    --state "$OUT/maintenance.state" --findings "$CURRENT" > "$OUT/maintenance.filtered"; then
+    mv -f "$OUT/maintenance.filtered" "$CURRENT"
+  else
+    # A broken helper must leave the original alarms intact.
+    echo "$STAMP maintenance filter failed; normal paging retained" >> "$OUT/cron.log"
+  fi
+fi
+
 while IFS='|' read -r FP DETAIL; do
   [ -z "$FP" ] && continue
   if grep -Fxq "$FP" "$ACTIVE"; then

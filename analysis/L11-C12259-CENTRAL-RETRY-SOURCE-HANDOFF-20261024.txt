@@ -1,0 +1,67 @@
+C12259 authorized exact central retry -- SOURCE CHECKPOINT / ORDERING OPEN
+
+Base: 2782fe6b1f8135703203682f4be633aa0c751768 (F).
+Branch: codex/l11-central-boot-retry-20261024
+Worktree: /private/tmp/oct24-l11-central-boot-retry-20261024
+Frozen F, APP359, harness3625, prior receipts and Main shared files untouched.
+
+APP change: ONLY services/schwab_1m_v2_bot.py, two added lines after the armed-
+safety check in _cw_boot_hold_check. Exact authorized conditional calls the real
+_try_complete_boot_state_restoration(self._watchlist,new_symbols=set()), then
+continues the original dangerous-segment check. No extra ordering predicate,
+latch assignment, cap/readiness/warmup/phase/timeout/DB/owner/schema change.
+
+Controls authored, ALL UNRUN, no imports/collection/AST/tests/rate execution:
+tests/unit/test_keepwatch_central_boot_retry.py: 18 intended expanded controls.
+tests/unit/test_keepwatch_central_boot_retry_rate.py: 1 intended 60-second gate.
+Functional controls declare CONTROLLED selected/scanner/readability/proof/warmup
+operands, not historical/native inputs or actual LNKS replay. Real constructor,
+completion predicate, seed function and dangerous check are used; no completion
+latch or held-bit fixture assignment. DB factory throws if called.
+Existing response/candle helpers are imported from the F-pinned producer module;
+there is no original-case, live/native, REST/streamer lifecycle or boot PASS.
+
+ORDERING EXPOSURES -- SOURCE-PREDICTED, NOT ACTUAL TEST RESULTS
+Four adversarial expanded controls are expected by static call-path inspection
+to fail with this EXACT insertion: pending owner, same-minute revised pending
+work, unfinished native read, shutdown with unfinished read. Complete proof and
+warmup let the existing fleet predicate complete; that predicate and the new
+conditional do not inspect pending work/native-read/stop state. The unchanged
+dangerous check examines current strategy state, not future callback mutations.
+The pending-owner control uses an explicit suspended controlled callback/task
+and real BarInbox, not a claimed full producer/strategy lifecycle. These controls
+express the ordering requirement for review, not proof every pending task is
+unsafe or that a particular live interleaving has happened. No assertion has
+been relaxed, no additional fence or new predicate has been implemented.
+STOP broader APP change pending C1 ordering disposition. If these ordering
+requirements need an extra fence, it is outside the approved two-line insertion.
+
+Remaining cohesive coverage NOT yet authored at this checkpoint: full actual
+REST/streamer/empty-tail/replay caller interleavings and real cancellation/native
+join lifecycle. Do not claim the 19 controls substitute for that coverage. Avoid
+spending an actual strict rate window before the ordering decision is resolved.
+
+Proposed Main-only first assessment (not authorization/author execution):
+pytest -q tests/unit/test_keepwatch_central_boot_retry.py
+Fresh private output XML/raw under an exact reviewed head/fence required.
+Rate node is separately claimable ONLY in a fresh coordinated quiet window:
+tests/unit/test_keepwatch_central_boot_retry_rate.py::test_central_retry_240_per_second_60s_incomplete_first_10s
+It paces 14400 real hold checks over >=60 seconds, keeps proof absent for the
+first ten seconds, then supplies the explicit controlled proof. Thresholds:
+measured >=200/s, max handler <50ms and loop stall <50ms, normal GC/logging,
+no retry after latch. It is not a full trade-handler/case/native benchmark.
+
+Impact: _publish_bot_state -> _cw_boot_hold_check -> same fleet completion
+predicate -> KEEPWATCH memory proof/anchor checks -> unchanged dangerous check.
+Production existing state publisher cadence remains five seconds. The real
+reconstructed entry-input grid calls the same hold method, but is not actual
+production state-publisher lifecycle evidence. L12 shares this gate; B0c7's idle
+publisher needs separate reviewed lifecycle correction by its owner. L14 saved
+data/read-only serving remains structurally separate. Flag-OFF control paths
+do not invoke the new retry. Once latched the new call is a no-op.
+
+Acceptance OPEN: actual original LNKS 07:02 admission, applicable original36,
+corrected final full, L12 actual boot, 03:40 guard and C1 package GO. Existing
+F full retained, not transferable to changed APP. SAIQ17 observed both phases
+unheld first1792676805000000000; do not generalize all-session LNKS hold to it.
+No install/provider/DB/runtime authority. Main owns subsequent claims/results.

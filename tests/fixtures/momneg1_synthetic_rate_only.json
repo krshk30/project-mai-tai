@@ -1,0 +1,20 @@
+{
+  "kind": "SYNTHETIC_RATE_ONLY",
+  "scope": "Controlled P2 old/new latency only; NOT P1, GIXI replay, historical evidence or native/live proof",
+  "day_volume": 100000,
+  "sessions": [
+    {"name": "PM", "observed_at": "2026-10-22T08:19:00-04:00"},
+    {"name": "RTH", "observed_at": "2026-10-22T10:19:00-04:00"}
+  ],
+  "countries": [
+    {"name": "US", "is_us": true, "broker": "schwab"},
+    {"name": "NON_US", "is_us": false, "broker": "webull"},
+    {"name": "UNKNOWN", "is_us": null, "broker": "webull"}
+  ],
+  "shapes": [
+    {"name": "DOWN", "price": "1.20", "prior_close": "1.31"},
+    {"name": "UP", "price": "1.50", "prior_close": "1.31"},
+    {"name": "EQUAL", "price": "1.31", "prior_close": "1.31"},
+    {"name": "PRIOR_UNKNOWN", "price": "1.50", "prior_close": null}
+  ]
+}

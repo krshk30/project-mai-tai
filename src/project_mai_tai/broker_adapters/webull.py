@@ -208,6 +208,9 @@ class WebullBrokerAdapter:
 
     # ------------------------------------------------------------------ public API
     async def submit_order(self, request: OrderRequest) -> list[ExecutionReport]:
+        from project_mai_tai.buy_price_floor import buy_order_allowed
+        if not buy_order_allowed(request):
+            return [self._reject(request, "PRICE1-REFUSED", origin="client")]
         account = self.accounts_by_name.get(request.broker_account_name)
         if account is None:
             return [self._reject(request, self._missing_config_reason(request.broker_account_name), origin="client")]
@@ -230,7 +233,10 @@ class WebullBrokerAdapter:
             except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
                 return [self._reject_from_exception(request, exc)]
         try:
-            return await asyncio.to_thread(self._submit_blocking, account, request)
+            from project_mai_tai.momentum_live.entry_wire import entry_wire_guard
+            guard = entry_wire_guard(request)
+            return await asyncio.to_thread(self._submit_blocking, account, request,
+                                          **({"entry_guard": guard} if guard is not None else {}))
         except Exception as exc:  # noqa: BLE001 - any SDK/transport error -> reject, never crash OMS
             return [self._reject_from_exception(request, exc)]
 
@@ -543,25 +549,30 @@ class WebullBrokerAdapter:
         if account is None:
             return None
         try:
-            return await asyncio.to_thread(self._fetch_order_blocking, account, request)
+            return await self._foreground_query(self._fetch_order_blocking, account, request)
         except Exception:  # noqa: BLE001
             logger.exception("Webull order-status fetch failed for %s", request.client_order_id)
             return None
 
-    async def fetch_momentum_cancel_read(self, request: OrderRequest) -> MomentumOrderRead:
+    async def fetch_momentum_cancel_read(self, request: OrderRequest, *, allow_absent=False,
+                                         lookup_missing_entry=False) -> MomentumOrderRead:
+        allow_absent = allow_absent and request.metadata.get("refused_pre_submit") is True
         account = self.accounts_by_name.get(request.broker_account_name)
         if (account is None or request.strategy_code != "momentum_warn_live"
                 or not request.metadata.get("episode_id") or request.intent_type == "cancel"
                 or not request.quantity.is_finite() or request.quantity <= 0):
             return MomentumOrderRead("invalid", reason="request_identity")
         try:
-            return await asyncio.to_thread(self._momentum_cancel_read_blocking, account, request)
+            return await self._foreground_query(
+                lambda: self._momentum_cancel_read_blocking(
+                    account, request, allow_absent=allow_absent,
+                    lookup_missing_entry=lookup_missing_entry))
         except (TimeoutError, ConnectionError, OSError):
             return MomentumOrderRead("unavailable", reason="transport")
         except Exception:
             return MomentumOrderRead("invalid", reason="unclassified_failure")
 
-    def _momentum_cancel_read_blocking(self, account, request):
+    def _momentum_cancel_read_blocking(self, account, request, *, allow_absent=False, lookup_missing_entry=False):
         try:
             self._query_budget.claim("detail", f"{account.account_id}:{request.client_order_id}", strict=True)
         except QueryBudgetUnavailable:
@@ -577,6 +588,9 @@ class WebullBrokerAdapter:
             response = self._get_client().get_response(detail)
         except Exception as exc:
             status = getattr(exc, "http_status", None)
+            code = getattr(exc, "code", None) or getattr(exc, "error_code", None)
+            if allow_absent and status == 417 and str(code).upper() == "ORDER_NOT_FOUND":
+                return MomentumOrderRead("absent", reason="webull_exact_client_id_ORDER_NOT_FOUND")
             if isinstance(exc, (TimeoutError, ConnectionError, OSError)) or status == 429 or (
                     isinstance(status, int) and 500 <= status <= 599):
                 return MomentumOrderRead("unavailable", reason="transport_or_throttle")
@@ -584,9 +598,21 @@ class WebullBrokerAdapter:
         status = self._response_status(response)
         if status == 429 or 500 <= status <= 599:
             return MomentumOrderRead("unavailable", reason="http_unavailable")
+        if allow_absent and status == 417:
+            body = self._body(response)
+            if isinstance(body, dict) and body.get("code") == "ORDER_NOT_FOUND":
+                return MomentumOrderRead("absent", reason="webull_exact_client_id_ORDER_NOT_FOUND")
         if status != 200:
             return MomentumOrderRead("invalid", reason="http_refusal")
         body = self._body(response)
+        if allow_absent or lookup_missing_entry:
+            items = body.get("items") if isinstance(body, dict) else None
+            if (not isinstance(body, dict) or str(body.get("account_id", "")) != account.account_id
+                    or body.get("client_order_id") != request.client_order_id
+                    or not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict)
+                    or items[0].get("symbol") != request.symbol
+                    or str(items[0].get("side", "")).lower() != request.side):
+                return MomentumOrderRead("invalid", reason="missing_exact_client_account_symbol_binding")
         execution = self._validated_list_execution(body, account, request.client_order_id,
             symbol=request.symbol, side=request.side)
         kind = "report"
@@ -673,7 +699,7 @@ class WebullBrokerAdapter:
         base = str(base_client_order_id or "")
         if account is None or not base:
             return None
-        return await asyncio.to_thread(self._exit_fill_blocking, account, symbol, base)
+        return await self._foreground_query(self._exit_fill_blocking, account, symbol, base)
 
     def _exit_fill_blocking(
         self, account: WebullAccountConfig, symbol: str, base: str
@@ -740,6 +766,104 @@ class WebullBrokerAdapter:
             raise ValueError("Webull OCO child read is UNKNOWN")
         return None
 
+    def cached_attach_pair_terminal(self, account_name, symbol, base, quantity):
+        """Bookkeeping evidence only: no HTTP, DETAIL fallback, or absence inference."""
+        account = self.accounts_by_name.get(account_name)
+        if account is None or not getattr(self, "_list_primary_enabled", False):
+            return None
+        coids = self.exit_pair_leg_client_order_ids(base)
+        bodies = self._today_reader.peek_terminal_complete(account.account_id, coids)
+        if bodies is None or len(bodies) != 2 or len(set(coids)) != 2:
+            return None
+        children = []
+        for coid, body in zip(coids, bodies):
+            execution = self._validated_list_execution(body, account, coid, symbol=symbol, side="sell")
+            if execution is None or execution[0] not in {"filled", "cancelled", "rejected"}:
+                return None
+            item = body["items"][0]
+            if str(item.get("symbol", "")).upper() != symbol.upper() or str(item.get("side", "")).lower() != "sell":
+                return None
+            requested = [self._decimal_or_none({k: part[k]}, k) for part in (body, item)
+                         for k in ("qty", "quantity", "order_qty", "orderQty") if part.get(k) is not None]
+            if (not requested or any(value != quantity for value in requested)
+                    or any(self._map_status({"status": body[k]}) != execution[0] for k in
+                           ("status", "order_status", "orderStatus") if body.get(k) is not None)
+                    or any(self._decimal_or_none({k: body[k]}, k) != Decimal(execution[2]) for k in
+                           ("filled_qty", "filledQty", "filled_quantity", "filledQuantity") if body.get(k) is not None)):
+                return None
+            children.append({"coid": coid, "status": execution[0], "broker_order_id": execution[1],
+                             "filled_quantity": execution[2], "price": execution[3],
+                             "filled_at": execution[4], "evidence": body["_webull_list_evidence"],
+                             "native_terminal_at": execution[4],
+                             "native_terminal_time_state": "execution_time" if execution[4] else "UNKNOWN",
+                             "terminal_observed_time_basis": "acquisition_upper_bound_not_native_event",
+                             "terminal_observed_at": body["_webull_list_evidence"]["acquired_at"]})
+        generations = {child["evidence"].get("scan_generation") for child in children}
+        acquired = [self._parse_broker_time(child["terminal_observed_at"]) for child in children]
+        if (len(generations) != 1 or not next(iter(generations))
+                or any(at is None or at.tzinfo is None or at > datetime.now(UTC) for at in acquired)):
+            return None
+        total = sum((Decimal(child["filled_quantity"]) for child in children), Decimal(0))
+        if total:
+            winners = [child for child in children if Decimal(child["filled_quantity"]) > 0]
+            if total != quantity or len(winners) != 1 or winners[0]["status"] != "filled":
+                return None
+            filled_at = self._parse_broker_time(winners[0]["filled_at"])
+            if filled_at is None or any(at <= filled_at for at in acquired):
+                return None
+        return {"source": "complete_cached_today_list", "account": account_name,
+                "account_id": account.account_id, "scan_generation": next(iter(generations)),
+                "terminal_observation_contract": "WBATTACH-L9-own-row-after-winner-v1",
+                "symbol": symbol, "base": base, "children": children}
+
+    def attach_terminal_scan_scope(self, account_name):
+        account = self.accounts_by_name.get(account_name)
+        if account is None or not getattr(self, "_list_primary_enabled", False):
+            return None
+        return (str(getattr(self, "host", "")), account.account_id)
+
+    def refresh_attach_terminal_scan(self, account_name):
+        """Blocking worker-only: one shared-budget HTTP page, never DETAIL."""
+        if self.attach_terminal_scan_scope(account_name) is None:
+            return
+        account = self.accounts_by_name[account_name]
+        try:
+            self._today_reader.refresh_one_page(account.account_id, lambda cursor: self._today_page(account, cursor))
+        except Exception as exc:
+            if self._is_rate_limited(exc):
+                self._today_reader.budget.defer("list-today", 30.)
+            raise
+
+    async def read_native_entry_book(self, broker_account_name: str):
+        from project_mai_tai.brokerdecides1_collect import read_webull
+
+        return await read_webull(self, broker_account_name)
+
+    async def _foreground_query(self, function, *args):
+        # Keep priority through cancellation until the actual blocking delegate
+        # ends; cancelling the asyncio waiter cannot stop an SDK thread.
+        budget = getattr(self, "_query_budget", None)
+        if budget is None:
+            budget = shared_budget(self.host, self.app_key)
+        priority = budget.foreground()
+        priority.__enter__()
+        try:
+            task = asyncio.create_task(asyncio.to_thread(function, *args))
+        except BaseException:
+            priority.__exit__(None, None, None)
+            raise
+        retained = self.__dict__.setdefault("_foreground_query_tasks", set())
+        retained.add(task)
+
+        def finished(done):
+            retained.discard(done)
+            priority.__exit__(None, None, None)
+            if not done.cancelled():
+                done.exception()
+
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
     async def list_account_positions(self, broker_account_name: str) -> list[BrokerPositionSnapshot]:
         """Live positions for one broker account, THROTTLED + 429-BACKED-OFF per account.
 
@@ -778,7 +902,7 @@ class WebullBrokerAdapter:
 
         # FETCH.
         try:
-            snapshots = await asyncio.to_thread(self._positions_blocking, account, broker_account_name)
+            snapshots = await self._foreground_query(self._positions_blocking, account, broker_account_name)
         except Exception as exc:  # noqa: BLE001
             if self._is_rate_limited(exc):
                 self._note_positions_backoff(key, time.monotonic())
@@ -846,7 +970,7 @@ class WebullBrokerAdapter:
 
     # ------------------------------------------------------------------ blocking impls
     def _submit_blocking(
-        self, account: WebullAccountConfig, request: OrderRequest
+        self, account: WebullAccountConfig, request: OrderRequest, *, entry_guard=None
     ) -> list[ExecutionReport]:
         order_type = self._order_type(request)
         limit_price = self._meta_price(request, "limit_price", "reference_price")
@@ -961,6 +1085,9 @@ class WebullBrokerAdapter:
                 if key.startswith("cw_target_api_"):
                     report_metadata.pop(key)
         try:
+            if entry_guard is not None:
+                entry_guard.check(quantity=wire_qty, limit=wire_limit, symbol=request.symbol)
+                entry_guard.before_transport()
             response = client.get_response(po)
             if is_target:
                 try:

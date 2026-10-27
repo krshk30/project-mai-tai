@@ -1,0 +1,57 @@
+C1 2026-10-25 11:36 reactivation: shared completion ordering/source checkpoint
+
+SAME L11 owner/branch/worktree, no duplicate task. Prior04052, 0f2, F278 and
+all original failures/UNKNOWNs retained. C11136 supersedes Oct24_2319 OUT ruling;
+this source checkpoint does NOT grant install or runtime authority.
+Root /private/tmp/oct24-l11-scoped-boot-ordering-dev-20261024
+Branch codex/l11-scoped-boot-ordering-dev-20261024
+Parent04052bc73c0d61adc1329e0bb28eb9ee5dae50aa (23:31:18 ET Oct24).
+
+MINIMAL CLOSURE
+Central _cw_boot_hold_check keeps the exact KEEPWATCH-ON/incomplete retry after
+the safety check and before the unchanged dangerous-state check. Its scoped
+inspection is MOVED, not duplicated, into _try_complete_boot_state_restoration:
+after restart replay refusal, safety-OFF compatibility and already-latched
+addition handling; before incomplete-fleet evaluation. Thus scanner, REST,
+streamer and replay direct callers pass through the SAME scoped boundary.
+No latch/held/readiness assignment, cap, phase, source precedence, clock, native
+permission, timeout, cadence, schema, L12 kernel or provider-query change.
+The memory-only fence from04052 remains: selected/current-session/current-epoch
+pending owner, active history/native operations, unknown native registration or
+shutdown defer; idle/unrelated/old-session attributed work do not block.
+Deferral remains retryable at the existing next real hold-check boundary.
+All original readable/nonempty/proven/warmup fleet conditions remain mandatory.
+
+CONTROLS / EXECUTION BOUNDARY
+Original0f2 strict18 retained. Original14PASS4FAIL are old-head actual evidence,
+not new-head PASS. Four failed assertions unchanged. 04052 new28 controls remain
+strict, including both direct-caller exposures; only their stale comments change.
+Add ONE distinct direct-deferral -> real central-retry recovery control; no
+scanner reinjection or readiness/latch assignment. Intended functional total47
+(18+28+1), rate1 separate. Counts are source inventory, NOT actual collection.
+ALL successor controls UNRUN. No imports, AST, compile, tests, replay, DB/PG,
+provider or production actions by author. Main must source-bind a clean claim.
+
+SOURCE CALL GRAPH / EFFECT
+Existing five-second publisher -> _cw_boot_hold_check -> actual completion ->
+scoped ordering -> unchanged fleet predicate -> unchanged dangerous hold check.
+Existing direct scanner/warmup/replay completion -> SAME scoped ordering.
+Flag-OFF seed and post-latch additions bypass this new incomplete-boot fence as
+before. Once restoration latches, central retry remains a no-op. In-flight
+registry cleanup/join behavior is exactly the previously authored04052 delta.
+Only one APP file changed; no whole-tree overwrite or L12/L14 deletion.
+
+OPEN GATES / PRECISE LIMITS
+Source closure is not causal original-case qualification. Required corrected-
+head gates: strict18/remaining caller controls; real OLD/NEW original21 with
+separate LNKS16 07:02 admission; Friday watched18 boot (62confirms/2751stored/
+11186Massive) with bound actual operands; only intended first entries changed
+and must-not-change byte identity; full104baseline+EXACTBBCI only; actual Friday
+close-nextday boot; tickrate/stall under fresh coordinated window.
+No duplicate export/baseline or old failure relabel. Existing harness3625 and
+other source-bound roots are immutable until separate reviewed binding.
+No claim these source changes alone supply missing live/native/initial-state
+operands. Main owns all claims, integration, shared queue/status/LATEST and
+production. L14 installation first/no overlap; APP start before22ET remains
+conditional on all mandatory gates. Any L11 migration must descend from
+20261023_atr_aggregate for one production Alembic head; none added here.

@@ -1,0 +1,94 @@
+L14-UI actual SKIP population correction -- SOURCE ONLY / PENDING C1 DISPLAY DISPOSITION
+Own root /private/tmp/mai-tai-l14-ui-skip-outcomes-20261025
+Branch codex/oct25-l14-ui-skip-outcomes
+Base70bfd6de4c0d09b5e606a7429e0a3dc157fdd975. Active Main70/full untouched.
+No author imports/compilation/tests/model/replay/PG/browser/provider/runtime.
+
+ACTUAL RETAINED CAUSE TABLE (file-only jq/HTML counts, no APP import)
+Mode                 API population        Shared rows   Missing
+FIRSTBAR             140TRADE+113SKIP       140           113SKIP
+FIRSTBAR_X3          140TRADE+113SKIP       140           113SKIP
+AGGREGATE_ENTRY      253                    253           0
+LIVE:ACTUAL          4                      4             0
+TODAY:SUPPLIED       4                      4             0
+VOLBODY:QUEUE_AWARE  4                      4             0
+VOLBODY:OPTIMISTIC   4                      4             0
+TOTAL                775                    549           226SKIP
+Each FIRST mode SKIP reasons:80 SKIPPED_FALSE_FLIP,
+29 SKIPPED_NO_BREAK_BEFORE_BOUNDARY,4 SKIPPED_ENTRY_WINDOW_ENDED.
+No actual FIRST UNKNOWN outcomes; UNKNOWN display still guarded/tested.
+Firstbar_tables correctly returns trades and separate skip counts; new CP mount
+used only trade rows and removed old footer, omitting113 outcomes/mode. My prior
+all253TRADE fixture masked this real display-coverage bug. Not a PG/reader failure.
+
+FILE-ONLY VISIBLE CELL COMPARISON
+Independent UTF8-aware HTML/JSON comparison found zero differing cells across
+FIRST140x9, X3140x9 and AGG253x9 (533rows/4797cells), ordered against actual API
+trade fields, with existing ET timestamp display conversion. Initial raw-byte
+analysis saw aggregate Unicode label mismatch; correcting UTF8 decoding removed
+it. No APP imports/caller/native rerun occurred. Legacy16rows each9cells counted;
+their full per-cell equivalence is not claimed by this file-only analysis.
+This is not overall775/native acceptance; actual new candidate readback remains UNRUN.
+
+IMMUTABLE INPUTS
+Prefix /private/tmp/OCT25-L14UI70-C11929-QUERYLESS775-PRIVATE-FIRST-20261025
+.json c55358afacbdcb819341d0af3dbf795eb530c8ede9ef659e78719d778d630452
+-shared.body 927594990e4933cad38ae2ff14c2b9ede595d4806c6555f08c81e2a553793845
+-firstbar.body 387b4513d5fd91d1668f8f5b0a7bb74796a64e9b8dc8556bb084ecc4cfee6174
+All7 actualGET200/schema7JSON114/FK/index/count45/2/3/775/2ROconnections/cleanup0
+remain retained diagnostic evidence, NOT queryless775 pagePASS. Current revision
+UNKNOWN_PERMISSION/C11929 catalog disposition and original42501 evidence stay.
+
+SOURCE CHANGE -- ONLY atr_simulation/cp_sim_display.py
+Keep firstbar_tables/full provenance/shape/economic guards UNCHANGED. Iterate
+each validated mode's canonical outcomes, consume untouched detached TRADE rows
+in the same order, and emit explicit rows for SKIP/UNKNOWN. Every real TRADE row
+HTML remains byte-identical to original existing row formatter (not a new trade
+template). No engine/store/read-model/trading/settings/migration changes.
+SKIP: actual ticker/broker + canonical reason, gray small NOT EXECUTED badge;
+quantity/entry time/entry price/exit time/exit price are absent '-' fields. P&L
+is nonnumeric NOT EXECUTED, pnl=None/known=False, never allocation/fill/P&L0.
+UNKNOWN is explicitly UNKNOWN, never asserted NOT EXECUTED or zero.
+Each mode section carries ordered actual outcomeID/kind/model plus safe actual
+day/symbol/broker metadata. Full account/episode payloads are NOT dumped in HTML.
+Duplicate mode+outcomeID refuses; trade projection cannot under/overconsume.
+Metadata aligns all253 visible outcomes/mode, preserving canonical API order.
+Stats copy unchanged140closed totals196.87/186.59, aggregate-22.94 and realized
+28.94/147/26. Seven9-column cards/onecaption/mobile scope remain unchanged.
+
+RETAINED-DATA DISPLAY FIXTURE
+tests/fixtures/atr_simulation/l14_ui/actual_firstbar_140_trade_113_skip.json
+506 actual outcomeIDs/kinds/models/reasons +280 actual trade display row values,
+source/totals copied by jq from immutable actual API above, not recreated trades.
+Nondisplay account/strategy/flip/segment identity fields and allocation refs are
+explicitly REDACTED; day/symbol/broker, actual outcomeIDs/tradeIDs and numeric
+display facts retained. Provenance describes sanitization. This is display-only
+test input, NOT model/receipt/engine provenance, not a reconstructed native tape.
+Other modes in composite775 source controls remain controlled data, clearly
+labeled; Main real private-copy775 acceptance cannot be replaced by that fixture.
+
+MAIN FIRST SELECTION -- PROPOSED10NEW CASES BY SOURCE ENUMERATION ONLY / UNRUN
+tests/unit/test_l14_ui_actual_skip_outcomes.py
+8functions with2parameterized2-case guards =10. Actual fixture140/113/reasons,
+all253 ordered IDs/mode/all775 composite/9cells, canonical140tradeHTMLbytes,
+NOT EXECUTED missing facts, UNKNOWN preserved, duplicateIDs, forbidden row/qty,
+supplied totals/input immutability and nonSIM HTML byte equality.
+Do not claim collection/count/PASS until Main runs under its reviewed fence.
+Old synthetic controls are retained, not weakened/replaced to hide the error.
+
+MAIN ADOPTION/ACTUAL CALLER NOTES -- NO SILENT RETAG
+C1's19:49 display-disposition question still pending when this source freezes.
+Candidate implements explicit226SKIP-nottrade rows to retain requested775; if C1
+chooses a separate audit view, this source remains reviewed alternative, not GO.
+Do NOT mutate active70 during full. Main may review/cherry-pick this isolated
+CP-only commit later; actual source guard must bind a separately reviewed real
+new Main head/whole pins, never relabel old70 receipt as new candidate acceptance.
+Old actual caller expected firstbar_tables only140 TRADE rows despitehard253
+count. Its independent shared oracle must include canonical API SKIP/UNKNOWN
+rows as missing facts/NOT EXECUTED, plus all253 ordered metadata IDs/mode; keep
+775 count, all9cell equality, actual140TRADEbytes, remaining253+16 APIs/economics,
+identity/RO/fence/time/currentrevisionUNKNOWN/receipt guards unchanged. No new
+unapproved DB/provider/source read. Retain oldc553 failure as failure.
+Then ONE newly reviewed actual queryless775 body and bounded offline screenshot,
+under Main claim, not synthetic screenshot. Current source controls alone do
+not finish that acceptance or justify production/restart/GO. D1OUT unchanged.

@@ -1,0 +1,444 @@
+diff --git a/src/project_mai_tai/services/keepwatch_bar_owner.py b/src/project_mai_tai/services/keepwatch_bar_owner.py
+index 2b84a88ea..adafb50b6 100644
+--- a/src/project_mai_tai/services/keepwatch_bar_owner.py
++++ b/src/project_mai_tai/services/keepwatch_bar_owner.py
+@@ -12,6 +12,8 @@ class BarConsumptionSuperseded(Exception):
+ 
+ bar_consumption_context: ContextVar[tuple | None] = ContextVar(
+     "keepwatch_bar_consumption", default=None)
++current_bar_recovery_context: ContextVar[tuple | None] = ContextVar(
++    "keepwatch_current_bar_recovery", default=None)
+ 
+ 
+ @dataclass(frozen=True)
+@@ -20,6 +22,7 @@ class OwnedBar:
+     source: str
+     anchor_ms: int
+     epoch: int
++    observed_ms: int = 0
+ 
+     def __post_init__(self):
+         bar = self.bar
+@@ -29,6 +32,71 @@ class OwnedBar:
+             producer=bar.producer))
+ 
+ 
++@dataclass
++class CurrentBarRecovery:
++    """Process-local current observations, never a full-history attestation.
++
++    The caller must still check its owner/STOP/membership fences. Counting a
++    receipt neither consumes its inbox work nor grants permission to trade.
++    """
++
++    symbol: str
++    anchor_ms: int
++    epoch: int
++    source_identity: object
++    ledger: object
++    state: object
++    period: int
++    membership: int = 0
++    last_work: OwnedBar | None = None
++    contiguous: int = 0
++    invalidated: bool = False
++    publication: tuple | None = None
++    gap_revision: int = -1
++    gap_open: bool = False
++
++    @property
++    def required(self) -> int:
++        # Identical to OLD _maybe_resume_gap_hold, not a new fixed-ten rule.
++        return 2 * self.period
++
++    def bound_to(self, *, symbol, anchor_ms, epoch, source_identity, ledger, state) -> bool:
++        return bool(not self.invalidated and self.period > 0 and self.epoch > 0
++                    and self.symbol == symbol and self.anchor_ms == anchor_ms
++                    and self.epoch == epoch and self.source_identity == source_identity
++                    and self.ledger is ledger and self.state is state)
++
++    def observe(self, work: OwnedBar, *, canonical: ChartBar, now_ms: int) -> bool:
++        bar = work.bar
++        if (self.invalidated or self.period <= 0 or self.epoch <= 0
++                or work.anchor_ms != self.anchor_ms or work.epoch != self.epoch
++                or bar.symbol != self.symbol or work.source not in {"rest", "streamer"}
++                or bar.producer not in {"massive", "schwab"}
++                or not self.anchor_ms <= bar.timestamp_ms < self.anchor_ms + 57_600_000
++                or bar.timestamp_ms % 60_000
++                or not 60_000 <= work.observed_ms - bar.timestamp_ms <= 180_000
++                or work.observed_ms > now_ms or bar != canonical):
++            return False
++        previous = self.last_work
++        if previous is not None and bar.timestamp_ms <= previous.bar.timestamp_ms:
++            if bar.timestamp_ms == previous.bar.timestamp_ms and bar == previous.bar:
++                return True  # Same-minute delivery/retry is not another bar.
++            # A correction behind consumed math needs repair, not another count.
++            self.invalidated = True
++            self.publication = None
++            return False
++        if previous is None or bar.timestamp_ms != previous.bar.timestamp_ms + 60_000:
++            self.contiguous = 0
++        self.publication = None
++        self.contiguous = min(self.required, self.contiguous + 1)
++        self.last_work = work
++        return True
++
++    def threshold_observed(self) -> bool:
++        return bool(not self.invalidated and self.period > 0
++                    and self.contiguous >= self.required)
++
++
+ @dataclass
+ class BarInbox:
+     capacity: int
+diff --git a/src/project_mai_tai/services/schwab_1m_v2_bot.py b/src/project_mai_tai/services/schwab_1m_v2_bot.py
+index a9d164bf5..b12f5d464 100644
+--- a/src/project_mai_tai/services/schwab_1m_v2_bot.py
++++ b/src/project_mai_tai/services/schwab_1m_v2_bot.py
+@@ -436,6 +436,7 @@ class SchwabV2BotService:
+         self._keepwatch_unknown: set[str] = set()
+         self._keepwatch_cancel_requested: set[str] = set()
+         self._keepwatch_proven: dict[str, object] = {}
++        self._keepwatch_current_recoveries: dict[str, object] = {}
+         self._line_pg_poll_fallbacks: dict[str, dict] = {}
+         # One bounded process-local log budget, not a per-symbol retention map.
+         self._line_pg_error_log = {"failures": 0, "fallbacks": 0, "emitted": 0,
+@@ -3328,9 +3329,22 @@ class SchwabV2BotService:
+         return ((set(self._watchlist) | retained)
+                 - set(getattr(self.settings, "protected_symbol_set", set())))
+ 
++    def _keepwatch_observation_member(self, symbol: str) -> bool:
++        """O(1) equivalent of observation membership, never held-only exit coverage."""
++        if not getattr(self, "_keepwatch_enabled", False):
++            return symbol in self._watchlist
++        return (symbol not in self.settings.protected_symbol_set
++                and (symbol in self._watchlist or (
++                    self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
++                    and symbol in self._keepwatch.first_seen_ms)))
++
+     def _keepwatch_entry_allowed(self, symbol: str) -> bool:
+         if symbol in self._keepwatch_boot_excluded_symbols():
+             return False
++        if self._keepwatch_current_publication(symbol) is not None:
++            return (self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
++                    and self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms
++                    and self._keepwatch.allows_entry(symbol))
+         fallback = self._line_pg_poll_fallback_current(symbol)
+         if fallback is not None:
+             # OLD scanner membership for this failed poll only. Retained-only
+@@ -5798,7 +5812,8 @@ class SchwabV2BotService:
+                 self._keepwatch_bar_quarantine[symbol] = anchor
+                 self._keepwatch_unknown.add(symbol)
+                 return
+-        admitted = inbox.offer(OwnedBar(bar, source, anchor, epoch))
++        admitted = inbox.offer(OwnedBar(
++            bar, source, anchor, epoch, observed_ms=self.strategy._now_ms()))
+         if not admitted:
+             # Receiver work is memory-only. Cancellation/logging belongs to the owner,
+             # not the WebSocket reader. This quarantine cannot be auto-cleared by a
+@@ -5858,7 +5873,8 @@ class SchwabV2BotService:
+                                  symbol, inbox.rejected, inbox.overflow_first_ms,
+                                  inbox.overflow_last_ms, len(inbox.pending))
+                 work = inbox.pending[min(inbox.pending)]
+-                if self.strategy._now_ms() - work.bar.timestamp_ms > 180_000:
++                if (self.strategy._now_ms() - work.bar.timestamp_ms > 180_000
++                        and self._keepwatch_current_recovery_scope(symbol) is None):
+                     # A current frame can repair an older prefix in one complete read;
+                     # its pending older observations are spliced before consumption.
+                     newest = inbox.pending[max(inbox.pending)]
+@@ -6012,6 +6028,99 @@ class SchwabV2BotService:
+         return (pins is None or work.bar.timestamp_ms not in pins.producers
+                 or pins.matches(work.bar))
+ 
++    def _keepwatch_current_recovery_scope(self, symbol: str):
++        proof = getattr(self, "_keepwatch_current_recoveries", {}).get(symbol)
++        ledger = self._line_sessions.get(symbol)
++        state = self.strategy._symbol_states.get(symbol)
++        anchor = session_start_ts_ms(self.strategy._now_ms())
++        if (proof is None or self._stop_event.is_set() or ledger is None or state is None
++                or not self._keepwatch_observation_member(symbol)
++                or symbol in self._line_readd_needs_live
++                or self._keepwatch_bar_quarantine.get(symbol) == anchor
++                or proof.membership != self._line_membership.get(symbol, 0)
++                or not proof.bound_to(symbol=symbol, anchor_ms=anchor, epoch=ledger.epoch,
++                    source_identity=self._line_source_identity.get(symbol),
++                    ledger=ledger, state=state)
++                or ledger.anchor_ms != anchor
++                or proof.gap_revision != ledger.revision or not proof.gap_open):
++            return None
++        return proof
++
++    def _keepwatch_refresh_current_recovery(self, symbol: str) -> None:
++        """Refresh only on bar/history work; admission/tick lookups never scan bars."""
++        proof = self._keepwatch_current_recoveries.get(symbol)
++        ledger = self._line_sessions.get(symbol)
++        if proof is not None and ledger is proof.ledger and proof.gap_revision != ledger.revision:
++            proof.gap_open = ledger.has_unrecovered_traded_gap()
++            proof.gap_revision = ledger.revision
++            proof.publication = None
++
++    def _keepwatch_current_publication(self, symbol: str):
++        proof = self._keepwatch_current_recovery_scope(symbol)
++        if proof is None or not proof.threshold_observed() or proof.publication is None:
++            return None
++        state, ledger = proof.state, proof.ledger
++        work = proof.last_work
++        if (work is None or not state.bars or state.gap_hold_active
++                or state.atr_prev_bar is None
++                or state.bars[-1].timestamp_ms != work.bar.timestamp_ms
++                or state.atr_prev_bar.timestamp_ms != work.bar.timestamp_ms
++                or work.bar.timestamp_ms != self.strategy._now_ms() // 60_000 * 60_000 - 60_000
++                or state.atr_state not in {"long", "short"}
++                or state.atr_trail is None or not math.isfinite(state.atr_trail)
++                or state.atr_trail <= 0
++                or any(getattr(state.bars[-1], name) != getattr(work.bar, name)
++                       for name in ("open", "high", "low", "close", "volume"))
++                or proof.publication != (work.bar.timestamp_ms, ledger.revision,
++                    state.atr_state, state.atr_trail, state.line_restore_reset_after_ms)):
++            return None
++        pins = self._keepwatch_producer_pins.get(symbol)
++        return proof if pins is not None and pins.matches(work.bar) else None
++
++    async def _keepwatch_consume_current_recovery(self, symbol, bar, callback, work) -> bool:
++        from project_mai_tai.services.keepwatch_bar_owner import (
++            BarConsumptionSuperseded, bar_consumption_context, current_bar_recovery_context,
++        )
++        proof = self._keepwatch_current_recovery_scope(symbol)
++        if proof is None or work is None or not self._keepwatch_work_current(symbol, work):
++            return False
++        pins = self._keepwatch_pins_for(symbol, proof.anchor_ms)
++        if not proof.observe(work, canonical=pins.current(bar.timestamp_ms),
++                             now_ms=self.strategy._now_ms()):
++            return False
++        state_only = (bar.timestamp_ms != self.strategy._now_ms() // 60_000 * 60_000 - 60_000
++                      or (not proof.state.gap_hold_active and not proof.threshold_observed()))
++
++        def publish(state):
++            if (state is proof.state and self._keepwatch_current_recovery_scope(symbol) is proof
++                    and self._keepwatch_work_current(symbol, work)
++                    and pins.matches(work.bar) and proof.threshold_observed()
++                    and not state.gap_hold_active and state.bars
++                    and state.bars[-1].timestamp_ms == work.bar.timestamp_ms):
++                proof.publication = (work.bar.timestamp_ms, proof.ledger.revision,
++                    state.atr_state, state.atr_trail, state.line_restore_reset_after_ms)
++
++        context = (work, proof.ledger, proof.epoch, proof.state,
++                   proof.source_identity, asyncio.current_task())
++        token = bar_consumption_context.set(context)
++        recovery_token = current_bar_recovery_context.set((state_only, publish))
++        try:
++            if state_only:
++                self._keepwatch_fence_strategy_consumption(symbol)
++                self._strategy_on_bar(symbol, bar, observation_phase="live")
++            else:
++                await callback(symbol, bar)
++            return bool(proof.state.bars
++                        and proof.state.bars[-1].timestamp_ms == work.bar.timestamp_ms
++                        and proof.state.atr_prev_bar is not None
++                        and proof.state.atr_prev_bar.timestamp_ms == work.bar.timestamp_ms
++                        and self._keepwatch_work_current(symbol, work))
++        except BarConsumptionSuperseded:
++            return False
++        finally:
++            current_bar_recovery_context.reset(recovery_token)
++            bar_consumption_context.reset(token)
++
+     async def _keepwatch_dispatch_bar(
+         self, symbol: str, bar: ChartBar, callback, *, expected_work=None,
+     ) -> bool:
+@@ -6019,7 +6128,7 @@ class SchwabV2BotService:
+             BarConsumptionSuperseded, bar_consumption_context,
+         )
+         if (not raw_symbol_is_uppercase(symbol) or bar.symbol != symbol
+-                or symbol not in self._subscription_symbols()):
++                or not (self._keepwatch_observation_member(symbol) or symbol in self._exit_coverage)):
+             return False
+         lock = self._keepwatch_bar_locks.setdefault(symbol, asyncio.Lock())
+         async with lock:
+@@ -6034,6 +6143,10 @@ class SchwabV2BotService:
+                 bar = (pins.current(bar.timestamp_ms) if expected_work is not None
+                        and bar.timestamp_ms in pins.producers
+                        else pins.accept(bar, now_ms=self.strategy._now_ms()))
++            self._keepwatch_refresh_current_recovery(symbol)
++            if self._keepwatch_current_recovery_scope(symbol) is not None:
++                return await self._keepwatch_consume_current_recovery(
++                    symbol, bar, callback, expected_work)
+             if await self._keepwatch_prepare_bar(symbol, bar, expected_work=expected_work):
+                 bar = pins.current(bar.timestamp_ms)
+                 ledger = self._line_sessions.get(symbol)
+@@ -6049,6 +6162,8 @@ class SchwabV2BotService:
+                     return False
+                 finally:
+                     bar_consumption_context.reset(token)
++            return await self._keepwatch_consume_current_recovery(
++                symbol, bar, callback, expected_work)
+         return False
+ 
+     def _keepwatch_gap_span_allowed(self, symbol: str, previous_ms: int, current_ms: int) -> bool:
+@@ -6226,6 +6341,23 @@ class SchwabV2BotService:
+             ledger.attest(history_coverage(history, prefix, canonical=True))
+             if ledger.has_unrecovered_traded_gap():
+                 self._keepwatch_hold_unknown(symbol, "empty_provider_conflicts_with_trade")
++                self._keepwatch_refresh_current_recovery(symbol)
++                if (expected_work is not None
++                        and self._line_source_identity.get(symbol) is not None
++                        and self._keepwatch_current_recovery_scope(symbol) is None):
++                    from project_mai_tai.services.keepwatch_bar_owner import CurrentBarRecovery
++                    self._keepwatch_current_recoveries[symbol] = CurrentBarRecovery(
++                        symbol, anchor, epoch, source_identity, ledger, state,
++                        self.strategy._atr_period, self._line_membership.get(symbol, 0))
++                    self._keepwatch_refresh_current_recovery(symbol)
++                if self._keepwatch_current_recovery_scope(symbol) is not None:
++                    for row in prefix:
++                        if not state.bars or state.bars[-1].timestamp_ms < row.timestamp_ms:
++                            # Actual retained provider bars can advance historical
++                            # math, but cannot become current receipts or entry replay.
++                            self.strategy.on_current_recovery_bar(
++                                symbol, row, state_only=True, publish=None,
++                                observation_phase="replay")
+                 return False
+             # Reconcile before shadow replay: a PG error must not rewind or
+             # replace live indicator/arm/owner state to recover OLD behaviour.
+@@ -7274,6 +7406,9 @@ class SchwabV2BotService:
+             )
+         except Exception:
+             logger.exception("schwab_1m_v2 on_bar failed for %s", symbol)
++            from project_mai_tai.services.keepwatch_bar_owner import current_bar_recovery_context
++            if current_bar_recovery_context.get() is not None:
++                raise  # The owner retains failed recovery work; a partial update is not completion.
+             return
+         self._wake_line_after_ingest(symbol)
+         normalized = symbol.upper()
+@@ -7335,6 +7470,7 @@ class SchwabV2BotService:
+         anchor = session_start_ts_ms(self.strategy._now_ms())
+         for symbol in set(self._line_sessions) - desired:
+             retired = self._line_sessions.pop(symbol)
++            self._keepwatch_current_recoveries.pop(symbol, None)
+             published = self._line_published.pop(symbol, None)
+             self._line_retired[symbol] = deepcopy((retired, published))
+             self._line_live_bars.pop(symbol, None)
+@@ -7358,6 +7494,7 @@ class SchwabV2BotService:
+                     producer_pins=(self._keepwatch_pins_for(symbol, anchor)
+                                    if self._keepwatch_enabled else None),
+                     clock=lambda: self.strategy._now_ms())
++                self._keepwatch_current_recoveries.pop(symbol, None)
+                 self._line_published.pop(symbol, None)
+                 self._line_live_bars.pop(symbol, None)
+                 self._line_source_waiting.pop(symbol, None)
+@@ -7450,6 +7587,7 @@ class SchwabV2BotService:
+             if closed_live and ledger.symbol in self._line_readd_pending:
+                 self._request_line_repairs({ledger.symbol})
+             self._line_repair_maintenance()
++            self._keepwatch_refresh_current_recovery(symbol)
+         except ValueError:
+             ledger.invalidate_coverage()
+             logger.exception("[V2-LINE-RESTORE] sym=%s outcome=invalid_bar entry_allowed=0", symbol)
+@@ -7737,6 +7875,8 @@ class SchwabV2BotService:
+ 
+     def _line_buy_ready(self, symbol: str) -> bool:
+         self._line_pg_poll_fallback_current(symbol)
++        if self._keepwatch_current_publication(symbol) is not None:
++            return self._entry_membership_allowed(symbol)
+         state = self.strategy._symbol_states.get(symbol)
+         if state is not None and state.line_live_fallback:
+             ledger = self._line_sessions.get(symbol)
+@@ -7783,6 +7923,10 @@ class SchwabV2BotService:
+ 
+     def _line_version(self, symbol: str) -> str:
+         self._line_pg_poll_fallback_current(symbol)
++        current = self._keepwatch_current_publication(symbol)
++        if current is not None:
++            return (f"current:{current.epoch}:{current.ledger.revision}:"
++                    f"{current.publication[0]}:{current.state.line_restore_reset_after_ms}")
+         state = self.strategy._symbol_states.get(symbol)
+         if state is not None and state.line_live_fallback and state.bars:
+             return f"live:{self._line_sessions[symbol].epoch}:{state.bars[-1].timestamp_ms}"
+@@ -8408,11 +8552,18 @@ class SchwabV2BotService:
+         """Classify real strategy bars while preserving lightweight test-double compatibility."""
+ 
+         self._line_pg_poll_fallback_current(symbol)
+-        observed = getattr(self.strategy, "on_observed_bar", None)
+-        if callable(observed):
+-            result = observed(symbol, bar, observation_phase=observation_phase)
++        from project_mai_tai.services.keepwatch_bar_owner import current_bar_recovery_context
++        recovery = current_bar_recovery_context.get()
++        if recovery is not None:
++            result = self.strategy.on_current_recovery_bar(
++                symbol, bar, state_only=recovery[0] or observation_phase != "live",
++                publish=recovery[1])
+         else:
+-            result = self.strategy.on_bar(symbol, bar)
++            observed = getattr(self.strategy, "on_observed_bar", None)
++            if callable(observed):
++                result = observed(symbol, bar, observation_phase=observation_phase)
++            else:
++                result = self.strategy.on_bar(symbol, bar)
+         if (observation_phase == "live"
+                 and getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is True):
+             state = self.strategy._symbol_states.get(symbol.upper())
+diff --git a/src/project_mai_tai/strategy_core/schwab_1m_v2.py b/src/project_mai_tai/strategy_core/schwab_1m_v2.py
+index 33b4c72e7..d5102aa5d 100644
+--- a/src/project_mai_tai/strategy_core/schwab_1m_v2.py
++++ b/src/project_mai_tai/strategy_core/schwab_1m_v2.py
+@@ -4652,6 +4652,19 @@ class SchwabV2Strategy:
+         finally:
+             self._bar_observation_phase = previous_phase
+ 
++    def on_current_recovery_bar(self, symbol: str, bar: ChartBar, *, state_only: bool,
++                                publish, observation_phase: Literal["live", "replay"] = "live",
++                                ) -> TradeIntentDraft | None:
++        """Consume proven current ingress without claiming historical coverage."""
++        if observation_phase == "replay" and not state_only:
++            raise ValueError("historical recovery cannot evaluate an entry")
++        previous = getattr(self, "_current_bar_recovery", None)
++        self._current_bar_recovery = (state_only, publish)
++        try:
++            return self.on_observed_bar(symbol, bar, observation_phase=observation_phase)
++        finally:
++            self._current_bar_recovery = previous
++
+     def on_bar(self, symbol: str, bar: ChartBar) -> TradeIntentDraft | None:
+         if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(bar.symbol):
+             return None
+@@ -4708,7 +4721,9 @@ class SchwabV2Strategy:
+         # deadline elapsed without a quote, or drop one whose segment flipped. Runs
+         # after _evaluate_completed_bar so _update_atr_state has rolled atr_prev_state.
+         # No-op (returns None) when hold-confirm is off — atr_hold_pending is never set.
+-        hold_draft = self._resolve_hold_on_bar(state)
++        recovery = getattr(self, "_current_bar_recovery", None)
++        hold_draft = (None if recovery is not None and recovery[0]
++                      else self._resolve_hold_on_bar(state))
+         return eval_draft or hold_draft
+ 
+     def on_stream_trade(
+@@ -9202,8 +9217,17 @@ class SchwabV2Strategy:
+         if not is_new_bar:
+             return None
+ 
++        recovery = getattr(self, "_current_bar_recovery", None)
++        if recovery is not None and recovery[0]:
++            # A bar received current may be parked behind repair. Advance its
++            # real math/count, but never replay its historical entry decision.
++            self._update_atr_state(state, state.bars[-1], state_only=True)
++            if self._gap_hold_enabled and state.gap_hold_active:
++                self._maybe_resume_gap_hold(state)
++            return None
++
+         if (getattr(self, "_line_restoration_enabled", False) and not restored
+-                and not state.line_live_fallback):
++                and not state.line_live_fallback and recovery is None):
+             # Shadow and gap carry advance math once while source admission waits.
+             anchor = session_start_ts_ms(state.bars[-1].timestamp_ms)
+             if (0 < state.atr_session_anchor_ms < anchor
+@@ -9238,6 +9262,11 @@ class SchwabV2Strategy:
+                 self._observe_atr_sell(state, atr_signal)
+                 return None
+ 
++        if recovery is not None:
++            # Publication follows real math and OLD's resume test, before any
++            # entry machine reads line readiness or stamps its draft version.
++            recovery[1](state)
++
+         # ⛔ POST-CLOSE IS EXIT-ONLY, NOT "ENTRY STATE THAT HAPPENS NOT TO EMIT".
+         #
+         # Bars continue until 20:00 ET. Before this guard, a BUY flip after 16:00 re-armed the

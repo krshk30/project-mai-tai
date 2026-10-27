@@ -1,0 +1,149 @@
+C11229 AHT PER-SYMBOL BOOT RECOVERY / SOURCE CANDIDATE / ALL NEW CONTROLS UNRUN
+============================================================================
+Stable task OCT26-C11229-AHT-BOUNDED-RECOVERY-APP-FIX. Galileo sole APP writer;
+Gibbs owns original ATR prefix/caller, Main sole integration/runtime/production.
+C11245 transfers ALL NEW-vs-REAL tables to C1. No further table/reader work here;
+join37PASS/source/assessments preserved as Main reports, not repeated by author.
+Other original case/membership/boot/ALLON/rate gates remain open, not dropped.
+
+AUTHORITY / IMMUTABLE BASE
+Full C11229 actual ruling read, SHA37bdd20c80ad5918c5f26f656271dbcfb9cc03e2ac7821fb1d8293d10671f8ef:
+/private/tmp/OCT26-C11229-ACTUAL-QUIET-ACK-AND-AHT-RULING-FIRST-20261026.txt
+C1 accepts REAL L11 regression and authorizes this minimal proof-only recovery.
+Source resumed AFTER Main explicit quiet RELEASE12:32ET; no quiet claim persists.
+New dedicated root /private/tmp/oct26-l11-aht-bounded-recovery-20261026
+branch codex/l11-aht-bounded-recovery-20261026
+exact base62fa33b95860b10acaf1558d387af2bc6147d6d1
+baseSRC2de1d42415fbec1bad27a4d2aba1d53742a3689b
+baseAPP5fdbf90195fefae808d47e16803f1c730be80a34
+Frozen sealed roots, ff324/f57/adcc/62fa, Gibbs tools and shared queues untouched.
+
+CAUSE (ACCEPTED C1, NOT A NEW HYPOTHESIS)
+Old _keepwatch_exclude_boot_symbol stores same-session exclusion+UNKNOWN.
+Getter tests anchor only. Boot fleet subtracts exclusions before seed evaluation;
+all-excluded is correctly held. Later valid history/ledger publication can remove
+the source-owned UNKNOWN but no path retires the exclusion. Only old membership/
+session pruning removes it. A 04:02 failure therefore may suppress the entire day.
+Actual retained NEW AHT10-21 receipt901... below had0opens through full completion;
+OLD produced the real09:30q237 order. Raw original failures/unknowns stay retained.
+
+ONE APP FILE / EXACT BEHAVIORAL DELTA
+src/project_mai_tai/services/schwab_1m_v2_bot.py ONLY (77 added lines).
+1 Exclusion records initial monotonic last_retry_at and retry_count0.
+2 _retry_keepwatch_boot_exclusions runs at the existing _cw_boot_hold_check timer,
+  AFTER existing armed-segment safety flag check, BEFORE unchanged central fleet
+  retry and dangerous-arm check. In APP, _cw_boot_hold_check's sole caller is
+  _publish_bot_state (existing five-second state-publish loop). Actual bar/REST/
+  streamer/replay completion paths call _try_complete_boot_state_restoration,
+  NOT this timer. No per-bar/tick new retry loop or provider/DB operation.
+3 Per-symbol minimum elapsed monotonic interval:60s at ET hour<10,300s at>=10.
+  Evaluate interval at retry time. Example last09:59 attempt ->10:04 firstdue;
+  never an early10:00 retry simply because the interval changed. Repeated timer
+  checks at one clock spend no retry. No timeout, inbox or current180s freshness
+  bound changes. Attempt count/reason remain in existing published retry state.
+4 Log WARNING [V2-BOOT-EXCLUDE-RETRY] per actual due evaluation. Proof successful:
+  remove ONLY the boot exclusion/old deferral and log INFO
+  [V2-BOOT-EXCLUDE-CLEAR], with symbol/anchor/epoch/attempt and guards unchanged.
+  No entry_allowed=1/native-flat claim in the log.
+
+EXACT PROOF / ORDERING REQUIRED TO CLEAR
+- Actual observed membership and current04:00 anchor, current ledger.
+- Existing exclusion-source readability true.
+- No current-session/current-or-unresolved epoch pending owner item. Pending
+  inbox rows never expired/drained/covered here, even if stale.
+- No selected current history operation or unjoined native read; any unregistered
+  native scope is UNKNOWN. Unrelated scoped work is not an invented symbol owner.
+- No source UNKNOWN or same-session owner quarantine. The REAL existing history/
+  owner path must already have resolved source UNKNOWN; this timer never does.
+- Actual current_history_response validates symbol/anchor/through/causal query
+  clocks/hashes at unchanged180s age bound, no future response.
+- Existing _keepwatch_halt_binding_current matches exact ledger/epoch/state/
+  source identity/coverage/history object; no stale receipt reuse.
+- Actual ledger.prepare succeeds (provider completeness,04 prefix, original raw
+  provenance+canonical values, gaps/trades/empty-minutes). No proof fabrication.
+- Existing _line_snapshot_current true (published request epoch/revision/current
+  candle/state/reset and DB reconciliation fences), existing warmup readiness.
+- Shutdown/not-accepting/restart replay/feature or safety OFF never retries.
+
+Nothing assigns _boot_state_restoration_complete/_entries_held; original fleet,
+scanner population, warmup and dangerous check retain all authority. Recovery
+also operates after a healthy fleet already latched: no global relatch/rehold or
+clear-other-symbol operation. Position/working order/UNKNOWN send/first-slot/
+restart/consumed-fill/fanout/exit state is untouched. SELL/f57/core rules unchanged.
+
+NO NEW PROVIDER RETRY LANE / COST BOUND
+Existing _keepwatch_history_pass/owned callbacks continue their ORIGINAL source
+read/repair cadence and ownership; they already include excluded observed names.
+This change schedules proof revalidation/clear ONLY, not another HTTP request or
+background actor. It cannot make unavailable data complete. No new task/thread,
+queue, DB session, or native/provider port is created by the new methods.
+Work per due symbol is bounded by existing session history (max960minutes) and
+existing finite pending/scoped-owned collections; ledger.prepare may rehash that
+bounded history. No measured latency/rate claim. Original rate/stall/GCINFO gate
+still mandatory on the resealed source, especially due-revalidation windows.
+
+CALLER / GIBBS SEAM
+Retained atr606_callbacks.py observation boundary already invokes the real
+bot._cw_boot_hold_check(). Since this same timer method now owns revalidation,
+no foreign driver edit/new wrapper, direct helper invocation or bar-time model
+change is required just to exercise this APP fix. Prefix04:00–04:12 is still
+ONLY that prefix and cannot prove09:30. Gibbs owns any later original caller
+source/head binding/fresh capability adaptation; do NOT retag existing62fa run.
+If the proof is still missing/stale/unreadable or an owner unresolved, the retry
+logs that reason and leaves UNKNOWN/exclusion in force; it does not forceq237.
+
+NEW SOURCE CONTROLS (28 INTENDED EXPANDED, ALL UNRUN)
+tests/unit/test_keepwatch_boot_exclusion_recovery.py, one new module only.
+Real constructor and actual history/producer/ledger/rebuild/warmup/census methods.
+CONTROLLED clocks/transport and report-only state readout; no completion-latch
+assignment, safety method replacement, native permission or fake positive book.
+No-store constructor mode initializes genuine owner/budget UNKNOWN, retained in
+positive assertions; entry-membership clear is not BUY/OMS/native acceptance.
+Controlled AHT-named04:02 exclusion ->later complete prefix ->60s timer clears
+and original fleet/dangerous check decides; log/state payload includes outcome.
+12 incomplete/stale/future/foreign-anchor/epoch/revision/prefix/readability/
+UNKNOWN/quarantine/warmup/missing-publication adversaries remain excluded.
+4 pending-owner/native-unjoined/unscoped-native/history-active adversaries.
+Post-latched symbol recovery/economic-state preservation; dangerous arm stays held;
+09:59->10:00 five-minute boundary/exact count/logs;6 OFF/restart/shutdown/context
+noops;100 per-bar restoration calls cannot spend retry; no provider/DB I/O added.
+Test time/candles are explicitly CONTROLLED (October13 fixture), NOT actualAHT
+10-21 history/quantity/proof. No q237 or historical native permission manufactured.
+
+MAIN PROPOSED FIRST SELECTION / NO AUTHOR EXECUTION
+After whole source review, existing pinned memory/factory/network/process fence:
+tests/unit/test_keepwatch_boot_exclusion_recovery.py (28 intended, NOT collected).
+Fresh private basetemp/XML/log/source inventory. Controlled provider threads and
+line rebuild are existing no-network memory work; actual country/native guards
+are not permitted externally. No old60/8/44/26/37 repeats by this selection.
+Any initial fixture/guard failure retained, no automatic retry/assertion change.
+
+ORIGINAL AHT ACCEPTANCE STILL REQUIRED / EXACT RETAINED REFERENCES
+Old failed NEW sourceff324 body:
+/private/tmp/OCT26-C11019-REMAINING17-FOURWIDE900-FIRST-20261026/3b8be9cebe1d300b/body/NEW-AHT.json
+SHA902a918ec2f217a0fb0d3af9d36071a5fcde58c90890dbca80069f54b53238c3
+inputcb51a10c153ce28e1b96696c059fd9a2e6fb25ab3eb9203643d4397fe1cb475d
+base8dd5d2ba70c79d1ae49a8a44a02bdce3291c5ca9e8a3ff8dd79a1292ce80df27
+340451complete/errors0/fills0/0buy12SELLobs. Not retagged to new APP.
+Original source_order/actual_fills remain in sibling NEW-day.json requests.
+Real09:30:06q237 STOP_LIMIT2.52/2.53, line2.5038, cancelled (not a fill), per
+hash-bound C1real_orders8c4d37af and originalSOURCE21 unique row required.
+Real08:46q236 entry/fill remains independent: not cleared by intended09:30 test.
+Gibbs prefixroot /private/tmp/mai-tai-atr606-aht-boot-prefix-20261026,
+analysis/OCT26-ATR606-C11135-BOOT-PREFIX-SOURCE-HANDOFF.md;44MainPASS already
+reported, no repeat by author. Main owns literal new source binding/unused schema/
+fresh output and genuine input/receipt origin checks.
+Required new actual AHT case: identical retained seed/profile/tape/cadence,
+actual04:02 exclusion ->actual successful prefix/epoch/publication and owner
+settlement ->timed proofclear ->09:30 localq237 at actual wire prices; preserve
+failed/unproven/stale holds and any genuine refusal. No provider/refetch/price/
+country/flat input invention or old q237 claim substituted for new execution.
+
+RESEAL / OPEN GATES
+New APP means sealed62fa FULL +L13quiet classification remain historical, not
+proof of this change. C1 requires reseal+newFULL under fresh Main quiet/full
+coordination and actual Fridayclose/boot replay. Actual original AHT, original
+membership/remaining cases, ALLON/rate/OMS-v2/new indexes/UI/native controls stay
+open to Main's precise claims; no author runtime or production action.
+Source head/pins/actual commit time supplied immediately after commit. Source
+checkpoint ETA13:05ET; not an actual case/full/install promise.

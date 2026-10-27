@@ -108,7 +108,14 @@ case "$SEED_CODE" in
   # every day for ten sessions, and a reasonless repeat is what turns an alarm into wallpaper. The
   # actual cause ("no DSN") was sitting in $SEED_LINE the whole time and was being thrown away.
   2) [ "$LEVEL" = "GREEN" ] && LEVEL=RED   ; VERDICT="$VERDICT | SEED-EXPOSURE: CANNOT SEE${SEED_LINE:+ —${SEED_LINE#*REFUSING:}}" ;;
-  1) [ "$LEVEL" = "GREEN" ] && LEVEL=AMBER ; VERDICT="$VERDICT | $SEED_LINE" ;;
+  1)
+    if grep -Eq '^  PAGEABLE : [1-9][0-9]* watched_exposed_untruncated ' "$SEED_OUT"; then
+      [ "$LEVEL" = "GREEN" ] && LEVEL=RED
+      VERDICT="$VERDICT | $SEED_LINE (watched and untruncated)"
+    else
+      VERDICT="$VERDICT | seed-exposure: status only (see $SEED_OUT)"
+    fi
+    ;;
   0) VERDICT="$VERDICT | seed-exposure: none" ;;
   *) [ "$LEVEL" = "GREEN" ] && LEVEL=RED   ; VERDICT="$VERDICT | SEED-EXPOSURE: crashed" ;;
 esac

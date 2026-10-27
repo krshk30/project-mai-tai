@@ -178,8 +178,9 @@ settings.py's default - NOT the value shown as LIVE_LOCKED. That is what a rebui
 the wrong numbers. Restore the env line, then restart the affected service - and remember the oms
 target restarts oms AND strategy together.
 
-⛔ Three of the env-set disagreements may be DELIBERATE: test_env_set_values_beat_live_locked
-asserts LIVE_LOCKED is False for them on purpose. Read that test before changing anything.
+For an env-set disagreement, first verify the operator-approved value. A stale replay mirror
+requires a reviewed mirror correction; a wrong live value requires the existing change procedure.
+The env-wins regression constructs its own disagreement and requires no mirror to stay wrong.
 
 Full reading: $STATUS_TXT"
       # ⛔ A SELFTEST OF A GENUINELY RED BOX KEEPS THE RED WORDING. The box really is drifted; only

@@ -51,7 +51,7 @@ def _proc_reader(
 
 def test_catalog_covers_every_settings_bool_exactly_once() -> None:
     entries = flags.load_catalog(CATALOG)
-    assert len(entries) == 143  # C6 plus one switch for each routing layer.
+    assert len(entries) == 145  # Includes separately gated L12 and KEEPWATCH1.
     assert {entry["name"] for entry in entries} == {
         name
         for name, field in Settings.model_fields.items()
@@ -68,14 +68,24 @@ def test_catalog_covers_every_settings_bool_exactly_once() -> None:
         for service in [entry["owning_service"], *entry.get("also_check_services", [])]
     ) == {
         "control": 14, "market-capture": 1, "market-data": 3,
-        "momentum-paper": 4, "oms": 55, "orb-schwab": 7,
-        "reconciler": 1, "schwab-1m-v2": 50, "strategy": 29,
+        "momentum-paper": 4, "oms": 56, "orb-schwab": 7,
+        "reconciler": 1, "schwab-1m-v2": 52, "strategy": 29,
     }
     country = by_name["strategy_schwab_1m_v2_country_route_enabled"]
     assert country["expected"] is True
     assert country["owning_service"] == "schwab-1m-v2"
     assert country["also_check_services"] == ["oms", "control"]
     assert Settings.model_fields["strategy_schwab_1m_v2_country_route_enabled"].default is False
+    l12 = by_name["strategy_schwab_1m_v2_brokerdecides1_enabled"]
+    assert l12["expected"] is True
+    assert l12["owning_service"] == "schwab-1m-v2"
+    assert l12["also_check_services"] == ["oms"]
+    assert Settings.model_fields["strategy_schwab_1m_v2_brokerdecides1_enabled"].default is False
+    keepwatch = by_name["strategy_schwab_1m_v2_keepwatch1_enabled"]
+    assert keepwatch["expected"] is True
+    assert keepwatch["owning_service"] == "schwab-1m-v2"
+    assert keepwatch.get("also_check_services", []) == []
+    assert Settings.model_fields["strategy_schwab_1m_v2_keepwatch1_enabled"].default is False
     assert by_name["strategy_schwab_1m_v2_false_flip2_enabled"]["expected"] is True
     assert by_name["bot_control_enabled"]["expected"] is True
     assert by_name["bot_control_enabled"]["owning_service"] == "oms"

@@ -170,7 +170,9 @@ async def test_actual_gateway_overflow_counter_through_page_preserves_snapshot(m
     assert "$+31.80" not in page.text  # Snapshot total is no longer page P&L.
     assert 'LIVE (real orders)' in page.text
     assert "Feed details" in page.text and "existing safety auto-revert: YES" not in page.text
-    assert len(client.metric_calls) == 1
+    # One gateway read and one separately bounded current-epoch consumer read.
+    assert len(client.metric_calls) == 2
+    assert all(kwargs == {"count": 64} for _, kwargs in client.metric_calls)
 
 
 @pytest.mark.parametrize("enabled,route", [(False, "/bot/momentum-30"), (True, "/bot/orb")])
@@ -207,5 +209,6 @@ def test_fresh_counter_remains_separate_from_unreadable_ledger(monkeypatch):
     with TestClient(app) as http:
         app.state.repository.redis = MetricsRedis([entry(live_sample)])
         page = http.get("/bot/momentum-30")
-    assert "Signal reference ledger unreadable: UNKNOWN" in page.text
+    assert "UNKNOWN" in page.text and "No total calculated" in page.text
+    assert page.text.count(">REFERENCE</span>") == 2
     assert "Queue drops: 3" in page.text and "$+31.80" not in page.text

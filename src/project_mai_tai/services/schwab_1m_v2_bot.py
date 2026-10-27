@@ -23,6 +23,7 @@ from __future__ import annotations
 from project_mai_tai.symbol_case import raw_symbol_is_uppercase
 
 import asyncio
+import gc
 import json
 import logging
 import math
@@ -31,11 +32,13 @@ import signal
 import threading
 import time
 from collections import deque
+from contextvars import ContextVar, copy_context
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as time_cls  # `time` the module is already imported above
 from decimal import Decimal
+from operator import eq
 from typing import Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -44,6 +47,7 @@ from redis.asyncio import Redis
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, aliased, sessionmaker
+from sqlalchemy.exc import SQLAlchemyError
 
 from project_mai_tai.db.models import (
     AccountPosition,
@@ -126,12 +130,15 @@ from project_mai_tai.strategy_core.order_routing import (
 )
 from project_mai_tai.strategy_core import entry_gate
 from project_mai_tai.strategy_core.session_line_restore import (
+    PRODUCER_PROJECTION_SOURCE,
+    is_keepwatch_coverage,
     RebuildResult,
     SessionCoverage,
     SessionLineRestoration,
     SessionLineSnapshot,
     build_session_line,
     history_fingerprint,
+    same_line_price_history,
 )
 from project_mai_tai.oms.atr_reprice_handoff import HandoffJournal, local_rpg_abort_proof
 from project_mai_tai.strategy_core.schwab_1m_v2 import (
@@ -154,6 +161,21 @@ from project_mai_tai.v2_removed_wait import (
 )
 
 logger = logging.getLogger(__name__)
+_BOOT_GC_FREEZE_LOCK = threading.Lock()
+_BOOT_GC_FREEZE_ATTEMPTED = False
+
+
+def _freeze_gc_after_boot_once() -> None:
+    global _BOOT_GC_FREEZE_ATTEMPTED
+    if _BOOT_GC_FREEZE_ATTEMPTED:
+        return
+    with _BOOT_GC_FREEZE_LOCK:
+        if _BOOT_GC_FREEZE_ATTEMPTED:
+            return
+        # Process-wide and irreversible here; never retry on a later re-release.
+        _BOOT_GC_FREEZE_ATTEMPTED = True
+        gc.freeze()
+        logger.info("[V2-GC-FREEZE] frozen=%d", gc.get_freeze_count())
 
 INTERVAL_SECS = 60
 _RETRY_ONE_EXIT_REASONS = frozenset(
@@ -282,6 +304,8 @@ FANOUT_OUTCOME_POLL_INTERVAL_SECONDS = 5.0
 # Gaps below this never need a session lookup (>99.9% of all gaps), so the calendar query is rare.
 _DB_SEED_GAP_PROBE_MIN = timedelta(hours=2)
 STATE_PUBLISH_INTERVAL_SECONDS = 5
+KEEPWATCH_BOOT_DEFERRAL_INTERVALS = 12
+KEEPWATCH_BOOT_DEFERRAL_SECONDS = KEEPWATCH_BOOT_DEFERRAL_INTERVALS * STATE_PUBLISH_INTERVAL_SECONDS
 BOOT_RESTORE_HOLD_LOG_INTERVAL_SECONDS = 60.0
 BOOT_RESTORE_INCOMPLETE_LOG_INTERVAL_SECONDS = 60.0
 POSITION_POLL_INTERVAL_SECONDS = 5
@@ -389,8 +413,14 @@ class SchwabV2BotService:
         session_factory: sessionmaker[Session] | None = None,
         massive_atr_seed_client: MassiveAtrSeedClient | None = None,
         massive_atr_seed_timeout_seconds: float = 3.0,
+        owner_phone_sender=None,
     ) -> None:
         self.settings = settings or get_settings()
+        self._brokerdecides1_owner_phone = None
+        if getattr(self.settings, "strategy_schwab_1m_v2_brokerdecides1_enabled", False) is True:
+            from project_mai_tai.brokerdecides1_owner_phone import make_owner_phone
+
+            self._brokerdecides1_owner_phone = owner_phone_sender if owner_phone_sender is not None else make_owner_phone()
         self.redis: Redis | None = None
         self.strategy = SchwabV2Strategy(self.settings)
         self.rest_client: SchwabV2RestClient | None = None
@@ -416,6 +446,46 @@ class SchwabV2BotService:
         )
         self._strategy_state_last_id = "$"
         self._watchlist: set[str] = set()
+        from project_mai_tai.strategy_core.keepwatch import KeepWatchSession
+        self._keepwatch_enabled = self.settings.strategy_schwab_1m_v2_keepwatch1_enabled
+        self._keepwatch = KeepWatchSession()
+        self._keepwatch_unknown: set[str] = set()
+        self._keepwatch_cancel_requested: set[str] = set()
+        self._keepwatch_proven: dict[str, object] = {}
+        self._keepwatch_current_recoveries: dict[str, object] = {}
+        self._line_pg_poll_fallbacks: dict[str, dict] = {}
+        # One bounded process-local log budget, not a per-symbol retention map.
+        self._line_pg_error_log = {"failures": 0, "fallbacks": 0, "emitted": 0,
+                                   "suppressed": 0, "next_log_at": 0.0}
+        self._line_pg_error_log_clock = time.monotonic
+        self._keepwatch_bar_locks: dict[str, asyncio.Lock] = {}
+        self._keepwatch_bar_inboxes: dict[str, object] = {}
+        self._keepwatch_producer_pins: dict[str, object] = {}
+        self._keepwatch_producer_anchor_ms = 0
+        self._keepwatch_bar_tasks: dict[str, asyncio.Task] = {}
+        self._keepwatch_bar_events: dict[str, asyncio.Event] = {}
+        self._keepwatch_bar_quarantine: dict[str, int] = {}
+        self._keepwatch_native_reads: set[asyncio.Task] = set()
+        self._keepwatch_native_read_scopes: dict[asyncio.Task, tuple[str, int, int]] = {}
+        self._keepwatch_history_scopes: dict[object, tuple[str, int, int]] = {}
+        self._keepwatch_history_context = ContextVar("keepwatch_history_operation", default=None)
+        self._keepwatch_boot_retry_deferred_reason: str | None = None
+        self._keepwatch_boot_retry_deferred_symbol: str | None = None
+        self._keepwatch_boot_deferrals: dict[str, dict] = {}
+        self._keepwatch_boot_exclusions: dict[str, dict] = {}
+        self._keepwatch_boot_retry_clock = time.monotonic
+        self._keepwatch_bar_accepting = True
+        self._keepwatch_shutdown_rejected = 0
+        self._keepwatch_budget_signature = None
+        self._keepwatch_provider_lock = asyncio.Lock()
+        self._keepwatch_history_client = MassiveAtrSeedClient(
+            str(getattr(self.settings, "massive_api_key", "") or ""))
+        if (self._keepwatch_enabled
+                and not self.settings.strategy_schwab_1m_v2_line_chart_restoration_enabled):
+            raise ValueError("KEEPWATCH1 requires LINE=CHART restoration")
+        if self._keepwatch_enabled:
+            self.strategy._keepwatch_entry_allowed = self._keepwatch_entry_allowed
+            self.strategy._keepwatch_gap_span_allowed = self._keepwatch_gap_span_allowed
         # P1 boot ordering: `_state_publish_loop` and `_scanner_consumer_loop` start together.
         # Until the scanner has applied one current snapshot (including its synchronous DB-seed
         # replays), an empty `cw_armed_segments()` means "nothing loaded yet", not "restoration
@@ -1078,7 +1148,8 @@ class SchwabV2BotService:
         try:
             if self.session_factory is None:
                 raise RuntimeError("removal evidence database unavailable")
-            store = RemovedWaitStore(self.session_factory)
+            store = RemovedWaitStore(self.session_factory, prewire_authority=(
+                getattr(self.settings, "strategy_schwab_1m_v2_brokerdecides1_enabled", False) is True))
             restored = await asyncio.to_thread(store.restore)
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] verdict=UNKNOWN reason=restore_unreadable")
@@ -1375,7 +1446,8 @@ class SchwabV2BotService:
             if (getattr(self, "_line_restoration_enabled", False)
                     or getattr(self.strategy, "_removed_wait_enabled", False)) and not self._line_draft_allowed(draft):
                 return False
-            if (selected.symbol in self._exit_coverage and selected.symbol not in self._watchlist):
+            if (selected.symbol in self._exit_coverage
+                    and not self._entry_membership_allowed(selected.symbol)):
                 return False
             if (str(metadata.get("order_type", "")).upper() != "STOP_LIMIT"
                     and not self._apply_extended_hours_routing(draft, datetime.now(UTC))):
@@ -1399,6 +1471,9 @@ class SchwabV2BotService:
             )
 
         self.redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
+        from project_mai_tai.brokerdecides1_entry import initialize
+
+        initialize(self.strategy)
         if self.session_factory is None:
             try:
                 self.session_factory = build_timed_session_factory(self.settings, service="schwab_1m_v2", profile="fast")
@@ -1421,6 +1496,9 @@ class SchwabV2BotService:
             self.redis,
             broker_account_name=self.settings.strategy_schwab_1m_v2_account_name,
             on_submitted=self.strategy.note_primary_resting_submission,
+            before_entry_publish=self._brokerdecides1_before_entry_publish,
+            publication_boundary_factory=self._brokerdecides1_publication_boundary,
+            on_prewire_refusal=self._brokerdecides1_prewire_refusal,
         )
         # Dual-broker FAN-OUT: build the SECOND emitter bound to the Webull account only when the
         # flag is on AND the account is set. Unset => warn + stay single-leg (never point at nothing).
@@ -1434,6 +1512,9 @@ class SchwabV2BotService:
                     self.settings,
                     self.redis,
                     broker_account_name=webull_account,
+                    before_entry_publish=self._brokerdecides1_before_entry_publish,
+                    publication_boundary_factory=self._brokerdecides1_publication_boundary,
+                    on_prewire_refusal=self._brokerdecides1_prewire_refusal,
                 )
                 logger.info(
                     "[V2-FANOUT] dual-broker fan-out ENABLED — Webull leg -> account %s",
@@ -1524,7 +1605,11 @@ class SchwabV2BotService:
             self._tasks["rest_client"] = asyncio.create_task(self.rest_client.run())
             if self._line_restoration_enabled:
                 self._tasks["line_restoration"] = asyncio.create_task(self._line_restoration_loop())
-                self._tasks["line_source_events"] = asyncio.create_task(self._line_source_events_loop())
+                if not self._keepwatch_enabled:
+                    self._tasks["line_source_events"] = asyncio.create_task(self._line_source_events_loop())
+                else:
+                    self._tasks["keepwatch_history"] = asyncio.create_task(
+                        self._keepwatch_history_loop())
             self._tasks["scanner"] = asyncio.create_task(self._scanner_consumer_loop())
             self._tasks["position_poll"] = asyncio.create_task(self._position_poll_loop())
             if self._dual_primary_book_enabled():
@@ -1554,10 +1639,20 @@ class SchwabV2BotService:
         try:
             await self._stop_event.wait()
         finally:
+            self._keepwatch_bar_accepting = False
             await self._publish_heartbeat("stopping")
             for task in self._tasks.values():
                 task.cancel()
+            for task in tuple(self._keepwatch_bar_tasks.values()):
+                task.cancel()
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+            from project_mai_tai.brokerdecides1_sync import shutdown_refresh
+
+            await shutdown_refresh(self)
+            await self._stop_keepwatch_bar_owners()
+            from project_mai_tai.brokerdecides1_alert_transport import stop_alert_transport
+
+            await stop_alert_transport(self)
             if self._restart_checkpoint_writer is not None:
                 await self._restart_checkpoint_writer.drain(timeout=3.0)
             if self._eh_stream_emit_tasks:
@@ -1840,6 +1935,189 @@ class SchwabV2BotService:
                         exc = None
                 self._loop_health.mark_task_died(name, exc=exc)
 
+    def _keepwatch_boot_retry_quiescent(self) -> bool:
+        """Order the boot retry after selected current work, without waiting on owners."""
+        self._keepwatch_boot_retry_deferred_reason = None
+        self._keepwatch_boot_retry_deferred_symbol = None
+        if self._stop_event.is_set() or not self._keepwatch_bar_accepting:
+            self._keepwatch_boot_retry_deferred_reason = "shutdown"
+            return False
+        now_ms = self.strategy._now_ms()
+        anchor = session_start_ts_ms(now_ms)
+        selected = set(self._watchlist)
+        observed = self._observation_symbols()
+        self._keepwatch_boot_exclusions = {
+            sym: row for sym, row in self._keepwatch_boot_exclusions.items()
+            if row["anchor_ms"] == anchor and sym in observed}
+        self._keepwatch_boot_deferrals = {
+            sym: row for sym, row in self._keepwatch_boot_deferrals.items()
+            if row["anchor_ms"] == anchor and sym in selected}
+        excluded = self._keepwatch_boot_excluded_symbols()
+        selected -= excluded
+        epochs = {}
+        blockers = {}
+        stale = set()
+        for symbol in selected:
+            ledger = self._line_sessions.get(symbol)
+            epoch = ledger.epoch if ledger is not None and ledger.anchor_ms == anchor else None
+            epochs[symbol] = epoch
+            inbox = self._keepwatch_bar_inboxes.get(symbol)
+            if inbox is not None:
+                for work in inbox.pending.values():
+                    if work.anchor_ms != anchor or (epoch is not None and work.epoch not in (0, epoch)):
+                        continue
+                    if now_ms - work.bar.timestamp_ms > 180_000:
+                        stale.add(symbol)
+                    else:
+                        blockers[symbol] = "selected_owner_pending"
+
+        def current(scope):
+            symbol, operation_anchor, epoch = scope
+            return (symbol in selected and operation_anchor == anchor
+                    and (epochs[symbol] is None or epoch in (0, epochs[symbol])))
+
+        for scope in self._keepwatch_history_scopes.values():
+            if current(scope):
+                blockers.setdefault(scope[0], "selected_history_active")
+        for native in self._keepwatch_native_reads:
+            scope = self._keepwatch_native_read_scopes.get(native)
+            if scope is None:
+                # A registration contract failure is UNKNOWN, never invented attribution.
+                self._keepwatch_boot_retry_deferred_reason = "native_scope_unknown"
+                return False
+            if current(scope):
+                blockers.setdefault(scope[0], "selected_native_unjoined")
+        now = self._keepwatch_boot_retry_clock()
+        for symbol in selected:
+            if symbol in stale:
+                self._keepwatch_exclude_boot_symbol(symbol, anchor, "pending_work_stale", 0.0)
+                blockers.pop(symbol, None)
+            elif symbol in blockers:
+                row = self._keepwatch_boot_deferrals.setdefault(symbol,
+                    {"anchor_ms": anchor, "started_at": now, "intervals": 0,
+                     "reason": blockers[symbol]})
+                elapsed = max(0.0, now - row["started_at"])
+                row["intervals"] = min(KEEPWATCH_BOOT_DEFERRAL_INTERVALS,
+                    int(elapsed // STATE_PUBLISH_INTERVAL_SECONDS))
+                row["reason"] = blockers[symbol]
+                if elapsed >= KEEPWATCH_BOOT_DEFERRAL_SECONDS:
+                    self._keepwatch_exclude_boot_symbol(symbol, anchor,
+                        "consecutive_deferral_bound", elapsed)
+                    blockers.pop(symbol, None)
+            else:
+                self._keepwatch_boot_deferrals.pop(symbol, None)
+        if blockers:
+            symbol = min(blockers)
+            self._keepwatch_boot_retry_deferred_symbol = symbol
+            self._keepwatch_boot_retry_deferred_reason = blockers[symbol]
+            return False
+        return True
+
+    def _keepwatch_boot_excluded_symbols(self) -> set[str]:
+        anchor = session_start_ts_ms(self.strategy._now_ms())
+        return {sym for sym, row in self._keepwatch_boot_exclusions.items()
+                if row["anchor_ms"] == anchor}
+
+    def _keepwatch_exclude_boot_symbol(self, symbol: str, anchor: int, reason: str,
+                                     elapsed: float) -> None:
+        self._keepwatch_boot_exclusions[symbol] = {
+            "anchor_ms": anchor, "reason": reason, "elapsed_seconds": elapsed,
+            "last_retry_at": self._keepwatch_boot_retry_clock(), "retry_count": 0,
+            "entry_allowed": False, "status": "UNKNOWN"}
+        self._keepwatch_boot_deferrals.pop(symbol, None)
+        self._keepwatch_unknown.add(symbol)
+        logger.warning("[V2-BOOT-EXCLUDE] symbol=%s reason=%s elapsed_seconds=%.3f "
+                       "bound_seconds=%d fleet_excluded=1 entry_allowed=0 status=UNKNOWN",
+                       symbol, reason, elapsed, KEEPWATCH_BOOT_DEFERRAL_SECONDS)
+
+    def _keepwatch_boot_recovery_reason(self, symbol: str, anchor: int) -> str | None:
+        """Read existing owned proof only; no seed, provider read or state repair here."""
+        from project_mai_tai.services.keepwatch_halt_proof import current_history_response
+
+        if self._stop_event.is_set() or not self._keepwatch_bar_accepting:
+            return "shutdown"
+        if not self._boot_exclusion_sources_readable:
+            return "exclusion_sources_unreadable"
+        if (symbol not in self._observation_symbols()
+                or anchor != session_start_ts_ms(self.strategy._now_ms())):
+            return "membership_or_anchor_changed"
+        ledger = self._line_sessions.get(symbol)
+        if ledger is None or ledger.anchor_ms != anchor:
+            return "epoch_unproven"
+        inbox = self._keepwatch_bar_inboxes.get(symbol)
+        if inbox is not None and any(work.anchor_ms == anchor
+                and work.epoch in (0, ledger.epoch) for work in inbox.pending.values()):
+            return "selected_owner_pending"
+        if any(scope[0] == symbol and scope[1] == anchor and scope[2] in (0, ledger.epoch)
+               for scope in self._keepwatch_history_scopes.values()):
+            return "selected_history_active"
+        for native in self._keepwatch_native_reads:
+            scope = self._keepwatch_native_read_scopes.get(native)
+            if scope is None:
+                return "native_scope_unknown"
+            if scope[0] == symbol and scope[1] == anchor and scope[2] in (0, ledger.epoch):
+                return "selected_native_unjoined"
+        if (symbol in self._keepwatch_unknown
+                or self._keepwatch_bar_quarantine.get(symbol) == anchor):
+            return "symbol_unknown_or_quarantined"
+        history = self._keepwatch_proven.get(symbol)
+        if not current_history_response(history, symbol=symbol, anchor_ms=anchor,
+                through_ms=ledger.current_bar_ms, now_ms=self.strategy._now_ms()):
+            return "history_unreadable_or_stale"
+        if not self._keepwatch_halt_binding_current(symbol, ledger, history):
+            return "history_epoch_binding_unproven"
+        if ledger.prepare() is None:
+            return "prefix_unproven"
+        if not self._line_snapshot_current(symbol):
+            return "publication_unproven"
+        if symbol not in self._warmup_ready_symbols():
+            return "rest_warmup_incomplete"
+        return None
+
+    def _retry_keepwatch_boot_exclusions(self) -> None:
+        """Bounded revalidation on the existing state timer, never bar/tick ingestion."""
+        if (not getattr(self, "_keepwatch_enabled", False)
+                or not self.strategy._cw_armed_segment_safety_enabled
+                or getattr(self, "_restart_membership_replay", False)
+                or self._stop_event.is_set() or not self._keepwatch_bar_accepting):
+            return
+        now_ms = self.strategy._now_ms()
+        anchor = session_start_ts_ms(now_ms)
+        et = datetime.fromtimestamp(now_ms // 1000, UTC).astimezone(EASTERN_TZ)
+        interval = 60 if et.hour < 10 else 300
+        now = self._keepwatch_boot_retry_clock()
+        for symbol, row in tuple(self._keepwatch_boot_exclusions.items()):
+            if row["anchor_ms"] != anchor or now - row["last_retry_at"] < interval:
+                continue
+            row["last_retry_at"] = now
+            row["retry_count"] += 1
+            reason = self._keepwatch_boot_recovery_reason(symbol, anchor)
+            row["retry_reason"] = reason or "complete_current_prefix"
+            logger.warning("[V2-BOOT-EXCLUDE-RETRY] symbol=%s anchor_ms=%d attempt=%d "
+                           "interval_seconds=%d reason=%s entry_guards_unchanged=1",
+                           symbol, anchor, row["retry_count"], interval, row["retry_reason"])
+            if reason is None:
+                # The source-owned UNKNOWN has already been cleared by the real
+                # history/owner path. Retire ONLY this boot exclusion, not a gate.
+                self._keepwatch_boot_exclusions.pop(symbol)
+                self._keepwatch_boot_deferrals.pop(symbol, None)
+                logger.info("[V2-BOOT-EXCLUDE-CLEAR] symbol=%s anchor_ms=%d epoch=%d "
+                            "attempt=%d reason=complete_current_prefix entry_guards_unchanged=1",
+                            symbol, anchor, self._line_sessions[symbol].epoch, row["retry_count"])
+
+    def _keepwatch_boot_retry_state(self) -> dict:
+        excluded = self._keepwatch_boot_excluded_symbols()
+        return {"deferred_reason": self._keepwatch_boot_retry_deferred_reason,
+                "deferred_symbol": self._keepwatch_boot_retry_deferred_symbol,
+                "bound_seconds": KEEPWATCH_BOOT_DEFERRAL_SECONDS,
+                "deferral_intervals": KEEPWATCH_BOOT_DEFERRAL_INTERVALS,
+                "interval_seconds": STATE_PUBLISH_INTERVAL_SECONDS,
+                "consecutive_deferrals": {
+                    sym: {"intervals": row["intervals"], "reason": row["reason"]}
+                    for sym, row in self._keepwatch_boot_deferrals.items()},
+                "excluded": {sym: dict(self._keepwatch_boot_exclusions[sym])
+                             for sym in sorted(excluded)}}
+
     def _cw_boot_hold_check(self) -> None:
         """Boot-hold self-verify (P1.3+P1.4). Runs each state-publish cycle.
 
@@ -1855,6 +2133,9 @@ class SchwabV2BotService:
         strat = self.strategy
         if not getattr(strat, "_cw_armed_segment_safety_enabled", False):
             return
+        self._retry_keepwatch_boot_exclusions()
+        if self._keepwatch_enabled and not self._boot_state_restoration_complete:
+            self._try_complete_boot_state_restoration(self._watchlist, new_symbols=set())
         segments = strat.cw_armed_segments()
         dangerous = [s for s in segments if s["dangerous"]]
         dangerous_symbols = ",".join(
@@ -1872,11 +2153,14 @@ class SchwabV2BotService:
                 self._boot_restore_last_hold_log_at = now
                 logger.warning(
                     "[V2-BOOT-HOLD] HELD — restoration_complete=0 "
-                    "armed_segments_observed=%d dangerous_observed=%d dangerous_symbols=%s; "
+                    "armed_segments_observed=%d dangerous_observed=%d dangerous_symbols=%s "
+                    "deferred_reason=%s deferred_symbol=%s; "
                     "absence before initial state restoration is not safety",
                     len(segments),
                     len(dangerous),
                     dangerous_symbols,
+                    self._keepwatch_boot_retry_deferred_reason or "fleet_prerequisite_incomplete",
+                    self._keepwatch_boot_retry_deferred_symbol or "-",
                 )
             return
         self._boot_restore_last_hold_log_at = None
@@ -1887,6 +2171,7 @@ class SchwabV2BotService:
                     "[V2-BOOT-HOLD] released — restoration_complete=1 "
                     "reconstructed_uncapped=0; CW-v2 entries open"
                 )
+                _freeze_gc_after_boot_once()
             return
         if not strat._entries_held:
             strat._entries_held = True
@@ -1906,6 +2191,8 @@ class SchwabV2BotService:
         self._cw_boot_hold_check()
         reportable = await asyncio.to_thread(self._fetch_reportable_state)
         data_health = self._v2_data_health_snapshot()
+        if self._keepwatch_enabled:
+            data_health["boot_retry"] = self._keepwatch_boot_retry_state()
         data_health["confirmation_exit"] = {
             "enabled": self._confirmation_exit_enabled(),
             "status": "MEASURED" if self._confirmation_evaluated else "UNEXERCISED",
@@ -2191,6 +2478,9 @@ class SchwabV2BotService:
         names.discard("")
         symbols = {entry.symbol for entry in entries}
         with self.session_factory() as session:
+            if session.get_bind().dialect.name == "postgresql":
+                session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                session.execute(text("SET TRANSACTION READ ONLY"))
             candidates = session.execute(select(Fill, BrokerOrder, BrokerAccount, OmsManagedPosition)
                 .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
                 .join(BrokerAccount, BrokerAccount.id == Fill.broker_account_id)
@@ -2209,11 +2499,42 @@ class SchwabV2BotService:
                 OmsManagedPosition.broker_account_name.in_(names), OmsManagedPosition.symbol.in_(symbols),
                 or_(OmsManagedPosition.status != "closed", OmsManagedPosition.status.is_(None),
                     OmsManagedPosition.current_quantity != 0, OmsManagedPosition.current_quantity.is_(None)))))
+            obligations = {}
+            from project_mai_tai.cancelack1 import ObligationScope, load_flat_obligations, working_buy_present
+            held.update(symbol for symbol in symbols if working_buy_present(session, symbol))
+            for fill, order, account, row in candidates:
+                entry = next(e for e in entries if e.fill_id == fill.id)
+                if not entry.fanout_slot_id:
+                    continue
+                own_names = {name for vp, name in books if vp.symbol == entry.symbol}
+                if own_names == names:
+                    continue  # Existing complete two-row path needs no missing-row waiver.
+                payload = order.payload or {}
+                md = payload.get("metadata", payload)
+                try:
+                    opportunity = int(md.get("fanout_segment_id", "0"))
+                    if (opportunity <= 0 or md.get("fanout_slot_id") != entry.fanout_slot_id
+                            or entry.fanout_slot_id != fanout_slot_id(strategy_code=STRATEGY_CODE,
+                                symbol=entry.symbol, segment_id=opportunity, slot="resting")):
+                        raise ValueError("confirmation_opportunity_UNKNOWN")
+                    now = datetime.now(UTC)
+                    scope = ObligationScope(entry.symbol, opportunity, int(now.timestamp() * 1000), tuple(names))
+                    accounts = {a.id: a.name for a in session.scalars(select(BrokerAccount).where(
+                        BrokerAccount.name.in_(names)))}
+                    proof = load_flat_obligations(session, scope, accounts, fill.strategy_id, now,
+                                                  FLIP_OWNER_EVIDENCE_MAX_AGE_MS)
+                    if account.name not in proof.required_accounts:
+                        raise ValueError("confirmation_owner_UNKNOWN")
+                    obligations[entry.fill_id] = proof.required_accounts
+                except (ValueError, TypeError, ArithmeticError):
+                    continue  # Missing actual-owner row/history remains UNKNOWN, not zero.
         wanted = {entry.fill_id: entry for entry in entries}
         flat = set()
         for fill, order, account, row in candidates:
             entry = wanted[fill.id]
             expected_names = names if entry.fanout_slot_id else {entry.broker_account_name}
+            if entry.fill_id in obligations:
+                expected_names = obligations[entry.fill_id]
             own = [(vp, name) for vp, name in books if vp.symbol == entry.symbol and name in expected_names]
             if (entry.symbol not in held and order.id == entry.order_id
                     and account.name == entry.broker_account_name and account.provider in {"schwab", "webull"}
@@ -2628,6 +2949,10 @@ class SchwabV2BotService:
         )
 
     async def _position_poll_pass(self) -> None:
+        if getattr(self.settings, "strategy_schwab_1m_v2_brokerdecides1_enabled", False) is True:
+            from project_mai_tai.brokerdecides1_sync import refresh_consumer
+
+            await refresh_consumer(self)
         if (getattr(self.settings, "strategy_schwab_1m_v2_dual_broker_fanout_enabled", False)
                 or getattr(self.settings, "strategy_schwab_1m_v2_country_route_enabled", False)):
             # DB evidence only: no broker call, and no local placement boolean as proof.
@@ -2694,14 +3019,13 @@ class SchwabV2BotService:
                 self._fetch_flip_position_book,
                 unknown_opportunities,
             )
+            await self._cancelack_obligations_poll()
+            await self._fresh_sell_owner_release_poll()
             self.strategy.apply_flip_position_book(position_book)
             if (getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True
                     and getattr(self.settings, "strategy_schwab_1m_v2_false_flip2_enabled", False) is True
                     and callable(getattr(self, "_falseflip2_poll", None))):
                 await self._falseflip2_poll(position_book)
-        fresh_sell_poll = getattr(self, "_fresh_sell_owner_release_poll", None)
-        if callable(fresh_sell_poll):
-            await fresh_sell_poll()
         removed_wait_poll = getattr(self, "_removed_wait_poll", None)
         if callable(removed_wait_poll):
             await removed_wait_poll()
@@ -3009,9 +3333,62 @@ class SchwabV2BotService:
         """Symbols to SUBSCRIBE: the watchlist plus anything we still hold.
 
         ⛔⭐⭐ SUBSCRIPTION ONLY. Never use this for an entry, arm, re-entry or fan-out decision —
-        those read `self._watchlist`. See docs/design/held-symbol-exit-coverage.md §2.
+        those read scanner or explicitly retained entry membership, never exit coverage.
+        See docs/design/held-symbol-exit-coverage.md §2.
         """
-        return set(self._watchlist) | set(self._exit_coverage)
+        return self._observation_symbols() | set(self._exit_coverage)
+
+    def _observation_symbols(self) -> set[str]:
+        if not getattr(self, "_keepwatch_enabled", False):
+            return set(self._watchlist)
+        retained = (self._keepwatch.retained(session_start_ts_ms(self.strategy._now_ms()))
+                    if getattr(self, "_keepwatch_enabled", False) else set())
+        return ((set(self._watchlist) | retained)
+                - set(getattr(self.settings, "protected_symbol_set", set())))
+
+    def _keepwatch_observation_member(self, symbol: str) -> bool:
+        """O(1) equivalent of observation membership, never held-only exit coverage."""
+        if not getattr(self, "_keepwatch_enabled", False):
+            return symbol in self._watchlist
+        return (symbol not in self.settings.protected_symbol_set
+                and (symbol in self._watchlist or (
+                    self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
+                    and symbol in self._keepwatch.first_seen_ms)))
+
+    def _keepwatch_entry_allowed(self, symbol: str) -> bool:
+        if symbol in self._keepwatch_boot_excluded_symbols():
+            return False
+        if self._keepwatch_current_publication(symbol) is not None:
+            return (self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
+                    and self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms
+                    and self._keepwatch.allows_entry(symbol))
+        fallback = self._line_pg_poll_fallback_current(symbol)
+        if fallback is not None:
+            # OLD scanner membership for this failed poll only. Retained-only
+            # membership cannot be invented by a database exception.
+            return (symbol not in self.settings.protected_symbol_set
+                    and (symbol in self._watchlist or (
+                        fallback["retained_entry_before"] and self._keepwatch.allows_entry(symbol))))
+        return (self._keepwatch.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
+                and self._keepwatch_bar_quarantine.get(symbol) != self._keepwatch.anchor_ms
+                and symbol not in self._keepwatch_unknown
+                and symbol in self._keepwatch_proven
+                and self._keepwatch_proven[symbol].anchor_ms == self._keepwatch.anchor_ms
+                and self._keepwatch.allows_entry(symbol))
+
+    def _entry_membership_allowed(self, symbol: str) -> bool:
+        if not getattr(self, "_keepwatch_enabled", False):
+            return symbol in self._watchlist
+        return (symbol not in self.settings.protected_symbol_set
+                and getattr(self, "_boot_exclusion_sources_readable", False)
+                and self._keepwatch_entry_allowed(symbol))
+
+    def _keepwatch_history_window_open(self, current_ms: int) -> bool:
+        from project_mai_tai.market_data.schwab_v2_rest_client import keepwatch_history_window
+
+        now_ms = self.strategy._now_ms()
+        return keepwatch_history_window(
+            session_start_ts_ms(now_ms), current_ms, now_ms * 1_000_000)
 
     def _release_entry_state_at_window_close(
         self, now: datetime | None = None
@@ -3573,17 +3950,88 @@ class SchwabV2BotService:
                 proof.update(never_dispatched=True, flat_accounts=list(accounts), reason="positive_begin_no_attempt")
         return proofs
 
-    async def _fresh_sell_owner_release_poll(self) -> None:
+    async def _cancelack_obligations_poll(self) -> None:
+        from project_mai_tai.cancelack1 import ObligationScope
+
+        strategy = self.strategy
+        now_ms = strategy._now_ms()
+        names = tuple(strategy._removed_wait_accounts())
+        scopes = tuple(ObligationScope(state.symbol,
+            int(state.flip_owner_opportunity_id or state.fanout_segment_id), now_ms, names)
+            for state in tuple(strategy._symbol_states.values())
+            if (state.flip_owner_opportunity_id or state.fanout_segment_id)
+            and state.symbol not in strategy._removed_wait_requests
+            and state.flip_owner_phase in {"bound", "consumed"}
+            and state.flip_owner_fill_accounts
+            and not set(names) <= state.flip_owner_fill_accounts)
+        generations = dict(getattr(self, "_clearwait_emit_generation_by_symbol", {}))
+        dispatch_generation = strategy._cancelack_dispatch_generation
+        proofs = await asyncio.to_thread(self._fetch_cancelack_obligations, scopes) if scopes else {}
+        if strategy._cancelack_dispatch_generation != dispatch_generation:
+            proofs = {}  # A publication during the read invalidates the entire old cutpoint.
+        strategy._cancelack_obligations = {key: proof for key, proof in proofs.items()
+            if not self._removed_wait_emits_inflight(key[0])
+            and getattr(self, "_clearwait_emit_generation_by_symbol", {}).get(key[0], 0)
+                == generations.get(key[0], 0)}
+
+    def _fetch_cancelack_obligations(self, scopes):
+        from project_mai_tai.cancelack1 import load_flat_obligations
+
+        proofs = {}
+        try:
+            with self.session_factory() as session:
+                if session.get_bind().dialect.name == "postgresql":
+                    session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                    session.execute(text("SET TRANSACTION READ ONLY"))
+                    session.execute(text("SET LOCAL statement_timeout = '2s'"))
+                    session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == STRATEGY_CODE))
+                for scope in scopes:
+                    accounts = {a.id: a.name for a in session.scalars(select(BrokerAccount).where(
+                        BrokerAccount.name.in_(scope.account_names)))}
+                    try:
+                        proofs[(scope.symbol, scope.opportunity_id)] = load_flat_obligations(
+                            session, scope, accounts, strategy_id, datetime.now(UTC),
+                            FLIP_OWNER_EVIDENCE_MAX_AGE_MS)
+                    except (ValueError, TypeError, ArithmeticError):
+                        continue  # No proof means the old conservative barrier remains.
+        except Exception:  # noqa: BLE001 - unknown history never skips a barrier
+            logger.exception("[CANCELACK1-HISTORY] verdict=UNKNOWN reason=read_failed")
+            return {}
+        return proofs
+
+    async def _refresh_fresh_sell_before_live_bar(self, symbol, *, observation_phase):
+        if observation_phase != "live":
+            return
+        request = getattr(self.strategy, "_removed_wait_requests", {}).get(symbol.upper())
+        if request is not None and request.purpose in {"retry_exhausted", "false_flip_restore"}:
+            await self._fresh_sell_owner_release_poll(symbol=symbol.upper())
+
+    async def _fresh_sell_owner_release_poll(self, *, symbol: str | None = None) -> None:
         strategy = self.strategy
         if (not getattr(strategy, "_flip_owned_first_entry_enabled", False)
                 or not self.settings.strategy_schwab_1m_v2_fresh_sell_owner_release_enabled):
             return
         requests = tuple(r for r in strategy._removed_wait_requests.values()
-                         if r.purpose in {"retry_exhausted", "false_flip_restore"})
+                         if r.purpose in {"retry_exhausted", "false_flip_restore"}
+                         and (symbol is None or r.symbol == symbol))
         if not requests:
             return
+        generations = self.__dict__.setdefault("_fresh_sell_read_generation", {})
+        expected = {}
+        for request in requests:
+            generations[request.symbol] = generations.get(request.symbol, 0) + 1
+            expected[request.symbol] = generations[request.symbol]
+            strategy._fresh_sell_release_evidence.pop(request.symbol, None)
         proofs = await asyncio.to_thread(self._fetch_fresh_sell_release_evidence, requests)
-        strategy._fresh_sell_release_evidence = {p.request.symbol: p for p in proofs}
+        current = {name: proof for name, proof in strategy._fresh_sell_release_evidence.items()
+                   if strategy._removed_wait_requests.get(name) == proof.request}
+        for proof in proofs:
+            name = proof.request.symbol
+            if (strategy._removed_wait_requests.get(name) == proof.request
+                    and generations.get(name) == expected.get(name)):
+                current[name] = proof
+        strategy._fresh_sell_release_evidence = current
 
     def _fetch_fresh_sell_release_evidence(
         self, requests: tuple[RemovedWait, ...],
@@ -3592,7 +4040,6 @@ class SchwabV2BotService:
         now = datetime.now(UTC)
         observed = int(now.timestamp() * 1000)
         cutoff = now - timedelta(milliseconds=FLIP_OWNER_ROW_SETTLE_MS)
-        terminal = {"cancelled", "canceled", "filled", "rejected", "expired"}
 
         def at_ms(value: datetime | None) -> int:
             if value is None:
@@ -3630,12 +4077,8 @@ class SchwabV2BotService:
             if has_position:
                 return result("position_stays_owned")
             # Deliberately no strategy/account restriction: shared Schwab ORB also owns a BUY.
-            if (session.scalar(select(BrokerOrder.id).where(BrokerOrder.symbol == symbol,
-                    BrokerOrder.side == "buy",
-                    or_(BrokerOrder.status.is_(None), BrokerOrder.status.notin_(terminal))).limit(1))
-                    or session.scalar(select(TradeIntent.id).where(TradeIntent.symbol == symbol,
-                        TradeIntent.side == "buy", TradeIntent.intent_type == "open",
-                        or_(TradeIntent.status.is_(None), TradeIntent.status.notin_(terminal))).limit(1))):
+            from project_mai_tai.cancelack1 import working_buy_present
+            if working_buy_present(session, symbol, now=now):
                 return result("working_buy_or_intent")
             cancels = session.execute(select(TradeIntent, Strategy.code)
                 .join(Strategy, Strategy.id == TradeIntent.strategy_id)
@@ -3657,6 +4100,9 @@ class SchwabV2BotService:
                 no_target = (intent.status == "rejected"
                              and payload.get("refusal_origin") == "skipped_before_submit"
                              and payload.get("refusal_code") == "cancel_target_not_found")
+                from project_mai_tai.cancelack1 import cancel_outcome_known
+                if not cancel_outcome_known(intent):
+                    return result("own_cancel_not_terminal")
                 if intent.status not in {"cancelled", "canceled"} and not no_target:
                     return result("own_cancel_not_terminal")
                 updated = at_ms(intent.updated_at)
@@ -3664,13 +4110,24 @@ class SchwabV2BotService:
                     return result("own_cancel_settling")
                 acknowledged.add(account_names[intent.broker_account_id])
             if acknowledged != set(names):
-                return result("own_cancel_missing")
+                from project_mai_tai.cancelack1 import load_proven_accounts
+                try:
+                    required = load_proven_accounts(session, request, account_names, strategy_id,
+                                                    observed_at_ms=observed)
+                except (ValueError, TypeError, ArithmeticError) as exc:
+                    return result(str(exc) if isinstance(exc, ValueError) else "cancel_obligations_UNKNOWN")
+                if not required <= acknowledged:
+                    return result("own_cancel_missing")
+                return result("flat_both_required_own_cancels_settled", True)
             return result("flat_both_own_cancels_settled", True)
 
         try:
             if self.session_factory is None:
                 raise ValueError("position database unavailable")
             with self.session_factory() as session:
+                if session.get_bind().dialect.name == "postgresql":
+                    session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                    session.execute(text("SET TRANSACTION READ ONLY"))
                 receipts = load_receipts(session)
                 return tuple(assess(session, request, receipts) for request in requests)
         except Exception:  # noqa: BLE001 - unknown evidence never releases an owner
@@ -3729,7 +4186,14 @@ class SchwabV2BotService:
         filled_opportunities = {}
         closed_entry_rows = frozenset()
         falseflip_release_proofs = {}
+        closed_owner_episodes = {}
+        l12_closed_enabled = getattr(self.settings, "strategy_schwab_1m_v2_brokerdecides1_enabled", False) is True
+        held_entries = None
         try:
+            if l12_closed_enabled:
+                from project_mai_tai.brokerdecides1_closed_owner import held_entry_ids
+
+                held_entries = held_entry_ids(accounts, unknown_opportunities)
             with self.session_factory() as session:
                 rows = session.scalars(
                     select(OmsManagedPosition).where(
@@ -3753,7 +4217,7 @@ class SchwabV2BotService:
                         == "oms_v2_managed_exit:CONFIRMATION_EXIT",
                     )
                 ).all()
-                if retry_one_enabled:
+                if retry_one_enabled or l12_closed_enabled:
                     closed_rows = list(
                         session.scalars(
                             select(OmsManagedPosition).where(
@@ -3761,7 +4225,9 @@ class SchwabV2BotService:
                                 OmsManagedPosition.broker_account_name.in_(accounts),
                                 OmsManagedPosition.status == "closed",
                                 OmsManagedPosition.current_quantity == 0,
-                                OmsManagedPosition.entry_time >= session_start,
+                                or_(OmsManagedPosition.entry_time >= session_start,
+                                    OmsManagedPosition.entry_order_id.in_(held_entries))
+                                if held_entries is not None else OmsManagedPosition.entry_time >= session_start,
                             )
                         ).all()
                     )
@@ -3776,10 +4242,37 @@ class SchwabV2BotService:
                                 Strategy.code == STRATEGY_CODE,
                                 BrokerAccount.name.in_(accounts),
                                 Fill.side == "sell",
-                                Fill.filled_at >= session_start,
+                                or_(Fill.filled_at >= session_start,
+                                    BrokerOrder.intent_id.in_(select(BrokerOrder.intent_id).where(
+                                        BrokerOrder.id.in_(held_entries)).correlate(None)))
+                                if held_entries is not None else Fill.filled_at >= session_start,
                             )
                         ).all()
                     )
+                if l12_closed_enabled and closed_rows:
+                    from project_mai_tai.brokerdecides1_closed_owner import closed_child_episodes
+
+                    entry_ids = {row.entry_order_id for row in closed_rows if row.entry_order_id}
+                    if len(entry_ids) > 2048:
+                        raise ValueError("closed_owner_entry_scope_overflow")
+                    entry_scope = aliased(BrokerOrder)
+                    opportunities = select(entry_scope.payload["fanout_segment_id"].as_string()).where(
+                        entry_scope.id.in_(entry_ids))
+                    linked_entries = session.execute(
+                        select(Fill, BrokerOrder, BrokerAccount)
+                        .join(BrokerOrder, BrokerOrder.id == Fill.order_id)
+                        .join(BrokerAccount, BrokerAccount.id == Fill.broker_account_id)
+                        .join(Strategy, Strategy.id == Fill.strategy_id)
+                        .where(Strategy.code == STRATEGY_CODE, BrokerAccount.name.in_(accounts),
+                            or_(BrokerOrder.id.in_(entry_ids),
+                                BrokerOrder.payload["fanout_segment_id"].as_string().in_(opportunities)),
+                            Fill.side == "buy")
+                        .limit(8193)
+                    ).all()
+                    if len(linked_entries) > 8192:
+                        raise ValueError("closed_owner_fill_scope_overflow")
+                    closed_owner_episodes = closed_child_episodes(closed_rows, linked_entries,
+                        [(fill, order, account) for fill, order, account, _ in retry_exit_rows])
                 terminal_unfilled: dict[str, frozenset[int]] = {}
                 terminal_evaluated = 0
                 if unknown_opportunities:
@@ -3948,6 +4441,7 @@ class SchwabV2BotService:
                 symbol: tuple(closes) for symbol, closes in closes_by_symbol.items()
             },
             closes_by_symbol=retry_closes_by_symbol,
+            closed_owner_episodes=closed_owner_episodes,
             terminal_unfilled_opportunities_by_symbol=terminal_unfilled,
             entry_classifications={key: tuple(value) for key, value in entry_classifications.items()},
             filled_opportunities={key: tuple(value) for key, value in filled_opportunities.items()},
@@ -4177,6 +4671,8 @@ class SchwabV2BotService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("schwab_1m_v2 scanner seed xrevrange failed: %s", exc)
             seed = []
+        if getattr(self, "_keepwatch_enabled", False) and seed:
+            await self._restore_keepwatch_membership(seed[0][0], max_watchlist)
         checkpoint = getattr(self, "_restart_checkpoint", None)
         if checkpoint and seed:
             cursor = checkpoint["cursor"]
@@ -4241,6 +4737,79 @@ class SchwabV2BotService:
             backoff_secs=self._loop_backoff_secs,
             logger=logger,
         )
+
+    def _keepwatch_roster_key(self, anchor: int) -> str:
+        return f"{self.settings.redis_stream_prefix}:schwab-1m-v2:keepwatch:{anchor}"
+
+    async def _restore_keepwatch_membership(self, cutoff, max_watchlist: int) -> None:
+        anchor = session_start_ts_ms(self.strategy._now_ms())
+        now_ms = self.strategy._now_ms()
+        self._keepwatch.update(anchor, set(), now_ms, {})
+        try:
+            saved = await self.redis.hgetall(self._keepwatch_roster_key(anchor))
+            restored = {}
+            for raw_symbol, raw_stamp in saved.items():
+                symbol = raw_symbol.decode() if isinstance(raw_symbol, bytes) else raw_symbol
+                stamp = int(raw_stamp)
+                if not raw_symbol_is_uppercase(symbol) or not anchor <= stamp <= now_ms:
+                    raise ValueError("invalid KEEPWATCH1 roster member")
+                restored[symbol] = stamp
+            cursor = f"{anchor}-0"
+            events = 0
+            while True:
+                rows = await self.redis.xrange(
+                    self._strategy_state_stream, min=cursor, max=cutoff, count=256)
+                if not rows:
+                    break
+                for entry_id, data in rows:
+                    event = StrategyStateSnapshotEvent.model_validate_json(data["data"])
+                    event_ms = int(event.produced_at.timestamp() * 1000)
+                    if anchor <= event_ms <= now_ms:
+                        for symbol in self._extract_confirmed_symbols(event)[:max_watchlist]:
+                            restored.setdefault(symbol, event_ms)
+                    events += 1
+                last_id = rows[-1][0]
+                if isinstance(last_id, bytes):
+                    last_id = last_id.decode()
+                cursor = f"({last_id}"
+                if len(rows) < 256:
+                    break
+            excluded = set(self.settings.protected_symbol_set)
+            self._keepwatch.first_seen_ms.update(
+                (sym, stamp) for sym, stamp in restored.items() if sym not in excluded)
+            for sym in self._keepwatch.first_seen_ms:
+                self._line_membership.setdefault(sym, 1)
+            logger.info("[V2-KEEPWATCH1-BOOT] restored=%d scanner_events=%d "
+                        "source=durable_roster_and_retained_stream stream_prefix_complete=UNKNOWN "
+                        "entry_permission_inherited=0", len(self._keepwatch.first_seen_ms), events)
+        except Exception as exc:
+            logger.warning("[V2-KEEPWATCH1-BOOT] outcome=UNKNOWN error_type=%s "
+                           "removed_today_inventory_unproven=1", type(exc).__name__)
+
+    async def _persist_keepwatch_membership(self) -> None:
+        if self.redis is None or not self._keepwatch.first_seen_ms:
+            return
+        anchor = self._keepwatch.anchor_ms
+        try:
+            await self.redis.hset(self._keepwatch_roster_key(anchor),
+                                 mapping=self._keepwatch.first_seen_ms)
+            # The next 04:00 boundary, including DST, retires the old observation roster.
+            next_anchor = session_start_ts_ms(anchor + 36 * 3_600_000)
+            await self.redis.expireat(self._keepwatch_roster_key(anchor), next_anchor // 1000)
+        except Exception as exc:
+            logger.warning("[V2-KEEPWATCH1-BOOT] persist=UNKNOWN error_type=%s "
+                           "current_observation_retained=1", type(exc).__name__)
+        requested = len(self._subscription_symbols())
+        signature = (anchor, self._keepwatch.peak_retained, requested)
+        if signature != self._keepwatch_budget_signature:
+            self._keepwatch_budget_signature = signature
+            logger.info("[V2-KEEPWATCH1-BUDGET] anchor_ms=%d retained=%d peak_retained=%d "
+                        "tradeable=%d requested_chart_symbols=%d configured_levelone=%d "
+                        "configured_timesale=%d provider_limit=UNKNOWN native_acceptance=UNKNOWN",
+                        anchor, len(self._keepwatch.first_seen_ms), self._keepwatch.peak_retained,
+                        len(self._keepwatch.tradeable), requested,
+                        int(self.settings.strategy_schwab_1m_v2_tick_capture_enabled),
+                        int(self.settings.strategy_schwab_1m_v2_timesale_capture_enabled))
 
     async def _scanner_tail_pass(self, max_watchlist: int) -> None:
         assert self.redis is not None
@@ -4363,6 +4932,8 @@ class SchwabV2BotService:
         return boundaries
 
     async def _prepare_atr_massive_seeds(self, symbols: set[str]) -> None:
+        if getattr(self, "_keepwatch_enabled", False):
+            return
         normalized = {str(symbol).upper() for symbol in symbols}
         boundaries = await asyncio.to_thread(
             self._persisted_current_bar_boundaries,
@@ -4424,6 +4995,8 @@ class SchwabV2BotService:
     async def _ensure_atr_massive_seed_before_bar(
         self, symbol: str, first_schwab_ms: int
     ) -> None:
+        if getattr(self, "_keepwatch_enabled", False):
+            return
         if not getattr(self, "_atr_massive_seed_enabled", False):
             return
         normalized = str(symbol).upper()
@@ -4586,8 +5159,10 @@ class SchwabV2BotService:
             if event is not None and self._strategy_state_event_is_current(event):
                 candidates = set(self._extract_confirmed_symbols(event)[:max_watchlist])
                 candidates.update(self._protected_symbols())
-                await self._prepare_atr_massive_seeds(candidates - self._watchlist)
+                await self._prepare_atr_massive_seeds(candidates - self._observation_symbols())
         self._apply_strategy_state_event(data, max_watchlist=max_watchlist)
+        if getattr(self, "_keepwatch_enabled", False):
+            await self._persist_keepwatch_membership()
         self._log_atr_massive_seed_census()
         self._persist_restart_checkpoint()
 
@@ -4659,18 +5234,54 @@ class SchwabV2BotService:
         now_ms = self.strategy._now_ms()
         for sym in scanner_selected - prior_entries:
             saved = continuing.get(sym)
-            watch_ms = saved["watch_ms"] if saved else now_ms
+            retained = (getattr(self, "_keepwatch_enabled", False)
+                        and sym in self._keepwatch.retained(session_start_ts_ms(now_ms)))
+            watch_ms = (self._watch_start_ms.get(sym, now_ms) if retained
+                        else saved["watch_ms"] if saved else now_ms)
             self._watch_start_ms[sym] = watch_ms
             self.strategy.watchlist_state(sym).retry_one_watch_start_ms = watch_ms
-            if sym in self._watchlist and saved is None:
+            if (sym in self._watchlist and saved is None
+                    and not getattr(self, "_keepwatch_enabled", False)):
                 self._cap_reconstructed_segment(sym, stage="scanner-entry-readd")
+        retained_before = (self._keepwatch.retained(session_start_ts_ms(now_ms))
+                           if getattr(self, "_keepwatch_enabled", False) else set())
+        entry_retained_before = (set(self._keepwatch.tradeable)
+                                 if getattr(self, "_keepwatch_enabled", False) else set())
+        if getattr(self, "_keepwatch_enabled", False):
+            old_anchor = self._keepwatch.anchor_ms
+            self._keepwatch.update(
+                session_start_ts_ms(now_ms), scanner_selected, now_ms,
+                {sym: (str(state.atr_state) if self._line_snapshot_current(sym) and state.bars
+                       and state.bars[-1].timestamp_ms == now_ms // 60_000 * 60_000 - 60_000
+                       else "unknown") for sym, state in self.strategy._symbol_states.items()},
+                retain_entries=True, excluded=frozenset(protected_exclude | ineligible_exclude),
+            )
+            if old_anchor != self._keepwatch.anchor_ms:
+                self._keepwatch_proven = {
+                    sym: proof for sym, proof in self._keepwatch_proven.items()
+                    if proof.anchor_ms == self._keepwatch.anchor_ms}
+                self._keepwatch_unknown.intersection_update(scanner_selected)
+                self._keepwatch_cancel_requested.intersection_update(scanner_selected)
+                self._keepwatch_bar_locks = {
+                    sym: lock for sym, lock in self._keepwatch_bar_locks.items()
+                    if lock.locked() or sym in selected}
+                for sym, inbox in tuple(self._keepwatch_bar_inboxes.items()):
+                    task = self._keepwatch_bar_tasks.get(sym)
+                    if (sym not in selected | self._exit_coverage and not inbox.pending
+                            and (task is None or task.done())):
+                        self._keepwatch_bar_inboxes.pop(sym, None)
+                        self._keepwatch_bar_tasks.pop(sym, None)
+                        self._keepwatch_bar_events.pop(sym, None)
+                        self._keepwatch_bar_quarantine.pop(sym, None)
         self._entry_watch_symbols = set(scanner_selected)
         self._boot_exclusion_sources_readable = not unreadable_exclusion_sources
         if getattr(self.strategy, "_removed_wait_enabled", False):
             previous = getattr(self, "_clearwait_scanner_symbols", None)
-            self._clearwait_scanner_symbols = set(scanner_selected)
+            entry_selected = (set(self._keepwatch.tradeable)
+                              if getattr(self, "_keepwatch_enabled", False) else set(scanner_selected))
+            self._clearwait_scanner_symbols = entry_selected
             if previous is not None:
-                for sym in previous - scanner_selected:
+                for sym in previous - entry_selected:
                     self.strategy.release_and_drop_symbol(sym)
             for sym in scanner_selected:
                 self.strategy.scanner_readded(sym)
@@ -4686,14 +5297,21 @@ class SchwabV2BotService:
                 int(bool(getattr(self.strategy, "_entries_held", False))),
             )
         line_reconfirmed = self._line_scanner_transition(event, scanner_selected)
+        revoked_retained = (entry_retained_before - self._keepwatch.tradeable
+                            if getattr(self, "_keepwatch_enabled", False) else set())
         if selected == self._watchlist:
+            for sym in sorted(revoked_retained):
+                self.strategy.release_and_drop_symbol(sym)
             self._request_line_repairs(line_reconfirmed)
             self._try_complete_boot_state_restoration(selected, new_symbols=set())
             return
-        new_symbols = selected - self._watchlist
+        new_symbols = selected - self._watchlist - retained_before
         # ⛔ Captured HERE, before `self._watchlist` is reassigned below — computing it after the
         # reassignment yields the empty set and the B19 release silently never runs.
         departed_symbols = self._watchlist - selected
+        if getattr(self, "_keepwatch_enabled", False):
+            departed_symbols -= self._keepwatch.tradeable
+            departed_symbols |= revoked_retained
         for sym in new_symbols | departed_symbols:
             self._eh_stream_ask_by_symbol.pop(sym, None)
         # ⭐ Stamp WHEN we started watching each symbol. This is the reference
@@ -4707,7 +5325,7 @@ class SchwabV2BotService:
                 self._watch_start_ms[sym] = now_ms
                 self.strategy.watchlist_state(sym).retry_one_watch_start_ms = now_ms
         self._watch_start_ms = {
-            sym: ts for sym, ts in self._watch_start_ms.items() if sym in selected
+            sym: ts for sym, ts in self._watch_start_ms.items() if sym in selected | retained_before
         }
         self._watchlist = selected
         self._sync_line_epochs()
@@ -4725,9 +5343,10 @@ class SchwabV2BotService:
         # the only record that this segment ended rather than simply stopped being observed.
         for sym in sorted(departed_symbols):
             self.strategy.release_and_drop_symbol(sym)
-        self._rest_warmup_done &= selected
-        self._boot_warmup_timeout_released &= selected
-        self._db_seeded &= selected
+        observed = self._observation_symbols()
+        self._rest_warmup_done &= observed
+        self._boot_warmup_timeout_released &= observed
+        self._db_seeded &= observed
         # Drop any buffered streamer bars for symbols no longer on the
         # watchlist — the streamer will be told to UNSUBS them below,
         # and stale buffers would replay after a re-join with bars
@@ -4736,7 +5355,7 @@ class SchwabV2BotService:
             self._streamer_pending = {
                 sym: bars
                 for sym, bars in self._streamer_pending.items()
-                if sym in selected
+                if sym in observed
             }
         self._push_desired_symbols()
         # Fix (b): hydrate the strategy bar buffer for newly-joined symbols from
@@ -4769,6 +5388,9 @@ class SchwabV2BotService:
         missing fresh-source observation from suppressing the fleet indefinitely. The fallback
         never turns an unreadable seed into safety, and the dangerous-segment check remains the
         final entry gate.
+
+        Source-owned callers can defer on their own active work. Completion is
+        retried at the existing five-second state-publish boundary after settlement.
         """
         if getattr(self, "_restart_membership_replay", False):
             return
@@ -4794,6 +5416,12 @@ class SchwabV2BotService:
                     len(new_symbols) - confirmed,
                 )
             return
+        # Scanner, warmup and replay callers share the same ordering boundary as
+        # the central publish retry; a direct caller cannot latch over owned work.
+        if self._keepwatch_enabled and not self._keepwatch_boot_retry_quiescent():
+            return
+        if self._keepwatch_enabled:
+            selected = set(selected) - self._keepwatch_boot_excluded_symbols()
         if not self._boot_exclusion_sources_readable:
             self._reset_boot_warmup_wait()
             results = [self._seed_strategy_bars_from_db(sym) for sym in sorted(new_symbols)]
@@ -4818,7 +5446,8 @@ class SchwabV2BotService:
                 )
             return
         evaluated = len(selected)
-        scanner_evaluated = len(self._boot_scanner_selected)
+        scanner_evaluated = len(self._boot_scanner_selected - (
+            self._keepwatch_boot_excluded_symbols() if self._keepwatch_enabled else set()))
         if evaluated == 0:
             self._reset_boot_warmup_wait()
             if self._boot_restore_warning_due(
@@ -4917,6 +5546,8 @@ class SchwabV2BotService:
         ):
             return False
         selected = set(self._watchlist)
+        if self._keepwatch_enabled:
+            selected -= self._keepwatch_boot_excluded_symbols()
         if (
             not selected
             or frozenset(selected) != self._boot_warmup_wait_population
@@ -5129,7 +5760,843 @@ class SchwabV2BotService:
         protected.update(self._fetch_open_positions())
         return protected
 
-    async def _handle_bar_from_rest(self, symbol: str, bar: ChartBar) -> None:
+    def _keepwatch_hold_unknown(self, symbol: str, reason: str) -> None:
+        was_unknown = symbol in self._keepwatch_unknown
+        self._keepwatch_unknown.add(symbol)
+        state = self.strategy._symbol_states.get(symbol)
+        if (symbol not in self._keepwatch_cancel_requested and state is not None
+                and (state.resting_active or state.webull_resting_active)):
+            self.strategy._queue_resting_cancel(state, reason="keepwatch_history_unknown")
+            self._keepwatch_cancel_requested.add(symbol)
+        if not was_unknown:
+            logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN reason=%s entry_allowed=0 "
+                           "line_reset=0", symbol, reason)
+
+    def _keepwatch_pins_for(self, symbol: str, anchor: int):
+        from project_mai_tai.market_data.keepwatch_producer import SessionProducerPins
+
+        if anchor != session_start_ts_ms(self.strategy._now_ms()):
+            raise ValueError("stale producer session")
+        if self._keepwatch_producer_anchor_ms != anchor:
+            self._keepwatch_producer_pins.clear()
+            self._keepwatch_producer_anchor_ms = anchor
+        pins = self._keepwatch_producer_pins
+        book = pins.get(symbol)
+        if book is None:
+            book = pins[symbol] = SessionProducerPins(symbol, anchor)
+        return book
+
+    def _enqueue_keepwatch_bar(self, symbol: str, bar: ChartBar, source: str) -> None:
+        from project_mai_tai.services.keepwatch_bar_owner import BarInbox, OwnedBar
+
+        if not self._keepwatch_bar_accepting or self._stop_event.is_set():
+            self._keepwatch_shutdown_rejected += 1
+            return
+        if (not raw_symbol_is_uppercase(symbol) or bar.symbol != symbol
+                or symbol not in self._subscription_symbols()):
+            return
+        anchor = session_start_ts_ms(self.strategy._now_ms())
+        ledger = self._line_sessions.get(symbol)
+        epoch = ledger.epoch if ledger is not None and ledger.anchor_ms == anchor else 0
+        inbox = self._keepwatch_bar_inboxes.setdefault(
+            symbol, BarInbox(STREAMER_PENDING_BARS_MAX_PER_SYMBOL))
+        if source == "rest" and self.strategy._now_ms() - bar.timestamp_ms > 180_000:
+            # KEEPWATCH1 never used count-seed warmup as admission. The owned full
+            # 04:00 read supplies these bars; do not let a 500-row REST warmup evict
+            # a current WebSocket frame before its owner gets an event-loop turn.
+            inbox.received += 1
+            inbox.historical_ignored += 1
+            return
+        if bar.timestamp_ms + 60_000 <= self.strategy._now_ms():
+            try:
+                bar = self._keepwatch_pins_for(symbol, anchor).accept(
+                    bar, now_ms=self.strategy._now_ms())
+                if ledger is not None and ledger.anchor_ms == anchor:
+                    # Memory-only CAS invalidation at ingress: a queued genuine
+                    # revision cannot leave an older in-flight rebuild current.
+                    revision = ledger.revision
+                    ledger.observe(bar)
+                    if ledger.revision != revision:
+                        self._line_dirty.add(symbol)
+                        self._line_rebuild_event.set()
+                        if ledger._seed_invalidated:
+                            self._line_reconcile_pending.add(symbol)
+            except ValueError:
+                # No provider I/O/log write on the receiver. Unknown identity is
+                # refused, never guessed from the generic REST transport name.
+                inbox.received += 1
+                inbox.rejected += 1
+                self._keepwatch_bar_quarantine[symbol] = anchor
+                self._keepwatch_unknown.add(symbol)
+                return
+        admitted = inbox.offer(OwnedBar(
+            bar, source, anchor, epoch, observed_ms=self.strategy._now_ms()))
+        if not admitted:
+            # Receiver work is memory-only. Cancellation/logging belongs to the owner,
+            # not the WebSocket reader. This quarantine cannot be auto-cleared by a
+            # later successful provider read that did not retain this rejected frame.
+            self._keepwatch_bar_quarantine[symbol] = anchor
+            self._keepwatch_unknown.add(symbol)
+        event = self._keepwatch_bar_events.setdefault(symbol, asyncio.Event())
+        event.set()
+        task = self._keepwatch_bar_tasks.get(symbol)
+        if task is None or task.done():
+            # This worker outlives its caller's history operation. Preserve all
+            # other context, but never let it resurrect that operation's token.
+            owner_context = copy_context()
+            owner_context.run(self._keepwatch_history_context.set, None)
+            task = asyncio.create_task(self._run_keepwatch_bar_owner(symbol),
+                                       name=f"keepwatch-bar:{symbol}", context=owner_context)
+            self._keepwatch_bar_tasks[symbol] = task
+            def owner_done(completed):
+                if completed.cancelled():
+                    failed = not self._stop_event.is_set()
+                else:
+                    failed = completed.exception() is not None
+                if failed:
+                    self._keepwatch_bar_quarantine[symbol] = anchor
+                    self._keepwatch_unknown.add(symbol)
+                    logger.error("[V2-KEEPWATCH1-BAR-OWNER] sym=%s outcome=UNKNOWN "
+                                 "owner_stopped_unexpectedly=1 pending_retained=1", symbol)
+            task.add_done_callback(owner_done)
+
+    def _keepwatch_bar_covered(self, symbol: str, work) -> bool:
+        ledger = self._line_sessions.get(symbol)
+        proof = self._keepwatch_proven.get(symbol)
+        published = self._line_published.get(symbol)
+        if (ledger is None or proof is None or published is None
+                or proof.anchor_ms != work.anchor_ms or ledger.anchor_ms != work.anchor_ms
+                or published.request.epoch != ledger.epoch
+                or published.request.revision != ledger.revision
+                or proof.through_ms < work.bar.timestamp_ms):
+            return False
+        actual = ledger._bars.get(work.bar.timestamp_ms)
+        return bool(actual is not None and all(getattr(actual, field) == getattr(work.bar, field)
+                    for field in ("symbol", "timestamp_ms", "open", "high", "low", "close", "volume")))
+
+    async def _run_keepwatch_bar_owner(self, symbol: str) -> None:
+        inbox = self._keepwatch_bar_inboxes[symbol]
+        event = self._keepwatch_bar_events[symbol]
+        overflow_logged = 0
+        try:
+            while inbox.pending and not self._stop_event.is_set():
+                event.clear()
+                if inbox.rejected != overflow_logged:
+                    overflow_logged = inbox.rejected
+                    self._keepwatch_hold_unknown(symbol, "bar_inbox_overflow")
+                    logger.error("[V2-KEEPWATCH1-BAR-OWNER] sym=%s outcome=UNKNOWN "
+                                 "rejected=%d first_rejected_ms=%d last_rejected_ms=%d "
+                                 "pending=%d entry_allowed=0 recovery=operator_review",
+                                 symbol, inbox.rejected, inbox.overflow_first_ms,
+                                 inbox.overflow_last_ms, len(inbox.pending))
+                work = inbox.pending[min(inbox.pending)]
+                if (self.strategy._now_ms() - work.bar.timestamp_ms > 180_000
+                        and self._keepwatch_current_recovery_scope(symbol) is None):
+                    # A current frame can repair an older prefix in one complete read;
+                    # its pending older observations are spliced before consumption.
+                    newest = inbox.pending[max(inbox.pending)]
+                    if self.strategy._now_ms() - newest.bar.timestamp_ms <= 180_000:
+                        work = newest
+                anchor = session_start_ts_ms(self.strategy._now_ms())
+                ledger = self._line_sessions.get(symbol)
+                if (work.anchor_ms != anchor or session_start_ts_ms(work.bar.timestamp_ms) != anchor
+                        or (work.epoch and (ledger is None or ledger.epoch != work.epoch))):
+                    inbox.complete(work, expired=True)
+                    logger.warning("[V2-KEEPWATCH1-BAR-OWNER] sym=%s expired_ms=%d "
+                                   "reason=session_or_epoch_changed replayed=0", symbol,
+                                   work.bar.timestamp_ms)
+                    continue
+                if work.bar.timestamp_ms + 60_000 <= self.strategy._now_ms():
+                    try:
+                        pins = self._keepwatch_pins_for(symbol, anchor)
+                        if work.bar.producer not in {"massive", "schwab"}:
+                            raise ValueError("closed work producer identity UNKNOWN")
+                        if work.bar.timestamp_ms not in pins.producers:
+                            pins.accept(work.bar, now_ms=self.strategy._now_ms())
+                        if not pins.matches(work.bar):
+                            # A same-producer response revised this minute while
+                            # the previous immutable work was awaiting a repair.
+                            inbox.offer(type(work)(pins.current(work.bar.timestamp_ms),
+                                                   work.source, anchor, work.epoch))
+                            continue
+                    except ValueError:
+                        self._keepwatch_hold_unknown(symbol, "producer_identity_unproven")
+                        try:
+                            await asyncio.wait_for(event.wait(),
+                                self.settings.strategy_schwab_1m_v2_bar_poll_interval_seconds)
+                        except TimeoutError:
+                            pass
+                        continue
+                if self._keepwatch_bar_covered(symbol, work):
+                    inbox.complete(work, covered=True)
+                    continue
+                try:
+                    async def consume(prepared_symbol, prepared_bar):
+                        callback = (self._handle_bar_from_streamer if work.source == "streamer"
+                                    else self._handle_bar_from_rest)
+                        await callback(prepared_symbol, prepared_bar, _keepwatch_prepared=True)
+
+                    consumed = await self._keepwatch_dispatch_bar(
+                        symbol, work.bar, consume, expected_work=work)
+                except Exception:
+                    inbox.failures += 1
+                    self._keepwatch_hold_unknown(symbol, "bar_owner_callback_failed")
+                    logger.exception("[V2-KEEPWATCH1-BAR-OWNER] sym=%s outcome=UNKNOWN "
+                                     "callback_failed=1 pending_retained=1", symbol)
+                    consumed = False
+                if consumed:
+                    inbox.complete(work)
+                else:
+                    # Keep the admitted bar until consumed or proved in a published repair.
+                    # New chart input or the existing bar-poll cadence wakes this owner.
+                    try:
+                        await asyncio.wait_for(event.wait(),
+                            self.settings.strategy_schwab_1m_v2_bar_poll_interval_seconds)
+                    except TimeoutError:
+                        pass
+        finally:
+            logger.info("[V2-KEEPWATCH1-BAR-OWNER] sym=%s accepted=%d consumed=%d "
+                        "covered=%d expired=%d rejected=%d pending=%d failures=%d historical_ignored=%d "
+                        "shutdown=%d", symbol, inbox.accepted, inbox.consumed,
+                        inbox.covered, inbox.expired, inbox.rejected, len(inbox.pending),
+                        inbox.failures, inbox.historical_ignored, int(self._stop_event.is_set()))
+            if not inbox.pending and symbol not in self._subscription_symbols():
+                # Empty retired-session owners do not accumulate across trading days.
+                if self._keepwatch_bar_tasks.get(symbol) is asyncio.current_task():
+                    self._keepwatch_bar_tasks.pop(symbol, None)
+                self._keepwatch_bar_inboxes.pop(symbol, None)
+                self._keepwatch_bar_events.pop(symbol, None)
+                self._keepwatch_bar_quarantine.pop(symbol, None)
+                lock = self._keepwatch_bar_locks.get(symbol)
+                if lock is not None and not lock.locked():
+                    self._keepwatch_bar_locks.pop(symbol, None)
+
+    async def _read_keepwatch_history_owned(self, symbol: str, anchor: int, current: int):
+        from project_mai_tai.market_data.keepwatch_history import read_keepwatch_history
+
+        async with self._keepwatch_provider_lock:
+            if self._stop_event.is_set():
+                raise asyncio.CancelledError
+            ledger = self._line_sessions.get(symbol)
+            epoch = ledger.epoch if ledger is not None and ledger.anchor_ms == anchor else 0
+            operation = self._keepwatch_history_context.get()
+            if operation is not None:
+                token, scope = operation
+                if scope != (symbol, anchor, epoch):
+                    raise ValueError("foreign queued history operation")
+                self._keepwatch_history_scopes[token] = scope
+            native = asyncio.create_task(asyncio.to_thread(
+                read_keepwatch_history, self.rest_client, self._keepwatch_history_client,
+                symbol, anchor, current,
+            ), name=f"keepwatch-history:{symbol}")
+            try:
+                self._keepwatch_native_read_scopes[native] = (symbol, anchor, epoch)
+                self._keepwatch_native_reads.add(native)
+                return await asyncio.shield(native)
+            except asyncio.CancelledError:
+                # Native HTTP cannot be killed by cancelling its awaiter. Join it before
+                # releasing the client owner lock; never start a duplicate detached read.
+                await asyncio.gather(asyncio.shield(native), return_exceptions=True)
+                raise
+            finally:
+                if native.done():
+                    self._retire_keepwatch_native_read(native)
+                else:
+                    # Repeated cancellation must not erase an unfinished native thread.
+                    native.add_done_callback(self._retire_keepwatch_native_read)
+
+    def _retire_keepwatch_native_read(self, native: asyncio.Task) -> None:
+        self._keepwatch_native_reads.discard(native)
+        self._keepwatch_native_read_scopes.pop(native, None)
+
+    async def _stop_keepwatch_bar_owners(self) -> None:
+        self._keepwatch_bar_accepting = False
+        self._stop_event.set()
+        tasks = tuple(self._keepwatch_bar_tasks.values())
+        for task in tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*(asyncio.shield(task) for task in tuple(self._keepwatch_native_reads)),
+                             return_exceptions=True)
+        self._keepwatch_bar_tasks.clear()
+        pending = sum(len(inbox.pending) for inbox in self._keepwatch_bar_inboxes.values())
+        logger.info("[V2-KEEPWATCH1-BAR-OWNER] shutdown=1 accepted=%d consumed=%d "
+                    "covered=%d expired=%d rejected=%d pending=%d shutdown_rejected=%d "
+                    "native_reads_joined=%d",
+                    sum(box.accepted for box in self._keepwatch_bar_inboxes.values()),
+                    sum(box.consumed for box in self._keepwatch_bar_inboxes.values()),
+                    sum(box.covered for box in self._keepwatch_bar_inboxes.values()),
+                    sum(box.expired for box in self._keepwatch_bar_inboxes.values()),
+                    sum(box.rejected for box in self._keepwatch_bar_inboxes.values()),
+                    pending, self._keepwatch_shutdown_rejected, int(not self._keepwatch_native_reads))
+        if pending:
+            logger.error("[V2-KEEPWATCH1-BAR-OWNER] shutdown_pending=%d "
+                         "outcome=UNKNOWN drained=0 native_reads_joined=1", pending)
+
+    def _keepwatch_work_current(self, symbol: str, work) -> bool:
+        if work is None:
+            return True
+        # A same-minute CHART revision may replace a REST item during either await.
+        inbox = self._keepwatch_bar_inboxes.get(symbol)
+        if inbox is None or inbox.pending.get(work.bar.timestamp_ms) is not work:
+            return False
+        pins = self._keepwatch_producer_pins.get(symbol)
+        return (pins is None or work.bar.timestamp_ms not in pins.producers
+                or pins.matches(work.bar))
+
+    def _keepwatch_current_recovery_scope(self, symbol: str):
+        proof = getattr(self, "_keepwatch_current_recoveries", {}).get(symbol)
+        ledger = self._line_sessions.get(symbol)
+        state = self.strategy._symbol_states.get(symbol)
+        anchor = session_start_ts_ms(self.strategy._now_ms())
+        if (proof is None or self._stop_event.is_set() or ledger is None or state is None
+                or not self._keepwatch_observation_member(symbol)
+                or symbol in self._line_readd_needs_live
+                or self._keepwatch_bar_quarantine.get(symbol) == anchor
+                or proof.membership != self._line_membership.get(symbol, 0)
+                or not proof.bound_to(symbol=symbol, anchor_ms=anchor, epoch=ledger.epoch,
+                    source_identity=self._line_source_identity.get(symbol),
+                    ledger=ledger, state=state)
+                or ledger.anchor_ms != anchor
+                or proof.gap_revision != ledger.revision or not proof.gap_open):
+            return None
+        return proof
+
+    def _keepwatch_refresh_current_recovery(self, symbol: str) -> None:
+        """Refresh only on bar/history work; admission/tick lookups never scan bars."""
+        proof = self._keepwatch_current_recoveries.get(symbol)
+        ledger = self._line_sessions.get(symbol)
+        if proof is not None and ledger is proof.ledger and proof.gap_revision != ledger.revision:
+            proof.gap_open = ledger.has_unrecovered_traded_gap()
+            proof.gap_revision = ledger.revision
+            proof.publication = None
+
+    def _keepwatch_current_publication(self, symbol: str):
+        proof = self._keepwatch_current_recovery_scope(symbol)
+        if proof is None or not proof.threshold_observed() or proof.publication is None:
+            return None
+        state, ledger = proof.state, proof.ledger
+        work = proof.last_work
+        if (work is None or not state.bars or state.gap_hold_active
+                or state.atr_prev_bar is None
+                or state.bars[-1].timestamp_ms != work.bar.timestamp_ms
+                or state.atr_prev_bar.timestamp_ms != work.bar.timestamp_ms
+                or work.bar.timestamp_ms != self.strategy._now_ms() // 60_000 * 60_000 - 60_000
+                or state.atr_state not in {"long", "short"}
+                or state.atr_trail is None or not math.isfinite(state.atr_trail)
+                or state.atr_trail <= 0
+                or any(getattr(state.bars[-1], name) != getattr(work.bar, name)
+                       for name in ("open", "high", "low", "close", "volume"))
+                or proof.publication != (work.bar.timestamp_ms, ledger.revision,
+                    state.atr_state, state.atr_trail, state.line_restore_reset_after_ms)):
+            return None
+        pins = self._keepwatch_producer_pins.get(symbol)
+        return proof if pins is not None and pins.matches(work.bar) else None
+
+    async def _keepwatch_consume_current_recovery(self, symbol, bar, callback, work) -> bool:
+        from project_mai_tai.services.keepwatch_bar_owner import (
+            BarConsumptionSuperseded, bar_consumption_context, current_bar_recovery_context,
+        )
+        proof = self._keepwatch_current_recovery_scope(symbol)
+        if proof is None or work is None or not self._keepwatch_work_current(symbol, work):
+            return False
+        pins = self._keepwatch_pins_for(symbol, proof.anchor_ms)
+        if not proof.observe(work, canonical=pins.current(bar.timestamp_ms),
+                             now_ms=self.strategy._now_ms()):
+            return False
+        state_only = (bar.timestamp_ms != self.strategy._now_ms() // 60_000 * 60_000 - 60_000
+                      or (not proof.state.gap_hold_active and not proof.threshold_observed()))
+
+        def publish(state):
+            if (state is proof.state and self._keepwatch_current_recovery_scope(symbol) is proof
+                    and self._keepwatch_work_current(symbol, work)
+                    and pins.matches(work.bar) and proof.threshold_observed()
+                    and not state.gap_hold_active and state.bars
+                    and state.bars[-1].timestamp_ms == work.bar.timestamp_ms):
+                proof.publication = (work.bar.timestamp_ms, proof.ledger.revision,
+                    state.atr_state, state.atr_trail, state.line_restore_reset_after_ms)
+
+        context = (work, proof.ledger, proof.epoch, proof.state,
+                   proof.source_identity, asyncio.current_task())
+        token = bar_consumption_context.set(context)
+        recovery_token = current_bar_recovery_context.set((state_only, publish))
+        try:
+            if state_only:
+                self._keepwatch_fence_strategy_consumption(symbol)
+                self._strategy_on_bar(symbol, bar, observation_phase="live")
+            else:
+                await callback(symbol, bar)
+            return bool(proof.state.bars
+                        and proof.state.bars[-1].timestamp_ms == work.bar.timestamp_ms
+                        and proof.state.atr_prev_bar is not None
+                        and proof.state.atr_prev_bar.timestamp_ms == work.bar.timestamp_ms
+                        and self._keepwatch_work_current(symbol, work))
+        except BarConsumptionSuperseded:
+            return False
+        finally:
+            current_bar_recovery_context.reset(recovery_token)
+            bar_consumption_context.reset(token)
+
+    async def _keepwatch_dispatch_bar(
+        self, symbol: str, bar: ChartBar, callback, *, expected_work=None,
+    ) -> bool:
+        from project_mai_tai.services.keepwatch_bar_owner import (
+            BarConsumptionSuperseded, bar_consumption_context,
+        )
+        if (not raw_symbol_is_uppercase(symbol) or bar.symbol != symbol
+                or not (self._keepwatch_observation_member(symbol) or symbol in self._exit_coverage)):
+            return False
+        lock = self._keepwatch_bar_locks.setdefault(symbol, asyncio.Lock())
+        async with lock:
+            if not self._keepwatch_work_current(symbol, expected_work):
+                return False
+            pins = self._keepwatch_pins_for(symbol, session_start_ts_ms(self.strategy._now_ms()))
+            if bar.timestamp_ms + 60_000 <= self.strategy._now_ms():
+                if bar.producer not in {"massive", "schwab"}:
+                    raise ValueError("closed callback producer identity UNKNOWN")
+                # Real ingress has already retained the raw candidate. Direct
+                # owned callers must supply the same explicit producer identity.
+                bar = (pins.current(bar.timestamp_ms) if expected_work is not None
+                       and bar.timestamp_ms in pins.producers
+                       else pins.accept(bar, now_ms=self.strategy._now_ms()))
+            self._keepwatch_refresh_current_recovery(symbol)
+            if self._keepwatch_current_recovery_scope(symbol) is not None:
+                return await self._keepwatch_consume_current_recovery(
+                    symbol, bar, callback, expected_work)
+            if await self._keepwatch_prepare_bar(symbol, bar, expected_work=expected_work):
+                bar = pins.current(bar.timestamp_ms)
+                ledger = self._line_sessions.get(symbol)
+                context = ((expected_work, ledger, ledger.epoch,
+                            self.strategy._symbol_states.get(symbol),
+                            self._line_source_identity.get(symbol), asyncio.current_task())
+                           if expected_work is not None and ledger is not None else None)
+                token = bar_consumption_context.set(context)
+                try:
+                    await callback(symbol, bar)
+                    return True
+                except BarConsumptionSuperseded:
+                    return False
+                finally:
+                    bar_consumption_context.reset(token)
+            return await self._keepwatch_consume_current_recovery(
+                symbol, bar, callback, expected_work)
+        return False
+
+    def _keepwatch_gap_span_allowed(self, symbol: str, previous_ms: int, current_ms: int) -> bool:
+        """Authorize only the exact provider-attested pair owned by this callback."""
+        from project_mai_tai.services.keepwatch_bar_owner import bar_consumption_context
+
+        if not self._keepwatch_enabled or self._stop_event.is_set():
+            return False
+        context = bar_consumption_context.get()
+        if context is None:
+            return False
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            return False
+        work, ledger, epoch, state, identity, owner_task = context
+        if (current_task is not owner_task or work.bar.symbol != symbol
+                or current_ms != work.bar.timestamp_ms
+                or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
+                or self.strategy._symbol_states.get(symbol) is not state
+                or self._line_source_identity.get(symbol) != identity
+                or not self._keepwatch_work_current(symbol, work)
+                or symbol in self._keepwatch_unknown
+                or session_start_ts_ms(self.strategy._now_ms()) != work.anchor_ms):
+            return False
+        proof = ledger._coverage
+        history = self._keepwatch_proven.get(symbol)
+        if (not is_keepwatch_coverage(proof)
+                or history is None or history.symbol != symbol or history.anchor_ms != work.anchor_ms
+                or history.through_ms < current_ms):
+            return False
+        if not self._keepwatch_halt_binding_current(symbol, ledger, history):
+            return False
+        from project_mai_tai.services.keepwatch_halt_proof import attested_empty_interval
+        if not attested_empty_interval(ledger, history, symbol=symbol,
+                anchor_ms=work.anchor_ms, previous_ms=previous_ms, through_ms=current_ms,
+                now_ms=self.strategy._now_ms(), resumed=True):
+            return False
+        request = ledger.prepare()
+        return bool(request is not None and request.current_bar_ms == current_ms
+                    and len(request.bars) >= 2
+                    and request.bars[-2].timestamp_ms == previous_ms
+                    and request.bars[-1].timestamp_ms == current_ms
+                    and (previous_ms, current_ms) in request.spanning_pairs)
+
+    def _keepwatch_halt_binding_current(self, symbol, ledger, history) -> bool:
+        saved = self.__dict__.get("_keepwatch_halt_bindings", {}).get(symbol)
+        return bool(saved is not None and saved[0] is ledger and saved[1] == ledger.epoch
+                    and saved[2] is self.strategy._symbol_states.get(symbol)
+                    and saved[3] == self._line_source_identity.get(symbol)
+                    and saved[4] is ledger._coverage and saved[5] is history
+                    and self._line_sessions.get(symbol) is ledger
+                    and not self._stop_event.is_set()
+                    and ledger.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
+                    and symbol in self._subscription_symbols())
+
+    def _keepwatch_record_halt_binding(self, symbol, ledger, history) -> None:
+        bindings = self.__dict__.setdefault("_keepwatch_halt_bindings", {})
+        for old, binding in tuple(bindings.items()):
+            if (self._line_sessions.get(old) is not binding[0]
+                    or binding[0].anchor_ms != ledger.anchor_ms):
+                bindings.pop(old, None)
+        bindings[symbol] = (ledger, ledger.epoch, self.strategy._symbol_states.get(symbol),
+                            self._line_source_identity.get(symbol), ledger._coverage, history)
+
+    def _keepwatch_empty_tail_proven(self, symbol, previous_ms, through_ms) -> bool:
+        from project_mai_tai.services.keepwatch_halt_proof import attested_empty_interval
+
+        ledger = self._line_sessions.get(symbol)
+        history = self._keepwatch_proven.get(symbol)
+        if (ledger is None or symbol in self._keepwatch_unknown
+                or not self._keepwatch_halt_binding_current(symbol, ledger, history)):
+            return False
+        return attested_empty_interval(ledger, history, symbol=symbol,
+            anchor_ms=ledger.anchor_ms, previous_ms=previous_ms, through_ms=through_ms,
+            now_ms=self.strategy._now_ms(), resumed=False)
+    def _keepwatch_fence_strategy_consumption(self, symbol: str) -> None:
+        from project_mai_tai.services.keepwatch_bar_owner import (
+            BarConsumptionSuperseded, bar_consumption_context,
+        )
+
+        context = bar_consumption_context.get()
+        if context is None:
+            return
+        work, ledger, epoch, state, identity, owner_task = context
+        if work.bar.symbol != symbol or asyncio.current_task() is not owner_task:
+            return
+        if (not self._keepwatch_work_current(symbol, work) or self._stop_event.is_set()
+                or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
+                or session_start_ts_ms(self.strategy._now_ms()) != work.anchor_ms
+                or self.strategy._symbol_states.get(symbol) is not state
+                or self._line_source_identity.get(symbol) != identity):
+            self._keepwatch_unknown.add(symbol)
+            raise BarConsumptionSuperseded(symbol)
+
+    async def _keepwatch_prepare_bar(
+        self, symbol: str, bar: ChartBar, *, history=None, expected_work=None,
+    ) -> bool:
+        from project_mai_tai.market_data.keepwatch_history import history_coverage, project_history
+
+        from project_mai_tai.services.keepwatch_halt_proof import current_history_response
+        now_ms = self.strategy._now_ms()
+        anchor = session_start_ts_ms(now_ms)
+        self._clear_line_pg_poll_fallback(symbol)
+        retained_entry_before = self._keepwatch_entry_allowed(symbol)
+        if self._stop_event.is_set():
+            return False
+        if not anchor <= bar.timestamp_ms < anchor + 57_600_000:
+            return False
+        # Historical REST warmup is not a current provider query or permission.
+        cutoff_ms = bar.timestamp_ms if history is None else history.through_ms
+        if now_ms - cutoff_ms > 180_000:
+            return False
+        if now_ms < bar.timestamp_ms + 60_000:
+            self._keepwatch_hold_unknown(symbol, "minute_not_closed")
+            return False
+        self._sync_line_epochs()
+        ledger = self._line_sessions.get(symbol)
+        if ledger is None:
+            self._keepwatch_hold_unknown(symbol, "observation_epoch_missing")
+            return False
+        state = self.strategy.watchlist_state(symbol)
+        previous_ms = state.bars[-1].timestamp_ms if state.bars else 0
+        receipt = self._keepwatch_proven.get(symbol)
+        if (history is None and receipt is not None and receipt.anchor_ms == anchor
+                and symbol not in self._keepwatch_unknown and ledger._coverage is not None
+                and not ledger._seed_invalidated
+                and previous_ms and previous_ms <= bar.timestamp_ms <= previous_ms + 60_000):
+            return True
+        self._keepwatch_unknown.add(symbol)
+        epoch = ledger.epoch
+        source_identity = self._line_source_identity.get(symbol)
+        try:
+            # Shared REST clients have one worker owner; independent symbols' trade/quote
+            # callbacks remain runnable while this gap/boot-only I/O awaits completion.
+            if history is None:
+                history = await self._read_keepwatch_history_owned(symbol, anchor, bar.timestamp_ms)
+            if not current_history_response(history, symbol=symbol, anchor_ms=anchor,
+                    through_ms=bar.timestamp_ms, now_ms=self.strategy._now_ms()):
+                raise ValueError("foreign KEEPWATCH1 history window")
+            if (self._stop_event.is_set()
+                    or not self._keepwatch_work_current(symbol, expected_work)
+                    or self._line_source_identity.get(symbol) != source_identity
+                    or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
+                    or session_start_ts_ms(self.strategy._now_ms()) != anchor
+                    or symbol not in self._subscription_symbols()
+                    or self.strategy._now_ms() - history.through_ms > 180_000
+                    or self.strategy._symbol_states.get(symbol) is not state):
+                return False
+            pins = self._keepwatch_pins_for(symbol, anchor)
+            projected = project_history(history, pins, now_ms=self.strategy._now_ms())
+            if not self._keepwatch_work_current(symbol, expected_work):
+                return False
+            merged = {row.timestamp_ms: row for row in projected
+                      if row.timestamp_ms <= bar.timestamp_ms}
+            # Keep all owned minute IDs, but choose every value from the same
+            # session producer pin used by callbacks and the restoration ledger.
+            merged.update((stamp, row) for stamp, row in ledger._bars.items()
+                          if anchor <= stamp <= bar.timestamp_ms)
+            inbox = self._keepwatch_bar_inboxes.get(symbol)
+            if inbox is not None:
+                merged.update((stamp, work.bar) for stamp, work in inbox.pending.items()
+                              if work.anchor_ms == anchor and stamp <= bar.timestamp_ms)
+            merged[bar.timestamp_ms] = bar
+            bars = tuple(pins.current(stamp) for stamp in sorted(merged))
+            bar = pins.current(bar.timestamp_ms)
+            prefix = tuple(row for row in bars if row.timestamp_ms < bar.timestamp_ms)
+            old_ms = previous_ms if previous_ms >= anchor else anchor - 60_000
+            filled = sum(old_ms < row.timestamp_ms < bar.timestamp_ms
+                         for row in bars)
+            massive_filled = sum(old_ms < stamp < bar.timestamp_ms
+                                 and stamp not in ledger._bars for stamp in history.massive_ids)
+            for row in prefix:
+                ledger.observe(row)
+            ledger.attest(history_coverage(history, prefix, canonical=True))
+            if ledger.has_unrecovered_traded_gap():
+                self._keepwatch_hold_unknown(symbol, "empty_provider_conflicts_with_trade")
+                self._keepwatch_refresh_current_recovery(symbol)
+                if (expected_work is not None
+                        and self._line_source_identity.get(symbol) is not None
+                        and self._keepwatch_current_recovery_scope(symbol) is None):
+                    from project_mai_tai.services.keepwatch_bar_owner import CurrentBarRecovery
+                    self._keepwatch_current_recoveries[symbol] = CurrentBarRecovery(
+                        symbol, anchor, epoch, source_identity, ledger, state,
+                        self.strategy._atr_period, self._line_membership.get(symbol, 0))
+                    self._keepwatch_refresh_current_recovery(symbol)
+                if self._keepwatch_current_recovery_scope(symbol) is not None:
+                    for row in prefix:
+                        if not state.bars or state.bars[-1].timestamp_ms < row.timestamp_ms:
+                            # Actual retained provider bars can advance historical
+                            # math, but cannot become current receipts or entry replay.
+                            self.strategy.on_current_recovery_bar(
+                                symbol, row, state_only=True, publish=None,
+                                observation_phase="replay")
+                return False
+            # Reconcile before shadow replay: a PG error must not rewind or
+            # replace live indicator/arm/owner state to recover OLD behaviour.
+            if prefix:
+                if state.bars and state.bars[-1].timestamp_ms > prefix[-1].timestamp_ms:
+                    self._keepwatch_hold_unknown(symbol, "prefix_publication_unproven")
+                    return False
+                reconciled = await self._reconcile_line_store(
+                    symbol, ledger, state, prefix[-1].timestamp_ms,
+                    retained_entry_before=retained_entry_before, expected_work=expected_work)
+                if reconciled == "pg_gap_error":
+                    return bool(self._line_pg_poll_fallback_current(symbol) is not None
+                                and self._keepwatch_work_current(symbol, expected_work))
+                if reconciled is not True:
+                    self._keepwatch_hold_unknown(symbol, "prefix_reconciliation_unproven")
+                    return False
+            for row in prefix:
+                if not state.bars or state.bars[-1].timestamp_ms < row.timestamp_ms:
+                    # Shadow math only. A recovered historical flip never sends an order.
+                    self._strategy_on_bar(symbol, row, observation_phase="replay")
+            # Rebuild the prefix before handing the current minute to ANY line consumer.
+            # This preserves the next real flip without replaying a recovered BUY.
+            if prefix and not await self._rebuild_session_line(
+                    symbol, ledger, prefix_through_ms=prefix[-1].timestamp_ms):
+                self._keepwatch_hold_unknown(symbol, "prefix_publication_unproven")
+                return False
+            if (self._stop_event.is_set()
+                    or not self._keepwatch_work_current(symbol, expected_work)
+                    or self._line_source_identity.get(symbol) != source_identity
+                    or self.strategy._symbol_states.get(symbol) is not state
+                    or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
+                    or session_start_ts_ms(self.strategy._now_ms()) != anchor
+                    or symbol not in self._subscription_symbols()):
+                return False
+            ledger.observe_closed_live(bar)
+            ledger.attest(history_coverage(history, bars, canonical=True))
+            if ledger.prepare() is None:
+                self._keepwatch_hold_unknown(symbol, ledger.incomplete_reason)
+                return False
+            # Only this source-owned UNKNOWN fence is retired; cancellation/ownership,
+            # in-flight sends, positions and consumed-fill state are never cleared here.
+            from project_mai_tai.services.keepwatch_halt_proof import (
+                attested_empty_interval, attested_repaired_interval,
+            )
+            left_ms = state.gap_line_left_bar_ms or previous_ms
+            empty_gap = attested_empty_interval(ledger, history, symbol=symbol,
+                anchor_ms=anchor, previous_ms=left_ms, through_ms=bar.timestamp_ms,
+                now_ms=self.strategy._now_ms(), resumed=True)
+            repaired_gap = attested_repaired_interval(ledger, history, symbol=symbol,
+                anchor_ms=anchor, previous_ms=left_ms, through_ms=bar.timestamp_ms,
+                now_ms=self.strategy._now_ms())
+            if ((empty_gap or repaired_gap) and state.gap_hold_active
+                    and left_ms + 60_000 <= state.gap_hold_detected_at_ms
+                    < bar.timestamp_ms + 60_000):
+                state.gap_hold_active = False
+                state.gap_hold_contiguous_bars = 0
+                state.gap_line_carry_pending = False
+                state.line_restore_reset_after_ms = 0
+            self._keepwatch_proven[symbol] = history
+            self._keepwatch_record_halt_binding(symbol, ledger, history)
+            self._keepwatch_unknown.discard(symbol)
+            self._keepwatch_cancel_requested.discard(symbol)
+            self._db_seeded.add(symbol)
+            self._line_source_waiting.pop(symbol, None)
+            self._line_dirty.add(symbol)
+            self._line_rebuild_event.set()
+            empty = sum(old_ms < stamp < bar.timestamp_ms and stamp not in merged
+                        for stamp in history.empty_minutes)
+            logger.info("[V2-KEEPWATCH1] sym=%s outcome=PROVEN filled_minutes=%d "
+                        "massive_filled_minutes=%d both_empty_minutes=%d "
+                        "no_invented_bars=1 gap_wait=%d "
+                        "query_start_ms=%d query_end_ms=%d observed_ns=%d "
+                        "massive_sha256=%s schwab_values_sha256=%s",
+                        symbol, filled, massive_filled, empty, int(state.gap_hold_active),
+                        anchor, history.through_ms + 60_000,
+                        history.completed_ns, history.massive_sha256, history.schwab_sha256)
+            return True
+        except Exception as exc:
+            self._keepwatch_hold_unknown(symbol, type(exc).__name__)
+            logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN "
+                           "reason=provider_or_publication_error error_type=%s entry_allowed=0",
+                           symbol, type(exc).__name__)
+            return False
+
+    async def _keepwatch_history_loop(self) -> None:
+        await run_resilient_loop(
+            stop_event=self._stop_event, tracker=self._loop_health, name="keepwatch_history",
+            iteration=self._keepwatch_history_pass, backoff_secs=self._loop_backoff_secs,
+            logger=logger,
+        )
+
+    def _keepwatch_history_caught_up(self, symbol: str, anchor: int, current: int) -> bool:
+        ledger = self._line_sessions.get(symbol)
+        receipt = self._keepwatch_proven.get(symbol)
+        state = self.strategy._symbol_states.get(symbol)
+        # A same-minute correction can leave both timestamp shortcuts true while
+        # invalidating the covered values. Only skip a still-proven observation.
+        if (symbol in self._keepwatch_unknown or ledger is None or ledger.anchor_ms != anchor
+                or receipt is None or receipt.anchor_ms != anchor or ledger._seed_invalidated
+                or ledger._coverage is None
+                or not is_keepwatch_coverage(ledger._coverage)
+                or ledger.prepare() is None):
+            return False
+        return bool((state is not None and state.bars and state.bars[-1].timestamp_ms >= current)
+                    or receipt.through_ms >= current)
+
+    async def _keepwatch_history_pass(self) -> None:
+        """Missing closed minutes are repaired even if no next Schwab bar arrives.
+
+        This is an owned background task, never called by quote/trade handlers.
+        Its cadence is the existing REST bar-poll cadence; no per-tick provider I/O.
+        """
+        from project_mai_tai.market_data.keepwatch_history import history_coverage, project_history
+
+        from project_mai_tai.services.keepwatch_halt_proof import current_history_response
+        now_ms = self.strategy._now_ms()
+        current = now_ms // 60_000 * 60_000 - 60_000
+        anchor = session_start_ts_ms(now_ms)
+        if self._keepwatch_history_window_open(current):
+            for symbol in sorted(self._subscription_symbols()):
+                self._clear_line_pg_poll_fallback(symbol)
+                if self._keepwatch_history_caught_up(symbol, anchor, current):
+                    continue
+                lock = self._keepwatch_bar_locks.setdefault(symbol, asyncio.Lock())
+                async with lock:
+                    if self._keepwatch_history_caught_up(symbol, anchor, current):
+                        continue
+                    self._sync_line_epochs()
+                    ledger = self._line_sessions.get(symbol)
+                    if ledger is None:
+                        continue
+                    epoch = ledger.epoch
+                    source_identity = self._line_source_identity.get(symbol)
+                    source_state = self.strategy._symbol_states.get(symbol)
+                    self._keepwatch_unknown.add(symbol)
+                    operation = object()
+                    context_token = self._keepwatch_history_context.set(
+                        (operation, (symbol, anchor, epoch)))
+                    try:
+                        history = await self._read_keepwatch_history_owned(symbol, anchor, current)
+                        if not current_history_response(history, symbol=symbol, anchor_ms=anchor,
+                                through_ms=current, now_ms=self.strategy._now_ms()):
+                            raise ValueError("unproven KEEPWATCH1 history availability")
+                        if (self._stop_event.is_set()
+                                or self._line_sessions.get(symbol) is not ledger or ledger.epoch != epoch
+                                or self._line_source_identity.get(symbol) != source_identity
+                                or self.strategy._symbol_states.get(symbol) is not source_state
+                                or session_start_ts_ms(self.strategy._now_ms()) != anchor
+                                or symbol not in self._subscription_symbols()
+                                or self.strategy._now_ms() - current > 180_000):
+                            continue
+                        state = self.strategy.watchlist_state(symbol)
+                        previous = state.bars[-1].timestamp_ms if state.bars else 0
+                        pins = self._keepwatch_pins_for(symbol, anchor)
+                        projected = project_history(history, pins, now_ms=self.strategy._now_ms())
+                        available = {bar.timestamp_ms: bar for bar in projected}
+                        inbox = self._keepwatch_bar_inboxes.get(symbol)
+                        if inbox is not None:
+                            available.update((stamp, work.bar) for stamp, work in inbox.pending.items()
+                                             if work.anchor_ms == anchor and stamp <= current)
+                        recovered = [pins.current(stamp) for stamp in sorted(available) if previous < stamp]
+                        if recovered:
+                            bar = recovered[-1]
+                            if await self._keepwatch_prepare_bar(symbol, bar, history=history):
+                                fresh = bar.timestamp_ms == current
+                                if fresh:
+                                    self._rest_warmup_done.add(symbol)
+                                if fresh:
+                                    # The real inbox owns the live TR exception;
+                                    # a background repair never borrows its context.
+                                    self._enqueue_keepwatch_bar(symbol, bar, "rest")
+                                else:
+                                    await self._handle_bar(symbol, bar, observation_phase="replay")
+                                    self._try_complete_boot_state_restoration(
+                                        self._watchlist, new_symbols=set())
+                        elif not recovered:
+                            # No new candle exists. Attest empty intervals without manufacturing
+                            # a bar, moving the last-real-bar clock, or resetting the indicator.
+                            known = {bar.timestamp_ms: bar for bar in projected}
+                            known.update(ledger._bars)
+                            rows = tuple(pins.current(stamp) for stamp in sorted(known))
+                            for row in rows:
+                                ledger.observe(row)
+                            ledger.attest(history_coverage(history, rows, canonical=True))
+                            if rows and ledger.prepare() is None:
+                                self._keepwatch_hold_unknown(symbol, ledger.incomplete_reason)
+                                continue
+                            self._keepwatch_proven[symbol] = history
+                            self._keepwatch_record_halt_binding(symbol, ledger, history)
+                            self._keepwatch_unknown.discard(symbol)
+                            self._keepwatch_cancel_requested.discard(symbol)
+                            left_ms = state.gap_line_left_bar_ms or previous
+                            if (state.gap_hold_active
+                                    and left_ms + 60_000 <= state.gap_hold_detected_at_ms
+                                    < history.through_ms + 60_000
+                                    and self._keepwatch_empty_tail_proven(symbol, left_ms, current)):
+                                state.gap_hold_active = False
+                                state.gap_hold_contiguous_bars = 0
+                                state.gap_line_carry_pending = False
+                                state.line_restore_reset_after_ms = 0
+                            self._line_source_waiting.pop(symbol, None)
+                            self._line_dirty.add(symbol)
+                            self._line_rebuild_event.set()
+                            logger.info("[V2-KEEPWATCH1] sym=%s outcome=BOTH_EMPTY "
+                                        "through_ms=%d observed_ns=%d gap_wait=%d invented_bars=0 "
+                                        "massive_sha256=%s schwab_values_sha256=%s",
+                                        symbol, current, history.completed_ns, int(state.gap_hold_active),
+                                        history.massive_sha256, history.schwab_sha256)
+                    except Exception as exc:
+                        self._keepwatch_hold_unknown(symbol, type(exc).__name__)
+                        logger.warning("[V2-KEEPWATCH1] sym=%s outcome=UNKNOWN "
+                                       "reason=closed_minute_read_error error_type=%s",
+                                       symbol, type(exc).__name__)
+                    finally:
+                        self._keepwatch_history_scopes.pop(operation, None)
+                        self._keepwatch_history_context.reset(context_token)
+        await sleep_or_stop(
+            self._stop_event, self.settings.strategy_schwab_1m_v2_bar_poll_interval_seconds)
+
+    async def _handle_bar_from_rest(
+        self, symbol: str, bar: ChartBar, *, _keepwatch_prepared: bool = False,
+    ) -> None:
         """REST callback. C3 + buffer-drain routing:
 
         - If REST has caught up to live (bar age <=
@@ -5145,8 +6612,15 @@ class SchwabV2BotService:
           source, or this is a genuine gap fill bar that the streamer
           missed during a disconnect window).
         """
+        if getattr(self, "_keepwatch_enabled", False) and not _keepwatch_prepared:
+            self._enqueue_keepwatch_bar(symbol, bar, "rest")
+            return
         if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(bar.symbol):
             return
+        if getattr(self, "_keepwatch_enabled", False):
+            # A callback may have waited after preparation. Do not let obsolete
+            # work revise producer pins before the post-await consumption fence.
+            self._keepwatch_fence_strategy_consumption(symbol)
         if self._loop_fault_injection_remaining > 0:
             # SPOF Workstream A (v2) controlled survival test (default OFF).
             # Raises on the E1 callback path — v2's real remaining escape — so an
@@ -5202,7 +6676,9 @@ class SchwabV2BotService:
             self._cap_reconstructed_segment(symbol, stage="rest-warmup")
             self._try_complete_boot_state_restoration(self._watchlist, new_symbols=set())
 
-    async def _handle_bar_from_streamer(self, symbol: str, bar: ChartBar) -> None:
+    async def _handle_bar_from_streamer(
+        self, symbol: str, bar: ChartBar, *, _keepwatch_prepared: bool = False,
+    ) -> None:
         """Streamer callback.
 
         Before fresh-source warmup completes for this symbol, streamer bars
@@ -5211,8 +6687,13 @@ class SchwabV2BotService:
         buffer, caps reconstructed state, and retries boot restoration. Stale
         bars from either source remain gated by the same 300-second bound.
         """
+        if getattr(self, "_keepwatch_enabled", False) and not _keepwatch_prepared:
+            self._enqueue_keepwatch_bar(symbol, bar, "streamer")
+            return
         if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(bar.symbol):
             return
+        if getattr(self, "_keepwatch_enabled", False):
+            self._keepwatch_fence_strategy_consumption(symbol)
         self._observe_line_bar(symbol, bar, source_callback=True)
         self._note_line_live_bar(symbol, bar)
         if symbol not in self._warmup_ready_symbols():
@@ -5305,8 +6786,16 @@ class SchwabV2BotService:
                 symbol,
                 latest_ts,
             )
-        for buffered in fresh:
-            await self._handle_bar(symbol, buffered, observation_phase="replay")
+        from project_mai_tai.services.keepwatch_bar_owner import BarConsumptionSuperseded
+
+        for index, buffered in enumerate(fresh):
+            try:
+                await self._handle_bar(symbol, buffered, observation_phase="replay")
+            except BarConsumptionSuperseded:
+                # A fenced callback has not consumed these observations. Preserve
+                # them for the owner retry rather than losing the popped buffer.
+                self._streamer_pending[symbol] = fresh[index:] + self._streamer_pending.get(symbol, [])
+                raise
         if fresh:
             logger.info(
                 "[V2-STREAMER-DRAIN] replayed %d buffered bars for %s "
@@ -5393,6 +6882,9 @@ class SchwabV2BotService:
         boot-hold suppressed CW-v2 entries **BOT-WIDE** for 54 minutes on 2026-07-27 (06:33->07:26)
         until a human restarted. One stale symbol froze every symbol.
         """
+        if getattr(self, "_keepwatch_enabled", False):
+            # LINE=CHART boot/re-add has a no-chase latch, not a fictional consumed fill.
+            return
         strat = self.strategy
         if not getattr(strat, "_cw_armed_segment_safety_enabled", False):
             return
@@ -5757,6 +7249,11 @@ class SchwabV2BotService:
         missing session or failed query returns False and remains retryable, so the boot hold can
         never turn "could not read restoration state" into "restored zero dangerous states".
         """
+        if getattr(self, "_keepwatch_enabled", False):
+            # Boot uses full 04:00 provider history, never the DB count-seed path.
+            receipt = self._keepwatch_proven.get(symbol)
+            return bool(receipt is not None
+                        and receipt.anchor_ms == session_start_ts_ms(self.strategy._now_ms()))
         if symbol in self._db_seeded:
             return True
         if self.session_factory is None:
@@ -5885,6 +7382,8 @@ class SchwabV2BotService:
         *,
         observation_phase: Literal["replay", "live"],
     ) -> None:
+        if getattr(self, "_keepwatch_enabled", False):
+            self._keepwatch_fence_strategy_consumption(symbol)
         self._observe_line_bar(symbol, bar, source_callback=observation_phase == "live")
         await self._ensure_atr_massive_seed_before_bar(symbol, bar.timestamp_ms)
         now_et = _format_eastern(datetime.now(UTC))
@@ -5911,6 +7410,11 @@ class SchwabV2BotService:
         if bar_age_secs <= PERSIST_BAR_AGE_LIMIT_SECONDS:
             await asyncio.to_thread(self._persist_bar, symbol, bar)
 
+        await self._refresh_fresh_sell_before_live_bar(symbol, observation_phase=observation_phase)
+        # Persistence and fresh-SELL evidence can await after preparation. This
+        # synchronous fence is the strategy-consumption linearization boundary.
+        if getattr(self, "_keepwatch_enabled", False):
+            self._keepwatch_fence_strategy_consumption(symbol)
         try:
             draft = self._strategy_on_bar(
                 symbol,
@@ -5919,6 +7423,9 @@ class SchwabV2BotService:
             )
         except Exception:
             logger.exception("schwab_1m_v2 on_bar failed for %s", symbol)
+            from project_mai_tai.services.keepwatch_bar_owner import current_bar_recovery_context
+            if current_bar_recovery_context.get() is not None:
+                raise  # The owner retains failed recovery work; a partial update is not completion.
             return
         self._wake_line_after_ingest(symbol)
         normalized = symbol.upper()
@@ -5976,10 +7483,11 @@ class SchwabV2BotService:
     def _sync_line_epochs(self) -> None:
         if not getattr(self, "_line_restoration_enabled", False):
             return
-        desired = self._watchlist | getattr(self, "_exit_coverage", set())
+        desired = self._observation_symbols() | getattr(self, "_exit_coverage", set())
         anchor = session_start_ts_ms(self.strategy._now_ms())
         for symbol in set(self._line_sessions) - desired:
             retired = self._line_sessions.pop(symbol)
+            self._keepwatch_current_recoveries.pop(symbol, None)
             published = self._line_published.pop(symbol, None)
             self._line_retired[symbol] = deepcopy((retired, published))
             self._line_live_bars.pop(symbol, None)
@@ -5998,7 +7506,12 @@ class SchwabV2BotService:
             old = self._line_sessions.get(symbol)
             if old is None or old.anchor_ms != anchor:
                 self._line_epoch += 1
-                self._line_sessions[symbol] = SessionLineRestoration(symbol, anchor, self._line_epoch)
+                self._line_sessions[symbol] = SessionLineRestoration(
+                    symbol, anchor, self._line_epoch,
+                    producer_pins=(self._keepwatch_pins_for(symbol, anchor)
+                                   if self._keepwatch_enabled else None),
+                    clock=lambda: self.strategy._now_ms())
+                self._keepwatch_current_recoveries.pop(symbol, None)
                 self._line_published.pop(symbol, None)
                 self._line_live_bars.pop(symbol, None)
                 self._line_source_waiting.pop(symbol, None)
@@ -6013,6 +7526,9 @@ class SchwabV2BotService:
                     ledger, published = retired
                     previously_checked = (symbol, ledger.epoch) in self._line_db_checked
                     ledger.epoch = self._line_epoch
+                    if self._keepwatch_enabled:
+                        ledger.producer_pins = self._keepwatch_pins_for(symbol, anchor)
+                        ledger._producer_clock = lambda: self.strategy._now_ms()
                     self._line_sessions[symbol] = ledger
                     self._line_readd_needs_live.add(symbol)
                     if published is not None and published.request.revision == ledger.revision:
@@ -6022,7 +7538,11 @@ class SchwabV2BotService:
                         self._line_published[symbol] = self._line_readd_snapshots[symbol]
                         if previously_checked:
                             self._line_db_checked.add((symbol, ledger.epoch))
-                if not anchored_session_poll_open(self.strategy._now_ms() // 60_000 * 60_000 - 60_000):
+                current = self.strategy._now_ms() // 60_000 * 60_000 - 60_000
+                history_open = (self._keepwatch_history_window_open(current)
+                                if getattr(self, "_keepwatch_enabled", False)
+                                else anchored_session_poll_open(current))
+                if not history_open:
                     self._line_startup_pending.add(symbol)
 
     def _observe_line_bar(self, symbol: str, bar: ChartBar, *, source_callback: bool = False) -> None:
@@ -6030,11 +7550,13 @@ class SchwabV2BotService:
             return
         self._sync_line_epochs()
         ledger = self._line_sessions.get(symbol.upper())
-        if (ledger is None or symbol.upper() not in self._watchlist | self._exit_coverage
+        if (ledger is None or symbol.upper() not in self._observation_symbols() | self._exit_coverage
                 or session_start_ts_ms(bar.timestamp_ms) != ledger.anchor_ms):
             return
         try:
             revision = ledger.revision
+            if ledger.producer_pins is not None:
+                bar = ledger.producer_pins.accept(bar, now_ms=self.strategy._now_ms())
             state = self.strategy._symbol_states.get(ledger.symbol)
             fills_gap = bool(
                 getattr(self.strategy, "_gap_line_carry_enabled", False) and state is not None
@@ -6071,14 +7593,18 @@ class SchwabV2BotService:
                     self._line_reconcile_pending.add(ledger.symbol)
                 self._line_dirty.add(ledger.symbol)
                 self._line_rebuild_event.set()
-            if (closed_live and ledger.symbol in self._line_startup_pending
-                    and anchored_session_poll_open(bar.timestamp_ms)
-                    and bar.timestamp_ms >= ledger.anchor_ms + 3 * 3_600_000):
+            history_open = (self._keepwatch_history_window_open(bar.timestamp_ms)
+                            if getattr(self, "_keepwatch_enabled", False)
+                            else (anchored_session_poll_open(bar.timestamp_ms)
+                                  and bar.timestamp_ms >= ledger.anchor_ms + 3 * 3_600_000))
+            if closed_live and ledger.symbol in self._line_startup_pending and history_open:
                 self._line_startup_pending.discard(ledger.symbol)
-                self._queue_line_source_event(ledger.symbol, "first_0700_closed")
+                if not getattr(self, "_keepwatch_enabled", False):
+                    self._queue_line_source_event(ledger.symbol, "first_0700_closed")
             if closed_live and ledger.symbol in self._line_readd_pending:
                 self._request_line_repairs({ledger.symbol})
             self._line_repair_maintenance()
+            self._keepwatch_refresh_current_recovery(symbol)
         except ValueError:
             ledger.invalidate_coverage()
             logger.exception("[V2-LINE-RESTORE] sym=%s outcome=invalid_bar entry_allowed=0", symbol)
@@ -6102,7 +7628,12 @@ class SchwabV2BotService:
         reconfirmed |= {sym for sym in selected & previous
                         if identities.get(sym) and self._line_confirmed_identity.get(sym)
                         and identities[sym] != self._line_confirmed_identity[sym]}
+        if getattr(self, "_keepwatch_enabled", False):
+            # Scanner generations revoke buys, not an uninterrupted line's source identity.
+            reconfirmed = selected - set(self._line_membership)
         for sym in previous - selected:
+            if getattr(self, "_keepwatch_enabled", False):
+                continue
             # Protected feed retention must not admit an old in-flight scanner event.
             self._line_source_pending.pop(sym, None)
             self._line_source_identity[sym] = self._line_source_identity.get(sym, 0) + 1
@@ -6127,6 +7658,8 @@ class SchwabV2BotService:
         return reconfirmed
 
     def _request_line_repairs(self, symbols: set[str]) -> None:
+        if getattr(self, "_keepwatch_enabled", False):
+            return  # Full-session proof is owned by the serialized bar pre-consumption path.
         if getattr(self, "_restart_membership_replay", False):
             return
         for symbol in symbols:
@@ -6171,7 +7704,9 @@ class SchwabV2BotService:
     def _queue_line_source_event(
         self, symbol: str, reason: str, *, event_token: int = 0, event_revision: int = 0,
     ) -> bool:
-        covered = self._watchlist | (self._exit_coverage if reason == "gap_resume" else set())
+        if getattr(self, "_keepwatch_enabled", False):
+            return False
+        covered = self._observation_symbols() | (self._exit_coverage if reason == "gap_resume" else set())
         if not self._line_restoration_enabled or symbol not in covered:
             return False
         context = self._line_source_request(symbol)
@@ -6212,7 +7747,7 @@ class SchwabV2BotService:
             ledger = self._line_sessions.get(symbol)
             if (ledger is None or ledger.epoch != repair.epoch
                     or repair.membership != self._line_membership.get(symbol, 0)
-                    or symbol not in self._watchlist):
+                    or symbol not in self._observation_symbols()):
                 continue
             if repair.fallback_due(now):
                 repair.fallback = True
@@ -6233,6 +7768,16 @@ class SchwabV2BotService:
         )
 
     async def _line_source_events_pass(self) -> None:
+        if getattr(self, "_keepwatch_enabled", False):
+            # Only the serialized pre-consumption path may replace KEEPWATCH1 proof.
+            if not self._line_source_pending:
+                try:
+                    await asyncio.wait_for(self._line_source_event.wait(), 1.0)
+                except TimeoutError:
+                    return
+            self._line_source_event.clear()
+            self._line_source_pending.clear()
+            return
         self._line_repair_maintenance()
         if not self._line_source_pending:
             pending = any(not repair.published and repair.attempts < 5
@@ -6325,7 +7870,7 @@ class SchwabV2BotService:
         return bool(ledger is not None and ledger.epoch == epoch
                     and anchored_session_poll_open(self.strategy._now_ms())
                     and ledger.anchor_ms == session_start_ts_ms(self.strategy._now_ms())
-                    and symbol in self._watchlist | (self._exit_coverage if allow_exit else set())
+                    and symbol in self._observation_symbols() | (self._exit_coverage if allow_exit else set())
                     and self._line_source_identity.get(symbol) == identity)
 
     def _line_snapshot_current(self, symbol: str) -> bool:
@@ -6346,10 +7891,13 @@ class SchwabV2BotService:
         )
 
     def _line_buy_ready(self, symbol: str) -> bool:
+        self._line_pg_poll_fallback_current(symbol)
+        if self._keepwatch_current_publication(symbol) is not None:
+            return self._entry_membership_allowed(symbol)
         state = self.strategy._symbol_states.get(symbol)
         if state is not None and state.line_live_fallback:
             ledger = self._line_sessions.get(symbol)
-            return bool(symbol in self._watchlist and state.bars
+            return bool(self._entry_membership_allowed(symbol) and state.bars
                         and ledger is not None and not ledger.has_unrecovered_traded_gap()
                         and state.bars[-1].timestamp_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000
                         and session_start_ts_ms(state.bars[-1].timestamp_ms)
@@ -6365,12 +7913,17 @@ class SchwabV2BotService:
         state = self.strategy._symbol_states.get(symbol)
         result = self._line_published.get(symbol)
         clean = True
-        if result is not None and result.request.spanning_pairs:
+        verified_sparse = bool(
+            getattr(self, "_keepwatch_enabled", False) and ledger is not None
+            and self._keepwatch_halt_binding_current(
+                symbol, ledger, self._keepwatch_proven.get(symbol))
+            and ledger.prepare() is not None)
+        if result is not None and result.request.spanning_pairs and not verified_sparse:
             current = result.request.current_bar_ms
             live = self._line_live_bars.get(symbol, set())
             clean = all(current - offset * 60_000 in live
                         for offset in range(2 * self.strategy._atr_period))
-        return bool(symbol in self._watchlist and self._line_snapshot_current(symbol)
+        return bool(self._entry_membership_allowed(symbol) and self._line_snapshot_current(symbol)
                     and ledger.current_bar_ms == self.strategy._now_ms() // 60_000 * 60_000 - 60_000
                     and state.atr_state in {"long", "short"}
                     and state.atr_trail is not None and math.isfinite(state.atr_trail)
@@ -6386,6 +7939,11 @@ class SchwabV2BotService:
         live.intersection_update(ts for ts in live.copy() if ts >= current - 600_000)
 
     def _line_version(self, symbol: str) -> str:
+        self._line_pg_poll_fallback_current(symbol)
+        current = self._keepwatch_current_publication(symbol)
+        if current is not None:
+            return (f"current:{current.epoch}:{current.ledger.revision}:"
+                    f"{current.publication[0]}:{current.state.line_restore_reset_after_ms}")
         state = self.strategy._symbol_states.get(symbol)
         if state is not None and state.line_live_fallback and state.bars:
             return f"live:{self._line_sessions[symbol].epoch}:{state.bars[-1].timestamp_ms}"
@@ -6475,10 +8033,19 @@ class SchwabV2BotService:
         if proof is None:
             self._line_source_waiting[symbol] = epoch
             return False
+        if ledger.producer_pins is not None and (
+                proof.complete is not True
+                or proof.source not in {"schwab_rest_full_session", "massive_preopen_schwab_session"}
+                or proof.closed_ids != tuple(bar.timestamp_ms for bar in bars)
+                or proof.bars_sha256 != history_fingerprint(bars)):
+            ledger.incomplete_reason = "source_values_unproven"
+            return False
         was_warmed = symbol in self._warmup_ready_symbols()
         state = self.strategy.watchlist_state(symbol)
         for bar in bars:
             ledger.observe(bar)
+            if ledger.producer_pins is not None:
+                bar = ledger.producer_pins.current(bar.timestamp_ms)
             # Massive's pre-07:00 seed belongs only to the ATR math ledger.
             if (getattr(proof, "source", None) == "massive_preopen_schwab_session"
                     and bar.timestamp_ms < ledger.anchor_ms + 3 * 3_600_000):
@@ -6493,6 +8060,13 @@ class SchwabV2BotService:
                     self._strategy_on_bar(symbol, bar, observation_phase=phase)
                 finally:
                     state.line_live_fallback = fallback
+        if ledger.producer_pins is not None:
+            ledger.raw_producer_coverage = proof
+            proof = replace(proof, source=PRODUCER_PROJECTION_SOURCE,
+                raw_source=proof.source, raw_bars_sha256=proof.bars_sha256,
+                raw_closed_ids=proof.closed_ids,
+                bars_sha256=history_fingerprint(
+                    tuple(ledger._bars[stamp] for stamp in proof.closed_ids)))
         ledger.attest(proof)
         self._line_readd_needs_live.discard(symbol)
         self._line_reconcile_pending.add(symbol)
@@ -6543,68 +8117,180 @@ class SchwabV2BotService:
             return 0
         return segment if self._line_retry_seed_candidate(state, indicator) == segment else 0
 
-    async def _rebuild_session_line(self, symbol: str, ledger: SessionLineRestoration) -> bool:
+    def _clear_line_pg_poll_fallback(self, symbol: str) -> None:
+        token = getattr(self, "_line_pg_poll_fallbacks", {}).pop(symbol, None)
+        if token is not None and self.strategy._symbol_states.get(symbol) is token["state"]:
+            token["state"].line_live_shadow = token["shadow_before"]
+            token["state"].line_live_fallback = token["fallback_before"]
+
+    def _line_pg_poll_fallback_current(self, symbol: str):
+        token = getattr(self, "_line_pg_poll_fallbacks", {}).get(symbol)
+        if token is None:
+            return None
+        ledger = token["ledger"]
+        now = self.strategy._now_ms()
+        traded_conflict = False
+        if ledger.revision != token["checked_revision"]:
+            traded_conflict = ledger.has_unrecovered_traded_gap()
+            if not traded_conflict:
+                token["checked_revision"] = ledger.revision
+        work = token["work"]
+        work_current = True
+        if work is not None:
+            inbox = self._keepwatch_bar_inboxes.get(symbol)
+            pending = inbox.pending.get(work.bar.timestamp_ms) if inbox is not None else None
+            observed = ledger._closed_live.get(work.bar.timestamp_ms)
+            fields = ("timestamp_ms", "open", "high", "low", "close", "volume")
+            work_current = (pending is work or (pending is None and observed is not None
+                and all(getattr(observed, key) == getattr(work.bar, key) for key in fields)))
+        if (self._stop_event.is_set() or now < token["started_ms"] or now >= token["deadline_ms"]
+                or not work_current
+                or self._line_sessions.get(symbol) is not ledger or ledger.epoch != token["epoch"]
+                or session_start_ts_ms(now) != ledger.anchor_ms
+                or self.strategy._symbol_states.get(symbol) is not token["state"]
+                or self._line_source_identity.get(symbol) != token["source_identity"]
+                or self._keepwatch_bar_quarantine.get(symbol) == ledger.anchor_ms
+                or traded_conflict):
+            self._clear_line_pg_poll_fallback(symbol)
+            return None
+        return token
+
+    def _activate_line_pg_poll_fallback(self, symbol: str, ledger, state,
+                                        *, retained_entry_before: bool, expected_work=None) -> None:
+        if not getattr(self, "_keepwatch_enabled", False):
+            return
+        now = self.strategy._now_ms()
+        interval_ms = int(self.settings.strategy_schwab_1m_v2_bar_poll_interval_seconds * 1000)
+        deadline = min(now + interval_ms, ledger.anchor_ms + 57_600_000)
+        if (interval_ms <= 0 or deadline <= now or self._stop_event.is_set()
+                or ledger.has_unrecovered_traded_gap()):
+            return
+        for pending in tuple(self._line_pg_poll_fallbacks):
+            self._line_pg_poll_fallback_current(pending)
+        self._clear_line_pg_poll_fallback(symbol)
+        self._line_pg_poll_fallbacks[symbol] = {
+            "ledger": ledger, "state": state, "epoch": ledger.epoch,
+            "source_identity": self._line_source_identity.get(symbol),
+            "started_ms": now, "deadline_ms": deadline,
+            "shadow_before": state.line_live_shadow, "fallback_before": state.line_live_fallback,
+            "retained_entry_before": retained_entry_before,
+            "work": expected_work,
+            "checked_revision": ledger.revision,
+        }
+        state.line_live_shadow = False
+        state.line_live_fallback = True
+
+    def _log_line_pg_gap_error(self, symbol: str, *, fallback: bool) -> None:
+        counts = self._line_pg_error_log
+        counts["failures"] += 1
+        counts["fallbacks"] += int(fallback)
+        now = self._line_pg_error_log_clock()
+        if now < counts["next_log_at"]:
+            counts["suppressed"] += 1
+            return
+        counts["next_log_at"] = now + 60.0
+        counts["emitted"] += 1
+        logger.warning("[V2-LINE-RESTORE] [V2-LINE-PG-FALLBACK] sym=%s "
+                       "outcome=tape_unreadable fallback=%s failures=%d fallbacks=%d "
+                       "emitted=%d suppressed=%d db_evidence=UNKNOWN native_permission=UNKNOWN",
+                       symbol, "OLD_LIVE_POLL" if fallback else "REFUSED_CURRENT_FENCE",
+                       counts["failures"], counts["fallbacks"], counts["emitted"],
+                       counts["suppressed"], exc_info=True)
+
+    async def _reconcile_line_store(self, symbol: str, ledger, state, rebuild_current: int,
+                                    *, retained_entry_before: bool = False, expected_work=None):
+        reconcile = bool(symbol in self._line_reconcile_pending
+                         or (symbol, ledger.epoch) not in self._line_db_checked)
+        source_proof = ledger._coverage
+        if self.session_factory is None or source_proof is None or not reconcile:
+            return True
+        self._line_reconcile_pending.add(symbol)
+        source_revision = ledger.revision
+        source_epoch = ledger.epoch
+        source_identity = self._line_source_identity.get(symbol)
+        reset_fence = state.line_restore_reset_after_ms
+        state_bar = state.bars[-1] if state.bars else None
+
+        def current(revision):
+            return (not self._stop_event.is_set()
+                    and self._line_sessions.get(symbol) is ledger and ledger.epoch == source_epoch
+                    and self._keepwatch_work_current(symbol, expected_work)
+                    and ledger.revision == revision
+                    and ledger._coverage is source_proof
+                    and self._line_source_identity.get(symbol) == source_identity
+                    and session_start_ts_ms(self.strategy._now_ms()) == ledger.anchor_ms
+                    and self.strategy._symbol_states.get(symbol) is state
+                    and (state.bars[-1] if state.bars else None) is state_bar
+                    and state.line_restore_reset_after_ms == reset_fence)
+        try:
+            stored = await asyncio.wait_for(asyncio.to_thread(
+                self._read_line_session_bars, symbol, ledger.anchor_ms, rebuild_current,
+            ), 6.0)
+        except Exception:
+            if current(source_revision):
+                ledger.invalidate_coverage()
+            logger.exception("[V2-LINE-RESTORE] sym=%s outcome=stored_history_unreadable "
+                             "entry_allowed=0", symbol)
+            return False
+        if not current(source_revision):
+            return False
+        for bar in stored:
+            ledger.observe(bar)
+        pairs = tuple(pair for pair in ledger.gap_pairs() if pair[1] <= rebuild_current)
+        if pairs:
+            evidence_revision = ledger.revision
+            try:
+                traded = await asyncio.wait_for(asyncio.to_thread(
+                    self._read_line_gap_trades, symbol, pairs,
+                ), 6.0)
+            except Exception as exc:
+                rate_limited = (getattr(self, "_keepwatch_enabled", False)
+                                and isinstance(exc, (SQLAlchemyError, TimeoutError)))
+                if not rate_limited and getattr(self, "_keepwatch_enabled", False):
+                    logger.exception("[V2-LINE-RESTORE] sym=%s outcome=tape_unreadable "
+                                     "fallback=OLD_LIVE_POLL_IF_CURRENT", symbol)
+                elif not rate_limited:
+                    logger.exception("[V2-LINE-RESTORE] sym=%s outcome=tape_unreadable "
+                                     "entry_allowed=0", symbol)
+                if not current(evidence_revision):
+                    if rate_limited:
+                        self._log_line_pg_gap_error(symbol, fallback=False)
+                    return False
+                ledger.invalidate_coverage()
+                self._line_db_checked.discard((symbol, ledger.epoch))
+                if not isinstance(exc, (SQLAlchemyError, TimeoutError)):
+                    return False
+                self._activate_line_pg_poll_fallback(symbol, ledger, state,
+                    retained_entry_before=retained_entry_before, expected_work=expected_work)
+                if rate_limited:
+                    self._log_line_pg_gap_error(symbol, fallback=symbol in self._line_pg_poll_fallbacks)
+                return "pg_gap_error"
+            if not current(evidence_revision):
+                return False
+            for pair in traded:
+                ledger.mark_traded_pair(pair)
+        self._line_db_checked.add((symbol, ledger.epoch))
+        self._line_reconcile_pending.discard(symbol)
+        return True
+
+    async def _rebuild_session_line(
+        self, symbol: str, ledger: SessionLineRestoration, *, prefix_through_ms: int | None = None,
+    ) -> bool:
         if symbol in self._line_readd_needs_live:
             return False
         state = self.strategy._symbol_states.get(symbol)
         if state is None or not state.bars:
             return False
+        rebuild_current = ledger.current_bar_ms if prefix_through_ms is None else prefix_through_ms
+        if prefix_through_ms is not None and (
+                not getattr(self, "_keepwatch_enabled", False)
+                or state.bars[-1].timestamp_ms != prefix_through_ms):
+            return False
         reset_fence = state.line_restore_reset_after_ms
-        source_revision = ledger.revision
+        if await self._reconcile_line_store(symbol, ledger, state, rebuild_current) is not True:
+            return False
         source_proof = ledger._coverage
         source_identity = self._line_source_identity.get(symbol)
-        reconcile = bool(symbol in self._line_reconcile_pending
-                         or (symbol, ledger.epoch) not in self._line_db_checked)
-        if self.session_factory is not None and source_proof is not None and reconcile:
-            # A stale attempt must leave this event unfinished, including its tape read.
-            self._line_reconcile_pending.add(symbol)
-            try:
-                stored = await asyncio.wait_for(asyncio.to_thread(
-                    self._read_line_session_bars, symbol, ledger.anchor_ms, ledger.current_bar_ms,
-                ), 6.0)
-            except Exception:
-                ledger.invalidate_coverage()
-                logger.exception("[V2-LINE-RESTORE] sym=%s outcome=stored_history_unreadable "
-                                 "entry_allowed=0", symbol)
-                return False
-            if (self._line_sessions.get(symbol) is not ledger or ledger.revision != source_revision
-                    or ledger._coverage is not source_proof
-                    or self._line_source_identity.get(symbol) != source_identity
-                    or session_start_ts_ms(self.strategy._now_ms()) != ledger.anchor_ms
-                    or self.strategy._symbol_states.get(symbol) is not state
-                    or not state.bars or state.bars[-1].timestamp_ms != ledger.current_bar_ms
-                    or state.line_restore_reset_after_ms != reset_fence):
-                return False
-            for bar in stored:
-                ledger.observe(bar)
-            # Do not rewrite the provider's IDs/value fingerprint to certify
-            # DB additions or corrections. Unreconciled sources remain held.
-            pairs = ledger.gap_pairs()
-            if pairs:
-                evidence_revision = ledger.revision
-                try:
-                    traded = await asyncio.wait_for(asyncio.to_thread(
-                        self._read_line_gap_trades, symbol, pairs,
-                    ), 6.0)
-                except Exception:
-                    ledger.invalidate_coverage()
-                    logger.exception("[V2-LINE-RESTORE] sym=%s outcome=tape_unreadable "
-                                     "entry_allowed=0", symbol)
-                    return False
-                if (self._line_sessions.get(symbol) is not ledger
-                        or ledger.revision != evidence_revision
-                        or ledger._coverage is not source_proof
-                        or self._line_source_identity.get(symbol) != source_identity
-                        or session_start_ts_ms(self.strategy._now_ms()) != ledger.anchor_ms
-                        or self.strategy._symbol_states.get(symbol) is not state
-                        or not state.bars or state.bars[-1].timestamp_ms != ledger.current_bar_ms
-                        or state.line_restore_reset_after_ms != reset_fence):
-                    return False
-                for pair in traded:
-                    ledger.mark_traded_pair(pair)
-            # No await between the final successful reconciliation fence and completion.
-            self._line_db_checked.add((symbol, ledger.epoch))
-            self._line_reconcile_pending.discard(symbol)
         previous = self._line_published.get(symbol)
         if self._line_snapshot_current(symbol):
             return True
@@ -6614,6 +8300,7 @@ class SchwabV2BotService:
             lambda request: (build_session_line(request, period, factor, previous=mathematical_previous)
                              if mathematical_previous is not None
                              else build_session_line(request, period, factor)),
+            through_ms=prefix_through_ms,
         )
         if (result is None or self._line_sessions.get(symbol) is not ledger
                 or self.strategy._symbol_states.get(symbol) is not state
@@ -6622,13 +8309,17 @@ class SchwabV2BotService:
                 or state.line_restore_reset_after_ms != reset_fence):
             return False
         seed_segment = await self._persist_line_retry_seed(state, dict(result.snapshot.indicator))
+        if result.request.current_bar_ms in self._line_live_bars.get(symbol, set()):
+            await self._refresh_fresh_sell_before_live_bar(symbol, observation_phase="live")
         if (self._line_sessions.get(symbol) is not ledger
+                or ledger._coverage is not source_proof
+                or self._line_source_identity.get(symbol) != source_identity
                 or self.strategy._symbol_states.get(symbol) is not state
                 or session_start_ts_ms(self.strategy._now_ms()) != ledger.anchor_ms
                 or state.bars[-1].timestamp_ms != result.request.current_bar_ms
                 or state.line_restore_reset_after_ms != reset_fence):
             return False
-        snapshot = ledger.admit(result)
+        snapshot = ledger.admit(result, through_ms=prefix_through_ms)
         if snapshot is None:
             return False
         indicator = dict(snapshot.indicator)
@@ -6642,8 +8333,16 @@ class SchwabV2BotService:
         confirmations = {key: value for key, value in self._confirmation_bar_states.items()
                          if key[0] != symbol}
         confirmations.update({(symbol, ts): value for ts, value in snapshot.confirmation if ts in live})
-        changed_history = bool(previous is None or previous.snapshot.reset_after_ms != reset_fence
-                               or result.request.bars[:len(previous.request.bars)] != previous.request.bars)
+        same_history = same_line_price_history if self._keepwatch_enabled else eq
+        changed_history = bool(
+            previous is None or previous.snapshot.reset_after_ms != reset_fence
+            or not same_history(result.request.bars[:len(previous.request.bars)], previous.request.bars)
+            or (self._keepwatch_enabled and (
+                previous.request.epoch != result.request.epoch
+                or previous.request.spanning_pairs != tuple(
+                    pair for pair in result.request.spanning_pairs
+                    if pair[1] <= previous.request.current_bar_ms)))
+        )
         confirmed_sell = int(indicator["atr_short_flip_bar_ts"])
         if not confirmed_sell:
             prior_state = None
@@ -6669,6 +8368,12 @@ class SchwabV2BotService:
             current_bar.low, current_bar.close, current_bar.volume,
         )
         self.strategy._restore_atr_indicator_snapshot(state, indicator)
+        if getattr(self, "_keepwatch_enabled", False):
+            if previous is None and indicator["atr_state"] != "short":
+                self._keepwatch.wait_for_sell(symbol, self.strategy._now_ms())
+            if result.request.current_bar_ms in live:
+                self._keepwatch.observe_line(symbol, str(indicator["atr_state"]),
+                                            result.request.current_bar_ms + 60_000)
         if previous is None:
             self._cap_reconstructed_segment(symbol, stage="first-line-publication")
         if seed_segment and self._line_retry_seed_candidate(state, indicator) == seed_segment:
@@ -6677,12 +8382,15 @@ class SchwabV2BotService:
                         "reason=restored_sell_identity", symbol, seed_segment)
         if not state.gap_hold_active:
             state.gap_line_carry_pending = False
-        # The hold/cancellation and ten clean-bar wait remain intact. Only
-        # complete-session publication replaces the reseeded mathematics.
+        # Legacy hold timing is unchanged. KEEPWATCH1's pre-consumption path
+        # releases only its proven data-gap hold, never an ownership barrier.
         state.line_restore_reset_after_ms = 0
         self._confirmation_bar_states = confirmations
         self._line_published[symbol] = result
+        if symbol in self._keepwatch_bar_events:
+            self._keepwatch_bar_events[symbol].set()
         was_fallback = state.line_live_fallback
+        self._clear_line_pg_poll_fallback(symbol)
         state.line_live_shadow = False
         state.line_live_fallback = False
         repair = self._line_repairs.get(symbol)
@@ -6694,8 +8402,15 @@ class SchwabV2BotService:
         adjacent_live = bool(
             not was_fallback and previous is not None and previous.request.epoch == result.request.epoch
             and previous.snapshot.reset_after_ms == reset_fence
-            and previous.request.bars == result.request.bars[:-1]
-            and previous.request.current_bar_ms + 60_000 == result.request.current_bar_ms
+            and not changed_history
+            and same_history(previous.request.bars, result.request.bars[:-1])
+            and (previous.request.current_bar_ms + 60_000 == result.request.current_bar_ms
+                 or (getattr(self, "_keepwatch_enabled", False)
+                     and source_proof is not None
+                     and is_keepwatch_coverage(source_proof)
+                     and all(stamp in source_proof.empty_minutes for stamp in range(
+                         previous.request.current_bar_ms + 60_000,
+                         result.request.current_bar_ms, 60_000))))
             and result.request.current_bar_ms in live
             and 0 <= self.strategy._now_ms() - result.request.current_bar_ms <= 180_000
         )
@@ -6853,11 +8568,19 @@ class SchwabV2BotService:
     ):
         """Classify real strategy bars while preserving lightweight test-double compatibility."""
 
-        observed = getattr(self.strategy, "on_observed_bar", None)
-        if callable(observed):
-            result = observed(symbol, bar, observation_phase=observation_phase)
+        self._line_pg_poll_fallback_current(symbol)
+        from project_mai_tai.services.keepwatch_bar_owner import current_bar_recovery_context
+        recovery = current_bar_recovery_context.get()
+        if recovery is not None:
+            result = self.strategy.on_current_recovery_bar(
+                symbol, bar, state_only=recovery[0] or observation_phase != "live",
+                publish=recovery[1])
         else:
-            result = self.strategy.on_bar(symbol, bar)
+            observed = getattr(self.strategy, "on_observed_bar", None)
+            if callable(observed):
+                result = observed(symbol, bar, observation_phase=observation_phase)
+            else:
+                result = self.strategy.on_bar(symbol, bar)
         if (observation_phase == "live"
                 and getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_false_flip_enabled", False) is True):
             state = self.strategy._symbol_states.get(symbol.upper())
@@ -7478,6 +9201,12 @@ class SchwabV2BotService:
                 and 0.0 <= print_age_s <= self._gap_hold_detect_seconds
             ):
                 continue
+            if getattr(self, "_keepwatch_enabled", False):
+                through = now_ms // 60_000 * 60_000 - 60_000
+                if self._keepwatch_empty_tail_proven(symbol, last_bar_ms, through):
+                    continue
+                self._keepwatch_hold_unknown(symbol, "live_bar_overdue_with_prints")
+                # UNKNOWN retains the real cancel/reset/recovery transition.
             logger.warning(
                 "[V2-GAP-DETECT] %s last_bar_close_age_s=%.1f last_print_age_s=%.1f "
                 "detect_seconds=%.1f",
@@ -7628,6 +9357,36 @@ class SchwabV2BotService:
             reason,
         )
 
+    def _brokerdecides1_before_entry_publish(self, draft, account) -> None:
+        from project_mai_tai.brokerdecides1_entry import draft_uses_exception, prepare_send
+
+        if draft_uses_exception(self.strategy, draft):
+            from project_mai_tai.brokerdecides1_prewire_authority import FreshJournalCapability, SIDECAR
+
+            if type(getattr(draft, SIDECAR, None)) is not FreshJournalCapability:
+                raise ValueError("brokerdecides1_exception_fresh_journal_UNKNOWN")
+
+        prepare_send(self.strategy, draft, account)
+
+    def _brokerdecides1_publication_boundary(self, draft, account):
+        from project_mai_tai.brokerdecides1_publication_callbacks import PublicationCallbacks
+        from project_mai_tai.brokerdecides1_entry import draft_uses_exception
+
+        if not draft_uses_exception(self.strategy, draft):
+            return None
+
+        adapter = self.__dict__.get("_brokerdecides1_publication_callbacks")
+        if adapter is None:
+            adapter = PublicationCallbacks(self)
+            self._brokerdecides1_publication_callbacks = adapter
+        return adapter.bind(draft, account)
+
+    async def _brokerdecides1_prewire_refusal(self, boundary, proof):
+        adapter = self.__dict__.get("_brokerdecides1_publication_callbacks")
+        if adapter is None:
+            raise ValueError("prewire_callback_owner_UNKNOWN")
+        return await adapter.refused(boundary, proof)
+
     async def _maybe_emit(self, draft, emitter=None) -> str:  # type: ignore[no-untyped-def]
         """Emit a draft through the entry-window gate + ATR-only belt + EH-routing chokepoint.
         `emitter` defaults to the primary (Schwab) emitter; the dual-broker fan-out passes the
@@ -7691,7 +9450,7 @@ class SchwabV2BotService:
         if (
             getattr(draft, "intent_type", "") == "open"
             and _sym in getattr(self, "_exit_coverage", set())
-            and _sym not in self._watchlist
+            and not self._entry_membership_allowed(_sym)
         ):
             logger.info(
                 "[V2-ENTRY-OFF-WATCHLIST-BLOCK] dropped open intent symbol=%s reason=%s — "

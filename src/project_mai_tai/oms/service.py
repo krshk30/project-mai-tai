@@ -22,6 +22,7 @@ from sqlalchemy import desc, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from project_mai_tai.broker_adapters.alpaca import AlpacaPaperBrokerAdapter
+from project_mai_tai.buy_price_floor import buy_intent_allowed
 from project_mai_tai.oms.bot_control_scope import is_controlled_strategy
 from project_mai_tai.broker_adapters.target_price import target_limit_price
 from project_mai_tai.broker_adapters.protocols import (
@@ -67,6 +68,7 @@ from project_mai_tai.events import (
 )
 from project_mai_tai.fanout_identity import carry_fanout_identity
 from project_mai_tai.log import configure_logging
+from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
 from project_mai_tai.oms.store import OmsStore
 from project_mai_tai.oms.price_binding import stored_price
 from project_mai_tai.oms.webull_attach_riskoff import atr_handoff_call
@@ -615,6 +617,8 @@ def _control_managed_exit_owner(method):
 def _refresh_working_cache_after_intent(method):
     @wraps(method)
     async def refreshed(self, event):
+        if not buy_intent_allowed(event):
+            return []  # Retain waiting state: no mirror finalization or cache/DB refresh.
         if str(getattr(event.payload, "strategy_code", "")).strip().lower() == "momentum_warn_live":
             return await method(self, event)
         try:
@@ -1068,6 +1072,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         self._oco_exit_poll_at: dict[tuple[str, str], float] = {}
         self._manual_stop_symbols: set[str] = set()
         self._manual_stop_loaded_at: float = -1e9
+        self._manual_stop_session_start: datetime | None = None
         # Bug A follow-up: native stop-guard (re)arms that reverse-rejected because the
         # just-cancelled prior guard / entry fill had not settled at the broker. Keyed by
         # hard-stop key -> (strategy_id, broker_account_id) so the periodic sync can re-arm
@@ -1251,6 +1256,9 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             writer = self.__dict__.get("_webull_identity_writer")
             if writer is not None:
                 await writer.close()
+            from project_mai_tai.brokerdecides1_sync import shutdown_refresh
+
+            await shutdown_refresh(self)
 
         await self._publish_heartbeat(
             "stopping",
@@ -1888,7 +1896,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         or existing.symbol != request.symbol or existing.side != request.side
                         or existing.quantity != request.quantity):
                     raise RuntimeError("KILLSW1:existing_entry_identity_changed")
-                return existing.id
+                return None  # Existing rows are never this call's unsent cleanup authority.
             order = self.store.get_or_create_order(
                 unit, intent=parent, strategy_id=parent.strategy_id,
                 broker_account_id=parent.broker_account_id,
@@ -1900,7 +1908,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             order.submitted_at = None
             return order.id
 
-        await self._run_db(prepare)
+        return await self._run_db(prepare)
 
     @_refresh_working_cache_after_intent
     @_finalize_retained_mirror_after_intent
@@ -1931,6 +1939,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         if self._rpg_external_retry(event):
             return []
         strategy_code = str(event.payload.strategy_code).strip().lower()
+        orb_admission_event = event
         reserve1_dispatch = self.__dict__.get("_reserve1_hard_stop_dispatch", {}).pop(
             event.event_id, None,
         ) == event.model_dump_json()
@@ -2212,34 +2221,36 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                             return [order_event]
                     if event.payload.metadata.get("orb_schwab_reprice") == "true":
                         if target is None:
-                            reason = "orb_schwab_reprice_no_working_parent"
-                            self.store.mark_intent_refused(
-                                intent, origin="skipped_before_submit", code=reason
-                            )
-                            order_event = self._build_rejected_event(
-                                event, intent.id, reason=reason
+                            try:
+                                event = await self._orb_pastlevel_continue(
+                                    session, intent, event, broker_account)
+                            except ValueError as exc:
+                                reason = str(exc)
+                                self.store.mark_intent_refused(intent, origin="client_abort", code=reason)
+                                order_event = self._build_rejected_event(event, intent.id, reason=reason)
+                                session.commit()
+                                await self._publish_order_event(order_event)
+                                return [order_event]
+                        else:
+                            published_events = await self._process_orb_schwab_reprice(
+                                session=session, intent=intent, event=event, target=target
                             )
                             session.commit()
-                            await self._publish_order_event(order_event)
-                            return [order_event]
-                        published_events = await self._process_orb_schwab_reprice(
-                            session=session, intent=intent, event=event, target=target
-                        )
-                        session.commit()
-                        for order_event in published_events:
-                            await self._publish_order_event(order_event)
-                        return published_events
-                published_events = await self._process_cancel_intent(
-                    session=session,
-                    strategy_id=strategy.id,
-                    broker_account_id=broker_account.id,
-                    intent=intent,
-                    event=event,
-                )
-                session.commit()
-                for order_event in published_events:
-                    await self._publish_order_event(order_event)
-                return published_events
+                            for order_event in published_events:
+                                await self._publish_order_event(order_event)
+                            return published_events
+                if event.payload.intent_type == "cancel":
+                    published_events = await self._process_cancel_intent(
+                        session=session,
+                        strategy_id=strategy.id,
+                        broker_account_id=broker_account.id,
+                        intent=intent,
+                        event=event,
+                    )
+                    session.commit()
+                    for order_event in published_events:
+                        await self._publish_order_event(order_event)
+                    return published_events
 
             if (
                 broker_account.provider == "schwab"
@@ -2761,7 +2772,32 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 time_in_force=str(event.payload.metadata.get("time_in_force", "day")),
             )
             if (strategy_code == "orb_schwab" and event.payload.intent_type == "open"
+                    and broker_account.provider == "webull"):
+                try:
+                    request = self._orb_pastlevel_request(request, orb_admission_event, provider="webull")
+                except ValueError as exc:
+                    self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+                    session.commit()
+                    return [self._build_rejected_event(event, intent.id, reason=str(exc))]
+            if (strategy_code == "orb_schwab" and event.payload.intent_type == "open"
                     and broker_account.provider == "schwab"):
+                from project_mai_tai.oms.orb_pastlevel import day_intents, receipt
+                proof = (intent.payload or {}).get("orb_pastlevel")
+                if proof is None:
+                    if day_intents(session, intent, utcnow()):
+                        self.store.mark_intent_refused(intent, origin="client_abort",
+                                                       code="orb_pastlevel_original_plan_already_exists")
+                        session.commit()
+                        return [self._build_rejected_event(event, intent.id,
+                            reason="orb_pastlevel_original_plan_already_exists")]
+                    receipt(intent, str(intent.id), "reserved")
+                try:
+                    request = self._orb_pastlevel_request(request, orb_admission_event)
+                except ValueError as exc:
+                    receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "local_zero")
+                    self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+                    session.commit()
+                    return [self._build_rejected_event(event, intent.id, reason=str(exc))]
                 preview_error = None
                 try:
                     preview_status, preview_body = await self.broker_adapter.preview_bracket_order(
@@ -2777,6 +2813,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     preview_status, preview_body
                 )
                 if not accepted:
+                    receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "local_zero")
                     self.store.mark_intent_refused(
                         intent, origin="client_abort", code="orb_schwab_preview_not_accepted"
                     )
@@ -2804,7 +2841,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                         request.symbol, warns,
                     )
                 post_preview_refusal = orb_schwab_intent_refusal(
-                    event, self.settings, utcnow()
+                    orb_admission_event, self.settings, utcnow()
                 )
                 if post_preview_refusal is None and self.settings.orb_schwab_atr_entry_gate_enabled:
                     atr = schwab_atr_entry_gate(self.session_factory, event.payload.symbol, utcnow())
@@ -2813,6 +2850,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     if atr.verdict != "allowed":
                         post_preview_refusal = f"orb_schwab_atr_{atr.reason}"
                 if post_preview_refusal is not None:
+                    receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "local_zero")
                     self.store.mark_intent_refused(
                         intent, origin="client_abort", code=post_preview_refusal
                     )
@@ -2856,7 +2894,21 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             if (deferred is not None and deferred.event.payload.broker_account_name == request.broker_account_name
                     and deferred.symbol == request.symbol):
                 deferred.local_no_wire = False
-            await self._prepare_bot_control_entry(session, intent, request, event.produced_at)
+            if (strategy_code == "orb_schwab" and broker_account.provider == "schwab"
+                    and request.prewire_check is not None):
+                try:
+                    request.prewire_check()
+                except (ValueError, RuntimeError) as exc:
+                    from project_mai_tai.oms.orb_pastlevel import receipt
+                    receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "local_zero")
+                    self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+                    session.commit()
+                    return [self._build_rejected_event(event, intent.id, reason=str(exc))]
+                from project_mai_tai.oms.orb_pastlevel import receipt
+                # Release of the transaction lock cannot release the plan budget.
+                receipt(intent, intent.payload["orb_pastlevel"]["plan_id"], "MAY_HAVE_SENT")
+                session.commit()
+            prepared_entry_id = await self._prepare_bot_control_entry(session, intent, request, event.produced_at)
             pending_sell_id = None
             pending_sell_required = False
             sell_prepare_session = None
@@ -2909,6 +2961,21 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 for item in [*pre_submit_events, refused]:
                     await self._publish_order_event(item)
                 return [*pre_submit_events, refused]
+            if (strategy_code == "orb_schwab" and event.payload.intent_type == "open"
+                    and broker_account.provider == "webull" and request.prewire_check is not None):
+                try:
+                    request.prewire_check()
+                except (ValueError, RuntimeError) as exc:
+                    from project_mai_tai.oms.orb_pastlevel import settle_prepared_webull_refusal
+                    control = self.__dict__.get("_bot_control_runtime")
+                    settle_prepared_webull_refusal(
+                        session, intent=intent, request=request, prepared_order_id=prepared_entry_id,
+                        control_store=(control.store if control is not None and control.controls(
+                            request.strategy_code, request.broker_account_name) else None), reason=str(exc),
+                    )
+                    self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+                    session.commit()
+                    return [self._build_rejected_event(event, intent.id, reason=str(exc))]
             reports = await self.broker_adapter.submit_order(request)
             self._emit_fanout_mirror_lag(event=event, reports=reports)
             published_events = [*pre_submit_events]
@@ -11644,6 +11711,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         )
         sdk_frame = SdkFrame()
         sdk_token = CURRENT.set(sdk_frame)
+        self._brokerdecides1_foreground_syncs = self.__dict__.get("_brokerdecides1_foreground_syncs", 0) + 1
         try:
             result = await self._sync_broker_state_pass(account_names=account_names)
             outcome = "ok"
@@ -11670,7 +11738,17 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                 duration_ms > bound_ms, sdk_invocations,
             )
             wbquiet_shadow.CURRENT.reset(shadow_token)
-            await wbquiet_shadow.finish(self, shadow_observer, shadow_frame, outcome)
+            try:
+                await wbquiet_shadow.finish(self, shadow_observer, shadow_frame, outcome)
+            finally:
+                self._brokerdecides1_foreground_syncs -= 1
+            if outcome == "ok":
+                from project_mai_tai.brokerdecides1_sync import schedule_refresh
+
+                try:
+                    schedule_refresh(self)
+                except Exception:
+                    self.logger.exception("[BROKERDECIDES1-PUBLISH] schedule UNKNOWN entry_allowed=0")
 
     async def _sync_broker_state_pass(
         self, *, account_names: list[str] | None = None
@@ -11705,6 +11783,13 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         position_summary = await self.sync_broker_positions(account_names=account_names)
         if getattr(self.settings, "strategy_schwab_1m_v2_false_flip_enabled", False) is True:
             self._falseflip_signal().set()
+        try:
+            from project_mai_tai.oms.webull_attach_riskoff import reconcile_cached_protection_intents
+            await reconcile_cached_protection_intents(self, account_names)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception("[WBATTACH1-BOOKKEEPING] cached terminal proof unavailable")
         return {
             "accounts": position_summary["accounts"],
             "positions": position_summary["positions"],
@@ -15068,10 +15153,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
         plane writes (`global_manual_stop_symbols`, payload {"symbols": [...]}).
 
         Cached for `_MANUAL_STOP_CACHE_SECS` so this costs one query per window, not one per intent.
-        Any failure returns the LAST GOOD set (never an empty one) — a DB blip must not silently
-        un-stop a symbol the operator deliberately halted.
+        A failure keeps the last good set only within its scanner session. The 04:00 roll
+        retires yesterday's stop even when the DB is unavailable.
         """
         now = time.monotonic()
+        session_start = current_scanner_session_start_utc(utcnow())
+        if self._manual_stop_session_start != session_start:
+            self._manual_stop_symbols = set()
+            self._manual_stop_loaded_at = -1e9
+            self._manual_stop_session_start = session_start
         if now - self._manual_stop_loaded_at < self._MANUAL_STOP_CACHE_SECS:
             return self._manual_stop_symbols
         if self.session_factory is None:
@@ -15084,7 +15174,15 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
                     .order_by(desc(DashboardSnapshot.created_at))
                 )
             payload = getattr(snapshot, "payload", None)
-            syms = payload.get("symbols", []) if isinstance(payload, dict) else []
+            marker = payload.get("scanner_session_start_utc") if isinstance(payload, dict) else None
+            try:
+                marker_dt = datetime.fromisoformat(marker) if isinstance(marker, str) else None
+            except ValueError:
+                marker_dt = None
+            if marker_dt is not None and marker_dt.tzinfo is None:
+                marker_dt = marker_dt.replace(tzinfo=UTC)
+            matches = marker_dt is not None and marker_dt.astimezone(UTC) == session_start
+            syms = payload.get("symbols", []) if matches else []
             self._manual_stop_symbols = {
                 str(x).strip().upper() for x in syms if str(x).strip()
             } if isinstance(syms, list) else set()
@@ -16189,6 +16287,87 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             await self.process_trade_intent(event)
 
+    def _orb_pastlevel_request(self, request, admission_event, *, provider="schwab"):
+        from project_mai_tai.strategy_core.orb_pastlevel import assert_same_selection, select_entry
+        level = Decimal(admission_event.payload.metadata["orb_intended_break_level"])
+        max_age = int(self.settings.orb_oms_quote_priced_max_age_ms)
+        quote = self._latest_quotes_by_symbol.get(request.symbol)
+        try:
+            selected = select_entry(level, quote, utcnow(), max_age_ms=max_age, provider=provider,
+                                    symbol=request.symbol)
+        except ValueError as exc:
+            self.logger.info("[ORBPASTLEVEL1] symbol=%s decision=NO_SEND reason=%s "
+                             "trigger=%s ask=%s cap=%s quote_at=%s",
+                             request.symbol, str(exc), request.metadata.get("stop_price"),
+                             (quote or {}).get("ask"), request.metadata.get("limit_price"),
+                             (quote or {}).get("received_at"))
+            raise
+        metadata = {**request.metadata, **selected}
+
+        def fence():
+            refusal = orb_schwab_intent_refusal(admission_event, self.settings, utcnow())
+            if refusal:
+                raise ValueError(refusal)
+            assert_same_selection(level, self._latest_quotes_by_symbol.get(request.symbol),
+                                  utcnow(), selected, max_age_ms=max_age, provider=provider,
+                                  symbol=request.symbol)
+
+        self.logger.info("[ORBPASTLEVEL1] symbol=%s decision=SELECTED type=%s trigger=%s ask=%s "
+                         "nominal_cap_pct=%s effective_cap=%s effective_cap_pct=%s anchor=%s",
+                         request.symbol, selected["order_type"], selected["stop_price"],
+                         selected["orb_quote_ask"], selected["orb_buy_cap_nominal_pct"],
+                         selected["orb_buy_cap_effective_price"], selected["orb_buy_cap_effective_pct"],
+                         selected["orb_exit_anchor"])
+        return replace(request, metadata=metadata, order_type=selected["order_type"], prewire_check=fence)
+
+    async def _orb_pastlevel_continue(self, session, intent, event, account):
+        from project_mai_tai.oms.orb_pastlevel import day_intents, receipt, unsent_plan
+        if account.provider != "schwab":
+            raise ValueError("orb_schwab_reprice_no_working_parent")
+        root = unsent_plan(session, intent, utcnow())
+        prior = (root.payload or {}).get("metadata", {})
+        # Route/control authority belongs to the new event; the root binds the plan/account/day.
+        for key in ("orb_country_route", "orb_country_broker", "orb_country_reason",
+                    "orb_country_status", "orb_country_as_of"):
+            if prior.get(key) != event.payload.metadata.get(key):
+                raise ValueError("orb_pastlevel_plan_route_changed")
+        for row in day_intents(session, intent, utcnow()):
+            if (row.payload or {}).get("event_id") == str(event.event_id):
+                raise ValueError("orb_pastlevel_redelivery_no_retry")
+            if Decimal(event.payload.metadata["stop_price"]) <= Decimal(row.payload["metadata"]["stop_price"]):
+                raise ValueError("orb_schwab_reprice_not_higher")
+        metadata = dict(event.payload.metadata)
+        metadata.pop("orb_schwab_reprice")
+        opened = event.model_copy(update={"payload": event.payload.model_copy(update={
+            "intent_type": "open", "quantity": root.quantity, "metadata": metadata})})
+        passed, reason = self._evaluate_risk(opened)
+        if not passed:
+            raise ValueError(reason or "orb_pastlevel_risk_refused")
+        from project_mai_tai.oms.orb_country import orb_route_owner_conflict, verify_country_admission
+        if metadata.get("orb_country_route") == "true":
+            if not await verify_country_admission(self, event, utcnow()):
+                raise ValueError("orb_country_route_changed_before_admission")
+            if orb_route_owner_conflict(session, account.id, account.name, event.payload.symbol,
+                                        intent.strategy_id, admission=True):
+                raise ValueError("orb_pastlevel_owner_conflict")
+        collision = self._orb_schwab_collision_reason(session=session, account_id=account.id,
+            symbol=event.payload.symbol, incoming_strategy="orb_schwab",
+            country_routed=metadata.get("orb_country_route") == "true")
+        if collision:
+            raise ValueError(collision)
+        verdict, reason, _ = schwab_completed_bar_macd_gate(self.session_factory, event.payload.symbol, utcnow())
+        if verdict != MacdVerdict.ALLOWED:
+            raise ValueError(f"orb_schwab_macd_{reason}")
+        if self.settings.orb_schwab_atr_entry_gate_enabled:
+            atr = schwab_atr_entry_gate(self.session_factory, event.payload.symbol, utcnow())
+            if atr.verdict != "allowed":
+                raise ValueError(f"orb_schwab_atr_{atr.reason}")
+        # This intent continues the root's unused budget, not a new daily plan.
+        intent.intent_type, intent.quantity = "open", root.quantity
+        intent.payload = {**dict(intent.payload or {}), "metadata": metadata}
+        receipt(intent, str(root.id), "reserved")
+        return opened
+
     async def _process_orb_schwab_reprice(
         self,
         *,
@@ -16257,6 +16436,12 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             order_type="stop_limit",
             time_in_force="day",
         )
+        try:
+            request = self._orb_pastlevel_request(request, event)
+            metadata = dict(request.metadata)
+        except ValueError as exc:
+            self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+            return [self._build_rejected_event(event, intent.id, reason=str(exc))]
         preview_error = None
         try:
             preview_status, preview_body = await self.broker_adapter.preview_bracket_order(request)
@@ -16306,6 +16491,11 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             request.metadata["bot_control_replace_intent_id"] = str(intent.id)
             session.commit()
         try:
+            request.prewire_check()
+        except ValueError as exc:
+            self.store.mark_intent_refused(intent, origin="client_abort", code=str(exc))
+            return [self._build_rejected_event(event, intent.id, reason=str(exc))]
+        try:
             report = await self.broker_adapter.replace_bracket_order(request, old_id)
         except Exception:
             self.logger.exception(
@@ -16353,6 +16543,7 @@ class OmsRiskService(EhFreshPriceMixin, MirrorRetainedHoldMixin, AtrRepriceRunti
             )
             return [self._build_rejected_event(event, intent.id, reason=reason)]
         target.broker_order_id = report.broker_order_id
+        target.order_type = request.order_type
         target.payload = {**old_metadata, **metadata}
         self.store.append_order_event(
             session,

@@ -41,7 +41,6 @@ from project_mai_tai.momentum_paper.conditions import (
 from project_mai_tai.momentum_paper.engine import MomentumPaperEngine, symbol_is_eligible
 from project_mai_tai.momentum_paper.models import (
     MOMENTUM_ACCOUNT_NAME,
-    MOMENTUM_STRATEGIES,
     MOMENTUM_WARNING_STRATEGIES,
     MomentumTapeRecord,
     TradePrint,
@@ -323,7 +322,8 @@ class MomentumPaperService:
             closed = session_closed_record(
                 session_date=et.date(),
                 observed_at=now,
-                excluded_prints=self._engine.session_excluded_prints,
+                excluded_prints=(self._warning.engine if self._warning is not None
+                                 else self._engine).session_excluded_prints,
             )
             await self._persist([closed])
             self._session_closed = True
@@ -336,7 +336,9 @@ class MomentumPaperService:
 
     async def _prepare_session(self, session_date: date) -> None:
         assert self.store is not None
-        existing = await asyncio.to_thread(self.store.load_session, session_date)
+        existing = await asyncio.to_thread(
+            self.store.load_session, session_date, strategy_codes=MOMENTUM_WARNING_STRATEGIES,
+        )
         ready = self.store.latest_session_ready(existing)
         if ready is None:
             prior_day = previous_trading_day(session_date)
@@ -363,14 +365,14 @@ class MomentumPaperService:
                           if symbol_is_eligible(symbol)},
             condition_version=self._condition_snapshot.version,
             coverage_started_ms=self._now_ms(),
+            # Keep session/feed services without evaluating retired snapshot methods.
+            strategy_windows={},
             validation_window=self._validation_window,
         )
         self._engine.seed_reentry_boundaries(existing)
         warning_rows: list[MomentumTapeRecord] = []
         if bool(getattr(self.settings, "market_data_momentum_warning_enabled", False)):
-            warning_rows = await asyncio.to_thread(
-                self.store.load_session, session_date, strategy_codes=MOMENTUM_WARNING_STRATEGIES,
-            )
+            warning_rows = list(existing)
             self._warning = MomentumWarningConsumer(
                 prior_closes=self._engine.prior_closes,
                 condition_version=self._condition_snapshot.version,
@@ -381,26 +383,22 @@ class MomentumPaperService:
             self._warning.engine.seed_reentry_boundaries(warning_rows)
             incomplete_warning = self.store.incomplete_logical_ids(warning_rows)
             if incomplete_warning:
-                await self._persist(self._interrupted_records(warning_rows, incomplete_warning))
-        incomplete = self.store.incomplete_logical_ids(existing)
-        if incomplete:
-            interrupted = self._interrupted_records(existing, incomplete)
-            await asyncio.to_thread(self.store.append_many, interrupted)
-            existing.extend(interrupted)
-            logger.warning(
-                "[MOMENTUM-PAPER-RECOVERY] marked %d interrupted forward paths UNANSWERABLE",
-                len(interrupted),
-            )
+                interrupted = self._interrupted_records(warning_rows, incomplete_warning)
+                await self._persist(interrupted)
+                warning_rows.extend(interrupted)
         self._completed_from_store = [
             dict(row.payload)
-            for row in existing
+            for row in warning_rows
             if row.event_type in {"FINAL", "NO_FILL", "UNANSWERABLE"}
         ]
         self._session_closed = any(row.event_type == "SESSION_CLOSED" for row in existing)
         closed_dates = await asyncio.to_thread(self.store.load_closed_session_dates, limit=20)
         self._complete_sessions = len(closed_dates)
         if closed_dates:
-            historical = await asyncio.to_thread(self.store.load_completed_since, min(closed_dates))
+            historical = await asyncio.to_thread(
+                self.store.load_completed_since, min(closed_dates),
+                strategy_codes=MOMENTUM_WARNING_STRATEGIES,
+            )
             self._historical_completed = [
                 row
                 for row in historical
@@ -652,15 +650,17 @@ class MomentumPaperService:
                         self._feed_gap_started_ms, self._now_ms(),
                     ))
                 self._feed_gap_started_ms = None
-            records, capped = self._engine.detect_from_snapshots(
-                event.payload.snapshots, completed_at=completed_at,
-                max_symbols=(
-                    _MAX_SUBSCRIBED_SYMBOLS - len(
-                        self._warning.desired_symbols(self._engine.active_symbols)
-                        - self._engine.active_symbols
-                    ) if self._warning is not None else _MAX_SUBSCRIBED_SYMBOLS
-                ),
-            )
+            records, capped = [], 0
+            if self._engine.strategy_windows:
+                records, capped = self._engine.detect_from_snapshots(
+                    event.payload.snapshots, completed_at=completed_at,
+                    max_symbols=(
+                        _MAX_SUBSCRIBED_SYMBOLS - len(
+                            self._warning.desired_symbols(self._engine.active_symbols)
+                            - self._engine.active_symbols
+                        ) if self._warning is not None else _MAX_SUBSCRIBED_SYMBOLS
+                    ),
+                )
             self._subscription_cap_skips += capped
             snapshot_decision_ns = wall_time.time_ns()
             await self._persist(records)
@@ -716,7 +716,10 @@ class MomentumPaperService:
                 price=payload.price, size=payload.size,
                 conditions=codes, eligible=eligible, exclusion_reason=reason,
             )
-            legacy_records = self._engine.ingest(trade, allow_detection=False)
+            legacy_records = (
+                self._engine.ingest(trade, allow_detection=False)
+                if self._engine.strategy_windows else []
+            )
             if self._warning is not None:
                 observed_ns = wall_time.time_ns()
                 records = self._warning.observe_trade(
@@ -935,10 +938,11 @@ class MomentumPaperService:
     async def _publish_state(self) -> None:
         if self._engine is None:
             return
+        observer = self._warning.engine if self._warning is not None else self._engine
         all_completed = (
             self._historical_completed
             + self._completed_from_store
-            + list(self._engine.completed_events)
+            + list(observer.completed_events)
         )
         heartbeat = HeartbeatEvent(
             source_service=SERVICE_NAME,
@@ -956,12 +960,15 @@ class MomentumPaperService:
                         ("" if self._condition_feed_verified else "trade_conditions_unverified")
                     ),
                     "trade_conditions_verified": str(self._condition_feed_verified).lower(),
-                    "subscription_mode": "snapshot_candidates",
+                    "subscription_mode": (
+                        "snapshot_candidates" if self._engine.strategy_windows else "warning_candidates"
+                    ),
+                    "legacy_snapshot_enabled": str(bool(self._engine.strategy_windows)).lower(),
                     "subscribed_symbols": str(len(self._subscribed_symbols)),
                     "subscription_cap": str(_MAX_SUBSCRIBED_SYMBOLS),
                     "subscription_cap_skips": str(self._subscription_cap_skips),
-                    "active_paths": str(len(self._engine.active_events)),
-                    "excluded_prints": str(self._engine.session_excluded_prints),
+                    "active_paths": str(len(observer.active_events)),
+                    "excluded_prints": str(observer.session_excluded_prints),
                 },
             ),
         )
@@ -971,7 +978,7 @@ class MomentumPaperService:
             maxlen=self.settings.redis_heartbeat_stream_maxlen,
             approximate=True,
         )
-        for strategy_code in MOMENTUM_STRATEGIES:
+        for strategy_code in observer.strategy_windows:
             state = IsolatedBotStateEvent(
                 source_service=SERVICE_NAME,
                 payload=self._build_bot_state(strategy_code, all_completed),
@@ -987,8 +994,13 @@ class MomentumPaperService:
         self, strategy_code: str, completed: list[dict[str, object]]
     ) -> StrategyBotStatePayload:
         assert self._engine is not None
+        observer = (
+            self._warning.engine
+            if strategy_code in MOMENTUM_WARNING_STRATEGIES and self._warning is not None
+            else self._engine
+        )
         active = [
-            row for row in self._engine.active_events if row["strategy_code"] == strategy_code
+            row for row in observer.active_events if row["strategy_code"] == strategy_code
         ]
         terminal = [row for row in completed if row.get("strategy_code") == strategy_code]
         today = self._session_date.isoformat() if self._session_date is not None else ""
@@ -1022,6 +1034,8 @@ class MomentumPaperService:
                     int(dict(row["detect"])["sip_ts_ms"]) / 1000, tz=UTC
                 ).isoformat()
                 for row in recent
+                # HOTFIX 10-22 claude-1 (operator-approved): observed_aggregate detects carry no sip_ts_ms.
+                if "sip_ts_ms" in dict(row["detect"])
             },
             data_health={
                 "status": "healthy" if self._connected and self._condition_feed_verified else "waiting",
@@ -1036,8 +1050,8 @@ class MomentumPaperService:
                     "closed": len(closed),
                     "no_fill": counts["NO_FILL"],
                     "unanswerable": counts["UNANSWERABLE"],
-                    "excluded_prints": self._engine.session_excluded_prints,
-                    "tape_key_collisions": self._engine.tape_key_collisions,
+                    "excluded_prints": observer.session_excluded_prints,
+                    "tape_key_collisions": observer.tape_key_collisions,
                     "gross_pnl": str(daily_pnl),
                     "grade": {
                         "verdict": grade.verdict,

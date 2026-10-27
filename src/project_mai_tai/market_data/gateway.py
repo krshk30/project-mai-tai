@@ -249,7 +249,6 @@ class MarketDataGatewayService:
         stop_event = asyncio.Event()
         _install_signal_handlers(stop_event)
 
-        await self._ensure_reference_data()
         await self._publish_heartbeat(
             "starting",
             {"reference_tickers": str(self.reference_cache.ticker_count())},
@@ -273,11 +272,9 @@ class MarketDataGatewayService:
             name="market-data-heartbeat",
         )
         tasks = [
-            asyncio.create_task(self._snapshot_loop(stop_event)),
             asyncio.create_task(self._subscription_loop(stop_event)),
             asyncio.create_task(self._stream_publish_loop(stop_event)),
             heartbeat_task,
-            asyncio.create_task(self._reference_refresh_loop(stop_event)),
         ]
         if self.settings.market_data_momentum_warning_enabled:
             self._warning_publish_task = asyncio.create_task(self._warning_publish_loop(stop_event))
@@ -1157,10 +1154,11 @@ class MarketDataGatewayService:
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=interval)
             except TimeoutError:
+                await self._read_snapshot_worker_health()
                 await self._publish_heartbeat(
                     "healthy",
                     {
-                        "reference_tickers": str(self.reference_cache.ticker_count()),
+                        "reference_tickers": str(getattr(self, "_snapshot_reference_tickers", self.reference_cache.ticker_count())),
                         "active_symbols": str(len(self._active_symbols)),
                         # DFNS/LGHL incident: a climbing value here means the scanner is blind to
                         # that many symbols. Non-zero is NORMAL (the cache is price-filtered to
@@ -1169,6 +1167,22 @@ class MarketDataGatewayService:
                         "last_snapshot_symbols": str(self._last_snapshot_symbol_count),
                     },
                 )
+
+    async def _read_snapshot_worker_health(self):
+        # Missing/failed worker health cannot stop the sole websocket process.
+        # Scanner staleness still derives from snapshot-batches, not these counters.
+        try:
+            values = await asyncio.wait_for(self.redis.hgetall(
+                stream_name(self.settings.redis_stream_prefix, "snapshot-worker-health")), timeout=1.)
+            fields = ("reference_tickers", "snapshots_without_reference", "last_snapshot_symbols")
+            if all(isinstance(values.get(key), str) and re.fullmatch(r"[0-9]{1,10}", values[key]) for key in fields):
+                self._snapshot_reference_tickers = int(values["reference_tickers"])
+                self._snapshots_without_reference = int(values["snapshots_without_reference"])
+                self._last_snapshot_symbol_count = int(values["last_snapshot_symbols"])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.warning("snapshot worker health unavailable; retaining last counters")
 
     async def _publish_historical_warmup(self, symbols: Iterable[str]) -> None:
         normalized = sorted({symbol.upper() for symbol in symbols if symbol})

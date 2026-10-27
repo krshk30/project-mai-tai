@@ -1,0 +1,3244 @@
+{
+  "version": "OCT24_L14_ONLY_A2_FALLBACK_SOURCE_V1",
+  "task_id": "OCT24-L14-ONLY-A2-FALLBACK",
+  "base_head": "a2d4156d06ab2bbe0b072a1d88a80141192470c6",
+  "donor_head": "2782fe6b1f8135703203682f4be633aa0c751768",
+  "scope": "SOURCE_PROJECTION_ONLY_UNRUN_NOT_QUALIFICATION",
+  "protected_a2_files": [
+    {
+      "mode": "100644",
+      "git_blob": "2bb324d0ebd3805f41af206a7bd6f6b068eb98e1",
+      "path": "ops/README.md"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "b29157212327f1b0f7c3e9bda1a7e6f3fe5740e8",
+      "path": "ops/bootstrap/01_install_packages.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "f86d7f7cc7bf5ff0fdc232fbf05d8bf031ad7a21",
+      "path": "ops/bootstrap/02_prepare_host.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "b57a21d4cc25029c5c5ac130524a516e02ce5811",
+      "path": "ops/bootstrap/03_create_dashboard_auth.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "22d8d4552012925cf5fbf07a759161c77e194910",
+      "path": "ops/bootstrap/04_enable_http_site.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "4ec949960019e2e9fa73ac8d3a9a181ee040d4ee",
+      "path": "ops/bootstrap/05_issue_certificate.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "0b698f888b83686bf5ba6f0d98a79193e05609fe",
+      "path": "ops/bootstrap/06_enable_https_site.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "064f042ce68cbb7ad2d0678d99d5ffe6fe7b995e",
+      "path": "ops/bootstrap/07_bootstrap_database.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "8267153639310adc8a945e9844e7e45cc029e2bf",
+      "path": "ops/bootstrap/08_install_runtime.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "6ed731e31b34408a9358d3242a7bb2cbd4d1884a",
+      "path": "ops/bootstrap/09_install_systemd_units.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "b31eb3d74bc93ef031f777bb7fcc0e9a4df3bf06",
+      "path": "ops/bootstrap/10_enable_services.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "0d3da695f9d44a1fbabcb12009ae40093fa6e5d7",
+      "path": "ops/bootstrap/11_install_unattended_upgrade_policy.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "aee8764d1d32ba28376f1ef73f99c84df5f4609d",
+      "path": "ops/bootstrap/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "589ae8fcf145b7ec3b24e3888209de91adadfb6d",
+      "path": "ops/bootstrap/maintenance-window/60-project-mai-tai-maintenance"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "db90f325af8845c01fac6848f27afbabd1d7e42e",
+      "path": "ops/bootstrap/maintenance-window/INSTALL.txt"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7d7330bd902364e04b31f4a6c2984bb79c4459dd",
+      "path": "ops/bootstrap/maintenance-window/apt-daily-upgrade.service.override.conf"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "90b3a614a030d85c1a75634f1de9486cfd6abb06",
+      "path": "ops/bootstrap/maintenance-window/apt-daily-upgrade.timer.override.conf"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "65c7219b9adb9681e243b62873ec0a8d7bb8f3e8",
+      "path": "ops/bootstrap/maintenance-window/policy-rc.d"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "09b47391f45f43d5cdb56b4ad588c824c0552d1b",
+      "path": "ops/bootstrap/maintenance-window/project-mai-tai-maintenance"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "2139d66f8b858bf16c69dece0827f603267cf134",
+      "path": "ops/bootstrap/maintenance-window/zz-project-mai-tai-window.conf"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "761131534a8349f6e96482452cf48cc698392593",
+      "path": "ops/bootstrap/test_unattended_upgrade_policy.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e858f3d3236c3b1854da0e88d4096ea69477cf77",
+      "path": "ops/bootstrap/unattended-upgrades/52-project-mai-tai-unattended-upgrades"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8758d54f51722db73577bbb03c51bacfd0902558",
+      "path": "ops/bootstrap/unattended-upgrades/apt-daily-upgrade.service.notify.conf"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ba9f039970238fa8a1448a18d8cfcceb36c8094b",
+      "path": "ops/bootstrap/unattended-upgrades/apt-daily-upgrade.timer.override.conf"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3779f2aceebfb613fb0124dd503fa2090b964320",
+      "path": "ops/bootstrap/unattended-upgrades/apt-daily.timer.override.conf"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "4873c7a1040866a1264085233d8376895eac37ad",
+      "path": "ops/bootstrap/unattended-upgrades/project-mai-tai-unattended-upgrade-notify"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1544d64e62198615056894e2a871fbc7dc9c4caf",
+      "path": "ops/env/project-mai-tai.env.example"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "abb0cd8f8f4807a664c90277eee68afdc729c54f",
+      "path": "ops/health/ALERTS1021-B-INPUT-CONTRACT.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a545c2b09efd0437878075fcda71d6e32b49b78c",
+      "path": "ops/health/ALERTS1021-B-INSTALL-HANDOFF.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e68375931e4f11c1690263314718a26d395ea414",
+      "path": "ops/health/ALERTS1021-O-1019-2-COMMANDS.txt"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "93b93f27b719263fd8f67ef6aaa5ea2fce99e25e",
+      "path": "ops/health/ALERTS1021-PACKET-CLASSIFICATION.tsv"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "483ca709b8ffcd9bed580f679e82347e11cff6d1",
+      "path": "ops/health/ALERTS1021-RUNBOOK.txt"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cde6ebb27da0737067152d48044b27ce2101501d",
+      "path": "ops/health/README.md"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "654c1352a94deba9f26d361c4dd80cf7d3e10294",
+      "path": "ops/health/armed_segments_check.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "7184f71c89bcf6981284a9f3a148b4598daeb935",
+      "path": "ops/health/armed_segments_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "4dba6ee621fd9b8c1cf0b85131cc9d865b17f5ec",
+      "path": "ops/health/assert_fleet_flat.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "0d74217d7a133fdc8c39449d73faaa8b4bf380b9",
+      "path": "ops/health/bar_gap_watch_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "ea15ee43cfba2e72c863693ed199792f98052d15",
+      "path": "ops/health/broker_blind_check.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "227c1a6731b54a7d239324586260c80a79a0f323",
+      "path": "ops/health/broker_blind_cron.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5db923d4019d5aa7d21194482d47ba1e9a7e043f",
+      "path": "ops/health/check_log_marker_collisions.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ddf77e3a807779f08cadbe93418f3bc15ecc2f50",
+      "path": "ops/health/collect_deploy_evidence.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "11268ab6a1ca5abf0baa4e035f997f65e027cca1",
+      "path": "ops/health/env_default_drift.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "aba2619fb0e5b1b96fb841d5cfa784f40e8003db",
+      "path": "ops/health/eod_counts.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "2d85188935653779328f25e905b44bb5a487466c",
+      "path": "ops/health/eod_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "1b5d829e5f8b19e1e8a997da0ae42965f89043c4",
+      "path": "ops/health/evidence.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8bed77c338b530a5098985fe8c16ab4335ee3083",
+      "path": "ops/health/expected_flags.json"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9d5802b1a91d0666c3089da1e71485783bcc81fa",
+      "path": "ops/health/expected_flags_check.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7a02e90b12749538ac88f9705f3572e53acd0e18",
+      "path": "ops/health/expected_numeric.json"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "9bc0df70c1f390b0585b6ed8c70b8e4f013b21f0",
+      "path": "ops/health/fanout_identity_acceptance.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "884b11b4095419f3543643fd7fba4a9a225e20be",
+      "path": "ops/health/fanout_outcome_acceptance.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "c910971d2d0a58f8a48dc2c8040e719df81c743d",
+      "path": "ops/health/fanout_outcome_acceptance_cron.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "32b8e9c8518d5988947ec7f7c14c8b36b3479cdf",
+      "path": "ops/health/fanout_outcome_acceptance_install_lib.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "d45862c217430136b108ad623e4ec212e0a43121",
+      "path": "ops/health/fanout_pair_identity_acceptance.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "62108a71d3105efbecb2a1af8efdb398e1df5914",
+      "path": "ops/health/field_acceptance.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "578b7a538f830f022c904847c17607493feade41",
+      "path": "ops/health/fleet_health_check.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "22b4a5df2a4ad237ac6cbcc38a7df83909f17cb3",
+      "path": "ops/health/fleet_health_cron.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d6bb8c00b806cf69868c5de80bdaf27ba8afa5ae",
+      "path": "ops/health/fullscan-maintenance.patch"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ad58cdbe934db92b341316518b8d45b0f8a020de",
+      "path": "ops/health/gate1_shape_watch.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "45b3917cb9ac764e4b0533bb4fd15cc12299f53f",
+      "path": "ops/health/gate1_shape_watch_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "99bca4faf75590078b686538943028ff1e18e7b7",
+      "path": "ops/health/install_armed_segments_schedule.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "fa2ca4a49c526a59bbf8115c98e2462b9751547f",
+      "path": "ops/health/install_eod_counts.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "3c93d5dd57c56b203c9e40016a89a14bcf952b1b",
+      "path": "ops/health/install_eod_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "6164af0a2e10bc1518914f84db85a000d2c0c523",
+      "path": "ops/health/install_fanout_outcome_acceptance.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "bef827c45b14b5cd641f2ee70ceb930e6cf1acef",
+      "path": "ops/health/install_known_defect_regression_watch.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "c80eab505172c5ae8660769cbd4a1dcf297c7bb4",
+      "path": "ops/health/install_low_priority_digest.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "e5fad4d9c86d1716469fa334e7620614b47a1b69",
+      "path": "ops/health/install_scanner_capture_verify.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "30f573e541ac98b015874c70793cb4139b386b59",
+      "path": "ops/health/install_unexercised_watch.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "ad72dd3ec62e44be3676d7659d9e0a4f38ff3e05",
+      "path": "ops/health/install_v2_entry_fix_watch.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "32a12f306514fc91c33cd8292a25ca388d1addbd",
+      "path": "ops/health/known_defect_regression_watch.cron"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "d5be4842d326602758f6826cf3cf0701f7546de3",
+      "path": "ops/health/known_defect_regression_watch.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "9fcb592c3ba86cceae17d00104d213087a4d6704",
+      "path": "ops/health/known_defect_regression_watch_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "12e3e56dd77ae6965ea38ee9ab7d2a55fb9e63c3",
+      "path": "ops/health/live_locked_drift_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "1eac3d771f1d40a9855a7f3a219a796d92797deb",
+      "path": "ops/health/low_priority_alerts.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "d402f95a909a0a8d8ffcd6a2533ba7c2fd2bc4c8",
+      "path": "ops/health/low_priority_digest_cron.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d5193311f351153383a3fd8a80145bdc6e99b196",
+      "path": "ops/health/maintenance_pending_check.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fc42a22a80009e670f073a4176d11ee35b09b155",
+      "path": "ops/health/marker_census.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "905b3b0f8a792d0dea44301b7940524117416f00",
+      "path": "ops/health/momlive1_owner_compat.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b9444b6bc55ee2639bdbf79a01151ff234cd0b4f",
+      "path": "ops/health/momwarn1_repair/optiona/G1/daily_guard.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c68332f5bd4e939095e739172605927f8e3caaf8",
+      "path": "ops/health/momwarn1_repair/optiona/G1/failure_stop.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5c11480df811f1a6f1388ae906d9b1212d18e714",
+      "path": "ops/health/momwarn1_repair/optiona/G1/guard_rules.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "bce7e5d3531c79ffa83276ae055992d892d2ccbb",
+      "path": "ops/health/momwarn1_repair/optiona/G1/sampler.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3100b1a888e1c180a01bca203a6c5bd00ecefc14",
+      "path": "ops/health/momwarn1_repair/optiona/G1/test_continuation.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fad741e4e429c88dc72ceaec987e850af0d515cc",
+      "path": "ops/health/momwarn1_repair/optiona/G1/test_d1_sampler.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5d3a7e6ede50e18527d556389c1d00efbb06474f",
+      "path": "ops/health/momwarn1_repair/optiona/G1/test_daily_guard_identity.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d3306dae46e31b560e49ddf168ffdc984b87f942",
+      "path": "ops/health/momwarn1_repair/optiona/G1/test_validation_session_day.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b96326210d8cc2298096c05f96280ea97e830589",
+      "path": "ops/health/momwarn1_repair/optiona/G2/F2/approved-chgrp/chgrp_exact_four.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e0a1343345505b0cefd47cfea5372d518771093b",
+      "path": "ops/health/momwarn1_repair/optiona/G2/F2/approved-chgrp/force_copy.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "18b9b91f124476be1645a1cb593b3a3c349b5766",
+      "path": "ops/health/momwarn1_repair/optiona/G2/F2/approved-chgrp/policy_contract.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c6d065c65ad79cfe83ade31b40f45a619ae85e67",
+      "path": "ops/health/momwarn1_repair/optiona/G2/F2/approved-chgrp/supplied-deployed-policy.conf"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7d14a690462f21e25e17282690dfc5a3125629c5",
+      "path": "ops/health/momwarn1_repair/optiona/G2/F2/approved-chgrp/test_offline_contract.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8f04077442d9f65f166041daac66697cc2ac22ee",
+      "path": "ops/health/momwarn1_repair/optiona/G2/f4-integration/guard_poststep.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c04a4c312d4e886efad80e07de0ce4d1c09405f9",
+      "path": "ops/health/momwarn1_repair/optiona/G2/f4-integration/runner_poststep.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f69fe78470d7e27270617ff2deee6aff2d113fcc",
+      "path": "ops/health/momwarn1_repair/optiona/G2/f4-integration/test_guard_poststep.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "21dc0c1ba702cde0aa23689f1da7eb05879ba02d",
+      "path": "ops/health/momwarn1_repair/optiona/G2/gateway_identity_poststep.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "00ee51a110a4321b524a4b8079c680789d025213",
+      "path": "ops/health/momwarn1_repair/optiona/G2/test_gateway_identity_poststep.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b64357520a8ea3da57a04e015834d7e6484e2d5b",
+      "path": "ops/health/momwarn1_repair/receipt_adapter.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4919444a059f5a57db5132f9c1c5914ad73a586d",
+      "path": "ops/health/momwarn_service_user_proof.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fdf8a84df68502eb1d770cee6bff8e442ccbc52f",
+      "path": "ops/health/oco_capture_check.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "bf3908b4f4ba9fc8f187b3f721fe64000cd87ecd",
+      "path": "ops/health/oco_capture_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "562d3f74f3a684301a6a4216c2d1abcf244394ad",
+      "path": "ops/health/oms_liveness_check.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "af3b4c3ec1b2c3dff2bce2c0fb48468b61b53018",
+      "path": "ops/health/oms_liveness_watch_cron.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "71e19ffc9871720baea1848efeae7f17cf9402ef",
+      "path": "ops/health/option_a_treatment_guard.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e8cb458933f168f2aa132331762ace37f68fef34",
+      "path": "ops/health/orb_open_watch.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c32af7690ef418d01ab4352bba5909bfcf4f973d",
+      "path": "ops/health/orphan_order_check.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "5d0789486be6840ecca42e56c847c8a843c7a5a0",
+      "path": "ops/health/orphan_order_cron.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0f5db097c155aeea4b50d949584056a79baea39e",
+      "path": "ops/health/phantom_managed_rows.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3af15e3ef93fd4d005603b722885867b765a0990",
+      "path": "ops/health/phone_alert_gate.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c7411f01ad9e00783bccca0ebb1b8d0e26068136",
+      "path": "ops/health/planned_maintenance.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f28916598529d978cc5af89b3de278d703e3c405",
+      "path": "ops/health/post_exit_stale_held_acceptance.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "2df74748bb1f762976aa8654b0b90dd41daec18e",
+      "path": "ops/health/preopen_alert.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "75285a711abcde26f20e462820d3390d494e483c",
+      "path": "ops/health/preopen_readiness_check.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "467c9c18c109d3eb3368122c76aca7de082735e9",
+      "path": "ops/health/preopen_readiness_cron.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "367bbb1ebc92818ff4af532b4d034cda79d809ac",
+      "path": "ops/health/preopen_rebaseline_capture.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7b322c8d28c5a292294c2e12cbcf8a522a865cca",
+      "path": "ops/health/preopen_restart_evidence.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "ad3862072cbbd13c3c996b5e9ae4f2f1c6d6b0e1",
+      "path": "ops/health/reconcile_alert_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "7eea31ad8ea73ccbb4b91374777a0b4883113dc3",
+      "path": "ops/health/reject_classes.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "4423571f14318f8e472292ab1bd32a5ae25e4659",
+      "path": "ops/health/reject_watch_cron.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "83862ae2881df89135a2c5b5436819f01f9db3df",
+      "path": "ops/health/replay_alerts1021.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "302a08d640dd0e5553c6c777dcd3b37340dbbaea",
+      "path": "ops/health/replay_alerts1021_b.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "3501347d4571be68835e862ef463bed62c1d3834",
+      "path": "ops/health/scanner_capture_check.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "f3f6bc63c64a7e222c7a62c59ce509d6942ede1f",
+      "path": "ops/health/scanner_capture_verify_cron.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "533118405d3e73434685f9f6b5ff6677543b9839",
+      "path": "ops/health/schwab_refresh_count_check.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cb612bd712717c453f0d1d41ca9be49ab2e5ff6a",
+      "path": "ops/health/schwab_token_expiry_check.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "bbe78e2c673c17095559adf4b9d4f2a1a5b79342",
+      "path": "ops/health/schwab_token_expiry_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "232312a503e091411675058d41e598cb429627a2",
+      "path": "ops/health/seed_exposure_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "3eb51e64c3e4f037e6c99a47bb81e3048ccf33f8",
+      "path": "ops/health/service_source_freshness.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0a65d2803c73702ad7fe336b97b1ed0e6daa4776",
+      "path": "ops/health/signal4_duplicate_legs.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "fa5d42b780aa64783faf523eb37a0c344a32ba24",
+      "path": "ops/health/stop_bots_and_clear_queue.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9e06882e7ec9d212dc9e124c66616d7dd5c79257",
+      "path": "ops/health/test_bar_gap_watch.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e05d95455a0abbeda8a2df78a951da42828b2382",
+      "path": "ops/health/test_validate_logcoverage.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f1c71d0c2a5c4929eac2e6b2c47750d7c1f34a89",
+      "path": "ops/health/trade_recorder.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "ba8167fdff16bc8fe84fa83569ca2778c3671951",
+      "path": "ops/health/trade_recorder_cron.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5f0c56eb06d3ec6dd597c447f64655bd263b99b8",
+      "path": "ops/health/unexercised_watch.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "c004b5a3c724962bb6078af44ecce58b108688f7",
+      "path": "ops/health/v2_cw_first_session_watch.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "bc16825c39c1a01cc45ec4f18535a27e85021188",
+      "path": "ops/health/v2_eh_exit_watch.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "23b981efa3c8ae37b2d253844d25c023a3abacce",
+      "path": "ops/health/v2_entry_fix_watch.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "c7735ad009240314535d1099806f2ef68237b376",
+      "path": "ops/health/v2_entry_fix_watch_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "47046f7b25f79cc6c478e36ead457d7d76efb603",
+      "path": "ops/health/v2_overnight_naked_cron.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "bf055cea60219e85db95ab9e616de5621abb8416",
+      "path": "ops/health/v2_restart_evidence.py"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "28fde9619a8198bf28a54bf2df06172dab478c30",
+      "path": "ops/health/validate_0813_deploy.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "af20644040ef8d013402818f9612eb2c02188eb0",
+      "path": "ops/install/KILLSW1_AFTER_CLOSE_RUNBOOK.txt"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3830a423ae734fb873491345f84b35e4c9f4d6dc",
+      "path": "ops/install/MOMGUARDEND1_NEXTBATCH_REVIEW_NOTES.txt"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ea0700957584df42cc3359c63e2724299d45df2c",
+      "path": "ops/install/MOMGUARDEND1_REVIEW_NOTES.txt"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1c8634fbb1cdd66ae2f4ff2dce817ef3f4b3ede1",
+      "path": "ops/install/MOMWARN1_RUNBOOK.txt"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "948a3e2ad936ec752ef0c87ad51429ae17e85776",
+      "path": "ops/install/momwarn1_install_runner.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "001d20b88b36dd78031226960d0ec8305d3ba728",
+      "path": "ops/install/momwarn1_readonly_rehearsal.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3e0d22f4fb07feb3d77e91c5f6239cecbb687e7d",
+      "path": "ops/install/momwarn1_retained_provenance.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5b63cf212175ee550573c7ab84ff6cd46f14aa5a",
+      "path": "ops/install/momwarn1_runner_support.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "2a848a79e2dbf154a16448c898156691289cace1",
+      "path": "ops/install/test_momwarn1_runner.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "239d04b38863fa5025e55190e78c3d96f89c8c0c",
+      "path": "ops/logrotate/README.md"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "7f6729f4a907edba4b21792ea1a0685338375273",
+      "path": "ops/logrotate/install.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4be3cb71b2e1158ee4475b868bc448482794b03b",
+      "path": "ops/logrotate/project-mai-tai"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "e0af27de90e71924802693f75ee5d63afef2d258",
+      "path": "ops/logrotate/test_install.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c8ed67d7d3b489ae56a2e3efe206e4caf4f9aa0c",
+      "path": "ops/momlive1/project-mai-tai-momlive-sec.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d52f7d4752dc810eefe7c4992df2dc72fca77eb4",
+      "path": "ops/momlive1/project-mai-tai-momlive-sec.timer"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3615e39d37fffbc9535314c3a234029c3183a31b",
+      "path": "ops/momlive1/sec_nightly_runner.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "14e01d7047e17f8effd06d642394650c93e33a08",
+      "path": "ops/nginx/KILLSW1-operator-boundary.txt"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ff5bf3bc592e9a9c58f33404f0251a83981f5dca",
+      "path": "ops/nginx/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9d01d5aa79d760fd7298d88cb833227e43ad90cb",
+      "path": "ops/nginx/project-mai-tai.live.http.conf"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "23ba597432bed50890f21d656b7812878a5d941d",
+      "path": "ops/nginx/project-mai-tai.live.https.conf"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "d98b3c9625ffe70978fd4af220f0179e0ffece7f",
+      "path": "ops/preflight/preflight_oms_restart.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "d5d35eda5b0ba258adbc203998f068c3082a8b06",
+      "path": "ops/preflight/preflight_v2_restart.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "b11409a7285a4734d9adb6d7e7b81d67f5bfebb4",
+      "path": "ops/preflight/test_preflight_link_step.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "3b0eb4a7725a314d6c92b6cf48ed5667d5762525",
+      "path": "ops/preflight/test_preflight_oms_restart.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c951663d2ae1c631291622849f6118743173ef93",
+      "path": "ops/sync2x_plan.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "abc02fae6999e7613f3112d1c9c19dc65a95dd33",
+      "path": "ops/systemd/DEPLOY_GATE_BOOTSTRAP.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b57c60565ae2e42a0dfda2c9c5e8f1f1979df03e",
+      "path": "ops/systemd/README.md"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "14d1571a18f9b87f334f262b53fd7922fbc01169",
+      "path": "ops/systemd/build_orb_paper_env.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "87f71360dfb36240330f694806b9ff544d90e1bb",
+      "path": "ops/systemd/deploy_gate_tools.sha256"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c2c5b0494c75f3edf56a44455fe51d6bea6ec018",
+      "path": "ops/systemd/deploy_main.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "517bc0303f50b7ed39830254def5ef191dd849ad",
+      "path": "ops/systemd/deploy_oms_strategy_authorized.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "7d938f03b25d55b126d64d6656d2379d3c3ef71f",
+      "path": "ops/systemd/deploy_service.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "e5d42d12501fc9bba3768ff77b18d2c20cf8e425",
+      "path": "ops/systemd/install_deploy_gate_tools.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "04ca2cba0a1cc3caf8d14313dd2842a6d06db6d2",
+      "path": "ops/systemd/install_momentum_paper.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "767c6584a4b8a43370c81971d1331920ef4273a0",
+      "path": "ops/systemd/install_units.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "a805af08145a164884ace4af852b7f746fc6a271",
+      "path": "ops/systemd/install_v2_atr_massive_seed.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "48f8c505877ef7392a4b90cf920e7e531d3da1db",
+      "path": "ops/systemd/live_helpers.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cdb78c566ca226121e107a57bda07f979924b21e",
+      "path": "ops/systemd/project-mai-tai-control.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d468aaf61b7d6309764c278213eafc97527c5e5b",
+      "path": "ops/systemd/project-mai-tai-gather-universe.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e84d6d39d4b30f24c8ff18d257bf7f4900528b9d",
+      "path": "ops/systemd/project-mai-tai-gather-universe.timer"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8bccefd15ea4eaf74c183d7ba44fa54be626a040",
+      "path": "ops/systemd/project-mai-tai-market-capture.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "2cf3a30d882ddd984efc5f8fde74413afcadbd91",
+      "path": "ops/systemd/project-mai-tai-market-data.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "83f2eee69a13c4315f6585a2b6159cb9ba60e856",
+      "path": "ops/systemd/project-mai-tai-momentum-paper.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cc4e7cc0daa20a8c3ccd137164c64a84095e44de",
+      "path": "ops/systemd/project-mai-tai-oms.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0a9273d9ed7eb074584437be7c044bfc65d1cc37",
+      "path": "ops/systemd/project-mai-tai-option-a-daily-guard.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6ee3742cbf80704000fbecf5e33dd36fa2045ec0",
+      "path": "ops/systemd/project-mai-tai-option-a-guard-failure@.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "18acade1ab4806aabe1630aa317a4aacc71bb097",
+      "path": "ops/systemd/project-mai-tai-option-a-guard@.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "da6f46ebd3998e05ea6c0d71f6de7ed0345fdd37",
+      "path": "ops/systemd/project-mai-tai-orb-schwab.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "16ed861e93d073fd9b49f061763a534c8d5ad8b9",
+      "path": "ops/systemd/project-mai-tai-orb.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "374715623c066562b31d33b5bb8301520eb7dfe9",
+      "path": "ops/systemd/project-mai-tai-prune-capture.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "96be2b60708344a482737ed043ce0c5266991033",
+      "path": "ops/systemd/project-mai-tai-prune-capture.timer"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "92c6a8c42fcd38c67b336aea93dc7dbc0ef67618",
+      "path": "ops/systemd/project-mai-tai-prune-retention-weekly.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cfab7d25bd48ec846deda08f390f0d388364c829",
+      "path": "ops/systemd/project-mai-tai-prune-retention-weekly.timer"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6b8eac8706a7a79639bd4e62f183bb28a7ca90f5",
+      "path": "ops/systemd/project-mai-tai-prune-ticks.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "eafe592d080a0d3e83f6d36c8133826332feac03",
+      "path": "ops/systemd/project-mai-tai-prune-ticks.timer"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ecd6928c001a29e6efaa48e8deb8eed27e4f1000",
+      "path": "ops/systemd/project-mai-tai-reconciler.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fb8fa4727db0c099ed561775e1878af41de5a320",
+      "path": "ops/systemd/project-mai-tai-schwab-1m-v2.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "86b244ac02cf8810202b63dd133fa140b9da6d7a",
+      "path": "ops/systemd/project-mai-tai-snapshot-worker.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d0b82257b281486e5b8d3d42b2bd9034f2749479",
+      "path": "ops/systemd/project-mai-tai-strategy.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7d3afa116174fb4a1b712c84eb8c66d3c2babf56",
+      "path": "ops/systemd/project-mai-tai-trade-coach.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cdd3e4280ab9496e5dfb8b82995b9c4241185069",
+      "path": "ops/systemd/project-mai-tai.target"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6d3fea3e03579f45dfaefa9d8a9be41e69b54fd9",
+      "path": "ops/systemd/reset_active_state.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "4d87800614f2a8e4841a50d4a6dcf2f354122bf6",
+      "path": "ops/systemd/restart_all.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "2b3def1a668e0683073a5ca08a13663251ea9563",
+      "path": "ops/systemd/restart_control_live.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ceceb81f9962a9d52536fe13e320585496d40404",
+      "path": "ops/systemd/restart_market_data_live.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "38f177f9c16ae27a34294ff90252bb1fa894da0c",
+      "path": "ops/systemd/restart_oms_live.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1d709e416763bd71d298a5961eb4e5f7681ccee5",
+      "path": "ops/systemd/restart_reconciler_live.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0dc1b23b25cf4cb10345ba2da4439390d08396c1",
+      "path": "ops/systemd/restart_strategy_live.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "ee4dfb1b1f1bca9d78d3186f6ea3d75c7304f91f",
+      "path": "ops/systemd/status.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5a078aca603ad85f73b241786259a51c02355f6f",
+      "path": "ops/systemd/sync_checkout_only.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "729fee0e7f454dfd55359506de89d0aec657f294",
+      "path": "ops/systemd/sync_only_unloaded_files.tsv"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "3e336af58fbe919abd0455a8d80bdf9524803b32",
+      "path": "ops/systemd/test_restart_oms_live.sh"
+    },
+    {
+      "mode": "100755",
+      "git_blob": "7a80a27364f757427898a01de3da3877d1ae6b2a",
+      "path": "ops/systemd/verify_momentum_paper_entitlement.sh"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7823f2054c3e932d7a0a9b9efd3882337d30ebea",
+      "path": "ops/weekmaint/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "98a952d0656486540e64cd872fb705714f7621f4",
+      "path": "ops/weekmaint/archive.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0094848244385913a0bb40a1fd7a9dd8502b3488",
+      "path": "ops/weekmaint/backend.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e400f9eb497bca02306727a1f3be53d1b5b40cce",
+      "path": "ops/weekmaint/collector.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "19547d4c13cc73a42f7d51428bcf2525fe526e4f",
+      "path": "ops/weekmaint/copy_plan.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "72ec6a32c559b5b0495449e25c438d9080f38159",
+      "path": "ops/weekmaint/policy.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "95a7b135fc5403061e20b03317ae8ebede7e3758",
+      "path": "ops/weekmaint/project-mai-tai-momlive-sec.service.d/60-weekmaint-after-success.conf"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5f465c5651abb24c1141687fd891e6236dfcbe4c",
+      "path": "ops/weekmaint/project-mai-tai-weekmaint-boot.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a7426a4baf7e6d6028825df8348bc82f78e5723d",
+      "path": "ops/weekmaint/project-mai-tai-weekmaint-failed.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5689bdc523b1caa6a64852c41b735c36172d0d5c",
+      "path": "ops/weekmaint/project-mai-tai-weekmaint.service"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b1b91b1ee36b4b4ddb50356997f2e06abb213584",
+      "path": "ops/weekmaint/security-only.conf"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "dd936c6ada1f96303161edbf1e44fdd8da1a5d2f",
+      "path": "pyproject.toml"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c2431ef4edba3c32ae00cdddd78d62c6ba18d8b7",
+      "path": "sql/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "419a1e557611554a123acbfdaba1e3ddb20dac3a",
+      "path": "sql/migrations/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d72902905d8208504b6eea677e0c13c3135537ff",
+      "path": "sql/migrations/env.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "04fd074f1905cca6458b0ee7a017baa3bc0a7145",
+      "path": "sql/migrations/script.py.mako"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f35d0a61a45c4d1d4d3adda29a825f40020b65ea",
+      "path": "sql/migrations/versions/20260328_0001_initial_runtime_schema.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9bd12b6c7287c9fc396d0fa948c3879f8b1c69be",
+      "path": "sql/migrations/versions/20260329_0002_scanner_blacklist_entries.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "bc63e71191b9c3988ceea8d0eba4db8c99165c2a",
+      "path": "sql/migrations/versions/20260401_0003_strategy_bar_history.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0e81a9fe30f6662d2674b5156ff3c6e79f2299c5",
+      "path": "sql/migrations/versions/20260424_0004_ai_trade_reviews.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1e684962277ed9cd1b5c873b923e22a8193323ad",
+      "path": "sql/migrations/versions/20260511_0005_schwab_ineligible_today.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "69c2953752f9a155381052f9ade0c32529b00691",
+      "path": "sql/migrations/versions/20260518_0006_index_broker_order_events_event_at.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6a68011ecb7ced2764e1fee9bd9603a445a5802c",
+      "path": "sql/migrations/versions/20260611_0007_market_ticks.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "971b21f04c2593770344deb44ebebcea315d8156",
+      "path": "sql/migrations/versions/20260614_0008_oms_managed_positions.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f871f9fb0b6e3f81884fd3a079f4c5c0a161d7e9",
+      "path": "sql/migrations/versions/20260622_0009_market_capture.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "711aa9965fa10ec2941677733256610620fedb15",
+      "path": "sql/migrations/versions/20260622_0010_market_capture_bars.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ee445b40649ed51c4033dd59236a7325bd641cf7",
+      "path": "sql/migrations/versions/20260707_0011_oms_armed_stops.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ed98adef14e318ff2e2e400d27ae3d8b65395ecb",
+      "path": "sql/migrations/versions/20260710_0012_scanner_confirmed_events.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5c97ce21b4b273d497fd08e62a15253ad8ec6446",
+      "path": "sql/migrations/versions/20260725_0013_webull_ineligible_today.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b20057ca92eb7fc577a879b0d51319d7ae1f99c8",
+      "path": "sql/migrations/versions/20260730_0014_bar_source_provenance.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d941b0f4adefc1b4c0006bd5ad0b8addd4961f31",
+      "path": "sql/migrations/versions/20260820_0015_broker_order_event_source.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "03f5d7b132730305a07ace65cfe2d301e7fc162d",
+      "path": "sql/migrations/versions/20260828_0016_dashboard_snapshot_order_index.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "790f9214ee5a52187d4c56dfa45551e65cfa26a9",
+      "path": "sql/migrations/versions/20260902_0017_paper_exit_harness.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9ec2d2ed3b064ca25e2e717b7dbc59fe9fcdcaa9",
+      "path": "sql/migrations/versions/20260902_0018_confirmation_exit.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "56a3dc5b37260af3eac0c38012f1046055e50a54",
+      "path": "sql/migrations/versions/20260904_0019_orb_paper_events.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a712563de0ff60d895349c209862e13ec200ff46",
+      "path": "sql/migrations/versions/20260910_0020_confirmation_fanout_slot.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ab651fe1431cdaa95a8b40e27dc535f6bbde405a",
+      "path": "sql/migrations/versions/20260916_0021_momentum_paper_tape.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9e7d811e7c5193a332420d181720e3ea256d7fc6",
+      "path": "sql/migrations/versions/20261005_0022_managed_entry_binding.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6eee53f7f665db5335d319e2e9829be95a5e68fb",
+      "path": "sql/migrations/versions/20261008_0023_entry_classification.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e0b43b2c6b7fe3243c71ad9a9ecfb4bfbc0b2fd2",
+      "path": "sql/migrations/versions/20261014_0024_sec_country.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c37c0350ef725d44baad61e585cf57b5ba2d44e6",
+      "path": "sql/migrations/versions/20261015_0025_bot_control.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9980e2fd5afbb34ef7c8c642dfb95fbf2f029ee2",
+      "path": "src/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0b62d5e8bdc4567f3468b7b4de74043e2578fa50",
+      "path": "src/project_mai_tai/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b50f5161fa11e7211eccd097954cd51765e6380d",
+      "path": "src/project_mai_tai/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c4dc2d7711187b7556f4f68a45663cacb238087a",
+      "path": "src/project_mai_tai/ai_trade_coach/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "56047f28c70d70cadae178c86bdefc4b1211adae",
+      "path": "src/project_mai_tai/ai_trade_coach/models.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1239d9a379d7a14c33026a5ca0185f07efae0b36",
+      "path": "src/project_mai_tai/ai_trade_coach/repository.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fd02b7a1b694eea01815a18684babbf8cea9335c",
+      "path": "src/project_mai_tai/ai_trade_coach/service.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5b96f7fd80fff5bdb429b01ee91c075b29aef482",
+      "path": "src/project_mai_tai/atr_country_route.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1d5435b7067516fda281c9e62c7e587b4612a063",
+      "path": "src/project_mai_tai/backtest/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1284cf16b3ce5e168bfc636284ab14a4926fd1aa",
+      "path": "src/project_mai_tai/backtest/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b423a782d6f0e13b1ecc21c835b15d524a6593e2",
+      "path": "src/project_mai_tai/backtest/__main__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c5cb50956ce1f623c4651b20984ce60bce6add94",
+      "path": "src/project_mai_tai/backtest/atr_oracle.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b3b6765b002ac97b1f70a3bdb10f67a2abeacf41",
+      "path": "src/project_mai_tai/backtest/broker_refusal.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "951bfdffcf71ed9c0cf8b94b981c5e1e3e434e47",
+      "path": "src/project_mai_tai/backtest/confirmed_selection_census.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "94818df7f302c736c0ccfdb344122b1ddf4a4ea8",
+      "path": "src/project_mai_tai/backtest/daily_sheet.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c4ac8901557ad465b186f346d157aaf30ca154bc",
+      "path": "src/project_mai_tai/backtest/data.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d90895c4e83f10fbe1afae1b5049e0095c2476e9",
+      "path": "src/project_mai_tai/backtest/dot_entry.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4c0379f7d0b2b4044289e044a759c7e50f7fa79a",
+      "path": "src/project_mai_tai/backtest/fill.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "14fd1851247add0a67b1c2748aeb0efaef309bf5",
+      "path": "src/project_mai_tai/backtest/metrics.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "bf42fda5c5a6c3c12afa8ac028075d456e1c8d06",
+      "path": "src/project_mai_tai/backtest/momentum_gateway_throughput.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "031253ccc544ab557432ed584682d262b4f78f7c",
+      "path": "src/project_mai_tai/backtest/momentum_live_rule_baseline.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "50d216bacaa5f1ae2a07bcfd9991ec44ff48a11a",
+      "path": "src/project_mai_tai/backtest/orb_entry.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7c107a9f138de3b9c68937a123326baac65611d1",
+      "path": "src/project_mai_tai/backtest/orb_sim.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "af546767d188bdfaae8e87af0ea981fe218e2284",
+      "path": "src/project_mai_tai/backtest/pre0700_shadow.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "407a5ee04d2bb3e8161267e757a80690723c74e0",
+      "path": "src/project_mai_tai/backtest/proximity_sweep.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "555b18c3ddf13898f5aa6489de2a7bd71bfb9aec",
+      "path": "src/project_mai_tai/backtest/replay.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "48c45d9b21b54dd04138835d84cd521af57461c7",
+      "path": "src/project_mai_tai/backtest/retry_one.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5f384f4fdda9fa586ad9cff822e7fb50cdcadd24",
+      "path": "src/project_mai_tai/backtest/study_report.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0bf8b190e8c31268133181a72172c0ad28b909c2",
+      "path": "src/project_mai_tai/backtest/watch_start.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "10919cc0f103eab4120289934bad36165817c25a",
+      "path": "src/project_mai_tai/broker_adapters/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1257952df70408e743a1b814f820847e0437dc5f",
+      "path": "src/project_mai_tai/broker_adapters/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5d57c1822ff804e2f127df83b376a9058c109748",
+      "path": "src/project_mai_tai/broker_adapters/alpaca.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "2c1602161a06b6156509640272bc497201e7a42a",
+      "path": "src/project_mai_tai/broker_adapters/atr_buy_readback.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "77c71e9117b2406ab04a00a0722f8031c992cf7f",
+      "path": "src/project_mai_tai/broker_adapters/momentum_order_read.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d4c25307719389d0a07ece4a4d5d8a1de0fb7f94",
+      "path": "src/project_mai_tai/broker_adapters/protocols.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8333968f092b9707ce8a6b2a4ca39d5230de8af3",
+      "path": "src/project_mai_tai/broker_adapters/routing.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "522a3b2979db11feed2f9a87a922b45b62186979",
+      "path": "src/project_mai_tai/broker_adapters/schwab.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3092352246b21f79aa922b30210081d0aada0450",
+      "path": "src/project_mai_tai/broker_adapters/schwab_token_manager.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6e26f761e01e19a3ffa87db64363153864142105",
+      "path": "src/project_mai_tai/broker_adapters/simulated.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9238b4160bb49e47057005c64a2405c50aec6d07",
+      "path": "src/project_mai_tai/broker_adapters/target_price.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c2713da106d71005d3397eb309e96430389da654",
+      "path": "src/project_mai_tai/broker_adapters/webull.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4a95ea3d0b7e497c9733445cd46adaed74fcd4f0",
+      "path": "src/project_mai_tai/broker_adapters/webull_exit_census.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "63e579d040121a6e88bd43310e43807663e9e84c",
+      "path": "src/project_mai_tai/broker_adapters/webull_order_reads.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d49aa3b1cda8955b4b9b56b71f356ebc8dfc489c",
+      "path": "src/project_mai_tai/broker_eligibility.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d035844277ba6594a96bbdd704ab0e82bea33d66",
+      "path": "src/project_mai_tai/buy_price_floor.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7ebac06c387fd27878740c4690daaf68590c5089",
+      "path": "src/project_mai_tai/cancelack1.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ccfa25b085f0dae327cc8de275d067b4d58e1655",
+      "path": "src/project_mai_tai/confirmation_exit.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0860f957412168aa3d59997a112b52f215714cbc",
+      "path": "src/project_mai_tai/db/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "bb726dba173b469dafb42a58aeebb4477c0ce715",
+      "path": "src/project_mai_tai/db/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "367004f5fcbf5b578dc187d536cce85b88320640",
+      "path": "src/project_mai_tai/db/base.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1210560a376170267a37161b10e946e99f82b447",
+      "path": "src/project_mai_tai/db/models.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "875ebcf68a734d63845464d963fd2a9fb5b1e412",
+      "path": "src/project_mai_tai/db/momlive_sec_country.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1f96eced23085786fe742ffdc544ad1b915ea762",
+      "path": "src/project_mai_tai/db/session.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "01d2ffd4ce4ae3c05b58268a858258fdd06ac7ed",
+      "path": "src/project_mai_tai/deploy_preflight.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fb772803d5841085a80224bfe5f6801f06eed293",
+      "path": "src/project_mai_tai/events.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6fc09ba0a38890a0070782b9ea34d3cf5105f64e",
+      "path": "src/project_mai_tai/exit_logic/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "233b76c0a64e20b6a5ef5c28a381b96f694df8f4",
+      "path": "src/project_mai_tai/exit_logic/config.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "23baf97ce0ea6f2b8f1ef9ac1ef0666bc7c6196c",
+      "path": "src/project_mai_tai/exit_logic/cw_exit.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6cee4213d504902916f7c3cfd49490cdf3ce1671",
+      "path": "src/project_mai_tai/exit_logic/engine.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b09b84d43a19da63d9f2ed8ebce99a502291d68c",
+      "path": "src/project_mai_tai/exit_logic/position.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d3eab85569d51567cb39fec12d05e39a7e164f67",
+      "path": "src/project_mai_tai/falseflip1.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "224c2f3c3d78c14e7448cab944f188e34570439e",
+      "path": "src/project_mai_tai/falseflip1_runtime.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "442b0fc5efdbb7da8fcefd99e2aff21ad5f4da8b",
+      "path": "src/project_mai_tai/fanout_identity.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ae171135ddac210be57f86c3bcd1ff3eabff6b74",
+      "path": "src/project_mai_tai/fanout_outcome_consumer.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "495c8736d8e78180d62f09ca0ac6d9b84a5369ad",
+      "path": "src/project_mai_tai/fanout_segment_store.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e1db6337416a77dd147cd96d5d3b83c60adb0528",
+      "path": "src/project_mai_tai/log.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a2ba9bb7d1f402ccf9890961fcb5054ad1c188cb",
+      "path": "src/project_mai_tai/maintenance/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6d422d551d6f91a91ed35c17efe37f1b850e0f66",
+      "path": "src/project_mai_tai/maintenance/reset_active_state.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1c0b09e7ed2a215d97247a2969c3289c1c434bed",
+      "path": "src/project_mai_tai/market_data/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8a26c7d37eca3c56bdf06ba0b2f044b6dd37e4ec",
+      "path": "src/project_mai_tai/market_data/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "19e1603ced41ccc1a783f02d646de38806c6ee06",
+      "path": "src/project_mai_tai/market_data/gateway.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "db1450dc221c4a10e6076fe675f0f7bcbd527aa6",
+      "path": "src/project_mai_tai/market_data/line_repair.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fbc3672d51b8d58d2559c54b5977307b5b128908",
+      "path": "src/project_mai_tai/market_data/massive_atr_seed.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "aedf8c0ca81f2b1ed8ace7f1ce8ae54f74e33fd7",
+      "path": "src/project_mai_tai/market_data/massive_indicator_provider.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7de0a7c4c74b33a41b03c0fc48d71898cf2450d5",
+      "path": "src/project_mai_tai/market_data/massive_provider.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b59b9079d33b94740bb7cd220b9f84906a3a2fe0",
+      "path": "src/project_mai_tai/market_data/models.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "538992824986ceffe54b793a0c1978569b18fce0",
+      "path": "src/project_mai_tai/market_data/momentum_warning_watchdog.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7895da101fd91e8209d8d2d0f9c40e89e459183d",
+      "path": "src/project_mai_tai/market_data/momwarn_pause_policy.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "131d1a2ad6b471c650345da8f4ca387a20373996",
+      "path": "src/project_mai_tai/market_data/protocols.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "85bd56c2ca23811c65b7a9b3b3740b850034f070",
+      "path": "src/project_mai_tai/market_data/publisher.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b8408698d228f30e1902a0636e4320af26996bcc",
+      "path": "src/project_mai_tai/market_data/reference_cache.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f29cf0ac33d6f1e1d52ea28868a28c811ab3a903",
+      "path": "src/project_mai_tai/market_data/schwab_streamer.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1913e67cc905671426ce8e79cd90c2deca6a4718",
+      "path": "src/project_mai_tai/market_data/schwab_tick_archive.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3804c1fb7b914b316ca1f80798347b0191824864",
+      "path": "src/project_mai_tai/market_data/schwab_v2_loop_health.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f12bf68c594e5aec1c25182dc1591c280ad9496f",
+      "path": "src/project_mai_tai/market_data/schwab_v2_rest_client.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8d201f4174586ee6b1cde9f2a4544f7f2f0df89a",
+      "path": "src/project_mai_tai/market_data/schwab_v2_streamer.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "358b755964d17ced824885b4344c459bf324d8f9",
+      "path": "src/project_mai_tai/market_data/schwab_v2_tick_writer.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "49abebbf1966573fdb84fa79b9d2d2c35d57767a",
+      "path": "src/project_mai_tai/market_data/snapshot_worker.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cecad749e5bd50e2cb2fab9ec990a1fc6dd5ecab",
+      "path": "src/project_mai_tai/market_data/stage_diagnostics.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fd9307fef42da009e6ba16d8a20644c55221d0b5",
+      "path": "src/project_mai_tai/market_data/taapi_indicator_provider.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cdab8e98d43a1828d03990db546d8e3c5d91aa3e",
+      "path": "src/project_mai_tai/market_data/tick_time.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "60f19b4414f348cdc638db53dc9376a87b77b13d",
+      "path": "src/project_mai_tai/market_halts.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "2da1a18fec2d1012ac3a2270bcabb784ee2aba6a",
+      "path": "src/project_mai_tai/momentum_gateway_handoff.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c3ce01271086ada3f952e83a2de7375d36b602cb",
+      "path": "src/project_mai_tai/momentum_live/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "db981f9c94d1f6e42fd792f01d1d44762cbd2f85",
+      "path": "src/project_mai_tai/momentum_live/actor.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "99a2141bb5ae8b3f9826495d559fefb197b07bc7",
+      "path": "src/project_mai_tai/momentum_live/admission.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e1df1a7e57e65648c439e0cb3fa7d3347a65b4c0",
+      "path": "src/project_mai_tai/momentum_live/entry_reprice.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "466f6e6730a322e17bc757b2e6e26110fa5773d3",
+      "path": "src/project_mai_tai/momentum_live/entry_wire.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "bb4db800b1f80f0e6f85a06cf08d2a5782ee476f",
+      "path": "src/project_mai_tai/momentum_live/execution.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7c68f650c4dc419432ae8b120bbdadd5d348bd8c",
+      "path": "src/project_mai_tai/momentum_live/exit_policy.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1b11fc4e323dd6a0b13efeadb6e34c6740555b5e",
+      "path": "src/project_mai_tai/momentum_live/handoff.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3f6720d0d7203d6b6b53deb7b9335653488ab2b7",
+      "path": "src/project_mai_tai/momentum_live/ledger.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "db5951e2f204139d7affeb761d32965ebe9ca096",
+      "path": "src/project_mai_tai/momentum_live/lifecycle.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a25c3cc99598a6a2460df15b107401fc3c05c23f",
+      "path": "src/project_mai_tai/momentum_live/owner_proof.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "046ad2743c0f52e4f345352cf181a4ee5e9e69b6",
+      "path": "src/project_mai_tai/momentum_live/persistence.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ada1f38c50c49e73751e5c7ce0c270a8d0a25a41",
+      "path": "src/project_mai_tai/momentum_live/protection.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ffe8c33217d2f569e7658352a4088f866ae21fed",
+      "path": "src/project_mai_tai/momentum_live/runtime.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e39db406740f72a60a0350b84be6d01c981fe878",
+      "path": "src/project_mai_tai/momentum_live_routing.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "24db2fa0da78ccbc445549bd9559eba403236e7f",
+      "path": "src/project_mai_tai/momentum_live_sec.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e630e4bed12834ac71fe87b2426c9f9df35ed4cd",
+      "path": "src/project_mai_tai/momentum_page_history.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7d5a106f83ea9ab5c7e8d853ac8837aa2b0e766a",
+      "path": "src/project_mai_tai/momentum_paper/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7461c117ac048bce579cfcb50ed98f5bd0b13b7b",
+      "path": "src/project_mai_tai/momentum_paper/case_collision_append.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cac367ee260c6e488939a6bf0585c087fb40ee91",
+      "path": "src/project_mai_tai/momentum_paper/case_collision_audit.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "30bac1df7477204f17b93dc7e5f1312327d3a8e2",
+      "path": "src/project_mai_tai/momentum_paper/case_collision_tool.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "2715895008ef96f0f681ffa42617421b05fd1757",
+      "path": "src/project_mai_tai/momentum_paper/case_collision_widen_tool.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "054fc81ae408956faaf8b644b7bb56a103e9dcd2",
+      "path": "src/project_mai_tai/momentum_paper/conditions.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c04212411d4b7840f979deedd5bd14eff73eb892",
+      "path": "src/project_mai_tai/momentum_paper/engine.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4e16512ebfb20c0f0ffd9a98195a6be9f3745321",
+      "path": "src/project_mai_tai/momentum_paper/models.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "efa425faabc00671d87eb52433dd277a73c0cf25",
+      "path": "src/project_mai_tai/momentum_paper/report.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a17015a9c1be8b315b5b91b71f64b3f3c736f618",
+      "path": "src/project_mai_tai/momentum_paper/store.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d8b4535cc9796a16fa13b63d468c4884c73e9977",
+      "path": "src/project_mai_tai/momentum_paper/warning_consumer.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "297d0b72ed9ac9c864669f204729f9907b61631f",
+      "path": "src/project_mai_tai/momentum_paper/warning_source_age.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b4f54fb99d3d341a62f78f1947715626ae02f260",
+      "path": "src/project_mai_tai/momentum_paper/warning_window.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "76e7a084765538b0fd6dca60f79d8dded293dbc5",
+      "path": "src/project_mai_tai/momwarn_cohort_lateness.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6757f584cecc89abe478ca25687cf4b4982dd029",
+      "path": "src/project_mai_tai/momwarn_health.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "12cde4bb8ebb023d852ab940afbc89357093bd01",
+      "path": "src/project_mai_tai/momwarn_health_contract.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e064c7032005f9221ddfe5323514f445b5ee79f8",
+      "path": "src/project_mai_tai/momwarn_live_health.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "12d2da6513e929a196286bcedaaf81f171e48e90",
+      "path": "src/project_mai_tai/momwarn_log_cursor.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "171bb4f83af60e5315918adb10c05cfa723965b3",
+      "path": "src/project_mai_tai/momwarn_measurement_probes.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9b8140a1fcea84a57a4b28886f027f0f3ccecaf0",
+      "path": "src/project_mai_tai/momwarn_measurements.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fca33c32585e92511519646bd7d410e9604103c8",
+      "path": "src/project_mai_tai/momwarn_metric_contract.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3a73f8c20a1efdcba150206b472dd38b66c6ad13",
+      "path": "src/project_mai_tai/momwarn_pause_incidents.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fdc8dd032f34e321862425e07cf93651ace12ece",
+      "path": "src/project_mai_tai/momwarn_validation_window.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "bb74ccbe3192f318809133792b1a4ffebdc1d5d9",
+      "path": "src/project_mai_tai/oms/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7daca3656c1d7110973b968f0ff5ffd81763da05",
+      "path": "src/project_mai_tai/oms/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "05f57a536754e0ea52e0c28a8ed9758459c0a4a5",
+      "path": "src/project_mai_tai/oms/atr_reprice_handoff.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "544cd91ca15cd6f91fd51cb9a74bccc1a7a70b8c",
+      "path": "src/project_mai_tai/oms/atr_reprice_runtime.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cfa19cac3f37ebcc71f337fd9db98626c4edb45a",
+      "path": "src/project_mai_tai/oms/bot_control.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d0a266bc02b3112a82aaa634ba62ab7951b623b7",
+      "path": "src/project_mai_tai/oms/bot_control_atr.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "56eb842aa552e7b26bdd78e284fa7d55f0872910",
+      "path": "src/project_mai_tai/oms/bot_control_cleanup.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0477ca061627442c9ad2bcc0694cad17e0a43d4b",
+      "path": "src/project_mai_tai/oms/bot_control_evidence.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f9e35e6ec78e8192c4b39cc7cf32386e8edeafb4",
+      "path": "src/project_mai_tai/oms/bot_control_executor.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c5a2eec9a4c1f76aef5709995aa76b2be67520c4",
+      "path": "src/project_mai_tai/oms/bot_control_journal.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "84153e8e56b5cf891f1a2f5bf2db78ca9fc9caf5",
+      "path": "src/project_mai_tai/oms/bot_control_legacy.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4f8b51e8a1239902ca1cf6cf9c6ea5721a9afdd7",
+      "path": "src/project_mai_tai/oms/bot_control_orb.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8dd5be770db61abf3a811213eb7ff7abadb9ccf4",
+      "path": "src/project_mai_tai/oms/bot_control_runtime.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9c977638be4053d9838f9f14f0c998ae3739b07b",
+      "path": "src/project_mai_tai/oms/bot_control_scope.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a2790b4236d6595e9df7644d72958aa9b59d8b76",
+      "path": "src/project_mai_tai/oms/eh_fresh_price.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "82a18380a26bb18700a271c1ddd89c3ad196ac0c",
+      "path": "src/project_mai_tai/oms/legacy_cancelled_partial.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6c3136dc2630e379da031c0ea6686586d1a196f6",
+      "path": "src/project_mai_tai/oms/managed_sell_prewire.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "75994069f9c1d97df1fd27e6acf0b37d82dabb52",
+      "path": "src/project_mai_tai/oms/managed_sell_retirement.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "32f5778124561682a04cdc58b29df741e244c165",
+      "path": "src/project_mai_tai/oms/mirror_fresh_price.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7f228dac25f4a02a1292ed925538fc6eb4597e07",
+      "path": "src/project_mai_tai/oms/mirror_retained_hold.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1ed50755093a3837baaf2632c80b8a7f1cd6460e",
+      "path": "src/project_mai_tai/oms/orb_country.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fd5cb72d34e2b280fee141980616d76de7efcca0",
+      "path": "src/project_mai_tai/oms/orb_pastlevel.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b2094c2f28a640b0c52a4cc9f9144be5d80a945f",
+      "path": "src/project_mai_tai/oms/orb_protection_work.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "92a17ba2589d96577dd955cdca84c589ffc986c7",
+      "path": "src/project_mai_tai/oms/orb_schwab_eod.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "26f0f7f81e577bdd0fd624729a92becc45f7828c",
+      "path": "src/project_mai_tai/oms/order_read_batch.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5c1a32a808602e5488e32a4f46800310504b4630",
+      "path": "src/project_mai_tai/oms/price_binding.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b041641caad013d8eb061ba657b91d54ed610f9e",
+      "path": "src/project_mai_tai/oms/route_owner.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ae659f98c346156c4e1960279a5b37b578882c62",
+      "path": "src/project_mai_tai/oms/schwab_owned_positions.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "17c42be54297c5ca530d9e478e32626f3fc47ade",
+      "path": "src/project_mai_tai/oms/service.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f5bd25e3c3b22a777f31c6f7a630247749d7e31d",
+      "path": "src/project_mai_tai/oms/store.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0869694517bbf6cd977196762187f84407c6c8c1",
+      "path": "src/project_mai_tai/oms/target_cache.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "592b599db56a7a3e7eeadec88ca14d30587c74c8",
+      "path": "src/project_mai_tai/oms/target_exit_receipt.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "232c9ffdb05ff95b7129f66574cb39b4b4e70ac9",
+      "path": "src/project_mai_tai/oms/wbquiet_shadow.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6ff05b6e035fc1661253500ddb6ea5c2ae7cc73a",
+      "path": "src/project_mai_tai/oms/webull_attach_riskoff.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "382b297fbdeaf78b8993b8cd233c465760234bf9",
+      "path": "src/project_mai_tai/oms/webull_c6_proof.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "bc0f1a97e3c9752c71eb46c70c893b4ecd25f87e",
+      "path": "src/project_mai_tai/oms/webull_identity_copy_audit.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "37c58820b95d63bd60da30179adce0d605c403a5",
+      "path": "src/project_mai_tai/oms/webull_order_identity.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1b12e8c00ef864cf5afa427989b7dd7b4cb1436b",
+      "path": "src/project_mai_tai/oms/webull_owned_positions.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "747100d1806b5c81fcfad05e0ae8ff1d8d0c1178",
+      "path": "src/project_mai_tai/orb_country_route.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ad00603272ea0891c3dd4ddc289597cb575705a6",
+      "path": "src/project_mai_tai/orb_live_decisions.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c90be304c22c55f27b2265500b54b4ddeb8b1a9c",
+      "path": "src/project_mai_tai/orb_paper_lifecycle.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "bdd439e21524c659c56a23e94256ad0491430120",
+      "path": "src/project_mai_tai/orb_schwab_atr_entry.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b48cd7a038fbaec3d24d31f018f711195fa8ebbf",
+      "path": "src/project_mai_tai/orb_schwab_exits.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "dbd05389630a1f7bb73ab933f708d50731704381",
+      "path": "src/project_mai_tai/orb_schwab_fill.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a2164e5004d55d2fa578221cc548811f58f4b43f",
+      "path": "src/project_mai_tai/orb_schwab_macd.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f6429df7601796c7ed908a73f44a97a311e431ce",
+      "path": "src/project_mai_tai/orb_schwab_order_route.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "700cb157326b0df35ddb62183bc5f40ad32be80a",
+      "path": "src/project_mai_tai/owned_inventory.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0c4308879fd4752c3ae2bee88be1615adc868d0a",
+      "path": "src/project_mai_tai/paper_exit.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8eeaca2fde880d6c7745685c9a0937760bd6c00a",
+      "path": "src/project_mai_tai/paper_exit_store.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "960fb9db30edd4fdaad3c2a0ec05e26be3baf374",
+      "path": "src/project_mai_tai/phone_alert_policy.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "de999f2bdfd23f943760943cc0f8ff6f636ea48a",
+      "path": "src/project_mai_tai/positions_read_receipt.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "74b3bc169fdc818a89dc31e10ea55e914fe34193",
+      "path": "src/project_mai_tai/post_restart_health_gate.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b3f540ef8426846b66f595736162f74d46d4fe01",
+      "path": "src/project_mai_tai/reconciliation/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a4d9ec2667f7cdeff2d60bd9bd1f2b72e1bd6c75",
+      "path": "src/project_mai_tai/reconciliation/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fb27972f8116536ce491601a2aa8fcd829ee3a20",
+      "path": "src/project_mai_tai/reconciliation/allowances.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6f4aa6ee890b37fac15ebfcc6dc9b4479b5f465f",
+      "path": "src/project_mai_tai/reconciliation/flat_incidents.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "15506d2e7e28e68ed8ad8cb90615da4a17d994ff",
+      "path": "src/project_mai_tai/reconciliation/operator_closed_exits.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "89216b00ea7821c317d5d80dd19a387515c76452",
+      "path": "src/project_mai_tai/reconciliation/order_read_evidence.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "120305156f733d101d18a4534d75a26947ff1e56",
+      "path": "src/project_mai_tai/reconciliation/ownership.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d15a39c23d3b988e006924a2bb4624572e8e8d56",
+      "path": "src/project_mai_tai/reconciliation/service.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f0dfab4212816ac73f14bc413e1428ac1cb1642e",
+      "path": "src/project_mai_tai/reconciliation/working_lifetime.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "afb4bd22533818348755d5d53b030055c6bb26aa",
+      "path": "src/project_mai_tai/runtime_registry.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ddfb2b1d0d66892c7fb084bdb82544d56c9a1c00",
+      "path": "src/project_mai_tai/runtime_seed.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "43e1556ece0f1311eedad112567aacf630d49c6d",
+      "path": "src/project_mai_tai/services/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a67cc57f064743a6ad22d0059512c600f86446df",
+      "path": "src/project_mai_tai/services/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c54a001c3a73942f9d6a5bbd8029913705f2f508",
+      "path": "src/project_mai_tai/services/bot_control_routes.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1ae075654dc064f558ada16c46839a6791607767",
+      "path": "src/project_mai_tai/services/market_capture_app.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "2b4232902f05a49109a886e8ee3f49ab0d0ed7a3",
+      "path": "src/project_mai_tai/services/market_data_gateway.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c94275efa92ff470d67a71e8da82006beca05b82",
+      "path": "src/project_mai_tai/services/market_data_snapshot_worker.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cccb94150eceea9561f28cfaa5e5bc4c82c92868",
+      "path": "src/project_mai_tai/services/momentum_live_replay.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b747da7439aa3b017b8bd1885d904edae179fc56",
+      "path": "src/project_mai_tai/services/momentum_live_sec_prepare.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "86cb9913c14fe97689f34b7a67ddd6b6bf23a3ce",
+      "path": "src/project_mai_tai/services/momentum_paper_app.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ecaf4f2fcb6f4faa197eace91869ea9891b5af97",
+      "path": "src/project_mai_tai/services/oms_risk.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d5898bb3556e10c23e6bc44ff98267e20a07f44b",
+      "path": "src/project_mai_tai/services/orb_app.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6343878465194554eaa74d068900c873c9728e0d",
+      "path": "src/project_mai_tai/services/orb_schwab_app.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9b49b425470f9bd321985382931245cf13739d08",
+      "path": "src/project_mai_tai/services/reconciler.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "813cd2f61a95cb0de6d856374711d5807ebb2d35",
+      "path": "src/project_mai_tai/services/runtime.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "14153d1dbdc9aeb5e904957f5586171f8b8754b2",
+      "path": "src/project_mai_tai/services/scanner_confirmed_capture.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "50dfde317216da30232102dfa4d606cfae9f2fcb",
+      "path": "src/project_mai_tai/services/schwab_1m_v2_bot.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "352f788b55c19d990f58ceb5e4ffa21e108d3fb8",
+      "path": "src/project_mai_tai/services/schwab_token_refresher.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "13257647f6625d6a15cb68162105ed2874c1d864",
+      "path": "src/project_mai_tai/services/strategy_engine.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5e67fba5eb836e514832083ff52e575a7d0845e4",
+      "path": "src/project_mai_tai/services/strategy_engine_app.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "781f2c443aeaa939411d4bbdf439a338bce16203",
+      "path": "src/project_mai_tai/services/trade_coach.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8615f84ec88a7740f2f950bfe1e3eb93ad0bcb97",
+      "path": "src/project_mai_tai/services/trade_coach_app.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "978a80befe337301b7a296adcb641af3a3249ace",
+      "path": "src/project_mai_tai/shadow/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6b9896d2c9b537c62074396bce423cb567f6ed64",
+      "path": "src/project_mai_tai/shadow/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cea1f4572ad85d5a1cb2cf7b4bb7170581234aae",
+      "path": "src/project_mai_tai/shadow/legacy_client.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ef4a8f1b8e0fd410a3b4cbfe1dbf4d6f2254140a",
+      "path": "src/project_mai_tai/strategy_core/README.md"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e1e26fc3a1eec50b6d539173058088055067ef5d",
+      "path": "src/project_mai_tai/strategy_core/__init__.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "29a283f671d2d46411a93fa78eb556ed8913a4fc",
+      "path": "src/project_mai_tai/strategy_core/bar_builder.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "40c9ff5c2f1edce57efa51417c47cfeb56eea918",
+      "path": "src/project_mai_tai/strategy_core/catalyst.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ddab83b277f0eec87e871b41e55c841527ccf145",
+      "path": "src/project_mai_tai/strategy_core/config.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1c9a042c6d2ebf88f343fcf754a55b35eb1cb069",
+      "path": "src/project_mai_tai/strategy_core/entry.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1abea8162ff9ac0baf6ac0c8498a402ad7757413",
+      "path": "src/project_mai_tai/strategy_core/entry_gate.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a8f8558b8382efe2103563e0dfcc1d2bb15e1204",
+      "path": "src/project_mai_tai/strategy_core/exit.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "971695d894a517cd646269a362e9e3de33d9af52",
+      "path": "src/project_mai_tai/strategy_core/feed_retention.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9944c197224f9f960a2d2e33b3d1354817ff89ff",
+      "path": "src/project_mai_tai/strategy_core/five_pillars.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "962ac4f989a645d2516b52e2dfcf27546502a8f4",
+      "path": "src/project_mai_tai/strategy_core/indicators.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "15f4d077635e209170c029aa1908556b15bd2f4f",
+      "path": "src/project_mai_tai/strategy_core/models.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d14e693d8114a17e9d1c6341d5f84727dbbc8381",
+      "path": "src/project_mai_tai/strategy_core/momentum_alerts.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1cc4d4d09f693808c4c9f9f69c5e4a15f684db02",
+      "path": "src/project_mai_tai/strategy_core/momentum_confirmed.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "67edc997e026a0db5ae1a6328b059835f583f509",
+      "path": "src/project_mai_tai/strategy_core/orb_intrabar.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9801d1d62a11984f22716d02300a7a5c4b970aae",
+      "path": "src/project_mai_tai/strategy_core/orb_pastlevel.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "48c03d2e6457cf641caa6c636418cd88278f55f6",
+      "path": "src/project_mai_tai/strategy_core/orb_schwab_bracket.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c6e42d32906eb5246a8964df3847e36eed0d9e89",
+      "path": "src/project_mai_tai/strategy_core/orb_schwab_open.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "621c277049f10282a085e564d3650e2af8e35ae3",
+      "path": "src/project_mai_tai/strategy_core/orb_tick_aggregator.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0c65848748fca4ed953e2f4ed54f43f452904ca9",
+      "path": "src/project_mai_tai/strategy_core/order_routing.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ee0f3819a143f68b8544fa80b95354f4e2b0397f",
+      "path": "src/project_mai_tai/strategy_core/polygon_30s.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3ce162046d5ce8916577d9f5c1ab841bbd796312",
+      "path": "src/project_mai_tai/strategy_core/position_tracker.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "52171cb59e1099124cbc203fa10702aea4e707ed",
+      "path": "src/project_mai_tai/strategy_core/runner.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "68d9d5ee3d061bdb44ffb64c0bec84f3eca362a6",
+      "path": "src/project_mai_tai/strategy_core/schwab_1m_v2.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4ec845ae5718e00ed95362c02ff095e3134e70ad",
+      "path": "src/project_mai_tai/strategy_core/schwab_native_30s.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "79fafc4d4dad544c7c4408c035ca909755f7af00",
+      "path": "src/project_mai_tai/strategy_core/session_line_restore.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "f2c3905f28ce828123e9e0813bb99862c543445f",
+      "path": "src/project_mai_tai/strategy_core/snapshot_utils.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a5e01f7b5b5a985483b510fdca132332c182911d",
+      "path": "src/project_mai_tai/strategy_core/time_utils.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "718ce7884a7982fb2d7fd24151d1e65f5ec5049d",
+      "path": "src/project_mai_tai/strategy_core/top_gainers.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "96c35cd00fb3eb6edc2ac4166202b67e6cabfd6b",
+      "path": "src/project_mai_tai/strategy_core/trading_config.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8a89f872d0e366a40cbaf79fb30e1ff7ead7274c",
+      "path": "src/project_mai_tai/strategy_core/v2_entry_sizing.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "402f1e3364ddace6297af75b6d6468d0b16fd2d2",
+      "path": "src/project_mai_tai/symbol_case.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "33bd4d03dc991ebd2702f2ff458a226ebaa816dc",
+      "path": "src/project_mai_tai/sync_sdk_diagnostics.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "53bf75928765ed27eec6274a13d462b33892c0a2",
+      "path": "src/project_mai_tai/trade_episodes.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "432635fb244d4c82da3c69fe8a45e2d2568b06ed",
+      "path": "src/project_mai_tai/trade_reasons.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0cfcafdea7f82e992223f0659b205fb169bb9b8d",
+      "path": "src/project_mai_tai/v2_falseflip_release.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0db43d55a70a63b1a209e0cd871c113bea68d840",
+      "path": "src/project_mai_tai/v2_flip_entry_ownership.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6ddb7878840c8efe8be93c1065bf5463fc627e63",
+      "path": "src/project_mai_tai/v2_removed_wait.py"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d821526e3b360463b08425b16581584a6d9936fb",
+      "path": "src/project_mai_tai/v2_restart_rest_store.py"
+    }
+  ],
+  "shared_files": [
+    {
+      "path": "src/project_mai_tai/services/control_plane.py",
+      "a2_git_blob": "3d3fd4b160449451fd7ebdc5de058557585abb04",
+      "sha256": "8ee169989749c719e7d6dbb8cad355cd3e4a17b147c70f1fee860c2789c2d5bf",
+      "projection": "ONLY_REVIEWED_L14_HUNKS_POSTIMAGE_EQUALS_F"
+    },
+    {
+      "path": "src/project_mai_tai/settings.py",
+      "a2_git_blob": "40c1a4eb6a04f96867ccfd84c0bdf7e6aeb9e8d8",
+      "sha256": "4dc957ad983730b6d2c6f3d85bf2c4cdfced44eb0fae85f06605fd050e22c128",
+      "projection": "ONLY_THREE_OPTIONAL_RECEIPT_FIELDS"
+    }
+  ],
+  "copied_files": [
+    {
+      "mode": "100644",
+      "git_blob": "5104ff9245c123e0d6b3cefc45229b0f1da70f0e",
+      "path": "sql/migrations/versions/20261023_atr_aggregate_entry.py",
+      "sha256": "ece27e94d265b85811880c30fb639b488bb8013a815e68153e39f7b8982cb3b4"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6f299ed9f2fc65dfd215498fd459aa71f8863373",
+      "path": "sql/migrations/versions/20261023_atr_simulation_store.py",
+      "sha256": "185e4ee38f868b84fe031fc77232061e081b02dacf429bd4a0048d26aaaeea0b"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "aa59e895474542c11fe934a00fc7e2897842add5",
+      "path": "src/project_mai_tai/atr_simulation/__init__.py",
+      "sha256": "714cc37aadd4fc7c3087a589d9a8534198786c7778f10040f8eb9acc9a99852a"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "65707119d6750138356632ec5d3dbbb2cbb6124a",
+      "path": "src/project_mai_tai/atr_simulation/accepted_aggregate_bootstrap.py",
+      "sha256": "9a4415d28ff2e3961b146b65428ce0f6fa49b192080160a59584df113a1ad85b"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d6d1d7c733e1404a61cd0759ec2494355dcd2dfe",
+      "path": "src/project_mai_tai/atr_simulation/aggregate_entry_contract.py",
+      "sha256": "ed8d185615137e891e852be095414c235d8ab128dbc7490cdaa85d215053e15a"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d4d87599c17feea129cd8405485d357ede7db16d",
+      "path": "src/project_mai_tai/atr_simulation/aggregate_entry_display.py",
+      "sha256": "6c7a04519b3ff505200d3e3c79a47edc8108f6c7c83c14d7eb24137b372853d5"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e0e87c71cc18ffc1360cc26120b1ac240c7d065b",
+      "path": "src/project_mai_tai/atr_simulation/aggregate_entry_publication.py",
+      "sha256": "b9d685a9259eb636a2b8d9a1477d07af38a63fb85acdfc1100974ae7d42274c1"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3761e26384a521dfc9b47a9eb5c045b7e09b6a1d",
+      "path": "src/project_mai_tai/atr_simulation/aggregate_entry_read_model.py",
+      "sha256": "540593427d250622997bcfc40547ca94023d8721024e3559c943b623b5200632"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "26ebaa48c938f16e2a2ec9023c4102d9614bfcc2",
+      "path": "src/project_mai_tai/atr_simulation/aggregate_entry_reader.py",
+      "sha256": "597dc1443ed1b68c73b5a6f69be179425be83d3b1e2546b4f8c4af1985a8ff6b"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "10699864141c4598778a3e652da69c15de457fea",
+      "path": "src/project_mai_tai/atr_simulation/cohort_assembler.py",
+      "sha256": "c5e52fd771181aca06655a3e63f6c7612bfa57dd13a06be86b3ba118303fe7da"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ee30ae3bdfc6c0a97e6b34b836ac83c17d6ab864",
+      "path": "src/project_mai_tai/atr_simulation/cohort_provenance.py",
+      "sha256": "dbf3c17871ccdfbf473d8de796aa898ff271e3d5fc8228ca7d97c12a1e32353b"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "889b9b98bf2a9fac29eaa0fef2e7cd52f0e83dda",
+      "path": "src/project_mai_tai/atr_simulation/cohort_sources.py",
+      "sha256": "caf33aec15dc6a34b8eed65832df324e8245ce0fac0768aaa4447b70bb1c57e2"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c76d213c912fe9d57b57fe8ce6dbb555222f29ac",
+      "path": "src/project_mai_tai/atr_simulation/completed_ui.py",
+      "sha256": "7e27238762a91372f3f7e16715680fe6f03ec72d0aef3fd75b6599be4bd730d5"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3831c29a4f8aac03ac669e8fd20d9ce52b81408c",
+      "path": "src/project_mai_tai/atr_simulation/engine.py",
+      "sha256": "696e506a561500e391bccf5b3fff529a5b47fa1fc8f6a2fd764e35759dc28f32"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0f69de883d6681a490d1834e43072cae43be800c",
+      "path": "src/project_mai_tai/atr_simulation/engine_binding.py",
+      "sha256": "be6ecf170c8532f20c9978b53884a67b7debb3ebd71c2429a306778a0ad05d29"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "42985e539d4a3c4b425462ecdd27bb821863b7c5",
+      "path": "src/project_mai_tai/atr_simulation/entry.py",
+      "sha256": "840895efc7a944cd39370dad19962c76b3a0ce0dcf1ff60dcbf94aa408feae23"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "32f1e659699e5bb61958c1f1e7557d259a6eb722",
+      "path": "src/project_mai_tai/atr_simulation/execution_eligibility.py",
+      "sha256": "3f6b657a69efa79e81fb73cf390051e296c20a876910b87857ee79861db582cc"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "67113d05863de19aac8c40c460a1425c96023be0",
+      "path": "src/project_mai_tai/atr_simulation/exits.py",
+      "sha256": "2853179ba83b8ba5bb137beeeac38c4a3696a1d6fd2325366c67f5bb5799d5f1"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "12864b80b94885e86d3a0bdd09387697fc6b2dd5",
+      "path": "src/project_mai_tai/atr_simulation/fill_models.py",
+      "sha256": "a749f396dd2a3b7b5b4697b27991a5874f9a43cdf03be0cb12dc2155cd5047b8"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "785f2f4e485021d6c299b47cfb574fecb495e709",
+      "path": "src/project_mai_tai/atr_simulation/firstbar.py",
+      "sha256": "29bf8d2282a0d3ee55d43a6676ddc1e817c51a57c41b6ea14fcb866484697302"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "586acda34849995b903c2a933b056e17d2ce665f",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_binding.py",
+      "sha256": "cc1047fd3732a93b9a7a7f132d8ac43bf704081ed3a6432cd8c5d1f1202acddf"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ccc41147975e107ffeadf16ab43091b506f39482",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_case_index.py",
+      "sha256": "0d0f37d452984b19e89401f2254826de55b6e317cf5179c8b0d8792ead983cdb"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5b0eda458267c2fb9aefc8976377c26b7964c87b",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_cohort_job.py",
+      "sha256": "6f8aa4028c5d1ead7585dcf0a7c8b9d9c73d0e91812b3c463351db5ebc67b168"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9cd238beb120bc8b86abcf9c57b1a474af15400b",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_comparison.py",
+      "sha256": "704081859ba681c3d302d638f93b60b17c09a8a6563bbfd31f181bc54fc954d9"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "93968dfbfb3ca7f8b743490b82261cee4f930138",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_display.py",
+      "sha256": "7d3561672aaaccc53a194dfbd1c117894a5ee80eb4f0152a425dc9b320984e75"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "64882d31c29d380230b5ab0622677153cf3ff516",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_exits.py",
+      "sha256": "ee38e47e7188c2dec75cb5f58edad7b897841cdb745ed4be8facaedccffb11d2"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fa42b2e84d46027ae87b165f51e48394029b4d65",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_live_baseline.py",
+      "sha256": "190167ea5788a0049d3909249cc2dc71bb8f89324c2f8d43f273883f7a79e359"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e7ee578d47e5e2f91d222a11676b7c3b9f1b64b5",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_projection.py",
+      "sha256": "6902da739a0589c25189d939c67dc1ab835ed464165a9ae9a9497766e36c3184"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "22ae57e05353d6d57cd4780f06f911cba908099b",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_read_model.py",
+      "sha256": "d3d634ad557c598c54855cf62baafe4cd944aef617f5301602427605ae65fa70"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8ee11c17b9fe58298a505f6e4f6e7a300c192dfb",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_reference.py",
+      "sha256": "b984c5268f5d2f4be0d00302573650251e3989edbe67935e7388d71bc91d3ae4"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8952d53401573fde423849e2b3181544f907a4ac",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_replay.py",
+      "sha256": "4ef286903bebc2c87cf6d4ddc8c93b51311cfc16228d9d0840f4234b5befc2c9"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6160f48e8f40cd063dae3af7a7fb5841fd915097",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_study.py",
+      "sha256": "f2bf4d031672af56d86ec9e63c866b2140ac6fe299a83f52040d0167bbeaf169"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "51448faeac0caa803aa92995e47dedc2c7414f81",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_study_publication.py",
+      "sha256": "bb579b5bb9c7cc079b3337babaa7e58c37d6c3f2db9d77349a1f5b3f16169fca"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "125411c0d98e27e86e8947e853e97f6803ca7846",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_target_rule.py",
+      "sha256": "a4ed9a1e387a3815f08a5c61e47bbed59c57e8b83bca39f749965bc1fe12d0c6"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d4436e42e792efee6c0ab56e515f649130b383ab",
+      "path": "src/project_mai_tai/atr_simulation/firstbar_ui_reader.py",
+      "sha256": "927a7e77b8512c5bb2fc93cb8efd29ef900d05c6a58bf61f8b825a5d2e3d01b1"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "843ca289eb589364d0a19c015d2ee291684eb14f",
+      "path": "src/project_mai_tai/atr_simulation/legacy_html_projection.py",
+      "sha256": "3988908d173570eb9c14c28ae881f0647f709178743892719c1b1e64b0793670"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6708a628b7440021711180a32cae9c7311b04d48",
+      "path": "src/project_mai_tai/atr_simulation/models.py",
+      "sha256": "b0e7ce2b2f947ae343a78dfc992eea31658345047bb1561ee59fdfeda0c10c6a"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "257a5de3305329822403ab5461caa1a29774a1e9",
+      "path": "src/project_mai_tai/atr_simulation/policy_io.py",
+      "sha256": "ed407a2ddb3f28cd50c17fba8301e455f3862fb51d05eb2902272af697680737"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "ef067bc441960f72588944d10fcb0b6641bf5607",
+      "path": "src/project_mai_tai/atr_simulation/read_model.py",
+      "sha256": "2637b15e52c32e681cb74c26cb7262c5387a56d27974a37854b9818a7a20d298"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "138f7548d30a97c4eead866ede6c0fe2e0790dc6",
+      "path": "src/project_mai_tai/atr_simulation/realized_display.py",
+      "sha256": "111946903cd81c4058032fd4deeccbc5ae0dc05f6492c63db29c3e605a4d67c0"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "a967a86faf7867611eccf534fbc3cbf0f8f6b383",
+      "path": "src/project_mai_tai/atr_simulation/repository.py",
+      "sha256": "7314c8369198f11c374181b569479e1d9ba6799d3c69c1c6b29bf1cf883bc2cc"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "189f7665dee3c71d171f3137f45be3dc8d86bd3e",
+      "path": "src/project_mai_tai/atr_simulation/service_contract.py",
+      "sha256": "37d1b1f734ab572bbd022110a7f880fa7cb7beaa30ab432218c251ec6586b582"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "58bc52d0c9a41f864103301c1169f5fb8789f9d2",
+      "path": "src/project_mai_tai/atr_simulation/store_schema_20261023.py",
+      "sha256": "c6e98ec1865b36f48d810d813dc36c6a335d579860d77549319e418d462bb2bc"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "bf3419a7e2c4913be1f1fe2c8df0c424f155570d",
+      "path": "src/project_mai_tai/atr_simulation/store_schema_20261023_aggregate.py",
+      "sha256": "7a072363a7337a65c72f753ae9428907024f940c4b34c1bef3313a6f92aef828"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6acaee8929f9aa238cbf012acdb63468840fcd02",
+      "path": "src/project_mai_tai/atr_simulation/types.py",
+      "sha256": "90f8dfac9a732c1fd247e5c10f2af18c7d3360ef987f43826ce3b8f708cef4ef"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4e3945d690f8509a0a11a14648be843cd861e351",
+      "path": "src/project_mai_tai/atr_simulation/ui.py",
+      "sha256": "b2e92092641731eb3e696e5151b5a8284c78e6913db27f716d6ef346b5a62154"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5ddb8fd7da7c67e2bfeedc11bba42f8f8ffaaa37",
+      "path": "src/project_mai_tai/atr_simulation/ui_reader.py",
+      "sha256": "87d9a16abca9d4c954bca17759d87f378eb322eb9a46556483eb0b14c2febf07"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e28e40691825babf631e1c832f71bb7fdc40e8a2",
+      "path": "src/project_mai_tai/atr_simulation/ui_schema.py",
+      "sha256": "14c1c30acd4def595fcf8a87cac3805453749fe19f4aae932119f041a736cc75"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0566a17287240f73ad831600e3d7e35fcd4182f9",
+      "path": "src/project_mai_tai/atr_simulation/volume_body.py",
+      "sha256": "6963a659f23466db66e2bfea1d44a4fed36e017ad8d336e219fc12c46ffa0e57"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "38761f4b4fba9d3216626e96e17ccc53f82f2080",
+      "path": "src/project_mai_tai/atr_simulation/worker.py",
+      "sha256": "6defbe32e930e0752ae7aebacb12ad945cdbc74d6cf05cabbe218e35eb54f783"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "85f7ff7d419600b5a9ccb8317b55695636b1ff41",
+      "path": "src/project_mai_tai/services/atr_aggregate_routes.py",
+      "sha256": "6071f616abdb36b846bd3aec303d5442f5dedf411d46325767a43fa1c4832d18"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8cd5f045b9a61f70944b2eec72bc7b03b6d7c27f",
+      "path": "src/project_mai_tai/services/atr_firstbar_routes.py",
+      "sha256": "3a0ad0077ea4816cd51c95bd007dd1663fa59cdf931dd8d17011a195c690914c"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6c29580a26c70570fa623d0071cd7551dac3264a",
+      "path": "src/project_mai_tai/services/atr_simulation_firstbar_worker.py",
+      "sha256": "aae07fbafce7ecb15321650bb6bd3437cc412dac2181b3d773353b4d037fc33a"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5af7b4925770d75372b2cb02ebb7c761f177e525",
+      "path": "src/project_mai_tai/services/atr_simulation_legacy_routes.py",
+      "sha256": "b6a0c398c40aa4d22ee94c7079b0d943252caa34dd9663aa83ffbfe8598868d9"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3a37f0de5d4cd88117ad1be463fbdc78ba56ce61",
+      "path": "tests/fixtures/atr_simulation/.gitattributes",
+      "sha256": "d5e87f05fd66a547203522f84198a86e3613e040ab902f3be03ba29c9a3bbfc1"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "58aa8f142e4157ee321bdc406d5fd16ee02a1ef3",
+      "path": "tests/fixtures/atr_simulation/firstbar_reference_173_20261023.csv",
+      "sha256": "6987ae93121fc35dc09d38d099933fd93aa932a5e48245b6dbaab82e17381f25"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "005f9b4c80be18a6ac5fde437f030f499203fbac",
+      "path": "tests/fixtures/atr_simulation_controlled_condition_rules.json",
+      "sha256": "e0ecaff7602607ab5f0593a596163bbd6bcddcf9aec3c2f1d3a0f70b6e3130c7"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "dec832fc812523a5c7c2e636249743ddd181920a",
+      "path": "tests/support/atr_simulation_eligibility.py",
+      "sha256": "66b3441365e372caa975d2f24ac235cc381e6fa836e5669b527a46e6c04107b6"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8d632fdc81c2fa3a40533f00f9765e430f06628f",
+      "path": "tests/unit/test_accepted_aggregate_bootstrap.py",
+      "sha256": "a0b5b1021d2ec9a70c041e6ce07187dbf742e533de604e27452cb0d51eda7ab4"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4f2c3751ff3d94880826d073a461df43d5f0ae13",
+      "path": "tests/unit/test_atr_aggregate_routes.py",
+      "sha256": "7a2cd400c671a5979c49e5cace74706994aa7df298aef86fe843d0b23ca38cb2"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c55a730f128945a8e2ef42b39c8f4ecc70b3b195",
+      "path": "tests/unit/test_atr_firstbar_live_baseline.py",
+      "sha256": "58951bb8ed5dc36670b7de4e69868f39288ad7ab2342d0082375025d25854bab"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "7b132f2ed456ef9f47ce4cd29d9695994ed7dc93",
+      "path": "tests/unit/test_atr_realized_complete_signal_contract.py",
+      "sha256": "387b49e60b1eee77b97ff15def523b4808c277cb5714619bb20fe34efbe1b9aa"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8e5baeebeeeba6e0221eff6b73e6c1aa8f8a7995",
+      "path": "tests/unit/test_atr_realized_display.py",
+      "sha256": "98e3c0fcaa648945d59ff8795e112bae9150f47d7a81c46b85188e58bb292e06"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8f1b1383bbf32f975d23801ff7ad7ddb993fe846",
+      "path": "tests/unit/test_atr_realized_pending_ruling.py",
+      "sha256": "84bf27ead2ce1dd561a8f190962115d71d4bab73707ff798e0f8a0466b4ed0bc"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5307db4469fb0225520b9d83aa29744dc9b5ef4c",
+      "path": "tests/unit/test_atr_simulation_aggregate_child_migration.py",
+      "sha256": "7d5fd10ad12363f92744f47edfa4ee7aade47db194f536740cdf15fe45a77cbc"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "03dc7a83ad31150693688f8417cf56d86673e409",
+      "path": "tests/unit/test_atr_simulation_aggregate_confirmation_exit.py",
+      "sha256": "84ba06749ac2d25e0c38fa371061e0c20ecb81f10a1eb3523a746025ff874ca5"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "34086d5c8d823bc12c678da77617c2eed96ba988",
+      "path": "tests/unit/test_atr_simulation_aggregate_display_contract.py",
+      "sha256": "f4c4e28fb3646dda5512d3c9b395fc36a8e4154693cf967025d75c36f546f9a4"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9bd70194062bab0a1a32dda683050383ec91ac1b",
+      "path": "tests/unit/test_atr_simulation_aggregate_entry_publication.py",
+      "sha256": "8dbd7d0d77db601052a67757032ec988ce7412a065fdcdadd018747ac62974fe"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fc8556b1828126d82c38a624216c4637b0c83b35",
+      "path": "tests/unit/test_atr_simulation_aggregate_entry_read_model.py",
+      "sha256": "fb6dd8736d295623f9a03098efcf0e3966712e429743229c488d61dfcb68bfab"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fd685e4dcfa00d59406cca518886a45bd5068cab",
+      "path": "tests/unit/test_atr_simulation_aggregate_entry_reader.py",
+      "sha256": "ebdd22c0d37d7acce16e133d3f38ec522c11a1658d72ef6d1cf60bcf775eac3d"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8601ec4dbe9c249479a8f1cfb1dd2b5f528514ad",
+      "path": "tests/unit/test_atr_simulation_aggregate_independent_legs.py",
+      "sha256": "2f1936f6f64d0a82215633aad7335a35bdf61c851601303c08e0310824473da6"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "95df51d0a6658e40dfb1b7837a7e000272af2e91",
+      "path": "tests/unit/test_atr_simulation_aggregate_main_binding.py",
+      "sha256": "19ab6b43d94f14ff59822e03a9520d13c1964b044940504b113f83be5ada6b83"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "d90bece6f2653ba372e4fb14aafe5681b10b3a0d",
+      "path": "tests/unit/test_atr_simulation_aggregate_sealed_compat.py",
+      "sha256": "0780ec3ef3d2c429be126da85ece9680b47c7cb076027b92e70565a526cb0225"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "96f71ed497dc8a8ac8905cfdc5923f098130ee84",
+      "path": "tests/unit/test_atr_simulation_firstbar.py",
+      "sha256": "8f2b879acd6a02ddf9df541dad0925992c696de9bd38a61c8cd20761227e9d2e"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "b240bd9c405d030edf49320d3c64a59b034bb786",
+      "path": "tests/unit/test_atr_simulation_firstbar_c1_two_groups.py",
+      "sha256": "c1b1db0978fb24f04305d8b8dce3fe00a153304b88cc35b6464861b854552cb0"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5fc446110d5cbbfec52a743a2f684979ea638c7c",
+      "path": "tests/unit/test_atr_simulation_firstbar_case_index.py",
+      "sha256": "d7accb05d45751d531895bd529e5f802e848e69553ca9c7f68ec13a765ea259e"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "290d41ca3f2f9d58737f0d04ad86314222ecf9ca",
+      "path": "tests/unit/test_atr_simulation_firstbar_cohort_job.py",
+      "sha256": "9633ba699b44d1b20d1346abfd2fc8ff3f0cfeac909cb2ea4c1a6ab0b2452fe5"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "fa933f045afc29bc3f03a2c79e879391656fb723",
+      "path": "tests/unit/test_atr_simulation_firstbar_comparison.py",
+      "sha256": "0f7f9774a8b153c8cfd12baa1fb45171e7c4e2923e4bd2ce8b7e79603247a805"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "0595e2d57e278fd11bc395fd092256c51cc0661f",
+      "path": "tests/unit/test_atr_simulation_firstbar_display.py",
+      "sha256": "13f001217b81395f0b33958e222e4aba0327f943d37ac51df5a7983f1392a348"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "28eb7c031bba8d7a12798231f513c333ab20d63e",
+      "path": "tests/unit/test_atr_simulation_firstbar_exits.py",
+      "sha256": "7570efe63cddc61873ff7346b1d7be3c934a847fbf94ef224a363bb5b2dde244"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "28b4c4a165166c8669240bf74345a5303c13d94e",
+      "path": "tests/unit/test_atr_simulation_firstbar_many_issues.py",
+      "sha256": "14fed4e4df88e43fdbb7d74e8a08e0067faaa1b800851e3ed91ca23a1a23cf72"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "5ed7645e07f2b1f93142e8e66c69a3137fd60fc0",
+      "path": "tests/unit/test_atr_simulation_firstbar_migration_parent.py",
+      "sha256": "6368214eb440c35ed31b602d08138b616aadf2b11880a4dd86abc1d9234fabe2"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e9a63dbd5af489e3e9c20b72c0460fa47e71e91a",
+      "path": "tests/unit/test_atr_simulation_firstbar_reference.py",
+      "sha256": "9be8b45ba1ac4966446dace2784f71e860774f95828065b23e63161dbc85e9b9"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "e048744260be60926228ec28e8690e12a6f71059",
+      "path": "tests/unit/test_atr_simulation_firstbar_replay.py",
+      "sha256": "2d34d8be29d7941274c3b0aafda945a55d71aabcba2a5325b1c896607f7c575e"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "6493ba86a3c4d3bf357ce86aada9e6372a76e10e",
+      "path": "tests/unit/test_atr_simulation_firstbar_store_binding.py",
+      "sha256": "adcd5604466b3ea599b04fd66051496fdad742324affc11222294caa47fa3075"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "23b4ad94fa2bc67f03ed2f057cbcc660563ad6ef",
+      "path": "tests/unit/test_atr_simulation_firstbar_study.py",
+      "sha256": "e5489c69f6ead639d7481c877a6afb2fea5555a0c7c378b3db56596338d18786"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "3881ab07beff064671a42698320736dff15fce4d",
+      "path": "tests/unit/test_atr_simulation_firstbar_study_publication.py",
+      "sha256": "e1885cc7bd57f490e8628459eb25bf32fff1afbe82d25a73d369a85012586b68"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "33604d03a1fc2c41fb73ef3855144e165cab5838",
+      "path": "tests/unit/test_atr_simulation_historical_restart_durability.py",
+      "sha256": "e548827feb556623a1a05694fb7e4652765e303d3fc63b16afaaeed15ac21168"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "9ffdc4a54d979f0f8bf372c778020e225210ae1b",
+      "path": "tests/unit/test_atr_simulation_legacy_visibility.py",
+      "sha256": "e20c1b2054ec72217cf58356681f142f66f6e857e5a694ca7b3e825b1866b7ac"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "928f708579a47a9b58ea7a5726dcd894de0d1980",
+      "path": "tests/unit/test_firstbar_case_index_mount.py",
+      "sha256": "4872fa1f112e8edc2a5c607fb4505ee56b119cdfbed035456ac64f4472d4e808"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "24daf7b11126ed18de5b9850bccaf58aa9c6fe64",
+      "path": "tests/unit/test_firstbar_pg_environment.py",
+      "sha256": "1ed5e277b76056c6207f069d75a760b3c559eca7260d6e3d667fef4e56c168f4"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "aa3650916927c6e54e1b67186381780c1d873713",
+      "path": "tests/unit/test_firstbar_pg_receipt_cleanup.py",
+      "sha256": "1837fca381c6287ea5cbbefc287a93358b7caafc0d93ea1c7269072fc6c95608"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4ffc60707712f0e22e94baf75d31ba7da7444cc2",
+      "path": "tests/unit/test_firstbar_projection_boundaries.py",
+      "sha256": "990fd163320a860dd9a465504bc3fb53f38d9449a794a5e9001a8fdf131a60d6"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "2a140f75ce415fb0080e8542bad75bc373238ccc",
+      "path": "tests/unit/test_firstbar_readonly_mount.py",
+      "sha256": "c081baf3c47345fb61a9a9af6cdd165dc409d89c11e15abec3f4a258b7f66feb"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "81962b3413f99f6d515645ddd44439bb0aee4dc0",
+      "path": "tests/unit/test_firstbar_reference_review_banner.py",
+      "sha256": "efe37a6be1327274e667e5d40c44ffce3692b6bcb4ecf40a50077b54a08f3db5"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "76982e41d935b3e3d32d22f1c290d73d1832c7df",
+      "path": "tests/unit/test_firstbar_study_store_rows.py",
+      "sha256": "ad3f0ce2daa8202b2ef72e16e04e1dacfdd450a34aa5be565f68e19568666b3f"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4b0bbaa29439599c7be4384f368fcfe39f751f85",
+      "path": "tests/unit/test_firstbar_text_read_release.py",
+      "sha256": "65cc0e4fe85927ecae23e3b1308130b75c24b6710bb32c8531cb42b7a1da08fa"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "86fed6cbcd0b89af4283d5ef57603b4c32d2361e",
+      "path": "tests/unit/test_firstbar_two_group_binding.py",
+      "sha256": "e740a9728248f314bdb3a94a289de2cf13cbd1166f18ef8e1a53467c1d52d8cb"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "184ff47e0906fcb019d9c6839bde363a92c62d85",
+      "path": "tests/unit/test_l14_projection_speed_contract.py",
+      "sha256": "b0206c975946b33774efd921b7b911463716db1207f4313fe58d0a0819f85789"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "2d766c851109fe59b4aaa5dbb41d4f317e1714d6",
+      "path": "tests/unit/test_legacy_sim_shared_mount.py",
+      "sha256": "0028aeb1b841e9f8f4667bb7d3667efbebfdb55236caab59d2d1aa67d2c2249a"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "8467f1061cb33d552525a6b09a390eacef98d556",
+      "path": "tests/unit/test_sim_api_response_offloop.py",
+      "sha256": "813de265083c4f2db2ab3df076b14c9ba3d8290b12e18b1f6dde33bc7d952dc1"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "c49b717f493cdab6dc277866112e159e29ab7a5c",
+      "path": "tests/unit/test_sim_page_owned_projection.py",
+      "sha256": "d275f1c316fa50583af21908ea9f197eea4d665fff657c56a6df76230dcef599"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "4fa4f4e738f77a9e51566292dcac3edc4c7377f2",
+      "path": "tests/unit/test_sim_selected_html_offloop.py",
+      "sha256": "5adf978048e24a1344b74ee20c1ce5a1275cc94a16c31c65c66330ba2d00d6a4"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "09c78b4ff80121b1ce116635017029bfb99a5db7",
+      "path": "tools/atr_firstbar_live_baseline.py",
+      "sha256": "357696feca9b5d2d403ec4a6b9fd67492a8bad66686f6f22ab34e65b2ee93d6d"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cab9439a1b92e89a8de49322eca3b06e201cd144",
+      "path": "tools/atr_firstbar_study_manifest.py",
+      "sha256": "0bac49ad895ff7dbc06d75ce8f5a0e7a09fa3498b4889d28e1650b545d54f1e2"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "1b7a6ee7a6035107d6663683ca3583cec287aafd",
+      "path": "tools/atr_firstbar_study_replay.py",
+      "sha256": "038319ff417695c136b1e98f486adfb3decbae26a9d1d337ed4ad648234f7af2"
+    },
+    {
+      "mode": "100644",
+      "git_blob": "cf826eb2df11ada8ebc730b0f169b1309e65a7dc",
+      "path": "tools/firstbar_private_pg_store.py",
+      "sha256": "fb8c79cd769062b4a5182876b1735ac389ac8a700c1e913c8e9376046c50ad98"
+    }
+  ],
+  "excluded_f_only_tests": [
+    "tests/unit/test_atr_simulation_l12_chain_binding.py",
+    "tests/unit/test_l12_graph_bound_native_profile.py",
+    "tests/unit/test_l12_nonce_restore_caller.py",
+    "tests/unit/test_l12_schema_rehearsal_child_transport.py"
+  ],
+  "notes": [
+    "No baseline tests, fixtures, flags, catalogs or existing source removed or changed except the two named shared files.",
+    "Original legacy 313 tests are not contained in F; this manifest does not claim their restoration or execution.",
+    "Source/fixture byte identity is not historical, financial, page, timing or install qualification.",
+    "The accepted 775-row archive is external input; no data or DSN is included in this source projection."
+  ]
+}

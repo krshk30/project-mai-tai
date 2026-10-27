@@ -628,6 +628,7 @@ class SchwabV2Streamer:
             close=close_p,
             volume=max(0, volume),
             timestamp_ms=ts_ms,
+            producer="schwab",
         )
 
     @staticmethod

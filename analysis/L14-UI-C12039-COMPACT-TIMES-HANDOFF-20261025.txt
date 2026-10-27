@@ -1,0 +1,96 @@
+C12039 REQUIRED TIMESTAMP TWEAK -- SOURCE ONLY / UNRUN
+Stable ID OCT25-L14-UI-C12039-COMPACT-TIMES; Bohr source, Main runtime/queue.
+Own root /private/tmp/mai-tai-l14-ui-c12039-compact-times-20261025
+branch codex/oct25-l14-ui-c12039-compact-times; exact base d914837b31aa8d7b34fbb6ea0f90a73b8d9ad66f.
+Main/d914/123/70/9c/dirty primary and other lanes untouched. D1OUT unchanged.
+No author APP imports/tests/compile/build/PG/provider/browser/runtime/shared writes.
+
+RULING / NARROW SCOPE
+C1LATEST20:39 accepted the d914 compact look, but required all CP SIM Entry/
+Exit times MM-DD HH:MM24hET with full timestamp hover, all9columns including
+P&L/Exitreason visible at1440 without horizontal scroll, mobile internal scroll.
+Only desktopFIRSTBAR+AGGREGATE_ENTRY need reshoot after actual new body.
+
+ONE APP FILE
+src/project_mai_tai/atr_simulation/cp_sim_display.py
+Before08da470d47e9ab973e9cbc823eaffca48eafd3aacc85c0edc728ea349a0f770e
+After607066c1e73bac122d3fe2ac181a2d2803f0cdc310c368ff7b98b2db12d496a9
+Panel renders the existing canonical detached row FIRST, then changes ONLY
+Entry/Exit td at indices3/5. Full original human ET text (year/seconds/AMPM)
+is retained in escaped title, visible text MM-DD HH:MM. Midnight/noon explicit.
+Canonical ISO offset/DST handling remains in the existing unchanged renderer;
+the SIM formatter only shortens its alreadyconverted ET label. UNKNOWN/malformed
+labels remain literal, no inferred dates/timezones/fills or invented values.
+Escaping retained; replacement is restricted to exactly9canonical td cells,
+not a generic page rewrite. The other7td/outerrow/indentation remain byteexact.
+All seven CP SIM panels use it, aggregate through existing compact panel path.
+Standalone SIM pages/APIs, shared LIVE renderer/template and data unchanged.
+
+Table fixed layout +nine explicit percentage columns totaling100, minwidth760;
+same fonts/verticalpadding/rowheight/badges/captions. Scoped SIM-only overflow/
+ellipsis uses existing reason title, keeping all9columns in width rather than
+auto-layout stretching the table. Existing .table-wrap overflow:auto retained
+for mobile. No pagewide CSS, no hiding P&L/Exitreason columns, no fewer rows.
+Actual1440 no-table-overflow/lasttwo-column geometry is UNKNOWN until Main
+browser verification; source/style controls are not pixel proof.
+
+BOUNDED LINEAGE / NO HISTORICAL WEAKENING
+Only added cp_sim_display after_sha changes in the current successor fixture.
+Literal9c fixture/history/all55 preimages, exact3otherpostimages, exactadded
+membership/noHEAD/noaccepteddescendant stay unchanged. Currentfixture bytes:
+d08b29e7c3bbaa2174cd2758f13a83321061fb5b6433715dba9b709ea1bde1be
+Current lineage test changes ONLY its literal fixture SHA. Fixture PROPOSED state
+retained as historical proposal provenance; C12009+C12039 ruling noted here.
+No old source/data/screenshot/full/timing evidence is retagged as this candidate.
+
+NEW/CHANGED CONTROLS -- ALL UNRUN
+tests/unit/test_l14_ui_compact_times.py:14 intended expanded controls.
+8 explicit24hET/AMPM/noon/midnight/UNKNOWN labels;4 exacttwo-cell changes with
+fulltitles, DST/UTC conversions/escaping/sourceimmutability/7untouchedcells;
+all7mode549realrows+226SKIP audit; nine-column/scopedCSS/mobile structure.
+Existing actual mixed fixture remains byteunchanged (140TRADE113SKIP/mode).
+Changed single selector below now allows ONLY the two required time cells/title,
+not weakened all9facts: exact280FIRST trade row pairing, full506metadata,
+549rowcount/9cells/113summary each/SKIP-noexecution remain checked. Independent
+test expectation derives compact text from canonical ET cells, not UI helper.
+
+MAIN FINITE SELECTION (14 NEW +1 CHANGED +2 BOUNDED +1 NONSIM =18 INTENDED)
+tests/unit/test_l14_ui_compact_times.py
+tests/unit/test_l14_ui_actual_skip_outcomes.py::test_all_actual_outcome_ids_and_kinds_have_rows_without_changing_trade_bytes
+tests/unit/test_l14_only_a2_fallback_composition.py::test_current_l14_runtime_preserves_exact_historical_9c_bytes
+tests/unit/test_l14_only_a2_fallback_composition.py::test_current_runtime_path_closure_matches_reviewed_combined_component
+tests/unit/test_l14_ui_actual_skip_outcomes.py::test_actual_mixed_population_keeps_nonSIM_html_bytes_exact
+Do not repeat old unchanged15/2/full as a separate bundle. This finite selection
+is source-described, not author executed/actual count. Main owns claim/fence.
+
+READBACK / SCREENSHOT CONTRACT ADAPTATION BEFORE MAIN EXECUTION
+Old d914 caller618f7f84/full3375pins and loaded405aa94da source explicitly bind
+d914; they must REFUSE this new head. Preserve them, no blanketcarry/HEAD flip.
+The exact candidate/finalcombined root/head/tree/fulltrackedcount/pins must be
+freshly bound after composition. Same privateDSN/role/epoch/RO/schema receipts,
+all549ordered9cells/all506identities+226SKIP audit/exacttotals/nonSIM remain.
+Expected-cell adaptation is limited to columns3/5: independently compact the
+canonical API-derived old ET strings and assert each actual title is the FULL
+old ET string. All7other cell bytes/text stay exact, nine columns remain.
+Actual normalized time labels alone without full title comparison are NOT PASS.
+No UI._compact_time or _sim_row as the expected oracle. Both MODE metadata and
+SKIPaudit stay independent actual APIs. Old titles/body/screenshot hashes are
+historical. A mere string substitution of old d031body is NOT new actual body.
+Main fresh actualbody first, then only desktopFIRSTBAR+AGGREGATE_ENTRY reshoot.
+At1440 assert each table.scrollWidth<=clientWidth, and boundingrects of P&L/
+Exitreason fit entirely inside wrapper; inspect both PNGs. Retain390internal
+scroll CSS, source checks; no new mobile screenshots required by C1.
+
+LOADED40 RESUME POINT
+Previous5aa94da sourceassessment remains valid: no existing9c display-carry.
+Same original40/fourSIMloops/actualread-entry+overlap/no warmup/retry/discard/
+OLDp95+.025s limit25.744583026971668ms. New head and time-cell comparison require
+reviewed literal amendment before timing. Explicitday12 worker still545 rows,
+querylessforeground549; this formatting tweak changes neither population.
+Prefer one exact finalcombined timing after finalsource seal rather than run
+d914 then newUI and spend duplicate windows. Main/C1 decides, no author timing.
+
+NEXT / REMAINING UNKNOWN
+Main whole-source+boundedlineage review/finite18actual; composition with SAME
+finalL11/L12 and one full; actualnewbody then only2desktopcaptures; exact final
+loaded40 binding/quiet claim. No install/restart/native/performance/full GO.

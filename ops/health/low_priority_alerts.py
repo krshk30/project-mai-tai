@@ -62,13 +62,20 @@ def send_low(
 ) -> bool:
     if sender not in SENDERS:
         raise ValueError(f"unrecognized low-priority sender: {sender}")
-    if not _send(url, title, body, tags):
+    try:
+        from project_mai_tai.phone_alert_policy import phone_decision
+        phone, rule = phone_decision(title, body)
+    except Exception as exc:
+        print(f"phone policy unavailable; keeping phone: {type(exc).__name__}", file=sys.stderr)
+        phone, rule = True, "policy_unavailable_keep_phone"
+    if phone and not _send(url, title, body, tags):
         return False
     now = datetime.now(ET)
     record = {
         "at": now.isoformat(),
         "sender": sender,
         "last_line": body.splitlines()[-1] if body.splitlines() else "",
+        "title": title, "body": body, "phone": phone, "phone_rule": rule,
     }
     path = _spool() / f"{now.date().isoformat()}.jsonl"
     with path.open("a", encoding="utf-8") as stream:

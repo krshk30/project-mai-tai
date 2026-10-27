@@ -36,6 +36,8 @@ class _Harness:
     # published symbols are then exactly the watchlist, as before.
     # See tests/unit/test_v2_held_symbol_exit_coverage.py for the held-symbol behaviour itself.
     _subscription_symbols = SchwabV2BotService._subscription_symbols
+    # Production dependency: SchwabV2BotService._observation_symbols, bot.py:3114.
+    _observation_symbols = SchwabV2BotService._observation_symbols
 
     def __init__(
         self,
@@ -48,7 +50,9 @@ class _Harness:
         self.settings = Settings(
             oms_v2_exit_management_enabled=enabled,
             strategy_schwab_1m_v2_gateway_register_enabled=register,
+            strategy_schwab_1m_v2_keepwatch1_enabled=False,
         )
+        self._keepwatch_enabled = self.settings.strategy_schwab_1m_v2_keepwatch1_enabled
         self.redis = _FakeRedis()
         self._watchlist = set(watchlist)
         self._exit_coverage = set(coverage or ())

@@ -1,0 +1,58 @@
+OCT25-L14-UI-FULL-SHARED-ROW-CONTRACT-SOURCE
+SOURCE REVIEW COMPLETE; TEST PROPOSAL ONLY, PENDING C1. All seven cases UNRUN.
+
+Literal base: 6c6776f68763342e534aaa4ad3316346cff6c48d
+Own root: /private/tmp/mai-tai-ui-offloop-time-contract-source-20261025
+No APP files changed. Frozen 6c/e6bc/90d and primary untouched.
+
+Retained actual:
+/private/tmp/OCT25-6C677-SELL-UI-CANDIDATE-FULL-FIRST-20261025.log
+SHA256 9080eb324a7284dc7c343b4fda3ef8adc7b9a01d86c4d7e403846b6cb90472b5
+Lines 2415-2435: shared exact formatter row assertion at old test line 180.
+Main reports 20060PASS/105FAIL/84SKIP/2XFAIL/146reserved, one new failure vs70.
+Keep this result; this proposal does not convert it to PASS.
+
+Causal source assessment:
+The failing test body is unchanged from70. C12039 required compact SIM clocks,
+and C12109 accepted the e6bc desktop result. cp_sim_display._sim_row starts from
+the canonical CP renderer then replaces td5 and td3, preserving other seven td
+and outer-row bytes. It adds exact full ET title/entry-or-exit markers and emits
+MM-DD HH:MM 24h ET. Whole canonical-row substring equality necessarily fails.
+The controlled entry/exit ISO seconds 10:01:01/10:01:02 become visible 10-23 10:01,
+with seconds retained in titles. This is evidence of a stale whole-row oracle,
+not evidence of unintended field loss. Truncated failure HTML alone does not
+prove every actual controlled DOM cell/title; corrected runtime remains UNKNOWN.
+e6bc actual e3bdd129 readback remains historical e6bc evidence, not a new6c GET.
+
+Minimal proposed test contract:
+One existing test file only; no fixture, APP, trading, threshold or mark changes.
+For each FIRST mode, require exact row count/order and nine cells; compare seven
+non-time cells byte-for-byte to the original canonical CP row (including P&L,
+raw reason and escaping). Reuse the independent existing time expectation, not
+the production compact formatter. Require exact two time opening tags, full
+escaped titles and entry/exit markers; compare remaining outer-row bytes exactly.
+Six new negative cases reject P&L, raw reason, escaping, full-title corruption,
+missing row and duplicated row. No skip/xfail/accepted-descendant mechanism.
+Standalone whole-page byte equality, shared non-SIM exact page equality,
+reader-call count, input immutability, offloop causal liveness and API exact JSON
+bytes/no-HTML/no-store/outcome count checks are unchanged. Their source is
+preserved; no individual new execution is claimed from this review.
+
+Main-only changed selections, seven intended cases total, UNRUN:
+tests/unit/test_sim_selected_html_offloop.py::test_selected_html_exact_existing_formatter_bytes_and_controlled_live_panel_unchanged[shared]
+tests/unit/test_sim_selected_html_offloop.py::test_shared_compact_contract_still_rejects_field_or_row_loss
+Do not repeat unchanged standalone/offloop/API selections absent Main/C1 request.
+
+Pins:
+Original test SHA256 5d26440ccf7f1a8afc5e15267dc3014df4fe808a3894402bf6360e56e866f761
+Proposed test SHA256 84954d8fa01ce4c27e8954fbf405d956f826d5c3be85629d6c705831f0277759
+Unchanged independent test helper SHA256 38b033b6c21c9c02888857023bf3a912b8b099dba0e68d9084b8fcb820e6738c
+Unchanged cp_sim_display SHA256 607066c1e73bac122d3fe2ac181a2d2803f0cdc310c368ff7b98b2db12d496a9
+Static git diff --check PASS; src/sql/ops diff empty. No syntax/import/test run.
+
+Disposition:
+Main/C1 must review before adoption and runtime. No inferred second-full waiver.
+A test-only successor changes whole HEAD/file inventory even with identical APP.
+Do not retag the frozen90d literal6c loaded40 binding or old receipts. Main/C1
+decide final test/source identity and exact component carry. Loaded40 remains
+pending C1 carry and a fresh quiet claim; no timing window or execution assumed.

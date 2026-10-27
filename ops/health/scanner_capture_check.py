@@ -4,7 +4,7 @@
 The original box-only check collapsed a failed database read into ``rows=0`` and then
 diagnosed the capture writer as broken.  This checker keeps those states separate and
 reports observations only.  A low-volume verdict means that the measured row rate is far
-below the previous matching weekdays at the same Eastern-time cutoff; it does not assign a
+below the previous trading days at the same Eastern-time cutoff; it does not assign a
 cause.
 """
 
@@ -34,12 +34,12 @@ WITH params AS (
         :'cutoff_et'::time AS cutoff_et,
         :'baseline_sessions'::integer AS baseline_sessions
 ),
-prior_matching_weekdays AS (
+prior_trading_days AS (
     SELECT DISTINCT events.trade_date
     FROM scanner_confirmed_events AS events
     CROSS JOIN params
     WHERE events.trade_date < params.today_et
-      AND EXTRACT(ISODOW FROM events.trade_date) = EXTRACT(ISODOW FROM params.today_et)
+      AND EXTRACT(ISODOW FROM events.trade_date) BETWEEN 1 AND 5
     ORDER BY events.trade_date DESC
     LIMIT (SELECT baseline_sessions FROM params)
 ),
@@ -59,7 +59,7 @@ baseline_counts AS (
     SELECT
         days.trade_date,
         COUNT(events.id)::bigint AS row_count
-    FROM prior_matching_weekdays AS days
+    FROM prior_trading_days AS days
     CROSS JOIN params
     LEFT JOIN scanner_confirmed_events AS events
       ON events.trade_date = days.trade_date
@@ -206,9 +206,14 @@ def classify(
     common = (
         f"rows={observation.row_count} symbols={observation.symbol_count} window=\"{window}\" "
         f"newest_row_et=\"{observation.newest_row_at_et}\" "
-        f"same_weekday_baseline_median={observation.baseline_median:g} "
+        f"trading_day_baseline_median={observation.baseline_median:g} "
         f"baseline_sessions={observation.baseline_sessions} feed_age_minutes={feed_age_minutes}"
     )
+    if observation.row_count == 0 and feed_age_minutes < FRESH_FEED_MAX_MINUTES:
+        return Verdict(
+            "LOW_VOLUME", 1,
+            f"SCANNER_CAPTURE LOW_VOLUME {common} reason=empty_capture cause=NOT_DETERMINED",
+        )
     if observation.baseline_sessions < MIN_BASELINE_SESSIONS or observation.baseline_median <= 0:
         return Verdict(
             "COULD_NOT_TELL",

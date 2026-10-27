@@ -57,6 +57,7 @@ class LiveActor:
         self.work = EpisodeWorkQueue(self._service_owned)
         self.dispatch = QuoteDispatch(self.work)
         self.restored = False
+        self.entry_inflight_symbol = None
         self.tasks: list[asyncio.Task] = []
         self._observations: dict[str, tuple[int, OwnedObservation]] = {}
         self._quantity_mismatch_since: dict[str, int | None] = {}
@@ -118,6 +119,7 @@ class LiveActor:
     async def _entries(self) -> None:
         while True:
             event = await self.inbox.get()
+            identity = signal = None
             try:
                 if event.payload.intent_type == "open":
                     if not self.ports.enabled():
@@ -131,6 +133,7 @@ class LiveActor:
                         raise Refusal("handoff_symbol_identity_mismatch")
                     # Pure claim operations are atomic on this event loop; never
                     # hold the owner lock while waiting for a targeted quote.
+                    self.entry_inflight_symbol = signal.symbol
                     identity, _, _ = await self.entry.admit(signal)
                     self._refresh_owners()
                     if identity in self.work.owners:
@@ -147,10 +150,22 @@ class LiveActor:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                if not isinstance(exc, Refusal):
+                    if identity is None and signal is not None:
+                        try:
+                            episode = self.book._sources.get(
+                                (signal.session_date, signal.symbol, signal.source_id))
+                            identity = episode.episode_id if episode is not None else None
+                        except Exception:
+                            identity = None  # Diagnostic metadata must not end the entry loop.
+                    logger.exception("[MOMLIVE1-ENTRY-EXCEPTION] symbol=%s episode=%s exception_type=%s",
+                                     event.payload.symbol, identity or "UNKNOWN", type(exc).__name__,
+                                     exc_info=(type(exc), exc, exc.__traceback__))
                 logger.warning("[MOMLIVE1-REFUSED] symbol=%s reason=%s", event.payload.symbol,
                                str(exc) if isinstance(exc, Refusal) else "entry_observation_UNKNOWN")
                 self._refresh_owners()
             finally:
+                self.entry_inflight_symbol = None
                 self.inbox.task_done()
 
     async def _cadence(self) -> None:

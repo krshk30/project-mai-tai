@@ -37,6 +37,11 @@ class Settings(BaseSettings):
 
     control_plane_host: str = "127.0.0.1"
     control_plane_port: int = 8100
+    # Explicit immutable baseline artifact; None keeps aggregate reads unconfigured.
+    atr_simulation_aggregate_receipt_path: str | None = None
+    # Main-reviewed actual-copy allocator output; both absent means UNKNOWN.
+    atr_simulation_realized_receipt_path: str | None = None
+    atr_simulation_realized_receipt_sha256: str | None = None
     # Sequencing only: the approved install explicitly enables this after seeding.
     bot_control_enabled: bool = False
     tradingview_alerts_host: str = "127.0.0.1"
@@ -479,6 +484,7 @@ class Settings(BaseSettings):
     strategy_schwab_1m_v2_gap_line_carry_enabled: bool = False
     # LINE=CHART: anchored, versioned session rebuild. Separate from pause handling.
     strategy_schwab_1m_v2_line_chart_restoration_enabled: bool = False
+    strategy_schwab_1m_v2_keepwatch1_enabled: bool = False
     # Missing-minute tape counts only prints that can establish an OHLC bar.
     strategy_schwab_1m_v2_gap_trade_conditions_filter_enabled: bool = True
     strategy_schwab_1m_v2_gap_hold_detect_seconds: float = 90.0  # Seconds past the last bar's CLOSE.
@@ -550,6 +556,10 @@ class Settings(BaseSettings):
     # entry owned by one confirmed BUY flip. Missing ownership evidence refuses entry. OFF bypasses
     # every new read, record and gate, restoring the pre-RECLAIM1 behaviour after a v2 restart.
     strategy_schwab_1m_v2_flip_owned_first_entry_enabled: bool = False
+    strategy_schwab_1m_v2_brokerdecides1_enabled: bool = False
+    # Claude 14:42:27: measured 4,438 passes, 15s cadence / 1.632s p99
+    # duration, explicitly approved 20s maximum wire observation age.
+    strategy_schwab_1m_v2_brokerdecides1_max_age_ms: int = 20_000
     strategy_schwab_1m_v2_slotclear_fresh_flip_enabled: bool = False
     # Independent SELL-only release; never grants the narrow reactive BUY exception.
     strategy_schwab_1m_v2_slotclear_fresh_sell_enabled: bool = False
@@ -1434,7 +1444,7 @@ class Settings(BaseSettings):
             return "schwab" if self.momentum_live_enabled else "none"
         if normalized_code == "orb_schwab":
             return "schwab" if self.orb_live_schwab_orders_enabled else "none"
-        if normalized_code in {"orb", "momentum_30s", "momentum_60s"}:
+        if normalized_code in {"orb", "momentum_30s", "momentum_60s", "momentum_30s_warn", "momentum_60s_warn"}:
             return "none"
         if normalized_code == "macd_30s":
             override = self._normalize_provider_name(self.strategy_macd_30s_broker_provider)
@@ -1539,7 +1549,7 @@ class Settings(BaseSettings):
             return "schwab"
         if normalized_code in {"polygon_30s", "webull_30s"}:
             return "polygon"
-        if normalized_code in {"momentum_30s", "momentum_60s"}:
+        if normalized_code in {"momentum_30s", "momentum_60s", "momentum_30s_warn", "momentum_60s_warn"}:
             return "massive"
         if normalized_code == "tos" and self.provider_for_strategy("tos") == "schwab":
             return "schwab"

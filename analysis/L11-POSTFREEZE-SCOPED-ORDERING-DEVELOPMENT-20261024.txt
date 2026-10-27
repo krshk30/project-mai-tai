@@ -1,0 +1,92 @@
+L11 post-freeze scoped ordering -- DEVELOPMENT CHECKPOINT, NOT QUALIFIED
+
+Authority: C1 2026-10-24 23:19 approves e03d583a development/review ONLY.
+L11 and L12 OUT of weekend. Main capacity belongs to A2+L14/Mirror fallback.
+Base 0f2ef470dbc3967e21e0a48a9f2f3c82579a2fb5, itself direct F278 successor.
+Branch codex/l11-scoped-boot-ordering-dev-20261024.
+Root /private/tmp/oct24-l11-scoped-boot-ordering-dev-20261024.
+F/359/0f2/harness3625/original receipts and shared queue/status/LATEST unchanged.
+
+APP SCOPE -- ONE BOT FILE
+src/project_mai_tai/services/schwab_1m_v2_bot.py only.
+- Central retry placement retained after safety flag; only KEEPWATCH and incomplete.
+- Synchronous selected/current-anchor/current-ledger-epoch ordering readset.
+  Current epoch0/unresolved ledger is fail-closed, not attributed to an old session.
+- Defer retry for shutdown/notaccepting, current selected pending inbox work,
+  current selected history critical operation, or current selected unjoined read.
+  Still executes original dangerous-segment check; no whole-method early return.
+- No global owner-task-is-alive latch. Unrelated/old-anchor/noncurrent-epoch
+  attributed work and empty parked owners do not block the selected fleet.
+- Unregistered native task is explicit native_scope_unknown, not invented scope.
+  One diagnostic reason field is bounded and does not itself set readiness.
+- Active history token registered after actual symbol lock/epoch acquisition,
+  retired in finally on success, continue, exception and cancellation.
+- Companion native scope registered with actual thread task. Existing shield and
+  cancellation join retained. If repeated cancellation exits the wrapper before
+  native completion, existing task/set/scope remain until actual completion;
+  completion callback retires them. Shutdown can still join that tracked task.
+- No new DB/provider/await in ordering inspection, timer/task/clock/cadence/cap,
+  field coercion, warmup phase, producer pin, scanner permission or L12 kernel.
+  The maps retain only existing in-flight operations; pending scans use existing
+  inbox capacity. No historical bars or completed-task archive is copied.
+
+CONTROL INVENTORY -- ALL UNRUN / NO AUTHOR IMPORTS OR COLLECTION
+NEW tests/unit/test_keepwatch_scoped_boot_ordering.py: 16 functions, intended
+28 expanded controls (manual source inventory, not runtime collection).
+Selectivity: unrelated symbol/anchor/epoch history+native scopes (3); current and
+epoch0 inbox (2); stale/unselected inbox (3); parked owner (1); unregistered native
+scope (1); dangerous-check delegation during deferral (1); multi-symbol last
+completion (1); actual suspended history pass (1); actual REST/streamer owner (2);
+real same-minute revision (1); actual normal/single/double-cancel read+join (3);
+actual fresh/replay/empty-tail/caught-up history pass (4); actual error/cancel
+history cleanup (2); no post-latch scan (1); direct-caller exposure (1); actual
+REST-warmup/direct-caller exposure with other selected work (1).
+The last TWO are expected by static source inspection to expose remaining caller
+closure, not skipped/xfail/relaxed assertions. Actual results remain UNKNOWN.
+Existing original0f2 functional18/rate1 sources retained byte-for-byte. Main's
+original14PASS4FAIL remain exact old-head evidence, not new-head PASS. Rate stays
+later-card only; no new full or diagnostic request is made here.
+Test helpers reuse F-pinned controlled producer and constructor inputs; they are
+not historical/native facts. Actual guards/predicates are not replaced. I/O ports
+return controlled typed history; callback observers delegate to the real callback.
+No native flatness, original HTTP timing, historical permission or LNKS BUY proof.
+
+NEW SOURCE FINDING / REVIEW REQUIRED BEFORE SHARED-ENTRY CHANGE
+A fence ONLY at the central retry does NOT order existing direct completion
+callers: scanner unchanged/new membership, REST/streamer just-warmed completion,
+and history replay call _try_complete_boot_state_restoration without the central
+hook. Another selected inbox can still be pending when they latch. A later
+central check then skips its ordering readset because restoration is already true.
+This is a static caller-closure finding, not an executed post-freeze test result.
+The two strict exposure controls retain that question explicitly.
+
+MINIMUM NEXT REVIEW PROPOSAL (NOT IMPLEMENTED)
+Keep the authorized central call at the same placement. Move the SAME ordering
+inspection to _try_complete_boot_state_restoration's shared incomplete-boot path:
+AFTER legacy safety-OFF and already-latched addition handling, BEFORE fleet
+completion. Apply only KEEPWATCH ON. Remove redundant central-only scan so one
+real invocation scans once. All callers then defer uniformly; no change to the
+actual nonempty/scanner/exclusions/seed/warmup/dangerous predicates or direct
+latch assignment. Existing warmup/replay callers inside their own registered
+operation may defer; next existing publish boundary retries after settlement.
+This changes ordering for direct callers and therefore needs explicit review,
+not a hidden insertion into the accepted central-only scope. No implementation
+of this shared-entry proposal in this checkpoint.
+
+SOURCE REVIEW NOTES / LIMITS
+No tests/imports/AST/compile/runtime/PG/provider/helper/model/oracle execution.
+Static diff/whitespace inspection only; no PASS claim from it.
+The real callback controls and fixture cleanup are authored but unexecuted. All
+fixture/constructor/API compatibility and concurrency outcomes remain UNRUN.
+The pending-owner/native controls include actual isolated tasks/threads when Main
+later runs them; the source author has not launched them. No background delegates.
+Registry cost, peak concurrency and >=200/s60s/<50ms are UNPROVEN until separate
+later-card execution in a fresh authorized window. No weekend rate/full request.
+
+LATER ACCEPTANCE / OWNERSHIP
+Actual LNKS07:02 admission, applicable36, actual L12 boot, new final full and03:40
+guard are OPEN on an eventual reviewed corrected head after the freeze. No old F
+full, source controls or synthetic favorable field can substitute. L12's modeled
+publish-step owner must bind actual reviewed APP separately; no B0c7/F retag.
+L14/Mirror fallback unaffected by these isolated source files. Main sole runtime,
+composition/shared writer; all original IDs/clocks/failures/nativeUNKNOWN retained.

@@ -17,13 +17,16 @@ def _price(value: Decimal, rounding: str) -> Decimal:
     return value.quantize(_tick(value), rounding=rounding)
 
 
-def build_orb_schwab_bracket_metadata(breakout_level: Decimal) -> dict[str, str]:
-    """Anchor +5%/-8% exits to the rounded trigger; cap the buy at +0.5%."""
+def build_orb_schwab_bracket_metadata(breakout_level: Decimal, *, tick_cap: bool = False) -> dict[str, str]:
+    """Trigger-anchored exits; tick_cap explicitly permits a >0.5% effective band."""
     if not breakout_level.is_finite() or breakout_level <= 0:
         raise ValueError("ORB breakout level must be finite and positive")
 
     trigger = _price(breakout_level, ROUND_UP)
     cap = _price(breakout_level * Decimal("1.005"), ROUND_DOWN)
+    if tick_cap:
+        cap = max(_price(breakout_level * Decimal("1.005"), ROUND_UP),
+                  _price(trigger + (Decimal(".01") if trigger >= 1 else Decimal(".0001")), ROUND_UP))
     if cap < trigger:
         raise ValueError("ORB buy cap rounds below the broker trigger")
     target = _price(trigger * Decimal("1.05"), ROUND_HALF_UP)

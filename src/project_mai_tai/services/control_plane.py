@@ -4,7 +4,7 @@ import asyncio
 import base64
 from contextlib import asynccontextmanager, contextmanager
 import csv
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from html import escape
 from io import StringIO
@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, quote, urlencode
 from urllib.request import Request as UrlRequest, urlopen
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Request as FastAPIRequest
+from fastapi import FastAPI, HTTPException, Query, Request as FastAPIRequest
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from redis.asyncio import Redis
 from sqlalchemy import case, desc, func, select, text
@@ -90,13 +90,14 @@ EASTERN_TZ = ZoneInfo("America/New_York")
 
 def _atr_episode_fill_ledger(
     recent_fills: list[dict[str, Any]], *, unattributed_exits: list[dict[str, Any]] | None = None,
+    fills_read_status: str | None = None,
 ) -> tuple[list[dict], float] | None:
     """Return proven rows/P&L; partial results require an unresolved-exit collector."""
-    if not recent_fills or len(recent_fills) >= 1000:
+    if (fills_read_status is not None and fills_read_status != "READABLE") or len(recent_fills) >= 1000:
         return None
     fills = [row for row in recent_fills if row.get("strategy_code") == "schwab_1m_v2"]
     if not fills:
-        return None
+        return ([], 0.0) if fills_read_status == "READABLE" else None
     episodes: dict[tuple[str, str, str], dict[str, Any]] = {}
     uncertain_episodes: set[tuple[str, str, str]] = set()
     unknown: dict[tuple[str, str], dict[str, Any]] = {}
@@ -959,6 +960,7 @@ class ControlPlaneRepository:
             recent_intents=db_state["recent_intents"],
             recent_orders=db_state["recent_orders"],
             recent_fills=db_state["recent_fills"],
+            fills_read_status=db_state.get("recent_fills_read_status", "UNKNOWN"),
             recent_trade_coach_reviews=db_state["recent_trade_coach_reviews"],
             recent_bar_decisions=db_state["recent_bar_decisions"],
             open_orders=db_state["open_orders"],
@@ -1066,6 +1068,33 @@ class ControlPlaneRepository:
             self._bot_dashboard_cache = None
             self._bot_dashboard_cache_at = None
 
+    async def _attach_momentum_live_dashboard(self, data: dict[str, Any]) -> dict[str, Any]:
+        bots = [bot for bot in data.get("bots", [])
+                if bot.get("strategy_code") not in MOMENTUM_PAGE_CODES | {MOMENTUM_LIVE_CODE}]
+        if not (self.settings.momentum_paper_enabled or self.settings.momentum_live_enabled):
+            return {**data, "bots": bots}
+        from project_mai_tai.momentum_live.ledger import load_live_ledger
+
+        day = utcnow().astimezone(EASTERN_TZ).date()
+        now_ns = time.time_ns()
+        live, owner, metrics = await asyncio.gather(
+            asyncio.wait_for(asyncio.to_thread(load_live_ledger, self.session_factory, day), timeout=3),
+            _read_momentum_page_owner(self.redis, self.settings.redis_stream_prefix, now_ns=now_ns),
+            (_read_momentum_warning_gateway_metrics(self.redis, self.settings.redis_stream_prefix, now_ns=now_ns)
+             if self.settings.market_data_momentum_warning_enabled
+             else asyncio.sleep(0, result={"status": "UNKNOWN"})),
+            return_exceptions=True,
+        )
+        live = live if isinstance(live, dict) else {"status": "UNKNOWN"}
+        owner = owner if isinstance(owner, dict) else {"status": "UNKNOWN"}
+        metrics = metrics if isinstance(metrics, dict) else {"status": "UNKNOWN"}
+        metrics = {**metrics, "consumer": await _read_momentum_page_consumer(
+            self.redis, self.settings.redis_stream_prefix, now_ns=time.time_ns(), gateway_metrics=metrics)}
+        live_bot = _momentum_live_dashboard_view(data, live, owner, metrics)
+        return {**data, "bots": [*bots, live_bot], "momentum_live_ledger": live,
+                "momentum_live_day": day.isoformat(), "momentum_live_owner": owner,
+                "momentum_live_metrics": metrics}
+
     async def _load_bot_dashboard_data_uncached(self) -> dict[str, Any]:
         # Run the heavy synchronous DB aggregation in a worker thread so the
         # asyncio event loop stays responsive to other requests while this
@@ -1080,6 +1109,7 @@ class ControlPlaneRepository:
             recent_intents=db_state["recent_intents"],
             recent_orders=db_state["recent_orders"],
             recent_fills=db_state["recent_fills"],
+            fills_read_status=db_state.get("recent_fills_read_status", "UNKNOWN"),
             recent_trade_coach_reviews=db_state["recent_trade_coach_reviews"],
             recent_bar_decisions=db_state["recent_bar_decisions"],
             open_orders=db_state["open_orders"],
@@ -1884,8 +1914,10 @@ class ControlPlaneRepository:
         open_orders: list[dict[str, Any]],
         persisted_snapshots: dict[str, Any],
         virtual_positions: list[dict[str, Any]] | None = None,
+        fills_read_status: str | None = None,
     ) -> list[dict[str, Any]]:
-        registrations = configured_strategy_registrations(self.settings)
+        registrations = tuple(registration for registration in configured_strategy_registrations(self.settings)
+                              if registration.code not in MOMENTUM_REFERENCE_CODES)
         ordered_codes = [registration.code for registration in registrations]
         registration_map = {registration.code: registration for registration in registrations}
         runtime_bots = strategy_runtime.get("bots", {})
@@ -2072,7 +2104,7 @@ class ControlPlaneRepository:
             ]
             runtime_provider = (
                 self.settings.market_data_provider_for_strategy(code)
-                if registration and code in {"momentum_30s", "momentum_60s"}
+                if registration and code in MOMENTUM_PAGE_CODES
                 else self.settings.provider_for_strategy(code)
                 if registration
                 else str(runtime_bot.get("provider", "") or "")
@@ -2227,7 +2259,10 @@ class ControlPlaneRepository:
             )
             if code == "schwab_1m_v2":
                 unattributed_exits: list[dict[str, Any]] = []
-                ledger = _atr_episode_fill_ledger(recent_fills, unattributed_exits=unattributed_exits)
+                ledger = _atr_episode_fill_ledger(
+                    recent_fills, unattributed_exits=unattributed_exits,
+                    fills_read_status=fills_read_status,
+                )
                 if ledger is None:
                     bot_views[-1]["closed_today_source"] = "UNKNOWN_FILL_EPISODE_COVERAGE"
                     bot_views[-1]["closed_today"] = []
@@ -2752,6 +2787,8 @@ class ControlPlaneRepository:
         recent_intents: list[dict[str, Any]] = []
         recent_orders: list[dict[str, Any]] = []
         recent_fills: list[dict[str, Any]] = []
+        recent_fills_read_status = "UNKNOWN"
+        recent_fills_raw_count: int | None = None
         recent_trade_coach_reviews: list[dict[str, Any]] = []
         recent_bar_decisions: list[dict[str, Any]] = []
         latest_strategy_bars: dict[str, dict[str, Any]] = {}
@@ -3020,12 +3057,14 @@ class ControlPlaneRepository:
                 }
                 entry_class_by_id = {row.id: row.payload.get("entry_classification")
                                      for row in recent_order_rows if isinstance(row.payload, dict)}
-                for fill in session.scalars(
+                fill_rows = session.scalars(
                     select(Fill)
                     .where(Fill.filled_at >= session_start, Fill.filled_at < session_end)
                     .order_by(desc(Fill.filled_at))
                     .limit(1000)
-                ).all():
+                ).all()
+                recent_fills_raw_count = len(fill_rows)
+                for fill in fill_rows:
                     strategy = strategy_lookup.get(fill.strategy_id)
                     account = account_lookup.get(fill.broker_account_id)
                     fill_payload = fill.payload if isinstance(fill.payload, dict) else {}
@@ -3059,6 +3098,10 @@ class ControlPlaneRepository:
                             "broker_provider": account.provider if account else "",
                         }
                     )
+                # Count before conversion and hidden-symbol filtering: neither
+                # dropped evidence nor a capped query proves an empty day.
+                if len(recent_fills) == recent_fills_raw_count and recent_fills_raw_count < 1000:
+                    recent_fills_read_status = "READABLE"
 
                 if self.settings.trade_coach_enabled:
                     for review in session.scalars(
@@ -3358,6 +3401,7 @@ class ControlPlaneRepository:
                     for entry in blacklist_entries
                 ]
         except Exception as exc:
+            recent_fills_read_status = "UNKNOWN"
             errors.append(f"database:{exc}")
 
         counts["skipped_database_rows"] = len(row_warnings)
@@ -3379,6 +3423,8 @@ class ControlPlaneRepository:
             "recent_intents": recent_intents,
             "recent_orders": recent_orders,
             "recent_fills": recent_fills,
+            "recent_fills_read_status": recent_fills_read_status,
+            "recent_fills_raw_count": recent_fills_raw_count,
             "recent_trade_coach_reviews": recent_trade_coach_reviews,
             "recent_bar_decisions": recent_bar_decisions,
             "latest_strategy_bars": latest_strategy_bars,
@@ -3790,9 +3836,49 @@ def build_app(
     session_factory: sessionmaker[Session] | None = None,
     redis_client: Redis | None = None,
     legacy_client: LegacyShadowClient | None = None,
+    firstbar_read_port: Any | None = None,
+    legacy_simulation_read_port: Any | None = None,
+    aggregate_simulation_read_port: Any | None = None,
 ) -> FastAPI:
     active_settings = settings or get_settings()
     active_session_factory = session_factory or build_timed_session_factory(active_settings, service="control", profile="slow")
+    from project_mai_tai.atr_simulation.firstbar_ui_reader import FirstBarSeedUIReader
+    from project_mai_tai.services.atr_firstbar_routes import (
+        build_firstbar_router, load_firstbar_display,
+    )
+    from project_mai_tai.atr_simulation.ui_reader import SimulationUIReader
+    from project_mai_tai.services.atr_aggregate_routes import (
+        build_aggregate_router, load_aggregate_display,
+    )
+    from project_mai_tai.services.atr_simulation_legacy_routes import (
+        LegacySimulationReadPort, build_legacy_router, load_legacy_display,
+    )
+
+    owns_firstbar_reader = firstbar_read_port is None
+    active_firstbar_reader = (FirstBarSeedUIReader(active_settings.database_url)
+        if owns_firstbar_reader else firstbar_read_port)
+    active_legacy_reader = legacy_simulation_read_port
+    active_aggregate_reader = aggregate_simulation_read_port
+    owns_aggregate_reader = (aggregate_simulation_read_port is None
+        and active_settings.atr_simulation_aggregate_receipt_path is not None)
+    if (aggregate_simulation_read_port is None
+            and active_settings.atr_simulation_aggregate_receipt_path is None
+            and (active_settings.atr_simulation_realized_receipt_path is not None
+                 or active_settings.atr_simulation_realized_receipt_sha256 is not None)):
+        raise ValueError("realized_requires_accepted_aggregate_binding")
+    if owns_aggregate_reader:
+        from project_mai_tai.atr_simulation.accepted_aggregate_bootstrap import configured_aggregate_port
+        realized_options = {}
+        if (active_settings.atr_simulation_realized_receipt_path is not None
+                or active_settings.atr_simulation_realized_receipt_sha256 is not None):
+            realized_options = dict(
+                realized_receipt_path=active_settings.atr_simulation_realized_receipt_path,
+                realized_receipt_sha256=active_settings.atr_simulation_realized_receipt_sha256)
+        active_aggregate_reader = configured_aggregate_port(active_settings.database_url,
+            active_settings.atr_simulation_aggregate_receipt_path,
+            **realized_options)
+    if active_legacy_reader is None and isinstance(active_firstbar_reader, SimulationUIReader):
+        active_legacy_reader = LegacySimulationReadPort(active_firstbar_reader)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -3808,22 +3894,58 @@ def build_app(
         token_refresher = SchwabTokenRefresher(active_settings)
         app.state.schwab_token_refresher = token_refresher
         refresher_task = asyncio.create_task(token_refresher.run())
+        lifespan_error = None
         try:
             yield
+        except BaseException as error:
+            lifespan_error = error
+            raise
         finally:
-            refresher_task.cancel()
+            failure = lifespan_error
             try:
-                await refresher_task
-            except asyncio.CancelledError:
-                pass
+                refresher_task.cancel()
+                try:
+                    await refresher_task
+                except asyncio.CancelledError:
+                    pass
+            except BaseException as error:
+                if failure is None:
+                    failure = error
+                else:
+                    failure.add_note("shutdown_refresher_failure=" + type(error).__name__)
+            cleanups = []
             if redis_client is None:
-                await redis.aclose()
+                cleanups.append(("redis", lambda: redis.aclose()))
+            if owns_firstbar_reader:
+                cleanups.append(("firstbar", lambda: asyncio.to_thread(active_firstbar_reader.close)))
+            if owns_aggregate_reader and active_aggregate_reader is not None:
+                cleanups.append(("aggregate", lambda: asyncio.to_thread(active_aggregate_reader.reader.close)))
+            # Attempt every owned close; secondary failures must not hide the
+            # original application/refresher error or close caller-owned ports.
+            for phase, close in cleanups:
+                try:
+                    await close()
+                except BaseException as error:
+                    if failure is None:
+                        failure = error
+                    else:
+                        failure.add_note("shutdown_" + phase + "_failure=" + type(error).__name__)
+            if failure is not None and lifespan_error is None:
+                raise failure
 
     app = FastAPI(
         title="Project Mai Tai Control Plane",
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.state.firstbar_read_port = active_firstbar_reader
+    app.include_router(build_firstbar_router(active_firstbar_reader,
+        render_row=lambda row: _render_completed_position_row(row)))
+    app.state.legacy_simulation_read_port = active_legacy_reader
+    app.include_router(build_legacy_router(active_legacy_reader))
+    app.state.aggregate_simulation_read_port = active_aggregate_reader
+    app.include_router(build_aggregate_router(active_aggregate_reader,
+        render_row=lambda row: _render_completed_position_row(row)))
 
     from functools import partial
 
@@ -3931,6 +4053,7 @@ def build_app(
     @app.get("/api/overview")
     async def overview() -> dict[str, Any]:
         data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository._attach_momentum_live_dashboard(data)
         _attach_schwab_token_refresher_status(app, data)
         return data
 
@@ -3942,6 +4065,7 @@ def build_app(
     @app.get("/api/bots")
     async def bots() -> dict[str, Any]:
         data = await app.state.repository.load_bot_dashboard_data()
+        data = await app.state.repository._attach_momentum_live_dashboard(data)
         return {
             "status": data.get("status", "unknown"),
             "row_conversion_warnings": data.get("row_conversion_warnings", []),
@@ -4391,7 +4515,7 @@ def build_app(
         data = await app.state.repository.load_bot_dashboard_data()
         return _build_bot_api_payload(data, "runner")
 
-    async def _render_bot_page_with_trade_coach(strategy_code: str) -> str:
+    async def _render_bot_page_with_trade_coach(strategy_code: str, *, firstbar_scope=None, legacy_scope=None, aggregate_scope=None) -> str:
         data = await app.state.repository.load_bot_dashboard_data()
         bot = _find_bot_view(data, strategy_code)
         if bot is None:
@@ -4466,11 +4590,31 @@ def build_app(
                 all_reviews=all_reviews,
                 live_regime_profiles=live_regime_profiles,
             )
+        firstbar_html = ""
+        if strategy_code == "schwab_1m_v2":
+            from project_mai_tai.atr_simulation.cp_sim_display import page_scopes, render_page
+            firstbar_selected, aggregate_selected, legacy_selected = page_scopes(
+                active_aggregate_reader, firstbar_scope, aggregate_scope, legacy_scope)
+            aggregate_context = await load_aggregate_display(active_aggregate_reader,
+                **aggregate_selected)
+            context = await load_firstbar_display(active_firstbar_reader, **firstbar_selected)
+            legacy_contexts = [await load_legacy_display(active_legacy_reader,
+                **scope, render_html=None) for scope in legacy_selected]
+            render_options = dict(render_row=_render_completed_position_row,
+                scopes=(firstbar_selected, aggregate_selected, legacy_selected))
+            if (all(scope.get("source_id") is None for scope in
+                    (firstbar_selected, aggregate_selected, *legacy_selected))
+                    and aggregate_context["realized"]["receipt_sha256"] is None):
+                firstbar_html = render_page(context, aggregate_context, legacy_contexts, **render_options)
+            else:
+                firstbar_html = await asyncio.to_thread(render_page, context, aggregate_context,
+                    legacy_contexts, **render_options)
         rendered = _render_bot_detail_page(
             data,
             strategy_code,
             trade_coach_live_advisories=advisories,
             trade_coach_enabled=active_settings.trade_coach_enabled,
+            firstbar_simulation_html=firstbar_html,
         )
         if active_settings.bot_control_enabled and strategy_code in {
             "schwab_1m_v2", "orb_schwab", "momentum_30s", "momentum_60s"
@@ -4507,6 +4651,7 @@ def build_app(
     @app.get("/bot/momentum", response_class=HTMLResponse)
     async def bot_momentum_page() -> str:
         data = await app.state.repository.load_bot_dashboard_data()
+        data = await app.state.repository._attach_momentum_live_dashboard(data)
         day = utcnow().astimezone(EASTERN_TZ).date()
         warnings = []
         for code in ("momentum_60s_warn", "momentum_30s_warn"):
@@ -4518,15 +4663,26 @@ def build_app(
             warnings.append(warning)
         from project_mai_tai.momentum_live.ledger import load_live_ledger
         try:
-            live = await asyncio.wait_for(asyncio.to_thread(load_live_ledger, active_session_factory, day), timeout=3)
+            live = (data["momentum_live_ledger"] if data.get("momentum_live_day") == day.isoformat()
+                    else await asyncio.wait_for(asyncio.to_thread(load_live_ledger, active_session_factory, day), timeout=3))
         except Exception:
             logging.getLogger(__name__).warning("[MOMPAGE4] live_fill_ledger=UNKNOWN", exc_info=True)
             live = {"status": "UNKNOWN"}
-        owner = await _read_momentum_page_owner(app.state.repository.redis, active_settings.redis_stream_prefix,
-            now_ns=time.time_ns())
-        metrics = ({"status": "UNKNOWN"} if not active_settings.market_data_momentum_warning_enabled
-                   else await _read_momentum_warning_gateway_metrics(app.state.repository.redis,
-                       active_settings.redis_stream_prefix, now_ns=time.time_ns()))
+        owner = data.get("momentum_live_owner")
+        if not isinstance(owner, dict):
+            owner = await _read_momentum_page_owner(app.state.repository.redis, active_settings.redis_stream_prefix,
+                now_ns=time.time_ns())
+        observed = owner.get("observed_ns")
+        if type(observed) is not int or not 0 <= time.time_ns() - observed <= 3_000_000_000:
+            owner = {"status": "UNKNOWN"}
+        metrics = data.get("momentum_live_metrics")
+        if not isinstance(metrics, dict):
+            metrics = ({"status": "UNKNOWN"} if not active_settings.market_data_momentum_warning_enabled
+                       else await _read_momentum_warning_gateway_metrics(app.state.repository.redis,
+                           active_settings.redis_stream_prefix, now_ns=time.time_ns()))
+            metrics = {**metrics, "consumer": await _read_momentum_page_consumer(
+                app.state.repository.redis, active_settings.redis_stream_prefix,
+                now_ns=time.time_ns(), gateway_metrics=metrics)}
         rendered = _render_momentum_page(data, live=live, warnings=warnings, owner=owner, metrics=metrics)
         if active_settings.bot_control_enabled:
             rendered = rendered.replace("</body>", '<iframe title="LIVE bot control: momentum_warn_live" '
@@ -4558,8 +4714,18 @@ def build_app(
         return await _render_bot_page_with_trade_coach("schwab_1m")
 
     @app.get("/bot/1m-schwab-v2", response_class=HTMLResponse)
-    async def bot_schwab_1m_v2_page() -> str:
-        return await _render_bot_page_with_trade_coach("schwab_1m_v2")
+    async def bot_schwab_1m_v2_page(
+        source_id: str | None = Query(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"),
+        day: date | None = None, days: int = Query(default=32, ge=1, le=32),
+        legacy_source_id: str | None = Query(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"),
+        legacy_day: date | None = None, legacy_days: int = Query(default=1, ge=1, le=7),
+        aggregate_source_id: str | None = Query(default=None, pattern=r"^aggregate-entry:[0-9a-f]{64}$"),
+        aggregate_day: date | None = None, aggregate_days: int = Query(default=32, ge=1, le=32),
+    ) -> str:
+        return await _render_bot_page_with_trade_coach("schwab_1m_v2",
+            firstbar_scope={"source_id": source_id, "day": day, "days": days},
+            legacy_scope={"source_id": legacy_source_id, "day": legacy_day, "days": legacy_days},
+            aggregate_scope={"source_id": aggregate_source_id, "day": aggregate_day, "days": aggregate_days})
 
     @app.get("/bot/tos", response_class=HTMLResponse)
     async def bot_tos_page() -> str:
@@ -4610,6 +4776,7 @@ def build_app(
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
         data = await app.state.repository.load_dashboard_data()
+        data = await app.state.repository._attach_momentum_live_dashboard(data)
         _attach_schwab_token_refresher_status(app, data)
         return _render_dashboard(
             data,
@@ -4632,10 +4799,14 @@ def _attach_schwab_token_refresher_status(app_obj: Any, data: dict[str, Any]) ->
         data["schwab_token_refresher"] = {"health": "unknown", "last_error": "status unavailable"}
 
 
+MOMENTUM_PAGE_CODES = frozenset({
+    "momentum_30s", "momentum_60s", "momentum_30s_warn", "momentum_60s_warn",
+})
+MOMENTUM_REFERENCE_CODES = frozenset({"momentum_30s_warn", "momentum_60s_warn"})
+MOMENTUM_LIVE_CODE = "momentum_warn_live"
 CONTROL_PLANE_ACTIVE_BOT_CODES = (
     "schwab_1m_v2",
-    "momentum_30s",
-    "momentum_60s",
+    MOMENTUM_LIVE_CODE,
     "polygon_30s",
     "orb_schwab",
 )
@@ -4691,7 +4862,6 @@ def _render_compact_dashboard(data: dict[str, Any]) -> str:
         bot_by_code[code]
         for code in CONTROL_PLANE_ACTIVE_BOT_CODES
         if code in bot_by_code
-        and not (code == "momentum_60s" and "momentum_30s" in bot_by_code)
     ]
 
     service_statuses = [
@@ -4715,7 +4885,13 @@ def _render_compact_dashboard(data: dict[str, Any]) -> str:
         _safe_int(scanner.get("active_subscription_symbols")),
         _safe_int(scanner.get("heartbeat_active_symbols")),
     )
-    open_positions = sum(_safe_int(bot.get("position_count")) for bot in ordered_bots)
+    open_positions: int | str = sum(
+        _safe_int(bot.get("position_count")) for bot in ordered_bots
+        if bot.get("strategy_code") not in MOMENTUM_REFERENCE_CODES
+    )
+    if any(bot.get("strategy_code") == MOMENTUM_LIVE_CODE
+           and type(bot.get("position_count")) is not int for bot in ordered_bots):
+        open_positions = "UNKNOWN"
     latest_reconciliation = data.get("reconciliation", {}).get("latest_run") or {}
     reconciliation_summary = latest_reconciliation.get("summary", {}) if isinstance(latest_reconciliation, dict) else {}
     cutover_confidence = _safe_int(reconciliation_summary.get("cutover_confidence"), 0)
@@ -4934,6 +5110,9 @@ def _compact_bot_page_url(code: str) -> str:
         "schwab_1m_v2": "/bot/1m-schwab-v2",
         "momentum_30s": "/bot/momentum",
         "momentum_60s": "/bot/momentum",
+        "momentum_30s_warn": "/bot/momentum",
+        "momentum_60s_warn": "/bot/momentum",
+        MOMENTUM_LIVE_CODE: "/bot/momentum",
         "polygon_30s": "/bot/30s-polygon",
         "orb_schwab": "/bot/orb",
     }.get(code, "/")
@@ -4944,7 +5123,9 @@ def _compact_bot_route_line(code: str, bot: dict[str, Any]) -> str:
         return "live · schwab streamer · sole session"
     if code == "polygon_30s":
         return "paper exit · mirrored Schwab + Webull fills · Polygon feed"
-    if code in {"momentum_30s", "momentum_60s"}:
+    if code in MOMENTUM_REFERENCE_CODES:
+        return "paper reference · Massive warning feed · 30s + 60s"
+    if code in MOMENTUM_PAGE_CODES:
         return "live · Webull + Schwab (SEC route) · 30s + 60s"
     if code == "orb_schwab":
         return f'live · Schwab · {bot.get("account_name", "-")}'
@@ -4958,9 +5139,11 @@ def _compact_bot_card(
     latest_strategy_bars: dict[str, dict[str, Any]],
 ) -> str:
     code = str(bot.get("strategy_code") or "")
+    if code == MOMENTUM_LIVE_CODE:
+        return _compact_momentum_live_card(bot)
     if code == "schwab_1m_v2":
         service = service_by_name.get("schwab-1m-v2")
-    elif code in {"momentum_30s", "momentum_60s"}:
+    elif code in MOMENTUM_PAGE_CODES:
         service = service_by_name.get("momentum-paper")
     else:
         service = None
@@ -4991,7 +5174,7 @@ def _compact_bot_card(
     if code == "polygon_30s":
         stream_tone = lag_tone if lag_tone != "good" else "good"
         stream_label = "bars stale" if lag_tone != "good" else "feed: polygon"
-    elif code in {"momentum_30s", "momentum_60s"}:
+    elif code in MOMENTUM_PAGE_CODES:
         stream_tone = _tone_for_status(streamer)
         stream_label = (
             "feed: Massive T.*"
@@ -5024,13 +5207,15 @@ def _compact_bot_card(
     name = str(bot.get("display_name") or code.replace("_", " ").title())
     if code == "orb_schwab":
         name = "ORB Live"
-    elif code in {"momentum_30s", "momentum_60s"}:
+    elif code in MOMENTUM_PAGE_CODES:
         name = "Momentum"
     route = _compact_bot_route_line(code, bot)
     bot_page_url = _compact_bot_page_url(code)
     # Paper vs live badge — paper-routed accounts (e.g. "paper:orb") must not read as LIVE.
-    is_paper = (str(bot.get("account_name") or "").startswith("paper:")
-                and code not in {"momentum_30s", "momentum_60s"})
+    is_paper = (code in MOMENTUM_REFERENCE_CODES or (
+        str(bot.get("account_name") or "").startswith("paper:")
+        and code not in MOMENTUM_PAGE_CODES
+    ))
     mode_tone = "warn" if is_paper else "good"
     mode_label = "PAPER" if is_paper else "LIVE"
     return f"""
@@ -5044,7 +5229,7 @@ def _compact_bot_card(
       </div>
       <div class="bot-metrics">
         <div class="metric"><div class="m-label">Data flow</div><div class="m-val {flow_tone}">{escape(_friendly_data_flow(data_flow))}</div></div>
-        <div class="metric"><div class="m-label">Live symbols</div><div class="m-val">{escape(live_symbols)}</div></div>
+        <div class="metric"><div class="m-label">{"Reference symbols" if code in MOMENTUM_REFERENCE_CODES else "Live symbols"}</div><div class="m-val">{escape(live_symbols)}</div></div>
         <div class="metric"><div class="m-label">Bar age</div><div class="m-val {lag_tone}">{escape(lag_label)}</div></div>
       </div>
       {data_date_note}
@@ -5055,6 +5240,86 @@ def _compact_bot_card(
       </div>
     </div>
     """
+
+
+def _momentum_live_dashboard_view(data: dict[str, Any], live: dict[str, Any],
+                                  owner: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    ledger = _momentum_page_ledger_copy({**live, "strategy_code": MOMENTUM_LIVE_CODE})
+    def valid_position(row: dict[str, Any]) -> bool:
+        try:
+            quantity = Decimal(str(row.get("remaining_quantity")))
+            entry = Decimal(str(row.get("entry_price")))
+            return (bool(row.get("symbol") or row.get("ticker"))
+                    and str(row.get("account_name", "")).startswith("live:")
+                    and quantity.is_finite() and quantity > 0 and entry.is_finite() and entry > 0)
+        except (ValueError, ArithmeticError):
+            return False
+
+    known = (live.get("strategy_code") == MOMENTUM_LIVE_CODE
+             and live.get("source") == "strategy_owned_broker_fills"
+             and ledger.get("status") == "READABLE" and not ledger.get("daily_pnl_partial")
+             and not ledger.get("page_positions_incomplete") and not ledger.get("page_closed_today_incomplete")
+             and all(valid_position(row) for row in ledger["positions"]))
+    pnl = None
+    if known:
+        try:
+            value = Decimal(str(ledger.get("daily_pnl")))
+            pnl = str(value) if value.is_finite() else None
+        except (ValueError, ArithmeticError):
+            pass
+    if pnl is None:
+        known = False
+    provenance_known = (live.get("strategy_code") == MOMENTUM_LIVE_CODE
+                        and live.get("source") == "strategy_owned_broker_fills")
+    positions = [{**row, "quantity": row.get("remaining_quantity", "UNKNOWN"),
+                  "strategy_code": MOMENTUM_LIVE_CODE} for row in ledger["positions"]] if provenance_known else []
+    if not provenance_known:
+        ledger = {"strategy_code": MOMENTUM_LIVE_CODE, "status": "UNKNOWN", "positions": [],
+                  "closed_today": [], "recent_decisions": []}
+    status = _momentum_listening_status(data, ledger, [], owner, metrics)
+    accounts = sorted({str(row["account_name"]) for row in [*positions, *ledger["closed_today"]]
+                       if row.get("account_name")})
+    def owned_rows(field: str) -> list[dict[str, Any]]:
+        return [row for row in data.get(field, []) if isinstance(row, dict)
+                and row.get("strategy_code") == MOMENTUM_LIVE_CODE]
+    return {"strategy_code": MOMENTUM_LIVE_CODE, "display_name": "Momentum LIVE",
+            "execution_mode": "live", "provider": "massive", "runtime_kind": "momentum_live",
+            "account_name": "", "account_display_name": ", ".join(accounts) or "No retained account fills",
+            "broker_account_names": accounts, "positions": positions,
+            "position_count": len(positions) if known else "UNKNOWN", "daily_pnl": pnl,
+            "daily_pnl_partial": not known, "closed_today": ledger["closed_today"],
+            "closed_today_source": "strategy_owned_broker_fills" if known else "UNKNOWN_FILL_EPISODE_COVERAGE",
+            "watchlist": [], "watchlist_count": "UNKNOWN", "pending_open_symbols": [],
+            "pending_close_symbols": [], "pending_scale_levels": {},
+            "recent_decisions": ledger["recent_decisions"], "recent_intents": owned_rows("recent_intents"),
+            "recent_orders": owned_rows("recent_orders"), "recent_fills": owned_rows("recent_fills"),
+            "indicator_snapshots": [], "bar_counts": {}, "last_tick_at": {}, "tos_parity": {},
+            "wiring_status": status["state"], "data_health": {"status": status["state"]},
+            "momentum_live_evidence": {"ledger": ledger, "owner": owner, "metrics": metrics},
+            "momentum_live_context": {"services": data.get("services", []), "market_data": data.get("market_data", {})},
+            "ledger_read_at": utcnow().isoformat()}
+
+
+def _compact_momentum_live_card(bot: dict[str, Any]) -> str:
+    status = _build_bot_listening_status(bot.get("momentum_live_context", {}), bot, [])
+    pnl = bot.get("daily_pnl")
+    pnl_label = f"{Decimal(str(pnl)):+.2f}" if pnl is not None else "UNKNOWN"
+    known = type(bot.get("position_count")) is int
+    position_detail = "; ".join(
+        f"{row.get('symbol', 'UNKNOWN')} {row.get('quantity', 'UNKNOWN')} @ {row.get('entry_price', 'UNKNOWN')} ({row.get('account_name', 'UNKNOWN')})"
+        for row in bot.get("positions", [])) if known else "UNKNOWN (incomplete LIVE ledger)"
+    position_detail = position_detail or "No open LIVE positions"
+    return f'''<div class="bot" data-strategy="momentum_warn_live">
+      <div class="bot-top"><div><div class="bot-name"><a href="/bot/momentum">Momentum LIVE</a></div>
+      <div class="bot-route">strategy-owned broker fills · Massive warning feed</div></div>
+      <span class="pill good"><span class="dot good"></span>LIVE</span></div>
+      <div class="bot-metrics">
+      <div class="metric"><div class="m-label">State</div><div class="m-val">{escape(status['state'])}</div></div>
+      <div class="metric"><div class="m-label">LIVE positions</div><div class="m-val">{escape(str(bot.get('position_count', 'UNKNOWN')))}</div></div>
+      <div class="metric"><div class="m-label">Today LIVE P&amp;L</div><div class="m-val">{escape(pnl_label)}</div></div></div>
+      <div class="bot-health-row">{escape(position_detail)}</div>
+      <div class="bot-route">{escape(status['detail'])}</div>
+      <div class="bot-route">Ledger read: {escape(str(bot.get('ledger_read_at', 'UNKNOWN')))}</div></div>'''
 
 
 def _compact_service_row(service: dict[str, Any], *, token_status: dict[str, Any]) -> str:
@@ -5282,6 +5547,10 @@ def _render_dashboard(
     return _render_compact_dashboard(data)
 
 BOT_PAGE_META = {
+    "momentum_warn_live": {
+        "title": "Momentum LIVE", "nav_title": "Momentum", "badge": "M",
+        "color": "#ff8a3d", "path": "/bot/momentum",
+    },
     "macd_30s": {
         "title": "Schwab 30 Sec Bot",
         "nav_title": "Schwab 30s",
@@ -5295,6 +5564,20 @@ BOT_PAGE_META = {
         "badge": "PG",
         "color": "#ff8f00",
         "path": "/bot/30s-polygon",
+    },
+    "momentum_30s_warn": {
+        "title": "Momentum",
+        "nav_title": "Momentum",
+        "badge": "M30",
+        "color": "#ff8a3d",
+        "path": "/bot/momentum",
+    },
+    "momentum_60s_warn": {
+        "title": "Momentum",
+        "nav_title": "Momentum",
+        "badge": "M60",
+        "color": "#ffc857",
+        "path": "/bot/momentum",
     },
     "momentum_30s": {
         "title": "Momentum",
@@ -5647,9 +5930,35 @@ def _build_bot_listening_status(
     data: dict[str, Any],
     bot: dict[str, Any],
     recent_decisions: list[dict[str, Any]],
+    *, strategy_service_name: str = "strategy-engine",
 ) -> dict[str, Any]:
+    if bot.get("strategy_code") == MOMENTUM_LIVE_CODE and "momentum_live_evidence" in bot:
+        evidence = bot["momentum_live_evidence"]
+        return _momentum_listening_status(data, evidence["ledger"], [], evidence["owner"], evidence["metrics"])
+    if bot.get("strategy_code") in MOMENTUM_REFERENCE_CODES:
+        service = _service_by_name(data, "momentum-paper") or {}
+        details = dict(service.get("details") or {})
+        heartbeat_at = str(service.get("observed_at") or "")
+        age = _seconds_since_eastern_label(heartbeat_at)
+        status = str(service.get("effective_status", service.get("status", "unknown"))).lower()
+        fresh = age is not None and 0 <= age <= 90
+        healthy = (fresh and status == "healthy"
+                   and details.get("streamer_connected") == "true"
+                   and details.get("trade_conditions_verified") == "true")
+        return {
+            "state": "PAPER REFERENCE" if healthy else "UNKNOWN" if not fresh else "DEGRADED",
+            "detail": ("Warning paper reference feed is healthy; this is not LIVE account status."
+                       if healthy else "Warning paper reference feed health is not verified."),
+            "color": "#5fff8d" if healthy else "#ffcc5b",
+            "latest_decision_at": "", "latest_bot_tick_at": "",
+            "latest_market_data_at": "", "latest_heartbeat_at": heartbeat_at,
+            "watchlist_count": len(bot.get("watchlist", [])),
+            "position_count": len(bot.get("positions", [])), "tracked_bar_count": None,
+            "data_health": {"status": "healthy" if healthy else "degraded" if fresh else "unknown",
+                            "execution_mode": "paper", "broker_route": "none"},
+        }
     market_data_source = ControlPlaneRepository._market_data_source_label(str(bot.get("provider", "") or ""))
-    strategy_service = _service_by_name(data, "strategy-engine") or {}
+    strategy_service = _service_by_name(data, strategy_service_name) or {}
     market_data = data.get("market_data", {})
     latest_snapshot = market_data.get("latest_snapshot_batch") or {}
     latest_market_data_at = str(latest_snapshot.get("completed_at") or "")
@@ -6426,6 +6735,9 @@ async def _read_momentum_warning_gateway_metrics(
         for field in ("watchdog_mode", "watchdog_observed_reason"):
             value = selected.get(field)
             result[field] = value if isinstance(value, str) and len(value) <= 128 else "UNKNOWN"
+        symbols = selected.get("owned_warning_symbols")
+        result["owned_warning_symbols"] = (list(symbols) if isinstance(symbols, list)
+            and len(symbols) <= 16 and all(isinstance(symbol, str) for symbol in symbols) else "UNKNOWN")
         return result
     except Exception:
         return unknown
@@ -6436,7 +6748,10 @@ def _render_momentum_warning_gateway_metrics(metrics: dict[str, Any] | None) -> 
     readable = metrics is not None and metrics.get("status") == "READABLE"
 
     def field(name: str) -> str:
-        return escape(str(metrics.get(name, "UNKNOWN") if readable else "UNKNOWN"))
+        value = metrics.get(name, "UNKNOWN") if readable else "UNKNOWN"
+        if name.endswith("_ms") and type(value) in (int, float) and math.isfinite(value):
+            return f"{value:.0f}"
+        return escape(str(value))
 
     coverage = metrics.get("coverage_status") if readable else None
     if coverage in {"requested", "provider_event_observed"}:
@@ -6459,7 +6774,7 @@ def _render_momentum_warning_gateway_metrics(metrics: dict[str, Any] | None) -> 
     details = escape(json.dumps(metrics or {"status": "UNKNOWN"}, sort_keys=True, allow_nan=False))
     return f"""<div class="panel-copy warning-feed-status">Warning feed: {state}
         &middot; bars in/out {field('A_received')}/{field('A_published')}
-        &middot; delay max {field('max_publish_lag_ms')} ms</div>
+        &middot; delay max {field('max_publish_lag_ms')} ms (gateway-instance cumulative, not today's totals)</div>
         <details class="panel-copy warning-feed-details"><summary>Feed details</summary>
         Queue drops: {field('queue_drops')}; total discarded: {field('dropped_total')};
         queue depth: {field('queue_depth')}; publish lag: {field('lag_ms')} ms.
@@ -6558,6 +6873,174 @@ async def _read_momentum_page_owner(redis, prefix: str, *, now_ns: int) -> dict[
         return unknown
 
 
+async def _read_momentum_page_consumer(redis, prefix: str, *, now_ns: int,
+                                      gateway_metrics: dict[str, Any]) -> dict[str, Any]:
+    """Bounded render-only evidence; a sample clock is not a consumed-event clock."""
+    unknown = {"status": "UNKNOWN"}
+    if gateway_metrics.get("status") != "READABLE":
+        return unknown
+    try:
+        entries = await asyncio.wait_for(redis.xrevrange(
+            stream_name(prefix, "momentum-warning-metrics"), count=64), timeout=0.25)
+        if not isinstance(entries, list) or len(entries) > 64:
+            return unknown
+        sample, decision = None, None
+        for _, fields in entries:
+            raw = fields.get("data", fields.get(b"data"))
+            if not isinstance(raw, (str, bytes)) or len(raw.encode() if isinstance(raw, str) else raw) > 16384:
+                return unknown
+            row = json.loads(raw)
+            if not isinstance(row, dict):
+                return unknown
+            if row.get("source") != "momentum-paper" or row.get("event_type") not in {"consumer_sample", "decision"}:
+                continue
+            json.dumps(row, allow_nan=False)
+            observed = row.get("observed_ns")
+            if (type(row.get("version")) is not int or row["version"] != 1
+                    or type(observed) is not int or not 0 < observed <= now_ns
+                    or type(row.get("generation")) is not int
+                    or row.get("gateway_instance_id") != gateway_metrics.get("gateway_instance_id")
+                    or row.get("generation") != gateway_metrics.get("generation")):
+                return unknown
+            if row["event_type"] == "consumer_sample":
+                if sample is None:
+                    sample = row
+            elif decision is None:
+                decision = row
+        if sample is None or now_ns - sample["observed_ns"] > 20_000_000_000:
+            return unknown
+        count = sample.get("owned_warning_symbols")
+        return {"status": "READABLE", "observed_ns": sample["observed_ns"],
+                "transport_status": sample.get("transport_status", "UNKNOWN"),
+                "owned_warning_symbols": count if type(count) is int and 0 <= count <= 16 else "UNKNOWN",
+                "decision": decision}
+    except Exception:
+        return unknown
+
+
+def _momentum_listening_status(data: dict[str, Any], live: dict[str, Any],
+                               warnings: list[dict[str, Any]], owner: dict[str, Any],
+                               metrics: dict[str, Any]) -> dict[str, Any]:
+    """Presentation evidence only; no ownership, feed, or trading state changes."""
+    now = utcnow()
+    now_ns = int(now.timestamp() * 1_000_000_000)
+
+    def label(value: Any) -> str:
+        if isinstance(value, datetime):
+            stamp = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        elif isinstance(value, str):
+            try:
+                stamp = parse_et_timestamp(value)
+            except (ValueError, TypeError, OverflowError):
+                return "UNKNOWN"
+        else:
+            return "UNKNOWN"
+        if stamp.year <= 1 or stamp > now:
+            return "UNKNOWN"
+        return _datetime_str(stamp)
+
+    def fresh_ns(value: Any, seconds: int) -> bool:
+        return type(value) is int and 0 <= now_ns - value <= seconds * 1_000_000_000
+
+    consumer = metrics.get("consumer")
+    consumer = consumer if isinstance(consumer, dict) else {}
+    consumer_known = consumer.get("status") == "READABLE" and fresh_ns(consumer.get("observed_ns"), 20)
+    metrics_known = metrics.get("status") == "READABLE" and fresh_ns(metrics.get("observed_ns"), 20)
+    owner_known = (owner.get("status") == "READABLE" and fresh_ns(owner.get("observed_ns"), 3)
+                   and type(owner.get("entry_admission_enabled")) is bool)
+    paper = _service_by_name(data, "momentum-paper") or {}
+    heartbeat = label(paper.get("observed_at_raw") or paper.get("observed_at"))
+    live_service = _service_by_name(data, "momentum-live") or {}
+    live_heartbeat = label(live_service.get("observed_at_raw") or live_service.get("observed_at"))
+    market = data.get("market_data") or {}
+    snapshot = market.get("latest_snapshot_batch") or {}
+    market_at = label(snapshot.get("completed_at") or market.get("latest_subscription_observed_at_raw"))
+    decisions = [dict(row) for warning in warnings if warning.get("status") == "READABLE"
+                 and isinstance(warning.get("recent_decisions"), list)
+                 for row in warning["recent_decisions"] if isinstance(row, dict)]
+    if isinstance(live.get("recent_decisions"), list):
+        decisions += [dict(row) for row in live["recent_decisions"] if isinstance(row, dict)]
+    observed_decision = consumer.get("decision") if consumer_known else None
+    if isinstance(observed_decision, dict):
+        observed = observed_decision.get("observed_ns")
+        if type(observed) is int and 0 < observed <= now_ns:
+            decisions.append({"last_bar_at": datetime.fromtimestamp(observed / 1e9, tz=UTC),
+                              "symbol": observed_decision.get("symbol"),
+                              "status": observed_decision.get("status"), "reason": observed_decision.get("reason")})
+    decisions = [row for row in decisions if not row.get("is_placeholder")
+                 and label(row.get("last_bar_at")) != "UNKNOWN"]
+    decisions.sort(key=lambda row: _momentum_page_sort_time(row["last_bar_at"]), reverse=True)
+    latest = decisions[0] if decisions else {}
+    symbols = metrics.get("owned_warning_symbols") if metrics_known else None
+    symbols = symbols if isinstance(symbols, list) else []
+    paper_details = paper.get("details") or {}
+    atr = _build_bot_listening_status(data, {
+        "strategy_code": "momentum_warn_live", "provider": "massive", "watchlist": symbols,
+        "positions": list(live.get("positions") or []), "last_tick_at": {},
+        "data_health": {"status": str(paper.get("effective_status", paper.get("status", "unknown")))},
+    }, [{**row, "last_bar_at": label(row.get("last_bar_at"))} for row in decisions],
+        strategy_service_name="momentum-paper")
+    state, detail = "UNKNOWN", "Current owner, warning feed, consumer, and heartbeat evidence required."
+    coverage = metrics.get("coverage_status") if metrics_known else "UNKNOWN"
+    if owner_known and owner.get("entry_admission_enabled") is False:
+        state, detail = "OFF", "LIVE entry admission disabled; owned exits remain enabled."
+    elif coverage in {"inactive", "off_by_window", "paused", "reverted"}:
+        state, detail = "OFF", f"Warning feed {coverage}; {metrics.get('watchdog_revert_reason', 'UNKNOWN')}."
+    elif owner_known and metrics_known and coverage in {"requested", "provider_event_observed"}:
+        market_age = _seconds_since_eastern_label(market_at)
+        heartbeat_age = _seconds_since_eastern_label(heartbeat)
+        paper_status = str(paper.get("effective_status", paper.get("status", "unknown"))).lower()
+        if heartbeat == "UNKNOWN" or market_at == "UNKNOWN" or not consumer_known:
+            detail = "Warning feed requested; paper heartbeat, market freshness, or consumer evidence UNKNOWN."
+        elif (paper_status != "healthy" or heartbeat_age is None or not 0 <= heartbeat_age <= 90
+              or market_age is None or not 0 <= market_age <= 90
+              or consumer.get("transport_status") != "observed_transport"
+              or atr["state"] in {"STALE", "STOPPED", "DEGRADED", "DATA HALT"}):
+            state = "DEGRADED"
+            detail = (str(paper_details.get("feed_reason") or "") or
+                      (atr["detail"] if atr["state"] != "LISTENING" else "Warning transport or paper heartbeat degraded."))
+        elif coverage != "provider_event_observed":
+            state, detail = "DEGRADED", "Warning subscription requested; provider events not yet observed."
+        else:
+            state, detail = "LISTENING", "LIVE admission enabled; warning transport and paper heartbeat fresh."
+    owned_warning_count = consumer.get("owned_warning_symbols", "UNKNOWN") if consumer_known else "UNKNOWN"
+    positions_known = (live.get("status") == "READABLE" and not live.get("daily_pnl_partial")
+                       and not live.get("page_positions_incomplete") and isinstance(live.get("positions"), list))
+    requested = metrics.get("A_subscription_requested_ns") if metrics_known else None
+    since = label(datetime.fromtimestamp(requested / 1e9, tz=UTC)) if type(requested) is int and 0 < requested <= now_ns else "UNKNOWN"
+    feed = (f"ON since {since}" if coverage in {"requested", "provider_event_observed"}
+            else f"OFF ({coverage})" if coverage != "UNKNOWN" else "UNKNOWN")
+    return {"state": state, "detail": detail, "color": "#5fff8d" if state == "LISTENING" else "#98a6c8" if state == "OFF" else "#ffcc5b",
+            "latest_decision_at": label(latest.get("last_bar_at")) if latest else "-",
+            "latest_decision_detail": f"{latest.get('symbol') or 'UNKNOWN'} / {latest.get('status') or 'UNKNOWN'}" if latest else "No retained decision",
+            # Neither consumer_sample.observed_ns nor transport_through_ms is a last-consumed clock.
+            "latest_bot_tick_at": "UNKNOWN", "latest_market_data_at": market_at,
+            "latest_heartbeat_at": heartbeat, "live_heartbeat_at": live_heartbeat,
+            "feed_health": feed, "daily_bars_in": "UNKNOWN", "daily_bars_out": "UNKNOWN",
+            "daily_max_delay_ms": "UNKNOWN", "watchlist_count": "UNKNOWN",
+            "owned_warning_symbol_count": owned_warning_count,
+            "position_count": len(live["positions"]) if positions_known else "UNKNOWN"}
+
+
+def _render_momentum_listening_status(status: dict[str, Any], metrics: dict[str, Any]) -> str:
+    tiles = (
+        ("State", status["state"], status["detail"]),
+        ("Last Decision", status["latest_decision_at"], status["latest_decision_detail"]),
+        ("Last Bot Tick", status["latest_bot_tick_at"], "Exact latest warning-stream consumption time is not exported"),
+        ("Last Market Data", status["latest_market_data_at"], "Snapshot / subscription freshness; same source as ATR"),
+        ("Last Heartbeat", status["latest_heartbeat_at"], f"momentum-paper; momentum-live heartbeat: {status['live_heartbeat_at']}"),
+        ("Feed Health", status["feed_health"], "Today: bars in/out UNKNOWN/UNKNOWN; max delay UNKNOWN (no daily provenance)"),
+        ("Tracked Symbols", status["watchlist_count"], f"Evaluating count UNKNOWN; owned warning candidates: {status['owned_warning_symbol_count']}; open LIVE positions: {status['position_count']}"),
+    )
+    cards = ''.join(f'<div class="hero-card"><span>{escape(name)}</span><strong>{escape(str(value))}</strong><small>{escape(detail)}</small></div>'
+                    for name, value, detail in tiles)
+    return f'''<section id="momentum-listening" class="panel full accent-panel">
+        <div class="panel-header"><div><h2>Listening Status</h2>
+        <div class="sub">Explicit signal for whether this bot is actively listening and evaluating.</div></div>
+        <span class="count accent" style="color:{status['color']}">{escape(status['state'])}</span></div>
+        <div class="hero-grid">{cards}</div>{_render_momentum_warning_gateway_metrics(metrics)}</section>'''
+
+
 def _momentum_page_sort_time(value: Any) -> datetime:
     try:
         return parse_et_timestamp(str(value or ""))
@@ -6650,12 +7133,16 @@ def _render_momentum_page(data: dict[str, Any], *, live: dict[str, Any], warning
         row.get("side"), row.get("quantity"), row.get("status"), _display_order_reason(row))) + '</tr>'
         for row in sorted(live_orders, key=lambda item: _momentum_page_sort_time(item.get("updated_at")), reverse=True))
     order_rows = order_rows or '<tr><td colspan="7">No live orders in the available order history</td></tr>'
-    references = ''.join(_render_momentum_ledger(warning,
-        title=f'Warning method {60 if warning.get("strategy_code") == "momentum_60s_warn" else 30} s completed',
-        method="Signal reference", other_rows=[], reference_only=True) for warning in warnings)
     failed_rows = _momentum_page_tape_rows(warnings, failures=True, live_orders=live_orders)
-    nav = _build_bot_nav_html([str(bot["strategy_code"]) for bot in data.get("bots", [])])
+    nav = _render_page_nav(MOMENTUM_LIVE_CODE, [str(bot["strategy_code"]) for bot in data.get("bots", [])])
     live_table = _render_momentum_ledger(live, title="LIVE (real orders)", method="LIVE", other_rows=[], paper=False)
+    reference_tables = ''.join(_render_momentum_ledger(
+        next((row for row in warnings if row.get("strategy_code") == code), {"status": "UNKNOWN"}),
+        title=f"Warning method {seconds} s completed trades", method=f"WARN {seconds}s",
+        other_rows=[], reference_only=True,
+    ) for code, seconds in (("momentum_60s_warn", 60), ("momentum_30s_warn", 30)))
+    listening = _render_momentum_listening_status(
+        _momentum_listening_status(data, live, warnings, owner, metrics), metrics)
     unknown_warning = '<p role="alert">Warning history UNKNOWN; decision and failure coverage is incomplete.</p>' if any(
         row.get("status") != "READABLE" or row["page_recent_decisions_incomplete"]
         or row["page_closed_today_incomplete"] for row in warnings) else ''
@@ -6665,34 +7152,54 @@ def _render_momentum_page(data: dict[str, Any], *, live: dict[str, Any], warning
         live_warning += '<p role="alert">Partial LIVE ledger: UNKNOWN episodes are shown separately; P&amp;L excludes them. Open and completed counts are UNKNOWN.</p>'
     return f'''<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <meta http-equiv="refresh" content="30"><title>Momentum</title><style>
-    :root{{--bg:#101723;--panel:#192334;--ink:#edf3fb;--muted:#afbed1;--line:#334359;--accent:#ffc857}}
-    *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font-family:Verdana,sans-serif;font-size:14px}}
-    a{{color:var(--accent)}}nav{{display:flex;gap:18px;flex-wrap:wrap;padding:18px;border-bottom:1px solid var(--line)}}
-    .layout{{display:grid;grid-template-columns:250px minmax(0,1fr);gap:24px;max-width:1600px;margin:auto;padding:24px}}
-    aside,.panel{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:20px}}
-    main{{min-width:0}}h1{{margin-top:0}}h3{{margin:0 0 12px}}dt,.sub,.panel-copy{{color:var(--muted);line-height:1.6}}
-    dd{{margin:4px 0 20px;overflow-wrap:anywhere}}.overview{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}}
-    .overview strong{{display:block;font-size:24px;margin-top:8px}}.table-wrap{{overflow-x:auto}}table{{width:100%;border-collapse:collapse}}
-    th,td{{text-align:left;padding:12px;border-bottom:1px solid var(--line);white-space:nowrap}}th{{color:var(--muted)}}
-    .panel-header{{display:flex;justify-content:space-between;gap:12px}}.count{{color:var(--accent)}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}
-    @media(max-width:800px){{.layout{{grid-template-columns:1fr;padding:12px}}.overview{{grid-template-columns:repeat(2,1fr)}}}}
-    </style></head><body><nav><a href="/">Control Plane</a>{nav}</nav><div class="layout">
-    <aside id="momentum-sidebar"><h2>Momentum</h2><dl><dt>Status</dt><dd>{status}</dd>
-    <dt>Account</dt><dd>live:orb (Webull) · live:schwab_1m_v2 (Schwab)</dd><dt>Mode</dt><dd>LIVE</dd>
-    <dt>Provider</dt><dd>Webull + Schwab (SEC route)</dd><dt>Interval</dt><dd>30s + 60s</dd></dl>
-    <p class="sub">Status is entry admission from the current OMS owner proof. OFF does not disable owned exits. Missing or stale proof is UNKNOWN.</p></aside>
-    <main><h1>Momentum</h1>{_render_database_row_warnings(data)}<div class="overview">
-    <section class="panel"><span>Day P&amp;L (LIVE)</span><strong>{total}</strong></section>
-    <section class="panel"><span>Open</span><strong>{open_count}</strong></section>
-    <section class="panel"><span>Completed trades</span><strong>{closed}</strong></section>
-    <section class="panel"><span>Pending entries</span><strong>{pending}</strong></section></div>
-    <p class="panel-copy">P&amp;L uses actual LIVE broker fills only. Warning methods are signal references, not real orders, and never enter live totals.</p>
-    {live_warning}{live_table}{references}
-    <section class="panel"><h3>Open Positions (LIVE)</h3><div class="table-wrap">{_render_open_position_table(open_body, with_path=True)}</div></section>
-    <section class="panel"><h3>Order History (LIVE)</h3><div class="table-wrap"><table><thead><tr><th>Time</th><th>Account</th><th>Ticker</th><th>Side</th><th>Qty</th><th>Status</th><th>Reason</th></tr></thead><tbody>{order_rows}</tbody></table></div></section>
-    <section class="panel"><h3>Decision Tape</h3>{unknown_warning}<div class="table-wrap"><table><thead><tr><th>Time (ET)</th><th>Interval</th><th>Ticker</th><th>Status</th><th>Reason</th></tr></thead><tbody>{_momentum_page_tape_rows(warnings)}</tbody></table></div></section>
-    <section class="panel"><h3>Failed Actions</h3>{unknown_warning}<div class="table-wrap"><table><thead><tr><th>Time (ET)</th><th>Interval</th><th>Ticker</th><th>Status</th><th>Reason</th></tr></thead><tbody>{failed_rows}</tbody></table></div></section>
-    <section class="panel"><h3>Listening Status</h3>{_render_momentum_warning_gateway_metrics(metrics)}</section>
+    :root{{--bg:#131a2b;--panel:#202b46;--panel-alt:#1c2540;--line:rgba(121,146,193,0.28);--ink:#f0f4ff;--muted:#98a6c8;--cyan:#59d7ff;--green:#5fff8d;--amber:#ffcc5b;--red:#ff6b6b;--accent:#59d7ff}}
+    *{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at top left,rgba(89,215,255,0.08),transparent 28%),linear-gradient(180deg,#0f1525,var(--bg));color:var(--ink);font-family:'Consolas','Monaco',monospace}}
+    .shell{{display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px;min-height:100vh;padding:16px}}
+    .sidebar{{position:sticky;top:16px;align-self:start;background:rgba(17,24,41,0.96);border:1px solid var(--line);border-radius:22px;padding:18px;box-shadow:0 24px 60px rgba(0,0,0,0.28)}}
+    .brand{{display:flex;align-items:center;gap:12px;margin-bottom:20px}}.brand h1{{margin:0;font-size:24px;color:white}}.brand p{{margin:4px 0 0;color:var(--muted);font-size:13px}}
+    .brand-badge{{width:68px;height:68px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),#59d7ff);color:white;font-weight:700;text-align:center;font-size:24px;line-height:1}}
+    .side-section{{margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}}.side-label{{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:10px}}
+    .stack{{display:grid;gap:8px}}.line-item{{background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;color:var(--muted);line-height:1.45;overflow-wrap:anywhere}}.line-item strong{{color:var(--ink)}}
+    .metric-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}}.metric-card{{background:var(--panel-alt);border:1px solid var(--line);border-radius:14px;padding:10px;overflow-wrap:anywhere}}
+    .metric-card strong{{display:block;font-size:22px;color:var(--cyan)}}.metric-card span{{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}}
+    .hero-grid{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;padding:0 16px 16px}}
+    .hero-card{{background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:14px;padding:12px;min-width:0;overflow-wrap:anywhere}}
+    .hero-card span{{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px}}
+    .hero-card strong{{display:block;font-size:18px;color:var(--ink)}}.hero-card small{{color:var(--muted);font-size:11px}}
+    .workspace{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-content:start;min-width:0}}
+    .panel{{background:rgba(24,32,54,0.96);border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 18px 42px rgba(0,0,0,0.24);min-width:0}}.panel.full{{grid-column:1/-1}}
+    .accent-panel{{border-color:color-mix(in srgb,var(--accent) 52%,rgba(121,146,193,0.28));box-shadow:0 18px 42px rgba(0,0,0,0.24),0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent)}}
+    .panel-header{{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 16px;background:linear-gradient(180deg,rgba(89,215,255,0.08),rgba(0,0,0,0));border-bottom:1px solid var(--line)}}
+    .panel-header h2,.panel-header h3{{margin:0;font-size:16px;color:var(--ink)}}.sub,.panel-copy{{color:var(--muted);font-size:12px;line-height:1.5}}.panel-header .sub{{margin-top:3px}}.panel-copy{{padding:12px 16px}}.panel>h4{{padding:0 16px}}
+    .count{{padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:rgba(89,215,255,0.12);color:var(--cyan)}}.count.accent{{background:color-mix(in srgb,var(--accent) 18%,transparent);color:color-mix(in srgb,var(--accent) 75%,white 25%)}}
+    .nav-strip{{display:flex;flex-wrap:wrap;gap:8px}}.nav-strip a{{text-decoration:none;color:var(--ink);background:linear-gradient(180deg,rgba(89,215,255,0.08),rgba(255,255,255,0.02));border:1px solid var(--line);border-radius:999px;padding:6px 10px;font-size:12px;line-height:1}}
+    .nav-strip a.active{{border-color:var(--accent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 80%,white 20%);background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 18%,transparent),rgba(255,255,255,0.02))}}
+    .table-wrap{{max-height:420px;overflow:auto}}table{{border-collapse:collapse;width:100%;font-size:13px}}th{{position:sticky;top:0;z-index:1;background:#253556;color:#b9c6e4;padding:8px 10px;text-align:left;border-bottom:1px solid var(--line)}}
+    td{{padding:8px 10px;border-bottom:1px solid rgba(121,146,193,0.16);color:#edf3ff;vertical-align:top}}tbody tr:nth-child(odd){{background:rgba(255,255,255,0.015)}}tbody tr:hover{{background:rgba(89,215,255,0.06)}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}
+    @media(max-width:1200px){{.shell{{grid-template-columns:1fr}}.sidebar{{position:static}}.hero-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+    @media(max-width:900px){{.workspace{{grid-template-columns:1fr}}.panel.full{{grid-column:auto}}.hero-grid{{grid-template-columns:1fr}}}}
+    </style></head><body><div class="shell">
+    <aside id="momentum-sidebar" class="sidebar"><div class="brand"><div class="brand-badge">MOM</div><div><h1>Momentum</h1><p>Execution Workspace for this bot.</p></div></div>
+    <div class="side-section"><div class="stack">
+    <div class="line-item"><strong>Status:</strong> {status}</div>
+    <div class="line-item"><strong>Account:</strong> live:orb (Webull) · live:schwab_1m_v2 (Schwab)</div>
+    <div class="line-item"><strong>Mode:</strong> LIVE</div>
+    <div class="line-item"><strong>Provider:</strong> Webull + Schwab (SEC route)</div>
+    <div class="line-item"><strong>Interval:</strong> 30s + 60s</div></div>
+    <p class="sub">Status is entry admission from the current OMS owner proof. OFF does not disable owned exits. Missing or stale proof is UNKNOWN.</p></div>
+    <div class="side-section"><div class="side-label">Overview</div><div class="metric-grid">
+    <div class="metric-card"><span>Day P&amp;L (LIVE)</span><strong>{total}</strong></div>
+    <div class="metric-card"><span>Open</span><strong>{open_count}</strong></div>
+    <div class="metric-card"><span>Completed trades</span><strong>{closed}</strong></div>
+    <div class="metric-card"><span>Pending entries</span><strong>{pending}</strong></div></div></div></aside>
+    <main class="workspace">{_render_database_row_warnings(data)}
+    <section class="panel full accent-panel"><div class="panel-header"><div><h2>Bot Navigation</h2><div class="sub">Quick switch between scanner, control plane, and bot pages.</div></div><span class="count accent">Momentum</span></div><div class="panel-copy">{nav}</div></section>
+    {listening}{reference_tables}
+    <section class="panel full"><div class="panel-copy">P&amp;L uses actual LIVE broker fills only.</div>{live_warning}</section>{live_table}
+    <section class="panel full"><div class="panel-header"><h3>Open Positions (LIVE)</h3></div><div class="table-wrap">{_render_open_position_table(open_body, with_path=True)}</div></section>
+    <section class="panel full"><div class="panel-header"><h3>Order History (LIVE)</h3></div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Account</th><th>Ticker</th><th>Side</th><th>Qty</th><th>Status</th><th>Reason</th></tr></thead><tbody>{order_rows}</tbody></table></div></section>
+    <section class="panel full"><div class="panel-header"><h3>Decision Tape</h3></div>{unknown_warning}<div class="table-wrap"><table><thead><tr><th>Time (ET)</th><th>Interval</th><th>Ticker</th><th>Status</th><th>Reason</th></tr></thead><tbody>{_momentum_page_tape_rows(warnings)}</tbody></table></div></section>
+    <section class="panel full"><div class="panel-header"><h3>Failed Actions</h3></div>{unknown_warning}<div class="table-wrap"><table><thead><tr><th>Time (ET)</th><th>Interval</th><th>Ticker</th><th>Status</th><th>Reason</th></tr></thead><tbody>{failed_rows}</tbody></table></div></section>
     </main></div></body></html>'''
 
 
@@ -6822,10 +7329,11 @@ def _render_momentum_ledger(
             summary = "UNKNOWN. No total calculated. Readable rows shown; completed count UNKNOWN."
         body = "".join(rows) or '<tr><td colspan="9">No completed positions</td></tr>'
     badge = "REFERENCE" if reference_only else "PAPER" if paper else "LIVE"
+    reference_note = '<div class="panel-copy">signal reference &mdash; not real orders; not in live P&amp;L</div>' if reference_only else ''
     return f"""<section class="panel full momentum-ledger">
         <div class="panel-header"><div><h3>{escape(title)}</h3>
         <div class="sub">{summary}</div></div><span class="count accent">{badge}</span></div>
-        <h4>Completed Positions &middot; {utcnow().astimezone(EASTERN_TZ).strftime('%Y-%m-%d')}</h4>
+        {reference_note}<h4>Completed Positions &middot; {utcnow().astimezone(EASTERN_TZ).strftime('%Y-%m-%d')}</h4>
         <div class="table-wrap"><table><thead>{_MOMENTUM_LEDGER_COLUMNS}</thead>
         <tbody>{body}</tbody></table></div></section>"""
 
@@ -6843,6 +7351,7 @@ def _render_bot_detail_page(
     *,
     trade_coach_live_advisories: list[dict[str, Any]] | None = None,
     trade_coach_enabled: bool = False,
+    firstbar_simulation_html: str = "",
 ) -> str:
     bot = _find_bot_view(data, strategy_code)
     if bot is None:
@@ -6889,7 +7398,7 @@ def _render_bot_detail_page(
             live_trade_coach_advisories
         )
     order_rows, order_count = _build_order_history_rows(recent_orders, recent_fills)
-    order_history_body = paper_broker_notice if strategy_code in {"momentum_30s", "momentum_60s"} else f"""<table>
+    order_history_body = paper_broker_notice if strategy_code in MOMENTUM_PAGE_CODES else f"""<table>
         <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Side</th><th style="text-align:right">Qty</th><th style="text-align:right">Price</th><th>Status</th><th>Reason</th></tr></thead>
         <tbody>{order_rows}</tbody></table>"""
     tos_parity = bot.get("tos_parity", {})
@@ -7861,7 +8370,7 @@ def _render_bot_detail_page(
                 </div>
             </section>'''}
 
-            {completed_positions_panel if strategy_code != "polygon_30s" else ""}
+            {completed_positions_panel if strategy_code != "polygon_30s" else ""}{firstbar_simulation_html if strategy_code == "schwab_1m_v2" else ""}
             {trade_forensics_panel}
             {live_trade_coach_panel}
             {trade_coach_panel}
@@ -10908,6 +11417,12 @@ def _render_tos_tolerance_hint(delta: float, *, label: str, tight: float, watch:
 
 
 def _build_bot_account_summary(data: dict[str, Any], bot: dict[str, Any]) -> dict[str, Any]:
+    if bot.get("strategy_code") == MOMENTUM_LIVE_CODE:
+        return {"source": "strategy_owned_broker_fills", "account_names": bot.get("broker_account_names", []),
+                "account_position_count": bot.get("position_count", "UNKNOWN"),
+                "strategy_symbol_count": len({row.get("symbol") for row in bot.get("positions", [])}),
+                "gross_market_value": None, "non_strategy_symbol_count": None,
+                "non_strategy_symbols": [], "latest_updated_at": bot.get("ledger_read_at", "UNKNOWN")}
     account_rows = [
         item for item in data["account_positions"] if item.get("broker_account_name") == bot["account_name"]
     ]

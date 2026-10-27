@@ -33,13 +33,13 @@ LATCHED = "[V2-FANOUT-REACTIVE-LATCHED]"
 
 
 class _Quote:
-    """The reactive path reads `last_price` + `quote_time_ms` off the quote and nothing else."""
+    """Controlled current quote for above-floor reactive marker scenarios."""
 
     def __init__(self, px: float, ms: int) -> None:
         self.last_price = px
         self.quote_time_ms = ms
-        self.bid_price = 0.0
-        self.ask_price = 0.0
+        self.bid_price = px
+        self.ask_price = px
 
 
 # 2026-08-24 14:00:00 UTC = 10:00 ET — inside RTH on purpose. The EH branch requires a live bar

@@ -1,0 +1,106 @@
+C1 12:02 cohesive source response -- UNRUN / NO INSTALL CLAIM
+
+Parent ff41a0ffbeb8d34a6413913808d5cfa79dfe700f remains immutable. New branch
+codex/l11-bounded-boot-census-20261025, root
+/private/tmp/oct25-l11-bounded-boot-census-20261025. Same L11 owner/assignment.
+No author imports/AST/compile/tests/replay/PG/provider/exports/shared writes.
+
+P1 ORDERING / BOUND
+Only same-session/current-epoch selected pending work within the existing180000ms
+cutoff defers. Stale pending work is NOT removed, expired or relabelled consumed;
+it quarantines its symbol from the boot census and logs WARNING. Positions,
+subscriptions, exits, ownership, working-order state and original inbox counts
+are untouched. Per-symbol entry guard refuses this quarantine before either
+normal KEEPWATCH permission OR the PG OLD-poll fallback can grant a new entry.
+
+Proposed N arithmetic:12 elapsed intervals x existing5second publisher =60seconds.
+Use a process-local monotonic clock, not number of calls. Repeated callbacks at
+one instant do not spend this budget. Consecutive same-symbol deferral survives
+reason/epoch changes while current work still blocks; a quiescent observation
+breaks it. Counter state is one row per selected symbol; exclusion state one row
+per observed current-session symbol, not per frame/retry/task/history record.
+No new setting, loop, timer, timeout, cap, provider/DB query or real await added.
+The elapsed deadline is checked at existing calls, not by a new60s timer; actual
+dispatch delay to that next check is not claimed zero or statically qualified.
+The requested release-within-bound timeline must be measured by Main's real
+clock/caller controls. No scheduler latency or timing threshold waiver is made.
+
+At bound, exclude only that symbol from the incomplete boot seed/warmup census,
+including the matching scanner denominator and seeded-warmup timeout population.
+Healthy symbols still require every existing actual proof/readability/warmup
+condition. All-excluded is empty and cannot vacuously complete. An unrelated
+healthy symbol's missing proof still fails closed. No direct latch/held assignment.
+The original dangerous-arm check is UNCHANGED, including quarantined symbols;
+if dangerous reconstruction remains, it still holds the fleet and must be
+reported, not filtered out to satisfy liveness. This conservative residual is
+explicit in a control; no dangerous-state waiver is claimed.
+
+QUARANTINE LIFETIME / IMPACT
+Exclusion is sticky for the current session/retained observation membership.
+Later history success clearing _keepwatch_unknown cannot silently grant entries
+over it. New-session scope cannot reuse the old exclusion OR the old provider
+proof as current permission. No automatic within-session unquarantine is added;
+that would require a separately reviewed source-proven recovery condition.
+This may cost that stuck symbol's first entries; other healthy names can boot.
+No all-fleet no-BUY is called PASS. LNKS07:02 and watched18 still require actual
+new-head qualification, including confirming valid names do not get quarantined.
+
+P3 / READ ACTIVATION
+History pass stores only task-local queued context before its read. It registers
+an active history scope AFTER the provider lock is acquired in the actual read.
+That scope then persists through caller publication until existing finally.
+Queued reads alone do not defer; unresolved owner work remains represented by
+the actual inbox. Epoch changes while queued refuse, never invent new scope.
+Native task scope is assigned BEFORE native-read-set membership, both inside the
+existing try/finally. Existing cancellation shield/join and delayed retirement
+remain. Native_scope_unknown is a defensive contract failure, not a normal
+registration transient or guessed symbol. Context is reset on every pass exit.
+Warmup/replay callbacks can defer on their own current work; after settlement,
+completion relies on the EXISTING five-second central hold-check retry. No new
+call from a diagnostic observer or extra scanner message is required.
+
+VISIBILITY
+Existing BOOT-HOLD warning now includes deferred_reason and deferred_symbol;
+one WARNING on exclusion reports reason, symbol, elapsed/bound and entry_allowed0.
+Published data_health.boot_retry includes same reason/symbol, fixed12x5/60s and
+each current exclusion with UNKNOWN/entry_allowedFalse. No event schema migration,
+secret/raw-payload print, unlimited log-per-frame or removal of existing fields.
+Flag-OFF data-health shape is not expanded. Monotonic budget is not a claim of
+historical elapsed-time availability; reconstructed callers need an explicit
+reviewed clock-port binding if they model this interval. Do not retime raw input.
+
+NEW CONTROLS -- SOURCE INVENTORY ONLY
+tests/unit/test_keepwatch_boot_bounded_census.py:12 functions/13 expanded cases.
+- exact180000/180001 age boundary;
+- stuck stale1of18 releases healthy fleet, keeps failed name blocked/subscribed,
+  logs exactly one WARNING and preserves pending/inbox counts;
+- same-symbol12elapsed intervals/60s, not55s or12 rapid calls;
+- same-clock100callbacks cannot exhaust bound;
+- quiescent observation resets consecutive budget;
+- actual queued history read does NOT defer, then real read/owner cleanup;
+- actual native scope visible BEFORE set.add;
+- actual published JSON plus BOOT-HOLD reason/symbol;
+- all-excluded cannot complete an empty fleet;
+- original dangerous-arm check still authoritative;
+- session scope does not promote old proof to next-day permission;
+- healthy missing seed is not fabricated by excluding another symbol.
+All original47 sources and rate1 remain unchanged from ff41. Intended functional
+union60=47+13, rate1 RESERVED. Main must review/pin/collect/run; NONE executed
+by author. No original18 old results transferred or failed assertions relaxed.
+
+CALLER / PROOF SEAMS
+Current frozen3625 FILE read wrapper delegates original_read rather than replacing
+it, so native/history registration remains in that real method on a new binding.
+Its cache and audit context remain separately source-bound; no harness changes
+in this APP successor. Existing3625 consumer359 pins still correctly REFUSE the
+new APP; new explicit reviewed carry/output/schema/cadence/clock closure required.
+Real Friday watched18 source packets/pins are in the immutable operand packet
+/private/tmp/OCT25-L11-FF41-OPERAND-AND-GATE-PACKET.txt (f9b021f1), not new exports.
+
+OPEN GATES
+Review/functional60; strict0f2 original18; original21 roster plus explicitLNKS16
+07:02 admission and must-not-change/economic predicates; Friday watched18 actual
+seed timing; real Friday-close/next-day L12 boot; final104+BBCI-only suite; fresh
+coordinated tick/stall window; C1 impact/install GO. New APP invalidates prior
+APP qualification; all raw failures remain. L14 first/no overlap; Main sole
+production/runtime and shared writer. No source-only READY/GO is asserted.

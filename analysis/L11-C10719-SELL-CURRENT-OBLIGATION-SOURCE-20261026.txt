@@ -1,0 +1,77 @@
+L11 C10719 SELL current-obligation source proposal -- UNRUN
+
+Owner: Galileo, sole core writer. Main alone executes; Gibbs alone records.
+Base: literal immutable 6c6776f68763342e534aaa4ad3316346cff6c48d.
+Authority: C1 2026-10-26 07:11, 07:13 and residual ruling 07:19.
+Stable scope: existing L11 SELL identity fix, no new trading feature.
+
+Changed APP: src/project_mai_tai/strategy_core/schwab_1m_v2.py only.
+Added controls: tests/unit/test_l11_c10719_sell_current_obligation.py,
+20 intended parametrized controls, all UNRUN. No imports/AST/tests/PG/runtime.
+No queue/status/LATEST/frozen-root writes.
+
+Actual retained cause, not a new run:
+CLWT 09:31 call551 phase idle, first_rest_placed=False, restart_pending=False,
+retains probe identity 1791805920000 after contradictory-idle branch. Existing
+unused_owner_at_sell_definite FALSE is not evidence of a current obligation.
+Ledger357cee39 and actual comparison d3a2b4e7 remain unchanged/raw UNKNOWN.
+
+Source boundary:
+- KEEPWATCH OFF exact legacy SELL branches remain unchanged, including original
+  26-control source module. L12 helper semantics and 925 GIXI fix are unchanged.
+- KEEPWATCH ON checks current local position/waiting order and existing native
+  snapshot positives/inflight/send reservations before legacy SELL retirement.
+  Missing native snapshot is NOT classified as native flatness.
+- Only an otherwise never-dispatched local probe may retire without a complete
+  admission card, and still requires readable/fresh existing position evidence
+  and readable durable owner store. Identity alone is not a dispatched order.
+- Previously placed/cancelled/expired or closed-fill historical identities need
+  a complete current card with no current position/working/UNKNOWN-send blocker;
+  historical same-segment fills are not reinterpreted as open positions.
+- Current restart quarantine still takes the exact existing cancel/hold path.
+- Existing removal-request guard and identity-then-owner durable writes remain.
+  A failed write keeps UNKNOWN. No slot or entry permission is fabricated.
+- Pending retirement is a bounded single tuple on existing SymbolState, tied to
+  the identity and actual SELL bar. Existing position-book application retries
+  only that exact owner; replacement identity cannot inherit the retirement.
+  No new tasks, provider/DB calls, clock changes or per-tick loops.
+- Historical native positives are retained conservatively until a later native
+  snapshot removes them; incomplete/absent card never resolves a dispatched send.
+
+Call graph:
+actual SELL -> _cw_v2_track -> _end_flip_owner_on_sell
+  -> _sell_owner_current_blocker -> existing AdmissionMemory pure read
+  -> idle probe pending -> _retire_probe_owner_after_sell
+  -> existing _retire_flip_owner_opportunity -> identity/owner stores
+later existing apply_flip_position_book -> exact pending owner retry.
+Real position/order/UNKNOWN-send/restart remains held. OLD-style slot reset is
+the existing durable retirement implementation, not a new blanket memory clear.
+
+Review attention before any runtime:
+The narrow new ordinary retirement is KEEPWATCH-enabled. Other old non-idle
+retirement/reconciliation logic is preserved except current-positive blockers
+now prevent a KEEPWATCH SELL reset. Actual CLWT fresh-position/readable-store
+operands must be checked from retained traces; this source does not assert them.
+Gibbs must establish CLWT Webull BUY133@2.24 position state at 09:31 from fills.
+If a current blocker has no later observed terminal fact, keep UNKNOWN, not PASS.
+Pending retry is not persisted as a permission: restart uses existing quarantine.
+
+Proposed Main selection (not executed here):
+tests/unit/test_l11_c10719_sell_current_obligation.py (new20)
+tests/unit/test_l12_c12139_sell_old_parity.py (original26 on FINAL head)
+Original26 expected count must be independently confirmed by Main collection.
+No threshold/timing/normal-GC/INFO/capture/workload changes authorized here.
+
+Remaining required actual evidence:
+3 groups and ALL10 changed rows explicit roster, EQUIV or named real blocker;
+then606. No native/fill/PnL/whole-case acceptance claimed from these controls.
+LNKS ordinary/genuine OLD-blocker fixtures and causal Friday joint ALLON remain
+additive next source work, based on frozen 9b984 proposal; not cancelled here.
+225/240 pacing, >=200/s,60s,<50ms unchanged. No runtime/quiet claim.
+
+C1 07:30 SPRC additional must-not-change:
+Controlled positive196 holding plus real fill-note and real later BUY binding,
+without matching managed-row evidence, must retain buy_flip_owner_not_proven,
+the exact opportunity/fill account, no SELL pending retirement and no admission.
+This is not a claim to reconstruct the actual 07:22:10/07:24:02 native ledger.
+The actual BUY binding function has no APP delta in this source proposal.

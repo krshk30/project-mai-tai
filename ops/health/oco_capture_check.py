@@ -24,7 +24,8 @@ RED   = a live-money or data-integrity fault (a $0 exit booked; entries closing 
 AMBER = the fix is not taking effect (brackets still drifting, realign rejected by the broker).
 GREEN = brackets aligned and exits pairing.
 
-READ-ONLY: queries the DB and reads logs. Places, cancels and modifies nothing.
+No trading actions. Queries DB/logs; writes only reviewed operator-close INFO
+audit/incident tags. No fill, order, position, or incident-status repair.
 Exit 0 green/skip, 1 amber, 2 red.
 """
 from __future__ import annotations
@@ -39,6 +40,7 @@ from sqlalchemy import text
 
 from project_mai_tai.db.session import build_session_factory
 from project_mai_tai.settings import get_settings
+from project_mai_tai.reconciliation.operator_closed_exits import exclude_reviewed_operator_closes
 
 ET = ZoneInfo("America/New_York")
 TOPIC = "mai-tai-preopen-28806a5a97b7"
@@ -95,12 +97,12 @@ def main() -> int:
 
     sf = build_session_factory(s)
     with sf() as sess:
-        buys, sells, zero_priced, unpaired = sess.execute(text("""
+        buys, sells, zero_priced, unpaired_ids = sess.execute(text("""
             SELECT
               count(*) FILTER (WHERE f.side = 'buy'),
               count(*) FILTER (WHERE f.side = 'sell'),
               count(*) FILTER (WHERE f.side = 'sell' AND f.price <= 0),
-              count(*) FILTER (WHERE f.side = 'buy'
+              array_agg(f.id::text) FILTER (WHERE f.side = 'buy'
                                AND f.filled_at < now() - make_interval(mins => :grace)
                                AND NOT EXISTS (
                                      SELECT 1 FROM fills x
@@ -117,10 +119,23 @@ def main() -> int:
             JOIN strategies st ON st.id = f.strategy_id
             WHERE st.code = 'schwab_1m_v2' AND f.filled_at::date = CURRENT_DATE
         """), {"grace": EXIT_GRACE_MIN}).one()
+        unpaired_ids = unpaired_ids or []
+        unpaired = len(unpaired_ids)
 
         still_open = sess.execute(text("""
             SELECT count(*) FROM oms_managed_positions WHERE current_quantity <> 0
         """)).scalar_one()
+        if capture_on:
+            try:
+                with sess.begin_nested():
+                    excluded = exclude_reviewed_operator_closes(sess, unpaired_ids, now=datetime.now(UTC))
+                sess.commit()
+                unpaired -= len(excluded)
+                if excluded:
+                    notes.append(f"operator-closed reviewed entry fills={len(excluded)}; INFO audit retained")
+            except Exception as exc:
+                sess.rollback()
+                notes.append(f"operator-closed evidence/audit unavailable ({type(exc).__name__}); no exclusions")
 
     notes.append(f"fills today buy={buys} sell={sells} · open managed rows={still_open}")
 

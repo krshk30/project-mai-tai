@@ -3,13 +3,15 @@ from __future__ import annotations
 import csv
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 from project_mai_tai.db.base import Base
 from project_mai_tai.db.models import (
@@ -663,13 +665,25 @@ def test_render_confirmed_catalyst_cell_shows_ai_shadow_overlay() -> None:
     assert "inks deal" in html
 
 
-def build_test_session_factory() -> sessionmaker[Session]:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+def build_test_session_factory(*, isolated: bool = False) -> sessionmaker[Session]:
+    if isolated:
+        directory = TemporaryDirectory(prefix="mai-tai-momentum-test-")
+        engine = create_engine(
+            "sqlite+pysqlite:///" + str(Path(directory.name) / "runtime.sqlite"),
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=NullPool,
+        )
+        # Keep the file through dispose/reuse and any thread-held Session.
+        # Cleanup follows engine GC/process exit, never engine.dispose().
+        engine._test_database_directory = directory
+    else:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 

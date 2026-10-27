@@ -738,6 +738,15 @@ def test_live_locked_tracks_the_2026_09_08_cw_operator_settings() -> None:
         assert getattr(settings, key) == value, f"{key} is stale in an off-VPS replay"
 
 
+def test_live_locked_tracks_operator_1545_cutoff_and_env_still_wins() -> None:
+    hour = "strategy_schwab_1m_v2_entry_window_end_hour_et"
+    minute = "strategy_schwab_1m_v2_entry_window_end_minute_et"
+    assert (LIVE_LOCKED[hour], LIVE_LOCKED[minute]) == (15, 45)
+    base = _Settings(**{hour: 14, minute: 30})
+    settings = build_replay_settings(base=base)
+    assert (getattr(settings, hour), getattr(settings, minute)) == (14, 30)
+
+
 def test_reclaim_parity_actually_moves_the_entry_cap() -> None:
     """Not just a flag: prove the setting changes BEHAVIOUR. Reclaim off caps a segment at ONE entry.
 

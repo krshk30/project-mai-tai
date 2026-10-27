@@ -43,6 +43,7 @@ async def test_snapshot_volume_reaches_actual_live_admission(day, accumulated, a
     now[0] += timedelta(seconds=age)
     observed = int(now[0].timestamp() * 1_000_000_000)
     detected = row(symbol="VBIO", session_date=now[0].date(), payload={
+        "prior_close": "1.50",  # CONTROLLED volume-path input, not historical VBIO proof.
         "observed_decision_ns": observed,
         "reference": {"end_ms": 1}, "detect": {"end_ms": 3, "price": "1.7341"},
     })

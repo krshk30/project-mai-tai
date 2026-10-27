@@ -1,0 +1,27 @@
+{
+  "kind": "L13_RETAINED_REDIS_RAW_20261022",
+  "directory": "/Users/velkris/.codex/task-queues/analysis/L13-P3-SNAPSHOT-INPUTS-20261022",
+  "provenance": "Claude LATEST 2026-10-22 14:32:24 ET: retained redis-cli --raw XRANGE and strategy log; main verified compressed/log SHA256SUMS 14:34:54 ET",
+  "producer_head": "UNKNOWN: not included in delivered packet",
+  "log_timezone": "UTC (18:25Z corresponds to reviewer 14:25ET)",
+  "prior_consumer_state": "UNKNOWN: in-memory state was never stored",
+  "archive": {
+    "file": "c1_snapbatches.raw.gz",
+    "bytes": 132749809,
+    "sha256": "fa1b53391efab924cbcb43b2c0f777620e2c7ba0f3c2c2e4b6441d7edc242fe3"
+  },
+  "strategy_log": {
+    "file": "c1_strategy_window.log",
+    "bytes": 66320,
+    "sha256": "655806e815f23e158949d5063c0df171978e36368d5493c661780db107825c47"
+  },
+  "raw": {
+    "batches": 120,
+    "raw_bytes": 729507460,
+    "raw_sha256": "2c51513a80015ea09ac042eb078a704b950aed863481a28e093a1ed8e541bae4",
+    "snapshots_per_batch": 13268,
+    "references_per_batch": 3051,
+    "first_id": "1792693011434-0",
+    "last_id": "1792693885152-0"
+  }
+}

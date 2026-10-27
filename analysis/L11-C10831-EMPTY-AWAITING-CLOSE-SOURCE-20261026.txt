@@ -1,0 +1,90 @@
+C10831 SOURCE CANDIDATE / NOT RUNTIME QUALIFIED
+
+Parent: ff324d5f04942f939fcf2bb703da0fa594eab8d5 (immutable).
+Root: /private/tmp/oct26-l11-empty-awaiting-close-20261026
+Only APP change: strategy_core/schwab_1m_v2.py, 12 added lines.
+No service, settings, L12, native adapter, migration, input-driver or gate-fixture change.
+Frozen ff324 / active 606 / approved fixture 9b5 are untouched.
+
+CORRECTION TO INITIAL CAUSE
+The installed a2d4156d and ff324 are NOT all-day deadlocks.
+In installed _end_flip_owner_on_sell, after the fresh-evidence check,
+awaiting_close with empty position_ids falls through the open_ids test to
+_retire_flip_owner_opportunity(reason="sell_flip_flat"), lines 3411-3416.
+ff324 preserves the equivalent fallback, independently of its new probe reset.
+That existing later-SELL branch is NOT changed by this candidate.
+
+Actual Main READONLY receipt:
+/private/tmp/OCT26-C10831-SPRC-OWNER-READONLY-FIRST-20261026.txt
+SHA256 e519ea175fe0e806f13fd9b8dd76bf1fe1dc36c3ee7540b063f5b46d35062c90
+07:53:02.536153 ET row 18dd1c7e-d7e0-46fd-94ef-2673d033429c:
+  active=true, phase=awaiting_close, position_ids={}, opportunity=1793012702533.
+08:31:02.247075 ET row 7421adbe-c0de-46ea-98bc-24489c97f29b:
+  active=false, same phase/empty IDs/opportunity, reason=sell_flip_flat.
+08:34:02.956629 ET row 2dd7eb6a-0a46-4aa7-b672-ef1b5668b325:
+  active=true, NEW opportunity=1793018042938, resting/first_rest_working.
+Main additionally reports actual fresh 08:31 SELL log, pos_qty=0 and ordered
+identity retirement / owner release / fresh-sell retry / ATR SELL.
+That log confirmation is Main-reported; this author has not received its file.
+
+NARROW REMAINING SOURCE GAP
+_apply_flip_position_evidence's existing awaiting_close retirement requires
+nonempty position_ids. Before that final branch, fill_accounts without row IDs
+also meet the generic missing_rows guard. Thus a flat position callback cannot
+release this empty-ID awaiting_close phase, although a later SELL can.
+ff324's probe reset requires its pending-SELL identity and additional probe /
+terminal / admission evidence; it is not general coverage of this exact phase.
+The missed 07:56 BUY is retained C1 incident evidence, not reproduced here.
+
+CANDIDATE
+Before the generic ownership reconciliation, ONLY for awaiting_close and EMPTY
+position_ids, require no managed open positions, readable restored owner store,
+existing fresh/readable/nonfuture position evidence, no existing current
+position/working order/unanswered submit/restart blocker, and consistent owner /
+fanout identity. Use existing _retire_flip_owner_opportunity with the existing
+sell_flip_flat_unknown_owner reason. Otherwise return held in this phase.
+No native absence is synthesized; absent native snapshot is not relabeled a
+native flat proof. Flatness uses the actual existing typed OMS position book.
+The existing current-obligation guard still vetoes known native obligations and
+actual local unanswered reservations. No new BUY/publication permission exists.
+Keepwatch OFF also receives this narrow lifecycle correction: incident occurred
+on installed flag configuration, not solely the new keepwatch path.
+
+SAFETY / IMPACT
+Existing false-flip reconciliation runs first and is not bypassed.
+Existing removal-request guard, identity-first retirement, owner persistence,
+failure UNKNOWN and slot cleanup remain the actual implementation.
+Nonempty bound owners, pre-SELL unknown/provisional/consumed owners and all
+SELL-reset branches are unchanged. No age limit, timeout or entry gate changed.
+Memory/CPU: one constant-size condition on existing position-book reconciliation;
+no DB/provider read, task, lock, polling, new loop or per-tick I/O.
+
+NEW CONTROL SOURCE (29 intended parametrized cases; NO collection/execution)
+tests/unit/test_l11_c10831_empty_awaiting_close.py
+Fresh flat SPRC/AIXI x keepwatch OFF/ON: 4.
+Stale/future/zero/unreadable book: 4.
+Actual managed positive read then actual flat callback: 1.
+Current quantities/resting/native position/each broker working/unanswered/
+reservation/restart: 10. Restore/identity conflict: 2. Store failures: 2.
+Bound-ID old branch: 1. Unknown-before-SELL stays held: 1.
+Actual legacy SELL -> unreadable -> fresh flat / idempotence: 1.
+Missing opportunity: 1. Existing evidence-age boundary: 1.
+Later SELL old fallback (explicitly NOT all-day stuck): 1.
+Reuse exact parent probe constructor helper; constructed data is CONTROLLED.
+
+MAIN REVIEW / CLAIM ONLY
+python -m pytest -q tests/unit/test_l11_c10831_empty_awaiting_close.py
+Use Main's existing fenced memory-only settings/source manifest and fresh outputs;
+command above is selector only, NOT permission to execute without that envelope.
+Original ff324 31 / final26 / 606 are not repeated or claimed by these controls.
+
+PRECISE REMAINING REAL INPUTS / UNRUN GATES
+Real SPRC rows exist, but actual first fresh-flat OMS book after 07:53:41,
+its observed_at/readable/accounts/legs, concurrent quantities, broker working /
+inflight reservations and restart state at that callback are not provided here.
+No claim that this candidate would admit exactly at 07:56 without those operands.
+AIXI 10-20 real persisted owner/book operands remain missing; no invented replay.
+Original EH-cross unbound-fill cause/sweep stays Bohr's separate trace lane.
+Main/C1 must review corrected prolonged-hold scope and candidate before adoption;
+actual incident replays, still-open/stale negatives, final binding/full/rate/
+native/production acceptance remain OPEN. All new controls are UNRUN.

@@ -1,0 +1,23 @@
+{
+  "12": {
+    "condition_id": 12,
+    "name": "CONTROLLED Form T neutral classifier example",
+    "updates_high_low": false,
+    "updates_open_close": false,
+    "updates_volume": true
+  },
+  "14": {
+    "condition_id": 14,
+    "name": "CONTROLLED Intermarket Sweep OHLC example",
+    "updates_high_low": true,
+    "updates_open_close": true,
+    "updates_volume": true
+  },
+  "37": {
+    "condition_id": 37,
+    "name": "CONTROLLED Odd Lot exclusion example",
+    "updates_high_low": false,
+    "updates_open_close": false,
+    "updates_volume": true
+  }
+}

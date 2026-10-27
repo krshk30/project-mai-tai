@@ -1,0 +1,23 @@
+id	group	counterfactual_phone	basis
+FogdCr5H9A5k	1	NO	operator22:47-22:57 planned stop; hypothetical scoped marker
+2RM7wpcIrkaY	1	NO	operator22:47-22:57 planned stop; hypothetical scoped marker
+BP5rA8d9imLI	1	NO	operator22:47-22:57 planned stop; hypothetical scoped marker
+FLQHDIfgC9dk	1	NO	operator22:47-22:57 planned stop; hypothetical scoped marker
+fZS6obCkHgej	1	NO	operator22:47-22:57 planned stop; hypothetical scoped marker
+MU5OpQLmKRVH	1	NO	operator22:47-22:57 planned stop; hypothetical scoped marker
+DLJiapc7K3eL	1	NO	operator22:47-22:57 planned stop; hypothetical scoped marker
+xWnfUxSX5mCP	1	NO	operator22:47-22:57 planned stop; hypothetical scoped marker
+0lfM8JQE8Aac	1	NO	operator22:47-22:57 planned stop; hypothetical scoped marker
+Jz9rvhcg9xeH	2	NO	actual15:45env agrees with corrected fallback mirror
+8eQ9Ku6Tufoe	3	YES	unplanned momentum-paper stop; GUARDPIN1 I/Claude dependency
+L5IHxnAFxue4	2	NO	actual15:45env agrees with corrected fallback mirror
+Ari39BxFu2xO	4	YES	actual NOTREADY UNKNOWN; no rebaseline/native acceptance claimed
+wXBgjD42r6a9	5	NO	actual8470rows and baseline_population_insufficient; UNKNOWN status retained
+8OR56jq4aEcK	6	NO	UNEXERCISED; nonpair duplicate/refused PASS; raw status retained
+0VLILsnDzfBS	6	NO	UNEXERCISED; nonpair duplicate/refused PASS; raw status retained
+C7o1JmImTwQD	6	NO	UNEXERCISED; nonpair duplicate/refused PASS; raw status retained
+ORRxUPAnGGoC	3	YES	actual OptionA paper STOP; no guard repair adopted
+UVpOp4eIdUJ6	3	YES	actual OptionA paper STOP; no guard repair adopted
+OFD3X2us9GZO	7	NO	aggregate gap notice without positive watched/untruncated proof; status retained
+AhfRpMKsjHE7	7	NO	aggregate gap notice without positive watched/untruncated proof; status retained
+Z5G6LReP1z4K	7	NO	aggregate gap notice without positive watched/untruncated proof; status retained

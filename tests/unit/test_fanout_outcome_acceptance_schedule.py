@@ -7,6 +7,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -556,7 +557,8 @@ def test_pass_writes_success_marker_with_all_denominators_and_deduplicates(tmp_p
     assert notifications == []
     assert "reason=already_reported denominator=one completed ET calendar-day session" in second.lines[0]
     history = (tmp_path / "history.log").read_text(encoding="utf-8")
-    assert "[D6-OUTCOME-ACCEPTANCE-SKIPPED] session=2026-08-28" in history
+    assert history.count("[D6-OUTCOME-ACCEPTANCE-SUCCESS] session=2026-08-28") == 1
+    assert "[D6-OUTCOME-ACCEPTANCE-SKIPPED]" not in history
 
 
 def test_nonpass_notifies_and_never_emits_the_success_marker(tmp_path) -> None:
@@ -955,6 +957,17 @@ def _shell_path(path: Path) -> str:
 
 
 def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path, Path]:
+    host_tools = {name: shutil.which(name) for name in ("id", "date", "install", "cp")}
+    if not all(host_tools.values()):
+        raise RuntimeError("installer fixture requires host id/date/install/cp tools")
+    hasher = shutil.which("sha256sum")
+    if hasher:
+        hash_command = [hasher]
+    else:
+        hasher = shutil.which("shasum")
+        if not hasher:
+            raise RuntimeError("installer fixture requires sha256sum or shasum")
+        hash_command = [hasher, "-a", "256"]
     repo = tmp_path / "repo"
     health = repo / "ops" / "health"
     health.mkdir(parents=True)
@@ -980,7 +993,7 @@ def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path
         "  if [[ ${FAKE_ID_EMPTY:-0} == 1 ]]; then exit 0; fi\n"
         "  echo 0\n"
         "else\n"
-        '  /usr/bin/id "$@"\n'
+        f'  {shlex.quote(host_tools["id"])} "$@"\n'
         "fi\n",
     )
     _write_executable(
@@ -989,7 +1002,7 @@ def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path
         "if [[ ${FAKE_DATE_FAIL:-0} == 1 ]]; then exit 32; fi\n"
         "if [[ ${FAKE_DATE_EMPTY:-0} == 1 ]]; then exit 0; fi\n"
         "if [[ -n ${FAKE_DATE_VALUE:-} ]]; then printf '%s\\n' \"$FAKE_DATE_VALUE\"; exit 0; fi\n"
-        'exec /usr/bin/date "$@"\n',
+        f'exec {shlex.quote(host_tools["date"])} "$@"\n',
     )
     _write_executable(
         fake_bin / "python3",
@@ -1003,7 +1016,7 @@ def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path
         "while (($#)); do\n"
         '  case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac\n'
         "done\n"
-        'exec /usr/bin/install "${args[@]}"\n',
+        f'exec {shlex.quote(host_tools["install"])} "${{args[@]}}"\n',
     )
     _write_executable(
         fake_bin / "sha256sum",
@@ -1014,14 +1027,14 @@ def _whole_installer_fixture(tmp_path: Path) -> tuple[Path, dict[str, str], Path
         'count=$((count + 1)); printf \'%s\' "$count" > "$FAKE_SHA256_STATE"\n'
         "if [[ ${FAKE_SHA256_FAIL_AT:-0} == $count ]]; then exit 33; fi\n"
         "if [[ ${FAKE_SHA256_EMPTY_AT:-0} == $count ]]; then exit 0; fi\n"
-        'exec /usr/bin/sha256sum "$@"\n',
+        f'exec {shlex.join(hash_command)} "$@"\n',
     )
     _write_executable(
         fake_bin / "cp",
         "#!/usr/bin/env bash\n"
         'printf \'cp %s\\n\' "$*" >> "$FAKE_COMMAND_LOG"\n'
         "if [[ ${FAKE_CP_FAIL:-0} == 1 ]]; then exit 28; fi\n"
-        'exec /usr/bin/cp "$@"\n',
+        f'exec {shlex.quote(host_tools["cp"])} "$@"\n',
     )
     _write_executable(
         fake_bin / "crontab",

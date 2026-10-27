@@ -96,8 +96,9 @@ def assess_clear_rules(
     intents: Sequence[TradeIntent], orders: Sequence[BrokerOrder],
     filled_order_ids: set[object], order_events: Sequence[BrokerOrderEvent],
     snapshots: Sequence[DashboardSnapshot], has_position: bool, strategy_id: object,
+    required_accounts: frozenset[str] | None = None,
 ) -> RemovedWaitProof:
-    """L1 rules over a fresh shared-account snapshot; no dispatch journal prerequisite."""
+    """L1 shared-account rules; waiving a missing receipt needs historical scope."""
     observed = int(now.timestamp() * 1000)
     cutoff = _utc(now) - timedelta(milliseconds=SETTLE_MS)
 
@@ -165,7 +166,18 @@ def assess_clear_rules(
             return result("cancel_unknown_or_refused")
         if metadata(intent).get("clearwait_removal_token") != request.token:
             continue
+        from project_mai_tai.cancelack1 import buy_only_cancel, cancel_outcome_known
+        if not cancel_outcome_known(intent):
+            return result("cancel_unknown_or_refused")
         p = intent.payload or {}
+        if (request.purpose in {"retry_exhausted", "false_flip_restore"}
+                and (not buy_only_cancel(intent) or not own(intent)
+                or str(metadata(intent).get("clearwait_opportunity_id")) != str(request.opportunity_id)
+                or metadata(intent).get("clearwait_buy_only") != "true"
+                or metadata(intent).get("reason") != ("false_flip_restore" if request.purpose == "false_flip_restore"
+                                                       else "retry_budget_exhausted")
+                or _utc(intent.created_at).timestamp() * 1000 < request.requested_at_ms)):
+            return result("cancel_receipt_invalid")
         no_target = (intent.status == "rejected" and p.get("refusal_origin") == "skipped_before_submit"
                      and p.get("refusal_code") == "cancel_target_not_found")
         if (intent.intent_type != "cancel" or intent.status not in {"cancelled", "canceled"}
@@ -209,7 +221,8 @@ def assess_clear_rules(
                 and metadata(i).get("reason") == ("false_flip_restore" if request.purpose == "false_flip_restore"
                                                   else "retry_budget_exhausted")
                 and own(i) and _utc(i.created_at).timestamp() * 1000 >= request.requested_at_ms}
-    if receipts != set(request.account_names):
+    from project_mai_tai.cancelack1 import receipts_cover
+    if not receipts_cover(request, receipts, required_accounts):
         return result("waiting_for_all_cancel_receipts")
     return result("false_flip_leftovers_cancelled_owner_kept" if request.purpose == "false_flip_restore"
                   else "retry_leftovers_cancelled_owner_kept", True)
@@ -230,8 +243,9 @@ def assess_removed_wait(
     order_events: Sequence[BrokerOrderEvent],
     snapshots: Sequence[DashboardSnapshot],
     has_position: bool,
+    required_accounts: frozenset[str] | None = None,
 ) -> RemovedWaitProof:
-    """Absence alone is never a receipt. Every configured account must acknowledge removal."""
+    """Absence alone is never a receipt; only proven obligations waive a leg."""
 
     def result(reason: str, clear: bool = False) -> RemovedWaitProof:
         return RemovedWaitProof(request, int(now.timestamp() * 1000), clear, reason)
@@ -314,7 +328,10 @@ def assess_removed_wait(
                 return result("intent_not_terminal")
             if md.get("clearwait_removal_token") != request.token:
                 continue
-            if (intent.intent_type != "cancel" or not exact(md)
+            from project_mai_tai.cancelack1 import buy_only_cancel, cancel_outcome_known
+            if not cancel_outcome_known(intent):
+                return result("cancel_unknown_or_refused")
+            if (not buy_only_cancel(intent) or not exact(md)
                     or str(md.get("clearwait_opportunity_id")) != str(request.opportunity_id)
                     or md.get("clearwait_buy_only") != "true"
                     or md.get("reason") != ("false_flip_restore" if request.purpose == "false_flip_restore"
@@ -333,7 +350,8 @@ def assess_removed_wait(
             if account is None:
                 return result("cancel_account_unproven")
             receipts.add(account)
-        if receipts != set(request.account_names):
+        from project_mai_tai.cancelack1 import receipts_cover
+        if not receipts_cover(request, receipts, required_accounts):
             return result("waiting_for_all_cancel_receipts")
         return result("false_flip_leftovers_cancelled_owner_kept" if request.purpose == "false_flip_restore"
                       else "retry_leftovers_cancelled_owner_kept", True)
@@ -533,8 +551,11 @@ def assess_removed_wait(
                 return result("opening_identity_unproven")
         if md.get("clearwait_removal_token") != request.token:
             continue
+        from project_mai_tai.cancelack1 import buy_only_cancel, cancel_outcome_known
+        if not cancel_outcome_known(intent):
+            return result("cancel_unknown_or_refused")
         if (
-            intent.intent_type != "cancel"
+            not buy_only_cancel(intent)
             or str(md.get("clearwait_opportunity_id")) != str(request.opportunity_id)
             or md.get("clearwait_buy_only") != "true"
             or _utc(intent.created_at).timestamp() * 1000 < request.requested_at_ms
@@ -554,7 +575,8 @@ def assess_removed_wait(
         if account is None:
             return result("cancel_account_unproven")
         receipts.add(account)
-    if receipts != set(accounts.values()):
+    from project_mai_tai.cancelack1 import receipts_cover
+    if not receipts_cover(request, receipts, required_accounts):
         return result("waiting_for_all_cancel_receipts")
 
     # The journal precedes publication, independently of the OMS transaction.
@@ -569,6 +591,8 @@ def assess_removed_wait(
     if request.opportunity_id == 0 or len(begins) != 1:
         return result("dispatch_history_unknown")
     expected_accounts = set(request.account_names)
+    # Journal account_names describes coverage, not an attempt on every venue.
+    actual_accounts = set(required_accounts) if required_accounts else expected_accounts
     for p in journal:
         if (p.get("schema_version") != 1 or p.get("strategy_code") != "schwab_1m_v2"
                 or p.get("kind") not in {"begin", "attempt"}
@@ -581,7 +605,7 @@ def assess_removed_wait(
     if len(attempts) != len([p for p in journal if p.get("kind") == "attempt"]):
         return result("dispatch_history_unknown")
     for token, p in attempts.items():
-        if not isinstance(token, str) or not token or p.get("account_name") not in expected_accounts:
+        if not isinstance(token, str) or not token or p.get("account_name") not in actual_accounts:
             return result("dispatch_history_unknown")
         matched = [i for i in intents if i.intent_type == "open" and exact(metadata(i))
                    and metadata(i).get("clearwait_dispatch_token") == token
@@ -606,10 +630,21 @@ def assess_removed_wait(
 
 
 class RemovedWaitStore:
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(self, session_factory: sessionmaker[Session], *, prewire_authority: bool = False) -> None:
         self.session_factory = session_factory
+        self.prewire_authority = prewire_authority is True
 
-    def record_dispatch(self, payload: dict) -> None:
+    def record_dispatch(self, payload: dict):
+        if (payload.get("kind") == "attempt" and payload.get("brokerdecides_exception") is True
+                and (self.prewire_authority or isinstance(payload.get("attempt_token"), str)
+                     and 0 < len(payload["attempt_token"]) <= 128)):
+            from project_mai_tai.brokerdecides1_prewire_authority import write_fresh_attempt
+
+            # Internal caller scope selects the existing strict eight-field
+            # authority writer; it is not new durable/wire proof metadata.
+            attempt = {key: value for key, value in payload.items() if key != "brokerdecides_exception"}
+            return write_fresh_attempt(self.session_factory, attempt,
+                                       issue_authority=self.prewire_authority)
         with self.session_factory() as session:
             session.add(DashboardSnapshot(snapshot_type=DISPATCH_SNAPSHOT_TYPE, payload=payload))
             session.commit()
@@ -759,9 +794,14 @@ class RemovedWaitStore:
                     results.append(RemovedWaitProof(request, int(observed.timestamp() * 1000), False,
                                                     "own_position_evidence_UNKNOWN"))
                     continue
+                from project_mai_tai.cancelack1 import optional_proven_accounts
+                required = (optional_proven_accounts(session, request, accounts, strategy_id,
+                                observed_at_ms=int(observed.timestamp() * 1000))
+                            if request.purpose in {"retry_exhausted", "false_flip_restore"} else None)
                 results.append(assess_clear_rules(request, now=observed, accounts=accounts,
                     intents=intents, orders=orders, filled_order_ids=fills, order_events=events,
-                    snapshots=snapshots, has_position=has_position, strategy_id=strategy_id))
+                    snapshots=snapshots, has_position=has_position, strategy_id=strategy_id,
+                    required_accounts=required))
         return tuple(results)
 
     def restore(self) -> dict[str, RemovedWait]:
@@ -839,6 +879,9 @@ class RemovedWaitStore:
         observed = now or datetime.now(UTC)
         results: list[RemovedWaitProof] = []
         with self.session_factory() as session:
+            if session.bind.dialect.name == "postgresql":
+                session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                session.execute(text("SET TRANSACTION READ ONLY"))
             strategy_id = session.scalar(select(Strategy.id).where(Strategy.code == "schwab_1m_v2"))
             accounts = {
                 a.id: a.name
@@ -941,6 +984,13 @@ class RemovedWaitStore:
                     results.append(RemovedWaitProof(request, int(observed.timestamp() * 1000), False,
                                                     "own_position_evidence_UNKNOWN"))
                     continue
+                from project_mai_tai.cancelack1 import optional_proven_accounts, working_buy_present
+                if working_buy_present(session, request.symbol):
+                    results.append(RemovedWaitProof(request, int(observed.timestamp() * 1000), False,
+                                                    "working_buy_or_intent"))
+                    continue
+                required = optional_proven_accounts(session, request, accounts, strategy_id,
+                    observed_at_ms=int(observed.timestamp() * 1000))
                 results.append(
                     assess_removed_wait(
                         request,
@@ -952,6 +1002,7 @@ class RemovedWaitStore:
                         order_events=order_events,
                         snapshots=snapshots,
                         has_position=has_position,
+                        required_accounts=required,
                     )
                 )
         return tuple(results)

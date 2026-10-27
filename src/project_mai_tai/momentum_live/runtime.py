@@ -7,6 +7,7 @@ from decimal import Decimal, ROUND_FLOOR
 from hashlib import sha256
 import json
 import re
+import time
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 from urllib.parse import quote
@@ -14,7 +15,7 @@ from urllib.parse import quote
 from sqlalchemy import func, or_, select
 
 from project_mai_tai.broker_adapters.protocols import ExecutionReport, OrderRequest
-from project_mai_tai.broker_adapters.momentum_order_read import MomentumOrderRead, MomentumReadUnavailable
+from project_mai_tai.broker_adapters.momentum_order_read import MomentumEntryLookup, MomentumOrderRead, MomentumReadUnavailable
 from project_mai_tai.broker_adapters.webull_order_reads import QueryBudgetUnavailable
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill, Strategy, SystemIncident, VirtualPosition
 from project_mai_tai.positions_read_receipt import SNAPSHOT_TYPE, load_receipts
@@ -59,6 +60,10 @@ class OmsLiveRuntime:
         self.runtime = {}
         self.boot_owned_exposures = {}
         self._legacy_stop_blocks = {}
+        self._missing_entry_reads = {}
+        self._missing_entry_pass = {}
+        self._missing_entry_started = {}
+        self._missing_entry_read_budget = (None, 0)
         self.state_lock = asyncio.Lock()
         self.actor = None
         self.publisher = None
@@ -146,7 +151,11 @@ class OmsLiveRuntime:
         entry_ports = ExecutionPorts(self.clock, self.quote, self.route_for, self._foreign_owner,
             self._claim, self._prepare, self._save, self._submit, self._record, self._route_report,
             self._request_quote_owner, self._wait_quote,
-            entry_metadata=self._entry_control_metadata if getattr(self.settings, "bot_control_enabled", False) else None)
+            entry_metadata=self._entry_control_metadata if getattr(self.settings, "bot_control_enabled", False) else None,
+            refuse_unsent_entry=self._refuse_unsent_entry,
+            reprice_unsent_entry=self._reprice_unsent_entry,
+            refuse_local_entry=self._refuse_local_entry,
+            mark_refused_pre_submit=self._mark_refused_pre_submit)
         executor = LiveEntryExecutor(self.book, entry_ports, schwab_account=self.accounts[0], webull_account=self.accounts[1])
         ports = ActorPorts(self._entry_enabled, self.now_ns, self._observe,
             self._save, self._cancel_entry, self._protect, self._exit, self._exit_quote,
@@ -316,6 +325,11 @@ class OmsLiveRuntime:
             await asyncio.gather(self.publication_task, return_exceptions=True)
         if self.actor:
             await self.actor.close()
+        if self._missing_entry_reads:
+            # A timed-out wrapper is not physical completion of a broker read.
+            await asyncio.gather(*self._missing_entry_reads.values(), return_exceptions=True)
+            self._missing_entry_reads.clear()
+            self._missing_entry_started.clear()
 
     async def _control_cleanup_progress(self, lease, journal):
         from project_mai_tai.oms.bot_control_executor import StopProgress
@@ -541,6 +555,28 @@ class OmsLiveRuntime:
     async def _prepare(self, identity, request, provider):
         await self.service._run_db(lambda session: self.db.prepare_order(session, identity, request, provider=provider))
 
+    async def _refuse_unsent_entry(self, request, reason, context):
+        await self.service._run_db(lambda session: self.db.refuse_unsent_entry(session, request, reason, context))
+
+    async def _mark_refused_pre_submit(self, request, reason):
+        await self.service._run_db(lambda session: self.db.mark_refused_pre_submit(session, request, reason))
+        episode = self.book.episodes[request.metadata["episode_id"]]
+        if episode.state == "claimed" and episode.first_submit_ns is None:
+            episode.state, episode.cancel_requested = "cancel_requested", True
+
+    async def _reprice_unsent_entry(self, previous, current, episode=None):
+        await self.service._run_db(lambda session: self.db.reprice_unsent_entry(
+            session, previous, current, episode))
+
+    async def _refuse_local_entry(self, request, proof):
+        from project_mai_tai.momentum_live.entry_wire import _NoDispatchProof
+        if type(proof) is not _NoDispatchProof:
+            raise Refusal("mombuffer1_local_no_dispatch_proof_unknown")
+        permit = proof.consume(request)
+        await self.service._run_db(lambda session: self.db.refuse_local_entry(
+            session, request, proof.reason, proof.context, permit=permit,
+            expected_episode=proof.attempt.episode))
+
     async def _submit(self, request):
         self.provider(request.broker_account_name)
         return await self.service.broker_adapter.submit_order(request)
@@ -606,6 +642,30 @@ class OmsLiveRuntime:
                 "quantity": str(quantity-exited), "account": entries[0].broker_account_name}
         return snapshot
 
+    async def _read_missing_execution_time(self, identity, row):
+        """One bounded original-order read; never infer an execution clock."""
+        request = row["request"]
+        key = "momlive_first_fill_ns" if request.side == "buy" else "momlive_last_exit_fill_ns"
+        if row["status"] != "filled" or request.metadata.get(key) is not None:
+            return
+        values = self.runtime.setdefault(identity, {})
+        attempted = list(values.get("execution_time_readback_coids") or [])
+        if request.client_order_id in attempted or len(attempted) >= 64:
+            return
+        attempted.append(request.client_order_id)
+        values["execution_time_readback_coids"] = attempted
+        # Save before the read so a restart cannot turn missing proof into a poll loop.
+        await self._save(next(item for item in self.book.snapshot() if item["episode_id"] == identity))
+        report = await self.backend.fetch_entry_update(request, self, fresh=True)
+        complete = (report is not None and report.origin == "broker" and report.event_type == "filled"
+                    and report.filled_quantity == request.quantity
+                    and report.metadata.get("momlive_execution_time_source") == "broker_execution_time")
+        if complete:
+            await self._record(request, [report])
+        else:
+            self.service.logger.warning("[MOMLIVE1-EXECUTION-TIME-UNKNOWN] episode=%s coid=%s side=%s",
+                identity, request.client_order_id, request.side)
+
     async def _observe(self, identity):
         snapshot = await self._inspect(identity)
         entry = None
@@ -613,6 +673,9 @@ class OmsLiveRuntime:
             request = row["request"]
             if request.side == "buy" and request.intent_type == "open":
                 entry = request
+                if row["status"] == "filled" and request.metadata.get("momlive_first_fill_ns") is None:
+                    await self._read_missing_execution_time(identity, row)
+                    continue
                 if (row["status"] not in {"filled", "cancelled", "rejected", "expired", "aborted"}
                         or snapshot["quantity"] > 0 and snapshot["first_fill_ns"] is None
                         and self.runtime.get(identity, {}).get("first_execution_time_status") != "UNKNOWN"):
@@ -620,9 +683,13 @@ class OmsLiveRuntime:
                     if (sent is not None and self.now_ns() - sent >= 2_000_000_000
                             and row["status"] not in {"filled", "cancelled", "rejected", "expired", "aborted"}):
                         request = replace(request, metadata={**request.metadata, "momlive_entry_deadline_read": "true"})
-                    report = await self.backend.fetch_entry_update(request, self)
+                    missing_unsent = (not row["broker_order_id"] and "submitted_at" in row
+                                      and row["submitted_at"] is None)
+                    report = None if missing_unsent else await self.backend.fetch_entry_update(request, self)
                     if report is not None:
                         await self._record(request, [report])
+            elif request.side == "sell" and row["status"] == "filled":
+                await self._read_missing_execution_time(identity, row)
             elif (request.side == "sell" and request.metadata.get("exit_reason")
                   and row["status"] not in {"filled", "cancelled", "rejected", "expired", "aborted"}):
                 report = await self.backend.fetch_entry_update(request, self)
@@ -633,6 +700,11 @@ class OmsLiveRuntime:
                 and not self.runtime.get(identity, {}).get("cancel_wire_sent_coid")
                 and not snapshot["entry_terminal"]):
             await self._cancel_entry(identity)
+            # Cancellation can commit terminality/fills. Never return the old
+            # snapshot to the actor and reopen a just-retired reservation.
+            snapshot = await self._inspect(identity)
+        if snapshot["entry_terminal"] and not snapshot["quantity"] and snapshot.get("closed_ns") is not None:
+            self.book.episodes[identity].closed_ns = snapshot["closed_ns"]
         position = None
         if snapshot["quantity"] > 0:
             if entry is None or not entry.metadata.get("broker_order_id"):
@@ -722,6 +794,68 @@ class OmsLiveRuntime:
             report.filled_quantity == request.quantity
             or report.event_type in {"filled", "cancelled", "rejected", "expired", "aborted"})
 
+    def _missing_entry_unknown(self, identity, reason):
+        values = self.runtime.setdefault(identity, {})
+        if not values.get("momcancel1_missing_entry_alerted"):
+            values["momcancel1_missing_entry_alerted"] = True
+            if (values.get("momcancel1_identity_critical_reported")
+                    or identity in getattr(self, "_momcancel1_identity_critical_emitted", set())):
+                return
+            self.service.logger.error(
+                "[MOMCANCEL1] episode=%s broker_client_lookup=UNKNOWN reason=%s retained=true retry=SYNC_PASS",
+                identity, reason)
+
+    async def _lookup_missing_entry(self, identity, request):
+        pass_id = getattr(self.service, "_reserve1_sync_pass_id", None)
+        if type(pass_id) is not int or pass_id <= 0:
+            self._missing_entry_unknown(identity, "no_actual_sync_pass")
+            return None
+        coid = request.client_order_id
+        pending = self._missing_entry_reads.get(coid)
+        if pending is not None:
+            if not pending.done():
+                if time.monotonic() - self._missing_entry_started[coid] >= 2:
+                    self._missing_entry_unknown(identity, "read_pending_physical_join_required")
+                return None
+            self._missing_entry_reads.pop(coid)
+            self._missing_entry_started.pop(coid)
+            try:
+                result = pending.result()
+            except asyncio.CancelledError:
+                self._missing_entry_unknown(identity, "read_cancelled_not_absence")
+                return None
+            except Exception as exc:
+                self._missing_entry_unknown(identity, type(exc).__name__)
+                return None
+        else:
+            if self._missing_entry_pass.get(coid) == pass_id:
+                return None
+            budget_pass, count = self._missing_entry_read_budget
+            if budget_pass != pass_id:
+                count = 0
+            if count >= 2:
+                return None  # Even intra-pass slot turnover cannot start a third read.
+            self._missing_entry_read_budget = (pass_id, count + 1)
+            self._missing_entry_pass[coid] = pass_id
+            self._missing_entry_started[coid] = time.monotonic()
+            # Never wait for broker I/O under the shared owned-episode lock.
+            # The task awaits the actual to_thread read; close() joins it.
+            self._missing_entry_reads[coid] = asyncio.create_task(
+                self.backend.lookup_missing_entry(request, self, pass_id), name="MOMCANCEL1-client-id-read")
+            return None
+        if (type(result) is not MomentumEntryLookup or result.sync_pass != pass_id
+                or getattr(self.service, "_reserve1_sync_pass_id", None) != pass_id
+                or (result.account, result.client_order_id, result.symbol) != (
+                    request.broker_account_name, coid, request.symbol)
+                or result.provider != self.provider(request.broker_account_name)
+                or not 0 <= self.now_ns() - result.observed_ns <= 2_000_000_000):
+            self._missing_entry_unknown(identity, "lookup_binding_or_freshness")
+            return None
+        if result.kind == "unknown":
+            self._missing_entry_unknown(identity, result.reason)
+            return None
+        return result
+
     async def _cancel_entry(self, identity):
         snapshot = await self._inspect(identity)
         for row in snapshot["orders"]:
@@ -732,6 +866,53 @@ class OmsLiveRuntime:
                     if values["cancel_wire_sent_coid"] != request.client_order_id:
                         raise Refusal("cancel_original_identity_CHANGED")
                     return
+                if not row["broker_order_id"] and "submitted_at" in row and row["submitted_at"] is None:
+                    if self.actor is not None and getattr(self.actor, "entry_inflight_symbol", None) == request.symbol:
+                        return  # An active prewire/POST await is not a retained failed entry.
+                    try:
+                        outcome = await self._lookup_missing_entry(identity, request)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        self._missing_entry_unknown(identity, type(exc).__name__)
+                        return
+                    if outcome is None:
+                        return
+                    if outcome.kind == "absent":
+                        try:
+                            closed_ns = await self.service._run_db(lambda session: self.db.retire_broker_absent_entry(
+                                session, request, outcome, now_ns=self.now_ns(),
+                                sync_pass=getattr(self.service, "_reserve1_sync_pass_id", None)))
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            self._missing_entry_unknown(identity, type(exc).__name__)
+                            return
+                        self.book.reconcile(identity, cumulative_filled=Decimal(0),
+                            cumulative_exited=Decimal(0), now_ns=self.now_ns(), terminal_entry=True)
+                        self.book.episodes[identity].closed_ns = closed_ns
+                        self._missing_entry_pass.pop(request.client_order_id, None)
+                        self.service.logger.info(
+                            "[MOMCANCEL1] episode=%s coid=%s broker_client_lookup=ABSENT "
+                            "order=aborted parent=cancelled state=terminal_no_fill slot=freed "
+                            "no_wire=true settlement=refused_pre_submit_proven",
+                            identity, request.client_order_id)
+                        return
+                    if outcome.kind != "present" or outcome.report is None:
+                        self._missing_entry_unknown(identity, "lookup_outcome_invalid")
+                        return
+                    try:
+                        report = self.backend._validate_fresh_report(outcome.report, request)
+                        await self._record(request, [report])
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        self._missing_entry_unknown(identity, type(exc).__name__)
+                        return
+                    if self._cancel_read_terminal(report, request):
+                        return
+                    request = replace(request, metadata={**request.metadata,
+                        "broker_order_id": report.broker_order_id})
                 if self.provider(request.broker_account_name) == "schwab" and (
                         not request.metadata.get("broker_order_id")
                         or request.metadata.get("momcancel1_ack_identity") == "UNKNOWN"):
@@ -950,6 +1131,7 @@ class OmsLiveRuntime:
             if len(exits) != 1:
                 raise Refusal("soft_exit_order_identity_UNKNOWN")
             row = exits[0]
+            await self._read_missing_execution_time(position.episode_id, row)
             terminal = {"filled", "cancelled", "rejected", "expired"}
             if (row["status"] not in terminal and self._soft_exit_chase_window()
                     and values.get("soft_exit_cancel_coid") == values.get("soft_exit_coid")
@@ -1171,10 +1353,54 @@ class OmsLiveRuntime:
         self.service.logger.info("[MOMLIVE1-EXIT-CHASE] episode=%s attempt=%s action=submit bid=%s quantity=%s result=%s",
                                  position.episode_id, attempt, bid, quantity,
                                  ",".join(report.event_type for report in reports) or "UNKNOWN")
+        if any(report.origin == "broker" and report.event_type == "filled" for report in reports):
+            current = await self._inspect(position.episode_id)
+            filled = next((row for row in current["orders"]
+                           if row["request"].client_order_id == request.client_order_id), None)
+            if filled is not None:
+                await self._read_missing_execution_time(position.episode_id, filled)
 
 
 class OwnedNativeBackend:
     """Existing broker capabilities, scoped to the durable own protection root."""
+
+    async def lookup_missing_entry(self, request, runtime, sync_pass):
+        provider = runtime.provider(request.broker_account_name)
+        def outcome(kind, reason, report=None):
+            return MomentumEntryLookup(kind, request.broker_account_name,
+                request.client_order_id, request.symbol, provider, sync_pass,
+                runtime.now_ns(), reason, report)
+        if (request.strategy_code != STRATEGY_CODE or request.side != "buy" or request.intent_type != "open"
+                or request.metadata.get("momlive_strategy") != STRATEGY_CODE
+                or request.metadata.get("momlive_one_shot") != "true"
+                or type(request.metadata.get("episode_id")) is not str
+                or request.client_order_id != "ml1-" + request.symbol + "-e-"
+                    + request.metadata["episode_id"].replace("-", "")[:20]):
+            return outcome("unknown", "original_momentum_entry_required")
+        marker = request.metadata.get("refused_pre_submit") is True
+        if marker and provider == "schwab":
+            # This read is only a candidate. The DB transaction rechecks the
+            # first-attempt seal and every dispatch/execution exclusion locked.
+            return outcome("absent", "refused_pre_submit_proven")
+        if provider == "schwab":
+            # Schwab does not transmit/query the local ml1 coid. An account list
+            # (including an empty or under-cap list) is not generic absence proof.
+            return outcome("unknown", "schwab_canonical_client_id_lookup_unavailable")
+        leaf = self.leaf(request.broker_account_name, runtime)
+        if (request.broker_account_name not in getattr(leaf, "accounts_by_name", {})
+                or not callable(getattr(leaf, "fetch_momentum_cancel_read", None))):
+            return outcome("unknown", "canonical_client_id_reader_unavailable")
+        result = await leaf.fetch_momentum_cancel_read(request, allow_absent=marker, lookup_missing_entry=True)
+        if type(result) is not MomentumOrderRead:
+            return outcome("unknown", "lookup_result_invalid")
+        if (marker and result.kind == "absent" and result.report is None
+                and result.reason == "webull_exact_client_id_ORDER_NOT_FOUND"):
+            return outcome("absent", result.reason)
+        if result.kind != "report" or result.report is None:
+            return outcome("unknown", result.reason or "lookup_not_conclusive")
+        report = await self._fetch_entry_update(request, runtime, supplied_report=result.report)
+        report = self._validate_fresh_report(report, request)
+        return outcome("present", "webull_exact_client_id_report", report)
 
     @staticmethod
     def schwab_children(raw, handle, leaf, *, root_id, first_fill_ns, now_ns, allow_unknown_status=False):

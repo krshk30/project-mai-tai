@@ -1,0 +1,38 @@
+MANSTOP1 separate lane -- base e28a4abf328a77c3efdfc2131473e756e8117b14
+C1 2026-10-23 14:00 operator session-scoped manual stop.
+
+Production: only OMS global-stop import/cache initialization/loader changes.
+Use same current_scanner_session_start_utc helper as control plane and its
+ISO marker normalization (naive markers UTC). Require explicit matching marker.
+Check session before cache window; at roll clear yesterday's set and refresh.
+On query error retain current-session set only; error retries remain one/window.
+No durable writes; risk direction checks, per-bot state and scanner unchanged.
+One existing query/window, plus first refresh after a session change; no query
+added to individual risk evaluation. Clock arithmetic/marker parsing only in
+the existing loader, not native wire/protection/quote loops.
+
+Prior-day five-symbol payload and BKYI three refusal times copied literally from
+C1 LATEST14:00. Original row created Oct22 11:45 ET, marker08:00Z; refusals Oct23
+12:33:02/12:42:04/13:03:04 ET. Raw DB row/intent IDs and complete event metadata
+were not delivered to this author. Therefore replay uses reconstructed retained
+payload/times with CONTROLLED remaining event/account/quantity inputs, NOT full
+native original-event replay and NOT proof that a trade would be admitted/fill.
+No lost fill claimed (C1 states max3.70 versus3.76 trigger).
+
+Five-case OLD2e79 vs NEW table intended (actual receipts pending execution):
+1 yesterday row / three BKYI times: OLD manual_stop / NEW no manual_stop.
+2 today marker: both manual_stop.
+3 03:55 stop crossing04:00: OLD still manual_stop / NEW retired.
+4 DB failure: both keep current session / only NEW drops at04:00.
+5 close/cancel/scale-out: both unaffected by a present stop.
+OLD source must be exact2e79, imported through explicit source root; same test
+driver exercises actual loader+risk methods, no copied decision implementation.
+Other admission gates are not bypassed: allowed means this isolated risk stage.
+
+New controls intended32: three retained-time rows, today1, roll1, DBerror1,
+reductions3, bad/missing/other markers6, equivalent-timezone3, querybudget/perbot1,
+3bot x2account x2session=12, DSTroll1. Existing five OMS manual-stop controls get
+an explicit current-session fixture marker (their old unmarked row is now an
+invalid stop; missing-marker behavior remains a separate negative control).
+All affected existing manual_stop controls must run; no assertion weakening.
+No performance/native/provider/production query or durable row cleanup authority.

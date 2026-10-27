@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal as D
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,6 +13,8 @@ from project_mai_tai.broker_adapters.webull import WebullBrokerAdapter
 from project_mai_tai.broker_adapters.routing import RoutingBrokerAdapter
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload
 from project_mai_tai.momentum_live.admission import Refusal, STRATEGY_CODE
+from project_mai_tai.momentum_live.admission import EpisodeLedger
+from project_mai_tai.momentum_live.actor import ActorPorts, LiveActor
 from project_mai_tai.momentum_live.runtime import OmsLiveRuntime
 from project_mai_tai.oms.service import OmsRiskService
 from project_mai_tai.settings import Settings
@@ -82,7 +85,7 @@ def setup(*, enabled=True):
         strategy_schwab_1m_v2_dual_broker_fanout_enabled=True)
     broker = ControlledBroker(lambda: now[0])
     redis = SimpleNamespace(xadd=AsyncMock(return_value="1-0"))
-    service = OmsRiskService(settings, redis, session_factory=build_test_session_factory(), broker_adapter=broker)
+    service = OmsRiskService(settings, redis, session_factory=build_test_session_factory(isolated=True), broker_adapter=broker)
     service.seed_runtime_metadata()
     service._latest_quotes_by_symbol["SCNI"] = {"ask": D("3.001"), "bid": D(3), "received_at": now[0]}
     runtime = OmsLiveRuntime(service, clock=lambda: now[0], identity="123:456")
@@ -170,6 +173,117 @@ async def offer_and_drain(runtime, order):
     assert runtime.actor.offer_intent(order)
     await asyncio.wait_for(runtime.actor.inbox.join(), 3)
     await asyncio.wait_for(runtime.actor.work.queue.join(), 3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["unexpected", "refusal", "cancelled"])
+async def test_entry_exception_logging_preserves_refusal_and_cancellation(failure, caplog):
+    # Exercise the real inbox/claim/exception/finally path, not broker transport.
+    book = EpisodeLedger.restore([])
+    claimed = []
+
+    async def admit(signal):
+        episode, fresh_claim = book.claim(signal, now_ns=signal.observed_ns)
+        assert fresh_claim
+        claimed.append(episode.episode_id)
+        if failure == "unexpected":
+            raise RuntimeError("controlled admission failure")
+        if failure == "refusal":
+            raise Refusal("controlled_refusal")
+        raise asyncio.CancelledError("controlled cancellation")
+
+    ports = ActorPorts(lambda: True, lambda: 0, AsyncMock(), AsyncMock(),
+        AsyncMock(), AsyncMock(), AsyncMock(), lambda _symbol: {})
+    actor = LiveActor(book, SimpleNamespace(admit=admit), ports, state_lock=asyncio.Lock())
+    actor.restored = True
+    caplog.set_level(logging.WARNING, logger="momentum-live")
+    assert actor.offer_intent(event(datetime(2026, 10, 14, 14, tzinfo=UTC)))
+    task = asyncio.create_task(actor._entries())
+    try:
+        await asyncio.wait_for(actor.inbox.join(), 3)
+        assert actor.inbox.empty() and len(claimed) == 1
+        records = [record for record in caplog.records if record.name == "momentum-live"]
+        errors = [record for record in records if record.levelno >= logging.ERROR]
+        warnings = [record for record in records if record.levelno == logging.WARNING]
+        if failure == "unexpected":
+            error, = errors
+            assert error.exc_info[0] is RuntimeError
+            assert isinstance(error.exc_info[1], RuntimeError) and error.exc_info[2] is not None
+            assert "[MOMLIVE1-ENTRY-EXCEPTION]" in error.getMessage()
+            assert "episode=" + claimed[0] in error.getMessage()
+            assert "symbol=SCNI" in error.getMessage() and "exception_type=RuntimeError" in error.getMessage()
+            warning, = warnings
+            assert "reason=entry_observation_UNKNOWN" in warning.getMessage()
+        elif failure == "refusal":
+            assert not errors
+            warning, = warnings
+            assert "reason=controlled_refusal" in warning.getMessage()
+        else:
+            assert not errors and not warnings
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        if failure != "cancelled":
+            assert not task.done()
+            assert actor.work.owners == {claimed[0]}
+        assert set(book.episodes) == set(claimed)  # Logging never clears ownership.
+        for port in (ports.observe, ports.save, ports.cancel_entry_once, ports.protect_owned, ports.exit_owned):
+            port.assert_not_awaited()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_entry_diagnostic_lookup_failure_keeps_original_error_and_next_inbox_event(caplog):
+    book = EpisodeLedger.restore([])
+    calls, lookups, before = [], [], []
+    original_error = RuntimeError("controlled original admission failure")
+
+    class DiagnosticSources(dict):
+        def get(self, key, *args):
+            lookups.append(key)
+            raise LookupError("controlled diagnostic lookup failure")
+
+    async def admit(signal):
+        calls.append(signal.source_id)
+        if len(calls) == 1:
+            episode, fresh_claim = book.claim(signal, now_ns=signal.observed_ns)
+            assert fresh_claim
+            before.extend(book.snapshot())
+            # The claim is normal; only the subsequent diagnostic lookup fails.
+            book._sources = DiagnosticSources(book._sources)
+            raise original_error
+        assert len(calls) == 2
+        return before[0]["episode_id"], None, None
+
+    ports = ActorPorts(lambda: True, lambda: 0, AsyncMock(), AsyncMock(),
+        AsyncMock(), AsyncMock(), AsyncMock(), lambda _symbol: {})
+    actor = LiveActor(book, SimpleNamespace(admit=admit), ports, state_lock=asyncio.Lock())
+    actor.restored = True
+    caplog.set_level(logging.WARNING, logger="momentum-live")
+    for _ in range(2):
+        assert actor.offer_intent(event(datetime(2026, 10, 14, 14, tzinfo=UTC)))
+    task = asyncio.create_task(actor._entries())
+    try:
+        await asyncio.wait_for(actor.inbox.join(), 3)
+        assert len(calls) == 2 and actor.inbox.empty() and not task.done()
+        assert lookups == [("2026-10-14", "SCNI", "sealed30")]
+        records = [record for record in caplog.records if record.name == "momentum-live"]
+        error, = [record for record in records if record.levelno >= logging.ERROR]
+        assert error.exc_info[0] is RuntimeError and error.exc_info[1] is original_error
+        assert error.exc_info[2] is not None
+        assert "[MOMLIVE1-ENTRY-EXCEPTION]" in error.getMessage()
+        assert "symbol=SCNI episode=UNKNOWN exception_type=RuntimeError" in error.getMessage()
+        warning, = [record for record in records if record.levelno == logging.WARNING]
+        assert "[MOMLIVE1-REFUSED]" in warning.getMessage()
+        assert "reason=entry_observation_UNKNOWN" in warning.getMessage()
+        assert book.snapshot() == before
+        assert actor.work.owners == actor.work.pending == {before[0]["episode_id"]}
+        for port in (ports.observe, ports.save, ports.cancel_entry_once, ports.protect_owned, ports.exit_owned):
+            port.assert_not_awaited()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

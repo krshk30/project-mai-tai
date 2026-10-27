@@ -198,9 +198,12 @@ async def test_gateway_native_pending_then_three_clean_admits_uncalibrated_late_
     svc._warning_health_reader = env.reader
     svc._warning_health_redis = env.client
     monkeypatch.setattr(gateway, '_install_signal_handlers', lambda stop: None)
-    svc._ensure_reference_data = AsyncMock(side_effect=RuntimeError('controlled stop before provider or Redis'))
+    svc._ensure_reference_data = AsyncMock(side_effect=AssertionError('snapshot work must stay out of the gateway startup'))
+    provider.start = AsyncMock(side_effect=RuntimeError('controlled stop before provider stream start'))
     with pytest.raises(RuntimeError, match='controlled stop'):
         await svc.run()
+    provider.start.assert_awaited_once()
+    svc._ensure_reference_data.assert_not_awaited()
     assert env.reader._gateway_startup['gateway_instance_id'] == svc._warning_instance_id
     assert env.reader._gateway_startup['started_ns'] == NOW
     await svc.apply_subscription_event(event('v2', ['WFF']))
