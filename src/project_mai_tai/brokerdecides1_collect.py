@@ -10,6 +10,8 @@ from datetime import UTC, datetime, timedelta
 import time
 import json
 import logging
+import re
+import sys
 from contextvars import ContextVar
 from functools import wraps
 from urllib.parse import quote, urlencode
@@ -75,6 +77,15 @@ def _log_native_failure(exc):
             "list-open background budget unavailable", "positions background budget unavailable",
             "list-open query budget unavailable", "positions query budget unavailable"}:
         safe_message = message
+        # Inspect only the already-loaded, actual budget exception class; never
+        # import an adapter or stringify an SDK exception for diagnostics.
+        module = sys.modules.get("project_mai_tai.broker_adapters.webull_order_reads")
+        if type(exc) is getattr(module, "QueryBudgetUnavailable", None):
+            code = getattr(exc, "background_refusal_code", None)
+            if type(code) is str and (code in {
+                    "foreground", "terminal_inflight", "ordinary_pending", "backoff"}
+                    or re.fullmatch(r"(?:recent_ordinary_attempt|background_interval)_-?[0-9]{1,12}ms", code)):
+                safe_message += ";condition=" + code
     else:
         safe_message = message if type(exc) is ValueError and message in SAFE_FAILURE_CODES else "REDACTED"
         kind = kind if type(exc) in (ValueError, RuntimeError, TypeError, TimeoutError) else "Exception"

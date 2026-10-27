@@ -1,6 +1,7 @@
 """Private SQLite controls for actual durable census; not native/PG qualification."""
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+import logging
 
 import pytest
 from sqlalchemy import create_engine
@@ -142,3 +143,80 @@ def test_other_strategy_pending_buy_is_inflight_not_native_flat_evidence(census)
     order(session, accounts, other, status="pending", source=None)
     inflight, fills, terminals = local_evidence(session, ACCOUNTS)
     assert "WORX" in inflight
+
+
+@pytest.mark.asyncio
+async def test_unknown_logs_once_per_rowset_and_summary_each_publish_preserves_refusal(census, caplog, monkeypatch):
+    from project_mai_tai.brokerdecides1 import assess, decode
+    from project_mai_tai.brokerdecides1_sync import LOCAL_CENSUS_DIAGNOSTICS, begin_pass, finish_pass
+    from project_mai_tai.db.models import BrokerDecidesDispatchRetirement
+    from test_brokerdecides1_sync import native, service
+
+    session, accounts, strategy = census
+    # Six actual durable attempts, three symbols. Invalid projection preimages
+    # must remain UNKNOWN: their mere existence cannot prove broker closure.
+    originals = []
+    for index, symbol in enumerate(("WORX", "WORX", "PFAI", "PFAI", "AIXI", "AIXI")):
+        row = attempt(session)
+        row.payload = {**row.payload, "symbol": symbol, "attempt_token": f"controlled-{index}"}
+        originals.append((row, dict(row.payload)))
+        if symbol == "AIXI":
+            session.add(BrokerDecidesDispatchRetirement(attempt_id=row.id,
+                proof_version=-1, attempt_state="CONTROLLED_INVALID_PREIMAGE",
+                token=f"controlled-{index}", account_name=ACCOUNTS[0], symbol=symbol,
+                observed_ms=1, counts={}))
+    session.flush()
+    expected = (frozenset({"WORX", "PFAI", "AIXI"}), frozenset(), frozenset())
+    fail_reader = False
+
+    async def reader(account):
+        if fail_reader:
+            raise ValueError("CONTROLLED_NATIVE_UNKNOWN")
+        return native(account)
+
+    value = service(monkeypatch, reader)
+
+    async def run_db(function, **kwargs):
+        assert kwargs == {"commit": False}
+        return function(session)  # Existing SQLite fixture, no provider/production DB.
+
+    value._run_db = run_db
+    for generation in range(1, 5):
+        if generation == 3:
+            row = attempt(session)
+            row.payload = {**row.payload, "attempt_token": "controlled-added-worx"}
+            originals.append((row, dict(row.payload)))
+            session.flush()
+        elif generation == 4:
+            fail_reader = True
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            actual_generation = await begin_pass(value)
+            await finish_pass(value, actual_generation, sync_succeeded=True)
+        assert actual_generation == generation
+        assert LOCAL_CENSUS_DIAGNOSTICS.get() is None
+        assert len(value._brokerdecides1_unknown_log_rows) == 3
+        snapshot = decode(value.redis.raw)
+        messages = [record.getMessage() for record in caplog.records]
+        details = [message for message in messages if message.startswith("[BROKERDECIDES1-UNKNOWN]")]
+        summaries = [message for message in messages
+            if message.startswith("[BROKERDECIDES1-UNKNOWN-SUMMARY]")]
+        assert len(details) == {1: 3, 2: 0, 3: 1, 4: 0}[generation]
+        if generation == 1:
+            assert sum("changed_projection=False" in message for message in details) == 2
+            assert sum("changed_projection=True" in message for message in details) == 1
+        elif generation == 3:
+            assert "symbol=WORX " in details[0]
+        counts = "unknown_symbols=UNKNOWN rows=UNKNOWN" if generation == 4 else (
+            f"unknown_symbols=3 rows={7 if generation == 3 else 6}")
+        assert summaries == [f"[BROKERDECIDES1-UNKNOWN-SUMMARY] generation={generation} {counts}"]
+        assert all(row.payload == payload for row, payload in originals)
+        if generation == 4:
+            assert not snapshot.local_complete
+            continue
+        assert snapshot.local_complete
+        assert (snapshot.inflight, snapshot.filled_segments, snapshot.terminal_reservations) == expected
+        for symbol in expected[0]:
+            decision = assess(snapshot, accounts=ACCOUNTS, symbol=symbol,
+                segment=900, now_ms=1000, max_age_ms=20_000)
+            assert not decision.allowed and decision.reason == "own_inflight_UNKNOWN_or_working"

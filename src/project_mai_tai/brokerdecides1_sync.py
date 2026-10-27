@@ -7,7 +7,7 @@ Do not substitute list-today, local BrokerOrder rows or cached positions for it.
 import asyncio
 import logging
 import time
-from contextvars import Context
+from contextvars import Context, ContextVar
 from datetime import UTC, datetime
 from functools import wraps
 from uuid import uuid4
@@ -21,6 +21,8 @@ from project_mai_tai.brokerdecides1_accounts import local_accounts
 from project_mai_tai.db.models import BotControlAttempt, BrokerOrder, Fill, Strategy, TradeIntent
 from project_mai_tai.events import stream_name
 from project_mai_tai.fanout_segment_store import current_session_anchor
+
+LOCAL_CENSUS_DIAGNOSTICS = ContextVar("l12_local_census_diagnostics", default=None)
 
 
 def enabled(settings):
@@ -302,6 +304,7 @@ def local_evidence(session, names):
         by_token.setdefault(order.payload["clearwait_dispatch_token"], []).append(order)
     account_id_by_name = {a.name: a.id for a in accounts}
     terminal_reservations = set()
+    unknown_rows, unknown_examples = {}, {}
     observed = now_ms()
     for symbol, token, account, opportunity, changed_receipt in scoped_attempts:
         own = by_token.get(token, ())
@@ -312,17 +315,9 @@ def local_evidence(session, names):
                 or not _closed_with_replacements(session, order, observed)
                 for order in own)):
             inflight.add(symbol)  # No row / lost XADD ACK is UNKNOWN, including after restart.
-            original = attempt_by_token[token]
-            stamp = original.created_at
-            if stamp is not None:
-                stamp = stamp.replace(tzinfo=UTC) if stamp.tzinfo is None else stamp
-                created_ms = int(stamp.timestamp() * 1000)
-                age = observed - created_ms if 0 < created_ms <= observed else None
-            else:
-                age = None
-            logging.getLogger(__name__).warning(
-                "[BROKERDECIDES1-UNKNOWN] symbol=%s age_ms=%s changed_projection=%s",
-                symbol, age, changed_receipt)
+            unknown_rows.setdefault(symbol, set()).add((attempt_by_token[token].id, changed_receipt))
+            if symbol not in unknown_examples or changed_receipt:
+                unknown_examples[symbol] = (attempt_by_token[token], changed_receipt)
         else:
             terminal_reservations.add((symbol, token))
     rows = session.execute(select(Fill, BrokerOrder).join(BrokerOrder, BrokerOrder.id == Fill.order_id)
@@ -347,6 +342,30 @@ def local_evidence(session, names):
             inflight.add(order.symbol)  # Legacy mapping absent: cannot disprove same-segment fill.
         else:
             fills.add((order.symbol, segment))
+    diagnostics = LOCAL_CENSUS_DIAGNOSTICS.get()
+    if diagnostics is not None:
+        logged_rows = diagnostics["logged_rows"]
+        next_logged_rows = {}
+        for symbol, members in unknown_rows.items():
+            members = frozenset(members)
+            next_logged_rows[symbol] = members
+            if logged_rows.get(symbol) != members:
+                original, changed_receipt = unknown_examples[symbol]
+                stamp = original.created_at
+                if stamp is not None:
+                    stamp = stamp.replace(tzinfo=UTC) if stamp.tzinfo is None else stamp
+                    created_ms = int(stamp.timestamp() * 1000)
+                    age = observed - created_ms if 0 < created_ms <= observed else None
+                else:
+                    age = None
+                logging.getLogger(__name__).warning(
+                    "[BROKERDECIDES1-UNKNOWN] symbol=%s age_ms=%s changed_projection=%s",
+                    symbol, age, changed_receipt)
+        # Retain only this bounded successful census, never a growing history.
+        logged_rows.clear()
+        logged_rows.update(next_logged_rows)
+        diagnostics.update(unknown_symbols=len(unknown_rows),
+            rows=sum(len(members) for members in unknown_rows.values()))
     return frozenset(inflight), frozenset(fills), frozenset(terminal_reservations)
 
 
@@ -376,6 +395,8 @@ async def finish_pass(service, generation, *, sync_succeeded):
     publisher = service._brokerdecides1_publisher
     books, inflight, fills, terminals = [], frozenset(), frozenset(), frozenset()
     complete, reason = False, "sync_failed"
+    census_diagnostics = dict(unknown_symbols="UNKNOWN", rows="UNKNOWN",
+        logged_rows=service.__dict__.setdefault("_brokerdecides1_unknown_log_rows", {}))
     if sync_succeeded:
         # Projection creation is one-time stopped-writer INSTALL work. Runtime
         # retains the full dynamic evidence invalidation census below; a stored
@@ -407,7 +428,11 @@ async def finish_pass(service, generation, *, sync_succeeded):
             require_background_priority()
             def read_local(session):
                 require_background_priority()
-                return local_evidence(session, publisher.accounts)
+                token = LOCAL_CENSUS_DIAGNOSTICS.set(census_diagnostics)
+                try:
+                    return local_evidence(session, publisher.accounts)
+                finally:
+                    LOCAL_CENSUS_DIAGNOSTICS.reset(token)
 
             inflight, fills, terminals = await _owned_db_delegate(service,
                 lambda: service._run_db(read_local, commit=False))
@@ -422,6 +447,9 @@ async def finish_pass(service, generation, *, sync_succeeded):
         inflight=inflight, filled_segments=fills, local_complete=complete, reason=reason,
         terminal_reservations=terminals)
     await _publish(service, snapshot)
+    service.logger.info("[BROKERDECIDES1-UNKNOWN-SUMMARY] generation=%d unknown_symbols=%s rows=%s",
+        generation, census_diagnostics["unknown_symbols"] if complete else "UNKNOWN",
+        census_diagnostics["rows"] if complete else "UNKNOWN")
     ages = [snapshot.completed_ms - b.wire_started_ms for b in books]
     service.logger.info("[BROKERDECIDES1-PUBLISH] generation=%d complete=%s "
         "accounts=%d oldest_wire_age_ms=%s acquisition_ms=%d reason=%s",

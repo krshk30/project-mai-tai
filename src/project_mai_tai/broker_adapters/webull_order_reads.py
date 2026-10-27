@@ -66,7 +66,23 @@ class QueryBudget:
             if (self.foreground_reads or self.terminal_inflight or pending or attempts
                     or now < self.blocked_until.get(endpoint, -float("inf"))
                     or now - self.background_at.get(endpoint, -float("inf")) < 30.0):
-                raise QueryBudgetUnavailable(f"{endpoint} background budget unavailable")
+                # Observability only: first satisfied operand in the SAME order
+                # as the unchanged refusal predicate, using this lock's now.
+                if self.foreground_reads:
+                    condition = "foreground"
+                elif self.terminal_inflight:
+                    condition = "terminal_inflight"
+                elif pending:
+                    condition = "ordinary_pending"
+                elif attempts:
+                    condition = f"recent_ordinary_attempt_{int((now - attempts[-1]) * 1000)}ms"
+                elif now < self.blocked_until.get(endpoint, -float("inf")):
+                    condition = "backoff"
+                else:
+                    condition = f"background_interval_{int((now - self.background_at[endpoint]) * 1000)}ms"
+                error = QueryBudgetUnavailable(f"{endpoint} background budget unavailable")
+                error.background_refusal_code = condition
+                raise error
             self.background_at[endpoint] = now
 
     def claim(self, endpoint: str, owner: str, *, strict: bool = False) -> None:
