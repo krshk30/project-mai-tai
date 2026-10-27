@@ -22,6 +22,10 @@ from sqlalchemy.exc import IntegrityError
 
 from project_mai_tai.db.models import DashboardSnapshot
 
+# C1 2026-10-27 16:29: relax ONLY L12 claim-to-claim self-throttle; actual
+# claim stamps and the separate 30s refresh-start cadence remain unchanged.
+L12_BACKGROUND_MIN_INTERVAL_SECONDS = 28.0
+
 
 class QueryBudgetUnavailable(RuntimeError):
     """No query permit now; callers retain UNKNOWN without blocking a deadline."""
@@ -54,7 +58,7 @@ class QueryBudget:
     def claim_background(self, endpoint: str, owner: str) -> None:
         """L12 never queues or consumes an ordinary read permit.
 
-        One attempt per endpoint/30s across aliases and adapter instances.
+        One attempt per endpoint/28s across aliases and adapter instances.
         An incomplete paginated book remains UNKNOWN, never a truncated book.
         """
         with self.lock:
@@ -65,7 +69,7 @@ class QueryBudget:
             pending = any(self.waiting.values())
             if (self.foreground_reads or self.terminal_inflight or pending or attempts
                     or now < self.blocked_until.get(endpoint, -float("inf"))
-                    or now - self.background_at.get(endpoint, -float("inf")) < 30.0):
+                    or now - self.background_at.get(endpoint, -float("inf")) < L12_BACKGROUND_MIN_INTERVAL_SECONDS):
                 # Observability only: first satisfied operand in the SAME order
                 # as the unchanged refusal predicate, using this lock's now.
                 if self.foreground_reads:

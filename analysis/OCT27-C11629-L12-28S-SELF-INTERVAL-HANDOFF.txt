@@ -1,0 +1,66 @@
+C11629 explicit OPERATOR decision / SOURCE diff FIRST / author controls UNRUN
+
+ROOT / BASE
+/private/tmp/oct27-gibbs-l12-self-interval-28s-20261027
+Branch codex/oct27-l12-self-interval-28s
+Literal parent 86b32d5aa7a05b9a48a6a19f4d8dd9f688d814f6 (installed).
+No production, shared source/queue/LATEST writes, imports/tests/compile/runtime,
+SSH/PG/provider/capture/benchmark, alert mute, or independent restart.
+
+EXACT AUTHORITY / CHANGE
+Both C1 blocks headed 2026-10-27 16:29 read in full, including explicit
+acknowledgment that this relaxes the actual claim-to-claim self-throttle.
+Only APP file broker_adapters/webull_order_reads.py:
+L12_BACKGROUND_MIN_INTERVAL_SECONDS = 28.0, module comment cites C11629.
+claim_background's final predicate uses that constant instead of literal30.0.
+Method documentation says28s. No other runtime expression changed.
+
+THIS IS A POLICY CHANGE, NOT OBSERVABILITY-ONLY
+The previous30s constraint is explicitly superseded ONLY for L12 background
+claim-to-claim interval. Actual successful claim still stamps background_at
+with original sampled now; no backdating/start-stamp substitution. This is our
+own conservative guard, not a measured vendor quota. No claim of unchanged
+budget, unchanged measured rate, guaranteed zero failures, or vendor capacity.
+The separate schedule_refresh 30s START cadence remains byte-identical; the
+rejected31s cushion is NOT implemented. Endpoint order/Schwab-first unchanged.
+
+PRESERVED SOURCE BOUNDARIES
+Same lock, one clock read, attempts deque expiry at2.0s, foreground/terminal/
+pending/attempt/backoff precedence, refusal class/original args/condition code,
+ordinary permit ceiling/queue/priority/backoff, actual successful claim stamp.
+All collector/sync/native files unchanged from86b32, including ownership/join,
+timers, scope, counts, pagination and fail-closed UNKNOWN/public suppression.
+Flood first-seen/row-set changes and per-generation summaries unchanged.
+No stale-row settlement, flags, GC, request expansion or safety exemption.
+
+NEW MAIN-ONLY RELATED CONTROLS: FOUR, UNRUN
+tests/unit/test_brokerdecides1_background_interval_28s.py::test_background_claim_at_29_973_seconds_is_allowed_and_stamped_at_actual_claim
+tests/unit/test_brokerdecides1_background_interval_28s.py::test_background_claim_at_27_9_seconds_retains_interval_refusal
+tests/unit/test_brokerdecides1_background_interval_28s.py::test_ordinary_attempt_1_5_seconds_ago_still_refuses_background
+tests/unit/test_brokerdecides1_background_interval_28s.py::test_foreground_still_refuses_otherwise_eligible_background_claim
+Controlled actual QueryBudget and clock only; no HTTP/client/native call.
+Accepted29.973 stamps actual29.973 and consumes no ordinary permit. Refused
+27.9 names background_interval_27900ms, ordinary1.5 names recent_ordinary_attempt_1500ms,
+foreground names foreground. Every case asserts one existing clock read and
+expected actual/no-refusal stamp. Existing diagnostic six cases unchanged.
+
+EXISTING RELATED MEMBERSHIP FOR MAIN REVIEW/ONE RUN
+tests/unit/test_brokerdecides1_background_budget_diagnostics.py
+tests/unit/test_brokerdecides1_collector.py
+tests/unit/test_brokerdecides1_sync.py
+Plus the NEW four-case module above; no duplicate selector claims/fullsuite.
+Main owns actual selection, test run/fresh private outputs and actual counts.
+
+SHA256
+src/project_mai_tai/broker_adapters/webull_order_reads.py
+102d1022b7fad52e40aecb79cd8dc313b91de48f3c9b116cff2a07c727383903
+tests/unit/test_brokerdecides1_background_interval_28s.py
+8d3358e6d1e67cda81bc68fb336458217383d8818827e92476d300e0ef516abf
+
+REMAINING
+Main/C1 exact diff review -> Main related tests -> fresh flat/0working/managed0
+gate -> trader-only literal checkout -> OMS-only restart ->10min actual
+complete/accounts denominator and refusal codes. Targetdiff16:45/live17:00
+conditional on gates, no install/actual-success claim from this source packet.
+Original86b32 code capture remains unmodified; build does not wait for its end.
+Alerts remain unmuted; all other lanes stay paused.
