@@ -1,0 +1,867 @@
+{
+  "packet_sha256": "f735fd7d34a44dc19d3585f259c36834faa6d11804d754b9bd9af05a510b811b",
+  "source": "/private/tmp/WBEXIT1-RETAINED-LOGS-FIRST-20261023.jsonl",
+  "begin": {
+    "kind": "BEGIN",
+    "log_clock": "RAW_UNZONED_AS_WRITTEN_VERIFY_SERVER_TZ_BEFORE_UTC_CLAIM",
+    "max_file_expanded_bytes": 67108864,
+    "max_total_expanded_bytes": 536870912,
+    "per_group_limit": 20000,
+    "read_only": true,
+    "server_timezone_seconds_west": 0,
+    "server_tzname": [
+      "UTC",
+      "UTC"
+    ],
+    "snapshot_utc": "2026-10-23T19:10:53.018298+00:00"
+  },
+  "end": {
+    "complete_historical_denominator": "UNVERIFIED_UNTIL_COVERAGE_AUDIT",
+    "expanded_bytes_scanned": 140717374,
+    "gipr_imcc_0918": "NOT_IN_REQUESTED_ROTATION_RANGE_SEARCH_EXISTING_PACKETS_SEPARATELY",
+    "groups_retained": {
+      "aiok_1023_184600_185400": 37,
+      "htco_1023_165800_170600": 37,
+      "outcomes_1016_1023": 42,
+      "positions_budget_aiok": 7,
+      "resolved_1021": 1,
+      "saiq_aixi_1020": 2111
+    },
+    "groups_total": {
+      "aiok_1023_184600_185400": 37,
+      "htco_1023_165800_170600": 37,
+      "outcomes_1016_1023": 42,
+      "positions_budget_aiok": 7,
+      "resolved_1021": 1,
+      "saiq_aixi_1020": 2111
+    },
+    "kind": "END",
+    "overflow_groups": [],
+    "snapshot_utc": "2026-10-23T19:10:53.018298+00:00"
+  },
+  "rows": [
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 16:58:13,258 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T16:57+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 31301,
+      "raw_line_sha256": "2305c1ebb662855d913d4e1754c54400b3205169c2593aeab5d3f446d947dc86",
+      "timestamp_raw": "2026-10-23 16:58:13"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 16:59:13,924 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T16:58+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 31338,
+      "raw_line_sha256": "2e5b94ca2a1a7d0e7442dd7a7e533af0a5822c7b95910e14c21fb754f49a7906",
+      "timestamp_raw": "2026-10-23 16:59:13"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:10,006 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T16:59+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 31433,
+      "raw_line_sha256": "02f34acb182980d3b4a5d5dd92c9cc371cc26488251135330e24cb63cf6663f3",
+      "timestamp_raw": "2026-10-23 17:00:10"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:10,991 INFO [project_mai_tai.oms.service] [OMS-V2-MANAGED-OPEN] sym=HTCO acct=live:orb qty=175 entry=1.6976 path=ATR Flip",
+      "line_number": 31440,
+      "raw_line_sha256": "45117c90a496ec32521a72c26d0de5a4d47fc42ca1d94273c2390b83849f4d60",
+      "timestamp_raw": "2026-10-23 17:00:10"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:10,992 WARNING [oms-risk] [WEBULL-BARE-FILL] HTCO live:orb qty=175 entry=1.6976 — FILLED WITH NO BROKER-SIDE BRACKET; the software ladder is the ONLY cover until an attach succeeds. n=1 bare fill(s) this session (2026-10-23).",
+      "line_number": 31441,
+      "raw_line_sha256": "243249c60003b635b5091838b48d18519047f222befdb21bdd5c7dcb8eed5829",
+      "timestamp_raw": "2026-10-23 17:00:10"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:11,522 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb HTCO reason=missing_exit_pair_base entry_coid=- entry_order_id=F4HI7E4G5FIN9752U5MN8Q5U9A entry_qty=175.00000000 managed_row_age=1s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 — polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect.",
+      "line_number": 31442,
+      "raw_line_sha256": "2d429fa90c336c235f0b34b25cba1af7fb86fdd6f654df9677e0ccd9321d5a0d",
+      "timestamp_raw": "2026-10-23 17:00:11"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:11,936 INFO [oms-risk] [SETTLE-LAG] acct=live:orb sym=HTCO VISIBLE after 0.9s (n=2)",
+      "line_number": 31443,
+      "raw_line_sha256": "51516f6e875672972d7618af23365532fe55dc1406365e7801882c8b0c1272a1",
+      "timestamp_raw": "2026-10-23 17:00:11"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:12,123 WARNING [oms-risk] [OMS-V2-QUOTE-LEG] acct=live:orb sym=HTCO elapsed_ms=358.4 slow=True",
+      "line_number": 31444,
+      "raw_line_sha256": "b8ccadd0c5517c4759943d97ecb04ee718cdfe36d6ab954a581d8c165328138c",
+      "timestamp_raw": "2026-10-23 17:00:12"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:12,871 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-EXIT-PAIR-PLACED] HTCO target=1.7825 stop=1.5618 coid=schwab_1m_v2-HTCO-protect-adb9897dd922 -> {'combo_order_id': 'KGHULDJSCFR4298K4R4R6D8AN8', 'client_combo_order_id': 'schwab_1m_v2-HTCO-protect-adb9897dd922'}",
+      "line_number": 31446,
+      "raw_line_sha256": "3f86d5b1510a9b5a716232d286922807d2c81c81f24da04585ec6695e065dc2c",
+      "timestamp_raw": "2026-10-23 17:00:12"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:13,145 WARNING [oms-risk] [OMS-V2-QUOTE-LEG] acct=live:orb sym=HTCO elapsed_ms=413.4 slow=True",
+      "line_number": 31447,
+      "raw_line_sha256": "ca0902123aa52bf8640639a7241742c091b4fa6f14add31101145c432fb26cd6",
+      "timestamp_raw": "2026-10-23 17:00:13"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:13,501 INFO [oms-risk] [WEBULL-PROTECT-ATTACHED] HTCO live:orb qty=175 entry=1.6976 target=1.78248 stop=1.561792 session=RTH attempt=1",
+      "line_number": 31451,
+      "raw_line_sha256": "041745737d2e005b16f5652bf9a2f2d11471cfbe4576794ba076193b8bb6e6a1",
+      "timestamp_raw": "2026-10-23 17:00:13"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:14,464 WARNING [oms-risk] [OMS-V2-QUOTE-LEG] acct=live:orb sym=HTCO elapsed_ms=428.9 slow=True",
+      "line_number": 31453,
+      "raw_line_sha256": "1d7a5269a686507e31689f805c26338f2e91693ab1085165782bd33445b6aeb4",
+      "timestamp_raw": "2026-10-23 17:00:14"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:00:44,799 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb HTCO reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-HTCO-protect-adb9897dd922 entry_order_id=F4HI7E4G5FIN9752U5MN8Q5U9A entry_qty=175.00000000 managed_row_age=34s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 — polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect.",
+      "line_number": 31516,
+      "raw_line_sha256": "34dbfb26ec975a04656a4ee651a2fdadb08cc77e9cd42e27e4c9a3c566ca364b",
+      "timestamp_raw": "2026-10-23 17:00:44"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:00,320 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T17:00+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 31525,
+      "raw_line_sha256": "a3aa2c6fab0fc669f1fcd9cc27b78ef19b401a0908d5acfcb4841575cfc26f8d",
+      "timestamp_raw": "2026-10-23 17:01:00"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:05,565 INFO [oms-risk] [OMS-V2-CW-FLIP-NOTE] sym=HTCO acct=live:schwab_1m_v2 state=absent age_s=unknown",
+      "line_number": 31536,
+      "raw_line_sha256": "5885ab7379379f121315430824d4042a7bd4744664c3671cc34a89ea1fb8dc27",
+      "timestamp_raw": "2026-10-23 17:01:05"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:05,570 ERROR [oms-risk] [OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=HTCO acct=live:schwab_1m_v2 fill_id=6019adde-64e7-4f88-bde4-6570d72b2c66 reason=no_open_position_to_bind",
+      "line_number": 31537,
+      "raw_line_sha256": "bc04dab236a3b518c0a8564d819a9dbd14819bc1f4b6378da1bb5563a79b3ae0",
+      "timestamp_raw": "2026-10-23 17:01:05"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:05,579 INFO [oms-risk] [OMS-V2-CONFIRMATION-EXIT-FIRED] sym=HTCO acct=live:orb fill_id=6019adde-64e7-4f88-bde4-6570d72b2c66 evaluated_at_ms=1792774860000 status=PENDING_EXECUTABLE_BID",
+      "line_number": 31538,
+      "raw_line_sha256": "c1502ef2489b7626b2f834094488ed72fb30f332d978e4580531bde30a3076d4",
+      "timestamp_raw": "2026-10-23 17:01:05"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:06,429 WARNING [project_mai_tai.broker_adapters.webull] Webull order-detail: unexpected body=None",
+      "line_number": 31547,
+      "raw_line_sha256": "8b7ddedd5d22fbea7e014bcc7fe87bfb0c1dd233f0ecda293112ce902ddbc8df",
+      "timestamp_raw": "2026-10-23 17:01:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:10,179 INFO [oms-risk] [OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED] sym=HTCO acct=live:orb base=schwab_1m_v2-HTCO-protect-adb9897dd922 attempt=1/3 requested=2 confirmed=2 inline_seconds=2.557",
+      "line_number": 31549,
+      "raw_line_sha256": "95b4dff1e86fbb900d4d901f0de306112a3d236f07dcb0a96d9bc957361451bd",
+      "timestamp_raw": "2026-10-23 17:01:10"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:10,276 INFO [oms-risk] [WBATTACH1-CANCEL] account=live:orb symbol=HTCO entry=schwab_1m_v2-HTCO-open-8d04e7b8fac8 entry_id=b4106bc7-128e-4d7f-93ae-35273777ab2a base=schwab_1m_v2-HTCO-protect-adb9897dd922 reason=oms_v2_managed_exit:CONFIRMATION_EXIT attempt=1/1 call=c07faa19-5652-4cf4-b31f-121f0b5778fb actor=ATR_OWNER action=request terminal=UNKNOWN",
+      "line_number": 31550,
+      "raw_line_sha256": "622db37e686f5eb561afc7a43be09e4fe4a202ebb79bb01500b7d1a861d61ac4",
+      "timestamp_raw": "2026-10-23 17:01:10"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:10,490 INFO [oms-risk] [WBATTACH1-CANCEL] account=live:orb symbol=HTCO entry=schwab_1m_v2-HTCO-open-8d04e7b8fac8 entry_id=b4106bc7-128e-4d7f-93ae-35273777ab2a base=schwab_1m_v2-HTCO-protect-adb9897dd922 reason=oms_v2_managed_exit:CONFIRMATION_EXIT attempt=1/1 call=c07faa19-5652-4cf4-b31f-121f0b5778fb actor=ATR_OWNER action=returned terminal=UNPROVEN receipts=count=2:schwab_1m_v2-HTCO-protect-adb9897dd922T/UNKNOWN/cancelled/broker/confirmed_after_accepted_request,schwab_1m_v2-HTCO-protect-adb9897dd922S/UNKNOWN/cancelled/broker/confirmed_after_accepted_request",
+      "line_number": 31635,
+      "raw_line_sha256": "31bb2a96dae36d16ff42974c927220420dc827a3349e0a2c44ea306d4c061388",
+      "timestamp_raw": "2026-10-23 17:01:10"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:10,609 INFO [oms-risk] [WBATTACH1-CANCEL] account=live:orb symbol=HTCO entry=schwab_1m_v2-HTCO-open-8d04e7b8fac8 entry_id=b4106bc7-128e-4d7f-93ae-35273777ab2a base=schwab_1m_v2-HTCO-protect-adb9897dd922 reason=oms_v2_managed_exit:CONFIRMATION_EXIT attempt=1/1 call=c07faa19-5652-4cf4-b31f-121f0b5778fb actor=ATR_OWNER action=confirmation_read outcome=released receipts=count=2:schwab_1m_v2-HTCO-protect-adb9897dd922S/GEIG7J5GG57N2LEGU5S9JJLO3B/cancelled/broker/confirmed,schwab_1m_v2-HTCO-protect-adb9897dd922T/FJGEJHSNO83H53CU8BGF0HQ328/cancelled/broker/confirmed validation=PENDING",
+      "line_number": 31636,
+      "raw_line_sha256": "7355584399804a3beca0de60bee0652cdd5c29dab810f551c5389ccbb9349eef",
+      "timestamp_raw": "2026-10-23 17:01:10"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:10,610 INFO [oms-risk] [WBATTACH1-CANCEL] account=live:orb symbol=HTCO entry=schwab_1m_v2-HTCO-open-8d04e7b8fac8 entry_id=b4106bc7-128e-4d7f-93ae-35273777ab2a base=schwab_1m_v2-HTCO-protect-adb9897dd922 reason=oms_v2_managed_exit:CONFIRMATION_EXIT attempt=1/1 call=c07faa19-5652-4cf4-b31f-121f0b5778fb actor=ATR_OWNER action=confirmed terminal=PROVEN",
+      "line_number": 31637,
+      "raw_line_sha256": "320b585b1c2b4262429b756567f5599aa0442bacac20ee8fccee288c1147d4b0",
+      "timestamp_raw": "2026-10-23 17:01:10"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:10,861 INFO [oms-risk] [WBATTACH1-HANDOFF] account=live:orb symbol=HTCO entry=b4106bc7-128e-4d7f-93ae-35273777ab2a quantity=175.00000000 owner=ATR",
+      "line_number": 31638,
+      "raw_line_sha256": "ca294374a38b7bb52312deb3a4cb306276c5b1a24687a7940d28db0832493ba7",
+      "timestamp_raw": "2026-10-23 17:01:10"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:10,981 INFO [oms-risk] [OMS-V2-EXIT-PLACE] acct=live:orb sym=HTCO client_order_id=schwab_1m_v2-HTCO-close-d4f048bff60a session=NORMAL clock_session=NORMAL",
+      "line_number": 31639,
+      "raw_line_sha256": "bd177a51e6f32ece3228885284e9514d7ebf122d277abfdf6f3d3d78b5f18bec",
+      "timestamp_raw": "2026-10-23 17:01:10"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:11,229 INFO [oms-risk] [OMS-V2-MANAGED-EXIT] oms_v2_managed_exit:CONFIRMATION_EXIT sym=HTCO acct=live:orb qty=175 ref=1.6300 decided_at=2026-10-23T17:01:10.179+00:00",
+      "line_number": 31640,
+      "raw_line_sha256": "201f23cbdc4ffe49aaf5786b9459311a4125a865b77d1c9ebcbf2a005bbccfeb",
+      "timestamp_raw": "2026-10-23 17:01:11"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:11,250 INFO [oms-risk] [OMS-V2-CONFIRMATION-EXIT-COVERAGE-RESTORED] sym=HTCO acct=live:orb resolution=close_submitted released_unprotected_seconds=1.071 released_unprotected_current=0",
+      "line_number": 31641,
+      "raw_line_sha256": "c2db978b94adc6bab37ee82e52c6d2d37bee25f943be76ce4c10e667ac6237e3",
+      "timestamp_raw": "2026-10-23 17:01:11"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:11,250 INFO [oms-risk] [OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=HTCO decision_fill_id=6019adde-64e7-4f88-bde4-6570d72b2c66 legs_total=2 legs_closed=0 legs_close_submitted=1 legs_refused=0 legs_no_open_row=1 legs_state_long=0 legs_released=1 legs_reprotected=0 legs_uncovered=0 released_unprotected_seconds_max=1.071 released_unprotected_current=0 released_accounts=live:orb reprotected_accounts=- accounts=live:schwab_1m_v2:no_open_row,live:orb:close_submitted",
+      "line_number": 31642,
+      "raw_line_sha256": "599cd86911049769901ede3a3c82f3520a378d344c6d236b3153cef1ab520747",
+      "timestamp_raw": "2026-10-23 17:01:11"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "outcomes_1016_1023",
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:11,250 INFO [oms-risk] [OMS-WEBULL-CANCEL-THEN-SELL] exit=CONFIRMATION_EXIT sym=HTCO acct=live:orb row=f1b429e9-1712-4f8c-88d7-e01886854ff2 outcome=close_submitted protection=released seconds=3.642",
+      "line_number": 31643,
+      "raw_line_sha256": "f016f0cf86d4041dd22bb802bcff1b58df481b31865279e859243712af2379a7",
+      "timestamp_raw": "2026-10-23 17:01:11"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:11,250 WARNING [oms-risk] [OMS-V2-QUOTE-LEG] acct=live:orb sym=HTCO elapsed_ms=3652.2 slow=True",
+      "line_number": 31644,
+      "raw_line_sha256": "43a7f9ec3d5bd948af53ee01c200bbd7b1f2f84d8adc3de3b708bee51ad1dbbe",
+      "timestamp_raw": "2026-10-23 17:01:11"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:29,025 INFO [project_mai_tai.oms.service] [OMS-V2-MANAGED-CLOSE] sym=HTCO acct=live:orb flat",
+      "line_number": 31656,
+      "raw_line_sha256": "501df90012b663a69324b41dc6e7de9812b2ef8b289d190b7a10c56be7e1e938",
+      "timestamp_raw": "2026-10-23 17:01:29"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:35,349 INFO [oms-risk] [V2-OCO-EMIT] HTCO live:orb SKIPPED (webull stop-limit master) -- Webull accepts this shape only BARE; attaching a bracket makes it a combo master the broker refuses",
+      "line_number": 31662,
+      "raw_line_sha256": "dedbc5875bbdc31b9822cd62c192fcd9c69dd8717bf447e32577f73596812a76",
+      "timestamp_raw": "2026-10-23 17:01:35"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:01:35,556 INFO [oms-risk] [OMS-FANOUT-MIRROR-LAG] sym=HTCO segment=1792774894769 slot_id=f09c9725-1f05-5fcd-8e86-087a27d2e855 primary_entered=none primary_clock=oms_submit_started wire=2026-10-23T17:01:35.403+00:00 lag_ms=-1 outcome=accepted shape=stop_limit_unchanged",
+      "line_number": 31664,
+      "raw_line_sha256": "d54296f7228a339a226d7a574b69c795a70d17896415fdc964c5ce8497632b93",
+      "timestamp_raw": "2026-10-23 17:01:35"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:02:00,518 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T17:01+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 31679,
+      "raw_line_sha256": "570b35a42f0ca8b207f4792262254ea7f33667d9b012567695db6bd1814b2dd5",
+      "timestamp_raw": "2026-10-23 17:02:00"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:03:00,162 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T17:02+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 31762,
+      "raw_line_sha256": "aef42ff0e35e7e9c0e71aeda3b73b68ef76f18536488bae0d785e5498dab5ed1",
+      "timestamp_raw": "2026-10-23 17:03:00"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:04:00,261 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T17:03+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 31811,
+      "raw_line_sha256": "278b4174536f742caa21bb093784b07f78d352d664217746d8728614a46b7d7f",
+      "timestamp_raw": "2026-10-23 17:04:00"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "htco_1023_165800_170600"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 17:05:00,544 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T17:04+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 31844,
+      "raw_line_sha256": "194f5d9b43af171c36fc251df7f7212e1bac1d730a8d254d0b58c5506cc16d00",
+      "timestamp_raw": "2026-10-23 17:05:00"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400",
+        "positions_budget_aiok"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:46:01,620 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T18:45+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 36226,
+      "raw_line_sha256": "442e12eebf7f65c969892c081f27d16da389a87cdd9292c8e51a3ebdfe48fbd7",
+      "timestamp_raw": "2026-10-23 18:46:01"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:46:16,740 INFO [project_mai_tai.oms.service] [OMS-V2-MANAGED-OPEN] sym=AIOK acct=live:orb qty=27 entry=10.91 path=ATR Flip",
+      "line_number": 36235,
+      "raw_line_sha256": "a0995f2d862bc82597bea0b6a78d7ea9ad23175cf69433fa58364c036d0247b6",
+      "timestamp_raw": "2026-10-23 18:46:16"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:46:16,741 WARNING [oms-risk] [WEBULL-BARE-FILL] AIOK live:orb qty=27 entry=10.9100 — FILLED WITH NO BROKER-SIDE BRACKET; the software ladder is the ONLY cover until an attach succeeds. n=2 bare fill(s) this session (2026-10-23).",
+      "line_number": 36236,
+      "raw_line_sha256": "d0484b146368644592957f47c1a873f0aa70b551bcb1489869de8e0545705b55",
+      "timestamp_raw": "2026-10-23 18:46:16"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:46:16,905 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIOK reason=missing_exit_pair_base entry_coid=- entry_order_id=L5HUG4I85M2N220OE825HOJGO9 entry_qty=27.00000000 managed_row_age=0s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=1 — polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect.",
+      "line_number": 36237,
+      "raw_line_sha256": "a84f31978ed5f2c15aa38c34f0fc11287c2f195bf70a8ae5a46eca49146fc100",
+      "timestamp_raw": "2026-10-23 18:46:16"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:46:17,034 INFO [oms-risk] [SETTLE-LAG] acct=live:orb sym=AIOK VISIBLE after 0.3s (n=1)",
+      "line_number": 36238,
+      "raw_line_sha256": "7fbdc3b41780fe3c16e3322b22ce2d7ea2f9be048badd3038db1fe6761e8d2e5",
+      "timestamp_raw": "2026-10-23 18:46:17"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:46:17,358 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-EXIT-PAIR-PLACED] AIOK target=11.4555 stop=10.0372 coid=schwab_1m_v2-AIOK-protect-fc06690fcc50 -> {'combo_order_id': 'BPGEMJC9EH1E61FVC5KA4JNI58', 'client_combo_order_id': 'schwab_1m_v2-AIOK-protect-fc06690fcc50'}",
+      "line_number": 36240,
+      "raw_line_sha256": "408e99a40048115670f45a085e45c4118a1009ec007c3da0f1eac0a5e02d3755",
+      "timestamp_raw": "2026-10-23 18:46:17"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:46:17,394 INFO [oms-risk] [WEBULL-PROTECT-ATTACHED] AIOK live:orb qty=27 entry=10.91 target=11.4555 stop=10.0372 session=RTH attempt=1",
+      "line_number": 36241,
+      "raw_line_sha256": "d973947824bc35ef589cf37248554ccc5e93201d044ff15cba135c657b8db2fd",
+      "timestamp_raw": "2026-10-23 18:46:17"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400",
+        "positions_budget_aiok"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:47:01,839 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T18:46+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 36262,
+      "raw_line_sha256": "d878515db26f489438feecda08f23913718c6ff99c64db55fbfb43ebe6f330d5",
+      "timestamp_raw": "2026-10-23 18:47:01"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:47:01,852 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIOK reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIOK-protect-fc06690fcc50 entry_order_id=L5HUG4I85M2N220OE825HOJGO9 entry_qty=27.00000000 managed_row_age=45s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 — polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect.",
+      "line_number": 36266,
+      "raw_line_sha256": "78ca02cf9c15c5442522fefb6d2731940d9fef5874b28147177643926e1f1d91",
+      "timestamp_raw": "2026-10-23 18:47:01"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400",
+        "positions_budget_aiok"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:47:31,833 WARNING [oms-risk] [OMS-OCO-EXIT-FILL] live:orb AIOK exit-fill fetch FAILED (transient, e.g. 429) — will retry on the next sync rather than book the trade unpaired",
+      "line_number": 36281,
+      "raw_line_sha256": "ddc9134655359a1348ef52d09766298487ce499435da28fd92c1cf68b3b0a0c6",
+      "timestamp_raw": "2026-10-23 18:47:31"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400",
+        "positions_budget_aiok"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:02,337 WARNING [oms-risk] [OMS-OCO-EXIT-FILL] live:orb AIOK exit-fill fetch FAILED (transient, e.g. 429) — will retry on the next sync rather than book the trade unpaired",
+      "line_number": 36296,
+      "raw_line_sha256": "a2a78be3c944454581a2c6c87e8ec52ef00a2dd7d09eed9a0d43de43ce01d974",
+      "timestamp_raw": "2026-10-23 18:48:02"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400",
+        "positions_budget_aiok"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:02,557 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T18:47+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 36297,
+      "raw_line_sha256": "fb02d727bd21d5865a560ced49164ee4654f5291f7e9fda8974fedc1cf15ebfa",
+      "timestamp_raw": "2026-10-23 18:48:02"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:03,184 INFO [oms-risk] [OMS-V2-CW-FLIP-NOTE] sym=AIOK acct=live:schwab_1m_v2 state=absent age_s=unknown",
+      "line_number": 36304,
+      "raw_line_sha256": "2de810e09ca58bbc415ee3b3c31e79d1f1c06b8dd9ad555e94cb7516e03ef4ce",
+      "timestamp_raw": "2026-10-23 18:48:03"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:03,195 ERROR [oms-risk] [OMS-V2-CONFIRMATION-EXIT-REFUSED] sym=AIOK acct=live:schwab_1m_v2 fill_id=811719b8-f90c-450f-9d80-87e73272db6e reason=no_open_position_to_bind",
+      "line_number": 36305,
+      "raw_line_sha256": "d5a562dddcba4b6d97a2f735e85ffcac7a81fdcbb929334e298125183290feb8",
+      "timestamp_raw": "2026-10-23 18:48:03"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:03,214 INFO [oms-risk] [OMS-V2-CONFIRMATION-EXIT-FIRED] sym=AIOK acct=live:orb fill_id=811719b8-f90c-450f-9d80-87e73272db6e evaluated_at_ms=1792781280000 status=PENDING_EXECUTABLE_BID",
+      "line_number": 36306,
+      "raw_line_sha256": "a61d38d388457d8eb3a442e027e2da0762dec05a7e60d369bbe6d509037240d7",
+      "timestamp_raw": "2026-10-23 18:48:03"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:05,837 INFO [oms-risk] [OMS-V2-CONFIRMATION-EXIT-WEBULL-RELEASED] sym=AIOK acct=live:orb base=schwab_1m_v2-AIOK-protect-fc06690fcc50 attempt=1/3 requested=2 confirmed=2 inline_seconds=2.508",
+      "line_number": 36307,
+      "raw_line_sha256": "307adb1003cb79ad87a1a2dd2f4077c29a7cc2302b40050ebe0e3beb08965d3b",
+      "timestamp_raw": "2026-10-23 18:48:05"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:05,897 INFO [oms-risk] [WBATTACH1-CANCEL] account=live:orb symbol=AIOK entry=schwab_1m_v2-AIOK-open-d1273a2c329a entry_id=b2e22e2e-be7c-4c0c-be9a-ce55ac5ece2f base=schwab_1m_v2-AIOK-protect-fc06690fcc50 reason=oms_v2_managed_exit:CONFIRMATION_EXIT attempt=1/1 call=02cb52a6-d059-4c5d-84af-e9923773aa12 actor=ATR_OWNER action=request terminal=UNKNOWN",
+      "line_number": 36308,
+      "raw_line_sha256": "e1be33ae6d79e450bfc1557780d7c66e25ca576ca6baf07bcec42d6f2339ba47",
+      "timestamp_raw": "2026-10-23 18:48:05"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:06,141 INFO [oms-risk] [WBATTACH1-CANCEL] account=live:orb symbol=AIOK entry=schwab_1m_v2-AIOK-open-d1273a2c329a entry_id=b2e22e2e-be7c-4c0c-be9a-ce55ac5ece2f base=schwab_1m_v2-AIOK-protect-fc06690fcc50 reason=oms_v2_managed_exit:CONFIRMATION_EXIT attempt=1/1 call=02cb52a6-d059-4c5d-84af-e9923773aa12 actor=ATR_OWNER action=returned terminal=UNPROVEN receipts=count=2:schwab_1m_v2-AIOK-protect-fc06690fcc50T/UNKNOWN/cancelled/broker/confirmed_after_accepted_request,schwab_1m_v2-AIOK-protect-fc06690fcc50S/UNKNOWN/cancelled/broker/confirmed_after_accepted_request",
+      "line_number": 36393,
+      "raw_line_sha256": "2029ef627f892849efdb9a6365e7dcde5e1af11afa2bdc7a8ee023fe9dbc84d2",
+      "timestamp_raw": "2026-10-23 18:48:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:06,270 INFO [oms-risk] [WBATTACH1-CANCEL] account=live:orb symbol=AIOK entry=schwab_1m_v2-AIOK-open-d1273a2c329a entry_id=b2e22e2e-be7c-4c0c-be9a-ce55ac5ece2f base=schwab_1m_v2-AIOK-protect-fc06690fcc50 reason=oms_v2_managed_exit:CONFIRMATION_EXIT attempt=1/1 call=02cb52a6-d059-4c5d-84af-e9923773aa12 actor=ATR_OWNER action=confirmation_read outcome=released receipts=count=2:schwab_1m_v2-AIOK-protect-fc06690fcc50S/P5G8OK6LP9PHCNKMI4UPE9DHG9/cancelled/broker/confirmed,schwab_1m_v2-AIOK-protect-fc06690fcc50T/KFIU2GB4J469DNG9OCKUOQKJEB/cancelled/broker/confirmed validation=PENDING",
+      "line_number": 36394,
+      "raw_line_sha256": "2398f778dbac0f498d1467afc9c43945f1eced9256c958f1dc83712b9f7217da",
+      "timestamp_raw": "2026-10-23 18:48:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:06,270 INFO [oms-risk] [WBATTACH1-CANCEL] account=live:orb symbol=AIOK entry=schwab_1m_v2-AIOK-open-d1273a2c329a entry_id=b2e22e2e-be7c-4c0c-be9a-ce55ac5ece2f base=schwab_1m_v2-AIOK-protect-fc06690fcc50 reason=oms_v2_managed_exit:CONFIRMATION_EXIT attempt=1/1 call=02cb52a6-d059-4c5d-84af-e9923773aa12 actor=ATR_OWNER action=confirmed terminal=PROVEN",
+      "line_number": 36395,
+      "raw_line_sha256": "8e377c5b157632b76b47690dda5f9dc4446912c3a837915db0717a1437d3c945",
+      "timestamp_raw": "2026-10-23 18:48:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400",
+        "positions_budget_aiok"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:06,305 CRITICAL [oms-risk] [WBATTACH1-BLOCKED] account=live:orb symbol=AIOK entry=b2e22e2e-be7c-4c0c-be9a-ce55ac5ece2f reason=software_exit_child_proof_required:wbattach1_positions_wire_receipt_unknown_or_stale sell=0",
+      "line_number": 36396,
+      "raw_line_sha256": "a6f43728e2a2ea9557028db21c5f3fdf3d1d3ec523c2dcf79ef8bf1fb64a0092",
+      "timestamp_raw": "2026-10-23 18:48:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "outcomes_1016_1023",
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:06,327 INFO [oms-risk] [OMS-WEBULL-CANCEL-THEN-SELL] exit=CONFIRMATION_EXIT sym=AIOK acct=live:orb row=c7ad4a8d-14ba-4eea-a038-9aec301779cf outcome=sell_refused_recovering protection=released seconds=3.026",
+      "line_number": 36397,
+      "raw_line_sha256": "73dbc8f9a04d726d326c9074d41569da2fac82d3e72074315d7224e8e6422f86",
+      "timestamp_raw": "2026-10-23 18:48:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:06,327 WARNING [oms-risk] [OMS-V2-QUOTE-LEG] acct=live:orb sym=AIOK elapsed_ms=3051.6 slow=True",
+      "line_number": 36398,
+      "raw_line_sha256": "0b2d90a15069e93ecce01f18a7612405658a0c2b6a35c0a5b13db36bab648b68",
+      "timestamp_raw": "2026-10-23 18:48:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:06,327 INFO [oms-risk] [RECONCILE-READ] acct=live:orb sym=AIOK result=HELD (n=1)",
+      "line_number": 36399,
+      "raw_line_sha256": "b4001f704c317001c8dae4fee6924e5a813d6fa07071edf60800341a37eec234",
+      "timestamp_raw": "2026-10-23 18:48:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:06,390 ERROR [oms-risk] [OMS-V2-CONFIRMATION-EXIT-REPROTECTED] sym=AIOK acct=live:orb fill_id=811719b8-f90c-450f-9d80-87e73272db6e protected=0 reason=close_refused missing_legs=target,stop inline_seconds=0.027",
+      "line_number": 36400,
+      "raw_line_sha256": "6f7b2a8c4972ab950394e089d2a4a3393ccec481d5d9febc965a76f8d8dc1964",
+      "timestamp_raw": "2026-10-23 18:48:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:06,396 ERROR [oms-risk] [OMS-V2-CONFIRMATION-EXIT-PAGE] sym=AIOK acct=live:orb fill_id=811719b8-f90c-450f-9d80-87e73272db6e protected=0 missing_legs=target,stop status=OPEN",
+      "line_number": 36401,
+      "raw_line_sha256": "fc7e4119468627c216a1cf5a95315c8f6b86dfce49c68bb056c444c59408d048",
+      "timestamp_raw": "2026-10-23 18:48:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:06,396 INFO [oms-risk] [OMS-V2-CONFIRMATION-EXIT-FANOUT] sym=AIOK decision_fill_id=811719b8-f90c-450f-9d80-87e73272db6e legs_total=2 legs_closed=0 legs_close_submitted=0 legs_refused=1 legs_no_open_row=1 legs_state_long=0 legs_released=1 legs_reprotected=0 legs_uncovered=1 released_unprotected_seconds_max=0.552 released_unprotected_current=1 released_accounts=live:orb reprotected_accounts=- accounts=live:schwab_1m_v2:no_open_row,live:orb:uncovered",
+      "line_number": 36402,
+      "raw_line_sha256": "ffca7132bb0434d2e9a78fb2c6bb43df26b71fddcb075d5e59ca432cf64bd287",
+      "timestamp_raw": "2026-10-23 18:48:06"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:48:47,784 ERROR [oms-risk] [OMS-WEBULL-UNCOVERED-SHARE] sym=AIOK acct=live:orb row=c7ad4a8d-14ba-4eea-a038-9aec301779cf status=PAGE cause=pair_released_not_sold uncovered_seconds=30.3 threshold_seconds=30 - a Webull share is held with NO resting broker stop; the software ladder is its only cover",
+      "line_number": 36424,
+      "raw_line_sha256": "4f7a71e198c3b6779001c89e8da3c222d257a107aa33f8483182363920aaa2bd",
+      "timestamp_raw": "2026-10-23 18:48:47"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400",
+        "positions_budget_aiok"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:49:02,304 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T18:48+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 36430,
+      "raw_line_sha256": "b0a7c811b8bee064ef0477804bc569ab4adefec307e55a60df07b12ea0fa3b44",
+      "timestamp_raw": "2026-10-23 18:49:02"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:50:02,432 WARNING [oms-risk] [OMS-V2-QUOTE-LEG] acct=live:orb sym=AIOK elapsed_ms=373.3 slow=True",
+      "line_number": 36462,
+      "raw_line_sha256": "54671c1b7b8e6d888104f2a41430c402611b8f855a39be6308ca77f202464663",
+      "timestamp_raw": "2026-10-23 18:50:02"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:50:03,326 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T18:49+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 36463,
+      "raw_line_sha256": "92924c984bc4fc772294dda90d9bc9c1ef6d523c7b4b46d59b0b75d5ce7893c6",
+      "timestamp_raw": "2026-10-23 18:50:03"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:50:04,610 WARNING [oms-risk] [OMS-V2-QUOTE-LEG] acct=live:orb sym=AIOK elapsed_ms=335.9 slow=True",
+      "line_number": 36470,
+      "raw_line_sha256": "4374f28ca9c601e6ba03c679328e6819b029605dfa6415e6c9e903031bdca74b",
+      "timestamp_raw": "2026-10-23 18:50:04"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:51:02,601 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T18:50+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 36495,
+      "raw_line_sha256": "9a2affcbef42ace34484be1f4b73b67566ab9b6d3b2e43ce1bda4b4d76dff0a1",
+      "timestamp_raw": "2026-10-23 18:51:02"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:51:18,288 WARNING [oms-risk] [VIRTUAL-CLEAR] zeroed 1 virtual position(s) with no broker backing clear_allowed=1 evaluated_unbacked=1 min_age_seconds=24.119: live:orb:AIOK=27.00000000",
+      "line_number": 36508,
+      "raw_line_sha256": "5b5ba7f8e1888c84cac17c089f570efeebce407ce4961b2c5a7a038b13eacc8d",
+      "timestamp_raw": "2026-10-23 18:51:18"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:52:02,648 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T18:51+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 36526,
+      "raw_line_sha256": "33c80ced07cf4523bec1cc8c4dc5aadbdd229b28367f131660d9888849b96f88",
+      "timestamp_raw": "2026-10-23 18:52:02"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:52:17,739 INFO [oms-risk] [OMS-OCO-EXIT-MISS] live:orb AIOK reason=broker_reported_no_filled_exit_leg entry_coid=schwab_1m_v2-AIOK-protect-fc06690fcc50 entry_order_id=L5HUG4I85M2N220OE825HOJGO9 entry_qty=27.00000000 managed_row_age=361s trigger=broker_child_fill_evaluation evaluated=1 attributed=0 could_not_tell=0 — polarity: attributed=0 means no child/time/price was recorded; could_not_tell=1 means no valid handle/read could answer. Managed row stays OPEN (blocks fan-out re-entry). A miss on an OLD row is the 07-31 AXTU/AXTX defect.",
+      "line_number": 36535,
+      "raw_line_sha256": "f7337472db21f6c443268c62bc6f77ff5541c0a0f0b1214d4705a4b6b4f4d97c",
+      "timestamp_raw": "2026-10-23 18:52:17"
+    },
+    {
+      "file": "oms.log",
+      "groups": [
+        "aiok_1023_184600_185400"
+      ],
+      "kind": "LOG",
+      "line": "2026-10-23 18:53:02,774 INFO [project_mai_tai.broker_adapters.webull] [WEBULL-ENDPOINT-CALLS] minute=2026-10-23T18:52+00:00 endpoint=/account/positions success=4 failure=0 total=4 partial=0",
+      "line_number": 36557,
+      "raw_line_sha256": "06ff292408c79c8873e79fa7299f898458257423dfba7355947733024e73d867",
+      "timestamp_raw": "2026-10-23 18:53:02"
+    }
+  ]
+}

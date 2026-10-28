@@ -73,6 +73,12 @@ class RoutingBrokerAdapter:
             raise RuntimeError("complete_native_reader_UNAVAILABLE")
         return await reader(broker_account_name)
 
+    async def read_exit_positions(self, broker_account_name: str, *, after: float):
+        return await self._adapter_for_account(broker_account_name).read_exit_positions(broker_account_name, after=after)
+
+    async def read_exit_order_status(self, request: OrderRequest, *, after: float):
+        return await self._adapter_for_account(request.broker_account_name).read_exit_order_status(request, after=after)
+
     def positions_wire_read_age_seconds(self, broker_account_name: str) -> float | None:
         """Route to the account's adapter. An adapter without a positions cache returns None,
         meaning every successful ``list_account_positions`` call was a real read (ALERTS1)."""
