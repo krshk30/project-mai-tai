@@ -1,0 +1,87 @@
+CURRENT L14-UI packet -- C119:59 OPTION B / source only / all author tests UNRUN
+Root /private/tmp/mai-tai-l14-ui-skip-outcomes-20261025
+Branch codex/oct25-l14-ui-skip-outcomes, literalbase70bfd6de4c0d09b5e606a7429e0a3dc157fdd975.
+Current candidate final head/time reported inchat. Main70 and finishedfull raw
+remain untouched; no imports/tests/compile/runtime/PG/provider/browser by author.
+
+SUPERSESSION / CORRECT ACCEPTANCE
+C119:59 explicitly selects compact optionB. This supersedes ONLY earlier
+775-visible-outcome-row interpretation and unadopted9c3e8ff9d row proposal.
+Old proposal/source/pins remain historical in9c3, not current instructions.
+Installed/source data775 = FIRST506 + aggregate253 + legacy16; screen549 real
+rows =140FIRST+140X3+253AGG+16legacy. FIRST506 accounted as280TRADE +226SKIP.
+Do not call this a waived assertion: C1 corrected the meaning of its775 input.
+
+CURRENT UI SOURCE
+Only APP path changed since70 is atr_simulation/cp_sim_display.py.
+firstbar_tables/read models/storage/engine/economics/settings/trading unchanged.
+Each FIRST table renders only exact original140 TRADE formatter outputs.
+Under each is ONE small gray collapsed details summary:
+113 signals skipped (no trade)
+Expand contains actual full canonical identity/outcomeID/reason; no qty/time/
+price/fill/allocation/P&L reconstruction, no SKIP table rows. UNKNOWN outcomes
+are separately counted/audited UNKNOWN, never coerced into SKIP/zero/TRADES.
+Every253 mode outcomeID/kind/model/identity remains accounted for in metadata,
+duplicate mode+ID refuses. Table columns/row bytes/cards/fonts/mobile scope and
+stat tiles196.87/186.59/-22.94/28.94 with147/26 unchanged. Audit list bounded
+240px/internal overflow; no new full-body Scope/coverage/reason paragraphs.
+
+RETAINED ACTUAL DATA / CAUSE
+Originalc55358af readback: all7GET200, catalogJSON114/FK/index/count45/2/3/775,
+two originalROconnections/cleanup0, currentrevisionUNKNOWN_PERMISSION. Not
+pagePASS: old compact mount lost113SKIP/mode footer. 9c3 retained row-proposal
+handoff records exact counts/body hashes/file-only533row4797cell comparison.
+No native read rerun occurred. Old549body92759499 and API387b4513 are immutable.
+Actual display fixture e44597eb... copies all506 originalIDs/kinds/models/reasons
+and280 actual trade display rows, redacts only nondisplay account/episode fields
+and allocation refs. It is NOT model/native/provenance proof. Remaining269 rows
+in composite source controls are controlled; actual Main private-page remains
+required. Original synthetic allTRADE controls remain, not rewritten/removed.
+
+SOURCE CONTROLS / MAIN SELECTIONS
+tests/unit/test_l14_ui_actual_skip_outcomes.py --10 proposed cases, UNRUN:
+actual140/113/reasons; all253 IDs/mode;549 table rows+226audititems; unchanged
+canonical140TRADE HTMLbytes; collapsed identities/reasons/no execution cells;
+UNKNOWNaudit; duplicateIDs; forbiddenallocationfields; unchangedtotals/nonSIMbytes.
+tests/unit/test_l14_ui_current_lineage_successor.py --5 proposed cases, UNRUN:
+exact current postimages with all55 historicalpreimages; exact membership;
+three negatives arbitraryHEAD/newpath/changedprotected-count refusal.
+15 proposed cases by SOURCE enumeration, not pytestcollection or actualPASS.
+
+BOUNDED CURRENT LINEAGE PROPOSAL -- PENDING C1, NOT AN UNCONDITIONAL TEST WAIVER
+Historicalfixture l14_only_a2_projection.json remains SHA
+3eaba723e024d9ac3d675ac661a5981a45673fa0d72784c8160482c39cd091ad.
+Original test_l14_only_a2_fallback_composition.py remains SHA
+ab61ee4a805c8db7ee5f471e1bd6e41a6935c80a7da7a1e20b28cc1c7b2f11b0.
+All original history/constants/55protected set/513A2 assertions untouched.
+Separate fixture l14_current_ui_successor_20261025.json pinnedc71c2095... contains
+literal9c+724 heads/trees, exact3 modified paths with historical preimage and
+current postimage SHA, and onlyadded cp_sim_display.py with exactpostimage.
+Changes: aggregate_entry_display.py, atr_simulation_legacy_routes.py, control_plane.py.
+All55 immutable historical preimages are asserted using original fixture/blob
+guards. Current52 others remain byte-exact; current3 must match literal new
+postimages, not a descendant or runtime HEAD. Exact current package48+1=49,
+whole runtime src/sql/ops membership =literal724 set plus onlythis added module.
+No newpath/schema/engine exception or arbitrary accepted-descendant logic.
+
+IMPORTANT: originaltwo CURRENT testbodies are NOT changed in this packet while
+C1's20:00 lineage disposition is pending. Their ready replacement bodies are
+analysis/L14-UI-CURRENT-LINEAGE-REPLACEMENT-PENDING-C1.proposal. Main reviews the
+exact3+1 contract then applies ONLY those two bodies after C1 approval, batching
+with this optionB source and L12 into ONE real final head/full. Until then the
+old2 failures are intentionally still present; do not call the full fixed/PASS.
+No original test excluded, historical fixture reauthored or oldfailure deleted.
+
+ACTUAL CALLER / SCREENSHOT NEXT -- MAIN ONLY
+Bind an actual adopted final head/whole pins; never retag70/full/copy receipts.
+Keep exact prior identity/DSN/RO/fiveprivfalse/fence/180s/4conns/nativeJSON114/FK/
+indexes/count775/9schema-readerbytes/C11929 revisionUNKNOWN/receipt/API guards.
+In shared checker keep actual firstbar_tables140TRADE/mode and their9cell/data
+equality; expected visible counts become140/140/253/4/4/4/4=549 per C11959.
+Independently compare full253 mode metadata IDs/kinds/model/identity to actual
+API, and exactly113 SKIP expand items/reasons/mode plus required summaryline;
+never use UI._firstbar_outcome_audit as the expected-data oracle. All506 outcomes
+accounted, exacttotals/nativeUNKNOWN caveats/nonSIMbyteproof remain mandatory.
+Then one actual default queryless body and bounded offline installed-runtime
+headless screenshot per priorMain plan, requestdeny/no install/no liveassets.
+Actual new-source controls/readback/screenshots remain UNRUN; no productionGO.

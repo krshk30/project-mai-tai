@@ -1,0 +1,10 @@
+C120:09 literal ruling read20:12: YES bounded CURRENT UI-lineage successor;
+exact source pre/post hashes/new membership; immutable9c fixture/history/55
+historical assertions remain, no arbitraryHEAD/descendant weakening.
+Applied ONLY ready2CURRENT function bodies from123 proposal to old composition
+test, plus this note. Base123 remains frozen; all other APP/test/fixture bytes
+match exact123. No fixture state/hash repin: PROPOSED_CURRENT_UI_LINEAGE_PENDING_C1
+is retained as immutable proposal provenance; this explicit ruling approves it.
+15actualPASS2.04s/XML88f6765d reported by Main on123, NOT rerun by author. Two
+changed old selectors now require Main claim; author imports/tests/runtime UNRUN.
+Main batches OptionB08da source + these2bodies +L12 grammar into ONE final head/full.

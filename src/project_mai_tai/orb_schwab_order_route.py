@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from redis.asyncio import Redis
 
 from project_mai_tai.events import TradeIntentEvent, TradeIntentPayload, stream_name
+from project_mai_tai.buy_price_floor import buy_price_allowed
 from project_mai_tai.settings import Settings
 from project_mai_tai.strategy_core.orb_schwab_bracket import build_orb_schwab_bracket_metadata
 
@@ -47,6 +48,8 @@ def build_orb_schwab_open_intent(
 ) -> TradeIntentEvent:
     """Build an intent only; OMS and the broker remain the execution authorities."""
     ticker = symbol.strip().upper()
+    if not buy_price_allowed(breakout_level, bot=STRATEGY_CODE, symbol=ticker):
+        raise ValueError("PRICE1-REFUSED")
     if selection is not None:
         from project_mai_tai.orb_country_route import ORB_ROUTE_QUANTITY, routed_orb_metadata
 
@@ -65,7 +68,7 @@ def build_orb_schwab_open_intent(
     account = settings.strategy_schwab_1m_v2_account_name
     if not ticker or not account.startswith("live:") or settings.provider_for_account(account) != "schwab":
         raise ValueError("ORB live orders require a named Schwab account and symbol")
-    metadata = build_orb_schwab_bracket_metadata(breakout_level)
+    metadata = build_orb_schwab_bracket_metadata(breakout_level, tick_cap=True)
     metadata["orb_intended_break_level"] = format(breakout_level, "f")
     if deferred_macd_bar_close is not None:
         metadata["orb_deferred_macd_bar_close"] = deferred_macd_bar_close.isoformat()
@@ -117,11 +120,13 @@ def build_orb_schwab_reprice_intent(
     ticker = symbol.strip().upper()
     if not ticker:
         raise ValueError("ORB reprice requires a symbol")
+    if not buy_price_allowed(breakout_level, bot=STRATEGY_CODE, symbol=ticker):
+        raise ValueError("PRICE1-REFUSED")
     if selection is not None:
         from project_mai_tai.orb_country_route import routed_orb_metadata
         metadata = routed_orb_metadata(selection, breakout_level)
     else:
-        metadata = build_orb_schwab_bracket_metadata(breakout_level)
+        metadata = build_orb_schwab_bracket_metadata(breakout_level, tick_cap=True)
     metadata["orb_intended_break_level"] = format(breakout_level, "f")
     metadata["orb_schwab_reprice"] = "true"
     return TradeIntentEvent(
@@ -198,7 +203,7 @@ def orb_schwab_intent_refusal(
                 return "orb_schwab_outside_reprice_window"
             try:
                 level = Decimal(payload.metadata["orb_intended_break_level"])
-                expected = build_orb_schwab_bracket_metadata(level)
+                expected = build_orb_schwab_bracket_metadata(level, tick_cap=True)
             except (KeyError, InvalidOperation, TypeError, ValueError):
                 return "orb_schwab_invalid_bracket"
             expected.update(
@@ -221,7 +226,7 @@ def orb_schwab_intent_refusal(
         return "orb_schwab_outside_entry_window"
     try:
         raw_level = Decimal(payload.metadata["orb_intended_break_level"])
-        expected = build_orb_schwab_bracket_metadata(raw_level)
+        expected = build_orb_schwab_bracket_metadata(raw_level, tick_cap=True)
     except (KeyError, InvalidOperation, TypeError, ValueError):
         return "orb_schwab_invalid_bracket"
     expected["orb_intended_break_level"] = format(raw_level, "f")

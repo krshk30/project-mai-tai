@@ -15,7 +15,8 @@
 # EST 15:00-21:30 UTC) and the ET guard below does the precision:
 #   */15 14-21 * * 1-5   /home/trader/project-mai-tai/ops/health/oco_capture_cron.sh
 #
-# Read-only. Exit 0 green/skip, 1 amber, 2 red.
+# No trading actions. Reviewed operator-close INFO audit/tags only; no ledger repair.
+# Exit 0 green/skip, 1 amber, 2 red.
 set -u
 OUT=/home/trader/oco_capture; mkdir -p "$OUT"
 STAMP=$(TZ=America/New_York date '+%F %H:%M:%S %Z')

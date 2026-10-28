@@ -65,6 +65,14 @@ class RoutingBrokerAdapter:
         adapter = self._adapter_for_account(broker_account_name)
         return await adapter.list_account_positions(broker_account_name)
 
+    async def read_native_entry_book(self, broker_account_name: str):
+        """L12 complete native scope is mandatory; there is no local/today fallback."""
+        adapter = self._adapter_for_account(broker_account_name)
+        reader = getattr(adapter, "read_native_entry_book", None)
+        if reader is None:
+            raise RuntimeError("complete_native_reader_UNAVAILABLE")
+        return await reader(broker_account_name)
+
     def positions_wire_read_age_seconds(self, broker_account_name: str) -> float | None:
         """Route to the account's adapter. An adapter without a positions cache returns None,
         meaning every successful ``list_account_positions`` call was a real read (ALERTS1)."""
@@ -184,6 +192,27 @@ class RoutingBrokerAdapter:
             return ExitPairReleaseResult(outcome="unanswerable")
         return await fn(broker_account_name=broker_account_name, symbol=symbol,
             base_client_order_id=base_client_order_id, quantity=quantity, after=after, original_attempts=original_attempts)
+
+    def cached_attach_pair_terminal(self, account_name, symbol, base, quantity):
+        provider = self.provider_by_account.get(account_name, self.default_provider)
+        if provider != "webull":
+            return None
+        # Cache inspection must not instantiate a provider or start any I/O.
+        adapter = self._adapters_by_provider.get(provider)
+        reader = getattr(adapter, "cached_attach_pair_terminal", None)
+        return reader(account_name, symbol, base, quantity) if reader else None
+
+    def attach_terminal_scan_scope(self, account_name):
+        provider = self.provider_by_account.get(account_name, self.default_provider)
+        adapter = self._adapters_by_provider.get(provider) if provider == "webull" else None
+        scope = getattr(adapter, "attach_terminal_scan_scope", None)
+        return scope(account_name) if scope else None
+
+    def refresh_attach_terminal_scan(self, account_name):
+        provider = self.provider_by_account.get(account_name, self.default_provider)
+        adapter = self._adapters_by_provider.get(provider) if provider == "webull" else None
+        refresh = getattr(adapter, "refresh_attach_terminal_scan", None)
+        return refresh(account_name) if refresh else None
 
     async def fetch_quotes(self, symbols: list[str]) -> dict[str, dict[str, float | None]]:
         """Quotes for ``symbols``, from ANY configured provider that can serve them.

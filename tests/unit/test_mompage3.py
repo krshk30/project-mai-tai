@@ -54,8 +54,8 @@ def test_shared_atr_columns_badges_separate_totals_and_short_times(monkeypatch, 
     tables.feed(html)
     completed = [row for row in tables.tables if row[:3] == ["Ticker", "Path", "Qty"]]
     columns = ["Ticker", "Path", "Qty", "Entry Time", "Entry", "Exit Time", "Exit", "P&L", "Exit Summary"]
-    assert completed == [columns] * 3
-    assert '<span class="count accent">REFERENCE</span>' in html
+    assert completed == [columns, columns, columns]
+    assert html.count('<span class="count accent">REFERENCE</span>') == 2
     assert '<span class="count accent">LIVE</span>' in html
     assert "$+49.40" in html and "$+28.80" in html
     assert html.count('Day total:') == 1
@@ -85,7 +85,7 @@ def test_live_note_plain_words_actual_flag_and_no_vwap(monkeypatch, route, enabl
         'status': 'READABLE', 'entry_admission_enabled': enabled, 'episodes': []}))
     html, _ = page(monkeypatch, route)
     state = "LIVE" if enabled else "OFF"
-    assert f'<dt>Status</dt><dd>{state}</dd>' in html
+    assert f'<strong>Status:</strong> {state}</div>' in html
     assert "P&L uses actual LIVE broker fills only." in unescape(html)
     assert "VWAP" not in html
     assert "$+49.40" in html and "$+28.80" in html and html.count('Day total:') == 1

@@ -1,0 +1,84 @@
+Task OCT27-C11120-L12-821-CONNECTED-SOURCE
+Owner Gibbs sole L12 SOURCE; Main integration/review/execution.
+Status actual APP source proposal, tests/imports/PG/runtime UNRUN.
+Completion requested: literal821-compatible APPdiff plus original3case plan.
+
+LITERAL GEOMETRY
+Owned local clone /private/tmp/oct27-gibbs-l12-821-included-source-20261027
+Branch codex/oct27-l12-821-included-source
+Parent821a982d1338d30cae40145d8bfa7172e3c80961, no foreign checkout writes.
+Donor b4403c7fd8a243ea725f4ae8d149a1defd1c477f; 62c test-only successor.
+Exact L12 bulk source carry = src/project_mai_tai diff42ffaccd..b440.
+Three-way application onto821 completed with NO conflicted paths.
+No old340/d16 file replacement, no currentHEAD/descendant inference.
+Review this commit diff against its literal821 parent. Main owns finalhead.
+
+ACTUAL CHANGE SET
+17 new brokerdecides1*.py modules, exact donorbytes; 11 shared APPfiles:
+broker_adapters/{routing,schwab,webull,webull_order_reads}.py;
+db/models.py; oms/service.py; services/schwab_1m_v2_bot.py; settings.py;
+strategy_core/schwab_1m_v2.py; v2_flip_entry_ownership.py; v2_removed_wait.py.
+28 APP paths, 3609 additions/23 deletions, plus this source handoff.
+No test, ops, environment, provider, deployment or migration change.
+Only restored Settings: brokerdecides1_enabled=False, max_age_ms=20000.
+No profileactivation, obsoleteflags, syntheticnativebooks or newpermission.
+
+SHARED HUNK RESOLUTION / PRESERVATION
+No merge conflicts required manual invention. Current821 files are the base.
+Core _retire_probe_owner_after_sell keeps821's terminal_unfilled proof as an
+independent legitimate retirement path; donor L12 card fallback is additive.
+Do not restore340's early card_not_clear_at_sell veto: it is absent here.
+Normal SELL reset remains before L12 fallback at old unknown/idle holds.
+Current service AHT/history ContextVar task routing and e772 freeze-on-release
+are not removed/replaced by oldservice. keepwatch_bar_owner.py stays821 bytes.
+Current publication_guard still wraps publication; final L12 check/reservation
+is beforeXADD without intervening await, unknownACK keeps reservation.
+Actual shutdown_refresh is awaited BEFORE owner/factory teardown; ordinary
+position polling/native adapters remain real. No fake completed teardown.
+OMS refresh is scheduled only after successful actualsync; existing limits
+and pagination/partial/unknown holds remain. No extra caller framework.
+
+SOURCE VERIFICATION ONLY
+git diff --cached --check passed before commit (whitespace only, NOT tests).
+Exact source hashes and restoration roundtrip proof are separate handoff
+metadata generated from Git/filebytes, not runtime permission or PGclaims.
+Main must review shared semantics and execute focused/original cases.
+
+THREE ORIGINAL CASES / PROPOSED MINIMUM MAIN ACCEPTANCE
+Source /Users/velkris/.codex/task-queues/analysis/L11-L12-122CASE-INPUTS-20261022/c1_export122.json
+SHA31147bd20bb1f0c3e9a997bc45f9dbf41ef5fb71a6a58bec4b9c0a9e30c6c5f6.
+Incident /103 WORX10-20 10:27 P4.11 previousSELL09:51: current SHORT+complete
+card can resolve only stale note/cap evidence; working/position/unknownhold.
+Neighbor /110 OLOX10-21 13:29 P1.03 previousSELL13:04: retain quote/line/slot/
+positive owner guards; no13:25 substitution or arm1.0200 cap overwrite.
+Passing /18 YMAT10-12 10:21 P2.23 previousSELL09:05: preserve actualfilled
+identity; no extra same-segmentBUY; newsegment only from real clean evidence.
+Retained raw orders/fills/logs are facts; historicalnativebooks UNKNOWN.
+Any currentbook branch stimulus must be labelled CONTROLLED, not historical
+flat proof. Missing original prefix/SHORT stays UNKNOWN; no forcedpermission.
+Use existing case path only: STOP/post if it fails; no newrig or rigrepair.
+
+FOCUSED EXISTING SELECTORS FOR MAIN REVIEW (NO COLLECTION/COUNT CLAIM)
+tests/unit/test_brokerdecides1_contract.py
+tests/unit/test_brokerdecides1_entry_hooks.py
+tests/unit/test_brokerdecides1_card_only.py
+tests/unit/test_brokerdecides1_native.py
+tests/unit/test_brokerdecides1_fresh_prewire_authority.py
+tests/unit/test_brokerdecides1_closed_child_owner.py
+tests/unit/test_brokerdecides1_unused_owner_sell.py
+tests/unit/test_brokerdecides1_crossday_owner.py
+Focus actual bothaccount negativebook, stale20s, positiveworking/position,
+lostACK/no-retry, cancelACK uncertainty, reservation beforeXADD, SELL reset,
+terminal-unfilled proof, closed-child evidence and hardguard preservation.
+Existing fixturebytes can be stale relative to current821; report mismatch,
+never change assertions merely to admit a removed/unknown nativefact.
+
+MATERIAL REMAINING REVIEW / SCHEMA
+Models restore two L12 projection tables and3indexes. Reviewed donor migration
+is sql/migrations/versions/20261022_l12_dispatch_retirement.py; NOT restored
+or executed here. Main must establish current installed/target schema and
+review applicability/parent before any enabled execution or deployment.
+This is an explicit schema prerequisite, not permission to assume tableexists.
+Main combined head/focused tests/originalcase receipts remain open.
+13:00 source handoff target; review by14:00 / risknotice14 / READY15:30 target
+conditional on actual Main results, not a promise of casePASS or install.

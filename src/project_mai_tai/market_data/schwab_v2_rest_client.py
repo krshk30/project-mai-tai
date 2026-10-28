@@ -28,7 +28,7 @@ import logging
 import math
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -54,6 +54,20 @@ def anchored_session_poll_open(now_ms: int) -> bool:
     return eastern.weekday() < 5 and 7 * 60 <= eastern.hour * 60 + eastern.minute < 16 * 60
 
 
+def keepwatch_history_window(anchor_ms: int, current_bar_ms: int, observed_at_ns: int) -> bool:
+    """Explicit L11 query scope; does not change the ordinary polling schedule."""
+    if (type(anchor_ms) is not int or type(current_bar_ms) is not int
+            or type(observed_at_ns) is not int or anchor_ms < 0
+            or anchor_ms % 60_000 or current_bar_ms % 60_000
+            or not anchor_ms <= current_bar_ms < anchor_ms + 57_600_000
+            or current_bar_ms + 60_000 > observed_at_ns // 1_000_000):
+        return False
+    eastern = datetime.fromtimestamp(anchor_ms / 1000, UTC).astimezone(ZoneInfo("America/New_York"))
+    observed = datetime.fromtimestamp(observed_at_ns / 1_000_000_000, UTC).astimezone(ZoneInfo("America/New_York"))
+    return (eastern.weekday() < 5 and eastern.hour == 4 and eastern.minute == 0
+            and observed.date() == eastern.date())
+
+
 ChartBarCallback = Callable[[str, "ChartBar"], Awaitable[None]]
 QuoteCallback = Callable[[str, "Quote"], Awaitable[None]]
 
@@ -67,6 +81,12 @@ class ChartBar:
     close: float
     volume: int
     timestamp_ms: int
+    # Init-only metadata preserves the seven-field equality/repr/asdict contract.
+    producer: InitVar[str | None] = None
+
+    def __post_init__(self, producer):
+        if producer is not None:
+            self.producer = producer
 
 
 @dataclass
@@ -430,6 +450,7 @@ class SchwabV2RestClient:
                         close=float(candle.get("close", 0.0) or 0.0),
                         volume=int(float(candle.get("volume", 0) or 0)),
                         timestamp_ms=ts,
+                        producer="schwab",
                     )
                 )
             except (TypeError, ValueError):
@@ -447,6 +468,17 @@ class SchwabV2RestClient:
             return [], None
         if not anchored_session_poll_open(current_bar_ms):
             return [], None
+        return self._fetch_session_history(symbol, anchor_ms, current_bar_ms, allow_sparse=False)
+
+    def fetch_keepwatch_history(self, symbol: str, anchor_ms: int, current_bar_ms: int,
+                               *, observed_at_ns: int):
+        """Bounded full-session L11 read; no default empty or global poll override."""
+        if not keepwatch_history_window(anchor_ms, current_bar_ms, observed_at_ns):
+            raise ValueError("KEEPWATCH1 history window/causal clock unproven")
+        return self._fetch_session_history(symbol, anchor_ms, current_bar_ms, allow_sparse=True)
+
+    def _fetch_session_history(self, symbol: str, anchor_ms: int, current_bar_ms: int,
+                               *, allow_sparse: bool):
         end_ms = current_bar_ms + 60_000
         if not anchor_ms <= current_bar_ms < anchor_ms + 16 * 3_600_000:
             raise ValueError("invalid restoration session window")
@@ -461,7 +493,8 @@ class SchwabV2RestClient:
             payload = self._authorized_get(
                 f"{self.settings.schwab_base_url.rstrip('/')}{self.PRICE_HISTORY_PATH}?{params}"
             )
-            return self._parse_session_history(symbol, anchor_ms, current_bar_ms, payload)
+            return self._parse_session_history(symbol, anchor_ms, current_bar_ms, payload,
+                                               allow_sparse=allow_sparse)
         except Exception as exc:
             exc.line_response_shape = self._session_response_shape(payload)
             raise
@@ -489,7 +522,8 @@ class SchwabV2RestClient:
                     shape[key] = value if isinstance(value, (int, float)) and math.isfinite(value) else None
         return shape
 
-    def _parse_session_history(self, symbol, anchor_ms, current_bar_ms, payload):
+    def _parse_session_history(self, symbol, anchor_ms, current_bar_ms, payload,
+                               *, allow_sparse=False):
         from project_mai_tai.strategy_core.session_line_restore import (
             SessionCoverage, SessionLineRestoration, history_fingerprint,
         )
@@ -506,6 +540,13 @@ class SchwabV2RestClient:
                 or any(payload.get(key) for key in ("next", "nextToken", "nextPage", "truncated"))):
             raise ValueError("session response completeness unproven")
         if not candles:
+            if allow_sparse:
+                if payload.get("empty") is not True:
+                    raise ValueError("empty Schwab history lacks explicit empty flag")
+                return [], SessionCoverage(
+                    "schwab_rest_full_session", anchor_ms, end_ms, (), True,
+                    history_fingerprint(()), prefix_complete=True,
+                )
             # A valid empty response has no bars or completeness proof yet.
             return [], None
         if payload.get("empty") is True:
@@ -516,12 +557,17 @@ class SchwabV2RestClient:
         for candle in candles:
             if not isinstance(candle, dict):
                 raise ValueError("malformed session candle")
+            if allow_sparse and (type(candle.get("datetime")) is not int
+                                 or type(candle.get("volume")) is not int):
+                raise ValueError("malformed sparse session timestamp/volume")
             bar = ChartBar(
                 symbol.upper(), float(candle["open"]), float(candle["high"]),
                 float(candle["low"]), float(candle["close"]),
-                int(candle["volume"]), int(candle["datetime"]),
+                int(candle["volume"]), int(candle["datetime"]), producer="schwab",
             )
             if bar.timestamp_ms > current_bar_ms:
+                if allow_sparse:
+                    raise ValueError("Schwab sparse response exceeds query window")
                 continue
             if not anchor_ms <= bar.timestamp_ms <= current_bar_ms or bar.timestamp_ms in ids:
                 raise ValueError("foreign or duplicate session candle")
@@ -529,7 +575,7 @@ class SchwabV2RestClient:
             ids.add(bar.timestamp_ms)
             bars.append(bar)
         bars.sort(key=lambda bar: bar.timestamp_ms)
-        if not bars or bars[-1].timestamp_ms != current_bar_ms:
+        if not allow_sparse and (not bars or bars[-1].timestamp_ms != current_bar_ms):
             return bars, None
         return bars, SessionCoverage(
             "schwab_rest_full_session", anchor_ms, end_ms,

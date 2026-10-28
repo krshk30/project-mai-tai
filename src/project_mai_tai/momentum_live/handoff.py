@@ -83,6 +83,23 @@ class LiveHandoff:
             return "not_live_signal"
         try:
             detect = record.payload["detect"]
+            signal_price = Decimal(str(detect["price"]))
+            # The paper engine seals its in-memory prior close into this record.
+            # Never fetch a replacement or let this live-only rule alter paper.
+            raw_prior_close = record.payload.get("prior_close")
+            try:
+                prior_close = Decimal(str(raw_prior_close))
+            except (ValueError, TypeError, ArithmeticError):
+                prior_close = None
+            if (prior_close is None or not prior_close.is_finite() or prior_close <= 0
+                    or (signal_price.is_finite() and signal_price < prior_close)):
+                reason = "momneg1_prior_close_unknown" if (
+                    prior_close is None or not prior_close.is_finite() or prior_close <= 0
+                ) else "momneg1_down_day"
+                self.counts[reason] += 1
+                logger.info("[MOMNEG1-REFUSED] symbol=%s price=%s prior_close=%s reason=%s",
+                            record.symbol, signal_price, raw_prior_close, reason)
+                return reason
             reference = record.payload["reference"]
             end = int(detect.get("end_ms", detect.get("sip_ts_ms")))
             start = int(reference.get("end_ms", reference.get("sip_ts_ms")))
@@ -96,7 +113,7 @@ class LiveHandoff:
                 "is_us": getattr(decision, "is_us", None), "cik": getattr(decision, "cik", None),
                 "as_of": getattr(decision, "as_of", None).isoformat() if getattr(decision, "as_of", None) else None}
             signal = Signal(str(record.session_date), record.symbol, record.logical_id,
-                            start, end, Decimal(str(detect["price"])), observed, day_volume,
+                            start, end, signal_price, observed, day_volume,
                             str(decision.broker), str(decision.reason), json.dumps(evidence, sort_keys=True))
             seen = (signal.session_date, signal.symbol, signal.source_id) in self.ledger._sources
             episode, fresh = self.ledger.claim(signal, now_ns=now_ns)

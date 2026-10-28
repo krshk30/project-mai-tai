@@ -1,0 +1,45 @@
+ALERTS1021 / O-1019-2 exact operator command checkpoint, 2026-10-21
+AUTHOR ONLY. No capture, publication, native gate, service operation or test executed.
+
+1. After the operator's final separately approved installation/restarts, confirm the
+   installed full SHA from the reviewed install receipt. Do not adopt a new SHA solely
+   because git reports it. 1e1a12b3 was the 07:16 reviewer-reported control-only install;
+   ffa7b4db is this lane's authoring BASE, not a claim about the installed machine.
+
+2. In Claude's already authorized box session, set O1019_EXPECTED to that full SHA
+   and O1019_CAPTURE to a fresh private absolute directory. Then execute exactly:
+
+   bash /home/trader/project-mai-tai/ops/health/preopen_rebaseline_capture.sh \
+     "$O1019_EXPECTED" "$O1019_CAPTURE"
+
+   Dependencies: Linux /proc, timeout, systemctl show, GNU stat, git, cp, cmp,
+   sha256sum; read access to the named gate and metadata. No provider or SQL calls.
+   Retain every output, including partial output on refusal. Do not reset restarts.
+   Do not run preopen.sh, run.sh, daily.py or the old bookkeeping_h74.py here.
+
+3. REVIEW/PUBLICATION BLOCKER, not a successful rebaseline:
+   No generic publish/rebaseline CLI exists in the supplied actual daily.py/run.sh.
+   Current preimages, final service identities and installation/action/source receipts
+   are not in this author's input packet. An executable publication command cannot be
+   truthfully pinned without them. Return capture to main/Claude to prepare/review
+   the guarded candidate transaction from the retained runbook sections 5/5a/6:
+   /Users/velkris/.codex/task-queues/analysis/PREOPEN-REBASE-RUNBOOK-20261019.txt
+   Prior exact checkpoint (historical a823 target, never execute unchanged):
+   /Users/velkris/.codex/task-queues/analysis/O-1019-2-PREOPEN-A823-COMMAND-20261020.txt
+
+4. Required reviewed publication content, none inferred from checkout alone:
+   - gate EXPECTED_SHA and seven PID/native UTC start pairs from the fresh capture;
+   - current SNAPSHOT/INSTALL_RECORD/restarted/new-service declarations from actual
+     installation evidence, never relabel the old Oct12 snapshot;
+   - binding approved_sha/tree/current_install and unchanged historical evidence;
+   - runtime approved_sha/final gate hash/binding hash/matching current_install;
+   - same run.lock inode/exclusive lock, exact preimage+mode+inode checks, backup,
+     same-filesystem staging, gate then binding then runtime LAST, directory fsync,
+     before/after boot/identity/head equality, final exact diff and rollback receipt.
+   Preserve all evidence_inputs hashes, flag catalog and helper pins; no automatic
+   repinning of drift, no fabricated process IDs or production assertions.
+   Preserve dynamic paper/guard admission, before07:00 and native06:20 gate rules.
+
+5. Acceptance is the actual next native 06:20 ET gate and its report, not a daytime
+   date override or a capture. The original group #4 alert must remain actionable
+   until readiness is actually established. GUARDPIN1 remains I/Claude's dependency.

@@ -74,10 +74,10 @@ def configured_strategy_registrations(settings: Settings) -> tuple[StrategyRegis
                 },
             )
         )
-    if settings.momentum_paper_enabled:
+    if settings.momentum_paper_enabled and settings.market_data_momentum_warning_enabled:
         for code, display_name, interval_secs in (
-            ("momentum_30s", "Momentum 30", 30),
-            ("momentum_60s", "Momentum 60", 60),
+            ("momentum_30s_warn", "Momentum Warning 30", 30),
+            ("momentum_60s_warn", "Momentum Warning 60", 60),
         ):
             registrations.append(
                 StrategyRegistration(
@@ -286,7 +286,7 @@ def strategy_registration_map(settings: Settings) -> dict[str, StrategyRegistrat
 def configured_broker_account_registrations(settings: Settings) -> tuple[BrokerAccountRegistration, ...]:
     registrations: dict[str, BrokerAccountRegistration] = {}
     for strategy in configured_strategy_registrations(settings):
-        if strategy.code in {"orb", "momentum_30s", "momentum_60s"}:
+        if strategy.code in {"orb", "momentum_30s", "momentum_60s", "momentum_30s_warn", "momentum_60s_warn"}:
             continue
         registrations.setdefault(
             strategy.account_name,

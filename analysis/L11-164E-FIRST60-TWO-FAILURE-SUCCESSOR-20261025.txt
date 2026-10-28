@@ -1,0 +1,92 @@
+L11 164e FIRST60 source-only successor; qualification remains OPEN
+
+Parent: 164e4ca3022d294896256c8ef7f30aae4a642e71 (immutable)
+Root: /private/tmp/oct25-l11-stale-callback-fence-20261025
+Branch: codex/l11-stale-callback-fence-20261025
+Authority: Main actual FIRST60 failure report / cohesive source-only correction.
+No author tests/imports/AST/compile/runtime/PG/provider/SSH/shared writes.
+
+Retained actual result
+----------------------
+/private/tmp/OCT25-L11-164E-BOUNDED-CENSUS-FIRST60-20261025.xml
+SHA256 6417838d59b4ac61a964ea0c2b03ed9c05ac338c6ff8d5d83baa72596f1b944f
+58P2F/7.501s/EXIT1. Original strict18 and bounded13 all passed.
+The timeout, missing warmup, shutdown pending1, and no-factory UNKNOWN remain
+actual failures/evidence. No reinterpretation as whole-gate PASS.
+
+Cause 1: stale callback can reverse a producer revision BEFORE existing fence
+--------------------------------------------------------------------------
+The actual test blocks its wrapper after preparation, then enqueues revised
+close5.99 while old immutable close6.0 remains in the first callback.
+Ingress admits revised work and its producer pin. On releasing the wrapper,
+REST callback previously called _observe_line_bar(old6.0), then _handle_bar
+called it again, before the existing post-await strategy-consumption fence.
+_observe_line_bar -> producer_pins.accept(old6.0) can revise the canonical pin
+BACK to6.0, even though the inbox retains replacement5.99. The later fence
+correctly refuses consumption, but does not undo the earlier pin mutation.
+Owner pins.matches(replacement) then fails; pins.current can reoffer stale6.0.
+Full history returning5.99 can reverse it again during preparation. This source
+path explains how recovery can remain pending; exact executed loop iterations
+were not logged, so no assertion that every inferred iteration occurred.
+The XML proves timeout, not a complete per-iteration causal trace.
+
+Correction: invoke the SAME existing _keepwatch_fence_strategy_consumption
+before mutable observation at REST callback, streamer callback and direct
+_handle_bar ingress. Keep the post-await fence exactly intact. The original
+fence checks work identity/current pins, epoch, session, state/source identity,
+current task and shutdown; stale work still raises BarConsumptionSuperseded,
+sets UNKNOWN and leaves replacement queued. No version alias, undo, timeout
+increase, manual completion or guard relaxation. No new await, loop or I/O.
+All eight new APP lines are in the single existing bot file.
+
+Cause 2: the control supplied two incompatible clocks
+---------------------------------------------------
+The warmup test advances strategy._now_ms to Oct13 candle40+61000ms, but
+_mark_warmed_from_fresh_bar measures datetime.now(UTC), i.e. actual Oct25.
+Its real <=300s predicate therefore rejects the old fixture candle. LNKS was
+pre-warmed by controlled_proof, so {'LNKS'} is consistent with that source.
+Fix only that test's service datetime port to the SAME controlled receipt as
+strategy._now_ms. Do not add IZM to _rest_warmup_done or replace its predicate.
+Real completion, dangerous-arm, cap and other-symbol pending checks remain.
+No claim this source correction has executed successfully.
+
+Source closure / impact
+-----------------------
+APP bot SHA256:
+2ff17a6c7bd739e49c024b9cda81784c3aba0b3e2f8871ed4abc0c5de88fb575
+Changed scoped control SHA256:
+657a84a3dd9eb12418d505e11db06e8ed54f187a270c9fd71c4c1b5db15fb339
+New callback boundary controls SHA256:
+14adaa3154bee74a52129c1d05d44c257b60fead9d8d99167fbe343a546d9bd9
+All other APP and old control bytes unchanged from164e.
+KEEPWATCH OFF branches unchanged; no-context calls retain existing no-op fence.
+KEEPWATCH owned REST/streamer/direct callbacks now refuse stale work before
+observation, persistence, warmup or native/strategy side effects. Shared bar
+type, producer priority, raw OHLCV, history/source proofs, entry permission,
+native readability, caps, 500 inbox, 180s consumability, 60s/12 deferral bound,
+timeouts and shutdown-join policy unchanged. Existing callback buffer drains
+and legitimate replacement recovery require Main verification; not assumed.
+
+Main-only exact changed/new selection (8 intended expansions; UNRUN)
+------------------------------------------------------------------
+tests/unit/test_keepwatch_scoped_boot_ordering.py::test_actual_owner_revision_during_callback_cannot_clear_replacement
+tests/unit/test_keepwatch_scoped_boot_ordering.py::test_actual_rest_warmup_completion_cannot_bypass_other_selected_pending_work
+tests/unit/test_keepwatch_callback_ingress_fence.py::test_superseded_callback_cannot_rewrite_pin_ledger_or_warmup
+tests/unit/test_keepwatch_callback_ingress_fence.py::test_unowned_callback_has_no_invented_owner_or_native_permission
+tests/unit/test_keepwatch_callback_ingress_fence.py::test_controlled_service_clock_preserves_real_warmup_age_boundary
+
+Use Main's reviewed FIRST60 memory/network/process fence with exact successor
+root/APP/test pins, explicit asyncio plugin and fresh output/audit paths.
+Do not execute the old caller with164e pins or repeat the unchanged58 here.
+New6: REST/streamer/direct stale ingress (3), no-context contract (1), actual
+300000ms accepted/300001ms refused service-clock warmup boundaries (2).
+No-original-case acceptance or performance claim follows from these controls.
+
+Remaining gates
+---------------
+All8 new/changed above UNRUN. Rate1 reserved UNRUN. Real LNKS16 07:02 admission,
+original21 denominator reconciliation/OLD-NEW, Friday watched18 and close/boot,
+full104+exactBBCI, L12 binding/boot and quiet rate/stall remain OPEN. 164e passed
+18+13 does not qualify this successor or establish any historical admission.
+No deployment permission. Prior operand packet remains provenance, not a
+runnable successor binding. Main owns queue/status/LATEST and every runtime.

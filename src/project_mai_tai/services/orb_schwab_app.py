@@ -511,7 +511,7 @@ class OrbSchwabService(OrbService):
                 continue
             if self._observe_only:
                 self._observe_seen_bars.setdefault(symbol, set()).add(bar.timestamp)
-            order = self._opening_orders.setdefault(symbol, OrbSchwabOpeningOrder(opening))
+            order = self._opening_orders.setdefault(symbol, OrbSchwabOpeningOrder(opening, symbol=symbol))
             if bar.timestamp < first + timedelta(minutes=2):
                 order.bars.setdefault(bar.timestamp, bar)
                 if self._observe_only:

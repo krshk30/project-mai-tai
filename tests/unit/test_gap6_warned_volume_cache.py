@@ -41,6 +41,7 @@ async def snapshot(target, now, *, count=4097, day=109055, accumulated=108897):
 def offer(target, now):
     observed = int(now.timestamp() * 1_000_000_000)
     detected = row(symbol="RYOJ", session_date=now.date(), payload={
+        "prior_close": "1.50",  # CONTROLLED volume-path input, not historical RYOJ proof.
         "observed_decision_ns": observed, "reference": {"end_ms": 1},
         "detect": {"end_ms": 3, "price": "1.7341"},
     })

@@ -368,10 +368,26 @@ def test_all_on_catalog_audit_committed_live_set_requires_both_consumers():
     control = by_name["bot_control_enabled"]
     assert control["expected"] is True
     assert [control["owning_service"], *control["also_check_services"]] == ["oms", "control"]
-    # Historical checks plus C6two, ATRthree and ORBthree actual consumers.
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags
+    # One reviewed L12 entry adds exactly these two consumers; code stays dark.
+    l12_name = "strategy_schwab_1m_v2_brokerdecides1_enabled"
+    l12 = by_name[l12_name]
+    assert l12["expected"] is True
+    assert [l12["owning_service"], *l12["also_check_services"]] == ["schwab-1m-v2", "oms"]
+    from project_mai_tai.settings import Settings
+    assert Settings.model_fields[l12_name].default is False
+    l11_name = "strategy_schwab_1m_v2_keepwatch1_enabled"
+    l11 = by_name[l11_name]
+    assert l11["expected"] is True
+    assert [l11["owning_service"], *l11.get("also_check_services", [])] == ["schwab-1m-v2"]
+    assert Settings.model_fields[l11_name].default is False
+    legacy_flags = [entry for entry in flags if entry["name"] not in {l11_name, l12_name}]
+    # Retain the original catalog projection as well as the new exact totals.
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_flags
                if entry["name"] != "momentum_live_enabled") == 153 + 2 + 3 + 3
-    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 156 + 2 + 3 + 3
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in legacy_flags) == 156 + 2 + 3 + 3
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags
+               if entry["name"] != "momentum_live_enabled") == 164
+    assert sum(1 + len(entry.get("also_check_services", [])) for entry in flags) == 167
     country = by_name["strategy_schwab_1m_v2_country_route_enabled"]
     assert country["expected"] is True
     assert [country["owning_service"], *country["also_check_services"]] == ["schwab-1m-v2", "oms", "control"]
@@ -447,7 +463,7 @@ def test_all_on_process_catalog_checker_refuses_three_dark_values_without_live_i
     control, = [entry for entry in entries if entry["name"] == "bot_control_enabled"]
     assert control["expected"] is True
     assert [control["owning_service"], *control["also_check_services"]] == ["oms", "control"]
-    # Retained164 + C6two + ATRthree + ORBthree; same six-refusal oracle.
-    assert lines[-1] == "Final call: REAL FAILURE; checked=172/172 mismatches=6 unknown=0"
+    # Retained174 consumer checks plus KEEPWATCH1; same six-refusal oracle.
+    assert lines[-1] == "Final call: REAL FAILURE; checked=175/175 mismatches=6 unknown=0"
     assert len(readers) == len(set(readers)) == 9  # ALERTS1 adds the reconciler
     assert len([line for line in lines if line.startswith("REAL FAILURE")]) == 6

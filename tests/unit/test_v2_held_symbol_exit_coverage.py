@@ -51,9 +51,13 @@ class _Harness:
 
     # the real helper, so the union logic under test is the shipped one
     _subscription_symbols = SchwabV2BotService._subscription_symbols
+    # Production dependency: SchwabV2BotService._observation_symbols, bot.py:3114.
+    _observation_symbols = SchwabV2BotService._observation_symbols
 
     def __init__(self, *, watchlist: set[str], coverage: set[str]) -> None:
-        self.settings = Settings(oms_v2_exit_management_enabled=True)
+        self.settings = Settings(oms_v2_exit_management_enabled=True,
+            strategy_schwab_1m_v2_keepwatch1_enabled=False)
+        self._keepwatch_enabled = self.settings.strategy_schwab_1m_v2_keepwatch1_enabled
         self.redis = _FakeRedis()
         self._watchlist = set(watchlist)
         self._exit_coverage = set(coverage)
@@ -216,11 +220,15 @@ def test_broker_flat_but_internally_held_stays_covered() -> None:
     class _PollHarness:
         # the real helpers, so the union under test is the shipped one
         _subscription_symbols = SchwabV2BotService._subscription_symbols
+        # Production dependency: SchwabV2BotService._observation_symbols, bot.py:3114.
+        _observation_symbols = SchwabV2BotService._observation_symbols
         _sync_gateway_subscription = SchwabV2BotService._sync_gateway_subscription
         _push_desired_symbols = SchwabV2BotService._push_desired_symbols
 
         def __init__(self) -> None:
-            self.settings = Settings(oms_v2_exit_management_enabled=True)
+            self.settings = Settings(oms_v2_exit_management_enabled=True,
+                strategy_schwab_1m_v2_keepwatch1_enabled=False)
+            self._keepwatch_enabled = self.settings.strategy_schwab_1m_v2_keepwatch1_enabled
             self.strategy = _Strategy()
             self._watchlist: set[str] = set()          # HELD already de-listed
             self._exit_coverage: set[str] = set()
@@ -338,8 +346,13 @@ async def test_held_delisted_symbol_can_never_enter() -> None:
             self.emitted.append(draft.symbol)
 
     class _EmitHarness:
+        # Production entry guard: SchwabV2BotService._entry_membership_allowed, bot.py:3137.
+        _entry_membership_allowed = SchwabV2BotService._entry_membership_allowed
+
         def __init__(self) -> None:
-            self.settings = Settings(oms_v2_exit_management_enabled=True)
+            self.settings = Settings(oms_v2_exit_management_enabled=True,
+                strategy_schwab_1m_v2_keepwatch1_enabled=False)
+            self._keepwatch_enabled = self.settings.strategy_schwab_1m_v2_keepwatch1_enabled
             self._watchlist = {STILL_WATCHED}        # HELD deliberately absent
             self._exit_coverage = {HELD}
             self.intent_emitter = _Emitter()

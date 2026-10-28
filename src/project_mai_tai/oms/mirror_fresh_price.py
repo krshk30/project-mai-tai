@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 
 from project_mai_tai.db.models import BrokerAccount, BrokerOrder, DashboardSnapshot, Fill
+from project_mai_tai.buy_price_floor import buy_order_allowed, buy_price_allowed
 from project_mai_tai.events import TradeIntentEvent, stream_name
 from project_mai_tai.fanout_outcome_consumer import (
     NFQ_GAVE_UP_PREFIX, NFQ_RETIRED_PREFIX, TERMINAL_RELEASE_OUTCOMES, append_outcome, broker_outcome,
@@ -193,8 +194,12 @@ class MirrorFreshPriceMixin:
                 self._nfq_outcome(session, event, "rejected_client_abort", reason)
                 self._nfq_log(event, "gave_up", "resting_window_ended")
             return reason
-        if not self._mirror_reading(event.payload.symbol).fresh:
+        reading = self._mirror_reading(event.payload.symbol)
+        if not reading.fresh:
             self._nfq_hold(session, event, "no_fresh_quote")
+            return HELD_REASON
+        if not buy_price_allowed(reading.price, bot=event.payload.strategy_code, symbol=event.payload.symbol):
+            self._nfq_hold(session, event, "PRICE1-REFUSED")
             return HELD_REASON
         return None
 
@@ -430,8 +435,12 @@ class MirrorFreshPriceMixin:
                     continue
                 if symbol is None or hold.phase != "held":
                     continue
-                if not self._mirror_reading(hold.event.payload.symbol).fresh:
+                reading = self._mirror_reading(hold.event.payload.symbol)
+                if not reading.fresh:
                     self._nfq_log(hold.event, "held", "no_fresh_quote")
+                    continue
+                if (not buy_order_allowed(hold.event.payload) or not buy_price_allowed(
+                        reading.price, bot=hold.event.payload.strategy_code, symbol=hold.event.payload.symbol)):
                     continue
                 retry = TradeIntentEvent(source_service="oms-risk", produced_at=self._nfq_now(),
                                          payload=hold.event.payload.model_copy(deep=True))

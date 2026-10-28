@@ -36,6 +36,8 @@ def bar(minute: int, close: str, volume: int = 100) -> BarPoint:
 
 def settings():
     return SimpleNamespace(
+        # Production Settings declares this optional mode OFF (settings.py).
+        strategy_schwab_1m_v2_keepwatch1_enabled=False,
         strategy_schwab_1m_v2_atr_flip_period=5,
         strategy_schwab_1m_v2_atr_flip_factor=3.5,
         strategy_schwab_1m_v2_atr_flip_variant="B",

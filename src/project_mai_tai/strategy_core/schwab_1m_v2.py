@@ -25,11 +25,13 @@ NO imports from: `schwab_native_30s.py`, `bar_builder.py`, `indicators.py`,
 from __future__ import annotations
 
 from project_mai_tai.symbol_case import raw_symbol_is_uppercase
+from project_mai_tai.buy_price_floor import buy_price_allowed
 
 import json
 import logging
 import math
 from collections import deque
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, ROUND_DOWN
@@ -172,6 +174,9 @@ class SchwabV2Config:
     # Setting to 0 effectively disables pending carryforward (cross
     # only fires if the cross-bar itself is fresh).
     pending_cross_max_gap_secs: int = 180
+    # Public configurations are also accepted as the legacy constructor's
+    # settings operand. Keep this rollout flag explicit and default OFF.
+    strategy_schwab_1m_v2_keepwatch1_enabled: bool = False
 
 
 # ⛔ A bar more than this far from its predecessor is a GAP, not the next bar. v2 runs 60s bars;
@@ -295,6 +300,7 @@ class SymbolState:
     slotclear_fresh_buy_segment_id: int = 0
     slotclear_reconstructed_watch_start_ms: int = 0
     slotclear_last_fresh_sell_bar_ms: int = 0
+    slotclear_deferred_sell: tuple[int, int, int] | None = None
     cw_resting_suppressed_segment_id: int = 0   # SLOT2 marker dedupe; policy remains cw_resting_taken
     cw_resting_suppressed_bars: int = 0         # eligible bars suppressed by the consumed slot
     cw_bar_low_so_far: float = 0.0             # min quote px of the current forming bar (rule 7)
@@ -333,6 +339,8 @@ class SymbolState:
     flip_owner_open_positions: dict[str, FlipPositionLeg] = field(default_factory=dict)
     flip_owner_first_rest_placed: bool = False
     flip_owner_recovery_warning_at_ms: int = 0
+    flip_owner_sell_reset_pending: tuple[int, int] | None = None
+    flip_owner_terminal_unfilled_proof: tuple[int, int] | None = None
     fresh_sell_owner_release_segment_ms: int = 0
     retry_one_segment_id: int = 0
     retry_one_closes_in_segment: int = 0
@@ -436,6 +444,8 @@ class SymbolState:
     # shape, on the broker whose order book we cannot even read reliably.
     webull_resting_active: bool = False
     webull_resting_generation_id: str = ""
+    liquidity_floor_bar_ms: int = 0
+    liquidity_floor_volume: float = 0.0
 
 
 @dataclass
@@ -656,6 +666,12 @@ class SchwabV2Strategy:
         self._atr_vol_floor = int(
             getattr(self.settings, "strategy_schwab_1m_v2_atr_flip_vol_floor", 5000)
         )
+        # Legacy indicator/report configurations predate this optional mode.
+        # Absence preserves OFF; an explicit non-boolean must never enable it.
+        keepwatch_enabled = getattr(self.settings, "strategy_schwab_1m_v2_keepwatch1_enabled", False)
+        if type(keepwatch_enabled) is not bool:
+            raise ValueError("strategy_schwab_1m_v2_keepwatch1_enabled must be a boolean")
+        self._keepwatch_liquidity_enabled = keepwatch_enabled
         # Observability only: every detected gap emits. Replay and live populations are separate,
         # and the per-phase evaluated-pair denominator rides each marker. Warmup replay must never
         # consume the only marker a later live gap would otherwise have had.
@@ -797,6 +813,8 @@ class SchwabV2Strategy:
         self._removed_wait_dispatch_persist: Callable[[dict], None] | None = None
         self._removed_wait_block_reason: dict[str, tuple[str, str]] = {}
         self._fresh_sell_release_evidence: dict[str, FreshSellReleaseEvidence] = {}
+        self._cancelack_obligations: dict = {}
+        self._cancelack_dispatch_generation = 0
         self._retry_one_max_retries = max(
             0,
             int(
@@ -1220,6 +1238,7 @@ class SchwabV2Strategy:
         return True
 
     def _restore_flip_owner(self, state: SymbolState) -> None:
+        state._brokerdecides1_restored_empty_owner = None
         if self._retry_one_enabled:
             state.retry_one_budget_readable = bool(
                 self._retry_one_budget_restore_readable
@@ -1242,6 +1261,10 @@ class SchwabV2Strategy:
                 or state.fanout_segment_id
                 or 0
             )
+            if state.flip_owner_opportunity_id <= 0:
+                # Retain unresolved restore provenance: an empty position read
+                # cannot prove that a missing durable owner was never dispatched.
+                restored[symbol] = None
             self._set_flip_owner_unknown(state, reason="restart_state_unreadable", persist=False)
             return
         state.flip_owner_phase = record.phase
@@ -1254,6 +1277,10 @@ class SchwabV2Strategy:
         state.flip_owner_position_ids = dict(record.position_ids)
         state.flip_owner_position_entry_ms = dict(record.position_entry_ms)
         state.flip_owner_first_rest_placed = True
+        if (record.phase == "unknown" and not record.fill_accounts
+                and not record.position_ids and not record.position_entry_ms
+                and not record.flip_bar_ts and not record.provisional_started_ms):
+            state._brokerdecides1_restored_empty_owner = record
         logger.info(
             "[V2-FLIP-OWNER-RESTORED] %s opportunity_id=%d phase=%s positions=%d "
             "entry_allowed=0 pending_fresh_position_read=1",
@@ -1446,17 +1473,24 @@ class SchwabV2Strategy:
         return tuple(accounts)
 
     def _record_removed_wait_dispatch(self, symbol: str, opportunity: int, *,
-                                      token: str = "", account: str = "") -> None:
+                                      token: str = "", account: str = "", l12_exception: bool = False):
         if self._removed_wait_dispatch_persist is None:
             raise RuntimeError("dispatch journal unavailable")
-        self._removed_wait_dispatch_persist({
+        payload = {
             "schema_version": 1, "strategy_code": STRATEGY_CODE, "symbol": symbol,
             "opportunity_id": str(opportunity), "account_names": list(self._removed_wait_accounts()),
             "kind": "attempt" if token else "begin", "attempt_token": token,
             "account_name": account,
-        })
+        }
+        if l12_exception:
+            payload["brokerdecides_exception"] = True
+        return self._removed_wait_dispatch_persist(payload)
 
     def track_removed_wait_dispatch(self, draft: TradeIntentDraft, account: str) -> bool:
+        self._cancelack_dispatch_generation += 1
+        for key in tuple(self._cancelack_obligations):
+            if key[0] == draft.symbol.upper():
+                self._cancelack_obligations.pop(key, None)
         # Eligibility awaits can outlive removal and a fresh scanner re-add.
         state = self._symbol_states.get(draft.symbol.upper())
         try:
@@ -1471,12 +1505,26 @@ class SchwabV2Strategy:
         if self._removed_wait_dispatch_persist is None:
             # Isolated legacy callers have no complete journal and cannot prove a removal.
             return True
+        from project_mai_tai.brokerdecides1_entry import draft_uses_exception
+
+        l12_exception = draft_uses_exception(self, draft)
         try:
             if opportunity <= 0 or account not in self._removed_wait_accounts():
                 raise ValueError("dispatch identity/account unavailable")
+            if l12_exception:
+                from project_mai_tai.brokerdecides1_prewire_authority import SIDECAR
+
+                setattr(draft, SIDECAR, None)
             token = str(uuid4())
-            self._record_removed_wait_dispatch(draft.symbol, opportunity, token=token, account=account)
+            capability = self._record_removed_wait_dispatch(draft.symbol, opportunity, token=token,
+                account=account, l12_exception=l12_exception)
             draft.metadata["clearwait_dispatch_token"] = token
+            if l12_exception:
+                from project_mai_tai.brokerdecides1_prewire_authority import FreshJournalCapability, SIDECAR
+
+                if type(capability) is not FreshJournalCapability:
+                    raise ValueError("fresh_journal_capability_missing")
+                setattr(draft, SIDECAR, capability)  # Never serialized into wire metadata.
         except Exception:  # noqa: BLE001
             logger.exception("[V2-REMOVED-WAIT] %s verdict=UNKNOWN reason=dispatch_journal_failed", draft.symbol)
             return False
@@ -1621,6 +1669,12 @@ class SchwabV2Strategy:
                                 (request.symbol, request.opportunity_id))
                         logger.info("[V2-RETRY-LEFTOVER-CANCEL] %s receipt=confirmed owner_kept=1",
                                     request.symbol)
+                elif not proof.clear and self._removed_wait_requests.get(request.symbol) == request:
+                    disposition = (request.token, proof.reason)
+                    if self._removed_wait_block_reason.get(request.symbol) != disposition:
+                        self._removed_wait_block_reason[request.symbol] = disposition
+                        logger.warning("[V2-RETRY-LEFTOVER-CANCEL] %s opportunity_id=%d receipt=UNKNOWN reason=%s",
+                                       request.symbol, request.opportunity_id, proof.reason)
                 continue
             if (self._removed_wait_enabled and proof.reason == "own_fill_stays_owned"
                     and not proof.clear and self._removed_wait_requests.get(request.symbol) == request
@@ -1769,6 +1823,8 @@ class SchwabV2Strategy:
 
     @staticmethod
     def _clear_flip_owner_memory(state: SymbolState) -> None:
+        state.flip_owner_sell_reset_pending = None
+        state.flip_owner_terminal_unfilled_proof = None
         state.restart_rest_evidence_pending = False
         state.restart_rest_recover_accounts.clear()
         state.restart_rest_cancel_fields.clear()
@@ -1868,6 +1924,9 @@ class SchwabV2Strategy:
             state.symbol,
             candidate,
         )
+        from project_mai_tai.brokerdecides1_entry import bind_reconstructed_opportunity
+
+        bind_reconstructed_opportunity(state, candidate)
         return candidate
 
     def _note_flip_owner_fill(self, state: SymbolState, *, account_name: str, reason: str) -> None:
@@ -1948,6 +2007,7 @@ class SchwabV2Strategy:
             state.flip_owner_evidence_readable = bool(book.readable)
             state.flip_owner_evidence_at_ms = int(book.observed_at_ms)
             if not book.readable:
+                state.flip_owner_terminal_unfilled_proof = None
                 state.flip_owner_open_positions = {}
                 if state.flip_owner_phase != "idle":
                     self._flip_owner_counts["cross_account_evaluated"] += 1
@@ -1972,13 +2032,25 @@ class SchwabV2Strategy:
                 by_account[leg.account_name] = leg
             state.flip_owner_open_positions = by_account
             if duplicate or any(account not in self._flip_owner_accounts for account in by_account):
+                state.flip_owner_terminal_unfilled_proof = None
                 self._set_flip_owner_unknown(state, reason="position_book_identity_ambiguous")
                 continue
+            terminal_unfilled = frozenset(
+                book.terminal_unfilled_opportunities_by_symbol.get(symbol, ()))
+            identity = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+            state.flip_owner_terminal_unfilled_proof = (
+                (identity, int(book.observed_at_ms))
+                if identity > 0 and identity in terminal_unfilled else None)
+            if state.flip_owner_sell_reset_pending is not None:
+                self._retire_probe_owner_after_sell(state)
+            from project_mai_tai.brokerdecides1_closed_owner import (
+                retire_closed_owner_on_new_short,
+            )
+
+            closed_episodes = book.closed_owner_episodes.get(symbol, ())
+            retire_closed_owner_on_new_short(self, state, closed_episodes)
             confirmation_closes = tuple(book.confirmation_closes_by_symbol.get(symbol, ()))
             position_closes = tuple(book.closes_by_symbol.get(symbol, ()))
-            terminal_unfilled = frozenset(
-                book.terminal_unfilled_opportunities_by_symbol.get(symbol, ())
-            )
             self._apply_flip_position_evidence(
                 state,
                 confirmation_closes,
@@ -2198,6 +2270,20 @@ class SchwabV2Strategy:
         accounts = self._removed_wait_accounts()
         if set(accounts) <= state.flip_owner_fill_accounts:
             return
+        proof = self._cancelack_obligations.get(key)
+        queued = any(d.symbol == state.symbol and getattr(d, "side", "") == "buy"
+                     and getattr(d, "intent_type", "") == "open"
+                     for name in ("_pending_intents", "_pending_webull_direct_intents", "_pending_webull_fanout_intents")
+                     for d in getattr(self, name, ()))
+        if (proof is not None and proof.scope.symbol == state.symbol
+                and proof.scope.opportunity_id == opportunity
+                and set(proof.scope.account_names) == set(accounts)
+                and 0 <= self._now_ms() - proof.observed_at_ms <= FLIP_OWNER_EVIDENCE_MAX_AGE_MS
+                and proof.required_accounts and proof.required_accounts <= state.flip_owner_fill_accounts
+                and not (queued or state.resting_active or state.webull_resting_active)):
+            logger.info("[V2-RETRY-LEFTOVER-CANCEL] %s opportunity_id=%d action=not_needed historical_accounts=%s",
+                        state.symbol, opportunity, ",".join(sorted(proof.required_accounts)))
+            return  # No request was opened; owner/budget/slot state is not reset.
         request = RemovedWait(state.symbol, opportunity, str(uuid4()), self._now_ms(),
                               accounts, "retry_exhausted")
         self._removed_wait_requests[state.symbol] = request
@@ -2278,6 +2364,10 @@ class SchwabV2Strategy:
         evaluated = self._flip_owner_counts["unknown_recovery_evaluated"]
         open_positions = state.flip_owner_open_positions
         opportunity_id = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+
+        if opportunity_id <= 0 and state.symbol.upper() in self._restored_flip_owners:
+            self._flip_owner_counts["unknown_recovery_pending"] += 1
+            return False
 
         if (
             opportunity_id <= 0
@@ -2806,6 +2896,18 @@ class SchwabV2Strategy:
             if open_positions:
                 self._set_flip_owner_unknown(state, reason="open_position_without_entry_owner")
             return
+        if phase == "awaiting_close" and not state.flip_owner_position_ids:
+            # An unbound fill can reach SELL before its managed-row binding.
+            # Once the actual position book is freshly flat, missing historical
+            # row IDs must not delay retirement until another SELL flip.
+            if (not open_positions
+                    and self._flip_owner_restore_readable
+                    and self._flip_owner_evidence_fresh(state)
+                    and not self._sell_owner_current_blocker(state)
+                    and state.fanout_segment_id in {0, state.flip_owner_opportunity_id}):
+                self._retire_flip_owner_opportunity(
+                    state, reason="sell_flip_flat_unknown_owner")
+            return
         self._flip_owner_counts["cross_account_evaluated"] += 1
         if phase == "unknown":
             if not self._recover_unknown_flip_owner(
@@ -3033,6 +3135,15 @@ class SchwabV2Strategy:
         )
 
     def _strict_first_rest_admitted(self, state: SymbolState, *, slot: str) -> bool:
+        if getattr(getattr(self, "settings", None), "strategy_schwab_1m_v2_brokerdecides1_enabled", False) is True:
+            from project_mai_tai.brokerdecides1_entry import entry_decision
+
+            if not entry_decision(self, state.symbol).allowed:
+                return False
+            from project_mai_tai.brokerdecides1_entry import reconstructed_first_admitted
+
+            if reconstructed_first_admitted(self, state, slot=slot):
+                return True
         if self._falseflip_entry_blocked(state):
             return False
         if not self._flip_owned_first_entry_enabled:
@@ -3077,6 +3188,9 @@ class SchwabV2Strategy:
             "retry_budget_exhausted",
         }:
             self._flip_owner_counts["admission_refused_unknown"] += 1
+        from project_mai_tai.brokerdecides1_owner_watchdog import note_owner_refusal
+
+        note_owner_refusal(self, state, reason=reason, allowed=allowed)
         bar_key = self._now_ms() // 60000
         logged = self.__dict__.setdefault("_flip_owner_admission_logged_bar", {})
         if logged.get(state.symbol) == bar_key:
@@ -3181,6 +3295,7 @@ class SchwabV2Strategy:
         state.slotclear_fresh_buy_bar_ms = 0
         state.slotclear_fresh_buy_segment_id = 0
         state.slotclear_reconstructed_watch_start_ms = 0
+        state.slotclear_deferred_sell = None
         state.cw_resting_suppressed_segment_id = 0
         state.cw_resting_suppressed_bars = 0
 
@@ -3278,6 +3393,76 @@ class SchwabV2Strategy:
                 and bar_ms > max(state.flip_owner_retry_segment_id, state.flip_owner_flip_bar_ts)):
             state.fresh_sell_owner_release_segment_ms = bar_ms
 
+    def _sell_owner_current_blocker(self, state: SymbolState) -> str:
+        if (state.restart_rest_evidence_pending or state.restart_rest_recover_accounts
+                or state.restart_rest_cancel_fields):
+            return "restart_quarantine"
+        if state.flip_owner_open_positions or state.position_qty or state.position_qty_held:
+            return "current_position"
+        if state.resting_active or state.webull_resting_active:
+            return "current_waiting_order"
+        memory = getattr(self, "_brokerdecides1_memory", None)
+        if memory is not None:
+            snapshot = memory.snapshot
+            if snapshot is not None:
+                if any(state.symbol in book.positions for book in snapshot.books
+                       if book.account in self._flip_owner_accounts):
+                    return "current_native_position"
+                if any(state.symbol in book.working for book in snapshot.books
+                       if book.account in self._flip_owner_accounts):
+                    return "current_native_working_order"
+                if state.symbol in snapshot.inflight:
+                    return "unanswered_submit"
+            decision = memory.assess(
+                accounts=tuple(sorted(self._flip_owner_accounts)), symbol=state.symbol,
+                segment=state.atr_short_flip_bar_ts, now_ms=self._now_ms(),
+                max_age_ms=FLIP_OWNER_EVIDENCE_MAX_AGE_MS)
+            if decision.reason == "local_send_reserved":
+                return "unanswered_submit"
+        return ""
+
+    def _retire_probe_owner_after_sell(self, state: SymbolState) -> bool:
+        """End a SELL-bound probe identity, not a current economic obligation.
+
+        Position updates retry this exact identity after a blocker ends. A new
+        identity cannot inherit the pending retirement. Native absence is not
+        inferred from a missing snapshot: only a never-dispatched local probe
+        can take the ordinary path without a complete current admission card.
+        """
+        pending = state.flip_owner_sell_reset_pending
+        identity = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+        if pending is None or pending[0] != identity or identity <= 0:
+            return False
+        if (state.fanout_segment_id not in {0, identity}
+                or self._sell_owner_current_blocker(state)
+                or not self._flip_owner_restore_readable
+                or not self._flip_owner_evidence_fresh(state)):
+            return False
+        memory = getattr(self, "_brokerdecides1_memory", None)
+        decision = None
+        if memory is not None:
+            decision = memory.assess(
+                accounts=tuple(sorted(self._flip_owner_accounts)), symbol=state.symbol,
+                segment=pending[1], now_ms=self._now_ms(),
+                max_age_ms=FLIP_OWNER_EVIDENCE_MAX_AGE_MS)
+        never_dispatched = not (
+            state.flip_owner_first_rest_placed or state.flip_owner_flip_bar_ts
+            or state.flip_owner_provisional_started_ms or state.flip_owner_fill_accounts
+            or state.flip_owner_position_ids or state.flip_owner_position_entry_ms
+            or state.cw_v2_emit_claimed or state.fanout_webull_claimed
+            or state.fanout_claim_slot_id or state.fanout_claim_attempt_id
+            or state.fanout_claim_outcome not in {"", "released"})
+        # A generic local "released" outcome is not terminal proof: grace
+        # expiry uses that same value. Reuse only the actual account-neutral
+        # terminal census for this exact opportunity and this fresh book.
+        terminal_unfilled = state.flip_owner_terminal_unfilled_proof == (
+            identity, state.flip_owner_evidence_at_ms)
+        if not never_dispatched and not terminal_unfilled and not (
+                decision is not None and (decision.allowed
+                    or decision.reason == "buy_fill_in_segment")):
+            return False
+        return self._retire_flip_owner_opportunity(state, reason="sell_ended_probe_identity")
+
     def _end_flip_owner_on_sell(self, state: SymbolState) -> None:
         if not self._flip_owned_first_entry_enabled:
             return
@@ -3302,6 +3487,16 @@ class SchwabV2Strategy:
             state.flip_owner_phase = "unknown"
             self._persist_flip_owner(state, active=True, reason="restart_sell_cancel_unproven")
             return
+        if self._keepwatch_liquidity_enabled:
+            identity = int(state.flip_owner_opportunity_id or state.fanout_segment_id or 0)
+            sell_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+            if (identity > 0 and sell_ms > identity
+                    and self._fanout_identity_bar_is_live(state)):
+                state.flip_owner_sell_reset_pending = (identity, sell_ms)
+            blocker = self._sell_owner_current_blocker(state)
+            if blocker:
+                self._set_flip_owner_unknown(state, reason=f"sell_flip_{blocker}")
+                return
         phase = state.flip_owner_phase
         if phase == "idle":
             contradictory_owner_state = bool(
@@ -3316,6 +3511,14 @@ class SchwabV2Strategy:
                 or state.flip_owner_first_rest_placed
             )
             if contradictory_owner_state:
+                if self._keepwatch_liquidity_enabled:
+                    if self._retire_probe_owner_after_sell(state):
+                        return
+                from project_mai_tai.brokerdecides1_entry import unused_owner_at_sell_definite
+
+                if unused_owner_at_sell_definite(self, state):
+                    self._retire_flip_owner_opportunity(state, reason="brokerdecides_unused_identity_sell")
+                    return
                 self._set_flip_owner_unknown(
                     state,
                     reason="sell_flip_idle_owner_contains_evidence",
@@ -3343,6 +3546,13 @@ class SchwabV2Strategy:
                 state.cw_resting_suppressed_bars = 0
             return
         if not self._flip_owner_evidence_fresh(state):
+            # L12 may resolve an OLD hold, never veto OLD's normal SELL reset.
+            if phase == "unknown":
+                from project_mai_tai.brokerdecides1_entry import unused_owner_at_sell_definite
+
+                if unused_owner_at_sell_definite(self, state):
+                    self._retire_flip_owner_opportunity(state, reason="brokerdecides_unused_identity_sell")
+                    return
             self._set_flip_owner_unknown(
                 state,
                 reason="sell_flip_without_fresh_position_evidence",
@@ -4442,6 +4652,19 @@ class SchwabV2Strategy:
         finally:
             self._bar_observation_phase = previous_phase
 
+    def on_current_recovery_bar(self, symbol: str, bar: ChartBar, *, state_only: bool,
+                                publish, observation_phase: Literal["live", "replay"] = "live",
+                                ) -> TradeIntentDraft | None:
+        """Consume proven current ingress without claiming historical coverage."""
+        if observation_phase == "replay" and not state_only:
+            raise ValueError("historical recovery cannot evaluate an entry")
+        previous = getattr(self, "_current_bar_recovery", None)
+        self._current_bar_recovery = (state_only, publish)
+        try:
+            return self.on_observed_bar(symbol, bar, observation_phase=observation_phase)
+        finally:
+            self._current_bar_recovery = previous
+
     def on_bar(self, symbol: str, bar: ChartBar) -> TradeIntentDraft | None:
         if not raw_symbol_is_uppercase(symbol) or not raw_symbol_is_uppercase(bar.symbol):
             return None
@@ -4477,6 +4700,9 @@ class SchwabV2Strategy:
         else:
             state.bars.append(ohlcv)
 
+        if self._keepwatch_liquidity_enabled:
+            self._bar_volume_for_liquidity_floor(state, ohlcv)
+
         if (
             self._gap_hold_enabled
             and state.gap_hold_active
@@ -4495,7 +4721,9 @@ class SchwabV2Strategy:
         # deadline elapsed without a quote, or drop one whose segment flipped. Runs
         # after _evaluate_completed_bar so _update_atr_state has rolled atr_prev_state.
         # No-op (returns None) when hold-confirm is off — atr_hold_pending is never set.
-        hold_draft = self._resolve_hold_on_bar(state)
+        recovery = getattr(self, "_current_bar_recovery", None)
+        hold_draft = (None if recovery is not None and recovery[0]
+                      else self._resolve_hold_on_bar(state))
         return eval_draft or hold_draft
 
     def on_stream_trade(
@@ -4581,7 +4809,8 @@ class SchwabV2Strategy:
         quote = Quote(
             symbol=state.symbol,
             bid_price=float(bid_price or 0.0) if self._pm_rest_feature(state, "pm_print_ask_confirm") else 0.0,
-            ask_price=ask if self._pm_rest_feature(state, "pm_print_ask_confirm") else 0.0,
+            # Preserve the validated real ask for PRICE1 and downstream sizing, even flag-OFF.
+            ask_price=ask,
             last_price=px,
             quote_time_ms=print_ms,
             trade_time_ms=print_ms,
@@ -4699,6 +4928,10 @@ class SchwabV2Strategy:
             and state.position_qty == 0
             and px >= state.atr_prev_trail
         ):
+            if (not buy_price_allowed(state.atr_prev_trail, bot=STRATEGY_CODE, symbol=state.symbol)
+                    or not buy_price_allowed(px, bot=STRATEGY_CODE, symbol=state.symbol)
+                    or not buy_price_allowed(quote.ask_price, bot=STRATEGY_CODE, symbol=state.symbol)):
+                return None
             if not self._atr_rearm_enabled:
                 state.atr_fired_in_short_seg = True  # legacy claim (flag-off; suppresses bar-close emit)
             state.atr_hold_pending = PendingHold(
@@ -4715,8 +4948,16 @@ class SchwabV2Strategy:
         self, state: SymbolState, ph: PendingHold, now_ms: int
     ) -> TradeIntentDraft | None:
         """Window elapsed: apply the net_delta verdict. Coverage guard (<min_ticks)
-        falls back to ENTER (matches the backtest BAR_CLOSE_FALLBACK). Always clears
-        the pending hold; always logs for live slippage/decision telemetry."""
+        falls back to ENTER (matches the backtest BAR_CLOSE_FALLBACK). A PRICE1
+        refusal retains the pending hold; ordinary verdicts clear it."""
+        if state.position_qty <= 0:
+            prices = [ph.touch_price, ph.last_px]
+            ask = getattr(state.last_quote, "ask_price", None)
+            if ask is not None:
+                prices.append(ask)
+            for price in prices:
+                if not buy_price_allowed(price, bot=STRATEGY_CODE, symbol=state.symbol):
+                    return None
         state.atr_hold_pending = None
         net_bps = (
             (ph.last_px - ph.touch_price) / ph.touch_price * 1e4 if ph.touch_price else 0.0
@@ -4759,13 +5000,15 @@ class SchwabV2Strategy:
         the last completed bar's volume and the touch-time segment age. Entry/reference
         price = touch_price (idealized, == backtest tp); the order is a market order
         downstream exactly as today, so the realised fill is touch+drift (drift logged)."""
-        if state.bars and state.bars[-1].volume <= self._atr_vol_floor:
+        if state.bars and self._bar_volume_for_liquidity_floor(state, state.bars[-1]) <= self._atr_vol_floor:
             self._log_hold(state, ph, mode + "_volfloor_skip", net_bps)
             return None
         if self._atr_use_max_state_age and ph.seg_age >= self._atr_max_state_age:
             self._log_hold(state, ph, mode + "_age_skip", net_bps)
             return None
         entry = ph.touch_price
+        if not buy_price_allowed(entry, bot=STRATEGY_CODE, symbol=state.symbol):
+            return None
         quote = state.last_quote
         sized = self._sized_open(
             state.symbol, leg="schwab", price=getattr(quote, "ask_price", None), basis="trigger_quote_ask"
@@ -4852,6 +5095,7 @@ class SchwabV2Strategy:
         state.atr_state_age = 0
         state.atr_short_flip_bar_ts = 0
         state.restart_last_live_sell_ms = 0
+        state.slotclear_deferred_sell = None
 
     @staticmethod
     def _drop_queued_open_intents_for_symbol(
@@ -4873,6 +5117,9 @@ class SchwabV2Strategy:
         return bool(state is not None and state.gap_hold_active)
 
     def line_buy_ready(self, symbol: str) -> bool:
+        keepwatch = getattr(self, "_keepwatch_entry_allowed", None)
+        if keepwatch is not None and not keepwatch(symbol.upper()):
+            return False
         if self._removed_wait_gate_closed(symbol):
             return False
         if not getattr(self, "_line_restoration_enabled", False):
@@ -4981,6 +5228,7 @@ class SchwabV2Strategy:
         if not state.gap_hold_active or state.gap_hold_contiguous_bars < required:
             return False
         state.gap_hold_active = False
+        self._retry_slotclear_deferred_sell(state)
         logger.info(
             "[V2-GAP-RESUME] %s contiguous_bars=%d required_bars=%d trail=%s entry_allowed=1",
             state.symbol,
@@ -5246,7 +5494,7 @@ class SchwabV2Strategy:
             self._atr_gap_pairs_evaluated[phase] += 1
             s = sum(state.atr_hl) / period
             hilo = min(hl_cur, 1.5 * s)
-            # ⛔⭐ NEVER COMPUTE TRUE RANGE ACROSS A BAR GAP.
+            # UNKNOWN gaps stay clamped; exact jointly-empty owner pairs may span.
             #
             # `href`/`lref` reference `prev.close`. When the previous bar we SAW is not the
             # adjacent minute -- a restart, a feed stall, a mid-session promotion -- `prev.close`
@@ -5267,9 +5515,14 @@ class SchwabV2Strategy:
             # ⚠️ Gaps are NOT restart-only. Same day, no outage: CRWU 25 min, AXTU 2-13 min,
             # SNDG 3 min. This guard covers all of them.
             gap_ms = decision_gap_ms
-            # R6 may authorize a specific complete-provider pair in the private
-            # state-only rebuild; live/unknown/outage pairs keep the clamp.
-            if gap_ms > _ATR_MAX_BAR_GAP_MS and not (state_only and span_gap):
+            # The live exception is bound to this callback's current admitted work.
+            attested_live_pair = False
+            if gap_ms > _ATR_MAX_BAR_GAP_MS:
+                reader = getattr(self, "_keepwatch_gap_span_allowed", None)
+                if reader is not None:
+                    attested_live_pair = reader(state.symbol, decision_prev_bar_ts,
+                                                int(cur.timestamp_ms)) is True
+            if gap_ms > _ATR_MAX_BAR_GAP_MS and not ((state_only and span_gap) or attested_live_pair):
                 tr = hilo
                 self._atr_gaps_observed[phase] += 1
                 symbol_phase = (state.symbol, phase)
@@ -5293,6 +5546,10 @@ class SchwabV2Strategy:
                     hilo,
                 )
             else:
+                if attested_live_pair:
+                    logger.info("[V2-ATR-ATTESTED-GAP] %s phase=%s prev_bar_ts=%d cur_bar_ts=%d "
+                                "provider_empty_pair=1 live_owner_bound=1",
+                                state.symbol, phase, decision_prev_bar_ts, int(cur.timestamp_ms))
                 href = (
                     (cur.high - prev.close)
                     if cur.low <= prev.high
@@ -5344,7 +5601,11 @@ class SchwabV2Strategy:
         ):
             touch = True
             touch_price = state.atr_prev_trail
-            if not self._atr_rearm_enabled:
+            if (not self._atr_rearm_enabled
+                    and buy_price_allowed(touch_price, bot=STRATEGY_CODE, symbol=state.symbol)
+                    and buy_price_allowed(cur.close, bot=STRATEGY_CODE, symbol=state.symbol)
+                    and (state.last_quote is None or buy_price_allowed(
+                        state.last_quote.ask_price, bot=STRATEGY_CODE, symbol=state.symbol))):
                 state.atr_fired_in_short_seg = True
 
         # --- flip state machine (close vs PRIOR trail) ---
@@ -5375,6 +5636,7 @@ class SchwabV2Strategy:
                     state.atr_state, state.atr_trail = "long", close - loss
                     flip, state.atr_state_age = "BUY", 0
                     state.atr_short_flip_bar_ts = 0
+                    state.slotclear_deferred_sell = None
 
         # Roll prev trail/state to THIS bar's values for the next bar's touch test.
         state.atr_prev_trail = state.atr_trail
@@ -5473,7 +5735,7 @@ class SchwabV2Strategy:
         # OFF (default) = skipped entirely -> byte-identical to the A/B path.
         if self._cw_enabled:
             return self._cw_entry(state, cur, atr_signal)
-        if cur.volume <= self._atr_vol_floor:
+        if self._bar_volume_for_liquidity_floor(state, cur) <= self._atr_vol_floor:
             return None  # the only filter: bar volume > floor
 
         # Track-B fresh-flip qualifier (ATR-Flip ONLY; OFF by default = behavior-
@@ -5509,6 +5771,9 @@ class SchwabV2Strategy:
             else:
                 return None
 
+        if (not buy_price_allowed(entry, bot=STRATEGY_CODE, symbol=state.symbol)
+                or not buy_price_allowed(cur.close, bot=STRATEGY_CODE, symbol=state.symbol)):
+            return None
         quote = state.last_quote
         sized = self._sized_open(
             state.symbol, leg="schwab", price=getattr(quote, "ask_price", None), basis="trigger_quote_ask"
@@ -5592,10 +5857,13 @@ class SchwabV2Strategy:
         # permitting. Stay armed on a non-break or a thin bar so a later break enters.
         if float(cur.high) <= state.cw_three_bar_high:
             return None
-        if cur.volume <= self._atr_vol_floor:
+        if self._bar_volume_for_liquidity_floor(state, cur) <= self._atr_vol_floor:
             return None  # broke on a sub-floor bar; wait for a liquid break
 
         entry = float(state.cw_three_bar_high)  # idealized stop-buy fill at the trigger
+        if (not buy_price_allowed(entry, bot=STRATEGY_CODE, symbol=state.symbol)
+                or not buy_price_allowed(cur.close, bot=STRATEGY_CODE, symbol=state.symbol)):
+            return None
         quote = state.last_quote
         sized = self._sized_open(
             state.symbol, leg="schwab", price=getattr(quote, "ask_price", None), basis="trigger_quote_ask"
@@ -5675,6 +5943,7 @@ class SchwabV2Strategy:
             decision_id=decision_id,
         )
         self._atr_sell_observed_bar_by_symbol[state.symbol] = cur.timestamp_ms
+        self._remember_slotclear_gap_sell(state, atr_signal)
         if self._bar_observation_phase == "live":
             state.restart_last_live_sell_ms = cur.timestamp_ms
         self._pending_atr_sell_observations[decision_id] = observation
@@ -5723,9 +5992,12 @@ class SchwabV2Strategy:
             return
         flip = (atr_signal or {}).get("flip")
         if flip == "BUY":
+            state.slotclear_deferred_sell = None
             state.fresh_sell_owner_release_segment_ms = 0
         elif state.fresh_sell_owner_release_segment_ms and flip != "SELL":
             self._fresh_sell_release_owner(state, atr_signal)
+        if flip != "SELL":
+            self._retry_slotclear_deferred_sell(state)
         # New bar: reset the forming-bar low; release a stale emit claim that never filled.
         state.cw_bar_low_so_far = 0.0
         state.cw_v2_bars_since_exit += 1  # reclaim gap: count NEW bars since the prior exit
@@ -5770,6 +6042,9 @@ class SchwabV2Strategy:
                     gap_ms / 60000.0,
                 )
                 return
+            from project_mai_tai.brokerdecides1_entry import recover_unused_at_buy
+
+            recover_unused_at_buy(self, state, atr_signal)
             self._slotclear_fresh_buy(state, atr_signal)
             state.cw_armed = True
             state.cw_bars_waited = 0
@@ -5941,6 +6216,16 @@ class SchwabV2Strategy:
             state.webull_resting_active, state.restart_rest_evidence_pending, state.restart_last_live_sell_ms,
         )
 
+    def _bar_volume_for_liquidity_floor(self, state: SymbolState, bar: OHLCVBar) -> float:
+        if not self._keepwatch_liquidity_enabled:
+            return float(bar.volume)
+        # First accepted closed-bar delivery owns this minute's floor input.
+        # Same-minute provider revisions remain in bars/coverage, not this latch.
+        if state.liquidity_floor_bar_ms != bar.timestamp_ms:
+            state.liquidity_floor_bar_ms = bar.timestamp_ms
+            state.liquidity_floor_volume = float(bar.volume)
+        return state.liquidity_floor_volume
+
     def _liquidity_floor_ok(self, state: SymbolState) -> bool:
         """Last COMPLETED bar's volume must clear `_atr_vol_floor`. True when unknown (no bars).
 
@@ -5956,7 +6241,7 @@ class SchwabV2Strategy:
         """
         if not state.bars:
             return True
-        return float(state.bars[-1].volume) > float(self._atr_vol_floor)
+        return self._bar_volume_for_liquidity_floor(state, state.bars[-1]) > float(self._atr_vol_floor)
 
     def _slotclear_live_close_after_watch(self, state: SymbolState, watch_ms: int) -> bool:
         if not getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_flip_enabled", False):
@@ -6024,8 +6309,58 @@ class SchwabV2Strategy:
                 or not self._flip_owned_first_entry_enabled
                 or not self._slotclear_live_sell_close_after_watch(state, watch_ms)
                 or signal.get("observation_phase", "live") != "live"
-                or state.atr_short_flip_bar_ts != state.bars[-1].timestamp_ms
-                or not self.line_buy_ready(state.symbol) or self._entries_held
+                or state.atr_short_flip_bar_ts != state.bars[-1].timestamp_ms):
+            return
+        self._remember_slotclear_gap_sell(state, signal)
+        self._release_slotclear_sell_cap(state, int(state.bars[-1].timestamp_ms))
+
+    def _remember_slotclear_gap_sell(self, state: SymbolState, signal: dict) -> None:
+        watch_ms = state.slotclear_reconstructed_watch_start_ms
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        if (getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled", False)
+                and self._flip_owned_first_entry_enabled
+                and signal.get("flip") == "SELL"
+                and signal.get("observation_phase", "live") == "live"
+                and self.gap_hold_active(state.symbol)
+                and self._slotclear_live_sell_close_after_watch(
+                    state, max(watch_ms, state.retry_one_watch_start_ms, self._boot_ms))
+                and watch_ms > 0 and state.atr_short_flip_bar_ts == bar_ms
+                and bar_ms > state.slotclear_last_fresh_sell_bar_ms
+                and state.cw_resting_taken and state.cw_reclaim_taken):
+            # Process-local proof only: restore/replay cannot mint a deferred boundary.
+            state.slotclear_deferred_sell = (bar_ms, watch_ms, self._boot_ms)
+            # The gap return also skips normal SELL budget initialization. Use its
+            # durable, monotonic once-per-segment path while THIS bar is still live.
+            self._retry_one_start_segment_on_sell(state, live=True)
+
+    def _retry_slotclear_deferred_sell(self, state: SymbolState) -> None:
+        proof = state.slotclear_deferred_sell
+        if proof is None:
+            return
+        sell_ms, watch_ms, boot_ms = proof
+        bar_ms = int(state.bars[-1].timestamp_ms) if state.bars else 0
+        if (watch_ms != state.slotclear_reconstructed_watch_start_ms
+                or boot_ms != self._boot_ms or state.atr_state != "short"
+                or state.atr_short_flip_bar_ts != sell_ms
+                or sell_ms <= state.slotclear_last_fresh_sell_bar_ms
+                or bar_ms < sell_ms
+                or session_start_ts_ms(bar_ms) != session_start_ts_ms(sell_ms)):
+            state.slotclear_deferred_sell = None
+            return
+        if (not getattr(self.settings, "strategy_schwab_1m_v2_slotclear_fresh_sell_enabled", False)
+                or not self._flip_owned_first_entry_enabled
+                or not self._slotclear_live_sell_close_after_watch(
+                    state, max(watch_ms, state.retry_one_watch_start_ms, boot_ms))
+                or self._entry_window_closed_for_session()
+                or state.restart_rest_evidence_pending):
+            return
+        # Restore/book uncertainty is represented by the actual owner readability,
+        # phase and position fields checked in the shared release gate below.
+        self._release_slotclear_sell_cap(state, sell_ms)
+
+    def _release_slotclear_sell_cap(self, state: SymbolState, sell_ms: int) -> None:
+        watch_ms = state.slotclear_reconstructed_watch_start_ms
+        if (not self.line_buy_ready(state.symbol) or self._entries_held
                 or self.gap_hold_active(state.symbol) or self._removed_wait_gate_closed(state.symbol)
                 or not self._flip_owner_restore_readable or not self._flip_owner_evidence_fresh(state)
                 or state.flip_owner_phase != "idle" or state.flip_owner_opportunity_id
@@ -6039,9 +6374,9 @@ class SchwabV2Strategy:
                 or not (state.cw_resting_taken and state.cw_reclaim_taken)):
             return
         self._clear_cw_slot_claims(state)
-        state.slotclear_last_fresh_sell_bar_ms = int(state.bars[-1].timestamp_ms)
+        state.slotclear_last_fresh_sell_bar_ms = sell_ms
         logger.info("[V2-SLOTCLEAR1-SELL] %s watch_start=%d flip_close=%d action=release_reconstructed_slots",
-                    state.symbol, watch_ms, state.bars[-1].timestamp_ms + 60000)
+                    state.symbol, watch_ms, sell_ms + 60000)
 
     def _cw_v2_quote(self, state: SymbolState, quote: Quote) -> TradeIntentDraft | None:
         if not self.line_buy_ready(state.symbol):
@@ -6148,6 +6483,8 @@ class SchwabV2Strategy:
         # slot" means mechanically: on a cross whose resting never filled, reactive can still fire
         # once, but only over the harder reclaim bar -- it can never stand in as the first entry.
         trig = self._resting_trigger_for_line(state.cw_flip_level) if fresh_first else state.cw_segment_high
+        if not buy_price_allowed(trig, bot=STRATEGY_CODE, symbol=state.symbol):
+            return None
         fl = state.cw_flip_level
         if trig <= 0.0 or (px < trig if fresh_first else px <= trig):
             return None  # rule 6: intrabar break of the entry-appropriate trigger
@@ -6402,6 +6739,8 @@ class SchwabV2Strategy:
     ) -> tuple[Decimal, dict[str, str]] | None:
         from project_mai_tai.atr_country_route import CountryRouteRefusal
 
+        if price is not None and not buy_price_allowed(price, bot=STRATEGY_CODE, symbol=symbol):
+            return None
         version = {}
         try:
             selected = (self._country_entry_selection(self.watchlist_state(symbol))
@@ -6462,6 +6801,11 @@ class SchwabV2Strategy:
         if self._resting_round_up_enabled():
             return float(resting_buy_stop(Decimal(f"{raw:.4f}")))
         return raw
+
+    def _resting_price_allowed(self, symbol: str, line: float) -> bool:
+        # Check before provider tick rounding or the stop-limit cap can lift it.
+        raw = float(line) * (1.0 + self._resting_offset_pct_value() / 100.0)
+        return buy_price_allowed(raw, bot=STRATEGY_CODE, symbol=symbol)
 
     def _resting_round_up_enabled(self) -> bool:
         return bool(getattr(getattr(self, "settings", None),
@@ -6558,6 +6902,8 @@ class SchwabV2Strategy:
         self, state: SymbolState, line: float, *, slot: str = "first",
         recover_accounts: set[str] | None = None,
     ) -> None:
+        if not self._resting_price_allowed(state.symbol, line):
+            return
         if state.restart_rest_evidence_pending:
             self._resting_return_reason(state, "restart_evidence_pending", slot=slot)
             return
@@ -6891,6 +7237,8 @@ class SchwabV2Strategy:
                 self._resting_return_reason(state, "webull_claim_unavailable", slot=slot)
 
     def _reprice_resting(self, state: SymbolState, line: float) -> None:
+        if not self._resting_price_allowed(state.symbol, line):
+            return
         if not self.line_buy_ready(state.symbol):
             return
         if self._resting_round_up_enabled() and state.resting_active and state.resting_is_broker_order:
@@ -7357,6 +7705,8 @@ class SchwabV2Strategy:
             return {**result, "reason": "line_unavailable"}
         ask = self._fresh_resting_ask(state.last_quote) if state.last_quote else None
         trigger = self._resting_trigger_for_line(line)
+        if not self._resting_price_allowed(state.symbol, line):
+            return {**result, "verdict": "wait", "reason": "PRICE1-REFUSED"}
         if ask is None or not math.isfinite(ask) or not 0 < ask < trigger:
             return {**result, "verdict": "wait" if slot == "first" else "expired",
                     "reason": "current_price_not_placeable"}
@@ -7795,7 +8145,9 @@ class SchwabV2Strategy:
                     if not self._resting_stop_ask_allows(state, trail, slot="first"):
                         self._resting_return_reason(state, "track_stop_ask_refused")
                         return
-                if state.cw_resting_taken:
+                from project_mai_tai.brokerdecides1_entry import reconstructed_first_admitted
+
+                if state.cw_resting_taken and not reconstructed_first_admitted(self, state):
                     segment_id = int(state.fanout_segment_id or state.cw_arm_bar_ts or 0)
                     marker_key = segment_id if segment_id > 0 else -1
                     if state.cw_resting_suppressed_segment_id != marker_key:
@@ -8211,6 +8563,10 @@ class SchwabV2Strategy:
         trigger = self._active_resting_trigger(state)
         if not (state.resting_active and line > 0.0 and trigger > 0.0):
             return None
+        if (not self._resting_price_allowed(state.symbol, line)
+                or not buy_price_allowed(trigger, bot=STRATEGY_CODE, symbol=state.symbol)
+                or not buy_price_allowed(quote.ask_price, bot=STRATEGY_CODE, symbol=state.symbol)):
+            return None
         if state.position_qty != 0 or state.resting_flip_ms:   # already filling / in the settle grace
             return None
         confirm_ask = self._pm_rest_feature(state, "pm_print_ask_confirm")
@@ -8518,6 +8874,8 @@ class SchwabV2Strategy:
         band-capped EH-LIMIT off the OMS's own fresh ask (a MARKET/OCO 417s in EH on Webull)."""
         if self._country_single_entry(state):
             return None
+        if not buy_price_allowed(entry_px, bot=STRATEGY_CODE, symbol=state.symbol):
+            return None
         quote = sizing_quote or state.last_quote
         sized = self._sized_open(
             state.symbol, leg="webull", price=getattr(quote, "ask_price", None),
@@ -8621,6 +8979,10 @@ class SchwabV2Strategy:
         line = float(state.resting_level or 0.0)
         trigger = self._active_resting_trigger(state, leg="webull")
         if not (state.resting_active and line > 0.0 and trigger > 0.0):
+            return
+        if (not self._resting_price_allowed(state.symbol, line)
+                or not buy_price_allowed(trigger, bot=STRATEGY_CODE, symbol=state.symbol)
+                or not buy_price_allowed(quote.ask_price, bot=STRATEGY_CODE, symbol=state.symbol)):
             return
         # ⭐⭐ RELEASE A CLAIM THAT NEVER BECAME A POSITION (2026-08-13).
         # The claim below is taken at QUEUE time. If the leg is then blocked -- by our own band cap,
@@ -8855,8 +9217,17 @@ class SchwabV2Strategy:
         if not is_new_bar:
             return None
 
+        recovery = getattr(self, "_current_bar_recovery", None)
+        if recovery is not None and recovery[0]:
+            # A bar received current may be parked behind repair. Advance its
+            # real math/count, but never replay its historical entry decision.
+            self._update_atr_state(state, state.bars[-1], state_only=True)
+            if self._gap_hold_enabled and state.gap_hold_active:
+                self._maybe_resume_gap_hold(state)
+            return None
+
         if (getattr(self, "_line_restoration_enabled", False) and not restored
-                and not state.line_live_fallback):
+                and not state.line_live_fallback and recovery is None):
             # Shadow and gap carry advance math once while source admission waits.
             anchor = session_start_ts_ms(state.bars[-1].timestamp_ms)
             if (0 < state.atr_session_anchor_ms < anchor
@@ -8890,6 +9261,11 @@ class SchwabV2Strategy:
                 # EXIT observations remain live; every ENTRY state machine below is held.
                 self._observe_atr_sell(state, atr_signal)
                 return None
+
+        if recovery is not None:
+            # Publication follows real math and OLD's resume test, before any
+            # entry machine reads line readiness or stamps its draft version.
+            recovery[1](state)
 
         # ⛔ POST-CLOSE IS EXIT-ONLY, NOT "ENTRY STATE THAT HAPPENS NOT TO EMIT".
         #
@@ -9156,6 +9532,11 @@ class SchwabV2Strategy:
         if not bar_is_fresh:
             return None
 
+        # SELL observation already ran above. Preserve a pending entry cross
+        # while PRICE1 refuses; its ordinary age/reversal gates still apply later.
+        if state.position_qty == 0 and not buy_price_allowed(cur.close, bot=STRATEGY_CODE, symbol=state.symbol):
+            return None
+
         # Bar IS fresh. Resolve effective paths = native ∪ valid-pending.
         # C2: a pending cross can be consumed by THIS fresh bar if the
         # gap from the original cross-bar is within the configured cap
@@ -9237,6 +9618,8 @@ class SchwabV2Strategy:
             return self._maybe_atr_emit(state, cur, atr_signal, bar_is_fresh)
 
         path_name = "MACD Cross" if path_macd else "VWAP Breakout"
+        if not buy_price_allowed(cur.close, bot=STRATEGY_CODE, symbol=state.symbol):
+            return None
         quantity = max(
             1, int(self.settings.strategy_schwab_1m_v2_default_quantity)
         )
@@ -9292,6 +9675,10 @@ class SchwabV2Strategy:
         return not (hhmm >= start or hhmm < end)
 
 
+class EntryPublicationRefused(RuntimeError):
+    """Positive no-xadd refusal, not an exception from a possibly sent publication."""
+
+
 class SchwabV2IntentEmitter:
     """Writes intents to Redis `strategy-intents` stream in the shape OMS
     already expects. OMS persists to trade_intents on stream consumption.
@@ -9304,11 +9691,19 @@ class SchwabV2IntentEmitter:
         broker_account_name: str,
         *,
         on_submitted: Callable[[TradeIntentDraft, UUID], None] | None = None,
+        publication_guard=None,
+        before_entry_publish: Callable[[TradeIntentDraft, str], None] | None = None,
+        publication_boundary_factory=None,
+        on_prewire_refusal=None,
     ) -> None:
         self.settings = settings
         self.redis = redis
         self.broker_account_name = broker_account_name
         self.on_submitted = on_submitted
+        self.publication_guard = publication_guard
+        self.before_entry_publish = before_entry_publish
+        self.publication_boundary_factory = publication_boundary_factory
+        self.on_prewire_refusal = on_prewire_refusal
         self.stream = stream_name(settings.redis_stream_prefix, "strategy-intents")
 
     async def emit(
@@ -9317,27 +9712,71 @@ class SchwabV2IntentEmitter:
         *,
         correlation_id: UUID | None = None,
     ) -> UUID:
-        payload = TradeIntentPayload(
-            strategy_code=STRATEGY_CODE,
-            broker_account_name=self.broker_account_name,
-            symbol=draft.symbol,
-            side=draft.side,  # type: ignore[arg-type]
-            quantity=draft.quantity,
-            intent_type=draft.intent_type,  # type: ignore[arg-type]
-            reason=draft.reason,
-            metadata=dict(draft.metadata),
+        is_l12_entry = (
+            getattr(self.settings, "strategy_schwab_1m_v2_brokerdecides1_enabled", False) is True
+            and draft.side == "buy" and draft.intent_type == "open"
         )
-        event = TradeIntentEvent(
-            source_service=SERVICE_NAME,
-            correlation_id=correlation_id,
-            payload=payload,
+        boundary = (
+            self.publication_boundary_factory(draft, self.broker_account_name)
+            if is_l12_entry and self.publication_boundary_factory is not None else None
         )
-        await self.redis.xadd(
-            self.stream,
-            {"data": event.model_dump_json()},
-            maxlen=self.settings.redis_strategy_intent_stream_maxlen,
-            approximate=True,
-        )
+        if is_l12_entry:
+            from project_mai_tai.brokerdecides1_prewire_authority import SIDECAR
+
+            if boundary is None and getattr(draft, SIDECAR, None) is not None:
+                raise ValueError("brokerdecides1_exception_boundary_missing")
+        wire_invoked = False
+        try:
+            guard = self.publication_guard(draft) if self.publication_guard is not None else nullcontext(lambda: True)
+            async with guard as valid:
+                if not valid():
+                    raise EntryPublicationRefused("exposure_or_source_generation_changed")
+                # No await separates the final L12 card check/reservation from
+                # XADD. Its two metadata stamps must reach the actual payload.
+                if is_l12_entry:
+                    if self.before_entry_publish is None and boundary is not None:
+                        raise ValueError("brokerdecides1_publish_guard_missing")
+                    if self.before_entry_publish is not None:
+                        self.before_entry_publish(draft, self.broker_account_name)
+                payload = TradeIntentPayload(
+                    strategy_code=STRATEGY_CODE,
+                    broker_account_name=self.broker_account_name,
+                    symbol=draft.symbol,
+                    side=draft.side,  # type: ignore[arg-type]
+                    quantity=draft.quantity,
+                    intent_type=draft.intent_type,  # type: ignore[arg-type]
+                    reason=draft.reason,
+                    metadata=dict(draft.metadata),
+                )
+                event = TradeIntentEvent(
+                    source_service=SERVICE_NAME,
+                    correlation_id=correlation_id,
+                    payload=payload,
+                )
+                encoded = event.model_dump_json()
+                kwargs = {"maxlen": self.settings.redis_strategy_intent_stream_maxlen,
+                          "approximate": True}
+                if boundary is not None:
+                    await boundary.invoke_xadd(self.redis.xadd, self.stream, {"data": encoded}, **kwargs)
+                else:
+                    wire_invoked = True
+                    await self.redis.xadd(self.stream, {"data": encoded}, **kwargs)
+        except BaseException as exc:
+            if boundary is not None and boundary.phase == "BEFORE_XADD":
+                proof = boundary.refuse(type(exc).__name__, int(datetime.now(UTC).timestamp() * 1000))
+                try:
+                    if self.on_prewire_refusal is None:
+                        raise RuntimeError("prewire_cleanup_callback_missing")
+                    await self.on_prewire_refusal(boundary, proof)
+                except BaseException as cleanup_error:
+                    raise RuntimeError("intent_prewire_cleanup_unknown") from cleanup_error
+            transport_invoked = wire_invoked or (
+                boundary is not None and boundary.phase not in {"BEFORE_XADD", "REFUSED"}
+            )
+            if isinstance(exc, EntryPublicationRefused) and transport_invoked:
+                # Includes a context-finalizer error after a successful XADD.
+                raise RuntimeError("intent_publication_transport_outcome_unknown") from exc
+            raise
         if self.on_submitted is not None:
             self.on_submitted(draft, event.event_id)
         logger.info(

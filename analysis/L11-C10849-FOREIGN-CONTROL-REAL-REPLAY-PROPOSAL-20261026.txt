@@ -1,0 +1,105 @@
+C10849 TEST-ONLY SUCCESSOR / NO APP CHANGE / REAL REPLAYS STILL OPEN
+
+Parent f57e721bc0c1d3c7047c183dade2a5aa529543e7 remains frozen.
+Root /private/tmp/oct26-l11-awaiting-foreign-control-20261026
+The prior 29 controls are unchanged. Main reports their actual PASS1.33s,
+XML cb9b9aad2a301523cc25e81f2b9c978c16a7cd27f1e7f1c1d8d78e7d0adfbd77.
+This source adds exactly ONE nonparametrized selector; it is UNRUN:
+tests/unit/test_l11_c10831_empty_awaiting_close.py::test_empty_awaiting_close_foreign_native_account_positive_book_does_not_count
+Main must use its existing memory-only source-pinned fence and fresh artifacts.
+No prior 29 repeat, no APP/import/test/PG/provider execution by this author.
+
+CONTROL CONTRACT
+Use the exact existing awaiting-close constructor and actual AdmissionMemory.
+NativeAccountBook account live:momentum_warn_live has positive positions AND
+working for SPRC. Its account is outside configured _flip_owner_accounts.
+The actual bounded two-book snapshot retains that positive foreign evidence;
+it is NOT a complete bot-account native-flat card. A separate typed, fresh,
+readable OMS FlipPositionBook supplies flat managed-position evidence.
+Actual apply_flip_position_book must retire through the actual ordered writes.
+Do not confuse this with a foreign managed leg inside FlipPositionBook: that
+different input still hits the existing position_book_identity_ambiguous guard.
+No native absence/permission is manufactured by this control.
+
+CORRECTED AIXI REAL EVIDENCE (NO NEW QUERY REQUIRED)
+Bohr retained-source packet:
+/private/tmp/mai-tai-ui-quiet-alert-trace-20261026/analysis/OCT26-C10831-AIXI-RETAINED-OWNER-WITNESSES.txt
+SHA256 954138c5cf0af8d5a77340f3a44bf831b701d2fbe502b4f4d0783b399fc616d1
+SOURCE21 bridge /private/tmp/oct24-l12-5575-psycopg3-orders-bridge-first-20261024
+manifest-v2.json c2e0b426792fa3b63f85d2fbd70ef856ce0633fdf9a2bb2c0917fd9758291cbf
+Eight actual owner rows, opportunity1792511762385, date2026-10-20:
+12:16:46.044673 ET provisional; 12:18:03.146034 unknown;
+13:27:02.689968 awaiting_close (empty position_ids);
+14:43:03.166657 inactive, same empty IDs, reason sell_flip_flat.
+The earlier Main query16:30..18:30ET was the wrong incident window, NOT evidence
+of retention loss/no incident. Preserve that failed selection as historical.
+Awaiting row47c27f66-008e-4a6e-8401-2d82e49cc388:
+quarantine/v2/dashboard_snapshots/00000153.json
+SHA f1046b100be8b87bb65dcf7c5a25bd52dd806aae96f24623367018fc83331d05
+Retired rowdfd8d252-95c8-4dbe-9939-fe9938c81694:
+quarantine/v2/dashboard_snapshots/00000476.json
+SHA 5b4d996d088f403c6181f0081ef1753b3b015c67750b1f1bba1b6e5972f35826
+Real linked managed row8c09507e-5352-4a5e-95b9-a777cf525ddc:
+quarantine/v2/oms_managed_positions/00000006.json
+SHA35e99b3fc1001cf7611172095a1c00712e9d90164ddbb1344c6f0211a261d77d
+Entry orderbe78a569-dbf8-40cd-9393-8e737fce0a0d:
+quarantine/v2/broker_orders/00000495.json
+SHA483211f4098f5fa63d89a99f5174a93b6d0d8682f92cf525533cc9b60f5fbe1e
+Closed status is capture-asof; updated_at is NOT the exact exit/first-flat time.
+AIXI recognition lag~0.607526s/RTH differs from SPRC EH timing; no shared cause
+inferred. C1 admission-log UTC/ET window still requires reconciliation.
+
+SMALLEST REAL REPLAY SOURCE PROPOSAL (MAIN EXECUTION AFTER REVIEW)
+Use immutable installed a2d4156d06ab2bbe0b072a1d88a80141192470c6 and
+ff324d5f04942f939fcf2bb703da0fa594eab8d5 as separate baselines, candidate f57e
+APP bytes unchanged here. Bind every root/head/member hash, source row/chunk
+and clock before imports; no feature-OFF substitute or auto source adoption.
+Load the REAL owner payload via existing FlipEntryOwnershipStore/record contract;
+preserve opportunity, phase, provisional/flip/retry clocks, fill_accounts and
+EMPTY position IDs. Use actual fanout identity rows separately, not a guessed ID.
+Deliver actual callback evidence in actual order through apply_flip_position_book;
+check old held vs candidate actual retirement, then unchanged real admission
+function at the recorded BUY clock. Record owner retirement separately from
+entry allowance, generated draft, publication and native fill.
+The real linked AIXI managed ID may be used in a separately labelled CONTROLLED
+bound-ID counterfactual; it must NOT overwrite the real empty-ID preimage.
+Retain real later SELL fallback witness; do not call either case all-day stuck.
+
+MISSING REAL OPERANDS (DO NOT INVENT THEM)
+SPRC: first post07:53:41 observed_at/readable/accounts/legs book, actual apply
+clock, simultaneous primary quantity/held quantity, resting/native working,
+unanswered local/dispatch reservations and restart state before07:56.
+AIXI: actual flat-close time, first flat book/apply clock after13:27 SELL and
+before14:43 SELL, same concurrent blockers, actual admission/log clock in ET.
+Neither owner history nor a final closed managed row establishes first-flat
+visibility. Existing native-book Redis value is replaced/TTL60s, not a historical
+append ledger; if no retained original packet, native asof remains UNKNOWN.
+
+FINITE EXISTING-LOG REQUEST TO MAIN / BOHR (NO WORKER EXPORT)
+AIXI UTC16:15:30..16:19:00,17:26:30..17:36:00,18:42:30..18:44:00 on10-20;
+SPRC UTC11:53:00..11:57:00 and12:30:30..12:34:30 on10-26.
+Use existing named retained v2/OMS log rotations and receipt packets first.
+Need full book/position-map or matching read-completion witnesses if retained;
+aggregate V2-FLIP-OWNER-POSITION-BOOK counts alone are not a reconstructable book.
+No provider read, broad sweep or invented native snapshot requested here.
+
+LINE / CARRY IMPACT (STATIC, NOT APPROVAL)
+Core _apply_flip_position_evidence2899..2910 is the ONLY f57e APP addition.
+Actual callback path: service _position_poll_pass2856 -> maps/update_position2914
+-> _fetch_flip_position_book2923/4029 -> cancelack/fresh-release -> apply2929;
+also existing callback at8443. Core apply1993 validates book before new branch.
+Current blockers3396..3422 / freshness3130 / ordered retirement1845 unchanged.
+No new bar/tick DB read, loop, task, await, native call or session created.
+The new empty-ID awaiting-close early return also skips generic row binding /
+reconciliation while held. Keep that disclosed impact; do not claim only the
+successful retirement return differs. Every 606 world reaching this phase needs
+callback/preimage review. A world proven never to reach it is a carry CANDIDATE,
+not automatically approved. Missing state observations => UNKNOWN applicability.
+No rerun/retag of ff324 worlds, current 606 or old incident receipts here.
+
+EXACT C1 DISPOSITION NEEDED IF HISTORICAL BOOKS ARE NOT RETAINED
+Does C1 accept a REAL persisted-owner + explicitly CONTROLLED fresh-flat-book
+causal replay as conditional code-path evidence, with exact07:56 historical
+admission/first-flat timing left UNKNOWN, or require original callback operands
+before adoption? This is not a request to label a constructed book REAL or waive
+open/stale/UNKNOWN-send blockers. Design/29controls PASS is not incident PASS.

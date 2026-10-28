@@ -2,6 +2,14 @@
   "schema_version": 1,
   "baseline": "2026-09-29 after 3389090a deploy; read-only /proc audit of owning processes",
   "flags": [
+    {"name": "strategy_schwab_1m_v2_brokerdecides1_enabled", "expected": true, "owning_service": "schwab-1m-v2", "also_check_services": ["oms"], "reason": "BROKERDECIDES1 native account publication and entry gate are enabled in the reviewed live package; unknown evidence remains guarded.", "ruling": "C1 2026-10-27 18:32 explicitly authorizes this one operational catalog entry, expected true under the operator deploy-flag-ON rule. Audit expectation only; no activation, restart or deployment authority."},
+    {
+      "name": "strategy_schwab_1m_v2_keepwatch1_enabled",
+      "expected": true,
+      "owning_service": "schwab-1m-v2",
+      "reason": "KEEPWATCH1 retains session observation and explicitly authorized entry membership; exit-only subscriptions never grant entry permission, and unknown history remains guarded.",
+      "ruling": "Operator/C1 2026-10-24 14:45 and 16:00: reviewed combined L11/L12/L14 package installs ALL switches ON only after final gates and C1 GO. Code default remains OFF for rollback. This expected-value catalog is not activation or installation authority."
+    },
     {
       "name": "bot_control_enabled",
       "expected": true,

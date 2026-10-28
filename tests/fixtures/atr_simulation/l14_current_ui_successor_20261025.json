@@ -1,0 +1,30 @@
+{
+  "state": "PROPOSED_CURRENT_UI_LINEAGE_PENDING_C1",
+  "historical_head": "9c10a7de1cd2fc7a7df2b0e587fe132d46faa4a7",
+  "historical_tree": "900fa2ed892c4800afa2f38d04ddc00d8541348e",
+  "combined_head": "724d36c5010f3e544e0d29d509060528662f5f82",
+  "combined_tree": "a3e33f457913363cb918eb250dcd08b10684efab",
+  "historical_fixture_sha256": "3eaba723e024d9ac3d675ac661a5981a45673fa0d72784c8160482c39cd091ad",
+  "historical_protected_count": 55,
+  "historical_package_count": 48,
+  "changes": {
+    "src/project_mai_tai/atr_simulation/aggregate_entry_display.py": {
+      "before_sha256": "6c7a04519b3ff505200d3e3c79a47edc8108f6c7c83c14d7eb24137b372853d5",
+      "after_sha256": "5a7b38fc049c0027afaacbc14686ed75d8565c84264f4567523cfce5c13a7d1d"
+    },
+    "src/project_mai_tai/services/atr_simulation_legacy_routes.py": {
+      "before_sha256": "b6a0c398c40aa4d22ee94c7079b0d943252caa34dd9663aa83ffbfe8598868d9",
+      "after_sha256": "8f9c617fb9c0efb72607df1bc860c52cff24dacc68835c8f6ff38001a55781e3"
+    },
+    "src/project_mai_tai/services/control_plane.py": {
+      "before_sha256": "8ee169989749c719e7d6dbb8cad355cd3e4a17b147c70f1fee860c2789c2d5bf",
+      "after_sha256": "b6eeec5790ebc41686c487aa97dfad96cdf5fdbafc5d14d477191c82e0436c31"
+    }
+  },
+  "additions": {
+    "src/project_mai_tai/atr_simulation/cp_sim_display.py": {
+      "before_sha256": null,
+      "after_sha256": "607066c1e73bac122d3fe2ac181a2d2803f0cdc310c368ff7b98b2db12d496a9"
+    }
+  }
+}

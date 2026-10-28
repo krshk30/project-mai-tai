@@ -462,7 +462,7 @@ class MomentumPaperEngine:
         reference_at_ms = signal_trade.sip_ts_ms if signal_trade is not None else now_ms
         if (
             not detection_time_is_eligible(now_ms, self.validation_window) or not symbol_is_eligible(symbol)
-            or prior_close is None or prior_close < Decimal("1")
+            or prior_close is None or signal_price < Decimal("1")
             or reference_price <= 0 or not reference_price.is_finite()
             or signal_price < reference_price * _DETECTION_MULTIPLIER
             or not reference_at_ms - seconds * 1000 <= reference_start_ms < reference_end_ms <= reference_at_ms

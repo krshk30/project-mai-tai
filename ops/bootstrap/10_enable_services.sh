@@ -3,6 +3,7 @@ set -euo pipefail
 
 sudo systemctl enable \
   project-mai-tai-market-data.service \
+  project-mai-tai-snapshot-worker.service \
   project-mai-tai-strategy.service \
   project-mai-tai-oms.service \
   project-mai-tai-reconciler.service \

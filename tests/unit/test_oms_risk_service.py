@@ -3951,10 +3951,12 @@ def test_resting_trigger_order_is_exempt_from_intent_max_age() -> None:
 
 def _manual_stop_row(session_factory, symbols):
     from project_mai_tai.db.models import DashboardSnapshot
+    from project_mai_tai.services.strategy_engine_app import current_scanner_session_start_utc
     with session_factory() as session:
         session.add(DashboardSnapshot(
             snapshot_type="global_manual_stop_symbols",
-            payload={"symbols": list(symbols)},
+            payload={"symbols": list(symbols),
+                     "scanner_session_start_utc": current_scanner_session_start_utc().isoformat()},
         ))
         session.commit()
 

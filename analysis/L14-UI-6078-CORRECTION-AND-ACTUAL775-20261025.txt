@@ -1,0 +1,110 @@
+L14-UI same stable task -- 6078 FIRST35 correction / SOURCE ONLY / UNRUN
+Current full8 pins: L14-UI-CORRECTED-SOURCE-PINS-20261025.sha256.
+Original L14-UI-SOURCE-PINS-20261025.sha256 retains historical6078 pins only.
+
+RETAINED FAILURE AND CAUSE
+/private/tmp/OCT25-L14UI6078-DEFAULT-COMPACT-FIRST35-20261025.stdout
+Actual34PASS/1FAIL2.61s. test_atr_aggregate_routes.py oldline179 tested
+AGGREGATE controlled subtotal $+12,650.00, not LIVE hero. Fixture's canonical
+projector subtotal is $+12,650.00; compact tile intentionally displays
++$12,650.00. Real LIVE acceptance is $+10.00. No evidence of a missing real
+LIVE row follows from this formatting failure; do not label it native proof.
+
+CORRECTION
+Tile retains exact projector label in escaped data-pnl-label alongside required
+visible sign-before-dollar format; no numeric economics change/extra body text.
+Original $+12,650.00 and $+10.00 assertions both retained. Added exact canonical
+attribute, visible +$12,650.00 tile, and whole nonSIM HTML byte equality within
+same actual controlled request. Freeze utcnow for deterministic byte comparison.
+Other changed control checks all three supplied canonical tile labels.
+
+MAIN CHANGED SELECTORS ONLY -- proposed2, neither author collected nor executed
+tests/unit/test_atr_aggregate_routes.py::test_shared_atr_mount_preserves_realized_live_rows_and_input
+tests/unit/test_l14_ui_default_compact.py::test_full_supplied_totals_and_reconciliation_counts_are_small_tiles_not_recomputed
+Do not repeat unchanged34. Prior FIRST35 failure retained, not overwritten.
+
+EXACT ACTUAL775 INTEGRATION RECIPE FOR MAIN REVIEW/CLAIM, NOT EXECUTED
+Reuse the existing normal configured-page caller, not a fabricated projection:
+/private/tmp/OCT25-L14-9C10-PRIVATE-CONFIGURED-PAGE-FIRST-20261025.caller.py
+Its reviewed driver/three-table evidence are retained at:
+/private/tmp/oct25-l14-9c10-accepted775-loaded40-source-20261025/tools/l14_simapi_final_generation.py
+/private/tmp/oct25-l14-9c10-accepted775-loaded40-source-20261025/tools/l14_three_table_evidence.py
+Do not edit these originals or rerun their old output prefix.
+
+1. Main binds reviewed candidate ROOT/HEAD and fresh source map including
+atr_simulation.cp_sim_display and aggregate_entry_display. Preserve whole-source
+guard/import-root verification, packet pins and imported-file checks. Existing
+9c10 copy receipt describes 9c10 copy lineage, NOT candidate HEAD. Preserve that
+literal historical receipt/head; independently attest candidate schema/read-only
+compatibility with the same private target or obtain Main-approved fresh target.
+Never replace copy_receipt.head with UI HEAD or falsely claim a new copy.
+Main must verify current actual private target/role/postmaster epoch/DSN and
+capacity under its existing authority; author has not read PG or assumed alive.
+
+2. Preserve caller180s alarm, bounded_get10s, exact database/reader Unix-socket
+identity/RO privileges, no source-database connection, four-connection cap,
+connect_timeout2, no-child-process and denied-provider fences, original C149
+exact denial, exclusive0600 new outputs and finally cleanup. Do not enlarge
+fences/caps to make the new UI pass. If actual reuse is incompatible, STOP and
+report exact missing input; do not create/restore/export another DB on this note.
+
+3. Keep normal noninjected build_app and its existing settings values supplied
+from pinned evidence.RAW and evidence.REALIZED_PATH/REALIZED_SHA. Preserve
+validate_startup_port, lazy/noDB-until-read and normal Settings env behavior.
+No injection of aggregate/legacy/firstbar synthetic read ports. Controlled LIVE
+dashboard may remain ONLY as clearly labeled LIVE isolation witness, not775data.
+All SIM rows must come from actual accepted private-copy read ports/projectors.
+
+4. Retain original six standalone requests and their unchanged checks:
+firstbar /atr-firstbar/api sourcefac9 day09-22 days32;
+aggregate /atr-aggregate/api source265b day09-22 days32;
+aggregate_html /atr-aggregate same scope;
+legacy12 /atr-simulation/api real4 day10-12 days1;
+legacy21 /atr-simulation/api real4 day10-21 days1;
+legacy_html /atr-simulation real4 day10-21 days1.
+FIRST and AGG fullIDs are in original handoff/source; never prefix-match source.
+The seventh shared request becomes EXACT /bot/1m-schwab-v2 with params={}.
+Assert response.request.url.query==b''; no hidden source/day override permitted.
+Keep API publication/outcome membership/identity/raw result equality/economic
+checks, not merely row counts. Keep no-store/cache/response byte caps unchanged.
+
+5. Keep evidence.check_html(shared=False) for unchanged standalone aggregate.
+For shared ONLY, old check_html(shared=True) assumes 25-row slice/verbose
+headings/realized paragraph and is incompatible with C11827 compact contract.
+Replace only shared presentation assertions, not evidence.check_api nor startup
+receipt validation. Parse actual shared HTML by section[data-sim-mode], tbody
+rows and9cells each: FIRSTBAR253/FIRSTBAR_X3253/AGGREGATE_ENTRY253;
+LIVE:ACTUAL4/TODAY:SUPPLIED4/VOLBODY:QUEUE_AWARE4/VOLBODY:OPTIMISTIC4.
+Assert total775 and each full9-column header. Compare ordered first/aggregate
+rendered cell tuples with unchanged formatter applied to actual API display
+rows (firstbar_tables converts API view, not new synthetic data). For legacy,
+compare identities/counts against original actual legacy12+legacy21 API rows,
+and each visible cell to copied raw facts / existing completion validation;
+no missing/incomplete/UNKNOWN receipt dropped, no zero coercion/inferred VWAP.
+Cross-check row facts as well as775 count; repeated rows cannot satisfy proof.
+
+6. Assert exact four visible tiles +$196.87/+$186.59/-$22.94/+$28.94 and147/26.
+Canonical modeled labels remain data-pnl-label $+196.87/$+186.59/$-22.94.
+Retain underlying API full gross -22.94130103, realized bound receipt exact
+28.9382578600000000 and unchanged147complete/26unreconciled. Preserve native
+partial timing UNKNOWN and not-actual-realized caveats in tooltip, not body dumps.
+Seven small header badges/one caption each; SHA in title only, no body paragraphs.
+
+7. Preserve existing caller observe_render exact actual shared HTML minus SAME
+SIM fragment == original renderer without SIM, and controlled LIVE $+10.00/data
+immutability. For old/new nonSIM, Main compares source baseline b3 and candidate
+template/helper diff and/or captured HTML with same dashboard/clock/kwargs;
+strip ONLY exact SIM fragment, not broad regex/other panels. Current source
+baseline renderer/template and shared CSS are unchanged outside SIM mount.
+Retain old receipts alongside new raw bodies/checks/hashes/audit/cleanup.
+
+8. Main headless desktop/mobile screenshot after actual queryless proof under
+separate reviewed browser authority; author has none. Check card fonts/row
+height/badges, internal table scrolling and no pagewide horizontal overflow.
+Main final L11/L12 composition before ONE final full; no production GO implied.
+
+KNOWN LIMITATIONS
+Instructions are not a new executable wrapper/claim/native proof. Current target
+availability/credentials/epoch and actual candidate775 results remain UNKNOWN
+until Main verifies. Private source path values belong only in Main's reviewed
+caller, never application defaults. No author imports/tests/runtime/browser/PG.

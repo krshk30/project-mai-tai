@@ -182,3 +182,45 @@ async def test_configured_webull_typed_cancel_read_classifies_real_wire_evidence
         assert outcome.report.client_order_id == req.client_order_id and outcome.report.origin == "broker"
         assert outcome.report.filled_quantity == {"status_unknown": D(0),
             "status_unknown_partial": D(7), "filled": D(31)}[mode]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode,expected", [
+    ("explicit_absent", "absent"), ("explicit_absent_no_marker", "invalid"), ("transport", "unavailable"),
+    ("not_found_wrong_http", "invalid"), ("not_found_text_only", "invalid"),
+    ("empty", "invalid"), ("present", "report"), ("wrong_symbol", "invalid"),
+    ("missing_account", "invalid"), ("wrong_coid", "invalid"), ("missing_native", "invalid")])
+async def test_c11145_exact_client_lookup_never_infers_absence_from_none_or_list(fake_sdk, mode, expected):
+    req = replace(request(), metadata={key: value for key, value in request().metadata.items()
+                                      if key != "broker_order_id"})
+    if mode != "explicit_absent_no_marker":
+        req.metadata["refused_pre_submit"] = True  # Parser candidate only; no DB settlement authority.
+    raw = body(request(), status="SUBMITTED", filled="0")
+    if mode == "empty":
+        raw = {"items": []}
+    elif mode == "wrong_symbol":
+        raw["items"][0]["symbol"] = "FOREIGN"
+    elif mode == "missing_account":
+        raw.pop("account_id")
+    elif mode == "wrong_coid":
+        raw["client_order_id"] = "FOREIGN"
+    elif mode == "missing_native":
+        raw.pop("order_id")
+    client = _FakeClient({"detail": raw})
+    if mode in {"explicit_absent", "explicit_absent_no_marker"}:
+        client.raises["detail"] = _ServerException("ORDER_NOT_FOUND", "controlled", 417)
+    elif mode == "transport":
+        client.raises["detail"] = TimeoutError("controlled")
+    elif mode == "not_found_wrong_http":
+        client.raises["detail"] = _ServerException("ORDER_NOT_FOUND", "controlled", 400)
+    elif mode == "not_found_text_only":
+        client.raises["detail"] = RuntimeError("ORDER_NOT_FOUND")
+    adapter = primary(client)
+    outcome = await adapter.fetch_momentum_cancel_read(req, allow_absent=True, lookup_missing_entry=True)
+    assert outcome.kind == expected and client.calls == {"detail": 1}
+    assert client.last["detail"].values["account_id"] == "ACC1"
+    assert client.last["detail"].values["client_order_id"] == req.client_order_id
+    if expected == "absent":
+        assert outcome.report is None and outcome.reason == "webull_exact_client_id_ORDER_NOT_FOUND"
+    elif expected == "report":
+        assert outcome.report.broker_order_id == raw["order_id"]

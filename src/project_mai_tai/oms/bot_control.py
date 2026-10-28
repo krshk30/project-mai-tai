@@ -567,6 +567,8 @@ class BotControlStore:
             ):
                 raise ControlConflict("entry_account_not_live")
             payload = dict(order.payload or {})
+            if strategy.code == "momentum_warn_live" and payload.get("refused_pre_submit") is True:
+                raise ControlConflict("entry_refused_before_submit")
             if "bot_control_permit" in payload:
                 raise ControlConflict("entry_dispatch_already_uncertain")
             revision = state.revision + 1

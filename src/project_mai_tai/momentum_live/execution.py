@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal, ROUND_CEILING
 import logging
 from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
+from uuid import uuid4
 
 from project_mai_tai.broker_adapters.protocols import OrderRequest
+from project_mai_tai.buy_price_floor import buy_price_allowed
 from project_mai_tai.momentum_live.admission import EpisodeLedger, Refusal, Route, STRATEGY_CODE, Signal, price_entry
+from project_mai_tai.momentum_live.entry_reprice import (
+    MAX_PRICE_UPDATES, UnsentEntryConflict, marketable_entry, price_changed,
+)
+from project_mai_tai.momentum_live.entry_wire import LocalEntryNoDispatch, entry_wire_check
 
 logger = logging.getLogger("momentum-live")
 
@@ -29,6 +35,16 @@ class ExecutionPorts:
     request_quote_owner: Callable[[], Awaitable[None]] | None = None
     wait_quote: Callable[[str], Awaitable[None]] | None = None
     entry_metadata: Callable[[Signal], dict[str, str]] | None = None
+    refuse_unsent_entry: Callable[[OrderRequest, str, dict], Awaitable[None]] | None = None
+    reprice_unsent_entry: Callable[[OrderRequest, OrderRequest, dict | None], Awaitable[None]] | None = None
+    refuse_local_entry: Callable[[OrderRequest, object], Awaitable[None]] | None = None
+    mark_refused_pre_submit: Callable[[OrderRequest, str], Awaitable[None]] | None = None
+
+
+@dataclass
+class _PreparedEntry:
+    request: OrderRequest
+    price_updates: int = 0
 
 
 class LiveEntryExecutor:
@@ -43,7 +59,45 @@ class LiveEntryExecutor:
     def _snapshot(self, episode_id: str) -> dict:
         return next(row for row in self.book.snapshot() if row["episode_id"] == episode_id)
 
+    async def _refresh_prepared(self, signal, route, prepared, context, *, episode=None):
+        while True:
+            checked = self._request(signal, prepared.request.metadata["episode_id"], route,
+                                    refusal_context=context)
+            checked.metadata.update({key: prepared.request.metadata[key] for key in (
+                "momlive_submit_attempt_id", "momlive_submit_attempt_count")
+                if key in prepared.request.metadata})
+            checked = marketable_entry(prepared.request, checked, route)
+            changed = price_changed(prepared.request, checked)
+            if not changed and episode is None:
+                return
+            if changed and prepared.price_updates >= MAX_PRICE_UPDATES:
+                raise Refusal("mombuffer1_price_update_budget_exhausted_no_dispatch")
+            if self.ports.reprice_unsent_entry is None:
+                if changed:
+                    raise Refusal("mombuffer1_unsent_reprice_unavailable")
+                await self.ports.save_episode(episode)
+            else:
+                await self.ports.reprice_unsent_entry(prepared.request, checked, episode)
+                # Settlement must address this committed version even if the
+                # fresh check after the await refuses or the budget expires.
+                prepared.request = checked
+            prepared.price_updates += int(changed)
+            if changed:
+                logger.info(
+                    "[MOMBUFFER1-REPRICE] symbol=%s episode=%s update=%s ask=%s ask_age_ms=%s "
+                    "limit=%s cap=%s quantity=%s order_identity=unchanged",
+                    signal.symbol, checked.metadata["episode_id"], prepared.price_updates,
+                    context["ask"], context["ask_age_ms"], checked.metadata["limit_price"],
+                    checked.metadata["cap_price"], checked.quantity,
+                )
+            episode = None
+            # No await between the last fresh check and returning to submit.
+
     def _request(self, signal: Signal, episode_id: str, route: Route, *, refusal_context=None) -> OrderRequest:
+        if not buy_price_allowed(signal.signal_price, bot=STRATEGY_CODE, symbol=signal.symbol):
+            raise Refusal("PRICE1-REFUSED")
+        if refusal_context is not None:
+            refusal_context.update(ask="UNKNOWN", ask_age_ms="UNKNOWN", limit="UNKNOWN")
         now = self.ports.clock()
         now_ns = int(now.timestamp()*1e9)
         if not 0 <= now_ns-signal.observed_ns <= 2_000_000_000:
@@ -68,7 +122,11 @@ class LiveEntryExecutor:
                 )
             except Exception:
                 pass  # Diagnostics must not change pricing/refusal behavior.
+        if ask is not None and not buy_price_allowed(ask, bot=STRATEGY_CODE, symbol=signal.symbol):
+            raise Refusal("PRICE1-REFUSED")
         priced = price_entry(signal.signal_price, ask, quote_ns=quote_ns, now_ns=now_ns, route=route, tick=tick)
+        if not buy_price_allowed(priced.limit, bot=STRATEGY_CODE, symbol=signal.symbol):
+            raise Refusal("PRICE1-REFUSED")
         session = "NORMAL" if (local.hour, local.minute) >= (9, 30) and local.hour < 16 else "AM"
         account = self.accounts[route]
         if not account or not account.startswith("live:"):
@@ -86,6 +144,11 @@ class LiveEntryExecutor:
 
     async def admit(self, signal: Signal) -> tuple[str, OrderRequest | None, dict | None]:
         signal.validate()
+        if not buy_price_allowed(signal.signal_price, bot=STRATEGY_CODE, symbol=signal.symbol):
+            raise Refusal("PRICE1-REFUSED")
+        cached_ask = (self.ports.quote(signal.symbol) or {}).get("ask")
+        if cached_ask is not None and not buy_price_allowed(cached_ask, bot=STRATEGY_CODE, symbol=signal.symbol):
+            raise Refusal("PRICE1-REFUSED")
         now = self.ports.clock()
         if signal.session_date != str(now.astimezone(ZoneInfo("America/New_York")).date()):
             raise Refusal("signal_session_date_mismatch")
@@ -143,17 +206,99 @@ class LiveEntryExecutor:
                 )
                 raise Refusal("quote_wait_expired_or_refused_no_wire") from None
         request = self._request(signal, episode.episode_id, route)
+        # Fresh durable claim + prepare_order's existing-coid refusal bind one
+        # attempt; a restored/previous owner never receives this new seal.
+        request.metadata.update(momlive_submit_attempt_id=str(uuid4()), momlive_submit_attempt_count="1")
         await self.ports.durable_order(episode.episode_id, request, route.value)
+        prepared = _PreparedEntry(request)
         # DB/ownership work may have waited; recheck cached quote and wire invariants.
-        checked = self._request(signal, episode.episode_id, route)
-        if checked.quantity != request.quantity or checked.metadata["limit_price"] != request.metadata["limit_price"]:
-            raise Refusal("quote_changed_after_durable_order_no_resubmit")
-        self.book.begin_submit(episode.episode_id, route, now_ns=int(self.ports.clock().timestamp()*1e9))
-        await self.ports.save_episode(self._snapshot(episode.episode_id))
-        checked = self._request(signal, episode.episode_id, route)
-        if checked.quantity != request.quantity or checked.metadata["limit_price"] != request.metadata["limit_price"]:
-            raise Refusal("quote_changed_before_wire_no_dispatch")
-        reports = await self.ports.submit(request)
+        refusal_context = {"ask": "UNKNOWN", "ask_age_ms": "UNKNOWN", "limit": "UNKNOWN",
+                           "cap": request.metadata["cap_price"]}
+        try:
+            await self._refresh_prepared(signal, route, prepared, refusal_context)
+            self.book.begin_submit(episode.episode_id, route, now_ns=int(self.ports.clock().timestamp()*1e9))
+            await self._refresh_prepared(signal, route, prepared, refusal_context,
+                                         episode=self._snapshot(episode.episode_id))
+        except UnsentEntryConflict as exc:
+            if self.ports.mark_refused_pre_submit is not None:
+                try:
+                    await self.ports.mark_refused_pre_submit(prepared.request, str(exc))
+                except Exception:
+                    logger.exception("[MOMLIVE1-REFUSAL-MARKER] episode=%s persistence=UNKNOWN ownership=retained",
+                                     episode.episode_id)
+            logger.warning(
+                "[MOMLIVE1-REFUSED] symbol=%s episode=%s reason=%s ask=%s ask_age_ms=%s "
+                "signal=%s cap=%s limit=%s route=%s no_wire=UNKNOWN ownership=retained",
+                signal.symbol, episode.episode_id, exc, refusal_context["ask"],
+                refusal_context["ask_age_ms"], signal.signal_price, refusal_context["cap"],
+                refusal_context["limit"], route.value,
+            )
+            raise
+        except Refusal as exc:
+            # This lexical boundary ends BEFORE submit. A timeout/unknown ACK or
+            # any report after submit must never reach client-only settlement.
+            if self.ports.refuse_unsent_entry is None:
+                raise Refusal("prewire_refusal_settlement_unavailable") from exc
+            await self.ports.refuse_unsent_entry(prepared.request, str(exc), refusal_context)
+            self.book.reconcile(episode.episode_id, cumulative_filled=Decimal(0), cumulative_exited=Decimal(0),
+                now_ns=int(self.ports.clock().timestamp()*1e9), terminal_entry=True)
+            await self.ports.save_episode(self._snapshot(episode.episode_id))
+            logger.info(
+                "[MOMLIVE1-REFUSED] symbol=%s episode=%s reason=%s ask=%s ask_age_ms=%s "
+                "signal=%s cap=%s limit=%s route=%s no_wire=true settlement=refused_before_wire",
+                signal.symbol, episode.episode_id, str(exc), refusal_context["ask"],
+                refusal_context["ask_age_ms"], signal.signal_price, refusal_context["cap"],
+                refusal_context["limit"], route.value,
+            )
+            if self.ports.request_quote_owner is not None:
+                await self.ports.request_quote_owner()
+            raise
+        request = prepared.request
+
+        def validate_wire():
+            context = {"ask": "UNKNOWN", "ask_age_ms": "UNKNOWN", "limit": "UNKNOWN",
+                       "cap": request.metadata["cap_price"]}
+            try:
+                checked = self._request(signal, episode.episode_id, route, refusal_context=context)
+                checked.metadata.update({key: request.metadata[key] for key in (
+                    "momlive_submit_attempt_id", "momlive_submit_attempt_count") if key in request.metadata})
+                sealed = replace(request, metadata={key: value for key, value in request.metadata.items()
+                                                    if key != "bot_control_permit"})
+                checked = marketable_entry(sealed, checked, route)
+                if price_changed(sealed, checked):
+                    raise Refusal("mombuffer1_quote_changed_after_permit_no_dispatch")
+            except Refusal as exc:
+                logger.warning(
+                    "[MOMLIVE1-REFUSED] symbol=%s episode=%s reason=%s ask=%s ask_age_ms=%s "
+                    "signal=%s cap=%s limit=%s route=%s settlement=not_authorized_after_submit",
+                    signal.symbol, episode.episode_id, exc, context["ask"], context["ask_age_ms"],
+                    signal.signal_price, context["cap"], context["limit"], route.value,
+                )
+                failure = RuntimeError(str(exc))
+                failure.refusal_context = context
+                raise failure from exc
+            return context
+
+        with entry_wire_check(request, validate_wire, episode=self._snapshot(episode.episode_id)) as attempt:
+            try:
+                reports = await self.ports.submit(request)
+            except LocalEntryNoDispatch:
+                if attempt.proof is None or attempt.dispatched:
+                    raise
+                reports = None
+            # Adapters may map the typed local refusal into a client report.
+            # The in-memory transport receipt, NEVER report text, is authority.
+            if attempt.proof is not None:
+                if self.ports.refuse_local_entry is None:
+                    raise Refusal("mombuffer1_local_no_dispatch_settlement_unavailable")
+                await self.ports.refuse_local_entry(request, attempt.proof)
+                self.book.reconcile(episode.episode_id, cumulative_filled=Decimal(0), cumulative_exited=Decimal(0),
+                    now_ns=int(self.ports.clock().timestamp()*1e9), terminal_entry=True)
+                await self.ports.save_episode(self._snapshot(episode.episode_id))
+                logger.info("[MOMBUFFER1-NO-DISPATCH] symbol=%s episode=%s settlement=terminal_no_fill "
+                            "permit=retained proof=exact_native_boundary reason=%s",
+                            signal.symbol, episode.episode_id, attempt.proof.reason)
+                raise Refusal(attempt.proof.reason)
         result = await self.ports.record(request, reports)
         if route == Route.SCHWAB and any(r.event_type == "rejected" and r.origin == "broker" for r in reports):
             self.schwab_refusals += 1

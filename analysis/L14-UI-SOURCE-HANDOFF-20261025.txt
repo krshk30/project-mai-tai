@@ -1,0 +1,73 @@
+OCT25-L14-UI-C11827-DEFAULT-COMPACT-SIM -- SOURCE HANDOFF / UNRUN
+Owner: Bohr. Main owns queue/LATEST/status/runtime/private PG/production.
+Root: /private/tmp/mai-tai-l14-ui-default-compact-20261025
+Branch: codex/oct25-l14-ui-default-compact
+Base: b3f5d1981fa1f229c1d91d62f754d107da4fae67
+Final source commit and ET time supplied in chat; no Main-root edits.
+D1 stays OUT/AFTERFREEZE, no resumed D1 work or changed ownership.
+
+DEFAULT OPERANDS (only accepted configured aggregate port enables defaults)
+FIRST firstbar-study:fac9c0fc0efd00f15a00776f869eafb28b4010f47c57dfc86e0a105357c93e2d
+AGG aggregate-entry:265b847b615df1efbb85cbf3b053bd9d597198309bdebd89d270ca458b0698e8
+LEGACY real4-retained-v3-main-io-20261023
+FIRST/AGG day2026-09-22 days32 through2026-10-23, limit10000 unchanged.
+LEGACY two one-day windows10-12 and10-21, limit10000 each, not a widened
+legacy read cap. Optional explicit source/day/days overrides remain bounded.
+No default selection for foreign/unconfigured aggregate binding.
+
+OPERAND SOURCE WITNESSES (already retained, file-only narrow reads)
+/private/tmp/OCT24-L14-C12039-FOUR-TABLE-CENSUS-FIRST-20261024.json
+  accepted.atr_simulation_runs.members -- exact three installed source IDs.
+/private/tmp/OCT25-L14-9C10-PRIVATE-CONFIGURED-PAGE-FIRST-20261025.caller.py
+  configured-page query operands168-173, both legacy days separately.
+/private/tmp/OCT25-L14-9C10-PRIVATE-CONFIGURED-PAGE-FIRST-20261025.json
+  modeled_totals -22.94/+196.87/+186.59; realized_gross28.9382578600000000,
+  complete_signals147/unreconciled_signals26. These are retained witnesses,
+  NOT fresh execution of this source or native acceptance.
+Existing MAI_TAI_ATR_SIMULATION_AGGREGATE_RECEIPT_PATH bootstrap unchanged;
+source has no hardcoded private capture path, no startup/settings changes.
+
+SOURCE DESIGN
+CP SIM mount only: one scoped root, seven panel/full cards with existing header,
+row formatter, typography, badge classes and table-wrap; nine columns per mode.
+All FIRST506 + AGG253 + legacy12+4 rows retained (775), no25-row CP slice.
+Four hero-card tiles COPY supplied totals; rounding bound realized gross to2dp
+is display-only. No allocation, reconciliation, modeled economics or live P&L
+changes. Legacy copies individual prices, not an invented VWAP; incomplete
+receipts stay visible with UNKNOWN P&L, not silently hidden or coerced to zero.
+One grey caption per mode, small header badge, SHA/caveats in tooltips only.
+CSS scoped to SIM root; mobile tables scroll internally. No shared CSS edits.
+Legacy CP-only render_html=None keeps full stored-tree/UTF8/closure validation,
+avoids unused API body/verbose HTML. API False and standalone True unchanged.
+Aggregate compact=True renders all validated rows; default standalone unchanged.
+Selected CP display work stays off-loop; unconfigured empty path no executor/read.
+
+MAIN-ONLY FOCUSED FIRST SELECTION (UNRUN, NO AUTHOR COLLECTION)
+29 new parameter cases by source enumeration, plus6 affected cases = proposed35:
+tests/unit/test_l14_ui_default_compact.py
+tests/unit/test_sim_selected_html_offloop.py::test_selected_html_exact_existing_formatter_bytes_and_controlled_live_panel_unchanged
+tests/unit/test_sim_selected_html_offloop.py::test_selected_invalid_full_stored_tree_still_refuses_and_renders_unknown_offloop
+tests/unit/test_atr_aggregate_routes.py::test_shared_atr_mount_preserves_realized_live_rows_and_input
+tests/unit/test_atr_realized_display.py::test_shared_page_actual_live_data_and_modeled_rows_are_not_mutated
+The two offloop selectors each include standalone/shared parameter cases.
+New controls use CONTROLLED memory SQLite / in-process ASGI only, no new native
+driver/framework. Author did NOT import, collect, compile or execute them.
+Existing selected offloop progress, unselected no-executor/read, standalone/API
+bytes and full-tree refusal controls remain available in original files.
+
+MAIN ACCEPTANCE STILL REQUIRED / UNKNOWN
+Claim exact-source focused verification under existing fences; do not infer
+PASS from source review or literal synthetic775 fixture. Actual configured
+queryless page must independently show FIRST506/AGG253/legacy12+4 and full
+totals196.87/186.59/-22.94/realized28.94 plus147/26. Preserve all prior data gates.
+NonSIM HTML must be byteequal outside ONLY SIM mount. Main actual screenshots
+at desktop and mobile: same existing cards/fonts/row heights, seven9-column
+tables, small tiles/badges/captions, hash hover, no pagewide horizontal overflow.
+Optional source/date overrides and reset need actual UI/default routing checks.
+Main folds same final L11/L12 head before ONE final full, not a new author run.
+No production GO, install, restart or accepted-L14 rollback claimed/authorized.
+
+AUTHOR STATIC VERIFICATION
+git diff --check only; full source/test diff read; source pins supplied separately.
+No imports/tests/compile/build/browser/PG/provider/export/install/restart.
+No active worker lane adopted; L11/L12/ATR/Mirror/MOM ownership unchanged.

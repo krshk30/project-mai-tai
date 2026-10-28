@@ -1,0 +1,104 @@
+CANCELACK08-CLOSURE-P2-20261021 / source-only 17:28 successor assessment
+All new code/tests UNRUN. No app import, DB/PG connection/restore/query, replay,
+provider, orders or production action. PG adapter remains STOPPED at9edffbf6.
+
+Evidence / assessment BEFORE patch:
+97's real evidence reader checks working_buy_present at bot3737-3738 BEFORE
+load_proven_accounts3771. That loader raises foreign_identity_UNKNOWN only at
+cancelack1:163 (segment missing/unparseable) or165 (segment outside old interval).
+It queries same-strategy ATR BUY/open intents, not momentum parents. Thus the
+reported changed WORX reason is not evidence that f723 is still working. With
+unmodified97 and the same call, the global working guard already passed.
+Main independently confirmed current f723's typed parent repair exists. No abort
+helper or marker/status/token fallback change belongs in this correction.
+
+NEW narrow permission: human authorized read-only fixed-archive pg_restore
+--file=- text inventory with bounded awk/jq, NOT restore/connection/SQL execution.
+Inspected only table/schema headers and relevant WORX fields plus strategy map.
+Archive MAIN-verifiedSHA fe396666bec6bdbf622862f8e2a4667839ac59010405ea8977b63cf38a94d4bb.
+pg_restore header: PG16.15, client_encoding UTF8. trade_intents COPY columns:
+id,strategy_id,broker_account_id,symbol,side,intent_type,quantity,reason,status,
+payload,created_at,updated_at. payload JSON NOT NULL, IDs UUID, quantity18,8,
+timestamps timestamptz NOT NULL. jq decoded COPY backslash pairs ONCE before
+fromjson; any other COPY escape refused rather than guessed. No SQL emitted by
+pg_restore was executed or imported. No full-output/env/credential dump saved.
+
+Actual bounded count: WORX BUY/open12 total = ATR8 + momentum4, not a strategy
+mix. Initial commentary quick tally9/6 was corrected to8/5 after explicit count.
+ATR42c5b77f-2437-40eb-9d57-310372da0efd -> schwab_1m_v2;
+MOMd1a325d7-254a-4f37-a484-e89ecd40a277 -> momentum_warn_live.
+ALL8 ATR payload+metadata are JSON objects, all segment fields are digit strings
+and dispatch token keys present. No missing/unparseable ATR segment found in
+this archive scope. Original segment1792428962411 has3 rows; later foreign
+1792494122706 has1,1792497422678 has1,1792508583030 has3, all created Oct20.
+Actual cancellation09183e51-4235-4b69-9f3e-8c4211b998f5 is Oct19 17:47:54Z,
+token06257408-12e5-46ef-9b6e-161d983c807d, opportunity1792428962411,
+exact rejected/skipped_before_submit/cancel_target_not_found BUY-only marker.
+That marker is cancel-only, not global native closure proof.
+
+Therefore, for the literal old request described by reviewer, later selected
+Oct20 segments hit the upper interval bound foreign > original requested_at.
+This is a supported source/data counterexample. EXACT reviewer RemovedWait
+requested_at_ms/source-module hashes and first offending unordered SQL row remain
+UNKNOWN until pom_proof.py/raw trace arrives. Do not claim an exact first-row
+trace or native historical firstSELL result from this text inventory.
+
+Minimal correction authored:
+load_proven_accounts gains keyword-only observed_at_ms. If absent, keep original
+request cutoff, with no automatic wall-clock widening. Reject noninteger/bool/
+pre-request read cuts. Original opportunity's proven_accounts STILL gets original
+request and unchanged original journal/attempt/token/time bounds. ONLY separate
+foreign groups use explicit read cut for foreign segment upper bound, independent
+foreign journal/owner/intent envelope and positive native/replacement closure.
+Missing/nonnumeric/older ambiguous segment, future segment/owner, own-token reuse,
+orphan children, unknown native/owner, working replacement, missing managed
+attribution all still UNKNOWN. No foreign row is blindly dropped as terminal.
+
+Changed functions/callers:
+- cancelack1.load_proven_accounts: called by optional_proven_accounts,
+  load_flat_obligations and bot._fetch_fresh_sell_release_evidence.
+- cancelack1.optional_proven_accounts: threads explicit cut; still converts
+  invalid/unreadable history to None, not permission.
+- cancelack1.load_flat_obligations: supplies its already-captured observed ms.
+- bot._fetch_fresh_sell_release_evidence: supplies its already-captured observed
+  ms, same clock as source freshness/settling evaluation; no extra query.
+- RemovedWaitStore.clear_rule_proofs and .proofs: pass their already-captured
+  observed datetime converted to ms; clear-rule and legacy flag-off both covered.
+No signature breaking positional changes; omitted keyword retains old behavior.
+No changes to f723/SPHL repair proof, global working guard, positive partial/
+replacement/native proof, exact terminal-parent-token inheritance, no-target,
+both-account fresh15s/settle15s, owner/slot/budget or commit/laterbar logic.
+No current-country/route/cancelset identity inference. No COPY_ONLY=>LIVE waiver.
+
+Tables/flags/state impact:
+Same read queries/tables and ROW_LIMIT; no new table/query or schema migration.
+Changed only comparison/closure clock for positively proven foreign episodes.
+No DB/RAM/receipt/status/token/owner/slot/budget or flag write. Existing request
+object immutable/unchanged. Ordinary off-loop readers retain all feature,
+session/control, current books and global sharedORB/other-owner gates.
+
+New current-archive fixture records actual selected IDs/statuses/segments/times,
+schema/COPY decoding/count provenance and literal cancellation fields. It does
+NOT fabricate native events/fills/dispatch journals/closed managed rows or exact
+reviewer requested_at. Five projected foreign IDs:
+a51a05b4-444e-40b4-910b-3a58c4401832
+d798587c-8f4e-4e8c-9902-a293e338c08e
+1aae92df-db71-4729-aa04-6e0b9222c577
+831f05b6-2ddf-4b30-a06a-1e6a4e3055ff
+28a10e1a-1a6b-41a2-a984-6b414916cdff
+New tests25 intended:20 dual-account foreign closure/unknown controls,3 invalid
+cut controls,1 own-journal original cutoff unchanged,1 literal8-row field inventory.
+Their native/book/journal values are SYNTHETIC controls, not actual WORX proof.
+All previous tests,97 POM/SAIQ token/abort fixes and60 authored controls unchanged.
+
+Exact missing request to main/reviewer:
+pom_proof.py+SHA, raw per-case output, exact imported head/module hashes, literal
+RemovedWait fields (especially original requested_at_ms), actual read clock,
+offending row ID+raw metadata+iteration order. For the five real foreign rows,
+complete linked orders/events/fills/managed attribution and dispatch+owner+
+replacement journals/completeness. This correction preserves their independent
+proof checks: if absent, next actual result must remain UNKNOWN, not be hidden.
+Main owns real SPHL COPY SQL/protocol and corresponding honest COPY_ONLY scope.
+Do not substitute its status-only simulation or forged live repair receipt.
+Claude same actual proof on reviewed successor, preserving POM/SAIQ success,
+WORX/SPHL all4 gates, original chronology, restart04/native/full/ALLON/GO owed.

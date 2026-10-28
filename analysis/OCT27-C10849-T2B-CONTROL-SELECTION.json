@@ -1,0 +1,24 @@
+{
+  "scope": "SOURCE_EXPECTED_MEMBERSHIP_NOT_COLLECTED_OR_EXECUTED",
+  "test_file": "tests/unit/test_v2_boot_gc_freeze.py",
+  "test_sha256": "b8268fd595ca9ff328ea0ef0f1521794eb5f6004210db6af1967563b4352124b",
+  "expected_cases": 16,
+  "selectors": [
+    "tests/unit/test_v2_boot_gc_freeze.py::test_same_release_state_and_guard_logs_as_literal_ecd2[options0]",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_same_release_state_and_guard_logs_as_literal_ecd2[options1]",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_same_release_state_and_guard_logs_as_literal_ecd2[options2]",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_same_release_state_and_guard_logs_as_literal_ecd2[options3]",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_same_release_state_and_guard_logs_as_literal_ecd2[options4]",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_same_release_state_and_guard_logs_as_literal_ecd2[options5]",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_same_release_state_and_guard_logs_as_literal_ecd2[options6]",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_same_release_state_and_guard_logs_as_literal_ecd2[options7]",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_same_release_state_and_guard_logs_as_literal_ecd2[options8]",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_same_release_state_and_guard_logs_as_literal_ecd2[options9]",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_freeze_follows_actual_release_log_and_restoration",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_once_across_repeated_checks_rehold_and_multiple_instances",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_incomplete_then_complete_and_dangerous_then_safe",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_freeze_failure_is_visible_and_never_retried",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_count_failure_is_visible_without_second_freeze",
+    "tests/unit/test_v2_boot_gc_freeze.py::test_no_other_gc_policy_or_boot_release_site_in_source"
+  ]
+}

@@ -1,0 +1,18 @@
+UNAPPLIED SOURCE PROPOSAL ONLY. Original historical test file remains byte-exact
+ab61ee4a805c8db7ee5f471e1bd6e41a6935c80a7da7a1e20b28cc1c7b2f11b0.
+After C1 approves this exact successor, replace ONLY the two CURRENT function
+bodies below in tests/unit/test_l14_only_a2_fallback_composition.py. No historical
+fixture/constants/history helpers/other8tests change. Until approved/applied,
+the original2 current assertions still fail on approved UI source by design;
+no test exclusion or claim that the full is fixed is made.
+
+def test_current_l14_runtime_preserves_exact_historical_9c_bytes():
+    # CURRENT successor is separately pinned; all55 historical preimages retained.
+    from tests.unit.test_l14_ui_current_lineage_successor import assert_current_protected_l14_successor
+    assert_current_protected_l14_successor()
+
+
+def test_current_runtime_path_closure_matches_reviewed_combined_component():
+    # Literal724 membership plus exactly one pinned CP display module, never HEAD.
+    from tests.unit.test_l14_ui_current_lineage_successor import assert_current_runtime_membership_successor
+    assert_current_runtime_membership_successor()

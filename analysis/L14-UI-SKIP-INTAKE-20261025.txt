@@ -1,0 +1,30 @@
+OCT25-L14-UI-C11827-DEFAULT-COMPACT-SIM / additive actual SKIP coverage correction
+Source Main19:49 assignment. Owner Bohr CP-only candidate; Main sole runtime/
+queue/LATEST/PG. Base literal70bfd6de4c0d09b5e606a7429e0a3dc157fdd975, new root
+/private/tmp/mai-tai-l14-ui-skip-outcomes-20261025, branchcodex/oct25-l14-ui-skip-outcomes.
+Main70/current full NEVER mutated/interrupted. No imports/tests/browser/runtime.
+Actual saved FIRST506 = each140TRADE+113SKIP; noUNKNOWN. Shared549 instead775.
+Own UI regression: firstbar_tables correctly accounts nontrades outside rows,
+but new CP mount omitted those outcomes. Synthetic allTRADE fixture masked it.
+Keep775 acceptance, actual253IDs/mode and unchanged totals; no zero-fill/P&L fiction.
+Next cohesive source/tests/retained-format sanitized fixture, pending C1 display
+disposition before adoption. Target source20:05:31EDT (15m conditional), reported.
+Completion source freeze/pins/selectors; Main real775/nonSIM/screenshot/C1 gates
+remain required, not completed by source controls. D1 OUT/AFTERFREEZE unchanged.
+
+19:57:35checkpoint reported: isolated70base/newroot, nofirstcommit, CP-onlysource,
+retainedmixedfixture/proposed10newcases drafted, ETA20:05:31 stillheld; noexecution.
+Source now readyforfreeze/statusSOURCE_HANDOFF_PREPARED_UNRUN_PENDING_C1. Report
+actualhead/time inchat; Main solequeue records result. Source whitespace check
+clean; actual533trade/aggregate rows4797cells file-only comparison0differences.
+
+C119:59 OPTION B read20:00:45 and Main explicit20:02 confirmation SUPERSEDES
+only the 775-visible-row requirement/9c3 unadopted row proposal. Keep549 real
+table rows +226SKIP counted/audited, installed/source775 unchanged. New code
+keeps only canonical140TRADE/mode, one collapsed113skip line with identities/
+reasons. No nontrade execution rows or invented facts. 9c3 source/checkpoint held.
+Additive20:00 lineage proposal: preserve immutable original9c fixture/history/
+55protected set/testfile, propose exact3postimages+1newpath CURRENT successor;
+two CURRENT test replacements UNAPPLIED pendingC1. Main full106FAIL/20015PASS
+50m08 reported, two new UI lineage failures and1BBCIresolved vs105 baseline.
+New packet target20:15 reported; source/tests UNRUN/no Mainrootwrites.

@@ -1,0 +1,34 @@
+Task OCT27-C11324-L12-UNCHANGED-HELPERS-READY
+Source human/Main13:24 explicit helpers/scopedselectors request.
+Main executor only; author SOURCE carries, no tests/import/query/DDL.
+Supersedes C11320 dependency-absent blocker ONLY for these3 restored files.
+No helper repair, alteredassertion, rig/cap or permission default.
+
+NEW EXACT56e0c4cc5216741a142f66da2de0bb9ac5bdef52 CARRIES
+tools/l12_worx_olox_replay.py
+tests/fixtures/l12_worx_olox_case_contract_20261022.json
+tests/fixtures/l12_worx_olox_e_packet_20261022.json
+Existing testfile is already exact56e; no changes to factory or otherhelpers.
+APP unchanged3d149867. Migration from b440 exactf3472c55 already included.
+
+MAIN THREE SELECTORS ONCE (SOURCE-DERIVED IDs; NO COLLECTION BY AUTHOR)
+tests/integration/test_l12_worx_olox_broker_truth.py::test_actual_publisher_consumer_card_on_each_case[flat-WORX-20261020-1027]
+tests/integration/test_l12_worx_olox_broker_truth.py::test_e_olox_real_market_callbacks_preserve_partial_scope_under_native_branches[flat]
+tests/unit/test_brokerdecides1_closed_child_owner.py::test_later_clean_short_retires_normal_identity_then_owner_no_retry_reset
+Labels WORX CONTROLLED nativecard/drafts0; OLOX partialcallback/CONTROLLEDcard;
+YMAT representativeOct23/195shares, NOToriginalOct12/18. Accepted C11320 scope.
+EnvL12_OLOX_RETAINED_BARS=/Users/velkris/.codex/task-queues/analysis/SLOTCAP-OLOX-BARS-20261021.jsonl.
+No need load Epacket for these3 selectors, but testmodule imports exact fixture.
+Main owns originalexecutor/factory/privateoutputs; STOP and post failures,
+no helperrepair or constructorpermissions/readiness injected to clear case.
+
+MAIN ACTUAL BOX READ REPORTED (NOT AUTHOR QUERY)
+Parent20261023_atr_aggregate matches exactdonor down_revision.
+dashboard_snapshots73243 rows/table296345600B/heap46235648B;
+broker_orders85223 rows/table47128576B; bot_control_attempts0/table8192B.
+Source budget estimate10..90s conservativeUNMEASURED, upper>60s.
+Do NOT treat this as measured indexduration or permission for ordinaryblocking
+CREATE. Main posted C1 concurrentproposal; exactmigration unchanged pending
+disposition. A concurrentoption must be separate reviewed outside-transaction
+plan; current donor transaction/savepoint cannot simply wrap CONCURRENTLY.
+No DDL/install/run approval inferred from source preparation or parentmatch.

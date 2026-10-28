@@ -1,0 +1,124 @@
+ALERTS1021 OPS AUTHOR BUNDLE - source only, no execution or installation
+Base ffa7b4dbf10ec089cff775ff78b176c64345db60; sole writer alerts1021 ops lane.
+Main owns queue/status/LATEST and serial tests. Claude reviews and installs.
+
+PLANNED MAINTENANCE (operator install runbook hooks)
+Before the first planned service stop, as the authorized installer:
+python3 /home/trader/project-mai-tai/ops/health/planned_maintenance.py start \
+  --ttl 900 --reason 'reviewed install receipt ID' \
+  --service control --service market-capture --service market-data --service oms \
+  --service orb-schwab --service reconciler --service schwab-1m-v2 \
+  --service strategy --service momentum-paper
+Narrow that scope to the services the actual reviewed install will stop.
+The marker is /run/project-mai-tai/planned-maintenance.json, mode0600, maxTTL1800.
+Existing marker refuses overwrite/implicit extension. Inspect an expired marker
+before removing it with the end command; create a new one only for a new reviewed window.
+After the separately required service health/identity checks, always run:
+python3 /home/trader/project-mai-tai/ops/health/planned_maintenance.py end
+Install runbooks should put that end command in their existing cleanup/trap too.
+No service stop/start/restart is part of either marker command.
+Fleet checks still run, record raw results, and page live-money, monitor errors,
+restart storms, provider errors and unscoped services. Only scoped inactive and
+heartbeat findings are suppressed. Expiry/deletion restores pages on the next
+normal fleet run; suppression never consumes notification-delivery state.
+One local start/end transition line is retained in fleet_health/maintenance.log.
+An invalid/unreadable/writable marker gives no suppression. Helper failure keeps
+the original page set intact. Install helper alongside fleet_health_cron.sh.
+
+CAPTURE BASELINE
+Use the last five observed weekday trade dates, same ET cutoff, minimum three.
+This removes the same-weekday-only selection that yielded baseline_sessions=1.
+Dates without any recorded events cannot be distinguished from no scan activity
+by this table alone; they are not invented as zero-valued baseline sessions.
+Insufficient baseline remains COULD_NOT_TELL/exit2 in STATUS.txt and cron.log,
+without a phone page. An independently fresh feed plus measured empty capture
+still pages without a baseline; measured ratio below20% still pages with one.
+Database/env/feed read failures keep their existing explicit UNKNOWN alerts.
+
+D6
+Preserve the raw metric verdicts and nonpass exit/status; no false PASS.
+UNEXERCISED and obsolete paired-only failures are nonpaging. Any failed/unknown
+fill-rate/duplicate/refused-exit metric or invalid denominator still notifies.
+Re-evaluate each time so an informational session cannot mask a later real fail.
+Summary history is once per session; full latest status remains available.
+The installed acceptance script is SHA-pinned by its existing installer: use that
+installer's real hash procedure; this bundle does not change acceptance.py bytes.
+
+SEED
+Stored gaps remain in detector/latest status, including on-deck names. Page only
+watched+exposed with a positive full hydration receipt for that symbol, from the
+current service invocation/today, <=90s old and not older than the DB window.
+Confirmed truncation stays status-only; absent/stale/partial journal evidence is
+UNKNOWN/status-only, never called truncated or safe. Read failures of the primary
+watchlist/DB retain the existing refusal alarm. Local systemctl/journalctl add
+bounded off-loop reads; no trading-path calls or service modifications.
+Hydration counts do not carry a durable seed-window fingerprint; late insertion
+of older history remains a proof limitation requiring reviewer judgment. Do not
+claim the raw aggregate seed notices themselves prove runtime truncation.
+
+RAW PACKET / MAIN-ONLY REPLAY
+Two actual packet files matched supplied SHA256SUMS (static shasum verification).
+They contain 22 MESSAGE records: #1=9 #2=2 #3=3 #4=1 #5=1 #6=3 #7=3.
+No open/keepalive entries occur in these bytes; 18 cannot be reconstructed by
+dropping four real messages. The script refuses a changed hash/population.
+Expected counterfactual remaining IDs (not an executed result):
+8eQ9Ku6Tufoe, ORRxUPAnGGoC, UVpOp4eIdUJ6 (group3), Ari39BxFu2xO (group4).
+Historical maintenance uses Claude's reported22:47-22:57ET window as an explicit
+counterfactual marker; no historical marker is claimed to exist. Scanner replay
+uses the actual reported rows/baseline; the new SQL cannot be replayed from an
+ntfy message because underlying historical row populations were not exported.
+This is a packet-routing replay, not live monitor/systemd/database acceptance.
+Command (main only, from this worktree; author DID NOT execute):
+env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS -u MAI_TAI_DATABASE_URL -u DATABASE_URL \
+  -u PGDSN -u PGPASSWORD PYTHONPATH=src \
+  /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B \
+  ops/health/replay_alerts1021.py \
+  /Users/velkris/.codex/task-queues/analysis/alerts1021-inputs
+
+MAIN-ONLY TARGETED TEST COMMAND (all whole modules, unexecuted by author)
+env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS -u MAI_TAI_DATABASE_URL -u DATABASE_URL \
+  -u PGDSN -u PGPASSWORD PYTHONPATH=src \
+  /Users/velkris/Projects/project-mai-tai/.venv/bin/python -B -u -m pytest -vv --tb=long \
+  tests/unit/test_alerts1021_ops.py tests/unit/test_fleet_health_cron.py \
+  tests/unit/test_scanner_capture_alert.py tests/unit/test_fanout_outcome_acceptance_schedule.py \
+  tests/unit/test_backtest_replay.py tests/unit/test_audit_live_locked_drift.py \
+  tests/unit/test_live_locked_drift_cron.py tests/unit/test_seed_exposure_detector.py \
+  tests/unit/test_preopen_restart_evidence_routing.py tests/unit/test_low_priority_alerts.py \
+  tests/unit/test_alert_transition_wrappers.py
+Main chooses fresh raw/XML receipt paths and its serial slot. Never borrow a PASS.
+
+DEPENDENCIES / ACCEPTANCE
+Python stdlib for marker/replay; tests require pytest and existing app dependencies.
+Existing detector: psycopg/Postgres/Redis; seed receipt read: Linux systemctl and
+journalctl, current invocation plus today and max20000entries/8MiB accepted output,
+5+10+5s timeouts. Scanner still uses psql and its independent feed reader.
+Fleet existing Bash/coreutils/curl dependencies unchanged; marker uses python3.
+Ops modifications need no trading service restart; existing schedules are unchanged.
+Corrected mirror is two literals in backtest/replay.py only; no live settings edit.
+GUARDPIN1 is an existing I/Claude dependency, unadopted and untouched.
+Preopen metadata publication and native acceptance remain BLOCKED pending fresh
+evidence and reviewed transaction; see ALERTS1021-O-1019-2-COMMANDS.txt.
+
+EXACT FILE MANIFEST (relative to /private/tmp/mai-tai-alerts1021-ops-20261021)
+ops/health/ALERTS1021-O-1019-2-COMMANDS.txt
+ops/health/ALERTS1021-PACKET-CLASSIFICATION.tsv
+ops/health/ALERTS1021-RUNBOOK.txt
+ops/health/fanout_outcome_acceptance_cron.py
+ops/health/fleet_health_cron.sh
+ops/health/live_locked_drift_cron.sh
+ops/health/planned_maintenance.py
+ops/health/preopen_readiness_cron.sh
+ops/health/preopen_rebaseline_capture.sh
+ops/health/replay_alerts1021.py
+ops/health/scanner_capture_check.py
+ops/health/scanner_capture_verify_cron.sh
+ops/health/seed_exposure_cron.sh
+scripts/audit_live_locked_drift.py
+scripts/seed_exposure_detector.py
+src/project_mai_tai/backtest/replay.py
+tests/unit/test_alert_transition_wrappers.py
+tests/unit/test_alerts1021_ops.py
+tests/unit/test_backtest_replay.py
+tests/unit/test_fanout_outcome_acceptance_schedule.py
+tests/unit/test_fleet_health_cron.py
+tests/unit/test_scanner_capture_alert.py

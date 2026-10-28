@@ -1,0 +1,14 @@
+Stable ID OCT25-L14-UI-C12039-COMPACT-TIMES
+Source C1LATEST20:39 screenshot review, Main source-only assignment.
+Priority required UI correction before final composition; owner Bohr source only.
+Status SOURCE_PREPARED_UNRUN. Main remains queue/status/LATEST/runtime sole writer.
+Completion criterion compact24hET times/all SIM modes/full timestamp titles,
+nine columns fit1440 desktop, mobile internal scroll, exactnonSIM/history55/
+549realrows+226SKIP audit unchanged. Desktop fit/screens require Main actual proof.
+Next action freeze minimal APP+boundedlineage/newcontrols; Main review/claim,
+actual new body then reshoot ONLY desktopFIRSTBAR+AGGREGATE_ENTRY.
+Source root /private/tmp/mai-tai-l14-ui-c12039-compact-times-20261025
+Literal base d914837b31aa8d7b34fbb6ea0f90a73b8d9ad66f, historical roots preserved.
+Loaded40source5aa94da55 retained; exactd914 binding does NOT cover this successor.
+No author tests/imports/compile/build/PG/browser/provider/runtime/shared writes.
+Source result reported with frozen commit/time/pins; actual18/desktop fit/two reshoots remain Main pending.

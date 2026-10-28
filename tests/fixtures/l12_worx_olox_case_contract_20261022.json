@@ -1,0 +1,47 @@
+{
+  "schema": "L12_WORX_OLOX_CASE_CONTRACT_V1",
+  "retained_export": "analysis/L11-L12-122CASE-INPUTS-20261022/c1_export122.json",
+  "sha256": "31147bd20bb1f0c3e9a997bc45f9dbf41ef5fb71a6a58bec4b9c0a9e30c6c5f6",
+  "controlled_account_bindings": [
+    {"provider": "schwab", "account": "live:schwab_1m_v2"},
+    {"provider": "webull", "account": "live:orb"}
+  ],
+  "controlled_account_scope": "EXPLICIT_TEST_RESPONSE_IDENTITIES_NOT_HISTORICAL_NATIVE_FLAT",
+  "cases": [
+    {
+      "case_id": "WORX-20261020-1027",
+      "source_pointer": "/103",
+      "symbol": "WORX",
+      "day": "2026-10-20",
+      "flip_bar_et": "10:27",
+      "previous_sell_et": "09:51",
+      "census_P": "4.11",
+      "historical_native_book": "UNKNOWN",
+      "bars_quotes_settings_packet": "REQUIRED_NOT_IN_122CASE_EXPORT"
+    },
+    {
+      "case_id": "OLOX-20261021-1329",
+      "source_pointer": "/110",
+      "symbol": "OLOX",
+      "day": "2026-10-21",
+      "flip_bar_et": "13:29",
+      "previous_sell_et": "13:04",
+      "census_P": "1.03",
+      "logged_arm_trigger": "1.0200",
+      "logged_arm_flip_level": "1.0196",
+      "logged_arm_received_utc": "2026-10-21 17:30:02,582",
+      "partial_bar_artifact": "analysis/SLOTCAP-OLOX-BARS-20261021.jsonl",
+      "partial_bar_sha256": "b0febb8bb4482ac3b95dc0822ffe0b289a6153d39488714e4e9f00f45f99e6d4",
+      "partial_bar_count": 490,
+      "partial_bar_first_utc": "2026-10-21T11:20:00+00:00",
+      "partial_bar_last_utc": "2026-10-21T19:29:00+00:00",
+      "missing_session_prefix": "04:00..07:20_ET_UNKNOWN_NOT_EMPTY",
+      "historical_native_book": "UNKNOWN",
+      "bars_quotes_settings_packet": "REQUIRED_NOT_IN_122CASE_EXPORT"
+    }
+  ],
+  "controlled_checks_not_historical_acceptance": [
+    "flat", "working", "position", "stale_over_20_seconds",
+    "LOSTACK", "CANCELACK", "missing_native_packet"
+  ]
+}

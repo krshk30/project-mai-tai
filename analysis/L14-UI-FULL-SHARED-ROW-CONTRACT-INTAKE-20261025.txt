@@ -1,0 +1,15 @@
+Stable ID OCT25-L14-UI-FULL-SHARED-ROW-CONTRACT-SOURCE
+Source Main actual6cfull23:06:22 new shared-row failure/log2415..2435.
+Priority finite causal assessment/test-only proposal; owner Bohr source only.
+Status SOURCE_HANDOFF_READY_TEST_PROPOSAL_PENDING_C1.
+Completion criterion source/retainedlog cause bounded, proposed exacttwo-time
+adaptation preserves9cells/7canonicaltdbytes/fulltitles/rawreason/PnL/escape/
+nonSIM/offloop/API proof; Main/C1 review before adopting/running.
+Source root /private/tmp/mai-tai-ui-offloop-time-contract-source-20261025
+Literal base6c6776f68763342e534aaa4ad3316346cff6c48d; all APP/frozenroots untouched.
+Next action freeze test-only proposal/changed selectors; Main asksC1/claims only
+after review. Full105raw retained; no claimed passingfull/no waiver/skip/xfail.
+No author imports/tests/runtime/PG/provider/browser/sharedwrites. Loaded40
+90d8946e remains pending real C1carry/quiet, no timing permission assumed.
+Result reported: completed causal source review, not corrected-test acceptance;
+separate test-only proposal with one changed and six negative cases UNRUN.

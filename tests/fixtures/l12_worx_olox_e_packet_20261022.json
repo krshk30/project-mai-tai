@@ -1,0 +1,20 @@
+{
+  "schema": "L12_E_PACKET_V1",
+  "root": "analysis/L11-L12-LATE-FREEZE-INPUTS-20261022/c1_l11pkt",
+  "source_kind": "RETAINED_EXPORT_NOT_HISTORICAL_NATIVE_BOOK",
+  "cases": {
+    "WORX-20261020-1027": {
+      "v2_log.log": {"name": "E_2026-10-20_WORX_v2_log.log", "sha256": "193b7ddeccfc43168cfd60b3b1bc7b78ab1ad3ce59cb4b93df65813864394429"},
+      "orders.csv": {"name": "E_2026-10-20_WORX_orders.csv", "sha256": "92abd6ba366f6eed73e64ada827622be9f0c1509cb4c1ad78134a6f66d4eb787"},
+      "fills.csv": {"name": "E_2026-10-20_WORX_fills.csv", "sha256": "dea111037e724d78a92f222ec07fe0d26261f004fcea495e7081bf0afd1892db"}
+    },
+    "OLOX-20261021-1329": {
+      "v2_log.log": {"name": "E_2026-10-21_OLOX_v2_log.log", "sha256": "6e6494760c646c2119c87e2c8a449b379d9c2a7a5c570d8d1d9cbed5d18ce9aa"},
+      "orders.csv": {"name": "E_2026-10-21_OLOX_orders.csv", "sha256": "df2ea168f9cbe36a24b76ee8b41d87a6103ad5dceca0ded0fc589f1852cf5cc9"},
+      "fills.csv": {"name": "E_2026-10-21_OLOX_fills.csv", "sha256": "5e75810f9c40fcd8b95217e0b12f2cf0781fb11341f1413b49f35cc9da2bf210"}
+    }
+  },
+  "historical_native_book": "UNKNOWN_NEVER_STORED",
+  "native_branches": "EXPLICIT_CONTROLLED_RESPONSE_ONLY",
+  "original_prefix_quotes": "UNKNOWN_UNLESS_SEPARATELY_SUPPLIED_AND_PINNED"
+}

@@ -47,7 +47,8 @@ def test_seed_exposure_pages_once_per_active_transition_and_recurs_after_clean(
     tmp_path: Path,
 ) -> None:
     result = tmp_path / "seed.txt"
-    result.write_text("  VERDICT: EXPOSED count=1\n  TNON window=seed\n", encoding="utf-8")
+    result.write_text("  VERDICT: EXPOSED count=1\n  TNON window=seed\n"
+                      "  PAGEABLE : 1 watched_exposed_untruncated symbols=TNON\n", encoding="utf-8")
     clean = tmp_path / "clean.txt"
     clean.write_text("  VERDICT: CLEAN count=0\n", encoding="utf-8")
     alert = _fake_alert(tmp_path)
@@ -60,6 +61,28 @@ def test_seed_exposure_pages_once_per_active_transition_and_recurs_after_clean(
     _run_seed(tmp_path, clean, 0, alert)
     _run_seed(tmp_path, result, 1, alert)
     assert calls.read_text(encoding="utf-8").count("CALL") == 2
+
+
+def test_seed_exposure_stored_gap_or_unknown_truncation_is_status_only(tmp_path: Path) -> None:
+    result = tmp_path / "seed.txt"
+    result.write_text("  VERDICT: EXPOSED count=1\n  OLOX window=250\n"
+                      "  PAGEABLE : 0 watched_exposed_untruncated symbols=-\n", encoding="utf-8")
+    alert = _fake_alert(tmp_path)
+    assert _run_seed(tmp_path, result, 1, alert).returncode == 0
+    assert not (tmp_path / "alert.calls").exists()
+    assert "OLOX window=250" in (tmp_path / "seed-state/latest.txt").read_text()
+
+
+def test_new_untruncated_symbol_changes_the_seed_page_key(tmp_path: Path) -> None:
+    result = tmp_path / "seed.txt"
+    alert = _fake_alert(tmp_path)
+    for symbol in ("OLOX", "TNON"):
+        result.write_text("  VERDICT: EXPOSED count=2\n  OLOX window=250\n  TNON window=250\n"
+                          f"  PAGEABLE : 1 watched_exposed_untruncated symbols={symbol}\n")
+        assert _run_seed(tmp_path, result, 1, alert).returncode == 0
+    calls = (tmp_path / "alert.calls").read_text()
+    assert calls.count("CALL RED") == 2
+    assert "symbols=OLOX" in calls and "symbols=TNON" in calls
 
 
 def test_seed_exposure_failed_delivery_does_not_consume_transition(tmp_path: Path) -> None:
@@ -100,6 +123,23 @@ def test_preopen_readiness_delivers_only_once_per_session(tmp_path: Path) -> Non
     assert first.returncode == 0
     assert second.returncode == 0
     assert (tmp_path / "alert.calls").read_text(encoding="utf-8").count("CALL") == 1
+
+
+def test_preopen_stored_gap_does_not_elevate_ready_verdict(tmp_path: Path) -> None:
+    readiness = tmp_path / "readiness.txt"
+    readiness.write_text("VERDICT: GREEN ready\n")
+    seed = tmp_path / "seed.txt"
+    seed.write_text("  VERDICT: EXPOSED count=1\n"
+                    "  PAGEABLE : 0 watched_exposed_untruncated symbols=-\n")
+    result = subprocess.run(["bash", str(PREOPEN_WRAPPER)], check=False, capture_output=True, text=True,
+        env={**os.environ, "PREOPEN_READINESS_TEST_MODE": "1",
+             "PREOPEN_READINESS_OUT": str(tmp_path / "preopen-state"),
+             "PREOPEN_READINESS_RESULT_FILE": str(readiness), "PREOPEN_READINESS_RESULT_CODE": "0",
+             "PREOPEN_SEED_RESULT_FILE": str(seed), "PREOPEN_SEED_RESULT_CODE": "1",
+             "PREOPEN_READINESS_ALERT": str(_fake_alert(tmp_path))})
+    assert result.returncode == 0
+    assert "CALL GREEN" in (tmp_path / "alert.calls").read_text()
+    assert "seed-exposure: status only" in (tmp_path / "alert.calls").read_text()
 
 
 def test_preopen_readiness_retries_an_undelivered_once_per_session_page(tmp_path: Path) -> None:

@@ -1,0 +1,56 @@
+C10719 review correction -- SOURCE ONLY, NO EXECUTION
+
+Base frozen3ae625b3edc2da3cc66bd808dccb9aa3373dcb10, never edited there.
+New root /private/tmp/oct26-l11-sell-account-terminal-review-20261026.
+Owner Galileo core, Main review/runtime, Gibbs independent recorder.
+
+Finding1 correction: native positions/working positives in the SELL-only helper
+are now filtered by the existing exact self._flip_owner_accounts. A foreign
+momentum account with the same symbol cannot create blocker1. The current bot
+account and its configured Webull account still hold. Current local position,
+working rest, UNKNOWN reservation/inflight and restart predicates unchanged.
+
+Finding2 source distinction, submitted explicitly for C1 review:
+Local fanout_claim_outcome='released' does not encode cancelled versus expired
+versus unknown. _release_fanout_webull_claim writes that same value for exact
+durable terminal outcomes AND grace/backstop release. See apply_fanout_outcome
+terminal branch, update_position's positive-evidence hold-expired branch, and
+_release_fanout_webull_claim itself. first_rest_placed is also historical, not
+an unanswered-send receipt. It cannot alone be treated as blocker3, and local
+'released' cannot alone prove blocker3 ended. No reinterpretation is made.
+
+Precise existing proof already available on actual private/live position reads:
+service._terminal_unfilled_first_rest_opportunities ->
+FlipPositionBook.terminal_unfilled_opportunities_by_symbol. It requires exact
+opportunity/account coverage, terminal intents/orders settled before cutoff,
+and no fills; missing, active, malformed and unanswered intents/orders do not
+enter the set. Existing _recover_unknown_flip_owner already uses this proof.
+
+Minimal proposed correction uses that SAME proof, not a new provider/card:
+apply_flip_position_book retains one (opportunity, observed_ms) tuple for the
+currently owned identity only. Unreadable/ambiguous/replaced/nonterminal books
+invalidate it. _clear_flip_owner_memory clears it. The SELL retirement needs
+the tuple to match current identity AND current fresh readable position-book
+timestamp. Thus proven cancelled/expired orders retire even when L12 card is
+missing/stale. Current native/local positives, reservation/UNKNOWN and restart
+continue to veto. No DB/provider/await added to SELL. No negative native proof
+is synthesized. No clocks/thresholds/ownership/persistence waivers.
+
+Tradeoff Main should put to C1 if bare-released acceptance is demanded:
+Two histories (exact terminal reply; unanswered submit followed by grace
+release) can have identical first_rest_placed/released/fresh-flat-position
+fields. Removing the L12 requirement from BOTH without terminal identity proof
+would clear genuine blocker3. Proposed narrow alternative is the existing real
+terminal census; a bare local release stays UNKNOWN, not described as a proven
+cancelled/expired order. If actual replay lacks that proof, report it explicitly
+and retain original failure; do not classify source-only as residual closure.
+
+Controls: 20 parent intended controls retained, plus11 new intended controls:
+foreign same-symbol position/working2; missing/stale card x cancelled/expired4;
+wrong-id/unreadable/stale/reserved4; local grace-release ambiguity1.
+All31 UNRUN. Parent controls not automatically claimed for repetition. Main
+chooses new11 plus original unrun20/exact26 roster after source/C1 review.
+These terminal positives exercise the real apply_flip_position_book contract;
+their input is CONTROLLED typed census output, not a newly executed SQL query.
+No actual CLWT result, account position, order status, native absence or PASS
+from this source. SPRC BUY binding body unchanged and hold control retained.

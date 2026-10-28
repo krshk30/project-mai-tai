@@ -268,6 +268,16 @@ def order(sessions, strategy, account, **overrides):
     return identity
 
 
+def test_c11220_refused_pre_submit_cannot_later_acquire_wire_permit(control):
+    store, sessions, strategy, account = control
+    store.seed(strategy)
+    identity = order(sessions, strategy, account, payload={"refused_pre_submit": True})
+    with pytest.raises(ControlConflict, match="entry_refused_before_submit"):
+        store.authorize_entry(order_id=identity, strategy_id=strategy, expected_generation=0)
+    with sessions() as session:
+        assert "bot_control_permit" not in session.get(BrokerOrder, identity).payload
+
+
 def test_permit_commits_before_stop_and_cannot_be_replayed(control):
     store, sessions, strategy, account = control
     store.seed(strategy)

@@ -24,6 +24,7 @@ def _run_wrapper(
     curl_status: int | None = None,
     mode: str = "full",
     default_url: bool = False,
+    maintenance_marker: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     check = tmp_path / "check.sh"
     check_args = tmp_path / "check.args"
@@ -50,6 +51,8 @@ def _run_wrapper(
         "FLEET_HEALTH_OUT": str(tmp_path / "state"),
         "FLEET_HEALTH_TEST_MODE": "1",
         "FLEET_HEALTH_MODE": mode,
+        "FLEET_MAINTENANCE_HELPER": str(WRAPPER.with_name("planned_maintenance.py")),
+        "FLEET_MAINTENANCE_MARKER": str(maintenance_marker or tmp_path / "no-marker.json"),
     }
     if default_url:
         env.pop("FLEET_HEALTH_NTFY_URL")
@@ -65,6 +68,33 @@ def _run_wrapper(
 def _call_log(tmp_path: Path) -> str:
     path = tmp_path / "curl.calls"
     return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def test_maintenance_suppresses_planned_stop_but_expiry_pages_it(tmp_path: Path) -> None:
+    import time
+
+    marker = tmp_path / "maintenance.json"
+    now = time.time()
+    data = {"started_at": now - 10, "expires_at": now + 300,
+            "services": ["oms"], "reason": "approved install"}
+    marker.write_text(json.dumps(data))
+    marker.chmod(0o600)
+    output = """VERDICT: RED service-runtime:oms:inactive class=FLEET_RUNTIME stopped
+VERDICT: RED stops-armed class=LIVE_MONEY naked
+SUMMARY: RED fleet-function-health checks=2
+"""
+    _run_wrapper(tmp_path, output, maintenance_marker=marker)
+    calls = _call_log(tmp_path)
+    assert "stops-armed" in calls
+    assert "RED mai-tai service runtime: service-runtime:oms:inactive" not in calls
+    assert "service-runtime:oms:inactive" not in (tmp_path / "state/paged.active").read_text()
+    data.update(started_at=now - 600, expires_at=now - 1)
+    marker.write_text(json.dumps(data))
+    _run_wrapper(tmp_path, output, maintenance_marker=marker)
+    assert "RED mai-tai service runtime: service-runtime:oms:inactive" in _call_log(tmp_path)
+    log = (tmp_path / "state/maintenance.log").read_text()
+    assert log.count("maintenance started") == 1
+    assert log.count("maintenance ended") == 1
 
 
 def test_paper_diagnostic_scoreboard_and_aggregate_never_page(tmp_path: Path) -> None:

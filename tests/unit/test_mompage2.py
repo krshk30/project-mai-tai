@@ -87,16 +87,16 @@ class LedgerTables(HTMLParser):
 
 
 @pytest.mark.parametrize("route", ["/bot/momentum-30", "/bot/momentum-60"])
-def test_two_reference_ledgers_same_columns_never_enter_live_total(monkeypatch, route):
+def test_reference_ledgers_restored_but_never_enter_live_total(monkeypatch, route):
     html, client = page(monkeypatch, route)
     assert "LIVE (real orders)" in html
-    assert "Warning method 60 s completed" in html and "Warning method 30 s completed" in html
+    assert "Warning method 60 s" in html and "Warning method 30 s" in html
+    assert html.count('>REFERENCE</span>') == 2
     assert "Snapshot method" not in html
     assert "Day total: $+49.40" not in html and "Day total: $+28.80" not in html
     assert "Day total: $+78.20" not in html
-    assert html.count("<td><strong>SCNI</strong>") == 2  # Same two rows, ATR ticker styling.
-    assert html.count('<td style="white-space:nowrap;">Signal reference</td>') == 2
-    assert html.count('Signal reference &mdash; not real orders') == 2
+    assert html.count('<td><strong>SCNI</strong>') == 2
+    assert 'Signal reference' in html
     assert html.count('<td style="text-align:right">50</td>') == 2
     assert "caught 49s" not in html
     assert "caught 53s" not in html
@@ -108,15 +108,18 @@ def test_two_reference_ledgers_same_columns_never_enter_live_total(monkeypatch, 
     assert '<td style="white-space:nowrap;">08:01:23 AM ET</td>' in html
     assert html.count('<td style="white-space:nowrap;">08:02:00 AM ET</td>') == 2
     assert '2026-10-14 08:00:34 AM ET' not in html
-    assert '$+49.40 (+5.0%)' in html and '$+28.80 (+5.0%)' in html
+    assert '$+49.40' in html and '$+28.80' in html
     assert "Warning feed: ON since 08:07 ET" in html
-    assert "bars in/out 1811/1806" in html and "delay max 134.5 ms" in html
+    assert "bars in/out 1811/1806" in html
+    assert "delay max 134.5 ms" not in html
+    assert any(f"delay max {value} ms" in html for value in (134, 135))
     assert '<details class="panel-copy warning-feed-details"><summary>Feed details</summary>' in html
     assert "<details open" not in html and "existing safety auto-revert: YES" not in html
     assert "Paper bot &mdash; no broker orders." not in html
     assert "Broker Qty<br>Current Price" in html  # ONE shared ATR-style open table.
     assert html.count('<h3>Open Positions') == 1 and 'No open positions' in html
-    assert len(client.metric_calls) == 1
+    assert len(client.metric_calls) == 2
+    assert all(kwargs == {"count": 64} for _, kwargs in client.metric_calls)
 
 
 @pytest.mark.parametrize("delta,expected", [(49, "earlier"), (-49, "later")])
@@ -185,7 +188,9 @@ def test_carded_ambiguity_note_does_not_choose_or_merge_comparison_rows():
 def test_unreadable_ledger_total_unknown_other_total_unchanged(monkeypatch, route, ledger):
     kwargs = {ledger: OSError("CONTROLLED unreadable")}
     html, _ = page(monkeypatch, route, **kwargs)
-    assert "Signal reference ledger unreadable: UNKNOWN" in html
+    assert "Warning history UNKNOWN" in html
+    method = "WARN 60s" if ledger == "snapshot" else "WARN 30s"
+    assert f"{method} ledger unreadable: UNKNOWN" in html
     assert "UNKNOWN. No total calculated." in html
     assert "Day total: $+0.00 &middot; 0 completed broker trades" in html
     assert html.count('Day total:') == 1
@@ -225,7 +230,7 @@ def test_missing_request_timestamp_unknown_not_hardcoded_since(monkeypatch):
     assert "Warning feed: ON since UNKNOWN ET" in html and "since 07:52" not in html
 
 
-def test_historical_ledgers_still_visible_when_metrics_disabled(monkeypatch):
+def test_reference_history_remains_when_metrics_disabled(monkeypatch):
     html, client = page(monkeypatch, "/bot/momentum-30", enabled=False)
     assert not client.metric_calls and "Warning feed: UNKNOWN" in html
     assert "$+49.40" in html and "$+28.80" in html

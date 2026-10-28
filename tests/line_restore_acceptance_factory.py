@@ -34,7 +34,9 @@ class RecordingEmitter:
 class LineRestoreCase:
     """Feed recorded events without starting a live service or opening a connection."""
 
-    def __init__(self, *, symbol, now_ms, settings_overrides=None):
+    def __init__(self, *, symbol, now_ms, settings_overrides=None, subscribe_initial=True):
+        if type(subscribe_initial) is not bool:
+            raise ValueError("explicit_initial_subscription_bool_required")
         self.symbol = symbol.upper()
         self.now_ms = int(now_ms)
         options = {
@@ -68,7 +70,8 @@ class LineRestoreCase:
         # Replace the durable outbox boundary, not exit evaluation/publication.
         self.bot._record_confirmation_evaluation = self._record_confirmation
         self.bot._mark_confirmation_published = self.confirmation_published.add
-        self.add()
+        if subscribe_initial:
+            self.add()
 
     def _record_confirmation(self, evaluation):
         key = evaluation.entry.fill_id
@@ -170,6 +173,7 @@ class LineRestoreCase:
         }
 
 
-def make_line_restore_case(*, symbol, now_ms, settings_overrides=None):
+def make_line_restore_case(*, symbol, now_ms, settings_overrides=None, subscribe_initial=True):
     """Stable entry point for the reviewer-owned scripts/line_restore_acceptance.py."""
-    return LineRestoreCase(symbol=symbol, now_ms=now_ms, settings_overrides=settings_overrides)
+    return LineRestoreCase(symbol=symbol, now_ms=now_ms, settings_overrides=settings_overrides,
+        subscribe_initial=subscribe_initial)

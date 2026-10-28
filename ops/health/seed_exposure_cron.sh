@@ -102,7 +102,14 @@ case "$CODE" in
     rm -f "$ACTIVE"
     exit 0
     ;;
-  1) LEVEL=AMBER ;;
+  1)
+    if ! grep -Eq '^  PAGEABLE : [1-9][0-9]* watched_exposed_untruncated ' "$OUTFILE"; then
+      echo "$STAMP SEED-EXPOSURE status only; untruncated exposure not established" >> "$OUT/cron.log"
+      rm -f "$ACTIVE"
+      exit 0
+    fi
+    LEVEL=RED
+    ;;
   2) LEVEL=RED   ;;
   *) LEVEL=RED   ;;                              # crash
 esac
@@ -111,11 +118,15 @@ esac
 # same condition can page again in the same session.
 KEY=$(grep -E '^\s+(VERDICT|⛔ CANNOT SEE)' "$OUTFILE" | head -1)
 KEY="$KEY|$(grep -oE '^\s+[A-Z0-9]+ +window=' "$OUTFILE" | awk '{print $1}' | sort | tr '\n' ',')"
+KEY="$KEY|$(grep '^  PAGEABLE : ' "$OUTFILE")"
 if [ -f "$ACTIVE" ] && grep -Fqx "$KEY" "$ACTIVE" 2>/dev/null; then
   exit 0
 fi
 
 SUMMARY=$(grep -E '^\s+(VERDICT|⛔ CANNOT SEE)' "$OUTFILE" | head -1)
+if [ "$CODE" -eq 1 ]; then
+  SUMMARY="$SUMMARY | $(grep '^  PAGEABLE : ' "$OUTFILE")"
+fi
 ALERT="${SEED_EXPOSURE_ALERT:-$REPO/ops/health/preopen_alert.sh}"
 if [ -x "$ALERT" ]; then
   if "$ALERT" "$LEVEL" "SEED-EXPOSURE $SUMMARY" "$OUTFILE"; then

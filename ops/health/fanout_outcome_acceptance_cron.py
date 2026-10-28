@@ -6,8 +6,8 @@ scheduled target uses that same exact [00:00, next 00:00) shape.  The duplicate-
 its published historical incident interval, while its requested-window target is still the same
 calendar day.  The root cron invokes this file across the UTC hours that can be 00:17-01:17 ET. The runner
 skips weekends/full-closure holidays and writes one durable result per session day.  PASS is the
-only success marker.  FAIL, COULD_NOT_TELL, and UNEXERCISED are all notified and remain visibly
-non-green.
+only success marker. Real failed/unknown current metrics notify. UNEXERCISED and the obsolete
+cross-venue pairing requirement remain non-green in status without phone notifications.
 """
 
 from __future__ import annotations
@@ -210,6 +210,25 @@ def _denominator_contract(lines: Sequence[str]) -> tuple[bool, str]:
     return True, "all four metric denominators present"
 
 
+def actionable_nonpass(verdict: str, lines: Sequence[str], denominator_ok: bool) -> bool:
+    """Keep real failed/unknown outcomes visible even when another metric is unexercised."""
+    if not denominator_ok:
+        return True
+    current_metrics = [line for line in lines if line.startswith("metric=")
+                       and not line.startswith("metric=paired_legs ")]
+    if any(" verdict=FAIL " in line or " verdict=COULD_NOT_TELL " in line
+           for line in current_metrics):
+        return True
+    # An otherwise healthy report whose only failure is the obsolete cross-venue
+    # pair requirement is also status-only under one-broker country routing.
+    if verdict == "FAIL" and len(current_metrics) == 3 and all(
+        " verdict=PASS " in line or " verdict=UNEXERCISED " in line
+        for line in current_metrics
+    ) and any(line.startswith("metric=paired_legs verdict=FAIL ") for line in lines):
+        return False
+    return verdict not in {"PASS", "UNEXERCISED"}
+
+
 def send_notification(title: str, body: str, *, url: str = DEFAULT_NTFY_URL) -> bool:
     # The helper keeps the original title/body and records successful low-topic sends for
     # the 20:00 ET digest. Load it by path so this script also works under -I.
@@ -240,7 +259,11 @@ def run_once(
     # This precedes the lazy application-calendar import in completed_session_window(). A stale
     # venv can fail after this point, but it cannot leave yesterday's SUCCESS looking current.
     prior_status = _begin_status(status_path, bootstrap)
-    _append_history(out_dir / "history.log", now=now, contents=bootstrap)
+    # Do not repeat a known informational session on each hourly invocation. Failures
+    # before a session can be resolved still retain their diagnostic startup evidence.
+    informational_prior = "verdict=UNEXERCISED denominators=present" in prior_status
+    if not informational_prior:
+        _append_history(out_dir / "history.log", now=now, contents=bootstrap)
 
     window = completed_session_window(now)
     attempted_path = out_dir / "last_attempted_session.txt"
@@ -256,7 +279,6 @@ def run_once(
             "reason=already_reported denominator=one completed ET calendar-day session"
         )
         _atomic_write(status_path, prior_status)
-        _append_history(out_dir / "history.log", now=now, contents=skipped + "\n")
         return ScheduledResult(
             PASS,
             (skipped,),
@@ -272,7 +294,8 @@ def run_once(
         "denominator=one completed ET calendar-day session\n"
     )
     _atomic_write(status_path, started)
-    _append_history(out_dir / "history.log", now=now, contents=started)
+    if not informational_prior:
+        _append_history(out_dir / "history.log", now=now, contents=started)
     if acceptance is None:
         if acceptance_path is None:
             raise ValueError("acceptance_path is required when acceptance is not supplied")
@@ -304,9 +327,13 @@ def run_once(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     _atomic_write(status_path, rendered)
-    _append_history(out_dir / "history.log", now=now, contents=rendered)
+    # Full status stays fresh; the local session summary is written only once per session.
+    summary_path = out_dir / "last_summary_session.txt"
+    if not summary_path.exists() or summary_path.read_text(encoding="utf-8").strip() != window.session_date:
+        _append_history(out_dir / "history.log", now=now, contents=marker + "\n")
+        _atomic_write(summary_path, window.session_date + "\n")
 
-    if effective_code != PASS:
+    if effective_code != PASS and actionable_nonpass(effective_verdict, report_lines, denominator_ok):
         report_hash = hashlib.sha256(rendered.encode("utf-8")).hexdigest()[:16]
         body = f"{marker}\nreport_sha256={report_hash}\n{rendered}"
         if not notify("D6 outcome acceptance NONPASS", body):

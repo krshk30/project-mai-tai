@@ -445,6 +445,38 @@ class DashboardSnapshot(Base):
     )
 
 
+class BrokerDecidesDispatchRetirement(Base):
+    """Positive closure projection only; original attempt/economic rows stay intact."""
+
+    __tablename__ = "brokerdecides_dispatch_retirements"
+
+    attempt_id: Mapped[UUID] = mapped_column(ForeignKey("dashboard_snapshots.id"), primary_key=True)
+    proof_version: Mapped[int] = mapped_column(Integer)
+    attempt_state: Mapped[str] = mapped_column(Text)
+    token: Mapped[str] = mapped_column(String(128), index=True)
+    account_name: Mapped[str] = mapped_column(String(64))
+    symbol: Mapped[str] = mapped_column(String(32))
+    observed_ms: Mapped[int] = mapped_column(BigInteger)
+    counts: Mapped[dict[str, int]] = mapped_column(JSON)
+
+
+class BrokerDecidesDispatchEvidence(Base):
+    __tablename__ = "brokerdecides_dispatch_evidence"
+
+    attempt_id: Mapped[UUID] = mapped_column(
+        ForeignKey("brokerdecides_dispatch_retirements.attempt_id"), primary_key=True)
+    entity_kind: Mapped[str] = mapped_column(String(24), primary_key=True)
+    entity_id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True)
+    original_state: Mapped[str] = mapped_column(Text)
+
+
+Index("ix_l12_dispatch_scope", DashboardSnapshot.snapshot_type,
+      DashboardSnapshot.payload["kind"].as_string(),
+      DashboardSnapshot.payload["strategy_code"].as_string(),
+      DashboardSnapshot.payload["account_name"].as_string(), DashboardSnapshot.created_at, DashboardSnapshot.id)
+Index("ix_l12_order_dispatch_token", BrokerOrder.payload["clearwait_dispatch_token"].as_string())
+
+
 class StrategyBarHistory(Base):
     __tablename__ = "strategy_bar_history"
     __table_args__ = (
@@ -1074,6 +1106,9 @@ class BotControlAttempt(Base):
             ),
         ),
         Index("ix_bot_control_attempts_recovery", "status", "next_eligible_at"),
+        Index("ix_l12_control_uncertainty", "account_id", "symbol",
+            postgresql_where=text("status IS NULL OR status NOT IN ('TERMINAL', 'PROVEN_NOT_SENT')"),
+            sqlite_where=text("status IS NULL OR status NOT IN ('TERMINAL', 'PROVEN_NOT_SENT')")),
     )
 
     attempt_id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)

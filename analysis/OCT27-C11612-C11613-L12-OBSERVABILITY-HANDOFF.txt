@@ -1,0 +1,115 @@
+C11612 supersedes C11609 changed-projection-only alternative.
+C11613 additive six budget-refusal operands. SOURCE diff FIRST / AUTHOR UNRUN.
+
+ROOT / OWNERSHIP
+/private/tmp/oct27-gibbs-l12-unknown-log-flood-20261027
+Branch codex/oct27-l12-unknown-log-flood
+Literal installed parent 77315e48f4871c02ac1fa7318f860671b2d381de.
+Gibbs sole implementation; Main sole execution/install. No foreign/shared writes.
+Supported source ETA16:30; fixed report16:40 is NOT unconditional install ETA.
+
+FLOOD: EXACT SCOPE
+Original local_evidence adds symbol to inflight before warning; assess in
+brokerdecides1.py refuses own_inflight_UNKNOWN_or_working. Outside-L12 ordinary
+entry bypass is unchanged. This is not merely informational evidence and does
+not prove 45 actual attempted entries were refused. No stale-row clearing.
+
+Replace per-attempt repeated warning with per-symbol first-seen/row-set-change
+warning in the existing OMS service's process-lifetime diagnostic state.
+Row-set identity = unordered pairs (actual attempt UUID, changed_receipt bool).
+No native/order/intent/economic identity emitted by the warning. Detail is an
+actual representative attempt (prefer changed projection when present), with
+its actual created_at age; not an assertion all symbol rows share that age.
+Successful census replaces diagnostic state with only current unknown symbols;
+removal then reappearance is a changed row set. No process-global growing set.
+At most MAX_SYMBOLS=4096 current attempt members/symbols; prior and current
+bounded census maps may coexist transiently. Failed census cannot accumulate
+new cache members. No source row deletion/update/retirement or age waiver.
+
+ONE summary per terminal generation publication:
+[BROKERDECIDES1-UNKNOWN-SUMMARY] generation=N unknown_symbols=45 rows=973
+Counts are DISTINCT symbols and actual uncertain dispatch attempts in the
+unchanged refusal branch, NOT all DB rows or all native/working predicates.
+begin_pass's temporary UNKNOWN transport invalidation is unchanged; summary
+corresponds to the existing terminal BROKERDECIDES1-PUBLISH generation log.
+If native/local collection did not complete, BOTH counts are literal UNKNOWN,
+never invented zeros or previous-generation counts. A proved empty successful
+census may report 0/0. Summary follows actual terminal Redis publication.
+
+EXPLICIT OPTIONAL OBSERVABILITY CHANNEL
+New LOCAL_CENSUS_DIAGNOSTICS ContextVar: read_local sets its own per-generation
+metrics dict INSIDE the existing DB delegate, calls original two-argument
+local_evidence, resets token in finally. Original signature and three-frozenset
+return unchanged, including existing alternate test queries/shutdown delegates.
+No context influences admission, native collection, queries, or guards.
+Metric/cached row sets remain outside encode()/snapshot/consumer payload.
+
+BUDGET: FIRST SATISFIED CONDITION, NOT UNIQUE CAUSE
+claim_background preserves exact lock, sampled now, deque expiry, pending check,
+original six-condition OR predicate, refusal exception type/args and success
+background_at assignment. Added branch executes ONLY after original refusal.
+Exception now carries background_refusal_code as diagnostic attribute:
+foreground -> terminal_inflight -> ordinary_pending ->
+recent_ordinary_attempt_<ms>ms -> backoff -> background_interval_<ms>ms.
+Same left-to-right precedence as original predicate; multiple conditions may
+be true. No assertion other operands were false. Milliseconds are integer
+elapsed age of newest retained ordinary attempt / last background claim,
+respectively, computed with the EXISTING sampled now, no second clock call.
+Signed numeric grammar preserves anomalous backward-clock evidence rather than
+clamping to zero. No permit, cadence, request order, waiting/backoff change.
+
+COLLECTOR PRIVACY
+Existing safe message preserved; actual trusted loaded QueryBudgetUnavailable
+may append ;condition=<allowlisted code> within existing msg<=200 boundary.
+Exact class identity is checked against its already-loaded defining module;
+no eager adapter import. Code accepts only four literals or the two numeric-ms
+forms (ASCII signed digits, at most12). No SDK str(), repr, URL/ID/token/queue
+owner output. Untrusted classes/attributes cannot add a condition string.
+Public Webull generic exception suppression stays unchanged. Existing warning
+once-per-read and foreground LOG-TIME semantics remain, not origin-time proof.
+
+BEHAVIOR / SOURCE PROOF LIMITS
+All SQL, row scopes, refusal branch predicates, inflight.add, fills/terminal
+construction, original frozenset return, publisher.finish arguments and wire
+payload unchanged. brokerdecides1.py and brokerdecides1_entry.py unchanged.
+No requests/endpoints, permissions, priority, budgets, intervals, GC, settings,
+timer, timeout, native-status/flat/ownership/line guard changes. No real fix for
+budget refusal: C1 chooses a later policy fix only from actual grouped counts.
+Warning ran inside existing _run_db/to_thread, not directly on asyncio loop.
+Logging's indirect GIL/lock/I/O and comparative handler cost remain UNMEASURED;
+existing warning time bounds include DB work, not with/without measurement.
+
+NEW MAIN-ONLY RELATED MEMBERSHIP: 7 SOURCE CASES, AUTHOR UNRUN
+tests/unit/test_brokerdecides1_local_census.py::test_unknown_logs_once_per_rowset_and_summary_each_publish_preserves_refusal
+ONE actual SQLite census/publisher/assess control, six original attempts/three
+symbols. Four generations: first details3, unchanged0, added WORX row detail1,
+native failure details0/UNKNOWN counts. Original payloads unchanged; literal
+inflight/fill/terminal/refusal expectations; ContextVar reset/cache bounded.
+Existing invalid projection preimages do not prove native closure/permission.
+
+tests/unit/test_brokerdecides1_background_budget_diagnostics.py::test_first_existing_budget_operand_is_logged_without_permit_or_private_data
+SIX parameter cases, one per existing operand, later operands also true to prove
+precedence. Actual QueryBudget/collector wrapper, controlled external I/O only.
+Exactly one clock read, original exception args, no interval permit stamp or
+HTTP, original public UNKNOWN, one sanitized log, no private fixture identities.
+No worker test collection/import/compile/AST/runtime/PG/SSH/provider/capture.
+No repeated108/36/full/rate gate requested; Main owns related selection/receipt.
+
+EXACT CHANGED FILE SHA256
+src/project_mai_tai/broker_adapters/webull_order_reads.py
+4d6b2eeb3f920eb76645be0532a9ec16f865c4c5ddf7cb3544637605659a261a
+src/project_mai_tai/brokerdecides1_collect.py
+37b94fbb3809fa5566a1c61b9d80604f83d1724e9b446392fc71b28715aa72a5
+src/project_mai_tai/brokerdecides1_sync.py
+74b2677c64b5b213de0b194032191a5f171204911d20d862fba419e684fd9bb8
+tests/unit/test_brokerdecides1_local_census.py
+4c25690a3a8e7f12b99bd14dab9feef56befaaf335bdd5b53375822b57cd46d0
+tests/unit/test_brokerdecides1_background_budget_diagnostics.py
+b5853945ff53cb11b82c1e6b8060289e0c7c07c9d8d1390118f5019bdaec428f
+
+REMAINING / PRESERVED
+Main/C1 exact diff review -> Main related run -> separate reviewed OMS-only
+restart under actual gates -> ten-minute observation/grouped counts. Existing
+77315 fixed600-second observation unmodified; its first real budget refusal
+does not yet identify which internal operand fired. Original failures/results
+preserved. All other lanes and stale-row settlement remain paused/parked.

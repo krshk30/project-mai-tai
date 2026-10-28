@@ -6,11 +6,12 @@ import asyncio
 import json
 from copy import deepcopy
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
 from math import isfinite
+from threading import Lock
 from time import monotonic
 from uuid import UUID, uuid4
 
@@ -590,7 +591,10 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
                 event = TradeIntentEvent(source_service="oms-risk", payload=TradeIntentPayload(
                     strategy_code=strategy.code, broker_account_name=acct.name, symbol=symbol,
                     side="sell", intent_type="close", quantity=owned, reason="WBATTACH1_PROTECTION",
-                    metadata={"entry_order_id": str(entry.id), "managed_row_id": str(row.id)}))
+                    metadata={"entry_order_id": str(entry.id), "managed_row_id": str(row.id),
+                              "webull_protect_base_client_order_id": base,
+                              "webull_protect_target_client_order_id": WebullBrokerAdapter._combo_leg_coid(base, "T"),
+                              "webull_protect_stop_client_order_id": WebullBrokerAdapter._combo_leg_coid(base, "S")}))
                 intent = service.store.create_trade_intent(session, strategy=strategy, broker_account=acct, event=event)
                 journal["attempts"] = [*journal["attempts"], {"base": base, "quantity": str(owned),
                     "intent_id": str(intent.id), "phase": "submitting", "cancel_requested": False}]
@@ -633,6 +637,11 @@ async def attach_atr(service, *, broker_account_name, symbol, quantity, entry_pr
                 intent = session.get(TradeIntent, UUID(last["intent_id"]))
                 if intent is not None:
                     intent.status = "accepted" if accepted else "pending"
+                    if accepted:
+                        last["combo_id"] = reports[0].broker_order_id
+                        intent.payload = {**intent.payload, "metadata": {
+                            **intent.payload.get("metadata", {}),
+                            "webull_protect_combo_id": reports[0].broker_order_id}}
                 journal["attempts"] = [*journal["attempts"][:-1], last]
             await _atr_state(service, account, symbol, coid, result)
             if accepted:
@@ -863,6 +872,227 @@ async def _atr_resolved_by_child(service, state, account, symbol, coid, base, re
             intent.status = "filled"
         return True
     return await service._run_db(write)
+
+
+def settle_cached_protection_intent(service, session, intent):
+    """Change only lifecycle bookkeeping after exact native and ledger proof."""
+    if (intent.reason != "WBATTACH1_PROTECTION" or intent.status not in {"accepted", "pending"}
+            or intent.side != "sell" or intent.intent_type != "close"):
+        return False
+    metadata = (intent.payload or {}).get("metadata", {})
+    entry = session.get(BrokerOrder, UUID(metadata["entry_order_id"]))
+    row = session.get(OmsManagedPosition, UUID(metadata["managed_row_id"]))
+    account = session.get(BrokerAccount, intent.broker_account_id)
+    strategy = session.get(Strategy, intent.strategy_id)
+    if (entry is None or row is None or account is None or account.provider != "webull"
+            or strategy is None or strategy.code != "schwab_1m_v2"
+            or entry.strategy_id != intent.strategy_id or entry.broker_account_id != intent.broker_account_id
+            or entry.symbol != intent.symbol or entry.side != "buy" or not entry.broker_order_id
+            or row.entry_order_id != entry.id or row.entry_client_order_id != entry.client_order_id
+            or row.broker_account_name != account.name or row.strategy_code != strategy.code
+            or row.symbol != intent.symbol):
+        return False
+    journal = (entry.payload or {}).get(KEY, {})
+    if journal.get("entry_id") != str(entry.id) or journal.get("managed_id") != str(row.id):
+        return False
+    attempts = [a for a in journal.get("attempts", []) if a.get("intent_id") == str(intent.id)]
+    if len(attempts) != 1:
+        return False
+    attempt = attempts[0]
+    base = metadata.get("webull_protect_base_client_order_id")
+    coids = [WebullBrokerAdapter._combo_leg_coid(base, suffix) for suffix in ("T", "S")] if base else []
+    quantity = Decimal(attempt["quantity"])
+    if (not base or attempt.get("base") != base or not quantity.is_finite() or quantity <= 0
+            or intent.quantity != quantity or [metadata.get("webull_protect_target_client_order_id"),
+                metadata.get("webull_protect_stop_client_order_id")] != coids
+            or not attempt.get("combo_id") or attempt["combo_id"] != metadata.get("webull_protect_combo_id")
+            or len([a for a in journal["attempts"] if a.get("base") == base]) != 1):
+        return False
+    reader = getattr(service.broker_adapter, "cached_attach_pair_terminal", None)
+    proof = reader(account.name, intent.symbol, base, quantity) if reader else None
+    if (not isinstance(proof, dict) or proof.get("source") != "complete_cached_today_list"
+            or proof.get("terminal_observation_contract") != "WBATTACH-L9-own-row-after-winner-v1"
+            or not proof.get("scan_generation") or not proof.get("account_id")
+            or (proof.get("account"), proof.get("symbol"), proof.get("base")) != (account.name, intent.symbol, base)):
+        return False
+    children = proof.get("children", [])
+    if len(children) != 2 or {c.get("coid") for c in children} != set(coids):
+        return False
+    if len({c.get("broker_order_id") for c in children}) != 2:
+        return False
+    for child in children:
+        evidence = child.get("evidence", {})
+        acquired = datetime.fromisoformat(evidence["acquired_at"])
+        filled = Decimal(child["filled_quantity"])
+        if (child.get("status") not in {"filled", "cancelled", "rejected"} or not child.get("broker_order_id")
+                or not filled.is_finite() or not 0 <= filled <= quantity
+                or child["status"] == "filled" and filled != quantity
+                or evidence.get("client_order_id") != child["coid"]
+                or evidence.get("account_id") != proof["account_id"]
+                or evidence.get("scan_generation") != proof["scan_generation"]
+                or evidence.get("failed") is not False
+                or evidence.get("complete") is not True or evidence.get("truncated") is not False
+                or child.get("terminal_observed_at") != evidence["acquired_at"]
+                or acquired.tzinfo is None or acquired > datetime.now(UTC)):
+            return False
+        if filled == 0 and session.scalar(select(Fill.id).join(BrokerOrder, BrokerOrder.id == Fill.order_id).where(
+                BrokerOrder.broker_order_id == child["broker_order_id"],
+                BrokerOrder.broker_account_id == entry.broker_account_id).limit(1)) is not None:
+            return False  # A zero native receipt must not contradict an existing execution.
+    total = sum((Decimal(c["filled_quantity"]) for c in children), Decimal(0))
+    if total == 0:
+        status = "cancelled"
+    elif total == quantity:
+        winners = [c for c in children if Decimal(c["filled_quantity"]) > 0]
+        if (len(winners) != 1 or winners[0]["status"] != "filled"
+                or row.status != "closed" or row.current_quantity != 0):
+            return False
+        winner = winners[0]
+        price = Decimal(winner["price"])
+        filled_at = datetime.fromisoformat(winner["filled_at"])
+        if (not price.is_finite() or price <= 0 or filled_at.tzinfo is None
+                or filled_at > datetime.now(UTC)
+                or any(datetime.fromisoformat(c["evidence"]["acquired_at"]) <= filled_at for c in children)):
+            return False
+        # Inspect the existing economic writer's rows; never record/reparent a fill here.
+        orders = session.scalars(select(BrokerOrder).where(
+            BrokerOrder.broker_order_id == winner["broker_order_id"],
+            BrokerOrder.intent_id == entry.intent_id, BrokerOrder.strategy_id == entry.strategy_id,
+            BrokerOrder.broker_account_id == entry.broker_account_id,
+            BrokerOrder.symbol == intent.symbol, BrokerOrder.side == "sell").limit(2)).all()
+        if len(orders) != 1 or (orders[0].payload or {}).get("source") != "native_oco_child_leg":
+            return False
+        fills = session.scalars(select(Fill).where(Fill.order_id == orders[0].id).limit(2)).all()
+        if (len(fills) != 1 or fills[0].broker_account_id != entry.broker_account_id
+                or fills[0].strategy_id != entry.strategy_id or fills[0].symbol != intent.symbol
+                or fills[0].side != "sell" or fills[0].quantity != quantity
+                or fills[0].price != price.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+                or (fills[0].filled_at.astimezone(UTC) if fills[0].filled_at.tzinfo is not None
+                    else fills[0].filled_at.replace(tzinfo=UTC)) != filled_at.astimezone(UTC)
+                or not str(fills[0].broker_fill_id or "").startswith(winner["broker_order_id"] + ":")):
+            return False
+        status = "filled"
+    else:
+        return False  # Partial execution or overfill cannot clear the lifecycle alarm.
+    intent.status = status
+    intent.payload = {**intent.payload, "metadata": {**metadata,
+        "wbattach1_terminal_bookkeeping": json.dumps({"status": status, "combo_id": attempt["combo_id"],
+            "proof": proof, "recorded_at": datetime.now(UTC).isoformat()}, sort_keys=True)}}
+    return True
+
+
+_PROTECTION_BATCH_SIZE = 8
+_PROTECTION_BATCH_SECONDS = 0.025
+
+
+@dataclass
+class _ProtectionSweep:
+    lock: object
+    cursors: dict
+    refreshes: dict = field(default_factory=dict)
+
+
+def _refresh_protection_scan_page(service, session, intents, state, scope, deadline):
+    """One attempt per physical account across the entire frozen-ceiling sweep.
+
+    Claims survive commit failure/cancel and are spent before I/O, not per row.
+    Copy bounded request identities then release the read transaction before HTTP.
+    """
+    get_scope = getattr(service.broker_adapter, "attach_terminal_scan_scope", None)
+    refresh = getattr(service.broker_adapter, "refresh_attach_terminal_scan", None)
+    if not callable(get_scope) or not callable(refresh):
+        return
+    requests = []
+    for intent in intents:
+        try:
+            metadata = (intent.payload or {}).get("metadata", {})
+            base = metadata.get("webull_protect_base_client_order_id")
+            if not isinstance(base, str) or not base or not intent.quantity.is_finite() or intent.quantity <= 0:
+                continue
+            account = session.get(BrokerAccount, intent.broker_account_id)
+            if account is not None and account.provider == "webull":
+                requests.append((account.name, intent.symbol, base, intent.quantity))
+        except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+            continue
+    claimed = state.refreshes[scope][1]
+    attempted = False
+    for account, symbol, base, quantity in requests:
+        if attempted and monotonic() >= deadline:
+            break
+        try:
+            physical = get_scope(account)
+            if physical is None or physical in claimed:
+                continue
+            if service.broker_adapter.cached_attach_pair_terminal(account, symbol, base, quantity) is not None:
+                continue
+        except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+            continue  # Malformed scope/evidence is UNKNOWN, not refresh authority.
+        claimed.add(physical)
+        if not attempted:
+            session.rollback()  # No mutations yet; do not hold a DB transaction across HTTP.
+        attempted = True
+        try:
+            refresh(account)
+        except Exception:
+            pass  # Budget denial,429,error/incomplete is UNKNOWN; never retry this sweep.
+
+
+async def reconcile_cached_protection_intents(service, account_names):
+    if not callable(getattr(service.broker_adapter, "cached_attach_pair_terminal", None)):
+        return
+    scope = None if account_names is None else tuple(sorted(set(account_names)))
+    if scope == ():
+        return
+    state = service.__dict__.setdefault("_wbattach_bookkeeping_sweep", _ProtectionSweep(Lock(), {}))
+
+    def unit():
+        # The worker owns the lock through commit, even if its awaiting task is cancelled.
+        if not state.lock.acquire(blocking=False):
+            return
+        try:
+            with service.session_factory() as session:
+                query = select(TradeIntent).join(BrokerAccount, BrokerAccount.id == TradeIntent.broker_account_id).where(
+                    TradeIntent.reason == "WBATTACH1_PROTECTION", TradeIntent.status.in_(["accepted", "pending"]),
+                    BrokerAccount.provider == "webull")
+                if scope is not None:
+                    query = query.where(BrokerAccount.name.in_(scope))
+                after, ceiling = state.cursors.get(scope, (None, None))
+                if ceiling is None and scope in state.refreshes:
+                    ceiling = state.refreshes[scope][0]  # Failed commit retains its sweep/claims.
+                if ceiling is None:
+                    ceiling = session.scalar(query.with_only_columns(TradeIntent.id).order_by(
+                        TradeIntent.id.desc()).limit(1))
+                if ceiling is None:
+                    state.refreshes.pop(scope, None)
+                    return
+                state.refreshes.setdefault(scope, (ceiling, set()))
+                page = query.where(TradeIntent.id <= ceiling)
+                if after is not None:
+                    page = page.where(TradeIntent.id > after)
+                intents = session.scalars(page.order_by(TradeIntent.id).limit(_PROTECTION_BATCH_SIZE)).all()
+                deadline = monotonic() + _PROTECTION_BATCH_SECONDS
+                _refresh_protection_scan_page(service, session, intents, state, scope, deadline)
+                visited = 0
+                for intent in intents:
+                    if visited and monotonic() >= deadline:
+                        break
+                    try:
+                        settle_cached_protection_intent(service, session, intent)
+                    except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+                        pass  # UNKNOWN/legacy stays eligible on the next sweep.
+                    after = intent.id
+                    visited += 1
+                session.commit()
+                # Never publish progress from a rolled-back transaction. A frozen upper
+                # bound lets each sweep finish rather than chasing newly appended IDs.
+                complete = visited == len(intents) and (len(intents) < _PROTECTION_BATCH_SIZE or after == ceiling)
+                state.cursors[scope] = (None, None) if complete else (after, ceiling)
+                if complete:
+                    state.refreshes.pop(scope, None)
+        finally:
+            state.lock.release()
+
+    await asyncio.to_thread(unit)
 
 
 def _cancel_read_summary(reports):

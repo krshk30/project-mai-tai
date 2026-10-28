@@ -29,6 +29,7 @@ class MassiveAtrSeedBar:
             close=self.close,
             volume=self.volume,
             timestamp_ms=self.timestamp_ms,
+            producer="massive",
         )
 
 
@@ -148,7 +149,7 @@ class MassiveAtrSeedClient:
             if stamp < session_start_ms or stamp in selected:
                 raise ValueError("foreign or duplicate Massive preopen candle")
             bar = ChartBar(symbol.upper(), *(float(row[key]) for key in ("o", "h", "l", "c")),
-                           int(row["v"]), stamp)
+                           int(row["v"]), stamp, producer="massive")
             validator.observe(bar)
             selected[stamp] = bar
         return tuple(selected[stamp] for stamp in sorted(selected))
