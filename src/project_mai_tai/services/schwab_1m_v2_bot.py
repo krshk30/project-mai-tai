@@ -5254,7 +5254,8 @@ class SchwabV2BotService:
                 {sym: (str(state.atr_state) if self._line_snapshot_current(sym) and state.bars
                        and state.bars[-1].timestamp_ms == now_ms // 60_000 * 60_000 - 60_000
                        else "unknown") for sym, state in self.strategy._symbol_states.items()},
-                retain_entries=True, excluded=frozenset(protected_exclude | ineligible_exclude),
+                # Card 10-22: off the scanner list = watched, but no new buys.
+                retain_entries=False, excluded=frozenset(protected_exclude | ineligible_exclude),
             )
             if old_anchor != self._keepwatch.anchor_ms:
                 self._keepwatch_proven = {
