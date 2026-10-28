@@ -388,6 +388,29 @@ async def begin_pass(service):
     return generation
 
 
+def _warn_caller_timeout(service, generation, accounts, books, timeouts):
+    """One bounded warning/minute for TimeoutError at the existing await boundary."""
+    try:
+        observed = time.monotonic()
+        previous = service.__dict__.get("_brokerdecides1_caller_timeout_warning_at")
+        if previous is not None and observed - previous < 60.0:
+            return
+        aliases = {"live:orb", "live:schwab_1m_v2", "live:webull", "live:schwab"}
+        present = {book.account for book in books}
+        missing = ",".join(name if name in aliases else "UNKNOWN"
+            for name in accounts if name not in present)
+        timed_out = ",".join(name if name in aliases else "UNKNOWN" for name, _ in timeouts)
+        elapsed_ms = max(elapsed for _, elapsed in timeouts)
+        service.__dict__["_brokerdecides1_caller_timeout_warning_at"] = observed
+        service.logger.warning(
+            "[BROKERDECIDES1-CALLER-TIMEOUT] generation=%d missing_accounts=%s "
+            "timeout_accounts=%s exc=TimeoutError elapsed_ms=%d budget_ms=5000 "
+            "elapsed_scope=max_timeout_reader_wait",
+            generation, missing, timed_out, elapsed_ms)
+    except Exception:
+        pass  # Diagnostic sink/state failure cannot change the original UNKNOWN result.
+
+
 @_owned_pass
 async def finish_pass(service, generation, *, sync_succeeded):
     if generation is None:
@@ -408,7 +431,9 @@ async def finish_pass(service, generation, *, sync_succeeded):
             if reader is None:
                 raise ValueError("complete_native_reader_UNAVAILABLE")
             errors = []
+            caller_timeouts = []
             for name in publisher.accounts:
+                reader_started = time.monotonic()
                 try:
                     book = await asyncio.wait_for(reader(name), 5)
                     if (not isinstance(book, NativeAccountBook) or book.account != name
@@ -419,8 +444,14 @@ async def finish_pass(service, generation, *, sync_succeeded):
                         errors.append(book.reason)
                 except asyncio.CancelledError:
                     raise
+                except TimeoutError:
+                    caller_timeouts.append((name,
+                        max(0, int((time.monotonic() - reader_started) * 1000))))
+                    errors.append("native_account_book_UNKNOWN")
                 except Exception:
                     errors.append("native_account_book_UNKNOWN")
+            if caller_timeouts:
+                _warn_caller_timeout(service, generation, publisher.accounts, books, caller_timeouts)
             if errors:
                 raise ValueError(";".join(errors))
             from project_mai_tai.brokerdecides1_collect import require_background_priority
